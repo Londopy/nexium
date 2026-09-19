@@ -1769,6 +1769,20 @@ impl<'a> Checker<'a> {
         };
         let te = self.finalize_expr(te);
         let ty = self.tys.resolve(te.ty, true);
+        if let Some(bad) = self.heap_owning_part(ty, &mut Vec::new()) {
+            let tn = self.type_name(ty);
+            let bn = self.type_name(bad);
+            let hint = match self.tys.kind(bad).clone() {
+                TyKind::List(e) => format!("; store a slice (`[]{}`) instead", self.type_name(e)),
+                TyKind::Str => "; store a `[]u8` instead".to_string(),
+                _ => String::new(),
+            };
+            if bad == ty {
+                self.error(te.span, format!("a constant cannot own heap data (`{}`){}", tn, hint));
+            } else {
+                self.error(te.span, format!("a constant cannot own heap data: `{}` contains a `{}`{}", tn, bn, hint));
+            }
+        }
         // evaluate at compile time
         let te = match crate::comptime::eval_const_expr(self, &te) {
             Some(v) => TExpr { kind: TExprKind::Value(v), ty, span: te.span },
@@ -1781,6 +1795,38 @@ impl<'a> Checker<'a> {
         self.consts[id as usize].in_progress = false;
         self.consts[id as usize].resolved = Some((ty, te.clone()));
         Some((ty, te))
+    }
+
+    /// The first part of `t` that owns heap memory (`List`, `String`, `Map`,
+    /// a `ref class`, a weak reference), or None when `t` is a plain value
+    /// type that can live in static data.
+    pub fn heap_owning_part(&mut self, t: TyId, seen: &mut Vec<TyId>) -> Option<TyId> {
+        let t = self.tys.resolve(t, true);
+        if seen.contains(&t) {
+            return None;
+        }
+        seen.push(t);
+        match self.tys.kind(t).clone() {
+            TyKind::List(_) | TyKind::Str | TyKind::Map(..) | TyKind::Weak(_) => Some(t),
+            TyKind::Struct(d, _) => {
+                if self.structs[d as usize].kind == StructKind::RefClass {
+                    return Some(t);
+                }
+                let ftys = self.struct_field_types(t);
+                ftys.into_iter().find_map(|f| self.heap_owning_part(f, seen))
+            }
+            TyKind::Enum(..) => {
+                let vtys = self.enum_variant_types(t);
+                vtys.into_iter().flatten().find_map(|f| self.heap_owning_part(f, seen))
+            }
+            TyKind::Tuple(ts) => ts.into_iter().find_map(|f| self.heap_owning_part(f, seen)),
+            TyKind::Array(_, e) | TyKind::Slice(_, e) | TyKind::Opt(e) | TyKind::ErrUnion(_, e) => self.heap_owning_part(e, seen),
+            TyKind::Distinct(d) => {
+                let u = self.distinct_underlying[&d];
+                self.heap_owning_part(u, seen)
+            }
+            _ => None,
+        }
     }
 
     fn resolve_global(&mut self, id: DefId) {

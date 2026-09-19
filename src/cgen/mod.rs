@@ -83,6 +83,8 @@ pub struct Gen {
     pub body: Vec<String>,
     pub sm_names: Vec<String>,
     pub str_lits: HashMap<Vec<u8>, String>,
+    /// static arrays behind constant slices
+    pub hoisted_arrays: usize,
     pub errors: Vec<String>,
     pub line_starts: Vec<Vec<u32>>,
     pub thunks_by_key: HashMap<String, String>,
@@ -153,6 +155,7 @@ impl Gen {
             body: Vec::new(),
             sm_names: Vec::new(),
             str_lits: HashMap::new(),
+            hoisted_arrays: 0,
             errors: Vec::new(),
             line_starts: Vec::new(),
             thunks_by_key: HashMap::new(),
@@ -1120,6 +1123,21 @@ impl Gen {
             (Value::Str(s), TyKind::Slice(..)) => {
                 let lit = self.string_literal(s);
                 format!("{{ (uint8_t*){}, {} }}", lit, s.len())
+            }
+            (Value::Array(a) | Value::List(a), TyKind::Slice(_, e)) => {
+                // the elements live in a static array of their own
+                let ecn = self.cty(e);
+                if a.is_empty() {
+                    return Some(format!("{{ ({}*)0, 0 }}", ecn));
+                }
+                let mut parts = Vec::new();
+                for x in a {
+                    parts.push(self.static_init(x, e)?);
+                }
+                let name = format!("nx_arr_{}", self.hoisted_arrays);
+                self.hoisted_arrays += 1;
+                let _ = writeln!(self.data_out, "static const {} {}[{}] = {{ {} }};", ecn, name, a.len(), parts.join(", "));
+                format!("{{ ({}*){}, {} }}", ecn, name, a.len())
             }
             (Value::Array(a), TyKind::Array(_, e)) => {
                 let mut parts = Vec::new();
