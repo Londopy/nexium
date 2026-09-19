@@ -2,10 +2,10 @@
 //
 // `import std.fs` then:
 //
-//     if (fs.exists("notes.txt")) { ... }
+//     if fs.exists("notes.txt") { ... }
 //     try fs.make_dirs("out/logs")
-//     for (try fs.list("out")) |name| { ... }
-//     for (try fs.walk("src")) |path| { ... }        // every file, recursively
+//     for name in try fs.list("out") { ... }
+//     for path in try fs.walk("src") { ... }        // every file, recursively
 //     let cfg = fs.join(fs.parent(argv0), "app.toml")
 //
 // The platform calls are the `io.*` builtins (documented in the language
@@ -51,7 +51,7 @@ pub fn read(path: []u8) -> !String {
 pub fn read_lines(path: []u8) -> !List(String){
     let text = try io.read_file(path)
     var out = List(String).new()
-    for (text.lines()) |l| { out.append(String.from(l)) }
+    for l in text.lines() { out.append(String.from(l)) }
     return out
 }
 
@@ -87,29 +87,29 @@ pub fn make_dir(path: []u8) -> !void {
 
 /// Create a directory and every missing parent.
 pub fn make_dirs(path: []u8) -> !void {
-    if (path.len == 0 or is_dir(path)) return
+    if path.len == 0 or is_dir(path) { return }
     let p = parent(path)
-    if (p.len > 0 and p.len < path.len and !is_dir(p)) try make_dirs(p)
+    if p.len > 0 and p.len < path.len and !is_dir(p) { try make_dirs(p) }
     return io.make_dir(path)
 }
 
 /// Remove a file or an empty directory.
 pub fn remove(path: []u8) -> !void {
-    if (is_dir(path)) return io.remove_dir(path)
+    if is_dir(path) { return io.remove_dir(path) }
     return io.remove_file(path)
 }
 
 /// Remove a file, or a directory with everything in it.
 pub fn remove_all(path: []u8) -> !void {
-    if (is_dir(path)) {
+    if is_dir(path) {
         let names = try io.list_dir(path)
-        for (names) |n| {
+        for n in names {
             let child = join(path, n)
             try remove_all(child)
         }
         return io.remove_dir(path)
     }
-    if (exists(path)) return io.remove_file(path)
+    if exists(path) { return io.remove_file(path) }
 }
 
 /// Rename or move a file or directory (an existing destination file is replaced).
@@ -127,9 +127,9 @@ pub fn walk(root: []u8) -> !List(String){
 
 fn walk_into(dir: []u8, out: *mut List(String)) -> !void {
     let names = try list(dir)
-    for (names) |n| {
+    for n in names {
         let child = join(dir, n)
-        if (is_dir(child)) {
+        if is_dir(child) {
             try walk_into(child, out)
         } else {
             out.append(child)
@@ -152,10 +152,10 @@ pub fn temp_dir() -> String {
 pub fn temp_path(prefix: []u8) -> String {
     let base = io.temp_dir()
     var n = time.now()
-    while (true) {
+    while true {
         var candidate = join(base, prefix)
         candidate.append(format("{}", .{n}))
-        if (!exists(candidate)) return candidate
+        if !exists(candidate) { return candidate }
         n += 1
     }
 }
@@ -168,24 +168,24 @@ fn is_sep(c: u8) -> bool {
 
 /// The separator a path uses: `\` when it contains one, else `/`.
 fn sep_of(path: []u8) -> u8 {
-    for (path) |c| { if (c == '\\') return '\\' }
+    for c in path { if c == '\\' { return '\\' } }
     return '/'
 }
 
 /// Does the path start at a root (`/x`, `C:\x`, `C:/x`, `\\server`)?
 pub fn is_absolute(path: []u8) -> bool {
-    if (path.len == 0) return false
-    if (is_sep(path[0])) return true
+    if path.len == 0 { return false }
+    if is_sep(path[0]) { return true }
     return path.len >= 3 and path[1] == ':' and is_sep(path[2])
 }
 
 /// `dir/name`; a separator is added only when needed, and an absolute `name`
 /// replaces `dir`.
 pub fn join(dir: []u8, name: []u8) -> String {
-    if (dir.len == 0 or is_absolute(name)) return String.from(name)
+    if dir.len == 0 or is_absolute(name) { return String.from(name) }
     var out = String.from(dir)
-    if (name.len == 0) return out
-    if (!is_sep(dir[dir.len - 1])) out.push_byte(sep_of(dir))
+    if name.len == 0 { return out }
+    if !is_sep(dir[dir.len - 1]) { out.push_byte(sep_of(dir)) }
     out.append(name)
     return out
 }
@@ -194,23 +194,23 @@ pub fn join(dir: []u8, name: []u8) -> String {
 /// `/c.txt` -> `/`.
 pub fn parent(path: []u8) -> []u8 {
     var end = path.len
-    while (end > 0 and is_sep(path[end - 1])) { end -= 1 }
+    while end > 0 and is_sep(path[end - 1]) { end -= 1 }
     var i = end
-    while (i > 0 and !is_sep(path[i - 1])) { i -= 1 }
-    if (i == 0) return path[0..0]
+    while i > 0 and !is_sep(path[i - 1]) { i -= 1 }
+    if i == 0 { return path[0..0] }
     var j = i
-    while (j > 1 and is_sep(path[j - 1])) { j -= 1 }
-    if (j == 1 and is_sep(path[0])) return path[0..1]
-    if (j >= 2 and path[j - 1] == ':') return path[0..j + 1]
+    while j > 1 and is_sep(path[j - 1]) { j -= 1 }
+    if j == 1 and is_sep(path[0]) { return path[0..1] }
+    if j >= 2 and path[j - 1] == ':' { return path[0..j + 1] }
     return path[0..j]
 }
 
 /// The last component: `a/b/c.txt` -> `c.txt`.
 pub fn base_name(path: []u8) -> []u8 {
     var end = path.len
-    while (end > 0 and is_sep(path[end - 1])) { end -= 1 }
+    while end > 0 and is_sep(path[end - 1]) { end -= 1 }
     var i = end
-    while (i > 0 and !is_sep(path[i - 1])) { i -= 1 }
+    while i > 0 and !is_sep(path[i - 1]) { i -= 1 }
     return path[i..end]
 }
 
@@ -218,10 +218,10 @@ pub fn base_name(path: []u8) -> []u8 {
 pub fn extension(path: []u8) -> []u8 {
     let name = base_name(path)
     var i = name.len
-    while (i > 0) {
+    while i > 0 {
         i -= 1
-        if (name[i] == '.') {
-            if (i == 0) return name[0..0]
+        if name[i] == '.' {
+            if i == 0 { return name[0..0] }
             return name[i + 1..name.len]
         }
     }
@@ -232,10 +232,10 @@ pub fn extension(path: []u8) -> []u8 {
 pub fn stem(path: []u8) -> []u8 {
     let name = base_name(path)
     var i = name.len
-    while (i > 0) {
+    while i > 0 {
         i -= 1
-        if (name[i] == '.') {
-            if (i == 0) return name
+        if name[i] == '.' {
+            if i == 0 { return name }
             return name[0..i]
         }
     }
@@ -245,8 +245,8 @@ pub fn stem(path: []u8) -> []u8 {
 /// The path with its extension replaced (or added): `a/b.txt`, `md` -> `a/b.md`.
 pub fn with_extension(path: []u8, ext: []u8) -> String {
     let e = extension(path)
-    var out = String.from(if (e.len > 0) path[0..path.len - e.len - 1] else path)
-    if (ext.len > 0) {
+    var out = String.from(if e.len > 0 { path[0..path.len - e.len - 1] } else { path })
+    if ext.len > 0 {
         out.push_byte('.')
         out.append(ext)
     }
@@ -260,14 +260,14 @@ pub fn normalize(path: []u8) -> String {
     var parts = List([]u8).new()
     var start: usize = 0
     var i: usize = 0
-    while (i <= path.len) {
-        if (i == path.len or is_sep(path[i])) {
+    while i <= path.len {
+        if i == path.len or is_sep(path[i]) {
             let part = path[start..i]
-            if (part.len == 0 or part == ".") {
+            if part.len == 0 or part == "." {
                 // skip
-            } else if (part == "..") {
-                if (parts.len > 0 and parts[parts.len - 1] != "..") { _ = parts.pop() }
-                else if (! (path.len > 0 and is_sep(path[0]))) parts.append(part)
+            } else if part == ".." {
+                if parts.len > 0 and parts[parts.len - 1] != ".." { _ = parts.pop() }
+                else if ! (path.len > 0 and is_sep(path[0])) { parts.append(part) }
             } else {
                 parts.append(part)
             }
@@ -276,12 +276,12 @@ pub fn normalize(path: []u8) -> String {
         i += 1
     }
     var out = String.new()
-    if (path.len > 0 and is_sep(path[0])) out.push_byte(sep)
-    for (parts) |p, k| {
-        if (k > 0) out.push_byte(sep)
+    if path.len > 0 and is_sep(path[0]) { out.push_byte(sep) }
+    for p, k in parts {
+        if k > 0 { out.push_byte(sep) }
         out.append(p)
     }
-    if (out.len == 0) out.push_byte('.')
+    if out.len == 0 { out.push_byte('.') }
     return out
 }
 
@@ -289,8 +289,8 @@ pub fn normalize(path: []u8) -> String {
 
 fn less(a: []u8, b: []u8) -> bool {
     var i: usize = 0
-    while (i < a.len and i < b.len) {
-        if (a[i] != b[i]) return a[i] < b[i]
+    while i < a.len and i < b.len {
+        if a[i] != b[i] { return a[i] < b[i] }
         i += 1
     }
     return a.len < b.len
@@ -298,9 +298,9 @@ fn less(a: []u8, b: []u8) -> bool {
 
 fn sort_names(names: *mut List(String)) {
     var i: usize = 1
-    while (i < names.len) {
+    while i < names.len {
         var j = i
-        while (j > 0 and less(names[j], names[j - 1])) {
+        while j > 0 and less(names[j], names[j - 1]) {
             let s = names.remove(j)
             names.insert(j - 1, s)
             j -= 1

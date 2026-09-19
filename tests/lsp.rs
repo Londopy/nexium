@@ -41,7 +41,7 @@ fn definition_completion_and_rename() {
     let helper = dir.join("helper.nx");
     std::fs::write(&helper, "pub fn twice(x: i32) -> i32 { return x * 2 }\npub const LIMIT: i32 = 10\n").unwrap();
     let main = dir.join("main.nx");
-    let text = "import helper\n\nstruct Point { x: i32, y: i32 }\n\nfn origin() -> Point { return Point{ .x = 0, .y = 0 } }\n\nfn main() {\n    let total = helper.twice(3)\n    let p = origin()\n    println(\"{} {}\", .{total + p.x, helper.LIMIT})\n    let again = total\n}\n";
+    let text = "import helper\n\nstruct Point { x: i32, y: i32 }\n\nfn origin() -> Point { return Point{ .x = 0, .y = 0 } }\n\nfn main() {\n    let total = helper.twice(3)\n    let p = origin()\n    println(\"{} {}\", .{total + p.x, helper.LIMIT})\n    let again = total\n    for item, idx in [1, 2] { println(\"{}\", .{item + idx}) }\n}\n";
     std::fs::write(&main, text).unwrap();
     let uri = format!("file:///{}", main.to_string_lossy().replace('\\', "/").replace(':', "%3A"));
     let open = format!(r#"{{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{{"textDocument":{{"uri":"{}","languageId":"nexium","version":1,"text":"{}"}}}}}}"#, uri, json_escape(text));
@@ -57,7 +57,9 @@ fn definition_completion_and_rename() {
     let comp_field = format!(r#"{{"jsonrpc":"2.0","id":5,"method":"textDocument/completion","params":{{"textDocument":{{"uri":"{}"}},"position":{{"line":9,"character":33}}}}}}"#, uri);
     // rename the local `total` from its use on line 10
     let rename = format!(r#"{{"jsonrpc":"2.0","id":6,"method":"textDocument/rename","params":{{"textDocument":{{"uri":"{}"}},"position":{{"line":10,"character":17}},"newName":"sum"}}}}"#, uri);
-    let out = session(&[r#"{"jsonrpc":"2.0","id":0,"method":"initialize","params":{}}"#.into(), open, def_twice, def_origin, def_local, comp_module, comp_field, rename]);
+    // `idx` used on line 11 (`item + idx`), column 52: a `for` binding
+    let def_for = format!(r#"{{"jsonrpc":"2.0","id":7,"method":"textDocument/definition","params":{{"textDocument":{{"uri":"{}"}},"position":{{"line":11,"character":53}}}}}}"#, uri);
+    let out = session(&[r#"{"jsonrpc":"2.0","id":0,"method":"initialize","params":{}}"#.into(), open, def_twice, def_origin, def_local, comp_module, comp_field, rename, def_for]);
 
     assert!(out.contains("\"definitionProvider\":true"), "capabilities: {}", out);
     // each response is one frame; find them by id
@@ -79,4 +81,7 @@ fn definition_completion_and_rename() {
     assert!(r5.contains("\"label\":\"x\"") && r5.contains("\"label\":\"y\""), "field completion: {}", r5);
     let r6 = resp(6);
     assert_eq!(r6.matches("\"newText\":\"sum\"").count(), 3, "rename edits: {}", r6);
+    // `idx` resolves to its binding in the `for` header on the same line, column 14
+    let r7 = resp(7);
+    assert!(r7.contains("\"line\":11") && r7.contains("\"character\":14"), "definition of for binding: {}", r7);
 }

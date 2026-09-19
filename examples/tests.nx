@@ -1,8 +1,8 @@
 fn fib(n: u32) -> u64 {
-    if (n < 2) return n as u64
+    if n < 2 { return n as u64 }
     var a: u64 = 0
     var b: u64 = 1
-    for (0..n) |_i| {
+    for _i in 0..n {
         let t = a + b
         a = b
         b = t
@@ -14,7 +14,7 @@ const TABLE: [8]u64 = comptime build_table()
 
 fn build_table() -> [8]u64 {
     var t: [8]u64 = undefined
-    for (0..8) |i| { t[i] = fib(i as u32) }
+    for i in 0..8 { t[i] = fib(i as u32) }
     return t
 }
 

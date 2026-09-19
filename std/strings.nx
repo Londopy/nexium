@@ -9,8 +9,8 @@
 /// Concatenate `parts` with `sep` between them.
 pub fn join(parts: [][]u8, sep: []u8) -> String {
     var out = String.new()
-    for (parts) |p, i| {
-        if (i > 0) out.append(sep)
+    for p, i in parts {
+        if i > 0 { out.append(sep) }
         out.append(p)
     }
     return out
@@ -19,15 +19,15 @@ pub fn join(parts: [][]u8, sep: []u8) -> String {
 /// `s` repeated `n` times.
 pub fn repeat(s: []u8, n: usize) -> String {
     var out = String.with_capacity(s.len * n)
-    for (0..n) |_| { out.append(s) }
+    for _ in 0..n { out.append(s) }
     return out
 }
 
 /// Left-pad with `fill` to at least `width` bytes.
 pub fn pad_left(s: []u8, width: usize, fill: u8) -> String {
-    var out = String.with_capacity(if (width > s.len) width else s.len)
-    if (width > s.len) {
-        for (0..width - s.len) |_| { out.push_byte(fill) }
+    var out = String.with_capacity(if width > s.len { width } else { s.len })
+    if width > s.len {
+        for _ in 0..width - s.len { out.push_byte(fill) }
     }
     out.append(s)
     return out
@@ -36,31 +36,31 @@ pub fn pad_left(s: []u8, width: usize, fill: u8) -> String {
 /// Right-pad with `fill` to at least `width` bytes.
 pub fn pad_right(s: []u8, width: usize, fill: u8) -> String {
     var out = String.from(s)
-    if (width > s.len) {
-        for (0..width - s.len) |_| { out.push_byte(fill) }
+    if width > s.len {
+        for _ in 0..width - s.len { out.push_byte(fill) }
     }
     return out
 }
 
 /// Center in `width` bytes, extra fill on the right.
 pub fn center(s: []u8, width: usize, fill: u8) -> String {
-    if (width <= s.len) return String.from(s)
+    if width <= s.len { return String.from(s) }
     let total = width - s.len
     let left = total / 2
     var out = String.with_capacity(width)
-    for (0..left) |_| { out.push_byte(fill) }
+    for _ in 0..left { out.push_byte(fill) }
     out.append(s)
-    for (0..total - left) |_| { out.push_byte(fill) }
+    for _ in 0..total - left { out.push_byte(fill) }
     return out
 }
 
 /// How many non-overlapping times `needle` occurs in `s`.
 pub fn count(s: []u8, needle: []u8) -> usize {
-    if (needle.len == 0 or needle.len > s.len) return 0
+    if needle.len == 0 or needle.len > s.len { return 0 }
     var n: usize = 0
     var i: usize = 0
-    while (i + needle.len <= s.len) {
-        if (s[i..i + needle.len] == needle) {
+    while i + needle.len <= s.len {
+        if s[i..i + needle.len] == needle {
             n += 1
             i += needle.len
         } else {
@@ -73,13 +73,13 @@ pub fn count(s: []u8, needle: []u8) -> usize {
 /// Every occurrence of `from` replaced by `to`.
 pub fn replace(s: []u8, from: []u8, to: []u8) -> String {
     var out = String.with_capacity(s.len)
-    if (from.len == 0) {
+    if from.len == 0 {
         out.append(s)
         return out
     }
     var i: usize = 0
-    while (i < s.len) {
-        if (i + from.len <= s.len and s[i..i + from.len] == from) {
+    while i < s.len {
+        if i + from.len <= s.len and s[i..i + from.len] == from {
             out.append(to)
             i += from.len
         } else {
@@ -92,32 +92,32 @@ pub fn replace(s: []u8, from: []u8, to: []u8) -> String {
 
 /// Position of `needle` at or after `start`.
 pub fn index_from(s: []u8, needle: []u8, start: usize) -> ?usize {
-    if (start > s.len) return null
+    if start > s.len { return null }
     let rest = s[start..]
-    if (rest.find(needle)) |i| return start + i
+    if let i = rest.find(needle) { return start + i }
     return null
 }
 
 /// Position of the last occurrence of `needle`.
 pub fn last_index(s: []u8, needle: []u8) -> ?usize {
-    if (needle.len == 0 or needle.len > s.len) return null
+    if needle.len == 0 or needle.len > s.len { return null }
     var i = s.len - needle.len + 1
-    while (i > 0) {
+    while i > 0 {
         i -= 1
-        if (s[i..i + needle.len] == needle) return i
+        if s[i..i + needle.len] == needle { return i }
     }
     return null
 }
 
 /// `s` without a leading `prefix`, or null when it does not start with it.
 pub fn strip_prefix(s: []u8, prefix: []u8) -> ?[]u8 {
-    if (s.starts_with(prefix)) return s[prefix.len..]
+    if s.starts_with(prefix) { return s[prefix.len..] }
     return null
 }
 
 /// `s` without a trailing `suffix`, or null when it does not end with it.
 pub fn strip_suffix(s: []u8, suffix: []u8) -> ?[]u8 {
-    if (s.ends_with(suffix)) return s[0..s.len - suffix.len]
+    if s.ends_with(suffix) { return s[0..s.len - suffix.len] }
     return null
 }
 
@@ -126,20 +126,20 @@ fn is_space(c: u8) -> bool { return c == ' ' or c == '\t' or c == '\n' or c == '
 /// Leading ASCII whitespace removed.
 pub fn trim_left(s: []u8) -> []u8 {
     var i: usize = 0
-    while (i < s.len and is_space(s[i])) { i += 1 }
+    while i < s.len and is_space(s[i]) { i += 1 }
     return s[i..]
 }
 
 /// Trailing ASCII whitespace removed.
 pub fn trim_right(s: []u8) -> []u8 {
     var n = s.len
-    while (n > 0 and is_space(s[n - 1])) { n -= 1 }
+    while n > 0 and is_space(s[n - 1]) { n -= 1 }
     return s[0..n]
 }
 
 /// True when `s` is empty or only ASCII whitespace.
 pub fn is_blank(s: []u8) -> bool {
-    for (s) |c| { if (!is_space(c)) return false }
+    for c in s { if !is_space(c) { return false } }
     return true
 }
 
@@ -147,11 +147,11 @@ pub fn is_blank(s: []u8) -> bool {
 pub fn split_whitespace(s: []u8) -> List([]u8) {
     var out = List([]u8).new()
     var i: usize = 0
-    while (i < s.len) {
-        while (i < s.len and is_space(s[i])) { i += 1 }
+    while i < s.len {
+        while i < s.len and is_space(s[i]) { i += 1 }
         let start = i
-        while (i < s.len and !is_space(s[i])) { i += 1 }
-        if (i > start) out.append(s[start..i])
+        while i < s.len and !is_space(s[i]) { i += 1 }
+        if i > start { out.append(s[start..i]) }
     }
     return out
 }
@@ -159,9 +159,9 @@ pub fn split_whitespace(s: []u8) -> List([]u8) {
 /// ASCII letters upper-cased; other bytes unchanged.
 pub fn to_upper(s: []u8) -> String {
     var out = String.with_capacity(s.len)
-    for (s) |c| {
-        if (c >= 'a' and c <= 'z') out.push_byte(c - 32)
-        else out.push_byte(c)
+    for c in s {
+        if c >= 'a' and c <= 'z' { out.push_byte(c - 32) }
+        else { out.push_byte(c) }
     }
     return out
 }
@@ -169,9 +169,9 @@ pub fn to_upper(s: []u8) -> String {
 /// ASCII letters lower-cased; other bytes unchanged.
 pub fn to_lower(s: []u8) -> String {
     var out = String.with_capacity(s.len)
-    for (s) |c| {
-        if (c >= 'A' and c <= 'Z') out.push_byte(c + 32)
-        else out.push_byte(c)
+    for c in s {
+        if c >= 'A' and c <= 'Z' { out.push_byte(c + 32) }
+        else { out.push_byte(c) }
     }
     return out
 }
@@ -179,7 +179,7 @@ pub fn to_lower(s: []u8) -> String {
 /// First ASCII letter upper-cased.
 pub fn capitalize(s: []u8) -> String {
     var out = String.from(s)
-    if (s.len > 0 and s[0] >= 'a' and s[0] <= 'z') {
+    if s.len > 0 and s[0] >= 'a' and s[0] <= 'z' {
         out.clear()
         out.push_byte(s[0] - 32)
         out.append(s[1..])
@@ -191,7 +191,7 @@ pub fn capitalize(s: []u8) -> String {
 pub fn reverse(s: []u8) -> String {
     var out = String.with_capacity(s.len)
     var i = s.len
-    while (i > 0) {
+    while i > 0 {
         i -= 1
         out.push_byte(s[i])
     }
@@ -200,15 +200,15 @@ pub fn reverse(s: []u8) -> String {
 
 /// Cut at the first `sep`: (before, after), or null when `sep` is absent.
 pub fn split_once(s: []u8, sep: []u8) -> ?([]u8, []u8) {
-    if (s.find(sep)) |i| return (s[0..i], s[i + sep.len..])
+    if let i = s.find(sep) { return (s[0..i], s[i + sep.len..]) }
     return null
 }
 
 /// Truncate to `max` bytes, appending `...` when something was cut.
 pub fn ellipsize(s: []u8, max: usize) -> String {
-    if (s.len <= max) return String.from(s)
+    if s.len <= max { return String.from(s) }
     var out = String.with_capacity(max)
-    if (max > 3) out.append(s[0..max - 3])
+    if max > 3 { out.append(s[0..max - 3]) }
     out.append("...")
     return out
 }
@@ -267,7 +267,7 @@ test "case and reverse" {
 }
 
 test "split_once and ellipsize" {
-    if (split_once("key=value=x", "=")) |kv| {
+    if let kv = split_once("key=value=x", "=") {
         expect_eq(kv.0, "key")
         expect_eq(kv.1, "value=x")
     } else {

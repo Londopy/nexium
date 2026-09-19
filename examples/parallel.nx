@@ -4,23 +4,23 @@
 
 fn simulate(seed: f64) -> f64 {
     var x = seed
-    for (0..2000) |_i| { x = x + 0.001 * math.sin(x) }
+    for _i in 0..2000 { x = x + 0.001 * math.sin(x) }
     return x
 }
 
 fn main() {
     var cases: [64]f64 = undefined
-    for (0..64) |i| { cases[i] = i as f64 * 0.1 }
+    for i in 0..64 { cases[i] = i as f64 * 0.1 }
     var results: [64]f64 = undefined
     let out = results[..]
-    for parallel (cases[..]) |c, i| {
+    for parallel c, i in cases[..] {
         out[i] = simulate(c)
     }
     var total: f64 = 0.0
-    for (results) |r| { total += r }
+    for r in results { total += r }
     println("sum {:.3} first {:.3} last {:.3}", .{total, results[0], results[63]})
     // sequential reference
     var check: f64 = 0.0
-    for (cases) |c| { check += simulate(c) }
+    for c in cases { check += simulate(c) }
     println("matches sequential: {}", .{total == check})
 }

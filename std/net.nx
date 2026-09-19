@@ -9,7 +9,7 @@
 //     c.close()
 //
 //     var l = try net.TcpListener.bind("127.0.0.1", 8080)
-//     while (true) {
+//     while true {
 //         var conn = try l.accept()
 //         var r = conn.reader()                     // a std.stream Reader
 //         let line = try r.read_line()
@@ -37,11 +37,11 @@ pub struct Addr {
 /// Split `host:port` or `[v6]:port`; null when there is no valid port.
 pub fn parse_addr(s: []u8) -> ?Addr {
     var i = s.len
-    while (i > 0 and s[i - 1] != ':') { i -= 1 }
-    if (i == 0 or i == s.len) return null
+    while i > 0 and s[i - 1] != ':' { i -= 1 }
+    if i == 0 or i == s.len { return null }
     let port = s[i..s.len].parse_int(u16) catch return null
     var host = s[0..i - 1]
-    if (host.len >= 2 and host[0] == '[' and host[host.len - 1] == ']') host = host[1..host.len - 1]
+    if host.len >= 2 and host[0] == '[' and host[host.len - 1] == ']' { host = host[1..host.len - 1] }
     return Addr{ .host = String.from(host), .port = port }
 }
 
@@ -99,9 +99,9 @@ impl TcpStream {
     /// Everything until the peer closes.
     pub fn recv_all(self: *Self) -> !String {
         var out = String.new()
-        while (true) {
+        while true {
             let chunk = try self.recv(65536)
-            if (chunk.len == 0) break
+            if chunk.len == 0 { break }
             out.append(chunk)
         }
         return out
@@ -128,7 +128,7 @@ impl TcpStream {
     }
 
     pub fn close(self: *mut Self) {
-        if (self.open) {
+        if self.open {
             net.close(self.sock) catch { }
             self.open = false
         }
@@ -171,7 +171,7 @@ impl TcpListener {
     }
 
     pub fn close(self: *mut Self) {
-        if (self.open) {
+        if self.open {
             net.close(self.sock) catch { }
             self.open = false
         }
@@ -224,7 +224,7 @@ impl UdpSocket {
     }
 
     pub fn close(self: *mut Self) {
-        if (self.open) {
+        if self.open {
             net.close(self.sock) catch { }
             self.open = false
         }

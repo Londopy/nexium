@@ -3,7 +3,7 @@
 // The only C is gui/platform.c (a window, input events, a framebuffer blit).
 // Everything here draws into a List(u32) framebuffer with a bitmap font and
 // hands it to the platform once per frame. Widgets are called every frame and
-// return what happened, egui style: `if (ui.button("Save")) { ... }`.
+// return what happened, egui style: `if ui.button("Save") { ... }`.
 
 pub const pf = @cImport("platform.h")
 
@@ -38,11 +38,11 @@ pub fn hue_color(h: f32) -> u32 {
     let f = x - (x as i32) as f32
     let up = (f * 255.0) as u8
     let down = ((1.0 - f) * 255.0) as u8
-    if (seg == 0) return rgb(255, up, 0)
-    if (seg == 1) return rgb(down, 255, 0)
-    if (seg == 2) return rgb(0, 255, up)
-    if (seg == 3) return rgb(0, down, 255)
-    if (seg == 4) return rgb(up, 0, 255)
+    if seg == 0 { return rgb(255, up, 0) }
+    if seg == 1 { return rgb(down, 255, 0) }
+    if seg == 2 { return rgb(0, 255, up) }
+    if seg == 3 { return rgb(0, down, 255) }
+    if seg == 4 { return rgb(up, 0, 255) }
     return rgb(255, 0, down)
 }
 
@@ -64,36 +64,36 @@ fn glyph_base(c: u8) -> usize {
 
 // Horizontal advance of a character; unknown characters take a cell.
 pub fn glyph_advance(c: u8) -> i32 {
-    if (c >= 32 and c < 127) return FONT[glyph_base(c)] as i32
+    if c >= 32 and c < 127 { return FONT[glyph_base(c)] as i32 }
     return font_w()
 }
 
 impl Canvas {
     pub fn new(w: i32, h: i32) -> Canvas {
         var px = List(u32).with_capacity((w * h) as usize)
-        for (0..(w * h) as usize) |_| { px.append(0) }
+        for _ in 0..(w * h) as usize { px.append(0) }
         return Canvas{ .w = w, .h = h, .px = px }
     }
 
     pub fn resize(self: *mut Self, w: i32, h: i32) {
-        if (w == self.w and h == self.h) return
+        if w == self.w and h == self.h { return }
         self.w = w
         self.h = h
         self.px.clear()
-        for (0..(w * h) as usize) |_| { self.px.append(0) }
+        for _ in 0..(w * h) as usize { self.px.append(0) }
     }
 
     pub fn clear(self: *mut Self, color: u32) {
-        for (0..self.px.len) |i| { self.px[i] = color }
+        for i in 0..self.px.len { self.px[i] = color }
     }
 
     pub fn set(self: *mut Self, x: i32, y: i32, color: u32) {
-        if (x < 0 or y < 0 or x >= self.w or y >= self.h) return
+        if x < 0 or y < 0 or x >= self.w or y >= self.h { return }
         self.px[(y * self.w + x) as usize] = color
     }
 
     pub fn get(self: *Self, x: i32, y: i32) -> u32 {
-        if (x < 0 or y < 0 or x >= self.w or y >= self.h) return 0
+        if x < 0 or y < 0 or x >= self.w or y >= self.h { return 0 }
         return self.px[(y * self.w + x) as usize]
     }
 
@@ -102,16 +102,16 @@ impl Canvas {
         var y0 = y
         var x1 = x + w
         var y1 = y + h
-        if (x0 < 0) x0 = 0
-        if (y0 < 0) y0 = 0
-        if (x1 > self.w) x1 = self.w
-        if (y1 > self.h) y1 = self.h
-        if (x1 <= x0 or y1 <= y0) return
+        if x0 < 0 { x0 = 0 }
+        if y0 < 0 { y0 = 0 }
+        if x1 > self.w { x1 = self.w }
+        if y1 > self.h { y1 = self.h }
+        if x1 <= x0 or y1 <= y0 { return }
         var yy = y0
-        while (yy < y1) {
+        while yy < y1 {
             let row = (yy * self.w) as usize
             var xx = x0
-            while (xx < x1) {
+            while xx < x1 {
                 self.px[row + xx as usize] = color
                 xx += 1
             }
@@ -138,7 +138,7 @@ impl Canvas {
 
     pub fn text_width(text: []u8) -> i32 {
         var w: i32 = 0
-        for (text) |c| { w += glyph_advance(c) }
+        for c in text { w += glyph_advance(c) }
         return w
     }
 
@@ -146,12 +146,12 @@ impl Canvas {
         let cw = font_w()
         let ch = font_h()
         var cx = x
-        for (text) |c| {
-            if (c >= 32 and c < 127) {
+        for c in text {
+            if c >= 32 and c < 127 {
                 let base = glyph_base(c) + 1
-                for (0..ch) |gy| {
-                    for (0..cw) |gx| {
-                        if (FONT[base + (gy * cw + gx) as usize] != 0) {
+                for gy in 0..ch {
+                    for gx in 0..cw {
+                        if FONT[base + (gy * cw + gx) as usize] != 0 {
                             self.set(cx + gx as i32, y + gy as i32, color)
                         }
                     }
@@ -165,7 +165,7 @@ impl Canvas {
     pub fn save_ppm(self: *Self, path: []u8) -> !void {
         var out = String.with_capacity((self.w * self.h * 3) as usize + 32)
         out.append(format("P6 {} {} 255\n", .{self.w, self.h}))
-        for (self.px) |p| {
+        for p in self.px {
             let rgb3 = [((p >> 16) & 255) as u8, ((p >> 8) & 255) as u8, (p & 255) as u8]
             out.append(rgb3[..])
         }
@@ -175,7 +175,7 @@ impl Canvas {
     // How many pixels have exactly this color (used by tests).
     pub fn count_color(self: *Self, color: u32) -> usize {
         var n: usize = 0
-        for (self.px) |p| { if (p == color) n += 1 }
+        for p in self.px { if p == color { n += 1 } }
         return n
     }
 }
@@ -280,7 +280,7 @@ impl Ui {
     pub fn open(title: *u8, w: i32, h: i32) -> ?Ui {
         var ok: i32 = 0
         unsafe { ok = pf.gp_open(title, w, h) }
-        if (ok == 0) return null
+        if ok == 0 { return null }
         var ui = Ui{ .canvas = Canvas.new(w, h), .input = Input.new(), .theme = dark_theme() }
         ui.open = true
         return ui
@@ -291,7 +291,7 @@ impl Ui {
     // Poll input and start a frame. Returns false when the window was closed.
     pub fn begin_frame(self: *mut Self) -> bool {
         self.input.begin_frame()
-        if (self.open) {
+        if self.open {
             self.poll()
             var t: f64 = 0.0
             unsafe { t = pf.gp_time() }
@@ -299,7 +299,7 @@ impl Ui {
             self.last_time = t
             self.time = t
         }
-        if (self.input.close) return false
+        if self.input.close { return false }
         self.frame += 1
         self.next_id = 0
         self.hot = -1
@@ -312,8 +312,8 @@ impl Ui {
 
     // Present the frame and pace to roughly 60 Hz.
     pub fn end_frame(self: *mut Self) {
-        if (!self.input.down) self.active = -1
-        if (!self.open) return
+        if !self.input.down { self.active = -1 }
+        if !self.open { return }
         unsafe {
             pf.gp_present(self.canvas.px[..].ptr, self.canvas.w, self.canvas.h)
             pf.gp_sleep(8)
@@ -321,7 +321,7 @@ impl Ui {
     }
 
     pub fn close(self: *mut Self) {
-        if (self.open) {
+        if self.open {
             unsafe { pf.gp_close() }
             self.open = false
         }
@@ -329,42 +329,42 @@ impl Ui {
 
     fn poll(self: *mut Self) {
         var ev = pf.gp_event { .kind = 0, .x = 0, .y = 0, .button = 0, .key = 0, .ch = 0 }
-        while (true) {
+        while true {
             var more: i32 = 0
             unsafe { more = pf.gp_poll(&mut ev) }
-            if (more == 0) break
+            if more == 0 { break }
             let k = ev.kind
-            if (k == pf.GP_EVENT_CLOSE) {
+            if k == pf.GP_EVENT_CLOSE {
                 self.input.close = true
-            } else if (k == pf.GP_EVENT_MOUSE_MOVE) {
+            } else if k == pf.GP_EVENT_MOUSE_MOVE {
                 self.input.mouse_x = ev.x
                 self.input.mouse_y = ev.y
-            } else if (k == pf.GP_EVENT_MOUSE_DOWN) {
+            } else if k == pf.GP_EVENT_MOUSE_DOWN {
                 self.input.mouse_x = ev.x
                 self.input.mouse_y = ev.y
-                if (ev.button == 1) {
+                if ev.button == 1 {
                     self.input.down = true
                     self.input.pressed = true
                 }
-            } else if (k == pf.GP_EVENT_MOUSE_UP) {
+            } else if k == pf.GP_EVENT_MOUSE_UP {
                 self.input.mouse_x = ev.x
                 self.input.mouse_y = ev.y
-                if (ev.button == 1) {
+                if ev.button == 1 {
                     self.input.down = false
                     self.input.released = true
                 }
-            } else if (k == pf.GP_EVENT_SCROLL) {
+            } else if k == pf.GP_EVENT_SCROLL {
                 self.input.scroll += ev.x
-            } else if (k == pf.GP_EVENT_CHAR) {
-                if (ev.ch >= 32 and ev.ch < 127) self.input.chars.append_char(ev.ch as u32 as char)
-            } else if (k == pf.GP_EVENT_KEY_DOWN) {
-                if (ev.key == pf.GP_KEY_BACKSPACE) self.input.backspace = true
-                if (ev.key == pf.GP_KEY_ENTER) self.input.enter = true
-                if (ev.key == pf.GP_KEY_ESCAPE) self.input.escape = true
-                if (ev.key == pf.GP_KEY_LEFT) self.input.left = true
-                if (ev.key == pf.GP_KEY_RIGHT) self.input.right = true
-            } else if (k == pf.GP_EVENT_RESIZE) {
-                if (ev.x > 0 and ev.y > 0) self.canvas.resize(ev.x, ev.y)
+            } else if k == pf.GP_EVENT_CHAR {
+                if ev.ch >= 32 and ev.ch < 127 { self.input.chars.append_char(ev.ch as u32 as char) }
+            } else if k == pf.GP_EVENT_KEY_DOWN {
+                if ev.key == pf.GP_KEY_BACKSPACE { self.input.backspace = true }
+                if ev.key == pf.GP_KEY_ENTER { self.input.enter = true }
+                if ev.key == pf.GP_KEY_ESCAPE { self.input.escape = true }
+                if ev.key == pf.GP_KEY_LEFT { self.input.left = true }
+                if ev.key == pf.GP_KEY_RIGHT { self.input.right = true }
+            } else if k == pf.GP_EVENT_RESIZE {
+                if ev.x > 0 and ev.y > 0 { self.canvas.resize(ev.x, ev.y) }
             }
         }
     }
@@ -375,7 +375,7 @@ impl Ui {
     fn place(self: *mut Self, w: i32, h: i32) -> i32 {
         var x = self.x
         var y = self.y
-        if (self.same_line_pending) {
+        if self.same_line_pending {
             x = self.last_x + self.last_w + self.spacing
             y = self.last_y
             self.same_line_pending = false
@@ -385,7 +385,7 @@ impl Ui {
         self.last_w = w
         self.last_h = h
         self.x = self.margin
-        self.y = y + (if (h > self.row_h) h else self.row_h) + self.spacing
+        self.y = y + (if h > self.row_h { h } else { self.row_h }) + self.spacing
         let id = self.next_id
         self.next_id += 1
         return id
@@ -412,8 +412,8 @@ impl Ui {
     // Shared hot/active bookkeeping: returns true when this widget was clicked this frame.
     fn interact(self: *mut Self, id: i32, x: i32, y: i32, w: i32, h: i32) -> bool {
         let inside = self.mouse_in(x, y, w, h)
-        if (inside) self.hot = id
-        if (inside and self.input.pressed) {
+        if inside { self.hot = id }
+        if inside and self.input.pressed {
             self.active = id
             self.focus = id
         }
@@ -451,8 +451,8 @@ impl Ui {
         let y = self.last_y
         let clicked = self.interact(id, x, y, w, h)
         var fill = self.theme.panel
-        if (self.hot == id) fill = self.theme.hover
-        if (self.active == id) fill = self.theme.active
+        if self.hot == id { fill = self.theme.hover }
+        if self.active == id { fill = self.theme.active }
         self.canvas.fill_rounded(x, y, w, h, fill)
         self.canvas.rect(x, y, w, h, self.theme.border)
         self.canvas.text(x + self.pad, y + (h - font_h()) / 2, text, self.theme.text)
@@ -468,11 +468,11 @@ impl Ui {
         let x = self.last_x
         let y = self.last_y
         let clicked = self.interact(id, x, y, w, h)
-        if (clicked) value.*= !value.*
+        if clicked { value.*= !value.*}
         let by = y + 4
-        self.canvas.fill_rounded(x, by, box, box, if (self.hot == id) self.theme.hover else self.theme.panel)
+        self.canvas.fill_rounded(x, by, box, box, if self.hot == id { self.theme.hover } else { self.theme.panel })
         self.canvas.rect(x, by, box, box, self.theme.border)
-        if (value.*) self.canvas.fill_rect(x + 4, by + 4, box - 8, box - 8, self.theme.accent)
+        if value.*{ self.canvas.fill_rect(x + 4, by + 4, box - 8, box - 8, self.theme.accent) }
         self.canvas.text(x + box + self.pad, y + (h - font_h()) / 2, text, self.theme.text)
         return clicked
     }
@@ -488,22 +488,22 @@ impl Ui {
         let y = self.last_y
         _ = self.interact(id, x, y, track_w, h)
         var changed = false
-        if (self.active == id and self.input.down) {
+        if self.active == id and self.input.down {
             var t = (self.input.mouse_x - x) as f32 / track_w as f32
-            if (t < 0.0) t = 0.0
-            if (t > 1.0) t = 1.0
+            if t < 0.0 { t = 0.0 }
+            if t > 1.0 { t = 1.0 }
             let v = min + (max - min) * t
-            if (v != value.*) changed = true
+            if v != value.*{ changed = true }
             value.*= v
         }
         var frac = (value.*- min) / (max - min)
-        if (frac < 0.0) frac = 0.0
-        if (frac > 1.0) frac = 1.0
+        if frac < 0.0 { frac = 0.0 }
+        if frac > 1.0 { frac = 1.0 }
         let ty = y + h / 2 - 3
         self.canvas.fill_rounded(x, ty, track_w, 6, self.theme.panel)
         self.canvas.fill_rounded(x, ty, (track_w as f32 * frac) as i32, 6, self.theme.accent)
         let kx = x + (track_w as f32 * frac) as i32 - 5
-        self.canvas.fill_rounded(kx, y + 4, 10, h - 8, if (self.active == id or self.hot == id) self.theme.active else self.theme.text)
+        self.canvas.fill_rounded(kx, y + 4, 10, h - 8, if self.active == id or self.hot == id { self.theme.active } else { self.theme.text })
         self.canvas.text(x + track_w + self.pad, y + (h - font_h()) / 2, text, self.theme.text)
         return changed
     }
@@ -513,8 +513,8 @@ impl Ui {
         let h: i32 = 10
         _ = self.place(w, h)
         var f = frac
-        if (f < 0.0) f = 0.0
-        if (f > 1.0) f = 1.0
+        if f < 0.0 { f = 0.0 }
+        if f > 1.0 { f = 1.0 }
         self.canvas.fill_rounded(self.last_x, self.last_y, w, h, self.theme.panel)
         self.canvas.fill_rounded(self.last_x, self.last_y, (w as f32 * f) as i32, h, self.theme.accent)
     }
@@ -528,26 +528,26 @@ impl Ui {
         let y = self.last_y
         _ = self.interact(id, x, y, w, h)
         var changed = false
-        if (self.focus == id) {
-            if (self.input.chars.len > 0) {
+        if self.focus == id {
+            if self.input.chars.len > 0 {
                 value.append(self.input.chars)
                 changed = true
             }
-            if (self.input.backspace and value.len > 0) {
+            if self.input.backspace and value.len > 0 {
                 _ = value.pop()
                 changed = true
             }
-            if (self.input.escape) self.focus = -1
+            if self.input.escape { self.focus = -1 }
         }
         self.canvas.fill_rounded(x, y, w, h, self.theme.panel)
-        self.canvas.rect(x, y, w, h, if (self.focus == id) self.theme.accent else self.theme.border)
+        self.canvas.rect(x, y, w, h, if self.focus == id { self.theme.accent } else { self.theme.border })
         // show the tail when the text is wider than the field
         let max_chars = ((w - 2 * self.pad) / font_w()) as usize
         var start: usize = 0
-        if (value.len > max_chars) start = value.len - max_chars
+        if value.len > max_chars { start = value.len - max_chars }
         let shown = value.as_slice()[start..]
         self.canvas.text(x + self.pad, y + (h - font_h()) / 2, shown, self.theme.text)
-        if (self.focus == id and (self.frame / 30) % 2 == 0) {
+        if self.focus == id and (self.frame / 30) % 2 == 0 {
             let cx = x + self.pad + Canvas.text_width(shown) + 1
             self.canvas.vline(cx, y + 5, h - 10, self.theme.accent)
         }

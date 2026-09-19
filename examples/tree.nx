@@ -19,13 +19,13 @@ fn push(nodes: *mut List(Node), n: Node) -> u32 {
 }
 
 fn peek(p: *Parser) -> u8 {
-    return if (p.pos < p.src.len) p.src[p.pos] else 0
+    return if p.pos < p.src.len { p.src[p.pos] } else { 0 }
 }
 
 // expr := term (('+') term)*
 fn parse_expr(p: *mut Parser, nodes: *mut List(Node)) -> u32 {
     var lhs = parse_term(p, nodes)
-    while (peek(p) == '+') {
+    while peek(p) == '+' {
         p.pos += 1
         let rhs = parse_term(p, nodes)
         lhs = push(nodes, Node.Add(lhs, rhs))
@@ -36,7 +36,7 @@ fn parse_expr(p: *mut Parser, nodes: *mut List(Node)) -> u32 {
 // term := atom (('*') atom)*
 fn parse_term(p: *mut Parser, nodes: *mut List(Node)) -> u32 {
     var lhs = parse_atom(p, nodes)
-    while (peek(p) == '*') {
+    while peek(p) == '*' {
         p.pos += 1
         let rhs = parse_atom(p, nodes)
         lhs = push(nodes, Node.Mul(lhs, rhs))
@@ -47,19 +47,19 @@ fn parse_term(p: *mut Parser, nodes: *mut List(Node)) -> u32 {
 // atom := number | '-' atom | '(' expr ')'
 fn parse_atom(p: *mut Parser, nodes: *mut List(Node)) -> u32 {
     let c = peek(p)
-    if (c == '-') {
+    if c == '-' {
         p.pos += 1
         let inner = parse_atom(p, nodes)
         return push(nodes, Node.Neg(inner))
     }
-    if (c == '(') {
+    if c == '(' {
         p.pos += 1
         let inner = parse_expr(p, nodes)
-        if (peek(p) == ')') p.pos += 1
+        if peek(p) == ')' { p.pos += 1 }
         return inner
     }
     var value: i64 = 0
-    while (peek(p) >= '0' and peek(p) <= '9') {
+    while peek(p) >= '0' and peek(p) <= '9' {
         value = value * 10 + (peek(p) - '0') as i64
         p.pos += 1
     }
@@ -101,7 +101,7 @@ fn show(nodes: []Node, id: u32, out: *mut String) {
 
 fn main() {
     let inputs = ["1+2*3", "(1+2)*3", "-(4*5)+2*2*2", "42"]
-    for (inputs) |text| {
+    for text in inputs {
         var nodes = List(Node).new()
         var p = Parser{ .src = text, .pos = 0 }
         let root = parse_expr(&mut p, &mut nodes)

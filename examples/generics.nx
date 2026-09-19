@@ -30,7 +30,7 @@ impl Shape for Circle {
 
 fn total_area(comptime T: type where T: Shape, items: []T) -> f64 {
     var sum: f64 = 0.0
-    for (items) |it| { sum += it.area() }
+    for it in items { sum += it.area() }
     return sum
 }
 
@@ -40,9 +40,9 @@ fn twice(f: fn(i32) -> i32 !allocates, x: i32) -> i32 { return f(f(x)) }
 fn double(x: i32) -> i32 { return x * 2 }
 
 fn largest(comptime T: type where T: Ord, xs: []T) -> ?T {
-    if (xs.len == 0) return null
+    if xs.len == 0 { return null }
     var best = xs[0]
-    for (xs) |x| { if (x > best) best = x }
+    for x in xs { if x > best { best = x } }
     return best
 }
 

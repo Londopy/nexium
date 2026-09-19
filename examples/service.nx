@@ -44,7 +44,7 @@ fn round_trip(server: *http.Server, routes: *http.Router, port: u16, method: []u
     conn.set_timeout(5000)
     var w = conn.writer()
     var headers = List(http.Header).new()
-    if (body.len > 0) headers.append(http.Header{ .name = String.from("Content-Type"), .value = String.from("text/plain") })
+    if body.len > 0 { headers.append(http.Header{ .name = String.from("Content-Type"), .value = String.from("text/plain") }) }
     try http.send_request(&mut w, method, &url, &headers, body)
     try server.serve_one(routes, 5000)
     var r = conn.reader()
@@ -56,7 +56,7 @@ fn round_trip(server: *http.Server, routes: *http.Router, port: u16, method: []u
 fn main() -> !void {
     let args = os.args()
     var routes = router()
-    if (args.len > 1) {
+    if args.len > 1 {
         let port = try args[1].parse_int(u16)
         var server = try http.Server.bind("0.0.0.0", port)
         println("serving on http://127.0.0.1:{}/", .{port})

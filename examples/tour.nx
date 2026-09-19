@@ -20,17 +20,17 @@ type Meters = distinct f64
 error ParseError { Empty, NotANumber }
 
 fn parse_num(text: []u8) -> ParseError!i64 {
-    if (text.len == 0) return error.Empty
+    if text.len == 0 { return error.Empty }
     var total: i64 = 0
-    for (text) |c| {
-        if (c < '0' or c > '9') return error.NotANumber
+    for c in text {
+        if c < '0' or c > '9' { return error.NotANumber }
         total = total * 10 + (c - '0') as i64
     }
     return total
 }
 
 fn max(comptime T: type where T: Ord, a: T, b: T) -> T {
-    return if (a > b) a else b
+    return if a > b { a } else { b }
 }
 
 trait Describe {
@@ -60,7 +60,7 @@ ref class Node {
 
 fn sum(xs: []i32) -> i32 !allocates !refcounts !blocks {
     var total: i32 = 0
-    for (xs) |x| { total +%= x }
+    for x in xs { total +%= x }
     return total
 }
 
@@ -96,17 +96,17 @@ fn main() -> !void {
 
     // collections
     var xs = List(i32).new()
-    for (0..10) |i| { xs.append((i * i) as i32) }
+    for i in 0..10 { xs.append((i * i) as i32) }
     xs.append(100)
     println("len {} last {} sum {}", .{xs.len, xs.last() orelse 0, sum(xs)})
     let popped = xs.pop()
-    if (popped) |v| { println("popped {}", .{v}) }
+    if let v = popped { println("popped {}", .{v}) }
     var s = String.from("hello")
     s.append(", world")
     s.append_char('!')
     println("{} ({} bytes) starts? {}", .{s, s.len, s.starts_with("hello")})
     let parts = "a,b,c".split(",")
-    for (parts) |part, i| { println("part {} = {}", .{i, part}) }
+    for part, i in parts { println("part {} = {}", .{i, part}) }
 
     var m = Map([]u8, i32).new()
     m.put("one", 1)
@@ -116,7 +116,7 @@ fn main() -> !void {
 
     // optionals and labeled blocks
     let found = outer: {
-        for (xs) |x, i| { if (x > 30) break :outer i as i64 }
+        for x, i in xs { if x > 30 { break :outer i as i64 } }
         -1
     }
     println("first > 30 at {}", .{found})
@@ -144,7 +144,7 @@ fn main() -> !void {
     let head = Node{ .value = 1, .next = tail }
     var total: i32 = 0
     var cur: ?Node = head
-    while (cur != null) {
+    while cur != null {
         let node = cur.?
         total += node.value
         cur = node.next

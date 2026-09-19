@@ -14,6 +14,7 @@ mod installer;
 mod lexer;
 mod lsp;
 mod manifest;
+mod migrate;
 mod parser;
 mod repl;
 mod report;
@@ -47,7 +48,8 @@ usage:
   nx audit <file.nx> [--globals]   list unsafe blocks and mutable globals
   nx refcounts <file.nx>           list every retain and release site
   nx size <file.nx>                attribute binary bytes to declarations
-  nx fmt <file.nx> [--check]       canonical formatting in place (--check: report only)
+  nx fmt <file.nx>... [--check]    canonical formatting in place (--check: report only;
+                                   --migrate-only: upgrade 0.5 syntax, keep the layout)
   nx doc <file.nx> [-o dir]        static HTML documentation
   nx lsp                           language server over stdio (diagnostics, hover)
   nx leaks <file.nx> [-- args]     run in debug mode with allocation tracking, report leaks at exit
@@ -1455,6 +1457,8 @@ fn cmd_lsp() -> i32 {
 
 fn cmd_fmt(opts: &Opts) -> i32 {
     let check_only = opts.rest.iter().any(|a| a == "--check");
+    // `--migrate-only` upgrades the syntax and leaves the layout alone
+    let migrate_only = opts.rest.iter().any(|a| a == "--migrate-only");
     let mut files = vec![opts.file.clone()];
     files.extend(opts.rest.iter().filter(|a| !a.starts_with("--")).map(PathBuf::from));
     let mut changed = 0;
@@ -1466,14 +1470,22 @@ fn cmd_fmt(opts: &Opts) -> i32 {
                 return 1;
             }
         };
-        let formatted = match fmt::format_source(&text) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("error: {}: {}", f.display(), e);
-                return 1;
+        // the formatter also upgrades 0.5 syntax (parenthesized conditions, `|x|` loop
+        // bindings, `if (opt) |v|`) to the current one, so migrating is running `nx fmt`
+        let original = text;
+        let text = migrate::migrate(&original);
+        let formatted = if migrate_only {
+            text
+        } else {
+            match fmt::format_source(&text) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("error: {}: {}", f.display(), e);
+                    return 1;
+                }
             }
         };
-        if formatted != text {
+        if formatted != original {
             changed += 1;
             if check_only {
                 println!("would reformat {}", f.display());

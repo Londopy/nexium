@@ -32,14 +32,14 @@ fn main() {
     shout(s)
 
     var xs = List(i32).new()
-    for (0..5) |i| { xs.append(i as i32) }
+    for i in 0..5 { xs.append(i as i32) }
     println("count {}", .{count(xs)})
 
     var toks = List(Token).new()
-    for (["a", "bb", "ccc"]) |w| {
+    for w in ["a", "bb", "ccc"] {
         toks.append(token(w.len as u8, String.from(w)))
     }
     var total: usize = 0
-    for (toks) |tk| { total += tk.text.len }
+    for tk in toks { total += tk.text.len }
     println("tokens {} chars {}", .{toks.len, total})
 }

@@ -5,7 +5,7 @@
 //
 //     let r = try http.get("http://example.com/")
 //     println("{} {}", .{r.status, r.body.len})
-//     if (r.header("content-type")) |ct| { ... }
+//     if let ct = r.header("content-type") { ... }
 //
 //     fn hello(req: *http.Request) -> http.Response {
 //         return http.text(200, "hello from Nexium")
@@ -34,15 +34,15 @@ pub struct Header {
 }
 
 fn header_value(headers: *List(Header), name: []u8) -> ?[]u8 {
-    for (0..headers.len) |i| {
-        if (headers[i].name.eq_ignore_case(name)) return headers[i].value
+    for i in 0..headers.len {
+        if headers[i].name.eq_ignore_case(name) { return headers[i].value }
     }
     return null
 }
 
 fn find_header(headers: *List(Header), name: []u8) -> ?usize {
-    for (headers) |h, i| {
-        if (h.name.eq_ignore_case(name)) return i
+    for h, i in headers {
+        if h.name.eq_ignore_case(name) { return i }
     }
     return null
 }
@@ -61,27 +61,27 @@ pub struct Url {
 pub fn parse_url(s: []u8) -> ?Url {
     var rest = s
     var scheme = "http"
-    if (rest.starts_with("http://")) {
+    if rest.starts_with("http://") {
         rest = rest[7..rest.len]
-    } else if (rest.starts_with("https://")) {
+    } else if rest.starts_with("https://") {
         scheme = "https"
         rest = rest[8..rest.len]
     } else {
         return null
     }
     var end: usize = 0
-    while (end < rest.len and rest[end] != '/' and rest[end] != '?') { end += 1 }
+    while end < rest.len and rest[end] != '/' and rest[end] != '?' { end += 1 }
     let hostport = rest[0..end]
     var path = rest[end..rest.len]
     var host = hostport
-    var port: u16 = if (scheme == "https") 443 else 80
-    if (net.parse_addr(hostport)) |a| {
+    var port: u16 = if scheme == "https" { 443 } else { 80 }
+    if let a = net.parse_addr(hostport) {
         host = a.host
         port = a.port
     }
-    if (host.len == 0) return null
+    if host.len == 0 { return null }
     var p = String.new()
-    if (path.len == 0 or path[0] == '?') p.append("/")
+    if path.len == 0 or path[0] == '?' { p.append("/") }
     p.append(path)
     return Url{ .scheme = String.from(scheme), .host = String.from(host), .port = port, .path = p }
 }
@@ -103,7 +103,7 @@ impl Response {
 
     /// Add or replace a header (builder style).
     pub fn with_header(self: *mut Self, name: []u8, value: []u8) {
-        if (find_header(&self.headers, name)) |i| {
+        if let i = find_header(&self.headers, name) {
             self.headers[i].value = String.from(value)
             return
         }
@@ -117,18 +117,18 @@ impl Response {
 
 /// The standard reason phrase for a status.
 pub fn reason_for(status: u16) -> []u8 {
-    if (status == 200) return "OK"
-    if (status == 201) return "Created"
-    if (status == 204) return "No Content"
-    if (status == 301) return "Moved Permanently"
-    if (status == 302) return "Found"
-    if (status == 304) return "Not Modified"
-    if (status == 400) return "Bad Request"
-    if (status == 401) return "Unauthorized"
-    if (status == 403) return "Forbidden"
-    if (status == 404) return "Not Found"
-    if (status == 405) return "Method Not Allowed"
-    if (status == 500) return "Internal Server Error"
+    if status == 200 { return "OK" }
+    if status == 201 { return "Created" }
+    if status == 204 { return "No Content" }
+    if status == 301 { return "Moved Permanently" }
+    if status == 302 { return "Found" }
+    if status == 304 { return "Not Modified" }
+    if status == 400 { return "Bad Request" }
+    if status == 401 { return "Unauthorized" }
+    if status == 403 { return "Forbidden" }
+    if status == 404 { return "Not Found" }
+    if status == 405 { return "Method Not Allowed" }
+    if status == 500 { return "Internal Server Error" }
     return "Unknown"
 }
 
@@ -165,17 +165,17 @@ pub fn redirect(location: []u8) -> Response {
 /// The content type for a file name, by extension.
 pub fn content_type_for(path: []u8) -> []u8 {
     let ext = fs.extension(path)
-    if (ext == "html" or ext == "htm") return "text/html; charset=utf-8"
-    if (ext == "css") return "text/css"
-    if (ext == "js") return "text/javascript"
-    if (ext == "json") return "application/json"
-    if (ext == "txt" or ext == "md" or ext == "nx") return "text/plain; charset=utf-8"
-    if (ext == "png") return "image/png"
-    if (ext == "jpg" or ext == "jpeg") return "image/jpeg"
-    if (ext == "gif") return "image/gif"
-    if (ext == "svg") return "image/svg+xml"
-    if (ext == "ico") return "image/x-icon"
-    if (ext == "pdf") return "application/pdf"
+    if ext == "html" or ext == "htm" { return "text/html; charset=utf-8" }
+    if ext == "css" { return "text/css" }
+    if ext == "js" { return "text/javascript" }
+    if ext == "json" { return "application/json" }
+    if ext == "txt" or ext == "md" or ext == "nx" { return "text/plain; charset=utf-8" }
+    if ext == "png" { return "image/png" }
+    if ext == "jpg" or ext == "jpeg" { return "image/jpeg" }
+    if ext == "gif" { return "image/gif" }
+    if ext == "svg" { return "image/svg+xml" }
+    if ext == "ico" { return "image/x-icon" }
+    if ext == "pdf" { return "application/pdf" }
     return "application/octet-stream"
 }
 
@@ -183,27 +183,27 @@ pub fn content_type_for(path: []u8) -> []u8 {
 
 fn parse_status(line: []u8) -> ?(u16, []u8) {
     // HTTP/1.1 200 OK
-    if (!line.starts_with("HTTP/")) return null
+    if !line.starts_with("HTTP/") { return null }
     var i: usize = 0
-    while (i < line.len and line[i] != ' ') { i += 1 }
-    if (i + 4 > line.len) return null
+    while i < line.len and line[i] != ' ' { i += 1 }
+    if i + 4 > line.len { return null }
     let status = line[i + 1..i + 4].parse_int(u16) catch return null
     var reason = line[0..0]
-    if (i + 5 <= line.len) reason = line[i + 5..line.len]
+    if i + 5 <= line.len { reason = line[i + 5..line.len] }
     return (status, reason)
 }
 
 fn read_headers(r: *mut stream.Reader) -> !List(Header){
     var headers = List(Header).new()
     var n: usize = 0
-    while (true) {
+    while true {
         let line = (try r.read_line()) orelse break
-        if (line.len == 0) break
+        if line.len == 0 { break }
         n += 1
-        if (n > MAX_HEADER_LINES) return error.InvalidInput
+        if n > MAX_HEADER_LINES { return error.InvalidInput }
         var c: usize = 0
-        while (c < line.len and line[c] != ':') { c += 1 }
-        if (c == line.len) return error.InvalidInput
+        while c < line.len and line[c] != ':' { c += 1 }
+        if c == line.len { return error.InvalidInput }
         headers.append(Header{ .name = String.from(line[0..c]), .value = String.from(line[c + 1..line.len].trim()) })
     }
     return headers
@@ -212,41 +212,41 @@ fn read_headers(r: *mut stream.Reader) -> !List(Header){
 fn hex_value(s: []u8) -> ?usize {
     var v: usize = 0
     var any = false
-    for (s) |c| {
+    for c in s {
         var d: usize = 0
-        if (c >= '0' and c <= '9') d = (c - '0') as usize
-        else if (c >= 'a' and c <= 'f') d = (c - 'a' + 10) as usize
-        else if (c >= 'A' and c <= 'F') d = (c - 'A' + 10) as usize
-        else if (c == ';' or c == ' ') break
-        else return null
+        if c >= '0' and c <= '9' { d = (c - '0') as usize }
+        else if c >= 'a' and c <= 'f' { d = (c - 'a' + 10) as usize }
+        else if c >= 'A' and c <= 'F' { d = (c - 'A' + 10) as usize }
+        else if c == ';' or c == ' ' { break }
+        else { return null }
         v = v * 16 + d
         any = true
     }
-    return if (any) v else null
+    return if any { v } else { null }
 }
 
 fn read_exact(r: *mut stream.Reader, n: usize) -> !String {
     var out = String.with_capacity(n)
-    while (out.len < n) {
+    while out.len < n {
         let chunk = try r.read(n - out.len)
-        if (chunk.len == 0) return error.Truncated
+        if chunk.len == 0 { return error.Truncated }
         out.append(chunk)
     }
     return out
 }
 
 fn read_body(r: *mut stream.Reader, headers: *List(Header), allow_until_close: bool) -> !String {
-    if (header_value(headers, "transfer-encoding")) |te| {
-        if (te.eq_ignore_case("chunked")) {
+    if let te = header_value(headers, "transfer-encoding") {
+        if te.eq_ignore_case("chunked") {
             var body = String.new()
-            while (true) {
+            while true {
                 let size_line = (try r.read_line()) orelse return error.Truncated
                 let size = hex_value(size_line) orelse return error.InvalidInput
-                if (size == 0) {
+                if size == 0 {
                     // trailers, then the blank line
-                    while (true) {
+                    while true {
                         let t = (try r.read_line()) orelse break
-                        if (t.len == 0) break
+                        if t.len == 0 { break }
                     }
                     break
                 }
@@ -256,11 +256,11 @@ fn read_body(r: *mut stream.Reader, headers: *List(Header), allow_until_close: b
             return body
         }
     }
-    if (header_value(headers, "content-length")) |cl| {
+    if let cl = header_value(headers, "content-length") {
         let n = cl.parse_int(usize) catch return error.InvalidInput
         return read_exact(r, n)
     }
-    if (allow_until_close) return r.read_all()
+    if allow_until_close { return r.read_all() }
     return String.new()
 }
 
@@ -269,7 +269,7 @@ pub fn read_response(r: *mut stream.Reader) -> !Response {
     let line = (try r.read_line()) orelse return error.Truncated
     let st = parse_status(line) orelse return error.InvalidInput
     let headers = try read_headers(r)
-    let body = if (st.0 == 204 or st.0 == 304) String.new() else try read_body(r, &headers, true)
+    let body = if st.0 == 204 or st.0 == 304 { String.new() } else { try read_body(r, &headers, true) }
     return Response{ .status = st.0, .reason = String.from(st.1), .headers = headers, .body = body }
 }
 
@@ -280,13 +280,13 @@ pub fn send_request(w: *mut stream.Writer, method: []u8, url: *Url, headers: *Li
     try w.write(url.path)
     try w.write(" HTTP/1.1\r\nHost: ")
     try w.write(url.host)
-    if (url.port != 80) try w.write(format(":{}", .{url.port}))
+    if url.port != 80 { try w.write(format(":{}", .{url.port})) }
     try w.write("\r\n")
-    if (header_value(headers, "user-agent") == null) try w.write("User-Agent: nexium-http/0.3\r\n")
-    if (header_value(headers, "accept") == null) try w.write("Accept: */*\r\n")
+    if header_value(headers, "user-agent") == null { try w.write("User-Agent: nexium-http/0.3\r\n") }
+    if header_value(headers, "accept") == null { try w.write("Accept: */*\r\n") }
     try w.write("Connection: close\r\n")
-    if (body.len > 0 or method == "POST" or method == "PUT") try w.write(format("Content-Length: {}\r\n", .{body.len}))
-    for (headers) |h| {
+    if body.len > 0 or method == "POST" or method == "PUT" { try w.write(format("Content-Length: {}\r\n", .{body.len})) }
+    for h in headers {
         try w.write(h.name)
         try w.write(": ")
         try w.write(h.value)
@@ -317,17 +317,17 @@ fn one_request(method: []u8, url: *Url, headers: *List(Header), body: []u8, time
 /// this client cannot speak (including `https://`).
 pub fn request(method: []u8, url_text: []u8, headers: *List(Header), body: []u8) -> !Response {
     var url = parse_url(url_text) orelse return error.InvalidInput
-    if (url.scheme != "http") return error.InvalidInput
+    if url.scheme != "http" { return error.InvalidInput }
     var hops: usize = 0
-    while (true) {
+    while true {
         let resp = try one_request(method, &url, headers, body, 15000)
         let is_redirect = resp.status == 301 or resp.status == 302 or resp.status == 303 or resp.status == 307 or resp.status == 308
-        if (!is_redirect or hops >= MAX_REDIRECTS) return resp
+        if !is_redirect or hops >= MAX_REDIRECTS { return resp }
         let loc = resp.header("location") orelse return resp
         hops += 1
-        if (loc.starts_with("http://") or loc.starts_with("https://")) {
+        if loc.starts_with("http://") or loc.starts_with("https://") {
             url = parse_url(loc) orelse return error.InvalidInput
-            if (url.scheme != "http") return error.InvalidInput
+            if url.scheme != "http" { return error.InvalidInput }
         } else {
             url.path = String.from(loc)
         }
@@ -365,10 +365,10 @@ impl Request {
 
     /// The value of a query parameter (`?a=1&b=2`), not decoded.
     pub fn param(self: *Self, name: []u8) -> ?[]u8 {
-        for (self.query.split("&")) |pair| {
+        for pair in self.query.split("&") {
             var eq: usize = 0
-            while (eq < pair.len and pair[eq] != '=') { eq += 1 }
-            if (pair[0..eq] == name) return if (eq < pair.len) pair[eq + 1..pair.len] else pair[0..0]
+            while eq < pair.len and pair[eq] != '=' { eq += 1 }
+            if pair[0..eq] == name { return if eq < pair.len { pair[eq + 1..pair.len] } else { pair[0..0] } }
         }
         return null
     }
@@ -380,19 +380,19 @@ pub fn read_request(r: *mut stream.Reader, peer: []u8) -> !?Request {
     let line = (try r.read_line()) orelse return null
     // GET /path?query HTTP/1.1
     var a: usize = 0
-    while (a < line.len and line[a] != ' ') { a += 1 }
-    if (a == line.len) return error.InvalidInput
+    while a < line.len and line[a] != ' ' { a += 1 }
+    if a == line.len { return error.InvalidInput }
     var b = a + 1
-    while (b < line.len and line[b] != ' ') { b += 1 }
+    while b < line.len and line[b] != ' ' { b += 1 }
     let target = line[a + 1..b]
     var q: usize = 0
-    while (q < target.len and target[q] != '?') { q += 1 }
+    while q < target.len and target[q] != '?' { q += 1 }
     let headers = try read_headers(r)
     let body = try read_body(r, &headers, false)
     return Request{
         .method = String.from(line[0..a]),
         .path = String.from(target[0..q]),
-        .query = String.from(if (q < target.len) target[q + 1..target.len] else target[0..0]),
+        .query = String.from(if q < target.len { target[q + 1..target.len] } else { target[0..0] }),
         .headers = headers,
         .body = body,
         .peer = String.from(peer),
@@ -404,7 +404,7 @@ pub fn write_response(w: *mut stream.Writer, resp: *Response) -> !void {
     try w.write(format("HTTP/1.1 {} ", .{resp.status}))
     try w.write(resp.reason)
     try w.write("\r\n")
-    for (resp.headers) |h| {
+    for h in resp.headers {
         try w.write(h.name)
         try w.write(": ")
         try w.write(h.value)
@@ -452,16 +452,16 @@ impl Router {
 
     /// The response for a request.
     pub fn handle(self: *Self, req: *Request) -> Response {
-        for (self.routes) |r| {
-            if (r.method != req.method) continue
-            let hit = if (r.path.ends_with("/*")) req.path.starts_with(r.path[0..r.path.len - 1]) else r.path == req.path
-            if (hit) {
+        for r in self.routes {
+            if r.method != req.method { continue }
+            let hit = if r.path.ends_with("/*") { req.path.starts_with(r.path[0..r.path.len - 1]) } else { r.path == req.path }
+            if hit {
                 let h = r.handler
                 return h(req)
             }
         }
-        if (self.static_root) |root| {
-            if (req.method == "GET") return static_file(root, req.path)
+        if let root = self.static_root {
+            if req.method == "GET" { return static_file(root, req.path) }
         }
         return not_found()
     }
@@ -470,10 +470,10 @@ impl Router {
 /// A file under `root` for a request path, refusing `..`; `index.html` for
 /// directories.
 pub fn static_file(root: []u8, path: []u8) -> Response {
-    if (path.find("..") != null) return text(403, "forbidden\n")
-    var file = fs.join(root, if (path.len > 0 and path[0] == '/') path[1..path.len] else path)
-    if (fs.is_dir(file)) file = fs.join(file, "index.html")
-    if (!fs.is_file(file)) return not_found()
+    if path.find("..") != null { return text(403, "forbidden\n") }
+    var file = fs.join(root, if path.len > 0 and path[0] == '/' { path[1..path.len] } else { path })
+    if fs.is_dir(file) { file = fs.join(file, "index.html") }
+    if !fs.is_file(file) { return not_found() }
     let data = fs.read(file) catch return text(500, "cannot read file\n")
     return respond(200, content_type_for(file), data)
 }
@@ -504,8 +504,8 @@ impl Server {
             null
         }
         var resp = text(400, "bad request\n")
-        if (!bad) {
-            if (maybe) |req| {
+        if !bad {
+            if let req = maybe {
                 resp = router.handle(&req)
             } else {
                 conn.close()
@@ -519,9 +519,9 @@ impl Server {
 
     /// Serve forever, one request at a time.
     pub fn serve(self: *Self, router: *Router) -> !void {
-        while (true) {
+        while true {
             self.serve_one(router, 0) catch |e| {
-                if (e != error.Timeout) return e
+                if e != error.Timeout { return e }
             }
         }
     }

@@ -30,12 +30,12 @@ impl Reader for Point {
 }
 
 fn max(comptime T: type where T: Ord, a: T, b: T) -> T {
-    return if (a > b) a else b
+    return if a > b { a } else { b }
 }
 
 pub fn sum(xs: []i32) -> i32 !allocates !refcounts {
     var total = 0
-    for (xs) |x, i| {
+    for x, i in xs {
         total += x
     }
     total
@@ -55,7 +55,7 @@ fn load(path: []u8) -> !u32 allocates blocks {
     let h = try read_header(path)
     defer println("done", .{})
     errdefer println("failed", .{})
-    let v = read_header(path) catch |e|match e {
+    let v = read_header(path) catch |e| match e {
         error.Truncated => return 7,
         else => return e,
     }
@@ -66,7 +66,7 @@ fn load(path: []u8) -> !u32 allocates blocks {
     let p = Point{ .x = 1.0, .y = 2.0 }
     send(.{ .port = 8080, .timeout = 30 })
     let found = outer: {
-        for (0..10) |i| { if (i == 3) break :outer i }
+        for i in 0..10 { if i == 3 { break :outer i } }
         0
     }
     return v +% 1

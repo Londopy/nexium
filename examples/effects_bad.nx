@@ -1,6 +1,6 @@
 fn helper(xs: []i32) -> i32 {
     var total: i32 = 0
-    for (xs) |x| { total += x }
+    for x in xs { total += x }
     return total
 }
 

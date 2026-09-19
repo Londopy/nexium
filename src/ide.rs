@@ -205,7 +205,11 @@ fn locals_before(f: &ast::FnDecl, toks: &[Token], off: usize) -> Vec<(String, Sp
                 continue;
             }
             let prev = &toks[i - 1].tok;
-            let declared = matches!(prev, Tok::Ident(k) if k == "let" || k == "var") || matches!(prev, Tok::Pipe | Tok::Comma if in_capture(toks, i));
+            // `let x`, `var x`, `if let x =`, `for x, i in`, `for parallel x in`,
+            // and closure or `catch` captures `|x|`
+            let declared = matches!(prev, Tok::Ident(k) if k == "let" || k == "var" || k == "for" || k == "parallel")
+                || matches!(prev, Tok::Pipe | Tok::Comma if in_capture(toks, i))
+                || matches!(prev, Tok::Comma if in_for_header(toks, i));
             if declared {
                 out.push((name.clone(), t.span));
             }
@@ -224,6 +228,21 @@ fn in_capture(toks: &[Token], i: usize) -> bool {
             Tok::Pipe => return true,
             Tok::Newline | Tok::LBrace | Tok::RBrace => return false,
             _ => {}
+        }
+    }
+    false
+}
+
+/// Is the identifier at `i` among the bindings of a `for` header, before `in`?
+fn in_for_header(toks: &[Token], i: usize) -> bool {
+    let mut j = i;
+    while j > 0 {
+        j -= 1;
+        match &toks[j].tok {
+            Tok::Ident(k) if k == "for" => return true,
+            Tok::Ident(k) if k == "in" => return false,
+            Tok::Ident(_) | Tok::Comma => {}
+            _ => return false,
         }
     }
     false

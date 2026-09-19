@@ -4,7 +4,10 @@
 // `import std.stream` then:
 //
 //     var r = try stream.Reader.open("big.log")
-//     while (try r.read_line()) |line| { ... }        // no whole-file allocation
+//     while true {                                    // no whole-file allocation
+//         let line = (try r.read_line()) orelse break
+//         ...
+//     }
 //     r.close()
 //
 //     var w = try stream.Writer.open("out.txt")
@@ -60,20 +63,20 @@ impl Reader {
     }
 
     fn pull(self: *mut Self, n: usize) -> !String {
-        if (self.socket) return net.recv(self.handle, n, 0)
+        if self.socket { return net.recv(self.handle, n, 0) }
         return io.read(self.handle, n)
     }
 
     // Drop consumed bytes and pull in the next chunk; false at end of input.
     fn fill(self: *mut Self) -> !bool {
-        if (self.eof) return false
-        if (self.pos > 0) {
+        if self.eof { return false }
+        if self.pos > 0 {
             let rest = String.from(self.buf[self.pos..self.buf.len])
             self.buf = rest
             self.pos = 0
         }
         let chunk = try self.pull(CHUNK)
-        if (chunk.len == 0) {
+        if chunk.len == 0 {
             self.eof = true
             return false
         }
@@ -83,20 +86,20 @@ impl Reader {
 
     /// The next line without its `\n` (or `\r\n`); null at end of input.
     pub fn read_line(self: *mut Self) -> !?String {
-        while (true) {
+        while true {
             var i = self.pos
-            while (i < self.buf.len and self.buf[i] != '\n') { i += 1 }
-            if (i < self.buf.len) {
+            while i < self.buf.len and self.buf[i] != '\n' { i += 1 }
+            if i < self.buf.len {
                 var end = i
-                if (end > self.pos and self.buf[end - 1] == '\r') end -= 1
+                if end > self.pos and self.buf[end - 1] == '\r' { end -= 1 }
                 let line = String.from(self.buf[self.pos..end])
                 self.pos = i + 1
                 return line
             }
-            if (! (try self.fill())) {
-                if (self.pos < self.buf.len) {
+            if ! (try self.fill()) {
+                if self.pos < self.buf.len {
                     var end = self.buf.len
-                    if (self.buf[end - 1] == '\r') end -= 1
+                    if self.buf[end - 1] == '\r' { end -= 1 }
                     let line = String.from(self.buf[self.pos..end])
                     self.pos = self.buf.len
                     return line
@@ -108,11 +111,11 @@ impl Reader {
 
     /// Up to `n` bytes; empty at end of input.
     pub fn read(self: *mut Self, n: usize) -> !String {
-        if (self.pos >= self.buf.len) {
-            if (! (try self.fill())) return String.new()
+        if self.pos >= self.buf.len {
+            if ! (try self.fill()) { return String.new() }
         }
         var end = self.pos + n
-        if (end > self.buf.len) end = self.buf.len
+        if end > self.buf.len { end = self.buf.len }
         let out = String.from(self.buf[self.pos..end])
         self.pos = end
         return out
@@ -122,9 +125,9 @@ impl Reader {
     pub fn read_all(self: *mut Self) -> !String {
         var out = String.from(self.buf[self.pos..self.buf.len])
         self.pos = self.buf.len
-        while (!self.eof) {
+        while !self.eof {
             let chunk = try self.pull(CHUNK)
-            if (chunk.len == 0) break
+            if chunk.len == 0 { break }
             out.append(chunk)
         }
         self.eof = true
@@ -133,7 +136,7 @@ impl Reader {
 
     /// Release the file (the standard streams stay open).
     pub fn close(self: *mut Self) {
-        if (self.owns) {
+        if self.owns {
             io.close(self.handle) catch { }
             self.owns = false
         }
@@ -182,7 +185,7 @@ impl Writer {
 
     pub fn write(self: *mut Self, data: []u8) -> !void {
         self.buf.append(data)
-        if (self.buf.len >= CHUNK) try self.flush()
+        if self.buf.len >= CHUNK { try self.flush() }
     }
 
     pub fn write_line(self: *mut Self, data: []u8) -> !void {
@@ -192,18 +195,18 @@ impl Writer {
 
     /// Hand buffered output to the handle.
     pub fn flush(self: *mut Self) -> !void {
-        if (self.buf.len > 0) {
-            if (self.socket) try net.send(self.handle, self.buf)
-            else try io.write(self.handle, self.buf)
+        if self.buf.len > 0 {
+            if self.socket { try net.send(self.handle, self.buf) }
+            else { try io.write(self.handle, self.buf) }
             self.buf.clear()
         }
-        if (!self.socket) return io.flush(self.handle)
+        if !self.socket { return io.flush(self.handle) }
     }
 
     /// Flush, then release the file (the standard streams stay open).
     pub fn close(self: *mut Self) -> !void {
         try self.flush()
-        if (self.owns) {
+        if self.owns {
             self.owns = false
             return io.close(self.handle)
         }
@@ -213,9 +216,9 @@ impl Writer {
 /// Copy everything from a reader to a writer; the number of bytes moved.
 pub fn copy(r: *mut Reader, w: *mut Writer) -> !usize {
     var total: usize = 0
-    while (true) {
+    while true {
         let chunk = try r.read(CHUNK)
-        if (chunk.len == 0) break
+        if chunk.len == 0 { break }
         try w.write(chunk)
         total += chunk.len
     }

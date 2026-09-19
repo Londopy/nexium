@@ -16,13 +16,13 @@ import std.fs
 
 /// Are two floats within `eps` of each other?
 pub fn approx(a: f64, b: f64, eps: f64) -> bool {
-    let d = if (a > b) a - b else b - a
+    let d = if a > b { a - b } else { b - a }
     return d <= eps
 }
 
 /// Panics unless `a` and `b` are within `eps`.
 pub fn expect_approx(a: f64, b: f64, eps: f64) {
-    if (!approx(a, b, eps)) panic(format("expected {} to be within {} of {}", .{a, eps, b}))
+    if !approx(a, b, eps) { panic(format("expected {} to be within {} of {}", .{a, eps, b})) }
 }
 
 /// Did the call fail? (Any error counts.)
@@ -33,13 +33,13 @@ pub fn is_err(comptime T: type, own r: !T) -> bool {
 
 /// Panics unless the result is an error.
 pub fn expect_err(comptime T: type, own r: !T) {
-    if (!is_err(T, r)) panic("expected an error but the call succeeded")
+    if !is_err(T, r) { panic("expected an error but the call succeeded") }
 }
 
 /// Panics unless the result is exactly `err`.
 pub fn expect_error(comptime T: type, own r: !T, err: error) {
     _ = r catch |e| {
-        if (e != err) panic(format("expected error {} but got {}", .{err, e}))
+        if e != err { panic(format("expected error {} but got {}", .{err, e})) }
         return
     }
     panic(format("expected error {} but the call succeeded", .{err}))
@@ -47,7 +47,7 @@ pub fn expect_error(comptime T: type, own r: !T, err: error) {
 
 /// Panics unless `hay` contains `needle`.
 pub fn expect_contains(hay: []u8, needle: []u8) {
-    if (hay.find(needle) == null) panic(format("expected to find {} in {}", .{needle, hay}))
+    if hay.find(needle) == null { panic(format("expected to find {} in {}", .{needle, hay})) }
 }
 
 /// Compares line by line; panics naming the first line that differs.
@@ -55,11 +55,11 @@ pub fn expect_lines(actual: []u8, expected: []u8) {
     let a = actual.lines()
     let e = expected.lines()
     var i: usize = 0
-    while (i < a.len and i < e.len) {
-        if (a[i] != e[i]) panic(format("line {} differs:\n  expected: {}\n  actual:   {}", .{i + 1, e[i], a[i]}))
+    while i < a.len and i < e.len {
+        if a[i] != e[i] { panic(format("line {} differs:\n  expected: {}\n  actual:   {}", .{i + 1, e[i], a[i]})) }
         i += 1
     }
-    if (a.len != e.len) panic(format("expected {} line(s) but got {}", .{e.len, a.len}))
+    if a.len != e.len { panic(format("expected {} line(s) but got {}", .{e.len, a.len})) }
 }
 
 /// Compare `actual` to `<dir>/<name>.txt`; write it when missing or when
@@ -68,7 +68,7 @@ pub fn snapshot_in(dir: []u8, name: []u8, actual: []u8) -> !void {
     var file = fs.join(dir, name)
     file.append(".txt")
     let update = os.env("NX_UPDATE_SNAPSHOTS") != null
-    if (update or !fs.exists(file)) {
+    if update or !fs.exists(file) {
         try fs.make_dirs(dir)
         try fs.write(file, actual)
         eprintln("wrote snapshot {}", .{file})
@@ -86,7 +86,7 @@ pub fn snapshot(name: []u8, actual: []u8) -> !void {
 // ------------------------------------------------------------------ tests
 
 fn parse_digit(s: []u8) -> !i32 {
-    if (s.len != 1 or s[0] < '0' or s[0] > '9') return error.InvalidInput
+    if s.len != 1 or s[0] < '0' or s[0] > '9' { return error.InvalidInput }
     return (s[0] - '0') as i32
 }
 

@@ -236,6 +236,30 @@ fn closes_control_head(toks: &[&Token], at: usize) -> bool {
     j > 0 && matches!(&toks[j - 1].tok, Tok::Ident(k) if k == "if" || k == "while" || k == "for")
 }
 
+/// Is the `{` at `i` the body of an `if`/`while`/`for`/`match` head on this
+/// line? Walks back at bracket depth 0 to the keyword; any brace in between
+/// means the head is over.
+fn opens_control_body(toks: &[&Token], i: usize) -> bool {
+    let mut depth = 0i32;
+    let mut j = i;
+    while j > 0 {
+        j -= 1;
+        match &toks[j].tok {
+            Tok::RParen | Tok::RBracket => depth += 1,
+            Tok::LParen | Tok::LBracket => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+            Tok::LBrace | Tok::RBrace | Tok::DotLBrace if depth == 0 => return false,
+            Tok::Ident(k) if depth == 0 && matches!(k.as_str(), "if" | "while" | "for" | "match") => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
 fn needs_space(toks: &[&Token], i: usize, ctx: &LineCtx) -> bool {
     use Tok::*;
     let a = &toks[i - 1].tok;
@@ -386,6 +410,11 @@ fn needs_space(toks: &[&Token], i: usize, ctx: &LineCtx) -> bool {
     // struct literals `Point{`, declarations `struct Point {`, blocks `) {`
     if matches!(b, LBrace) {
         if matches!(&toks[0].tok, Ident(k) if matches!(k.as_str(), "struct" | "enum" | "record" | "ref" | "impl" | "trait" | "error" | "artifact" | "using" | "test")) {
+            return true;
+        }
+        // the body brace of `if c {`, `while c {`, `for x in xs {`, `match v {`:
+        // a bare struct literal cannot appear in such a head, so `if k == Kind.Defer {`
+        if opens_control_body(toks, i) {
             return true;
         }
         if let Ident(s) = a {

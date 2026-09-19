@@ -61,7 +61,7 @@ fn main() -> !void {
     }
     _ = short
     let tlv = parse_tlv("\x03\x00abcXYZ")
-    if (tlv) |p| { println("tlv payload {}", .{p}) }
+    if let p = tlv { println("tlv payload {}", .{p}) }
     var buf: [16]u8 = undefined
     let written = try <<4:4, 5:4, 0:8, 1500:16/big, "ab">> into buf[..]
     println("wrote {} bytes: {x} {x} {x} {x} {c}{c}", .{written.len, written[0], written[1], written[2], written[3], written[4], written[5]})

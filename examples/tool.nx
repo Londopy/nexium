@@ -30,14 +30,14 @@ fn parse_options() -> !Options {
     let ext = p.option("--ext", "-e") orelse "log"
     var since: i64 = -9223372036854775807
     var until: i64 = 9223372036854775807
-    if (p.option("--since", "-s")) |s| {
+    if let s = p.option("--since", "-s") {
         let d = time.parse_iso(s) orelse {
             eprintln("bad --since date: {}", .{s})
             return error.InvalidInput
         }
         since = d.to_ms()
     }
-    if (p.option("--until", "-u")) |s| {
+    if let s = p.option("--until", "-u") {
         let d = time.parse_iso(s) orelse {
             eprintln("bad --until date: {}", .{s})
             return error.InvalidInput
@@ -47,7 +47,7 @@ fn parse_options() -> !Options {
     let count_only = p.flag("--count", "-c")
     let timing = p.flag("--timing", "-t")
     let rest = p.rest()
-    let root = if (rest.len > 0) rest[0] else "examples/data/logs"
+    let root = if rest.len > 0 { rest[0] } else { "examples/data/logs" }
     return Options{
         .root = String.from(root),
         .pattern = String.from(pattern),
@@ -62,7 +62,7 @@ fn parse_options() -> !Options {
 /// The timestamp at the start of a log line, when it has one.
 fn line_time(line: []u8) -> ?i64 {
     var end: usize = 0
-    while (end < line.len and line[end] != ' ') { end += 1 }
+    while end < line.len and line[end] != ' ' { end += 1 }
     let d = time.parse_iso(line[0..end]) orelse return null
     return d.to_ms()
 }
@@ -70,10 +70,10 @@ fn line_time(line: []u8) -> ?i64 {
 /// The level word after the timestamp: `ERROR`, `WARN`, `INFO`, ...
 fn line_level(line: []u8) -> []u8 {
     var i: usize = 0
-    while (i < line.len and line[i] != ' ') { i += 1 }
-    while (i < line.len and line[i] == ' ') { i += 1 }
+    while i < line.len and line[i] != ' ' { i += 1 }
+    while i < line.len and line[i] == ' ' { i += 1 }
     let start = i
-    while (i < line.len and line[i] != ' ') { i += 1 }
+    while i < line.len and line[i] != ' ' { i += 1 }
     return line[start..i]
 }
 
@@ -83,8 +83,8 @@ struct Tally {
 }
 
 fn bump(tallies: *mut List(Tally), level: []u8) {
-    for (tallies) |t, i| {
-        if (t.level == level) {
+    for t, i in tallies {
+        if t.level == level {
             tallies[i].count += 1
             return
         }
@@ -99,7 +99,7 @@ fn main() -> !void {
         eprintln("bad pattern: {}", .{opts.pattern})
         return error.InvalidInput
     }
-    if (!fs.is_dir(opts.root)) {
+    if !fs.is_dir(opts.root) {
         eprintln("not a directory: {}", .{opts.root})
         return error.NotFound
     }
@@ -112,31 +112,31 @@ fn main() -> !void {
     var tallies = List(Tally).new()
 
     let files = try fs.walk(opts.root)
-    for (files) |path| {
-        if (fs.extension(path) != opts.ext) continue
+    for path in files {
+        if fs.extension(path) != opts.ext { continue }
         files_seen += 1
         let lines = fs.read_lines(path) catch {
             eprintln("cannot read {}", .{path})
             continue
         }
-        for (lines) |line, i| {
+        for line, i in lines {
             lines_seen += 1
             let stamp = line_time(line) orelse continue
-            if (stamp < opts.since or stamp > opts.until) continue
-            if (!re.is_match(line)) continue
+            if stamp < opts.since or stamp > opts.until { continue }
+            if !re.is_match(line) { continue }
             matched += 1
-            if (stamp < first) first = stamp
-            if (stamp > last) last = stamp
+            if stamp < first { first = stamp }
+            if stamp > last { last = stamp }
             bump(&mut tallies, line_level(line))
-            if (!opts.count_only) println("{}:{}: {}", .{path, i + 1, line})
+            if !opts.count_only { println("{}:{}: {}", .{path, i + 1, line}) }
         }
     }
 
     println("{} matching line(s) in {} file(s), {} line(s) read", .{matched, files_seen, lines_seen})
-    for (tallies) |t| { println("  {:<6} {}", .{t.level, t.count}) }
-    if (matched > 0) {
+    for t in tallies { println("  {:<6} {}", .{t.level, t.count}) }
+    if matched > 0 {
         let span = time.Duration.between(first, last)
         println("  from {} to {} ({})", .{time.utc(first).iso(), time.utc(last).iso(), span.text()})
     }
-    if (opts.timing) eprintln("scanned in {}", .{watch.elapsed().text()})
+    if opts.timing { eprintln("scanned in {}", .{watch.elapsed().text()}) }
 }

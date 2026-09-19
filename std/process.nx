@@ -4,7 +4,7 @@
 // `import std.process` then:
 //
 //     let out = try process.run(["git", "status", "--short"])
-//     if (out.ok()) print("{}", .{out.stdout})
+//     if out.ok() { print("{}", .{out.stdout}) }
 //
 //     let r = try process.run_with(["sort"], process.Options{ .stdin = "b\na\n", .cwd = "" })
 //     let sh = try process.shell("echo hi")          // cmd /C on Windows, sh -c elsewhere
@@ -51,7 +51,7 @@ pub fn run(argv: [][]u8) -> !Output {
 
 /// Run a command line through the platform shell.
 pub fn shell(command: []u8) -> !Output {
-    if (os.env("COMSPEC") != null and os.env("WINDIR") != null) {
+    if os.env("COMSPEC") != null and os.env("WINDIR") != null {
         let argv = ["cmd", "/C", command]
         return run(argv[..])
     }

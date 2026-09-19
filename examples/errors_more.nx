@@ -6,13 +6,13 @@ import std.fs
 import std.stream
 
 fn maybe(ok: bool) -> !i32 {
-    if (!ok) return error.InvalidInput
+    if !ok { return error.InvalidInput }
     return 7
 }
 
 fn rethrow(ok: bool) -> !i32 {
     let v = maybe(ok) catch |e| {
-        if (e == error.InvalidInput) return e
+        if e == error.InvalidInput { return e }
         0
     }
     return v

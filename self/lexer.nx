@@ -64,8 +64,8 @@ fn is_alnum(c: u8) -> bool { return is_digit(c) or is_alpha(c) }
 fn is_hex(c: u8) -> bool { return is_digit(c) or (c >= 'a' and c <= 'f') or (c >= 'A' and c <= 'F') }
 
 fn hex_value(c: u8) -> u8 {
-    if (is_digit(c)) return c - '0'
-    if (c >= 'a' and c <= 'f') return c - 'a' + 10
+    if is_digit(c) { return c - '0' }
+    if c >= 'a' and c <= 'f' { return c - 'a' + 10 }
     return c - 'A' + 10
 }
 
@@ -82,19 +82,19 @@ fn append_hex(out: *mut String, b: u8) {
 }
 
 fn utf8_len(first: u8) -> usize {
-    if (first < 0x80) return 1
-    if ((first >> 5) == 0b110) return 2
-    if ((first >> 4) == 0b1110) return 3
+    if first < 0x80 { return 1 }
+    if (first >> 5) == 0b110 { return 2 }
+    if (first >> 4) == 0b1110 { return 3 }
     return 4
 }
 
 fn append_utf8(out: *mut String, cp: u32) {
-    if (cp < 0x80) {
+    if cp < 0x80 {
         push_byte(out, cp as u8)
-    } else if (cp < 0x800) {
+    } else if cp < 0x800 {
         push_byte(out, (0xC0| (cp >> 6)) as u8)
         push_byte(out, (0x80| (cp & 0x3F)) as u8)
-    } else if (cp < 0x10000) {
+    } else if cp < 0x10000 {
         push_byte(out, (0xE0| (cp >> 12)) as u8)
         push_byte(out, (0x80| ((cp >> 6) & 0x3F)) as u8)
         push_byte(out, (0x80| (cp & 0x3F)) as u8)
@@ -112,63 +112,63 @@ fn is_scalar(v: u32) -> bool {
 
 // The first code point of a UTF-8 buffer, or null when it is not valid UTF-8.
 fn first_code_point(b: []u8) -> ?u32 {
-    if (b.len == 0) return null
+    if b.len == 0 { return null }
     let c0 = b[0]
-    if (c0 < 0x80) return c0 as u32
+    if c0 < 0x80 { return c0 as u32 }
     let n = utf8_len(c0)
-    if (n == 4 and (c0 >> 3) != 0b11110) return null
-    if (b.len < n) return null
+    if n == 4 and (c0 >> 3) != 0b11110 { return null }
+    if b.len < n { return null }
     var cp: u32 = 0
-    if (n == 2) {
+    if n == 2 {
         cp = (c0 & 0x1F) as u32
-    } else if (n == 3) {
+    } else if n == 3 {
         cp = (c0 & 0x0F) as u32
     } else {
         cp = (c0 & 0x07) as u32
     }
-    for (1..n) |i| {
+    for i in 1..n {
         let c = b[i]
-        if ((c & 0xC0) != 0x80) return null
+        if (c & 0xC0) != 0x80 { return null }
         cp = (cp << 6) | (c & 0x3F) as u32
     }
-    if (n == 2 and cp < 0x80) return null
-    if (n == 3 and cp < 0x800) return null
-    if (n == 4 and cp < 0x10000) return null
-    if (!is_scalar(cp)) return null
+    if n == 2 and cp < 0x80 { return null }
+    if n == 3 and cp < 0x800 { return null }
+    if n == 4 and cp < 0x10000 { return null }
+    if !is_scalar(cp) { return null }
     // the rest of the buffer must be valid too (Rust checks the whole literal)
     var i = n
-    while (i < b.len) {
+    while i < b.len {
         let c = b[i]
-        if (c < 0x80) { i += 1; continue }
+        if c < 0x80 { i += 1; continue }
         let m = utf8_len(c)
-        if (m == 4 and (c >> 3) != 0b11110) return null
-        if (i + m > b.len) return null
-        for (1..m) |j| { if ((b[i + j] & 0xC0) != 0x80) return null }
+        if m == 4 and (c >> 3) != 0b11110 { return null }
+        if i + m > b.len { return null }
+        for j in 1..m { if (b[i + j] & 0xC0) != 0x80 { return null } }
         i += m
     }
     return cp
 }
 
 fn is_valid_utf8(b: []u8) -> bool {
-    if (b.len == 0) return true
+    if b.len == 0 { return true }
     return first_code_point(b) != null
 }
 
 fn parse_radix(text: []u8, radix: u128) -> ?u128 {
-    if (text.len == 0) return null
+    if text.len == 0 { return null }
     var v: u128 = 0
-    for (text) |c| {
+    for c in text {
         var d: u128 = 0
-        if (is_digit(c)) {
+        if is_digit(c) {
             d = (c - '0') as u128
-        } else if (is_hex(c)) {
+        } else if is_hex(c) {
             d = hex_value(c) as u128
         } else {
             return null
         }
-        if (d >= radix) return null
-        if (v.checked_mul(radix)) |m| { v = m } else { return null }
-        if (v.checked_add(d)) |a| { v = a } else { return null }
+        if d >= radix { return null }
+        if let m = v.checked_mul(radix) { v = m } else { return null }
+        if let a = v.checked_add(d) { v = a } else { return null }
     }
     return v
 }
@@ -177,28 +177,28 @@ fn parse_radix(text: []u8, radix: u128) -> ?u128 {
 fn valid_float(text: []u8, radix: u32) -> bool {
     var i: usize = 0
     var mant_digits: usize = 0
-    while (i < text.len and (is_digit(text[i]) or (radix == 16 and is_hex(text[i])))) { i += 1; mant_digits += 1 }
-    if (i < text.len and text[i] == '.') {
+    while i < text.len and (is_digit(text[i]) or (radix == 16 and is_hex(text[i]))) { i += 1; mant_digits += 1 }
+    if i < text.len and text[i] == '.' {
         i += 1
-        while (i < text.len and (is_digit(text[i]) or (radix == 16 and is_hex(text[i])))) { i += 1; mant_digits += 1 }
+        while i < text.len and (is_digit(text[i]) or (radix == 16 and is_hex(text[i]))) { i += 1; mant_digits += 1 }
     }
-    if (mant_digits == 0) return false
-    if (i < text.len and ((radix == 10 and (text[i] == 'e' or text[i] == 'E')) or (radix == 16 and (text[i] == 'p' or text[i] == 'P')))) {
+    if mant_digits == 0 { return false }
+    if i < text.len and ((radix == 10 and (text[i] == 'e' or text[i] == 'E')) or (radix == 16 and (text[i] == 'p' or text[i] == 'P'))) {
         i += 1
-        if (i < text.len and (text[i] == '+' or text[i] == '-')) i += 1
+        if i < text.len and (text[i] == '+' or text[i] == '-') { i += 1 }
         var exp_digits: usize = 0
-        while (i < text.len and is_digit(text[i])) { i += 1; exp_digits += 1 }
-        if (exp_digits == 0) return false
+        while i < text.len and is_digit(text[i]) { i += 1; exp_digits += 1 }
+        if exp_digits == 0 { return false }
     }
     return i == text.len
 }
 
 impl Lexer {
     fn peek(self: *Self) -> u8 {
-        return if (self.pos < self.src.len) self.src[self.pos] else 0
+        return if self.pos < self.src.len { self.src[self.pos] } else { 0 }
     }
     fn peek_at(self: *Self, n: usize) -> u8 {
-        return if (self.pos + n < self.src.len) self.src[self.pos + n] else 0
+        return if self.pos + n < self.src.len { self.src[self.pos + n] } else { 0 }
     }
     fn push(self: *mut Self, kind: Kind, start: usize, own text: String) {
         self.toks.append(Token{ .kind = kind, .start = start, .end = self.pos, .text = text })
@@ -210,112 +210,112 @@ impl Lexer {
         self.errors.append(format("error at {}: {}", .{start, msg}))
     }
     fn last_is_newline(self: *Self) -> bool {
-        if (self.toks.len == 0) return true
+        if self.toks.len == 0 { return true }
         return self.toks[self.toks.len - 1].kind == Kind.Newline
     }
     fn newlines_suppressed(self: *Self) -> bool {
-        if (self.depth.len == 0) return false
+        if self.depth.len == 0 { return false }
         let top = self.depth[self.depth.len - 1]
         return top == '(' or top == '['
     }
 
     pub fn lex(self: *mut Self) {
-        while (true) {
+        while true {
             let c = self.peek()
-            if (c == 0) break
+            if c == 0 { break }
             let start = self.pos
-            if (c == ' ' or c == '\t' or c == '\r') {
+            if c == ' ' or c == '\t' or c == '\r' {
                 self.pos += 1
-            } else if (c == '\n') {
+            } else if c == '\n' {
                 self.pos += 1
-                if (!self.newlines_suppressed() and !self.last_is_newline()) {
+                if !self.newlines_suppressed() and !self.last_is_newline() {
                     self.push_plain(Kind.Newline, start)
                 }
-            } else if (c == '/' and self.peek_at(1) == '/') {
+            } else if c == '/' and self.peek_at(1) == '/' {
                 let is_doc = self.peek_at(2) == '/' and self.peek_at(3) != '/'
-                self.pos += if (is_doc) 3 else 2
+                self.pos += if is_doc { 3 } else { 2 }
                 let s = self.pos
-                while (self.peek() != '\n' and self.peek() != 0) { self.pos += 1 }
-                if (is_doc) {
+                while self.peek() != '\n' and self.peek() != 0 { self.pos += 1 }
+                if is_doc {
                     let text = String.from(self.src[s..self.pos].trim())
                     self.push(Kind.Doc, start, text)
                 }
-            } else if (is_alpha(c) or c == '_') {
-                if ((c == 'r' or c == 'b') and self.peek_at(1) == '"') {
+            } else if is_alpha(c) or c == '_' {
+                if (c == 'r' or c == 'b') and self.peek_at(1) == '"' {
                     self.pos += 1
                     self.string(start, c == 'r', c == 'b')
                     continue
                 }
-                while (is_alnum(self.peek()) or self.peek() == '_') { self.pos += 1 }
+                while is_alnum(self.peek()) or self.peek() == '_' { self.pos += 1 }
                 self.push(Kind.Ident, start, String.from(self.src[start..self.pos]))
-            } else if (is_digit(c)) {
+            } else if is_digit(c) {
                 self.number(start)
-            } else if (c == '"') {
+            } else if c == '"' {
                 self.string(start, false, false)
-            } else if (c == '\'') {
+            } else if c == '\'' {
                 self.char_lit(start)
-            } else if (c >= 0x80) {
-                while (self.peek() >= 0x80) { self.pos += 1 }
+            } else if c >= 0x80 {
+                while self.peek() >= 0x80 { self.pos += 1 }
                 self.err(start, "non-ASCII characters are not permitted outside string literals and comments")
             } else {
                 self.punct(start)
             }
         }
         let start = self.pos
-        if (!self.last_is_newline()) self.push_plain(Kind.Newline, start)
+        if !self.last_is_newline() { self.push_plain(Kind.Newline, start) }
         self.push_plain(Kind.Eof, start)
     }
 
     fn number(self: *mut Self, start: usize) {
         var radix: u32 = 10
-        if (self.peek() == '0') {
+        if self.peek() == '0' {
             let n = self.peek_at(1)
-            if (n == 'x' or n == 'X') { radix = 16; self.pos += 2 }
-            else if (n == 'o' or n == 'O') { radix = 8; self.pos += 2 }
-            else if (n == 'b' or n == 'B') { radix = 2; self.pos += 2 }
+            if n == 'x' or n == 'X' { radix = 16; self.pos += 2 }
+            else if n == 'o' or n == 'O' { radix = 8; self.pos += 2 }
+            else if n == 'b' or n == 'B' { radix = 2; self.pos += 2 }
         }
         let digits_start = self.pos
         var is_float = false
-        while (true) {
+        while true {
             let c = self.peek()
-            if (c == '_' or is_digit(c) or (radix == 16 and is_hex(c))) {
+            if c == '_' or is_digit(c) or (radix == 16 and is_hex(c)) {
                 self.pos += 1
-            } else if (c == '.' and radix == 10 and is_digit(self.peek_at(1))) {
+            } else if c == '.' and radix == 10 and is_digit(self.peek_at(1)) {
                 is_float = true
                 self.pos += 1
-            } else if (c == '.' and radix == 16 and is_hex(self.peek_at(1))) {
+            } else if c == '.' and radix == 16 and is_hex(self.peek_at(1)) {
                 is_float = true
                 self.pos += 1
-            } else if ((c == 'e' or c == 'E') and radix == 10) {
+            } else if (c == 'e' or c == 'E') and radix == 10 {
                 is_float = true
                 self.pos += 1
-                if (self.peek() == '+' or self.peek() == '-') self.pos += 1
-            } else if ((c == 'p' or c == 'P') and radix == 16) {
+                if self.peek() == '+' or self.peek() == '-' { self.pos += 1 }
+            } else if (c == 'p' or c == 'P') and radix == 16 {
                 is_float = true
                 self.pos += 1
-                if (self.peek() == '+' or self.peek() == '-') self.pos += 1
+                if self.peek() == '+' or self.peek() == '-' { self.pos += 1 }
             } else {
                 break
             }
         }
         var text = String.new()
-        for (self.src[digits_start..self.pos]) |b| { if (b != '_') text.append_char(b as char) }
-        if (is_float) {
-            if (valid_float(text, radix)) {
+        for b in self.src[digits_start..self.pos] { if b != '_' { text.append_char(b as char) } }
+        if is_float {
+            if valid_float(text, radix) {
                 self.push(Kind.Float, start, String.from(self.src[start..self.pos]))
             } else {
                 self.err(start, format("malformed float literal `{}`", .{text}))
             }
         } else {
-            if (parse_radix(text, radix as u128)) |v| {
+            if let v = parse_radix(text, radix as u128) {
                 self.push(Kind.Int, start, v.to_string())
             } else {
                 self.err(start, format("malformed integer literal `{}`", .{text}))
             }
         }
-        if (is_alpha(self.peek())) {
+        if is_alpha(self.peek()) {
             let s = self.pos
-            while (is_alnum(self.peek())) { self.pos += 1 }
+            while is_alnum(self.peek()) { self.pos += 1 }
             self.err(s, "unexpected characters after numeric literal")
         }
     }
@@ -324,36 +324,36 @@ impl Lexer {
     fn escape(self: *mut Self, out: *mut String, start: usize) {
         let c = self.peek()
         self.pos += 1
-        if (c == 'n') out.append_char('\n')
-        else if (c == 'r') out.append_char('\r')
-        else if (c == 't') out.append_char('\t')
-        else if (c == '0') out.append_char(0 as char)
-        else if (c == '\\') out.append_char('\\')
-        else if (c == '"') out.append_char('"')
-        else if (c == '\'') out.append_char('\'')
-        else if (c == 'x') {
-            if (is_hex(self.peek()) and is_hex(self.peek_at(1))) {
+        if c == 'n' { out.append_char('\n') }
+        else if c == 'r' { out.append_char('\r') }
+        else if c == 't' { out.append_char('\t') }
+        else if c == '0' { out.append_char(0 as char) }
+        else if c == '\\' { out.append_char('\\') }
+        else if c == '"' { out.append_char('"') }
+        else if c == '\'' { out.append_char('\'') }
+        else if c == 'x' {
+            if is_hex(self.peek()) and is_hex(self.peek_at(1)) {
                 let v = hex_value(self.peek()) * 16 + hex_value(self.peek_at(1))
                 push_byte(out, v)
                 self.pos += 2
             } else {
                 self.err(start, "\\x escape needs two hex digits")
             }
-        } else if (c == 'u') {
-            if (self.peek() == '{') {
+        } else if c == 'u' {
+            if self.peek() == '{' {
                 self.pos += 1
                 let s = self.pos
-                while (is_hex(self.peek())) { self.pos += 1 }
+                while is_hex(self.peek()) { self.pos += 1 }
                 let hex = self.src[s..self.pos]
-                if (self.peek() == '}') self.pos += 1
+                if self.peek() == '}' { self.pos += 1 }
                 var ok = false
-                if (parse_radix(hex, 16)) |v| {
-                    if (v < 0x110000 and is_scalar(v as u32)) {
+                if let v = parse_radix(hex, 16) {
+                    if v < 0x110000 and is_scalar(v as u32) {
                         append_utf8(out, v as u32)
                         ok = true
                     }
                 }
-                if (!ok) self.err(start, "invalid \\u{...} escape")
+                if !ok { self.err(start, "invalid \\u{...} escape") }
             } else {
                 self.err(start, "\\u escape needs braces: \\u{1F600}")
             }
@@ -368,33 +368,33 @@ impl Lexer {
     fn string(self: *mut Self, start: usize, raw: bool, bytes: bool) {
         self.pos += 1
         var out = String.new()
-        while (true) {
+        while true {
             let c = self.peek()
-            if (c == 0) {
+            if c == 0 {
                 self.err(start, "unterminated string literal")
                 break
             }
-            if (c == '"') {
+            if c == '"' {
                 self.pos += 1
                 break
             }
-            if (c == '\\' and !raw) {
+            if c == '\\' and !raw {
                 self.pos += 1
                 self.escape(&mut out, start)
                 continue
             }
-            if (c == '\n' and !raw) {
+            if c == '\n' and !raw {
                 self.err(start, "newline in string literal (use \\n or a raw string)")
             }
             push_byte(&mut out, c)
             self.pos += 1
         }
         var hex = String.new()
-        for (out) |b| { append_hex(&mut hex, b) }
-        if (bytes) {
+        for b in out { append_hex(&mut hex, b) }
+        if bytes {
             self.push(Kind.Bytes, start, hex)
         } else {
-            if (!is_valid_utf8(out)) {
+            if !is_valid_utf8(out) {
                 self.err(start, "string literal is not valid UTF-8 (use b\"...\" for bytes)")
             }
             self.push(Kind.Str, start, hex)
@@ -405,28 +405,28 @@ impl Lexer {
         self.pos += 1
         var out = String.new()
         let c = self.peek()
-        if (c == '\\') {
+        if c == '\\' {
             self.pos += 1
             self.escape(&mut out, start)
-        } else if (c == 0 or c == '\n') {
+        } else if c == 0 or c == '\n' {
             self.err(start, "unterminated character literal")
             return
         } else {
             let n = utf8_len(c)
             var end = self.pos + n
-            if (end > self.src.len) end = self.src.len
+            if end > self.src.len { end = self.src.len }
             out.append(self.src[self.pos..end])
             self.pos += n
         }
-        if (self.peek() != '\'') {
+        if self.peek() != '\'' {
             self.err(start, "character literal must contain exactly one character")
-            while (self.peek() != '\'' and self.peek() != '\n' and self.peek() != 0) { self.pos += 1 }
+            while self.peek() != '\'' and self.peek() != '\n' and self.peek() != 0 { self.pos += 1 }
         }
-        if (self.peek() == '\'') self.pos += 1
+        if self.peek() == '\'' { self.pos += 1 }
         var v: u32 = 0
-        if (first_code_point(out)) |cp| {
+        if let cp = first_code_point(out) {
             v = cp
-        } else if (out.len > 0) {
+        } else if out.len > 0 {
             v = out[0] as u32
         }
         self.push(Kind.Char, start, v.to_string())
@@ -438,65 +438,65 @@ impl Lexer {
         let c2 = self.peek_at(2)
         var kind = Kind.Eof
         var len: usize = 1
-        if (c == '(') { self.depth.append('('); kind = Kind.LParen }
-        else if (c == '[') { self.depth.append('['); kind = Kind.LBracket }
-        else if (c == '{') { self.depth.append('{'); kind = Kind.LBrace }
-        else if (c == ')') { _ = self.depth.pop(); kind = Kind.RParen }
-        else if (c == ']') { _ = self.depth.pop(); kind = Kind.RBracket }
-        else if (c == '}') { _ = self.depth.pop(); kind = Kind.RBrace }
-        else if (c == ',') kind = Kind.Comma
-        else if (c == ';') kind = Kind.Semi
-        else if (c == ':') kind = Kind.Colon
-        else if (c == '.' and c1 == '*') { kind = Kind.DotStar; len = 2 }
-        else if (c == '.' and c1 == '?') { kind = Kind.DotQuestion; len = 2 }
-        else if (c == '.' and c1 == '.') { kind = Kind.DotDot; len = 2 }
-        else if (c == '.' and c1 == '{') { self.depth.append('{'); kind = Kind.DotLBrace; len = 2 }
-        else if (c == '.') kind = Kind.Dot
-        else if (c == '-' and c1 == '>') { kind = Kind.Arrow; len = 2 }
-        else if (c == '=' and c1 == '>') { kind = Kind.FatArrow; len = 2 }
-        else if (c == '=' and c1 == '=') { kind = Kind.EqEq; len = 2 }
-        else if (c == '=') kind = Kind.Eq
-        else if (c == '!' and c1 == '=') { kind = Kind.Ne; len = 2 }
-        else if (c == '!') kind = Kind.Bang
-        else if (c == '<' and c1 == '<' and c2 == '=') { kind = Kind.ShlEq; len = 3 }
-        else if (c == '<' and c1 == '<') { kind = Kind.LtLt; len = 2 }
-        else if (c == '<' and c1 == '=') { kind = Kind.Le; len = 2 }
-        else if (c == '<') kind = Kind.Lt
-        else if (c == '>' and c1 == '>' and c2 == '=') { kind = Kind.ShrEq; len = 3 }
-        else if (c == '>' and c1 == '>') { kind = Kind.GtGt; len = 2 }
-        else if (c == '>' and c1 == '=') { kind = Kind.Ge; len = 2 }
-        else if (c == '>') kind = Kind.Gt
-        else if (c == '+' and c1 == '%' and c2 == '=') { kind = Kind.PlusPctEq; len = 3 }
-        else if (c == '+' and c1 == '%') { kind = Kind.PlusPct; len = 2 }
-        else if (c == '+' and c1 == '|') { kind = Kind.PlusPipe; len = 2 }
-        else if (c == '+' and c1 == '=') { kind = Kind.PlusEq; len = 2 }
-        else if (c == '+') kind = Kind.Plus
-        else if (c == '-' and c1 == '%' and c2 == '=') { kind = Kind.MinusPctEq; len = 3 }
-        else if (c == '-' and c1 == '%') { kind = Kind.MinusPct; len = 2 }
-        else if (c == '-' and c1 == '|') { kind = Kind.MinusPipe; len = 2 }
-        else if (c == '-' and c1 == '=') { kind = Kind.MinusEq; len = 2 }
-        else if (c == '-') kind = Kind.Minus
-        else if (c == '*' and c1 == '%' and c2 == '=') { kind = Kind.StarPctEq; len = 3 }
-        else if (c == '*' and c1 == '%') { kind = Kind.StarPct; len = 2 }
-        else if (c == '*' and c1 == '|') { kind = Kind.StarPipe; len = 2 }
-        else if (c == '*' and c1 == '=') { kind = Kind.StarEq; len = 2 }
-        else if (c == '*') kind = Kind.Star
-        else if (c == '/' and c1 == '=') { kind = Kind.SlashEq; len = 2 }
-        else if (c == '/') kind = Kind.Slash
-        else if (c == '%' and c1 == '=') { kind = Kind.PercentEq; len = 2 }
-        else if (c == '%') kind = Kind.Percent
-        else if (c == '&' and c1 == '=') { kind = Kind.AmpEq; len = 2 }
-        else if (c == '&') kind = Kind.Amp
-        else if (c == '|' and c1 == '>') { kind = Kind.PipeGt; len = 2 }
-        else if (c == '|' and c1 == '=') { kind = Kind.PipeEq; len = 2 }
-        else if (c == '|') kind = Kind.Pipe
-        else if (c == '^' and c1 == '=') { kind = Kind.CaretEq; len = 2 }
-        else if (c == '^') kind = Kind.Caret
-        else if (c == '?') kind = Kind.Question
-        else if (c == '~') kind = Kind.Tilde
-        else if (c == '@') kind = Kind.At
-        else if (c == '#') kind = Kind.Hash
-        else if (c == '$') kind = Kind.Dollar
+        if c == '(' { self.depth.append('('); kind = Kind.LParen }
+        else if c == '[' { self.depth.append('['); kind = Kind.LBracket }
+        else if c == '{' { self.depth.append('{'); kind = Kind.LBrace }
+        else if c == ')' { _ = self.depth.pop(); kind = Kind.RParen }
+        else if c == ']' { _ = self.depth.pop(); kind = Kind.RBracket }
+        else if c == '}' { _ = self.depth.pop(); kind = Kind.RBrace }
+        else if c == ',' { kind = Kind.Comma }
+        else if c == ';' { kind = Kind.Semi }
+        else if c == ':' { kind = Kind.Colon }
+        else if c == '.' and c1 == '*' { kind = Kind.DotStar; len = 2 }
+        else if c == '.' and c1 == '?' { kind = Kind.DotQuestion; len = 2 }
+        else if c == '.' and c1 == '.' { kind = Kind.DotDot; len = 2 }
+        else if c == '.' and c1 == '{' { self.depth.append('{'); kind = Kind.DotLBrace; len = 2 }
+        else if c == '.' { kind = Kind.Dot }
+        else if c == '-' and c1 == '>' { kind = Kind.Arrow; len = 2 }
+        else if c == '=' and c1 == '>' { kind = Kind.FatArrow; len = 2 }
+        else if c == '=' and c1 == '=' { kind = Kind.EqEq; len = 2 }
+        else if c == '=' { kind = Kind.Eq }
+        else if c == '!' and c1 == '=' { kind = Kind.Ne; len = 2 }
+        else if c == '!' { kind = Kind.Bang }
+        else if c == '<' and c1 == '<' and c2 == '=' { kind = Kind.ShlEq; len = 3 }
+        else if c == '<' and c1 == '<' { kind = Kind.LtLt; len = 2 }
+        else if c == '<' and c1 == '=' { kind = Kind.Le; len = 2 }
+        else if c == '<' { kind = Kind.Lt }
+        else if c == '>' and c1 == '>' and c2 == '=' { kind = Kind.ShrEq; len = 3 }
+        else if c == '>' and c1 == '>' { kind = Kind.GtGt; len = 2 }
+        else if c == '>' and c1 == '=' { kind = Kind.Ge; len = 2 }
+        else if c == '>' { kind = Kind.Gt }
+        else if c == '+' and c1 == '%' and c2 == '=' { kind = Kind.PlusPctEq; len = 3 }
+        else if c == '+' and c1 == '%' { kind = Kind.PlusPct; len = 2 }
+        else if c == '+' and c1 == '|' { kind = Kind.PlusPipe; len = 2 }
+        else if c == '+' and c1 == '=' { kind = Kind.PlusEq; len = 2 }
+        else if c == '+' { kind = Kind.Plus }
+        else if c == '-' and c1 == '%' and c2 == '=' { kind = Kind.MinusPctEq; len = 3 }
+        else if c == '-' and c1 == '%' { kind = Kind.MinusPct; len = 2 }
+        else if c == '-' and c1 == '|' { kind = Kind.MinusPipe; len = 2 }
+        else if c == '-' and c1 == '=' { kind = Kind.MinusEq; len = 2 }
+        else if c == '-' { kind = Kind.Minus }
+        else if c == '*' and c1 == '%' and c2 == '=' { kind = Kind.StarPctEq; len = 3 }
+        else if c == '*' and c1 == '%' { kind = Kind.StarPct; len = 2 }
+        else if c == '*' and c1 == '|' { kind = Kind.StarPipe; len = 2 }
+        else if c == '*' and c1 == '=' { kind = Kind.StarEq; len = 2 }
+        else if c == '*' { kind = Kind.Star }
+        else if c == '/' and c1 == '=' { kind = Kind.SlashEq; len = 2 }
+        else if c == '/' { kind = Kind.Slash }
+        else if c == '%' and c1 == '=' { kind = Kind.PercentEq; len = 2 }
+        else if c == '%' { kind = Kind.Percent }
+        else if c == '&' and c1 == '=' { kind = Kind.AmpEq; len = 2 }
+        else if c == '&' { kind = Kind.Amp }
+        else if c == '|' and c1 == '>' { kind = Kind.PipeGt; len = 2 }
+        else if c == '|' and c1 == '=' { kind = Kind.PipeEq; len = 2 }
+        else if c == '|' { kind = Kind.Pipe }
+        else if c == '^' and c1 == '=' { kind = Kind.CaretEq; len = 2 }
+        else if c == '^' { kind = Kind.Caret }
+        else if c == '?' { kind = Kind.Question }
+        else if c == '~' { kind = Kind.Tilde }
+        else if c == '@' { kind = Kind.At }
+        else if c == '#' { kind = Kind.Hash }
+        else if c == '$' { kind = Kind.Dollar }
         else {
             self.pos += 1
             var msg = String.from("unexpected character `")
@@ -517,7 +517,7 @@ pub fn new_lexer(src: []u8) -> Lexer {
 
 /// Is `s` a reserved word?
 pub fn is_keyword(s: []u8) -> bool {
-    for (KEYWORDS) |k| { if (k == s) return true }
+    for k in KEYWORDS { if k == s { return true } }
     return false
 }
 
@@ -525,7 +525,7 @@ const KEYWORDS = ["fn", "let", "var", "const", "struct", "enum", "record", "ref"
 
 fn main() -> !void {
     let args = os.args()
-    if (args.len < 2) {
+    if args.len < 2 {
         eprintln("usage: lexer <file.nx>", .{})
         os.exit(2)
     }
@@ -533,15 +533,15 @@ fn main() -> !void {
     var lx = Lexer{ .src = text, .pos = 0, .depth = List(u8).new(), .toks = List(Token).new(), .errors = List(String).new() }
     lx.lex()
     var out = String.new()
-    for (lx.toks) |t| {
+    for t in lx.toks {
         out.append(format("{} {} {}", .{t.start, t.end, kind_name(t.kind)}))
-        if (t.text.len > 0) {
+        if t.text.len > 0 {
             out.append(" ")
             out.append(t.text)
         }
         out.append("\n")
     }
     print("{}", .{out})
-    for (lx.errors) |e| { eprintln("{}", .{e}) }
-    if (lx.errors.len > 0) os.exit(1)
+    for e in lx.errors { eprintln("{}", .{e}) }
+    if lx.errors.len > 0 { os.exit(1) }
 }

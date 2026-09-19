@@ -3,12 +3,12 @@
 // `import std.regex` then:
 //
 //     let re = try regex.compile("(\\w+)@(\\w+)\\.com")
-//     if (re.is_match(text)) { ... }
-//     if (re.find(text)) |m| { println("{} at {}", .{m.text(), m.start}) }
-//     for (re.find_all(text)) |m| { println("{}", .{m.group(1).?}) }
+//     if re.is_match(text) { ... }
+//     if let m = re.find(text) { println("{} at {}", .{m.text(), m.start}) }
+//     for m in re.find_all(text) { println("{}", .{m.group(1).?}) }
 //     let out = re.replace_all(text, "$2:$1")
 //     let parts = try regex.compile(",\\s*")
-//     for (parts.split("a, b,c")) |p| { ... }
+//     for p in parts.split("a, b,c") { ... }
 //
 // Syntax: literals, `.` (any byte but newline), classes `[a-z]` `[^...]`,
 // `\d \w \s \D \W \S \b \B`, escapes `\. \\ \n \t \r`, anchors `^ $`,
@@ -75,7 +75,7 @@ fn single(own n: Node) -> List(Node) {
 
 impl Parser {
     fn peek(self: *Self) -> u8 {
-        return if (self.pos < self.src.len) self.src[self.pos] else 0
+        return if self.pos < self.src.len { self.src[self.pos] } else { 0 }
     }
 
     fn eof(self: *Self) -> bool {
@@ -85,62 +85,62 @@ impl Parser {
     fn parse_alt(self: *mut Self) -> !Node {
         var branches = List(Node).new()
         branches.append(try self.parse_cat())
-        while (!self.eof() and self.peek() == '|') {
+        while !self.eof() and self.peek() == '|' {
             self.pos += 1
             branches.append(try self.parse_cat())
         }
-        if (branches.len == 1) return branches.pop().?
+        if branches.len == 1 { return branches.pop().?}
         return Node.Alt(branches)
     }
 
     fn parse_cat(self: *mut Self) -> !Node {
         var items = List(Node).new()
-        while (!self.eof() and self.peek() != '|' and self.peek() != ')') {
+        while !self.eof() and self.peek() != '|' and self.peek() != ')' {
             items.append(try self.parse_repeat())
         }
-        if (items.len == 0) return Node.Empty
-        if (items.len == 1) return items.pop().?
+        if items.len == 0 { return Node.Empty }
+        if items.len == 1 { return items.pop().?}
         return Node.Cat(items)
     }
 
     fn parse_repeat(self: *mut Self) -> !Node {
         var atom = try self.parse_atom()
-        while (!self.eof()) {
+        while !self.eof() {
             let c = self.peek()
             var min: usize = 0
             var max: i64 = -1
-            if (c == '*') {
+            if c == '*' {
                 self.pos += 1
-            } else if (c == '+') {
+            } else if c == '+' {
                 min = 1
                 self.pos += 1
-            } else if (c == '?') {
+            } else if c == '?' {
                 max = 1
                 self.pos += 1
-            } else if (c == '{') {
+            } else if c == '{' {
                 let save = self.pos
                 self.pos += 1
                 let lo = self.parse_number()
-                if (lo == null) {
+                if lo == null {
                     // a literal brace
                     self.pos = save
                     break
                 }
                 min = lo.?
                 max = min as i64
-                if (self.peek() == ',') {
+                if self.peek() == ',' {
                     self.pos += 1
                     let hi = self.parse_number()
-                    max = if (hi == null) - 1 else hi.?as i64
+                    max = if hi == null { -1 } else { hi.?as i64 }
                 }
-                if (self.peek() != '}') return error.InvalidInput
+                if self.peek() != '}' { return error.InvalidInput }
                 self.pos += 1
-                if (max >= 0 and (max as usize) < min) return error.InvalidInput
+                if max >= 0 and (max as usize) < min { return error.InvalidInput }
             } else {
                 break
             }
             var greedy = true
-            if (!self.eof() and self.peek() == '?') {
+            if !self.eof() and self.peek() == '?' {
                 greedy = false
                 self.pos += 1
             }
@@ -152,44 +152,44 @@ impl Parser {
     fn parse_number(self: *mut Self) -> ?usize {
         var n: usize = 0
         var any = false
-        while (!self.eof() and self.peek() >= '0' and self.peek() <= '9') {
+        while !self.eof() and self.peek() >= '0' and self.peek() <= '9' {
             n = n * 10 + ((self.peek() - '0') as usize)
             self.pos += 1
             any = true
         }
-        return if (any) n else null
+        return if any { n } else { null }
     }
 
     fn parse_atom(self: *mut Self) -> !Node {
         let c = self.peek()
         self.pos += 1
-        if (c == '(') {
+        if c == '(' {
             var index: i64 = -1
-            if (self.peek() == '?') {
+            if self.peek() == '?' {
                 self.pos += 1
-                if (self.peek() != ':') return error.InvalidInput
+                if self.peek() != ':' { return error.InvalidInput }
                 self.pos += 1
             } else {
                 self.ngroups += 1
                 index = self.ngroups as i64
             }
             let inner = try self.parse_alt()
-            if (self.peek() != ')') return error.InvalidInput
+            if self.peek() != ')' { return error.InvalidInput }
             self.pos += 1
             return Node.Group(single(inner), index)
         }
-        if (c == ')' or c == '*' or c == '+' or c == '?') return error.InvalidInput
-        if (c == '[') return self.parse_class()
-        if (c == '.') return Node.Any
-        if (c == '^') return Node.Start
-        if (c == '$') return Node.End
-        if (c == '\\') {
-            if (self.eof()) return error.InvalidInput
+        if c == ')' or c == '*' or c == '+' or c == '?' { return error.InvalidInput }
+        if c == '[' { return self.parse_class() }
+        if c == '.' { return Node.Any }
+        if c == '^' { return Node.Start }
+        if c == '$' { return Node.End }
+        if c == '\\' {
+            if self.eof() { return error.InvalidInput }
             let e = self.peek()
             self.pos += 1
-            if (e == 'b') return Node.WordB
-            if (e == 'B') return Node.NotWordB
-            if (e == 'd' or e == 'w' or e == 's' or e == 'D' or e == 'W' or e == 'S') {
+            if e == 'b' { return Node.WordB }
+            if e == 'B' { return Node.NotWordB }
+            if e == 'd' or e == 'w' or e == 's' or e == 'D' or e == 'W' or e == 'S' {
                 var cls = Class{ .negate = e == 'D' or e == 'W' or e == 'S', .ranges = List(u8).new() }
                 add_escape_ranges(&mut cls.ranges, e)
                 self.classes.append(cls)
@@ -202,38 +202,38 @@ impl Parser {
 
     fn parse_class(self: *mut Self) -> !Node {
         var cls = Class{ .negate = false, .ranges = List(u8).new() }
-        if (self.peek() == '^') {
+        if self.peek() == '^' {
             cls.negate = true
             self.pos += 1
         }
         var first = true
-        while (true) {
-            if (self.eof()) return error.InvalidInput
+        while true {
+            if self.eof() { return error.InvalidInput }
             var c = self.peek()
-            if (c == ']' and !first) break
+            if c == ']' and !first { break }
             first = false
             self.pos += 1
-            if (c == '\\') {
-                if (self.eof()) return error.InvalidInput
+            if c == '\\' {
+                if self.eof() { return error.InvalidInput }
                 let e = self.peek()
                 self.pos += 1
-                if (e == 'd' or e == 'w' or e == 's') {
+                if e == 'd' or e == 'w' or e == 's' {
                     add_escape_ranges(&mut cls.ranges, e)
                     continue
                 }
                 c = escape_byte(e)
             }
             var hi = c
-            if (self.peek() == '-' and self.pos + 1 < self.src.len and self.src[self.pos + 1] != ']') {
+            if self.peek() == '-' and self.pos + 1 < self.src.len and self.src[self.pos + 1] != ']' {
                 self.pos += 1
                 hi = self.peek()
                 self.pos += 1
-                if (hi == '\\') {
-                    if (self.eof()) return error.InvalidInput
+                if hi == '\\' {
+                    if self.eof() { return error.InvalidInput }
                     hi = escape_byte(self.peek())
                     self.pos += 1
                 }
-                if (hi < c) return error.InvalidInput
+                if hi < c { return error.InvalidInput }
             }
             cls.ranges.append(c)
             cls.ranges.append(hi)
@@ -245,21 +245,21 @@ impl Parser {
 }
 
 fn escape_byte(e: u8) -> u8 {
-    if (e == 'n') return '\n'
-    if (e == 't') return '\t'
-    if (e == 'r') return '\r'
-    if (e == 'f') return 12
-    if (e == 'v') return 11
-    if (e == '0') return 0
+    if e == 'n' { return '\n' }
+    if e == 't' { return '\t' }
+    if e == 'r' { return '\r' }
+    if e == 'f' { return 12 }
+    if e == 'v' { return 11 }
+    if e == '0' { return 0 }
     return e
 }
 
 fn add_escape_ranges(r: *mut List(u8), e: u8) {
-    let k: u8 = if (e == 'D') 'd' else if (e == 'W') 'w' else if (e == 'S') 's' else e
-    if (k == 'd') {
+    let k: u8 = if e == 'D' { 'd' } else if e == 'W' { 'w' } else if e == 'S' { 's' } else { e }
+    if k == 'd' {
         r.append('0')
         r.append('9')
-    } else if (k == 'w') {
+    } else if k == 'w' {
         r.append('0')
         r.append('9')
         r.append('A')
@@ -294,13 +294,13 @@ fn compile_node(n: *Node, prog: *mut List(Inst)) {
         .WordB => { _ = emit(prog, OP_WORDB, 0, 0) },
         .NotWordB => { _ = emit(prog, OP_NOTWORDB, 0, 0) },
         .Cat(items) => {
-            for (items) |it| { compile_node(&it, prog) }
+            for it in items { compile_node(&it, prog) }
         },
         .Alt(branches) => {
             // split L1, L2; L1: a; jmp end; L2: split ... ; last branch; end:
             var jumps = List(usize).new()
-            for (branches) |br, i| {
-                if (i + 1 < branches.len) {
+            for br, i in branches {
+                if i + 1 < branches.len {
                     let split = emit(prog, OP_SPLIT, 0, 0)
                     prog[split].a = prog.len
                     compile_node(&br, prog)
@@ -310,18 +310,18 @@ fn compile_node(n: *Node, prog: *mut List(Inst)) {
                     compile_node(&br, prog)
                 }
             }
-            for (jumps) |j| { prog[j].a = prog.len }
+            for j in jumps { prog[j].a = prog.len }
         },
         .Repeat(inner, min, max, greedy) => {
             let node = &inner[0]
-            for (0..min) |_| { compile_node(node, prog) }
-            if (max < 0) {
+            for _ in 0..min { compile_node(node, prog) }
+            if max < 0 {
                 // L1: split L2, L3; L2: node; jmp L1; L3:
                 let split = emit(prog, OP_SPLIT, 0, 0)
                 let body = prog.len
                 compile_node(node, prog)
                 _ = emit(prog, OP_JMP, split, 0)
-                if (greedy) {
+                if greedy {
                     prog[split].a = body
                     prog[split].b = prog.len
                 } else {
@@ -330,24 +330,24 @@ fn compile_node(n: *Node, prog: *mut List(Inst)) {
                 }
             } else {
                 var splits = List(usize).new()
-                for (min..max as usize) |_| {
+                for _ in min..max as usize {
                     let split = emit(prog, OP_SPLIT, 0, 0)
                     splits.append(split)
                     let body = prog.len
                     compile_node(node, prog)
-                    if (greedy) prog[split].a = body
-                    else prog[split].b = body
+                    if greedy { prog[split].a = body }
+                    else { prog[split].b = body }
                 }
-                for (splits) |s| {
-                    if (greedy) prog[s].b = prog.len
-                    else prog[s].a = prog.len
+                for s in splits {
+                    if greedy { prog[s].b = prog.len }
+                    else { prog[s].a = prog.len }
                 }
             }
         },
         .Group(inner, index) => {
-            if (index >= 0) _ = emit(prog, OP_SAVE, (index as usize) * 2, 0)
+            if index >= 0 { _ = emit(prog, OP_SAVE, (index as usize) * 2, 0) }
             compile_node(&inner[0], prog)
-            if (index >= 0) _ = emit(prog, OP_SAVE, (index as usize) * 2 + 1, 0)
+            if index >= 0 { _ = emit(prog, OP_SAVE, (index as usize) * 2 + 1, 0) }
         },
     }
 }
@@ -365,7 +365,7 @@ pub fn compile(pattern: []u8) -> !Regex {
     var classes = List(Class).new()
     var p = Parser{ .src = pattern, .pos = 0, .classes = &mut classes, .ngroups = 0 }
     let tree = try p.parse_alt()
-    if (!p.eof()) return error.InvalidInput
+    if !p.eof() { return error.InvalidInput }
     var prog = List(Inst).new()
     _ = emit(&mut prog, OP_SAVE, 0, 0)
     compile_node(&tree, &mut prog)
@@ -402,10 +402,10 @@ impl Match {
 
     /// Group `i` (0 is the whole match); null when the group did not participate.
     pub fn group(self: *Self, i: usize) -> ?[]u8 {
-        if (i * 2 + 1 >= self.caps.len) return null
+        if i * 2 + 1 >= self.caps.len { return null }
         let s = self.caps[i * 2]
         let e = self.caps[i * 2 + 1]
-        if (s == NONE or e == NONE) return null
+        if s == NONE or e == NONE { return null }
         return self.source[s..e]
     }
 
@@ -436,8 +436,8 @@ fn is_word(c: u8) -> bool {
 fn class_matches(cls: *Class, c: u8) -> bool {
     var hit = false
     var i: usize = 0
-    while (i + 1 < cls.ranges.len) {
-        if (c >= cls.ranges[i] and c <= cls.ranges[i + 1]) {
+    while i + 1 < cls.ranges.len {
+        if c >= cls.ranges[i] and c <= cls.ranges[i + 1] {
             hit = true
             break
         }
@@ -448,27 +448,27 @@ fn class_matches(cls: *Class, c: u8) -> bool {
 
 impl Vm {
     fn add_thread(self: *mut Self, list: *mut List(Thread), pc: usize, own caps: List(usize), pos: usize) {
-        if (self.visited[pc] == self.gen) return
+        if self.visited[pc] == self.gen { return }
         self.visited[pc] = self.gen
         let inst = self.prog[pc]
-        if (inst.op == OP_JMP) {
+        if inst.op == OP_JMP {
             self.add_thread(list, inst.a, caps, pos)
-        } else if (inst.op == OP_SPLIT) {
+        } else if inst.op == OP_SPLIT {
             self.add_thread(list, inst.a, caps.clone(), pos)
             self.add_thread(list, inst.b, caps, pos)
-        } else if (inst.op == OP_SAVE) {
+        } else if inst.op == OP_SAVE {
             var c2 = caps
             c2[inst.a] = pos
             self.add_thread(list, pc + 1, c2, pos)
-        } else if (inst.op == OP_START) {
-            if (pos == 0) self.add_thread(list, pc + 1, caps, pos)
-        } else if (inst.op == OP_END) {
-            if (pos == self.text.len) self.add_thread(list, pc + 1, caps, pos)
-        } else if (inst.op == OP_WORDB or inst.op == OP_NOTWORDB) {
+        } else if inst.op == OP_START {
+            if pos == 0 { self.add_thread(list, pc + 1, caps, pos) }
+        } else if inst.op == OP_END {
+            if pos == self.text.len { self.add_thread(list, pc + 1, caps, pos) }
+        } else if inst.op == OP_WORDB or inst.op == OP_NOTWORDB {
             let before = pos > 0 and is_word(self.text[pos - 1])
             let after = pos < self.text.len and is_word(self.text[pos])
             let at_boundary = before != after
-            if (at_boundary == (inst.op == OP_WORDB)) self.add_thread(list, pc + 1, caps, pos)
+            if at_boundary == (inst.op == OP_WORDB) { self.add_thread(list, pc + 1, caps, pos) }
         } else {
             list.append(Thread{ .pc = pc, .caps = caps })
         }
@@ -480,34 +480,34 @@ impl Vm {
         var nlist = List(Thread).new()
         var matched: ?List(usize) = null
         var pos = from
-        while (true) {
-            if (matched == null and (!anchored or pos == 0)) {
+        while true {
+            if matched == null and (!anchored or pos == 0) {
                 var fresh = List(usize).with_capacity(ncaps)
-                for (0..ncaps) |_| { fresh.append(NONE) }
+                for _ in 0..ncaps { fresh.append(NONE) }
                 self.gen += 1
                 // keep the marks of threads already in clist for this step
                 self.mark_list(&clist)
                 self.add_thread(&mut clist, 0, fresh, pos)
             }
             // no live thread: done once a match exists (or the search is anchored)
-            if (clist.len == 0 and (matched != null or anchored)) break
+            if clist.len == 0 and (matched != null or anchored) { break }
             self.gen += 1
-            let c: u8 = if (pos < self.text.len) self.text[pos] else 0
+            let c: u8 = if pos < self.text.len { self.text[pos] } else { 0 }
             var i: usize = 0
-            while (i < clist.len) {
+            while i < clist.len {
                 let pc = clist[i].pc
                 let inst = self.prog[pc]
                 var advance = false
-                if (inst.op == OP_MATCH) {
+                if inst.op == OP_MATCH {
                     matched = clist[i].caps.clone()
                     // lower-priority threads are cut
                     break
-                } else if (pos < self.text.len) {
-                    if (inst.op == OP_CHAR) advance = c == (inst.a as u8)
-                    else if (inst.op == OP_ANY) advance = c != '\n'
-                    else if (inst.op == OP_CLASS) advance = class_matches(&self.classes[inst.a], c)
+                } else if pos < self.text.len {
+                    if inst.op == OP_CHAR { advance = c == (inst.a as u8) }
+                    else if inst.op == OP_ANY { advance = c != '\n' }
+                    else if inst.op == OP_CLASS { advance = class_matches(&self.classes[inst.a], c) }
                 }
-                if (advance) {
+                if advance {
                     let caps = clist[i].caps.clone()
                     self.add_thread(&mut nlist, pc + 1, caps, pos + 1)
                 }
@@ -517,27 +517,27 @@ impl Vm {
             let tmp = clist
             clist = nlist
             nlist = tmp
-            if (pos >= self.text.len) break
+            if pos >= self.text.len { break }
             pos += 1
         }
         return matched
     }
 
     fn mark_list(self: *mut Self, list: *List(Thread)) {
-        for (list) |t| { self.visited[t.pc] = self.gen }
+        for t in list { self.visited[t.pc] = self.gen }
     }
 }
 
 impl Regex {
     fn vm(self: *Self, text: []u8) -> Vm {
         var visited = List(usize).with_capacity(self.prog.len)
-        for (0..self.prog.len) |_| { visited.append(0) }
+        for _ in 0..self.prog.len { visited.append(0) }
         return Vm{ .prog = &self.prog, .classes = &self.classes, .text = text, .visited = visited, .gen = 0 }
     }
 
     /// The first match at or after byte `from`.
     pub fn find_at(self: *Self, text: []u8, from: usize) -> ?Match {
-        if (from > text.len) return null
+        if from > text.len { return null }
         var vm = self.vm(text)
         let ncaps = (self.ngroups + 1) * 2
         let caps = vm.search(from, self.anchored, ncaps) orelse return null
@@ -558,12 +558,12 @@ impl Regex {
     pub fn find_all(self: *Self, text: []u8) -> List(Match) {
         var out = List(Match).new()
         var pos: usize = 0
-        while (pos <= text.len) {
+        while pos <= text.len {
             let m = self.find_at(text, pos) orelse break
-            let next = if (m.end > m.start) m.end else m.end + 1
+            let next = if m.end > m.start { m.end } else { m.end + 1 }
             out.append(m)
             pos = next
-            if (self.anchored) break
+            if self.anchored { break }
         }
         return out
     }
@@ -573,7 +573,7 @@ impl Regex {
     pub fn replace_all(self: *Self, text: []u8, repl: []u8) -> String {
         var out = String.new()
         var last: usize = 0
-        for (self.find_all(text)) |m| {
+        for m in self.find_all(text) {
             out.append(text[last..m.start])
             expand(&mut out, &m, repl)
             last = m.end
@@ -586,8 +586,8 @@ impl Regex {
     pub fn split(self: *Self, text: []u8) -> List([]u8) {
         var out = List([]u8).new()
         var last: usize = 0
-        for (self.find_all(text)) |m| {
-            if (m.end == m.start) continue
+        for m in self.find_all(text) {
+            if m.end == m.start { continue }
             out.append(text[last..m.start])
             last = m.end
         }
@@ -598,17 +598,17 @@ impl Regex {
 
 fn expand(out: *mut String, m: *Match, repl: []u8) {
     var i: usize = 0
-    while (i < repl.len) {
+    while i < repl.len {
         let c = repl[i]
-        if (c == '$' and i + 1 < repl.len) {
+        if c == '$' and i + 1 < repl.len {
             let d = repl[i + 1]
-            if (d == '$') {
+            if d == '$' {
                 out.push_byte('$')
                 i += 2
                 continue
             }
-            if (d >= '0' and d <= '9') {
-                if (m.group((d - '0') as usize)) |g| { out.append(g) }
+            if d >= '0' and d <= '9' {
+                if let g = m.group((d - '0') as usize) { out.append(g) }
                 i += 2
                 continue
             }

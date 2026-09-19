@@ -16,8 +16,8 @@ fn advice(l: Light, m: Mode) -> []u8 {
 
 fn find(xs: []i32, want: i32) {
     var i: usize = 0
-    while (i < xs.len) {
-        if (xs[i] == want) {
+    while i < xs.len {
+        if xs[i] == want {
             println("found {} at {}", .{want, i})
             break
         }
@@ -28,10 +28,10 @@ fn find(xs: []i32, want: i32) {
 }
 
 fn main() {
-    for (0..10 step 3) |i| { print("{} ", .{i}) }
+    for i in 0..10 step 3 { print("{} ", .{i}) }
     println("")
     var down: i32 = 5
-    for (down..0 step -2) |i| { print("{} ", .{i}) }
+    for i in down..0 step -2 { print("{} ", .{i}) }
     println("")
     let xs = [4, 8, 15, 16, 23, 42]
     find(xs[..], 15)

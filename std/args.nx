@@ -20,8 +20,8 @@ impl Parser {
     /// Wrap `os.args()`; the program name in `argv[0]` is skipped.
     pub fn new(argv: [][]u8) -> Parser {
         var used = List(bool).with_capacity(argv.len)
-        for (argv) |_| { used.append(false) }
-        if (used.len > 0) used[0] = true
+        for _ in argv { used.append(false) }
+        if used.len > 0 { used[0] = true }
         return Parser{ .argv = argv, .used = used }
     }
 
@@ -33,9 +33,9 @@ impl Parser {
     /// True when the flag is present (any number of times).
     pub fn flag(self: *mut Self, long: []u8, short: []u8) -> bool {
         var found = false
-        for (self.argv) |a, i| {
-            if (a == "--") break
-            if (self.matches(i, long, short)) {
+        for a, i in self.argv {
+            if a == "--" { break }
+            if self.matches(i, long, short) {
                 self.used[i] = true
                 found = true
             }
@@ -46,16 +46,16 @@ impl Parser {
     /// How many times the flag appears (`-vvv` counts as three).
     pub fn count(self: *mut Self, long: []u8, short: []u8) -> usize {
         var n: usize = 0
-        for (self.argv) |a, i| {
-            if (a == "--") break
-            if (self.matches(i, long, short)) {
+        for a, i in self.argv {
+            if a == "--" { break }
+            if self.matches(i, long, short) {
                 self.used[i] = true
                 n += 1
-            } else if (short.len == 2 and a.len > 2 and a[0] == '-' and a[1] != '-') {
+            } else if short.len == 2 and a.len > 2 and a[0] == '-' and a[1] != '-' {
                 // stacked short flags: -vvv
                 var all = true
-                for (a[1..]) |c| { if (c != short[1]) all = false }
-                if (all) {
+                for c in a[1..] { if c != short[1] { all = false } }
+                if all {
                     self.used[i] = true
                     n += a.len - 1
                 }
@@ -67,15 +67,15 @@ impl Parser {
     /// The value of `--name value`, `--name=value`, or `-n value`; the last one wins.
     pub fn option(self: *mut Self, long: []u8, short: []u8) -> ?[]u8 {
         var value: ?[]u8 = null
-        for (self.argv) |a, i| {
-            if (a == "--") break
-            if (self.matches(i, long, short)) {
+        for a, i in self.argv {
+            if a == "--" { break }
+            if self.matches(i, long, short) {
                 self.used[i] = true
-                if (i + 1 < self.argv.len) {
+                if i + 1 < self.argv.len {
                     self.used[i + 1] = true
                     value = self.argv[i + 1]
                 }
-            } else if (a.len > long.len and a.starts_with(long) and a[long.len] == '=') {
+            } else if a.len > long.len and a.starts_with(long) and a[long.len] == '=' {
                 self.used[i] = true
                 value = a[long.len + 1..]
             }
@@ -86,15 +86,15 @@ impl Parser {
     /// Every value of a repeatable option, in order.
     pub fn options(self: *mut Self, long: []u8, short: []u8) -> List([]u8) {
         var out = List([]u8).new()
-        for (self.argv) |a, i| {
-            if (a == "--") break
-            if (self.matches(i, long, short)) {
+        for a, i in self.argv {
+            if a == "--" { break }
+            if self.matches(i, long, short) {
                 self.used[i] = true
-                if (i + 1 < self.argv.len) {
+                if i + 1 < self.argv.len {
                     self.used[i + 1] = true
                     out.append(self.argv[i + 1])
                 }
-            } else if (a.len > long.len and a.starts_with(long) and a[long.len] == '=') {
+            } else if a.len > long.len and a.starts_with(long) and a[long.len] == '=' {
                 self.used[i] = true
                 out.append(a[long.len + 1..])
             }
@@ -113,12 +113,12 @@ impl Parser {
     pub fn rest(self: *Self) -> List([]u8) {
         var out = List([]u8).new()
         var after_dashes = false
-        for (self.argv) |a, i| {
-            if (after_dashes) {
+        for a, i in self.argv {
+            if after_dashes {
                 out.append(a)
-            } else if (a == "--") {
+            } else if a == "--" {
                 after_dashes = true
-            } else if (!self.used[i]) {
+            } else if !self.used[i] {
                 out.append(a)
             }
         }
@@ -128,9 +128,9 @@ impl Parser {
     /// Unconsumed arguments that look like options: the ones the program did not ask for.
     pub fn unknown_options(self: *Self) -> List([]u8) {
         var out = List([]u8).new()
-        for (self.argv) |a, i| {
-            if (a == "--") break
-            if (!self.used[i] and a.len > 1 and a[0] == '-') out.append(a)
+        for a, i in self.argv {
+            if a == "--" { break }
+            if !self.used[i] and a.len > 1 and a[0] == '-' { out.append(a) }
         }
         return out
     }
@@ -145,10 +145,10 @@ pub fn usage(program: []u8, summary: []u8, rows: [][]u8) -> String {
     out.append(summary)
     out.append("\n")
     var i: usize = 0
-    while (i + 1 < rows.len) {
+    while i + 1 < rows.len {
         out.append("  ")
         out.append(rows[i])
-        for (rows[i].len..22) |_| { out.push_byte(' ') }
+        for _ in rows[i].len..22 { out.push_byte(' ') }
         out.append(rows[i + 1])
         out.append("\n")
         i += 2
@@ -159,10 +159,10 @@ pub fn usage(program: []u8, summary: []u8, rows: [][]u8) -> String {
 /// The environment as a map, from `os.environ()`.
 pub fn env_map() -> Map(String, String) {
     var m = Map(String, String).new()
-    for (os.environ()) |entry| {
+    for entry in os.environ() {
         var i: usize = 0
-        while (i < entry.len and entry[i] != '=') { i += 1 }
-        if (i == 0 or i >= entry.len) continue
+        while i < entry.len and entry[i] != '=' { i += 1 }
+        if i == 0 or i >= entry.len { continue }
         m.put(String.from(entry[0..i]), String.from(entry[i + 1..entry.len]))
     }
     return m

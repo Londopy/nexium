@@ -37,14 +37,14 @@ pub fn is_leap(year: i32) -> bool {
 }
 
 pub fn days_in_month(year: i32, month: u8) -> u8 {
-    if (month == 2) return if (is_leap(year)) 29 else 28
-    if (month == 4 or month == 6 or month == 9 or month == 11) return 30
+    if month == 2 { return if is_leap(year) { 29 } else { 28 } }
+    if month == 4 or month == 6 or month == 9 or month == 11 { return 30 }
     return 31
 }
 
 fn floor_div(a: i64, b: i64) -> i64 {
     var q = a / b
-    if ((a % b != 0) and ((a < 0) != (b < 0))) q -= 1
+    if (a % b != 0) and ((a < 0) != (b < 0)) { q -= 1 }
     return q
 }
 
@@ -55,10 +55,10 @@ fn floor_mod(a: i64, b: i64) -> i64 {
 /// Days since 1970-01-01 of a civil date (Howard Hinnant's algorithm).
 fn days_from_civil(y0: i32, m: u8, d: u8) -> i64 {
     var y = y0 as i64
-    if (m <= 2) y -= 1
+    if m <= 2 { y -= 1 }
     let era = floor_div(y, 400)
     let yoe = y - era * 400
-    let mp = if (m > 2) (m as i64) - 3 else (m as i64) + 9
+    let mp = if m > 2 { (m as i64) - 3 } else { (m as i64) + 9 }
     let doy = (153 * mp + 2) / 5 + (d as i64) - 1
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
     return era * 146097 + doe - 719468
@@ -74,8 +74,8 @@ fn civil_from_days(z0: i64) -> (i32, u8, u8) {
     let doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
     let mp = (5 * doy + 2) / 153
     let d = doy - (153 * mp + 2) / 5 + 1
-    let m = if (mp < 10) mp + 3 else mp - 9
-    let year = if (m <= 2) y + 1 else y
+    let m = if mp < 10 { mp + 3 } else { mp - 9 }
+    let year = if m <= 2 { y + 1 } else { y }
     return (year as i32, m as u8, d as u8)
 }
 
@@ -119,20 +119,20 @@ pub fn now_local() -> DateTime {
 
 /// A date at midnight UTC; `null` when the fields do not name a real day.
 pub fn date(year: i32, month: u8, day: u8) -> ?DateTime {
-    if (month < 1 or month > 12 or day < 1 or day > days_in_month(year, month)) return null
+    if month < 1 or month > 12 or day < 1 or day > days_in_month(year, month) { return null }
     return DateTime{ .year = year, .month = month, .day = day, .hour = 0, .minute = 0, .second = 0, .millis = 0, .offset_min = 0 }
 }
 
 fn pad(out: *mut String, v: i64, width: usize) {
-    var n = if (v < 0) - v else v
+    var n = if v < 0 { -v } else { v }
     var digits: usize = 1
     var t = n
-    while (t >= 10) {
+    while t >= 10 {
         t /= 10
         digits += 1
     }
-    if (v < 0) out.push_byte('-')
-    while (digits < width) {
+    if v < 0 { out.push_byte('-') }
+    while digits < width {
         out.push_byte('0')
         digits += 1
     }
@@ -165,7 +165,7 @@ impl DateTime {
     pub fn day_of_year(self: *Self) -> u16 {
         var n: u16 = self.day as u16
         var m: u8 = 1
-        while (m < self.month) {
+        while m < self.month {
             n += days_in_month(self.year, m) as u16
             m += 1
         }
@@ -197,13 +197,13 @@ impl DateTime {
     /// The offset as `Z`, or `+HH:MM` / `-HH:MM`.
     pub fn offset_text(self: *Self) -> String {
         var out = String.new()
-        if (self.offset_min == 0) {
+        if self.offset_min == 0 {
             out.push_byte('Z')
             return out
         }
         let o = self.offset_min as i64
-        out.push_byte(if (o < 0) '-' else '+')
-        let a = if (o < 0) - o else o
+        out.push_byte(if o < 0 { '-' } else { '+' })
+        let a = if o < 0 { -o } else { o }
         pad(&mut out, a / 60, 2)
         out.push_byte(':')
         pad(&mut out, a % 60, 2)
@@ -215,7 +215,7 @@ impl DateTime {
         var out = self.date_text()
         out.push_byte('T')
         out.append(self.time_text())
-        if (self.millis != 0) {
+        if self.millis != 0 {
             out.push_byte('.')
             pad(&mut out, self.millis as i64, 3)
         }
@@ -229,27 +229,27 @@ impl DateTime {
     pub fn format(self: *Self, spec: []u8) -> String {
         var out = String.new()
         var i: usize = 0
-        while (i < spec.len) {
+        while i < spec.len {
             let c = spec[i]
-            if (c != '%' or i + 1 >= spec.len) {
+            if c != '%' or i + 1 >= spec.len {
                 out.push_byte(c)
                 i += 1
                 continue
             }
             let f = spec[i + 1]
             i += 2
-            if (f == 'Y') pad(&mut out, self.year as i64, 4)
-            else if (f == 'm') pad(&mut out, self.month as i64, 2)
-            else if (f == 'd') pad(&mut out, self.day as i64, 2)
-            else if (f == 'H') pad(&mut out, self.hour as i64, 2)
-            else if (f == 'M') pad(&mut out, self.minute as i64, 2)
-            else if (f == 'S') pad(&mut out, self.second as i64, 2)
-            else if (f == '3') pad(&mut out, self.millis as i64, 3)
-            else if (f == 'j') pad(&mut out, self.day_of_year() as i64, 3)
-            else if (f == 'z') out.append(self.offset_text())
-            else if (f == 'a') out.append(DAYS[self.weekday() as usize])
-            else if (f == 'b') out.append(MONTHS[(self.month - 1) as usize])
-            else if (f == '%') out.push_byte('%')
+            if f == 'Y' { pad(&mut out, self.year as i64, 4) }
+            else if f == 'm' { pad(&mut out, self.month as i64, 2) }
+            else if f == 'd' { pad(&mut out, self.day as i64, 2) }
+            else if f == 'H' { pad(&mut out, self.hour as i64, 2) }
+            else if f == 'M' { pad(&mut out, self.minute as i64, 2) }
+            else if f == 'S' { pad(&mut out, self.second as i64, 2) }
+            else if f == '3' { pad(&mut out, self.millis as i64, 3) }
+            else if f == 'j' { pad(&mut out, self.day_of_year() as i64, 3) }
+            else if f == 'z' { out.append(self.offset_text()) }
+            else if f == 'a' { out.append(DAYS[self.weekday() as usize]) }
+            else if f == 'b' { out.append(MONTHS[(self.month - 1) as usize]) }
+            else if f == '%' { out.push_byte('%') }
             else {
                 out.push_byte('%')
                 out.push_byte(f)
@@ -260,11 +260,11 @@ impl DateTime {
 }
 
 fn digits(s: []u8, start: usize, n: usize) -> ?i64 {
-    if (start + n > s.len) return null
+    if start + n > s.len { return null }
     var v: i64 = 0
-    for (start..start + n) |i| {
+    for i in start..start + n {
         let c = s[i]
-        if (c < '0' or c > '9') return null
+        if c < '0' or c > '9' { return null }
         v = v * 10 + ((c - '0') as i64)
     }
     return v
@@ -275,33 +275,33 @@ fn digits(s: []u8, start: usize, n: usize) -> ?i64 {
 /// text is not a date.
 pub fn parse_iso(s: []u8) -> ?DateTime {
     let year = digits(s, 0, 4) orelse return null
-    if (s.len < 10 or s[4] != '-' or s[7] != '-') return null
+    if s.len < 10 or s[4] != '-' or s[7] != '-' { return null }
     let month = digits(s, 5, 2) orelse return null
     let day = digits(s, 8, 2) orelse return null
     var dt = date(year as i32, month as u8, day as u8) orelse return null
     var i: usize = 10
-    if (i < s.len and (s[i] == 'T' or s[i] == ' ')) {
+    if i < s.len and (s[i] == 'T' or s[i] == ' ') {
         let hour = digits(s, i + 1, 2) orelse return null
-        if (i + 3 >= s.len or s[i + 3] != ':') return null
+        if i + 3 >= s.len or s[i + 3] != ':' { return null }
         let minute = digits(s, i + 4, 2) orelse return null
-        if (hour > 23 or minute > 59) return null
+        if hour > 23 or minute > 59 { return null }
         dt.hour = hour as u8
         dt.minute = minute as u8
         i += 6
-        if (i < s.len and s[i] == ':') {
+        if i < s.len and s[i] == ':' {
             let second = digits(s, i + 1, 2) orelse return null
-            if (second > 60) return null
+            if second > 60 { return null }
             dt.second = second as u8
             i += 3
-            if (i < s.len and s[i] == '.') {
+            if i < s.len and s[i] == '.' {
                 var n: usize = 0
                 var ms: i64 = 0
-                while (i + 1 + n < s.len and s[i + 1 + n] >= '0' and s[i + 1 + n] <= '9') {
-                    if (n < 3) ms = ms * 10 + ((s[i + 1 + n] - '0') as i64)
+                while i + 1 + n < s.len and s[i + 1 + n] >= '0' and s[i + 1 + n] <= '9' {
+                    if n < 3 { ms = ms * 10 + ((s[i + 1 + n] - '0') as i64) }
                     n += 1
                 }
-                if (n == 0) return null
-                while (n < 3) {
+                if n == 0 { return null }
+                while n < 3 {
                     ms *= 10
                     n += 1
                 }
@@ -310,21 +310,21 @@ pub fn parse_iso(s: []u8) -> ?DateTime {
             }
         }
     }
-    if (i < s.len) {
+    if i < s.len {
         let c = s[i]
-        if (c == 'Z') {
+        if c == 'Z' {
             i += 1
-        } else if (c == '+' or c == '-') {
+        } else if c == '+' or c == '-' {
             let oh = digits(s, i + 1, 2) orelse return null
-            if (i + 3 >= s.len or s[i + 3] != ':') return null
+            if i + 3 >= s.len or s[i + 3] != ':' { return null }
             let om = digits(s, i + 4, 2) orelse return null
             var off = (oh * 60 + om) as i32
-            if (c == '-') off = -off
+            if c == '-' { off = -off }
             dt.offset_min = off
             i += 6
         }
     }
-    if (i != s.len) return null
+    if i != s.len { return null }
     return dt
 }
 
@@ -359,28 +359,28 @@ impl Duration {
     pub fn text(self: *Self) -> String {
         var out = String.new()
         var ms = self.ms
-        if (ms < 0) {
+        if ms < 0 {
             out.push_byte('-')
             ms = -ms
         }
-        if (ms < 1000) {
+        if ms < 1000 {
             out.append(format("{}ms", .{ms}))
             return out
         }
-        if (ms < 60000) {
+        if ms < 60000 {
             let tenths = (ms + 50) / 100
             out.append(format("{}.{}s", .{tenths / 10, tenths % 10}))
             return out
         }
         let secs = ms / 1000
-        if (secs < 3600) {
+        if secs < 3600 {
             out.append(format("{}m ", .{secs / 60}))
             pad(&mut out, secs % 60, 2)
             out.push_byte('s')
             return out
         }
         let mins = secs / 60
-        if (mins < 1440) {
+        if mins < 1440 {
             out.append(format("{}h ", .{mins / 60}))
             pad(&mut out, mins % 60, 2)
             out.push_byte('m')

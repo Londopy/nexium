@@ -5,14 +5,14 @@ fn summarize(words: [][]u8) -> usize {
     var total: usize = 0
     using arena {
         var pieces = List(String).new()
-        for (words) |w| {
+        for w in words {
             var s = String.from(w)
             s.append("!")
             pieces.append(s)
         }
-        for (pieces) |p| { total += p.len }
+        for p in pieces { total += p.len }
         var m = Map([]u8, usize).new()
-        for (words) |w, i| { m.put(w, i) }
+        for w, i in words { m.put(w, i) }
         total += m.len
     }
     return total
@@ -27,9 +27,9 @@ fn main() {
     var seen = Map([]u8, i32).new()
     using arena {
         var scratch = List(i32).new()
-        for (0..1000) |i| { scratch.append(i as i32) }
+        for i in 0..1000 { scratch.append(i as i32) }
         kept.append(scratch[999])
-        for (words) |w| {
+        for w in words {
             var tmp = String.from(w)
             tmp.append(";")
             log.append(tmp.as_slice())

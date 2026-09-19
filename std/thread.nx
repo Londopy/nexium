@@ -54,7 +54,7 @@ pub fn spawn(comptime T: type, comptime R: type, f: fn(*mut T) -> R, own arg: T)
 impl(T, R) Thread(T, R) {
     /// Wait for the thread and take its result. Joining twice panics.
     pub fn join(self: *mut Self) -> R {
-        if (self.joined) panic("thread joined twice")
+        if self.joined { panic("thread joined twice") }
         thread.join(self.handle)
         self.joined = true
         return self.cell[0].result.pop().?
@@ -62,7 +62,7 @@ impl(T, R) Thread(T, R) {
 
     /// The argument after the thread finished (for results written in place).
     pub fn arg(self: *Self) -> *T {
-        if (!self.joined) panic("the argument is shared with the running thread until join")
+        if !self.joined { panic("the argument is shared with the running thread until join") }
         return &self.cell[0].arg
     }
 }
@@ -95,14 +95,14 @@ pub fn run(comptime T: type, f: fn(*mut T) -> void, own arg: T) -> Worker(T) {
 impl(T) Worker(T) {
     /// Wait for the thread. Joining twice panics.
     pub fn join(self: *mut Self) {
-        if (self.joined) panic("thread joined twice")
+        if self.joined { panic("thread joined twice") }
         thread.join(self.handle)
         self.joined = true
     }
 
     /// The argument after the thread finished (for results written in place).
     pub fn arg(self: *Self) -> *T {
-        if (!self.joined) panic("the argument is shared with the running thread until join")
+        if !self.joined { panic("the argument is shared with the running thread until join") }
         return &self.cell[0].arg
     }
 }
@@ -138,9 +138,9 @@ impl(T) Channel(T) {
     /// The next value, waiting for one; null when closed and empty.
     pub fn recv(self: *mut Self) -> ?T {
         sync.lock(self.lock)
-        while (self.items.len == 0 and !self.closed) { sync.wait(self.cond, self.lock) }
+        while self.items.len == 0 and !self.closed { sync.wait(self.cond, self.lock) }
         var out: ?T = null
-        if (self.items.len > 0) out = self.items.remove(0)
+        if self.items.len > 0 { out = self.items.remove(0) }
         sync.unlock(self.lock)
         return out
     }
@@ -149,7 +149,7 @@ impl(T) Channel(T) {
     pub fn try_recv(self: *mut Self) -> ?T {
         sync.lock(self.lock)
         var out: ?T = null
-        if (self.items.len > 0) out = self.items.remove(0)
+        if self.items.len > 0 { out = self.items.remove(0) }
         sync.unlock(self.lock)
         return out
     }
@@ -215,7 +215,7 @@ struct Range {
 fn sum_range(r: *mut Range) -> i64 {
     var s: i64 = 0
     var i = r.from
-    while (i < r.to) {
+    while i < r.to {
         s += i
         i += 1
     }
@@ -229,7 +229,7 @@ struct Producer {
 
 fn produce(p: *mut Producer) {
     var i: i64 = 0
-    while (i < p.n) {
+    while i < p.n {
         p.out.send(i)
         i += 1
     }
@@ -243,7 +243,7 @@ struct Bumper {
 
 fn bump(b: *mut Bumper) {
     var i: i64 = 0
-    while (i < b.times) {
+    while i < b.times {
         let n = b.counter.lock()
         n.*+= 1
         b.counter.unlock()
@@ -264,7 +264,7 @@ test "channel" {
     var p = run(Producer, produce, Producer{ .out = &mut ch, .n = 100 })
     var sum: i64 = 0
     var got: i64 = 0
-    while (true) {
+    while true {
         let v = ch.recv() orelse break
         sum += v
         got += 1
@@ -279,10 +279,10 @@ test "channel" {
 test "mutex" {
     var counter = mutex(i64, 0)
     var ts = List(Worker(Bumper)).new()
-    for (0..4) |_| {
+    for _ in 0..4 {
         ts.append(run(Bumper, bump, Bumper{ .counter = &mut counter, .times = 2500 }))
     }
-    for (0..ts.len) |i| { ts[i].join() }
+    for i in 0..ts.len { ts[i].join() }
     let n = counter.lock()
     expect_eq(n.*, 10000)
     counter.unlock()

@@ -7,21 +7,21 @@ struct Box {
 }
 
 fn make(n: i32) -> ?Box {
-    if (n < 0) return null
+    if n < 0 { return null }
     var l = List(i32).new()
-    for (0..n as usize) |i| { l.append(i as i32) }
+    for i in 0..n as usize { l.append(i as i32) }
     return Box{ .items = l }
 }
 
 fn load(ok: bool) -> !Box {
-    if (!ok) return error.NotFound
+    if !ok { return error.NotFound }
     return Box{ .items = List(i32).new() }
 }
 
 fn main() -> !void {
     var b = Box{ .items = List(i32).new() }
     let maybe = make(3)
-    if (maybe == null) return
+    if maybe == null { return }
     b = maybe.?
     println("unwrapped {}", .{b.items.len})
 
