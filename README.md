@@ -322,6 +322,7 @@ on the same inputs:
 | parser | [`self/parser.nx`](self/parser.nx) | `nx sexp` | ✅ identical on all 46 sources |
 | checker | [`self/check.nx`](self/check.nx) | `nx tir` | ✅ the full typed IR is identical on every source (54: examples, std, GUI, the self-hosting files), and every compile-fail case is rejected with the same messages |
 | C emitter | [`self/cgen.nx`](self/cgen.nx) | `nx emit-c` | ✅ byte-identical C on every source, its own included |
+| driver | [`self/nx.nx`](self/nx.nx) | `nx build/run/test` | ✅ builds itself; the result builds and runs programs |
 
 `cargo test` builds each stage with the Rust compiler and diffs its output
 against the oracle over every example, std module, GUI and self-hosting

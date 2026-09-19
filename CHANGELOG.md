@@ -45,6 +45,11 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
   compiler) emits the C of itself, `zig cc` builds `nx2` from it with no
   Rust involved, and `nx2` emits byte-identical C for itself and other
   programs. `cargo test` performs the three stages.
+- `self/nx.nx`, the `nx` driver in Nexium: build, run, test, check, emit-c
+  and tir over the self-hosted pipeline, invoking the C compiler as the
+  Rust driver does; the standard library is embedded in it. It builds
+  itself, and the result builds and runs programs (`cargo test` checks
+  that). Nothing past the first compiler needs `cargo`.
 
 ### Fixed
 

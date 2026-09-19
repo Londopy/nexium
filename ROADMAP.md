@@ -30,8 +30,9 @@ What exists and is verified on Windows, Linux, and macOS:
 - Distribution: a Windows installer with bundled Zig, a macOS/Linux install
   script with checksum verification, a VS Code extension, a Sublime syntax,
   a GitHub Action, and a release template for Nexium programs.
-- Self-hosting: the lexer, parser, checker and C emitter, verified
-  byte-for-byte against the Rust ones on every source.
+- Self-hosting: the lexer, parser, checker, C emitter and driver in
+  Nexium, verified byte-for-byte against the Rust ones on every source;
+  the driver builds itself.
 - nexium-gui: an immediate-mode GUI in Nexium on a 200-line C window layer.
 
 Numbers: 29.4k lines of Rust (the compiler), 18.7k of Nexium, 190 std
@@ -145,15 +146,19 @@ checked against the Rust compiler on identical inputs.
   same messages.
 - C emitter (`self/cgen.nx`): byte-identical C for every example. Done:
   identical on every source in the tree, its own included.
-- Driver, tools, and the std embedding in Nexium.
+- Driver, tools, and the std embedding in Nexium. Done: `self/nx.nx`
+  (build, run, test, check, emit-c, tir) with the standard library
+  embedded; the other tools (fmt, doc, lsp, ship, packages) stay in Rust
+  for now.
 - Bootstrap: Rust `nx` builds `nx1`; `nx1` builds `nx2`; `nx1` and `nx2`
   produce identical output. Done for the emitter (`cargo test` runs the
   three stages); the driver's tools come next, then the Rust compiler
   moves to `bootstrap/`, kept for building the first Nexium compiler on a
   fresh machine.
 
-- Status (0.6.1+): syntax settled; lexer, parser, checker and C emitter
-  done and bootstrapped to a fixed point; the driver's tools are next.
+- Status (0.6.1+): syntax settled; lexer, parser, checker, C emitter and
+  driver done and bootstrapped: `nx` written in Nexium builds itself. Left:
+  the remaining tools, and moving the Rust compiler to `bootstrap/`.
 
 Exit: `cargo` is no longer needed to build `nx` from a release tarball.
 
