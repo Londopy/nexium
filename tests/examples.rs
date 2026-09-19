@@ -129,6 +129,33 @@ fn self_hosted_lexer_matches_oracle() {
     }
 }
 
+/// The parser written in Nexium prints the same tree as `nx sexp` for every
+/// example, std module, GUI and self-hosting source (phase 4 of the roadmap).
+#[test]
+fn self_hosted_parser_matches_oracle() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let exe = root.join("nx-out").join(if cfg!(windows) { "self_parser.exe" } else { "self_parser" });
+    let build = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).args(["build", "self/parser.nx", "-o"]).arg(&exe).current_dir(root).output().expect("run nx");
+    assert!(
+        build.status.success(),
+        "building self/parser.nx failed:
+{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
+    for dir in ["examples", "std", "gui", "self", "tests"] {
+        files.extend(std::fs::read_dir(root.join(dir)).unwrap().filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().map(|x| x == "nx").unwrap_or(false)));
+    }
+    files.sort();
+    assert!(files.len() > 40, "expected the whole tree, found {} files", files.len());
+    for f in files {
+        let oracle = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).arg("sexp").arg(&f).output().unwrap();
+        let mine = std::process::Command::new(&exe).arg(&f).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&oracle.stdout), String::from_utf8_lossy(&mine.stdout), "parse tree differs for {}", f.display());
+        assert_eq!(oracle.status.code(), mine.status.code(), "exit code differs for {}", f.display());
+    }
+}
+
 /// The GUI library's headless tests (rasterizer and widget interaction) must pass;
 /// this also compiles gui/platform.c on every platform (the non-Windows stub included).
 #[test]
