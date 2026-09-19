@@ -187,7 +187,7 @@ fn self_hosted_checker_matches_signatures() {
             // a C header somewhere in the import graph
             continue;
         }
-        let mine = std::process::Command::new(&exe).arg(&f).current_dir(root).output().unwrap();
+        let mine = std::process::Command::new(&exe).arg(&f).arg("--sigs").current_dir(root).output().unwrap();
         assert!(
             mine.status.success(),
             "self/check.nx rejected {}:
@@ -199,6 +199,80 @@ fn self_hosted_checker_matches_signatures() {
         compared += 1;
     }
     assert!(compared > 35, "expected the whole tree, compared {} files", compared);
+}
+
+/// The checker written in Nexium, stage 2: the full typed IR matches `nx tir`
+/// on every source it already covers (generics, closures, dyn, binary
+/// patterns, comptime calls and C imports are the remaining stages). The
+/// list only grows.
+#[test]
+fn self_hosted_checker_matches_bodies() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let exe = root.join("nx-out").join(if cfg!(windows) { "self_check2.exe" } else { "self_check2" });
+    let build = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).args(["build", "self/check.nx", "-o"]).arg(&exe).current_dir(root).output().expect("run nx");
+    assert!(
+        build.status.success(),
+        "building self/check.nx failed:
+{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let files = [
+        "examples/arena.nx",
+        "examples/control.nx",
+        "examples/ctest.nx",
+        "examples/errors_more.nx",
+        "examples/guard_scope.nx",
+        "examples/hello.nx",
+        "examples/json.nx",
+        "examples/loops_more.nx",
+        "examples/moves_again.nx",
+        "examples/optional_move.nx",
+        "examples/orelse_return.nx",
+        "examples/own.nx",
+        "examples/ownership.nx",
+        "examples/parallel.nx",
+        "examples/process.nx",
+        "examples/ropesim.nx",
+        "examples/service.nx",
+        "examples/tool.nx",
+        "examples/tree.nx",
+        "self/check.nx",
+        "self/lexer.nx",
+        "self/parser.nx",
+        "std/args.nx",
+        "std/bytes.nx",
+        "std/fs.nx",
+        "std/http.nx",
+        "std/json.nx",
+        "std/net.nx",
+        "std/num.nx",
+        "std/process.nx",
+        "std/regex.nx",
+        "std/stream.nx",
+        "std/strings.nx",
+        "std/text.nx",
+        "std/time.nx",
+    ];
+    for f in files {
+        let path = root.join(f);
+        let oracle = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).arg("tir").arg(&path).current_dir(root).output().unwrap();
+        assert!(
+            oracle.status.success(),
+            "nx tir rejected {}:
+{}",
+            f,
+            String::from_utf8_lossy(&oracle.stderr)
+        );
+        let mine = std::process::Command::new(&exe).arg(&path).current_dir(root).output().unwrap();
+        assert!(
+            mine.status.success(),
+            "self/check.nx rejected {}:
+{}",
+            f,
+            String::from_utf8_lossy(&mine.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&oracle.stdout), String::from_utf8_lossy(&mine.stdout), "typed IR differs for {}", f);
+    }
 }
 
 /// The GUI library's headless tests (rasterizer and widget interaction) must pass;

@@ -2879,6 +2879,18 @@ impl Checker {
         if k == parser.NodeKind.IfCapture { return self.check_if_capture(e, expected) }
         if k == parser.NodeKind.MethodCall { return self.check_method_call(e, expected) }
         if k == parser.NodeKind.Match { return self.check_match(e, expected) }
+        if k == parser.NodeKind.Comptime {
+            // evaluated at compile time; the stage-2 evaluator folds scalars,
+            // calls are a later stage (the expression is kept as checked)
+            let inner_node = n.x
+            let saved = self.ctx().is_comptime
+            self.ctx().is_comptime = true
+            var inner = self.check_expr(inner_node, expected)
+            self.ctx().is_comptime = saved
+            inner = self.finalize_expr(inner)
+            if let v = self.eval_const(inner) { return self.value_node(&v, self.tir.nodes[inner].ty, start, end) }
+            return inner
+        }
         if k == parser.NodeKind.Builtin { return self.check_at_builtin(e, expected) }
         if k == parser.NodeKind.Null {
             var t = NONE
