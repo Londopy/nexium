@@ -110,8 +110,8 @@ Goal: sharing code beyond a sibling file.
   since Python and Node together cover most "one native piece" needs.
 - `installer` artifact: `nx ship` producing an installer for a Nexium
   program, reusing this repository's Inno and script templates.
-- Editor support: tree-sitter grammar for Neovim, Helix, and Zed; the
-  language server gains completion, go-to-definition, and rename.
+- Editor support: tree-sitter grammar for Neovim, Helix, and Zed (done);
+  the language server gains completion, go-to-definition, and rename.
 - Linguist PR, when the usage bar is met.
 
 Exit: a second person's package is used by a third person's program.

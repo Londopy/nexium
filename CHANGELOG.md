@@ -18,6 +18,9 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
   `nx fetch` clones every git dependency (transitively) into
   `nexium_modules/` and writes `nexium.lock` with the resolved commits.
   See `docs/packages.md`.
+- A tree-sitter grammar (`editors/tree-sitter-nexium`) with highlight
+  queries for Neovim, Helix and Zed; it parses every example, std module
+  and self-hosted source without an error node, and CI keeps it that way.
 
 ## [0.4.0] - 2026-09-19
 

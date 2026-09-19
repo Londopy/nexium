@@ -1,0 +1,30 @@
+{
+  "$schema": "https://tree-sitter.github.io/tree-sitter/assets/schemas/config.schema.json",
+  "grammars": [
+    {
+      "name": "nexium",
+      "camelcase": "Nexium",
+      "title": "Nexium",
+      "scope": "source.nexium",
+      "path": ".",
+      "file-types": ["nx"],
+      "highlights": "queries/highlights.scm",
+      "injection-regex": "^nexium$"
+    }
+  ],
+  "metadata": {
+    "version": "0.4.0",
+    "license": "MIT",
+    "description": "Nexium grammar for tree-sitter",
+    "authors": [{ "name": "Londopy" }],
+    "links": { "repository": "https://github.com/Londopy/nexium" }
+  },
+  "bindings": {
+    "c": false,
+    "go": false,
+    "node": false,
+    "python": false,
+    "rust": false,
+    "swift": false
+  }
+}

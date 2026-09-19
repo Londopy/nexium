@@ -5,6 +5,9 @@
 
 # generated and vendored bits should not count toward language statistics
 gui/font.bin binary linguist-generated=true
+editors/tree-sitter-nexium/src/** linguist-generated=true
+*.scm text eol=lf
+*.js text eol=lf
 assets/*.svg linguist-vendored=true
 editors/** linguist-vendored=false
 
