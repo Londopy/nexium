@@ -5,7 +5,7 @@
 // of `nx tokens`, so the two can be diffed. Errors go to stderr as
 // `error at OFFSET: message` and the exit code is 1.
 
-enum Kind {
+pub enum Kind {
     Ident, Int, Float, Str, Bytes, Char, Doc, Newline, Eof,
     LParen, RParen, LBrace, RBrace, LBracket, RBracket,
     Comma, Colon, Semi, Dot, DotStar, DotQuestion, DotDot, DotLBrace,
@@ -19,7 +19,7 @@ enum Kind {
     LtLt, GtGt,
 }
 
-fn kind_name(k: Kind) -> []u8 {
+pub fn kind_name(k: Kind) -> []u8 {
     match k {
         .Ident => "Ident", .Int => "Int", .Float => "Float", .Str => "Str", .Bytes => "Bytes",
         .Char => "Char", .Doc => "Doc", .Newline => "Newline", .Eof => "Eof",
@@ -43,14 +43,14 @@ fn kind_name(k: Kind) -> []u8 {
     }
 }
 
-struct Token {
+pub struct Token {
     kind: Kind
     start: usize
     end: usize
     text: String
 }
 
-struct Lexer {
+pub struct Lexer {
     src: []u8
     pos: usize
     depth: List(u8)
@@ -219,7 +219,7 @@ impl Lexer {
         return top == '(' or top == '['
     }
 
-    fn lex(self: *mut Self) {
+    pub fn lex(self: *mut Self) {
         while (true) {
             let c = self.peek()
             if (c == 0) break
@@ -509,6 +509,19 @@ impl Lexer {
         self.push_plain(kind, start)
     }
 }
+
+/// A lexer over `src`, ready to `lex()`.
+pub fn new_lexer(src: []u8) -> Lexer {
+    return Lexer{ .src = src, .pos = 0, .depth = List(u8).new(), .toks = List(Token).new(), .errors = List(String).new() }
+}
+
+/// Is `s` a reserved word?
+pub fn is_keyword(s: []u8) -> bool {
+    for (KEYWORDS) |k| { if (k == s) return true }
+    return false
+}
+
+const KEYWORDS = ["fn", "let", "var", "const", "struct", "enum", "record", "ref", "class", "trait", "impl", "pub", "import", "return", "if", "else", "for", "while", "match", "break", "continue", "try", "catch", "defer", "errdefer", "comptime", "unsafe", "error", "true", "false", "null", "undefined", "and", "or", "type", "distinct", "where", "into", "artifact", "test", "export", "unreachable", "as", "orelse", "in", "dyn", "weak", "parallel", "extern", "using"]
 
 fn main() -> !void {
     let args = os.args()
