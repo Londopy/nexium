@@ -158,7 +158,7 @@ pub enum InferKind {
     Float,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct TyTable {
     kinds: Vec<TyKind>,
     map: HashMap<TyKind, TyId>,

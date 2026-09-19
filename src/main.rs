@@ -24,6 +24,7 @@ mod ship_node;
 mod size;
 mod stdlib;
 mod tir;
+mod tirdump;
 mod types;
 
 use cgen::{BuildMode, Entry, Gen, GenOptions};
@@ -50,6 +51,7 @@ usage:
   nx size <file.nx>                attribute binary bytes to declarations
   nx fmt <file.nx>... [--check]    canonical formatting in place (--check: report only;
                                    --migrate-only: upgrade 0.5 syntax, keep the layout)
+  nx tir <file.nx> [--sigs]        the checked program as S-expressions (--sigs: signatures only)
   nx doc <file.nx> [-o dir]        static HTML documentation
   nx lsp                           language server over stdio (diagnostics, hover)
   nx leaks <file.nx> [-- args]     run in debug mode with allocation tracking, report leaks at exit
@@ -2221,6 +2223,21 @@ fn real_main() -> i32 {
                 return 1;
             }
             print!("{}", sexp::module(&m, &text));
+            0
+        }
+        "tir" => {
+            // the checked program as S-expressions: the oracle for the self-hosted checker
+            let o = parse_opts(rest);
+            let sigs = rest.iter().any(|a| a == "--sigs");
+            let loaded = match load(&o.file) {
+                Ok(l) => l,
+                Err(()) => return 1,
+            };
+            let prog = match check(&loaded, &o) {
+                Ok(p) => p,
+                Err(()) => return 1,
+            };
+            print!("{}", tirdump::program(&prog, sigs));
             0
         }
         "parse" => {
