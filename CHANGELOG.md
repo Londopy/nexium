@@ -30,6 +30,9 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
   `is_match`, `replace_all` with `$1` references, `split`, and `Match.group`.
 - A local that was moved out can be assigned again; the assignment
   re-initializes it instead of being reported as a use after move.
+- `examples/tool.nx`: a log scanner (walk a tree, parse timestamps, filter
+  by a date window and a regex, tally by level) in 142 lines, the phase 1
+  exit example of the roadmap; runs on `examples/data/logs` by default.
 
 ### Fixed
 

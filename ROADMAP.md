@@ -62,6 +62,8 @@ misses nothing for the tool's own needs.
 
 Exit: `examples/tool.nx`, a real utility (a log grep with regex, dates, and
 file walking) under 300 lines, runs on all three platforms from the release.
+Status: `std.fs`, `std.time`, `std.regex` and `examples/tool.nx` (142 lines)
+are done; the rest of the list is open.
 
 ## Phase 2: a language that talks to the world (0.4)
 

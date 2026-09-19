@@ -1,0 +1,10 @@
+examples/data/logs/app.log:3: 2026-09-18T22:11:40 WARN  slow request GET /api/items took 1830ms
+examples/data/logs/app.log:4: 2026-09-18T23:02:11 ERROR db: connection reset by peer (attempt 1)
+examples/data/logs/app.log:6: 2026-09-19T00:15:09 ERROR handler /api/upload: payload too large (4.2MB)
+examples/data/logs/app.log:8: 2026-09-19T03:41:27 WARN  disk usage at 91%
+examples/data/logs/sub/worker.log:2: 2026-09-18T22:30:41 ERROR worker 3: job 8812 failed: timeout after 40s
+examples/data/logs/sub/worker.log:4: 2026-09-19T02:05:55 WARN  worker 1 queue depth 250
+6 matching line(s) in 2 file(s), 14 line(s) read
+  WARN   3
+  ERROR  3
+  from 2026-09-18T22:11:40Z to 2026-09-19T03:41:27Z (5h 29m)
