@@ -461,6 +461,18 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     subset written in the compiler, because the crate takes no
     dependencies.
 
+84. **Editor navigation is syntactic.** Go to definition, completion and
+    rename resolve names from the token stream and the parsed modules with
+    the language's own scoping rules (locals of the enclosing function
+    first, then the file, then imports), not from the typed program. The
+    typed program only exists when the file checks, and an editor needs
+    answers most while the file does not. The cost is precision at the
+    edges: `value.method` finds a method of that name in any `impl`, and
+    completion after a dot offers every field and method declared anywhere.
+    Hover keeps using the typed program, because a signature with inferred
+    effects is worth waiting for. When the file checks, the typed answers
+    can replace the syntactic ones without changing the protocol.
+
 ## Compiler selection
 
 60. **Native macOS builds use the system compiler.** zig 0.14.1 cannot read

@@ -9,6 +9,7 @@ mod diag;
 mod doc;
 mod effects;
 mod fmt;
+mod ide;
 mod lexer;
 mod lsp;
 mod manifest;
@@ -1082,43 +1083,7 @@ fn analyze_text(path: &str, text: &str) -> (Vec<lsp::Diagnostic>, Option<(Loaded
     all.extend(p.diags.clone());
     let mut result = None;
     if all.is_empty() {
-        let dir = dir_of(Path::new(path));
-        // imported modules are loaded from disk
-        let mut loaded = Loaded {
-            sm,
-            modules: vec![m],
-            names: vec![Path::new(path).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "main".into())],
-            dirs: vec![dir.clone()],
-            pkgs: Vec::new(),
-        };
-        for item in loaded.modules[0].items.clone() {
-            if let ast::Item::Import(im) = item {
-                if im.path[0] == "std" {
-                    if im.path.len() == 2 {
-                        if let Some(src) = stdlib::source(&im.path[1]) {
-                            let f = loaded.sm.add(format!("<std>/{}.nx", im.path[1]), src.to_string());
-                            let (tk, _) = lexer::Lexer::new(src, f).lex();
-                            let mut pp = parser::Parser::new(tk, f);
-                            loaded.modules.push(pp.parse_module());
-                            loaded.names.push(im.path.join("."));
-                            loaded.dirs.push("std".into());
-                        }
-                    }
-                    continue;
-                }
-                let rel: PathBuf = im.path.iter().collect();
-                let candidate = Path::new(&dir).join(&rel).with_extension("nx");
-                if let Ok(t) = std::fs::read_to_string(&candidate) {
-                    let f = loaded.sm.add(candidate.to_string_lossy().to_string(), t.clone());
-                    let (tk, _) = lexer::Lexer::new(&t, f).lex();
-                    let mut pp = parser::Parser::new(tk, f);
-                    let mm = pp.parse_module();
-                    loaded.modules.push(mm);
-                    loaded.names.push(im.path.join("."));
-                    loaded.dirs.push(dir_of(&candidate));
-                }
-            }
-        }
+        let loaded = load_for_editor(path, sm, m);
         let mut c = check::Checker::new(&loaded.sm);
         c.source_dirs = loaded.dirs.clone();
         let cc = cc_command(&opts);
@@ -1140,6 +1105,80 @@ fn analyze_text(path: &str, text: &str) -> (Vec<lsp::Diagnostic>, Option<(Loaded
         return (to_lsp_diags(&all, sm_ref, path, text), result);
     }
     (to_lsp_diags(&all, &sm, path, text), None)
+}
+
+/// The root module of an editor buffer plus the modules it imports, read
+/// from disk (siblings, packages) or the embedded std, without checking.
+fn load_for_editor(path: &str, sm: SourceMap, m: ast::Module) -> Loaded {
+    let dir = dir_of(Path::new(path));
+    let pkgs: Vec<(String, PathBuf)> = manifest::find(Path::new(&dir)).and_then(|mf| manifest::packages(&mf).ok()).unwrap_or_default();
+    let mut loaded = Loaded {
+        sm,
+        modules: vec![m],
+        names: vec![Path::new(path).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "main".into())],
+        dirs: vec![dir.clone()],
+        pkgs: vec![String::new()],
+    };
+    for item in loaded.modules[0].items.clone() {
+        if let ast::Item::Import(im) = item {
+            if im.path[0] == "std" {
+                if im.path.len() == 2 {
+                    if let Some(src) = stdlib::source(&im.path[1]) {
+                        let f = loaded.sm.add(format!("<std>/{}.nx", im.path[1]), src.to_string());
+                        let (tk, _) = lexer::Lexer::new(src, f).lex();
+                        let mut pp = parser::Parser::new(tk, f);
+                        loaded.modules.push(pp.parse_module());
+                        loaded.names.push(im.path.join("."));
+                        loaded.dirs.push("std".into());
+                        loaded.pkgs.push(String::new());
+                    }
+                }
+                continue;
+            }
+            let (candidate, pkg) = match pkgs.iter().find(|(n, _)| *n == im.path[0]) {
+                Some((pn, src)) => {
+                    let rel: PathBuf = if im.path.len() == 1 { PathBuf::from("lib") } else { im.path[1..].iter().collect() };
+                    (src.join(&rel).with_extension("nx"), pn.clone())
+                }
+                None => {
+                    let rel: PathBuf = im.path.iter().collect();
+                    (Path::new(&dir).join(&rel).with_extension("nx"), String::new())
+                }
+            };
+            if let Ok(t) = std::fs::read_to_string(&candidate) {
+                let f = loaded.sm.add(candidate.to_string_lossy().to_string(), t.clone());
+                let (tk, _) = lexer::Lexer::new(&t, f).lex();
+                let mut pp = parser::Parser::new(tk, f);
+                loaded.modules.push(pp.parse_module());
+                loaded.names.push(im.path.join("."));
+                loaded.dirs.push(dir_of(&candidate));
+                loaded.pkgs.push(pkg);
+            }
+        }
+    }
+    loaded
+}
+
+/// Parse an editor buffer and its imports for the IDE features, whatever
+/// its errors; the root module is index 0.
+fn editor_modules(path: &str, text: &str) -> Loaded {
+    let mut sm = SourceMap::default();
+    let file = sm.add(path.to_string(), text.to_string());
+    let (toks, _) = lexer::Lexer::new(text, file).lex();
+    let mut p = parser::Parser::new(toks, file);
+    let m = p.parse_module();
+    load_for_editor(path, sm, m)
+}
+
+fn byte_offset(text: &str, line: usize, col: usize) -> usize {
+    let mut off = 0;
+    for (i, l) in text.split('\n').enumerate() {
+        if i == line {
+            return off + col.min(l.len());
+        }
+        off += l.len() + 1;
+    }
+    text.len()
 }
 
 /// Hover for a file that does not check: the signature as written, without effects.
@@ -1330,17 +1369,37 @@ fn to_lsp_diags(diags: &[diag::Diag], sm: &SourceMap, path: &str, text: &str) ->
 fn cmd_lsp() -> i32 {
     let backend = lsp::Backend {
         diagnostics: Box::new(|path, text| analyze_text(path, text).0),
+        definition: Box::new(|path, text, line, col| {
+            let loaded = editor_modules(path, text);
+            let off = byte_offset(text, line, col);
+            let d = ide::definition(&loaded.modules, &loaded.names, text, off)?;
+            let file = loaded.sm.file(d.file)?;
+            let (sl, sc) = ide::line_col(&loaded.sm, d.file, d.span.start);
+            let (el, ec) = ide::line_col(&loaded.sm, d.file, d.span.end);
+            // the std sources have no file on disk; point at the root instead of a phantom path
+            let name = if file.name.starts_with("<std>") { None } else { Some(file.name.clone()) };
+            Some(lsp::Location { path: name?, line: sl, col: sc, end_line: el, end_col: ec })
+        }),
+        completion: Box::new(|path, text, line, col| {
+            let loaded = editor_modules(path, text);
+            let off = byte_offset(text, line, col);
+            ide::completions(&loaded.modules, &loaded.names, text, off).into_iter().map(|c| lsp::CompletionItem { label: c.label, kind: c.kind, detail: c.detail }).collect()
+        }),
+        rename: Box::new(|path, text, line, col| {
+            let loaded = editor_modules(path, text);
+            let off = byte_offset(text, line, col);
+            ide::rename_spans(&loaded.modules, text, off)
+                .into_iter()
+                .map(|sp| {
+                    let (sl, sc) = ide::line_col(&loaded.sm, 0, sp.start);
+                    let (el, ec) = ide::line_col(&loaded.sm, 0, sp.end);
+                    lsp::Location { path: path.to_string(), line: sl, col: sc, end_line: el, end_col: ec }
+                })
+                .collect()
+        }),
         hover: Box::new(|path, text, line, col| {
             let (_, result) = analyze_text(path, text);
-            // byte offset of the position
-            let mut off = 0;
-            for (i, l) in text.split('\n').enumerate() {
-                if i == line {
-                    off += col.min(l.len());
-                    break;
-                }
-                off += l.len() + 1;
-            }
+            let off = byte_offset(text, line, col);
             let (loaded, prog) = match result {
                 Some(r) => r,
                 None => return hover_from_syntax(text, off),

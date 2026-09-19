@@ -21,6 +21,12 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
 - A tree-sitter grammar (`editors/tree-sitter-nexium`) with highlight
   queries for Neovim, Helix and Zed; it parses every example, std module
   and self-hosted source without an error node, and CI keeps it that way.
+- The language server gained go to definition (functions, types, constants,
+  locals, imported and package modules), completion (module members after
+  `alias.`, fields, methods, variants and errors after `.`, names in
+  scope), and rename (a local within its function, an item across the
+  file). They work from the parsed source, so they answer in files that do
+  not type-check yet.
 
 ## [0.4.0] - 2026-09-19
 

@@ -230,7 +230,7 @@ the compiler:
 | `nx refcounts` | every `Retain`/`Release`/`Weak`/`Upgrade` node, with its function |
 | `nx audit` | `unsafe` blocks and globals |
 | `nx doc` | doc comments, signatures, and effects, rendered to HTML |
-| `nx lsp` | diagnostics from a full check on every edit, hover from `TFunc` |
+| `nx lsp` | diagnostics from a full check on every edit, hover from `TFunc`; definition, completion and rename from the token stream and parsed modules (`src/ide.rs`), so they answer while the code has errors |
 | `nx size` | section sizes of the object file mapped back to declarations |
 | `nx fmt` | the token stream only; it never joins or splits lines |
 

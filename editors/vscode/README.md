@@ -1,6 +1,7 @@
 # Nexium for Visual Studio Code
 
-Syntax highlighting for `.nx` files, plus diagnostics and hover through the
+Syntax highlighting for `.nx` files, plus diagnostics, hover, go to
+definition, completion and rename through the
 compiler's own language server (`nx lsp`).
 
 ## Install
@@ -11,7 +12,7 @@ From a release file: download `nexium-<version>.vsix` from the
 [Releases](https://github.com/Londopy/nexium/releases) page, then in VS Code
 run **Extensions: Install from VSIX...**.
 
-For diagnostics and hover, `nx` must be on your `PATH`, or set `nexium.nxPath`
+For the language features, `nx` must be on your `PATH`, or set `nexium.nxPath`
 in settings.
 
 ## What you get
@@ -19,6 +20,10 @@ in settings.
 - Highlighting for keywords, types, effects (`!allocates`), intrinsics
   (`@cImport`), binary patterns (`<<len:16/little, rest:bytes>>`), format
   placeholders, labels, and error names.
+- Go to definition (F12) for functions, types, constants, locals and
+  imported module members; completion after `.` for module members, fields,
+  methods and error names, and for names in scope; rename (F2) of a local
+  within its function or of an item across the file.
 - Diagnostics on every edit and hover on functions showing the signature and
   the inferred effect set.
 - **Nexium: Run Current File** in the command palette runs `nx run` in a

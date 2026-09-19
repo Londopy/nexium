@@ -2,10 +2,10 @@
 
 | editor | what | where |
 | --- | --- | --- |
-| Visual Studio Code | extension: highlighting, diagnostics and hover via `nx lsp`, run command | [`vscode/`](vscode) (Marketplace: "Nexium", or the `.vsix` on Releases) |
+| Visual Studio Code | extension: highlighting, diagnostics, hover, go to definition, completion and rename via `nx lsp`, run command | [`vscode/`](vscode) (Marketplace: "Nexium", or the `.vsix` on Releases) |
 | Sublime Text 3 and 4 | syntax definition | [`sublime/Nexium.sublime-syntax`](sublime/Nexium.sublime-syntax), copy into `Packages/User` |
 | Neovim, Helix, Zed | tree-sitter grammar and highlight queries | [`tree-sitter-nexium/`](tree-sitter-nexium), install steps in its README |
-| Any editor with LSP | diagnostics and hover | run `nx lsp` over stdio |
+| Any editor with LSP | diagnostics, hover, go to definition, completion, rename | run `nx lsp` over stdio |
 | GitHub | highlighting on github.com | `.gitattributes` maps `.nx` to Zig's grammar until Linguist knows Nexium |
 
 The TextMate and Sublime grammars are the same rules in two formats, and the
