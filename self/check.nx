@@ -740,6 +740,15 @@ pub struct Checker {
     record_new_mode: bool
     vtables: List(VTable)
     obligations: List(Obligation)
+    // calls made inside `for parallel` bodies: (instance, loop start, module)
+    parallel_calls: List(Obligation)
+    // mutable-global reads and writes: (global, at, module) and the function
+    global_uses: List(Obligation)
+    global_use_fns: List(String)
+    // artifact kinds declared by the program; some make it an embeddable library
+    artifact_kinds: List(String)
+    // a shared wildcard pattern for the exhaustiveness matrix
+    wild_pat_node: usize
     // aggregate `(value ...)` payloads, by index
     values: List(CV)
     // the compile-time interpreter's state (see `it_enter`)
@@ -767,6 +776,11 @@ fn item_key(module: usize, name: []u8) -> String {
 impl Checker {
     fn fail(self: *mut Self, module: usize, at: usize, msg: []u8) {
         self.errors.append(format("{}:{}: {}", .{self.mods[module].name, at, msg}))
+    }
+
+    /// A note attached to the error just reported.
+    fn note(self: *mut Self, module: usize, at: usize, msg: []u8) {
+        self.errors.append(format("  note: {}:{}: {}", .{self.mods[module].name, at, msg}))
     }
 
     fn node(self: *Self, module: usize, id: usize) -> *parser.Node {
@@ -802,6 +816,14 @@ impl Checker {
             let items = self.mods[m].parsed.items.clone()
             for it in items { self.collect_item(m, it) }
         }
+    }
+
+    /// Whether any parameter of the function is `own`.
+    fn fn_takes_own(self: *Self, fid: usize) -> bool {
+        let nm = self.fns[fid].node_module
+        let n = self.node(nm, self.fns[fid].node)
+        for p in n.kids { if self.node(nm, p).flag2 { return true } }
+        return false
     }
 
     fn fn_is_generic(self: *Self, module: usize, id: usize) -> bool {
@@ -900,6 +922,8 @@ impl Checker {
         } else if k == parser.NodeKind.Test {
             let n = self.node(m, it)
             self.fns.append(FnDef{ .node = it, .node_module = m, .module = m, .impl_id = NONE, .is_generic = false, .is_test = true, .test_name = n.name.clone(), .test_comptime = n.flag })
+        } else if k == parser.NodeKind.Artifact {
+            self.artifact_kinds.append(self.node(m, it).name.clone())
         }
     }
 
@@ -1770,6 +1794,7 @@ impl Checker {
         var pos: u64 = 0
         var start: usize = 0
         var end: usize = 0
+        var any_owned = false
         if is_test {
             test_comptime = self.fns[fid].test_comptime
             name = format("{}:{}", .{if test_comptime { "ctest" } else { "test" }, self.fns[fid].test_name})
@@ -1798,12 +1823,21 @@ impl Checker {
                 let pstart = pn.start
                 let pend = pn.end
                 let t = self.resolve_type(m, pty_node, self_ty)
+                // in a generic function the instantiation decides whether `own` matters
+                if owned and !self.needs_drop(t) and gen_names.len == 0 {
+                    self.fail(m, pstart, format("`own` applies to owning types (`List`, `String`, `Map`, or structs holding them); `{}` is copied anyway", .{self.ty_name(t)})[..])
+                }
+                if owned { any_owned = true }
                 locals.append(Local{ .name = pname, .ty = t, .mutable = owned, .start = pstart, .end = pend, .is_param = true, .owned = owned, .loop_item = false })
                 params.append(locals.len - 1)
             }
             ret = if ret_node == NONE { self.tys.void() } else { self.resolve_type(m, ret_node, self_ty) }
             for w in words {
                 if w[0] == '!' { neg = neg | effect_bit(w[1..]) } else { pos = pos | effect_bit(w[..]) }
+            }
+            if export_name != "-" {
+                if targs.len > 0 { self.fail(m, start, "generic functions cannot be exported") }
+                if any_owned { self.fail(m, start, "exported functions cannot take `own` parameters; the host language cannot hand over ownership") }
             }
         }
         self.env_restore(&saved_env)
@@ -1903,7 +1937,83 @@ impl Checker {
             }
         }
         self.propagate_effects()
+        self.check_effect_bounds()
+        self.check_embedded_constraints()
         self.check_obligations()
+    }
+
+    /// Declared negative bounds hold; calls in `for parallel` bodies do not
+    /// mutate shared state.
+    fn check_effect_bounds(self: *mut Self) {
+        let n = self.insts.len
+        for i in 0..n {
+            if self.insts[i].body == NONE { continue }
+            let violated = self.insts[i].effects & self.insts[i].declared_neg
+            if violated == 0 { continue }
+            let fname = self.insts[i].name.clone()
+            let fstart = self.insts[i].start
+            let fm = self.insts[i].module
+            for nm, ei in EFFECT_NAMES {
+                let bit = (1 as u64) << (ei as u64)
+                if (violated & bit) == 0 { continue }
+                self.fail(fm, fstart, format("function `{}` is declared `!{}` but has the `{}` effect", .{fname, nm, nm})[..])
+                let intro = self.find_introducer(i, bit)
+                if intro == NONE { continue }
+                let why = self.introducer_why(intro, bit)
+                if intro == i {
+                    self.note(fm, self.insts[intro].start, format("the effect is introduced here: {}", .{why})[..])
+                } else {
+                    self.note(fm, fstart, format("this call acquires `{}`", .{nm})[..])
+                    self.note(self.insts[intro].module, self.insts[intro].start, format("introduced by `{}` here: {}", .{self.insts[intro].name, why})[..])
+                }
+            }
+        }
+        let calls = self.parallel_calls.clone()
+        for c in calls {
+            if (self.insts[c.inst].effects & EFF_SHARED_MUTABLE) != 0 {
+                self.fail(c.module, c.at, format("`{}` is called inside a `for parallel` body but has the `shared_mutable` effect", .{self.insts[c.inst].name})[..])
+            }
+        }
+    }
+
+    /// The function that introduces effect `bit` on some call path from `inst`.
+    fn find_introducer(self: *mut Self, inst: usize, bit: u64) -> usize {
+        var visited = List(usize).new()
+        var stack = List(usize).new()
+        stack.append(inst)
+        while stack.len > 0 {
+            let i = stack.pop() orelse break
+            if list_has_usize(&visited, i) { continue }
+            visited.append(i)
+            if (self.insts[i].own_effects & bit) != 0 or self.insts[i].is_extern { return i }
+            for c in self.insts[i].callees.clone() {
+                if (self.insts[c].effects & bit) != 0 { stack.append(c) }
+            }
+        }
+        return NONE
+    }
+
+    fn introducer_why(self: *mut Self, inst: usize, bit: u64) -> String {
+        for w in self.insts[inst].witnesses { if (w.effects & bit) != 0 { return w.why.clone() } }
+        if self.insts[inst].is_extern { return String.from("foreign functions may do anything") }
+        return String.new()
+    }
+
+    /// In an embeddable library, any reachable mutable global is an error.
+    fn check_embedded_constraints(self: *mut Self) {
+        var embedded = false
+        for k in self.artifact_kinds {
+            if k == "cabi" or k == "python" or k == "rustlib" or k == "node" or k == "shared" { embedded = true }
+        }
+        if !embedded { return }
+        var reported = List(usize).new()
+        let uses = self.global_uses.clone()
+        for u, i in uses {
+            if list_has_usize(&reported, u.inst) { continue }
+            reported.append(u.inst)
+            let gname = self.globals[u.inst].name.clone()
+            self.fail(u.module, u.at, format("mutable global `{}` is reachable from `{}`, but this project declares an embeddable artifact (S2: no process-global state)", .{gname, self.global_use_fns[i]})[..])
+        }
     }
 
     /// Closures, function references and trait objects coerced to bounded
@@ -2409,9 +2519,88 @@ impl Checker {
             return st
         }
         te = self.coerce_or_error(te, ret, "return value")
+        self.check_escaping_view(te, start)
         te = self.take_ownership(te)
         self.tir.nodes[st].kids.append(te)
         return st
+    }
+
+    /// Region rule R1, conservatively: a returned slice or pointer must not be
+    /// a view into a local variable (array, List, String, or a struct holding
+    /// one) that is released when the function returns.
+    fn check_escaping_view(self: *mut Self, te: usize, at: usize) {
+        var t = self.tys.shallow(self.tys.resolve(self.tir.nodes[te].ty, false))
+        var k = self.tys.kind(t)
+        if k == TK.Opt or k == TK.ErrUnion {
+            t = self.tys.shallow(self.tys.list[t].args[0])
+            k = self.tys.kind(t)
+        }
+        if ! (k == TK.Slice or k == TK.Ptr) { return }
+        var what: []u8 = ""
+        let local = self.view_root(te, &mut what)
+        if local == NONE { return }
+        if self.ctx().locals[local].is_param { return }
+        let lt = self.tys.shallow(self.tys.resolve(self.ctx().locals[local].ty, false))
+        let lk = self.tys.kind(lt)
+        let owns = lk == TK.Array or lk == TK.List or lk == TK.Str or lk == TK.Map or lk == TK.Struct or lk == TK.Tuple or lk == TK.Enum
+            or lk == TK.Int or lk == TK.Float or lk == TK.Bool or lk == TK.Char
+        if !owns { return }
+        let name = self.ctx().locals[local].name.clone()
+        self.fail_here(at, format("this returns a {} into `{}`, a local that is released when the function returns (region rule R1)", .{what, name})[..])
+    }
+
+    /// The local a view expression borrows from (NONE when none), and what kind of view it is.
+    fn view_root(self: *mut Self, e: usize, what: *mut[]u8) -> usize {
+        let k = self.tir.nodes[e].k
+        let kids = self.tir.nodes[e].kids.clone()
+        if k == TKind.ArrayToSlice or k == TKind.ListToSlice or k == TKind.StrToSlice {
+            what.*= "slice"
+            return self.place_root(kids[0])
+        }
+        if k == TKind.SliceOp {
+            what.*= "slice"
+            let bk = self.tir.nodes[kids[0]].k
+            if bk == TKind.ArrayToSlice or bk == TKind.ListToSlice or bk == TKind.StrToSlice { return self.place_root(self.tir.nodes[kids[0]].kids[0]) }
+            return self.place_root(kids[0])
+        }
+        if k == TKind.AddrOf {
+            what.*= "pointer"
+            return self.place_root(kids[0])
+        }
+        if k == TKind.OptWrap or k == TKind.ErrWrap { return self.view_root(kids[0], what) }
+        if k == TKind.BlockExpr {
+            let tail = self.tir.nodes[kids[0]].a
+            if tail == NONE { return NONE }
+            return self.view_root(tail, what)
+        }
+        if k == TKind.If {
+            let then_tail = self.tir.nodes[kids[1]].a
+            if then_tail != NONE {
+                let r = self.view_root(then_tail, what)
+                if r != NONE { return r }
+            }
+            if kids.len > 2 {
+                let else_tail = self.tir.nodes[kids[2]].a
+                if else_tail != NONE { return self.view_root(else_tail, what) }
+            }
+            return NONE
+        }
+        return NONE
+    }
+
+    /// The root local of a place expression (`x`, `x.f`, `x[i]`, `x.0`), not through pointers.
+    fn place_root(self: *mut Self, e: usize) -> usize {
+        let k = self.tir.nodes[e].k
+        if k == TKind.Local { return self.tir.nodes[e].a }
+        if k == TKind.Field or k == TKind.TupleField or k == TKind.Index {
+            // indexing a slice reaches memory the slice borrows, not the local itself
+            let base = self.tir.nodes[e].kids[0]
+            let bt = self.tys.shallow(self.tir.nodes[base].ty)
+            let bk = self.tys.kind(bt)
+            if bk == TK.Slice or bk == TK.Ptr { return NONE }
+            return self.place_root(base)
+        }
+        return NONE
     }
 
     /// The index into the label stack of the named label (or the innermost loop), or NONE.
@@ -2761,6 +2950,7 @@ impl Checker {
         }
         if self.is_borrowed_view(e) {
             self.fail_here(self.tir.nodes[e].start, format("cannot move a `{}` out of a field or element", .{self.ty_name(t)})[..])
+            self.note(self.cur_module(), self.tir.nodes[e].start, "use `.clone()` for an owned copy")
         }
         return e
     }
@@ -2768,7 +2958,13 @@ impl Checker {
     /// A field, element, or dereference: a view into something else's storage.
     fn is_borrowed_view(self: *mut Self, e: usize) -> bool {
         let k = self.tir.nodes[e].k
-        return k == TKind.Field or k == TKind.RefField or k == TKind.TupleField or k == TKind.Index or k == TKind.Deref
+        if k == TKind.Field or k == TKind.RefField or k == TKind.TupleField or k == TKind.Index or k == TKind.Deref { return true }
+        if k == TKind.Builtin { return self.tir.nodes[e].name == "MapGet" or self.tir.nodes[e].name == "ListLast" }
+        // `return xs[i]` into a `?T` or `!T` wraps the element first; the view is still moved
+        if k == TKind.OrElse or k == TKind.Unwrap or k == TKind.Try or k == TKind.OptWrap or k == TKind.ErrWrap {
+            return self.is_borrowed_view(self.tir.nodes[e].kids[0])
+        }
+        return false
     }
 
     // ----- unification and coercion -------------------------------------------------
@@ -3401,6 +3597,10 @@ impl Checker {
                     self.fail_here(start, format("`{}` is generic; call it with arguments so its type parameters can be inferred", .{name})[..])
                     return self.error_expr(start, end)
                 }
+                if self.fn_takes_own(fid) {
+                    self.fail_here(start, format("`{}` takes `own` parameters and cannot be used as a function value; call it directly", .{name})[..])
+                    return self.error_expr(start, end)
+                }
                 let inst = self.instantiate(fid, List(usize).new())
                 var ps = List(usize).new()
                 for p in self.insts[inst].params { ps.append(self.insts[inst].locals[p].ty) }
@@ -3428,6 +3628,8 @@ impl Checker {
                     self.fail_here(start, format("access to mutable global `{}` requires an `unsafe` block", .{name})[..])
                 }
                 self.add_effect(EFF_SHARED_MUTABLE, start, "access to a mutable global")
+                self.global_uses.append(Obligation{ .inst = item.id, .neg = 0, .at = start, .module = m })
+                self.global_use_fns.append(self.ctx().fn_name.clone())
                 let te = self.mk(TKind.Global, ty, start, end)
                 self.tir.nodes[te].a = item.id
                 return te
@@ -5997,10 +6199,25 @@ impl Checker {
         let lid = self.new_label(label[..], label.len > 0, true, NONE)
         self.ctx().loop_depth += 1
         let v = self.tys.void()
+        // a parallel body must not touch shared mutable state
+        let w_before = self.ctx().witnesses.len
+        let c_before = self.ctx().callees.len
         if is_parallel { self.ctx().in_parallel += 1 }
         let tb = self.check_block(body_node, v, NONE, NONE)
         if is_parallel {
             self.ctx().in_parallel -= 1
+            let nw = self.ctx().witnesses.len
+            for wi in w_before..nw {
+                if (self.ctx().witnesses[wi].effects & EFF_SHARED_MUTABLE) != 0 {
+                    let wat = self.ctx().witnesses[wi].at
+                    self.fail_here(wat, "a `for parallel` body must not have the `shared_mutable` effect")
+                }
+            }
+            let nc = self.ctx().callees.len
+            for ci in c_before..nc {
+                let callee = self.ctx().callees[ci]
+                self.parallel_calls.append(Obligation{ .inst = callee, .neg = 0, .at = start, .module = self.cur_module() })
+            }
             self.add_effect(EFF_BLOCKS, start, "`for parallel` joins its worker threads")
         }
         self.ctx().loop_depth -= 1
@@ -6365,6 +6582,10 @@ impl Checker {
             if fid != NONE {
                 if self.fns[fid].is_generic {
                     self.fail_here(start, format("`{}` is generic; call it directly", .{name})[..])
+                    return self.error_expr(start, end)
+                }
+                if self.fn_takes_own(fid) {
+                    self.fail_here(start, format("`{}` takes `own` parameters and cannot be used as a function value; call it directly", .{name})[..])
                     return self.error_expr(start, end)
                 }
                 let inst = self.instantiate(fid, List(usize).new())
@@ -9687,6 +9908,11 @@ impl Checker {
     }
 }
 
+fn list_has_usize(xs: *List(usize), x: usize) -> bool {
+    for y in xs { if y == x { return true } }
+    return false
+}
+
 fn cmp_bytes(a: []u8, b: []u8) -> i8 {
     var i: usize = 0
     while i < a.len and i < b.len {
@@ -9771,9 +9997,247 @@ impl Checker {
             let last = self.tir.nodes[a].kids.len - 1
             self.tir.nodes[a].kids[last] = bodies[i - 1]
         }
+        self.check_exhaustive(st, r, start)
         self.ctx().pat_by_ref = saved_by_ref
         self.tir.nodes[r].ty = ty
         return r
+    }
+
+    // ----- exhaustiveness ----------------------------------------------------------
+
+    fn pat_irrefutable(self: *mut Self, p: usize) -> bool {
+        let k = self.tir.nodes[p].k
+        if k == TKind.PWild or k == TKind.PBind { return true }
+        if k == TKind.PTuple {
+            for q in self.tir.nodes[p].kids.clone() { if !self.pat_irrefutable(q) { return false } }
+            return true
+        }
+        if k == TKind.POr {
+            for q in self.tir.nodes[p].kids.clone() { if self.pat_irrefutable(q) { return true } }
+            return false
+        }
+        return false
+    }
+
+    fn pat_is_wild(self: *mut Self, p: usize) -> bool {
+        let k = self.tir.nodes[p].k
+        return k == TKind.PWild or k == TKind.PBind
+    }
+
+    /// A wildcard pattern node to stand in for unmatched sub-columns.
+    fn wild_pat(self: *mut Self) -> usize {
+        if self.wild_pat_node == NONE { self.wild_pat_node = self.pat_node(TKind.PWild, 0, 0) }
+        return self.wild_pat_node
+    }
+
+    fn check_exhaustive(self: *mut Self, st: usize, r: usize, at: usize) {
+        let arm_nodes = self.tir.nodes[r].kids.clone()
+        var unguarded = List(usize).new()
+        for a, i in arm_nodes {
+            if i == 0 { continue }
+            if self.tir.nodes[a].flag { continue }
+            unguarded.append(self.tir.nodes[a].kids[0])
+        }
+        for p in unguarded { if self.pat_irrefutable(p) { return } }
+        let t = self.tys.shallow(st)
+        let k = self.tys.kind(t)
+        var flat = List(usize).new()
+        for p in unguarded {
+            if self.tir.nodes[p].k == TKind.POr {
+                for q in self.tir.nodes[p].kids.clone() { flat.append(q) }
+            } else {
+                flat.append(p)
+            }
+        }
+        var rows = List(List(usize)).new()
+        for p in flat {
+            var row = List(usize).new()
+            row.append(p)
+            rows.append(row)
+        }
+        var tys = List(usize).new()
+        tys.append(st)
+        if self.rows_exhaustive(&tys, &rows) { return }
+        var hint = String.from("; add a catch-all arm `_ =>`")
+        if k == TK.Enum {
+            let d = self.tys.list[t].def
+            let em = self.enums[d].module
+            let variants = self.enums[d].variants.clone()
+            var missing = String.new()
+            for v, i in variants {
+                var covered = false
+                for p in flat {
+                    if self.tir.nodes[p].k != TKind.PVariant or self.tir.nodes[p].a != i { continue }
+                    var all = true
+                    for q in self.tir.nodes[p].kids.clone() { if !self.pat_irrefutable(q) { all = false } }
+                    if all { covered = true }
+                }
+                if covered { continue }
+                if missing.len > 0 { missing.append(", ") }
+                missing.append(".")
+                missing.append(self.node(em, v).name[..])
+            }
+            hint = format("; not covered: {}", .{missing})
+        } else if k == TK.Slice or k == TK.Str or k == TK.Array {
+            hint = String.from("; binary and string matches need a catch-all arm `_ =>` (section 6.2)")
+        } else if k == TK.ErrUnion {
+            hint = String.from("; add `else => ...` to handle the remaining errors")
+        } else if k == TK.Opt {
+            hint = String.from("; cover both `null` and a binding for the value")
+        }
+        self.fail_here(at, format("`match` is not exhaustive{}", .{hint})[..])
+    }
+
+    /// The sub-patterns of `p` when it is built with constructor `c` (a
+    /// (kind, index) pair), or null when it is built with another.
+    fn pat_ctor_args(self: *mut Self, p: usize, ck: u8, ci: usize) -> ?List(usize) {
+        let k = self.tir.nodes[p].k
+        var out = List(usize).new()
+        if ck == 0 and k == TKind.PBool {
+            if (if self.tir.nodes[p].flag { 1 } else { 0 }) != ci { return null }
+            return out
+        }
+        if ck == 1 and k == TKind.PVariant {
+            if self.tir.nodes[p].a != ci { return null }
+            for q in self.tir.nodes[p].kids.clone() { out.append(q) }
+            return out
+        }
+        if ck == 2 and k == TKind.PNull { return out }
+        if ck == 3 and k == TKind.PSome { out.append(self.tir.nodes[p].kids[0]); return out }
+        if ck == 4 and k == TKind.POk { out.append(self.tir.nodes[p].kids[0]); return out }
+        if ck == 5 and k == TKind.PError {
+            if self.tir.nodes[p].a != ci { return null }
+            return out
+        }
+        if ck == 6 and k == TKind.PTuple {
+            for q in self.tir.nodes[p].kids.clone() { out.append(q) }
+            return out
+        }
+        return null
+    }
+
+    /// The constructors of a type with their payload types: parallel lists of
+    /// kind (0 bool, 1 variant, 2 null, 3 some, 4 ok, 5 error, 6 tuple),
+    /// index, and payload types; false when there are too many to enumerate.
+    fn constructors(self: *mut Self, t0: usize, kinds: *mut List(u8), idxs: *mut List(usize), payloads: *mut List(List(usize))) -> bool {
+        let t = self.tys.shallow(t0)
+        let k = self.tys.kind(t)
+        if k == TK.Bool {
+            kinds.append(0); idxs.append(1); payloads.append(List(usize).new())
+            kinds.append(0); idxs.append(0); payloads.append(List(usize).new())
+            return true
+        }
+        if k == TK.Enum {
+            let vts = self.enum_variant_types(t)
+            for vt, i in vts {
+                kinds.append(1); idxs.append(i); payloads.append(vt.clone())
+            }
+            return true
+        }
+        if k == TK.Opt {
+            kinds.append(2); idxs.append(0); payloads.append(List(usize).new())
+            var inner = List(usize).new()
+            inner.append(self.tys.list[t].args[0])
+            kinds.append(3); idxs.append(0); payloads.append(inner)
+            return true
+        }
+        if k == TK.Tuple {
+            kinds.append(6); idxs.append(0); payloads.append(self.tys.list[t].args.clone())
+            return true
+        }
+        if k == TK.ErrUnion and self.tys.list[t].flag {
+            var inner = List(usize).new()
+            inner.append(self.tys.list[t].args[0])
+            kinds.append(4); idxs.append(0); payloads.append(inner)
+            for id in self.error_set_ids(self.tys.list[t].def) {
+                kinds.append(5); idxs.append(id); payloads.append(List(usize).new())
+            }
+            return true
+        }
+        return false
+    }
+
+    /// The error ids of an error set's members.
+    fn error_set_ids(self: *mut Self, set: usize) -> List(usize) {
+        var out = List(usize).new()
+        let m = self.error_sets[set].module
+        let items = self.mods[m].parsed.items.clone()
+        for it in items {
+            let n = self.node(m, it)
+            if n.k == parser.NodeKind.ErrorSet and n.name == self.error_sets[set].name {
+                let words = n.words.clone()
+                for w in words { out.append(self.error_id(w[..])) }
+                return out
+            }
+        }
+        return out
+    }
+
+    /// Is every value of the tuple of types `tys` matched by some row? The
+    /// classic matrix algorithm: pick the first column, split on its
+    /// constructors, and recurse on the specialized rows.
+    fn rows_exhaustive(self: *mut Self, tys: *List(usize), rows0: *List(List(usize))) -> bool {
+        if tys.len == 0 { return rows0.len > 0 }
+        // or-patterns in the first column become separate rows
+        var rows = List(List(usize)).new()
+        for r in rows0 { rows.append(r.clone()) }
+        var changed = true
+        while changed {
+            changed = false
+            var next = List(List(usize)).new()
+            for r in rows {
+                if self.tir.nodes[r[0]].k == TKind.POr {
+                    changed = true
+                    for alt in self.tir.nodes[r[0]].kids.clone() {
+                        var nr = List(usize).new()
+                        nr.append(alt)
+                        for x, i in r { if i > 0 { nr.append(x) } }
+                        next.append(nr)
+                    }
+                } else {
+                    next.append(r.clone())
+                }
+            }
+            rows = next
+        }
+        var rest_tys = List(usize).new()
+        for t, i in tys { if i > 0 { rest_tys.append(t) } }
+        var kinds = List(u8).new()
+        var idxs = List(usize).new()
+        var payloads = List(List(usize)).new()
+        if !self.constructors(tys[0], &mut kinds, &mut idxs, &mut payloads) {
+            // integers, strings, ...: only a wildcard covers them
+            var d = List(List(usize)).new()
+            for r in rows {
+                if !self.pat_is_wild(r[0]) { continue }
+                var nr = List(usize).new()
+                for x, i in r { if i > 0 { nr.append(x) } }
+                d.append(nr)
+            }
+            return self.rows_exhaustive(&rest_tys, &d)
+        }
+        let wild = self.wild_pat()
+        for ck, c in kinds {
+            let ci = idxs[c]
+            let sub_tys = payloads[c].clone()
+            var spec = List(List(usize)).new()
+            for r in rows {
+                if self.pat_is_wild(r[0]) {
+                    var nr = List(usize).new()
+                    for i in 0..sub_tys.len { nr.append(wild) }
+                    for x, i in r { if i > 0 { nr.append(x) } }
+                    spec.append(nr)
+                } else if let subs = self.pat_ctor_args(r[0], ck, ci) {
+                    var nr = subs
+                    for x, i in r { if i > 0 { nr.append(x) } }
+                    spec.append(nr)
+                }
+            }
+            var nt = sub_tys.clone()
+            for t in rest_tys { nt.append(t) }
+            if !self.rows_exhaustive(&nt, &spec) { return false }
+        }
+        return true
     }
 
     /// A common type for a set of branch expressions; each is coerced to it in place.
@@ -10833,6 +11297,7 @@ pub fn new_checker(own mods: List(Mod)) -> Checker {
         .ctxs = List(FnCtx).new(), .main_inst = NONE, .tests = List(usize).new(),
         .env_names = List(String).new(), .env_tys = List(usize).new(),
         .record_new_mode = false, .vtables = List(VTable).new(), .obligations = List(Obligation).new(),
+        .parallel_calls = List(Obligation).new(), .global_uses = List(Obligation).new(), .global_use_fns = List(String).new(), .artifact_kinds = List(String).new(), .wild_pat_node = NONE,
         .values = List(CV).new(),
         .it_steps = 0, .it_panic = String.new(), .it_panic_at = NONE, .it_has_panic = false, .it_budget = false,
         .it_pending = 0, .it_pending_label = NONE, .it_pending_val = cv_none(), .it_failed_at = NONE,
