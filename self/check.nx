@@ -2660,7 +2660,7 @@ impl Checker {
             let tn = self.node(m, target_node)
             if tn.k == parser.NodeKind.Ident {
                 let l = self.lookup_local(tn.name[..])
-                if l != NONE {
+                if l != NONE and self.ctx().moved.contains(l) {
                     _ = self.ctx().moved.remove(l)
                     _ = self.ctx().ranges.remove(l)
                 }
@@ -3320,7 +3320,17 @@ impl Checker {
             return NONE
         }
         if kf == TK.ErrorSet and kt == TK.ErrUnion {
-            if self.tir.nodes[e].k == TKind.ErrVal { return self.retype(e, target) }
+            if self.tir.nodes[e].k == TKind.ErrVal {
+                // a named set admits only its own members
+                if self.tys.list[to].flag {
+                    let s = self.tys.list[to].def
+                    let ename = self.error_names[self.tir.nodes[e].a - 1].clone()
+                    if !self.error_set_has(s, ename[..]) {
+                        self.fail_here(self.tir.nodes[e].start, format("error `{}` is not a member of error set `{}`", .{ename, self.error_sets[s].name})[..])
+                    }
+                }
+                return self.retype(e, target)
+            }
             return self.wrap_node(TKind.ErrToUnion, e, target)
         }
         if kt == TK.ErrUnion {
@@ -4923,11 +4933,25 @@ impl Checker {
     fn guard_narrowing(self: *mut Self, c: usize) -> List(Narrowing) {
         var out = List(Narrowing).new()
         if self.tir.nodes[c].k == TKind.Logical and self.tir.nodes[c].flag {
+            // both sides hold: a local named twice (`x > 0 and x < 10`) gets
+            // the intersection, not whichever fact was inserted last
             let l = self.guard_narrowing(self.tir.nodes[c].kids[0])
             let r = self.guard_narrowing(self.tir.nodes[c].kids[1])
             for x in l { out.append(Narrowing{ .local = x.local, .lo = x.lo, .hi = x.hi }) }
-            for x in r { out.append(Narrowing{ .local = x.local, .lo = x.lo, .hi = x.hi }) }
-            return out
+            for x in r {
+                var found = false
+                for j in 0..out.len {
+                    if out[j].local == x.local {
+                        out[j].lo = max128(out[j].lo, x.lo)
+                        out[j].hi = min128(out[j].hi, x.hi)
+                        found = true
+                    }
+                }
+                if !found { out.append(Narrowing{ .local = x.local, .lo = x.lo, .hi = x.hi }) }
+            }
+            var kept = List(Narrowing).new()
+            for x in out { if x.lo <= x.hi { kept.append(Narrowing{ .local = x.local, .lo = x.lo, .hi = x.hi }) } }
+            return kept
         }
         if self.tir.nodes[c].k != TKind.Binary { return out }
         let op = self.tir.nodes[c].text.clone()
@@ -5850,7 +5874,7 @@ impl Checker {
     fn index_proven(self: *mut Self, base: usize, index: usize) -> bool {
         let bt = self.tys.shallow(self.tir.nodes[base].ty)
         if self.tys.kind(bt) == TK.Array {
-            if let r = self.expr_range(index) { return r.lo >= 0 and r.hi < self.tys.list[bt].n as i128 }
+            if let r = self.expr_range(index) { if r.lo >= 0 and r.hi < self.tys.list[bt].n as i128 { return true } }
         }
         if self.tir.nodes[base].k == TKind.Local and self.tir.nodes[index].k == TKind.Local {
             let bl = self.tir.nodes[base].a
