@@ -1212,7 +1212,14 @@ impl Gen {
             TExprKind::Unreachable => {
                 let loc = self.loc(e.span);
                 self.line(format!("nx_panic(\"reached unreachable code\", {});", loc));
-                "0".into()
+                // never runs, but must be a value of the expression's type when that
+                // type is an aggregate (an error union, a struct) rather than a scalar
+                let cn = self.cty(e.ty);
+                if cn == "void" {
+                    "0".into()
+                } else {
+                    format!("(({}){{0}})", cn)
+                }
             }
             TExprKind::Undefined => {
                 let cn = self.cty(e.ty);
