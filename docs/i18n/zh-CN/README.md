@@ -287,8 +287,8 @@ trait 对象、并行循环、arena 作用域、直接导入 C 头文件和全�
 | 阶段 | 文件 | 对照基准 | 状态 |
 | --- | --- | --- | --- |
 | 词法分析器 | [`self/lexer.nx`](../../../self/lexer.nx) | `nx tokens` | ✅ 在每个示例和它自身上完全一致 |
-| 语法分析器 | | `nx parse` | 下一步 |
-| 检查器 | | `nx check`、compile-fail 测试集 | |
+| 语法分析器 | [`self/parser.nx`](../../../self/parser.nx) | `nx sexp` | ✅ 在全部 46 个源文件上完全一致 |
+| 检查器 | [`self/check.nx`](../../../self/check.nx) | `nx tir` | 🚧 声明与签名一致（`--sigs`，41 个源文件）；函数体进行中 |
 | C 生成器 | | `nx emit-c` | |
 
 `cargo test` 用 Rust 编译器构建 `self/lexer.nx`，并将其输出与对照基准比对。

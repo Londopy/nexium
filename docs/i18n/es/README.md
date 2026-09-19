@@ -297,8 +297,8 @@ compilador de Rust con las mismas entradas:
 | etapa | archivo | oráculo | estado |
 | --- | --- | --- | --- |
 | lexer | [`self/lexer.nx`](../../../self/lexer.nx) | `nx tokens` | ✅ coincide en cada ejemplo y en sí mismo |
-| parser | | `nx parse` | siguiente |
-| verificador | | `nx check`, la suite de compile-fail | |
+| parser | [`self/parser.nx`](../../../self/parser.nx) | `nx sexp` | ✅ idéntico en las 46 fuentes |
+| verificador | [`self/check.nx`](../../../self/check.nx) | `nx tir` | 🚧 declaraciones y firmas coinciden (`--sigs`, 41 fuentes); cuerpos en curso |
 | emisor de C | | `nx emit-c` | |
 
 `cargo test` compila `self/lexer.nx` con el compilador de Rust y compara su

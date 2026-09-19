@@ -291,8 +291,8 @@ using arena {
 | 단계 | 파일 | 기준 | 상태 |
 | --- | --- | --- | --- |
 | 렉서 | [`self/lexer.nx`](../../../self/lexer.nx) | `nx tokens` | ✅ 모든 예제와 자기 자신에서 일치 |
-| 파서 | | `nx parse` | 다음 |
-| 검사기 | | `nx check`, compile-fail 스위트 | |
+| 파서 | [`self/parser.nx`](../../../self/parser.nx) | `nx sexp` | ✅ 46개 소스 전부에서 일치 |
+| 검사기 | [`self/check.nx`](../../../self/check.nx) | `nx tir` | 🚧 선언과 시그니처 일치 (`--sigs`, 41개 소스); 본문 진행 중 |
 | C 생성기 | | `nx emit-c` | |
 
 `cargo test`는 Rust 컴파일러로 `self/lexer.nx`를 빌드하고 그 출력을 기준과

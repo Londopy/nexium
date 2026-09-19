@@ -295,8 +295,8 @@ denselben Eingaben geprüft:
 | Stufe | Datei | Orakel | Stand |
 | --- | --- | --- | --- |
 | Lexer | [`self/lexer.nx`](../../../self/lexer.nx) | `nx tokens` | ✅ identisch bei jedem Beispiel und bei sich selbst |
-| Parser | | `nx parse` | als Nächstes |
-| Prüfer | | `nx check`, die Compile-Fail-Suite | |
+| Parser | [`self/parser.nx`](../../../self/parser.nx) | `nx sexp` | ✅ identisch bei allen 46 Quellen |
+| Prüfer | [`self/check.nx`](../../../self/check.nx) | `nx tir` | 🚧 Deklarationen und Signaturen identisch (`--sigs`, 41 Quellen); Rümpfe in Arbeit |
 | C-Emitter | | `nx emit-c` | |
 
 `cargo test` baut `self/lexer.nx` mit dem Rust-Compiler und vergleicht die

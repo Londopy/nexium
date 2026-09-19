@@ -295,8 +295,8 @@ compilateur Rust sur les mêmes entrées :
 | étape | fichier | oracle | état |
 | --- | --- | --- | --- |
 | lexeur | [`self/lexer.nx`](../../../self/lexer.nx) | `nx tokens` | ✅ identique sur chaque exemple et sur lui-même |
-| analyseur | | `nx parse` | prochaine |
-| vérificateur | | `nx check`, la suite compile-fail | |
+| analyseur | [`self/parser.nx`](../../../self/parser.nx) | `nx sexp` | ✅ identique sur les 46 sources |
+| vérificateur | [`self/check.nx`](../../../self/check.nx) | `nx tir` | 🚧 déclarations et signatures identiques (`--sigs`, 41 sources) ; corps en cours |
 | émetteur C | | `nx emit-c` | |
 
 `cargo test` compile `self/lexer.nx` avec le compilateur Rust et compare sa

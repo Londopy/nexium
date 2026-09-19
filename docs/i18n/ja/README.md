@@ -291,8 +291,8 @@ Rust、C のコンポーネントを出荷できます。トレイトオブジ�
 | 段階 | ファイル | 基準 | 状態 |
 | --- | --- | --- | --- |
 | 字句解析器 | [`self/lexer.nx`](../../../self/lexer.nx) | `nx tokens` | ✅ すべての例と自分自身で一致 |
-| 構文解析器 | | `nx parse` | 次 |
-| 検査器 | | `nx check`、compile-fail スイート | |
+| 構文解析器 | [`self/parser.nx`](../../../self/parser.nx) | `nx sexp` | ✅ 46 ソースすべてで一致 |
+| 検査器 | [`self/check.nx`](../../../self/check.nx) | `nx tir` | 🚧 宣言とシグネチャが一致（`--sigs`、41 ソース）；本体は作業中 |
 | C 生成器 | | `nx emit-c` | |
 
 `cargo test` は Rust コンパイラで `self/lexer.nx` をビルドし、出力を基準と比較
