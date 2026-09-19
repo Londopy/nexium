@@ -48,7 +48,7 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
 - `tests/spec`: the specification's conformance cases, one program per
   claim SPEC.md makes with its recorded output and exit code, run by
   `cargo test` and diffed through every self-hosting stage; sections 2 to
-  4 so far.
+  7 so far.
 - `self/nx.nx`, the `nx` driver in Nexium: build, run, test, check, emit-c
   and tir over the self-hosted pipeline, invoking the C compiler as the
   Rust driver does; the standard library is embedded in it. It builds
@@ -59,6 +59,10 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
 
 - `Color.Green as u8` (a unit enum cast to an integer) emitted a C cast of
   the whole struct, which the C compiler rejected; it is the tag now.
+- `let d: i8 = -128` is accepted: a negative literal is one literal, not
+  the negation of 128 (which does not fit an i8).
+- A labeled block that ends in `break :label value` has the value's type;
+  it was `never`, and printing the value was rejected.
 - A `break` inside an `orelse` default, a call argument or any other nested
   expression now ends a `while true`; a non-void function that ended in such
   a loop was accepted without a return value.
