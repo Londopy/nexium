@@ -1,6 +1,6 @@
 # The Nexium Language Specification
 
-Version 0.2, describing Nexium as implemented by `nx` 0.2.1. This document is
+Version 0.3, describing Nexium as implemented by `nx` 0.3.0. This document is
 normative for what the compiler does today; `nexium-spec.txt` is the
 original design, `DECISIONS.md` records every call made where that design
 was open, and `ROADMAP.md` says what comes next. Anything marked **planned**
@@ -227,7 +227,10 @@ Compound assignment: `= += -= *= /= %= &= |= ^= <<= >>= +%= -%= *%=`.
   statement, so `if (c) x = 1 else x = 2` and `if (c) return v` are valid.
 - `if (opt) |v| { } else { }` unwraps an optional.
 - `while (c) { }`, `for (items) |x| { }`, `for (items) |x, i| { }`,
-  `for (a, b) |x, y| { }` (lengths must match), `for (lo..hi) |i| { }`.
+  `for (a, b) |x, y| { }` (lengths must match), `for (lo..hi) |i| { }`,
+  `for (lo..hi step s) |i| { }` (a negative step counts down and needs a
+  signed loop variable; a zero step is an error). `while (c) { } else { }`
+  runs the else block when the condition turns false, not after a `break`.
   Iteration works over arrays, slices, lists, strings, and map keys.
   Loop bodies take braces.
 - `break`, `continue`, `return`, each optionally with a label:
@@ -260,8 +263,10 @@ Formatting is compiled: each placeholder becomes a typed write.
 
 ## 7. Patterns
 
-`match` is exhaustive for enums and bools; other scrutinee types need a
-`_ =>` arm. Patterns: literals (integers, chars, strings, bools, negative
+`match` must be exhaustive. Exhaustiveness is decided by the usual matrix
+algorithm over constructors, so tuples of enums, nested optionals, enum
+payloads and error sets are checked precisely; integers, strings and
+other unbounded types need a `_ =>` arm. Patterns: literals (integers, chars, strings, bools, negative
 literals), integer ranges `1..=9`, enum variants `.Variant(p, q)` or
 `.Variant { field: p }`, `null` and a binding on optionals (the binding is
 the payload), `error.Name` and a binding on error unions (the binding is
@@ -392,10 +397,12 @@ returns `error.InvalidRecord` instead.
 `import a.b` loads `a/b.nx` relative to the root file; the module's `pub`
 items are `b.item`. `import std.name` loads a standard library module that
 is written in Nexium and embedded in the compiler: `strings`, `lists`,
-`bytes`, `num`, `json`, `args` (see `docs/std.md`). The builtin namespaces
-`math`, `io`, `os`, `process`, `time`, `random`, `mem` are always in scope
-and need no import. **planned**: `std.fs`, `std.time`, `std.regex`,
-`std.net`, `std.http`, packages with a manifest (ROADMAP phases 1 to 3).
+`bytes`, `num`, `json`, `args`, `fs`, `time`, `regex`, `text`, `testing`,
+`stream` (see `docs/std.md`); std modules may import each other. The
+builtin namespaces `math`, `io`, `os`, `process`, `time`, `random`, `mem`
+are always in scope and need no import. `error` names the anonymous error
+set as a type. **planned**: `std.net`, `std.http`, packages with a manifest
+(ROADMAP phases 2 and 3).
 
 The builtin methods of `List`, `String`, `Map`, slices, integers, floats,
 and chars are listed in `docs/language.md`. They are implemented in the
