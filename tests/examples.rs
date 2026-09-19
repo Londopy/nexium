@@ -278,6 +278,59 @@ fn self_hosted_emitter_matches_oracle() {
     assert!(compared > 50, "expected the whole tree, compared {} files", compared);
 }
 
+/// The bootstrap: `nx1` (the emitter in Nexium, built by the Rust compiler)
+/// emits the C of itself; `zig cc` turns that into `nx2` with no Rust
+/// involved; `nx2` emits byte-identical C for itself and for other programs.
+#[test]
+fn bootstrap_reaches_a_fixed_point() {
+    if !have_cc() {
+        eprintln!("skipping: zig not found");
+        return;
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = root.join("nx-out").join("bootstrap");
+    let _ = std::fs::create_dir_all(&out_dir);
+    let nx1 = out_dir.join(if cfg!(windows) { "nx1.exe" } else { "nx1" });
+    let build = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).args(["build", "self/cgen.nx", "-o"]).arg(&nx1).arg("--out-dir").arg(&out_dir).current_dir(root).output().expect("run nx");
+    assert!(
+        build.status.success(),
+        "building nx1 failed:
+{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    // stage 2: nx1 emits itself, zig cc builds it
+    let emit = std::process::Command::new(&nx1).arg("self/cgen.nx").env("NX_ZIG", "zig").current_dir(root).output().unwrap();
+    assert!(
+        emit.status.success(),
+        "nx1 could not emit cgen.nx:
+{}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let c2 = out_dir.join("nx2.c");
+    std::fs::write(&c2, &emit.stdout).unwrap();
+    let nx2 = out_dir.join(if cfg!(windows) { "nx2.exe" } else { "nx2" });
+    let cc = std::process::Command::new("zig").args(["cc", "-std=gnu11", "-O0", "-w", "-fno-strict-aliasing", "-o"]).arg(&nx2).arg(&c2).current_dir(root).output().expect("run zig cc");
+    assert!(
+        cc.status.success(),
+        "zig cc could not build nx2:
+{}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    // stage 3: nx2 reproduces nx1's output
+    for f in ["self/cgen.nx", "examples/hello.nx", "examples/json.nx", "std/strings.nx"] {
+        let a = std::process::Command::new(&nx1).arg(f).env("NX_ZIG", "zig").current_dir(root).output().unwrap();
+        let b = std::process::Command::new(&nx2).arg(f).env("NX_ZIG", "zig").current_dir(root).output().unwrap();
+        assert!(
+            b.status.success(),
+            "nx2 could not emit {}:
+{}",
+            f,
+            String::from_utf8_lossy(&b.stderr)
+        );
+        assert!(a.stdout == b.stdout, "nx1 and nx2 emit different C for {}", f);
+    }
+}
+
 /// The checker written in Nexium, stage 3: every compile-fail case is
 /// rejected with every message the Rust checker produces (the notes too).
 #[test]
