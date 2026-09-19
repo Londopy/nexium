@@ -1,0 +1,14 @@
+// SPEC 9: effects are inferred to a fixpoint; bounds hold; proofs discharge panics; fn values carry their bounds.
+fn pure(a: i32, b: i32) -> i32 !allocates !blocks !panics {
+    // indexing with a loop index and a guarded add are proven safe
+    let xs = [a, b]
+    var t: i32 = 0
+    for x, i in xs { t = xs[i] }
+    if t < 1000 and t > -1000 { t = t + 1 }
+    return t
+}
+fn loud(a: i32) -> String { return format("{}", .{a}) }
+fn call_quiet(f: fn(i32, i32) -> i32 !allocates, a: i32) -> i32 !allocates { return f(a, a) }
+fn main() {
+    println("{} {} {}", .{pure(1, 2), loud(3), call_quiet(pure, 5)})
+}

@@ -1,0 +1,4 @@
+// EXPECT: not a member of error set
+error Parse { Empty }
+fn f() -> Parse!i32 { return error.Bad }
+fn main() { _ = f() catch 0 }

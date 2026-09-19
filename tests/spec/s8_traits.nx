@@ -1,0 +1,22 @@
+// SPEC 8.3: trait defaults, inherent methods, automatic dereference on method calls, derive(Eq, Ord).
+trait Greeter {
+    fn name(self: *Self) -> []u8
+    fn greet(self: *Self) -> String { return format("hello, {}", .{self.name()}) }
+}
+struct En { n: []u8 }
+struct Fr { n: []u8 }
+impl Greeter for En { fn name(self: *Self) -> []u8 { return self.n } }
+impl Greeter for Fr {
+    fn name(self: *Self) -> []u8 { return self.n }
+    fn greet(self: *Self) -> String { return format("bonjour, {}", .{self.name()}) }
+}
+struct V derive(Eq, Ord) { a: i32, b: i32 }
+fn main() {
+    let e = En{ .n = "ann" }
+    let f = Fr{ .n = "luc" }
+    let pe: *En = &e
+    println("{} {} {}", .{e.greet(), f.greet(), pe.greet()})
+    let x = V{ .a = 1, .b = 5 }
+    let y = V{ .a = 2, .b = 0 }
+    println("{} {} {}", .{x == y, x < y, x == V{ .a = 1, .b = 5 }})
+}
