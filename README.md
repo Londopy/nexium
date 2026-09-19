@@ -254,6 +254,8 @@ using arena {
 
 **Documentation**
 
+- [Specification](SPEC.md): the language as implemented, with planned parts marked.
+- [Roadmap](ROADMAP.md): phases, exit criteria, and what is not planned.
 - [How Nexium works](docs/architecture.md): the pipeline from source to binary, effects inference, ownership, the runtime, and shipping.
 - [Language reference](docs/language.md): every construct the compiler implements.
 - [Embedding](docs/embedding.md): calling shipped libraries from Python, Rust, and C.

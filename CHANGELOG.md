@@ -8,6 +8,10 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
 
 ## [Unreleased]
 
+### Added
+
+- `SPEC.md`, the language specification as implemented, and `ROADMAP.md`.
+
 ## [0.2.0] - 2026-09-19
 
 ### Added
