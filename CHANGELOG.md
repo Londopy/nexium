@@ -22,6 +22,13 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
 - `examples/records.nx`: compile-time, `.new` and run-time constraint checks.
 - `examples/binary_sizes.nx`: float, signed, little-endian and computed-size
   segments, a remainder written back out.
+- `self/check.nx` evaluates at compile time: an interpreter over the typed
+  IR runs constants, globals, `comptime` expressions, `comptime test` blocks
+  and record constraints; `examples/comptime.nx` (a CRC table, primes,
+  strings and structs computed at compile time) joins the comparison (50
+  sources: every example and std module but `@cImport` users).
+- A constant slice whose elements were computed at compile time is stored
+  as a static array; only string literals could back a constant slice.
 
 ### Fixed
 
@@ -36,6 +43,9 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
   of a function returning `!void` is returned; it was reported as unused.
 - `%` on floats compiles: the generated C applied the integer operator to
   doubles and the C compiler rejected it; it is `fmod` now.
+- A constant of `List`, `String`, `Map`, `ref class` or weak type (or one
+  containing them) is rejected with a hint to store a slice; it used to
+  fail in the C compiler, or worse, be freed by whoever copied it.
 
 ## [0.6.1] - 2026-09-19
 
