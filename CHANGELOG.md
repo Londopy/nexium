@@ -8,6 +8,25 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
 
 ## [Unreleased]
 
+### Added
+
+- `nx tir`: the checked program as S-expressions, the oracle for the
+  self-hosted checker; `--sigs` prints declarations and signatures only.
+- `self/check.nx`, stage 1 of the checker in Nexium: module loading,
+  declarations, type interning, and the signatures of non-generic
+  functions, constants and globals; `cargo test` diffs it against
+  `nx tir --sigs` over 41 sources.
+
+### Fixed
+
+- The formatter spaces bit-or like the other operators (`a | b`, not
+  `a| b`) and no longer glues `-> !List(T) {`; closure bars are classified
+  per line so a bit-or inside a closure body is not taken for its closing bar.
+- A `String` built for the right side of `and`/`or` produced C that did not
+  compile (its release was emitted outside the block that declared it).
+- `i128` range bounds overflowed inside the compiler.
+- The tree-sitter parser is regenerated for 0.6.0 (its version is embedded).
+
 ## [0.6.0] - 2026-09-19
 
 ### Changed
