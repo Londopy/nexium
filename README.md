@@ -282,7 +282,9 @@ using arena {
 | `nx audit file.nx` | list `unsafe` blocks and mutable globals |
 | `nx ship file.nx` | produce every declared `artifact` |
 | `nx emit-c file.nx` | print the generated C |
-| `nx tokens file.nx` | dump the token stream (the self-hosting oracle) |
+| `nx tokens file.nx` | dump the token stream (the self-hosted lexer's oracle) |
+| `nx sexp file.nx` | the syntax tree as S-expressions (the parser's oracle) |
+| `nx tir file.nx [--sigs]` | the checked program as S-expressions (the checker's oracle) |
 | `nx fmt file.nx [--check]` | canonical formatting |
 | `nx doc file.nx` | HTML documentation with inferred effects |
 | `nx size file.nx` | attribute binary bytes to declarations |
@@ -315,13 +317,14 @@ on the same inputs:
 
 | stage | file | oracle | status |
 | --- | --- | --- | --- |
-| lexer | [`self/lexer.nx`](self/lexer.nx) | `nx tokens` | ✅ matches on every example and on itself |
-| parser | | `nx parse` | next |
-| checker | | `nx check`, the compile-fail suite | |
+| lexer | [`self/lexer.nx`](self/lexer.nx) | `nx tokens` | ✅ identical on every source |
+| parser | [`self/parser.nx`](self/parser.nx) | `nx sexp` | ✅ identical on all 46 sources |
+| checker | [`self/check.nx`](self/check.nx) | `nx tir` | 🚧 declarations and signatures match (`--sigs`, 41 sources); bodies in progress |
 | C emitter | | `nx emit-c` | |
 
-`cargo test` builds `self/lexer.nx` with the Rust compiler and diffs its output
-against the oracle.
+`cargo test` builds each stage with the Rust compiler and diffs its output
+against the oracle over every example, std module, GUI and self-hosting
+source.
 
 ## Languages in the repository
 
@@ -330,10 +333,10 @@ files (`gui/font.bin`, lock files):
 
 | language | lines | share | what it is |
 | --- | --- | --- | --- |
-| Rust | 22,788 | 82.1% | the `nx` compiler |
-| Nexium | 3,690 | 13.3% | the standard library, examples, the self-hosted lexer, nexium-gui, tests |
-| C | 1,127 | 4.1% | the runtime `nx_rt.h` and the GUI window layer |
-| JavaScript, TypeScript | 159 | 0.6% | the VS Code extension |
+| Rust | 29,094 | 67.9% | the `nx` compiler |
+| Nexium | 11,751 | 27.4% | the standard library, examples, the self-hosted lexer, parser and checker, nexium-gui, tests |
+| C | 1,840 | 4.3% | the runtime `nx_rt.h` and the GUI window layer |
+| JavaScript, TypeScript | 159 | 0.4% | the VS Code extension |
 
 The Nexium share grows with every self-hosting stage; the Rust share is the
 bootstrap compiler and will one day be zero.
