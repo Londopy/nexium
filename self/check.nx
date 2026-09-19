@@ -1931,9 +1931,20 @@ impl Checker {
             self.tir.nodes[tb].a = NONE
             let tt = self.tys.resolve(self.tir.nodes[tail].ty, false)
             let tk = self.tys.kind(tt)
+            var tail_is_err_void = false
+            if tk == TK.ErrUnion { tail_is_err_void = self.tys.kind(self.tys.shallow(self.tys.list[tt].args[0])) == TK.Void }
+            let ret_is_err = self.tys.kind(self.tys.resolve(ret, true)) == TK.ErrUnion
             if is_void_ret and (tk == TK.Void or tk == TK.Never) {
                 let s = self.tir.add(tblank(TKind.SExpr, tt, self.tir.nodes[tail].start, self.tir.nodes[tail].end))
                 self.tir.nodes[s].kids.append(tail)
+                self.tir.nodes[tb].kids.append(s)
+            } else if is_void_ret and tail_is_err_void and ret_is_err {
+                // a `!void` tail in a `!void` function is returned, errors and all
+                let start = self.tir.nodes[tail].start
+                let end = self.tir.nodes[tail].end
+                let v = self.coerce_or_error(tail, ret, "return value")
+                let s = self.tir.add(tblank(TKind.SReturn, ret, start, end))
+                self.tir.nodes[s].kids.append(v)
                 self.tir.nodes[tb].kids.append(s)
             } else if is_void_ret {
                 self.fail_here(self.tir.nodes[tail].start, format("this value of type `{}` is unused; the function returns void. Discard it with `_ = ...` or return it", .{self.ty_name(tt)})[..])
@@ -3060,6 +3071,7 @@ impl Checker {
         if k == parser.NodeKind.MethodCall { return self.check_method_call(e, expected) }
         if k == parser.NodeKind.Match { return self.check_match(e, expected) }
         if k == parser.NodeKind.Closure { return self.check_closure(e, expected) }
+        if k == parser.NodeKind.BinConstruct { return self.check_bin_construct(e) }
         if k == parser.NodeKind.Comptime {
             // evaluated at compile time; the stage-2 evaluator folds scalars,
             // calls are a later stage (the expression is kept as checked)
@@ -7836,11 +7848,271 @@ impl Checker {
         return self.pat_node(TKind.PWild, start, end)
     }
 
+    // ----- binary patterns and construction -------------------------------------------------
+
+    /// A segment's modifiers: endian text, signed, float, utf8.
+    fn seg_mods(self: *mut Self, m: usize, seg: usize, signed: *mut bool, float: *mut bool, utf8: *mut bool) -> String {
+        var endian = String.from("big")
+        for w in self.node(m, seg).words.clone() {
+            if w == "big" or w == "little" or w == "native" { endian = w.clone() }
+            if w == "signed" { signed.*= true }
+            if w == "unsigned" { signed.*= false }
+            if w == "float" { float.*= true }
+            if w == "utf8" { utf8.*= true }
+        }
+        return endian
+    }
+
+    /// Size arithmetic runs at pointer width: every identifier is widened to
+    /// `usize` by a synthesized cast, mirroring the oracle's rewrite.
+    fn widen_size_expr(self: *mut Self, m: usize, e: usize) -> usize {
+        let n = self.node(m, e)
+        let k = n.k
+        let start = n.start
+        let end = n.end
+        if k == parser.NodeKind.Ident {
+            var tn = self.blank_node(parser.NodeKind.TName, start, end)
+            tn.words.append(String.from("usize"))
+            let tid = self.mods[m].parsed.tree.add(tn)
+            var c = self.blank_node(parser.NodeKind.Cast, start, end)
+            c.x = e
+            c.y = tid
+            return self.mods[m].parsed.tree.add(c)
+        }
+        if k == parser.NodeKind.Binary {
+            let lhs = self.widen_size_expr(m, n.x)
+            let rhs = self.widen_size_expr(m, n.y)
+            var b = self.blank_node(parser.NodeKind.Binary, start, end)
+            b.name = self.node(m, e).name.clone()
+            b.x = lhs
+            b.y = rhs
+            return self.mods[m].parsed.tree.add(b)
+        }
+        if k == parser.NodeKind.Unary {
+            let inner = self.widen_size_expr(m, n.x)
+            var u = self.blank_node(parser.NodeKind.Unary, start, end)
+            u.name = self.node(m, e).name.clone()
+            u.x = inner
+            return self.mods[m].parsed.tree.add(u)
+        }
+        return e
+    }
+
+    fn blank_node(self: *mut Self, k: parser.NodeKind, start: usize, end: usize) -> parser.Node {
+        return parser.Node{
+            .k = k, .start = start, .end = end, .name = String.new(), .text = String.new(),
+            .flag = false, .flag2 = false, .a = 0, .b = 0,
+            .kids = List(usize).new(), .kids2 = List(usize).new(),
+            .x = NONE, .y = NONE, .z = NONE, .words = List(String).new(),
+        }
+    }
+
+    /// A segment's size: `bits` when constant, else a checked `usize`
+    /// expression in `size_expr`. Returns the size text for the dump.
+    fn seg_size(self: *mut Self, m: usize, seg: usize, default_bits: u64, bits: *mut u64, size_expr: *mut usize) -> String {
+        let sz = self.node(m, seg).y
+        if sz == NONE {
+            bits.*= default_bits
+            return format("bits {}", .{default_bits})
+        }
+        if let v = self.const_eval_int(m, sz) {
+            if v <= 0 {
+                self.fail_here(self.node(m, sz).start, "segment size must be positive")
+                bits.*= 8
+                return String.from("bits 8")
+            }
+            bits.*= v as u64
+            return format("bits {}", .{v})
+        }
+        let u = self.tys.usize_ty()
+        let widened = self.widen_size_expr(m, sz)
+        var te = self.check_expr(widened, u)
+        te = self.coerce_or_error(te, u, "segment size")
+        size_expr.*= te
+        return String.from("expr")
+    }
+
+    fn int_type_for_bits(self: *mut Self, bits: u64, signed: bool) -> usize {
+        var nm: []u8 = "u64"
+        if bits <= 8 { nm = if signed { "i8" } else { "u8" } }
+        else if bits <= 16 { nm = if signed { "i16" } else { "u16" } }
+        else if bits <= 32 { nm = if signed { "i32" } else { "u32" } }
+        else if signed { nm = "i64" }
+        return self.tys.named(TK.Int, nm)
+    }
+
+    fn seg_node(self: *mut Self, ty: usize, start: usize, end: usize, kind: []u8, size: []u8, endian: []u8, signed: bool, float: bool, utf8: bool, value: usize, size_expr: usize) -> usize {
+        let r = self.mk(TKind.Seg, ty, start, end)
+        self.tir.nodes[r].name = format("{} size={} endian={} signed={} float={} utf8={}", .{kind, size, endian, signed, float, utf8})
+        if value != NONE { self.tir.nodes[r].kids.append(value) }
+        if size_expr != NONE { self.tir.nodes[r].kids.append(size_expr) }
+        return r
+    }
+
     fn check_bin_pattern(self: *mut Self, pat: usize) -> usize {
         let m = self.cur_module()
-        let start = self.node(m, pat).start
-        self.fail_here(start, "binary patterns are not supported yet (stage 2)")
-        return self.pat_node(TKind.PWild, start, self.node(m, pat).end)
+        let n = self.node(m, pat)
+        let segs = n.kids.clone()
+        let start = n.start
+        let end = n.end
+        let bytes_t = self.tys.str_slice()
+        let p = self.pat_node(TKind.PBinary, start, end)
+        for seg, i in segs {
+            var signed = false
+            var float = false
+            var utf8 = false
+            let endian = self.seg_mods(m, seg, &mut signed, &mut float, &mut utf8)
+            let sn = self.node(m, seg)
+            let text = sn.text.clone()
+            let name = sn.name.clone()
+            let value_node = sn.x
+            let sstart = sn.start
+            let send = sn.end
+            let has_size = sn.y != NONE
+            if text == "rest" {
+                if i != segs.len - 1 { self.fail_here(sstart, "a `bytes` segment consumes the remainder and must be last") }
+                let l = self.declare_local(name[..], bytes_t, false, sstart, send)
+                let r = self.seg_node(bytes_t, sstart, send, format("rest {}", .{l})[..], "rest", endian[..], signed, float, utf8, NONE, NONE)
+                self.tir.nodes[p].kids.append(r)
+                continue
+            }
+            if text == "bind" {
+                let default_bits: u64 = if float { 64 } else { 8 }
+                var bits: u64 = 0
+                var size_expr = NONE
+                let size = self.seg_size(m, seg, default_bits, &mut bits, &mut size_expr)
+                var ty = bytes_t
+                if size_expr == NONE {
+                    if float {
+                        if bits == 32 { ty = self.tys.named(TK.Float, "f32") }
+                        else if bits == 64 { ty = self.tys.named(TK.Float, "f64") }
+                        else {
+                            self.fail_here(sstart, "float segments are 32 or 64 bits")
+                            ty = self.tys.named(TK.Float, "f64")
+                        }
+                    } else if utf8 or bits > 64 {
+                        if bits % 8 != 0 { self.fail_here(sstart, "byte-slice segments need a size that is a multiple of 8 bits") }
+                        ty = bytes_t
+                    } else {
+                        ty = self.int_type_for_bits(bits, signed)
+                    }
+                }
+                let l = self.declare_local(name[..], ty, false, sstart, send)
+                let r = self.seg_node(ty, sstart, send, format("bind {}", .{l})[..], size[..], endian[..], signed, float, utf8, NONE, size_expr)
+                self.tir.nodes[p].kids.append(r)
+                continue
+            }
+            // a literal to match
+            let vn = self.node(m, value_node)
+            if vn.k == parser.NodeKind.Lit and (vn.text == "str" or vn.text == "bytes") {
+                if has_size { self.fail_here(sstart, "string segments take their size from the literal") }
+                let blen = vn.name.len
+                let te = self.check_expr(value_node, NONE)
+                let r = self.seg_node(bytes_t, sstart, send, "value", format("bits {}", .{blen * 8})[..], endian[..], signed, float, utf8, te, NONE)
+                self.tir.nodes[p].kids.append(r)
+                continue
+            }
+            var bits: u64 = 0
+            var size_expr = NONE
+            let size = self.seg_size(m, seg, 8, &mut bits, &mut size_expr)
+            var ty = NONE
+            if size_expr == NONE and float {
+                ty = if bits == 32 { self.tys.named(TK.Float, "f32") } else { self.tys.named(TK.Float, "f64") }
+            } else if size_expr == NONE and bits <= 64 {
+                ty = self.int_type_for_bits(bits, signed)
+            } else {
+                self.fail_here(sstart, "literal segments must be at most 64 bits")
+                ty = self.tys.named(TK.Int, "u64")
+            }
+            var te = self.check_expr(value_node, ty)
+            te = self.coerce_or_error(te, ty, "binary segment literal")
+            if self.tir.nodes[te].k == TKind.Int and size_expr == NONE and bits < 64 and !signed {
+                let v = self.tir.nodes[te].ival
+                if v < 0 or v >= (1 << (bits as u32)) {
+                    self.fail_here(sstart, format("literal `{}` does not fit in {} bits", .{v, bits})[..])
+                }
+            }
+            let r = self.seg_node(ty, sstart, send, "value", size[..], endian[..], signed, float, utf8, te, size_expr)
+            self.tir.nodes[p].kids.append(r)
+        }
+        return p
+    }
+
+    fn check_bin_construct(self: *mut Self, e: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        let segs = n.kids.clone()
+        let target_node = n.x
+        let start = n.start
+        let end = n.end
+        let bytes_t = self.tys.str_slice()
+        let u = self.tys.u8_ty()
+        let mut_bytes = self.tys.wrap(TK.Slice, u, true)
+        var t = self.check_expr(target_node, mut_bytes)
+        t = self.coerce_or_error(t, mut_bytes, "construction target (needs `[]mut u8`)")
+        var out = List(usize).new()
+        for seg in segs {
+            var signed = false
+            var float = false
+            var utf8 = false
+            let endian = self.seg_mods(m, seg, &mut signed, &mut float, &mut utf8)
+            let sn = self.node(m, seg)
+            let text = sn.text.clone()
+            let sstart = sn.start
+            let send = sn.end
+            // a bound name is the identifier of that name
+            var value_node = sn.x
+            if text != "expr" {
+                var id = self.blank_node(parser.NodeKind.Ident, sstart, send)
+                id.name = sn.name.clone()
+                value_node = self.mods[m].parsed.tree.add(id)
+            }
+            var is_rest = text == "rest"
+            for w in self.node(m, seg).words.clone() { if w == "bytes" { is_rest = true } }
+            if is_rest {
+                var te = self.check_expr(value_node, bytes_t)
+                te = self.coerce_or_error(te, bytes_t, "byte segment")
+                out.append(self.seg_node(bytes_t, sstart, send, "value", "rest", endian[..], signed, float, utf8, te, NONE))
+                continue
+            }
+            let vn = self.node(m, value_node)
+            if vn.k == parser.NodeKind.Lit and (vn.text == "str" or vn.text == "bytes") {
+                let blen = vn.name.len
+                let te = self.check_expr(value_node, NONE)
+                out.append(self.seg_node(bytes_t, sstart, send, "value", format("bits {}", .{blen * 8})[..], endian[..], signed, float, utf8, te, NONE))
+                continue
+            }
+            let default_bits: u64 = if float { 64 } else { 8 }
+            var bits: u64 = 0
+            var size_expr = NONE
+            let size = self.seg_size(m, seg, default_bits, &mut bits, &mut size_expr)
+            var te = self.check_expr(value_node, NONE)
+            let vt = self.tys.resolve(self.tir.nodes[te].ty, true)
+            let vk = self.tys.kind(vt)
+            if vk == TK.Int or vk == TK.Char or vk == TK.Bool {
+            } else if vk == TK.Float and self.tys.list[vt].name == "f32" {
+                if ! (size_expr == NONE and bits == 32) and !float { self.fail_here(sstart, "an f32 segment needs `:32/float`") }
+            } else if vk == TK.Float {
+                if !float { self.fail_here(sstart, "float values need the `/float` modifier") }
+            } else if vk == TK.Slice and self.tys.kind(self.tys.shallow(self.tys.list[vt].args[0])) == TK.Int and self.tys.list[self.tys.shallow(self.tys.list[vt].args[0])].name == "u8" {
+                out.append(self.seg_node(bytes_t, sstart, send, "value", size[..], endian[..], signed, float, utf8, te, size_expr))
+                continue
+            } else if vk == TK.Str {
+                var w = tblank(TKind.StrToSlice, bytes_t, sstart, send)
+                w.kids.append(te)
+                let te2 = self.tir.add(w)
+                out.append(self.seg_node(bytes_t, sstart, send, "value", size[..], endian[..], signed, float, utf8, te2, size_expr))
+                continue
+            } else {
+                self.fail_here(sstart, format("cannot write a value of type `{}` into a binary; use integers, floats, or `[]u8`", .{self.ty_name(vt)})[..])
+            }
+            out.append(self.seg_node(vt, sstart, send, "value", size[..], endian[..], signed, float, utf8, te, size_expr))
+        }
+        let ret = self.tys.err_union(0, false, bytes_t)
+        let r = self.mk(TKind.BinConstruct, ret, start, end)
+        for o in out { self.tir.nodes[r].kids.append(o) }
+        self.tir.nodes[r].kids.append(t)
+        return r
     }
 
     // ----- @builtins ------------------------------------------------------------------------
