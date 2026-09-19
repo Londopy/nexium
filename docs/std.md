@@ -7,35 +7,83 @@ The core containers (`List`, `String`, `Map`), formatting, and the `math`,
 builtins and are documented in [`language.md`](language.md).
 
 Sources are in [`std/`](../std); each module carries its own `test` blocks,
-run by `nx test std/<module>.nx` and by `cargo test`.
+run by `nx test std/<module>.nx` and by `cargo test`. This file is generated
+by `scripts/std_docs.py` from the doc comments.
 
-## std.strings
+| module | what |
+| --- | --- |
+| [`std.args`](#stdargs) | command-line argument parsing, written in Nexium. |
+| [`std.bytes`](#stdbytes) | encodings and byte-level utilities, written in Nexium. |
+| [`std.json`](#stdjson) | a JSON parser and serializer, written in Nexium. |
+| [`std.lists`](#stdlists) | generic helpers over slices and Lists, written in Nexium. |
+| [`std.num`](#stdnum) | integer utilities, written in Nexium. |
+| [`std.strings`](#stdstrings) | text utilities on `[]u8` and `String`, written in Nexium. |
 
-std.strings: text utilities on `[]u8` and `String`, written in Nexium. `import std.strings` then `strings.join(parts, ", ")`. The core methods (`len`, `split`, `trim`, `find`, `starts_with`, `parse_int`, ...) are compiler builtins; this module adds what is naturally written in the language itself. Slices returned here point into the argument they were cut from; `String` results are owned by the caller.
+## std.args
+
+std.args: command-line argument parsing, written in Nexium. `import std.args` then: var p = args.Parser.new(os.args()) let verbose = p.flag("--verbose", "-v") let level = p.option("--level", "-l") orelse "info" let files = p.rest() Long options take `--name value` or `--name=value`; short ones `-n value`. Everything after `--` is positional. Unknown options stay in `rest()` so the caller can report them.
+
+Types: `Parser`
 
 | function | what it does |
 | --- | --- |
-| `join(parts: [][]u8, sep: []u8) -> String` | Concatenate `parts` with `sep` between them. |
-| `repeat(s: []u8, n: usize) -> String` | `s` repeated `n` times. |
-| `pad_left(s: []u8, width: usize, fill: u8) -> String` | Left-pad with `fill` to at least `width` bytes. |
-| `pad_right(s: []u8, width: usize, fill: u8) -> String` | Right-pad with `fill` to at least `width` bytes. |
-| `center(s: []u8, width: usize, fill: u8) -> String` | Center in `width` bytes, extra fill on the right. |
-| `count(s: []u8, needle: []u8) -> usize` | How many non-overlapping times `needle` occurs in `s`. |
-| `replace(s: []u8, from: []u8, to: []u8) -> String` | Every occurrence of `from` replaced by `to`. |
-| `index_from(s: []u8, needle: []u8, start: usize) -> ?usize` | Position of `needle` at or after `start`. |
-| `last_index(s: []u8, needle: []u8) -> ?usize` | Position of the last occurrence of `needle`. |
-| `strip_prefix(s: []u8, prefix: []u8) -> ?[]u8` | `s` without a leading `prefix`, or null when it does not start with it. |
-| `strip_suffix(s: []u8, suffix: []u8) -> ?[]u8` | `s` without a trailing `suffix`, or null when it does not end with it. |
-| `trim_left(s: []u8) -> []u8` | Leading ASCII whitespace removed. |
-| `trim_right(s: []u8) -> []u8` | Trailing ASCII whitespace removed. |
-| `is_blank(s: []u8) -> bool` | True when `s` is empty or only ASCII whitespace. |
-| `split_whitespace(s: []u8) -> List([]u8)` | Split on runs of ASCII whitespace; no empty pieces. |
-| `to_upper(s: []u8) -> String` | ASCII letters upper-cased; other bytes unchanged. |
-| `to_lower(s: []u8) -> String` | ASCII letters lower-cased; other bytes unchanged. |
-| `capitalize(s: []u8) -> String` | First ASCII letter upper-cased. |
-| `reverse(s: []u8) -> String` | Bytes in reverse order (bytes, not code points). |
-| `split_once(s: []u8, sep: []u8) -> ?([]u8, []u8)` | Cut at the first `sep`: (before, after), or null when `sep` is absent. |
-| `ellipsize(s: []u8, max: usize) -> String` | Truncate to `max` bytes, appending `...` when something was cut. |
+| `(method) new(argv: [][]u8) -> Parser` | Wrap `os.args()`; the program name in `argv[0]` is skipped. |
+| `(method) flag(self: *mut Self, long: []u8, short: []u8) -> bool` | True when the flag is present (any number of times). |
+| `(method) count(self: *mut Self, long: []u8, short: []u8) -> usize` | How many times the flag appears (`-vvv` counts as three). |
+| `(method) option(self: *mut Self, long: []u8, short: []u8) -> ?[]u8` | The value of `--name value`, `--name=value`, or `-n value`; the last one wins. |
+| `(method) options(self: *mut Self, long: []u8, short: []u8) -> List([]u8)` | Every value of a repeatable option, in order. |
+| `(method) int_option(self: *mut Self, long: []u8, short: []u8) -> !?i64` | An option parsed as an integer; `error.InvalidInput` when present but not a number. |
+| `(method) rest(self: *Self) -> List([]u8)` | Arguments not consumed by any query, plus everything after `--`. |
+| `(method) unknown_options(self: *Self) -> List([]u8)` | Unconsumed arguments that look like options: the ones the program did not ask for. |
+| `usage(program: []u8, summary: []u8, rows: [][]u8) -> String` | Render a usage line and option table from (flags, description) rows. |
+
+## std.bytes
+
+std.bytes: encodings and byte-level utilities, written in Nexium. `import std.bytes` then `bytes.hex(data)`, `bytes.base64(data)`, ... Decoders return `error.InvalidInput` on malformed text.
+
+| function | what it does |
+| --- | --- |
+| `hex(data: []u8) -> String` | Lower-case hexadecimal, two characters per byte. |
+| `unhex(text: []u8) -> !String` | Bytes from hexadecimal text (either case, even length). |
+| `base64(data: []u8) -> String` | Standard base64 with `=` padding. |
+| `unbase64(text: []u8) -> !String` | Bytes from standard base64 (padding optional). |
+| `fnv1a(data: []u8) -> u32` | FNV-1a, 32 bits: a fast non-cryptographic hash. |
+| `crc32(data: []u8) -> u32` | CRC-32 (IEEE), as used by zip and PNG. |
+| `read_u32_be(data: []u8, at: usize) -> u32` | Big-endian 32-bit read. |
+| `read_u32_le(data: []u8, at: usize) -> u32` | Little-endian 32-bit read. |
+| `write_u32_be(out: *mut String, v: u32)` | Append a big-endian 32-bit value. |
+| `write_u32_le(out: *mut String, v: u32)` | Append a little-endian 32-bit value. |
+| `first_difference(a: []u8, b: []u8) -> ?usize` | Bytes that differ, for a compact diff of two buffers. |
+
+## std.json
+
+std.json: a JSON parser and serializer, written in Nexium. `import std.json` then `json.parse(text)`, `json.stringify(&value)`. Values are the `Json` enum below; arrays and objects own their children. Numbers are f64 (JSON has one number type); integers up to 2^53 round trip.
+
+Types: `Member`, `Json`
+
+| function | what it does |
+| --- | --- |
+| `null_value() -> Json` |  |
+| `boolean(b: bool) -> Json` |  |
+| `number(n: f64) -> Json` |  |
+| `string(s: []u8) -> Json` |  |
+| `array() -> Json` |  |
+| `object() -> Json` |  |
+| `push(v: *mut Json, own item: Json)` | Append to an array; does nothing when `v` is not an array. |
+| `set(v: *mut Json, key: []u8, own value: Json)` | Set a key on an object (replacing an existing one); does nothing otherwise. |
+| `get(v: *Json, key: []u8) -> ?*Json` | The member `key` of an object, or null. |
+| `get_mut(v: *mut Json, key: []u8) -> ?*mut Json` | The member `key` of an object, mutable, or null. |
+| `at_mut(v: *mut Json, i: usize) -> ?*mut Json` | Element `i` of an array, mutable, or null. |
+| `at(v: *Json, i: usize) -> ?*Json` | Element `i` of an array, or null. |
+| `len(v: *Json) -> usize` | Number of elements or members; 0 for scalars. |
+| `is_null(v: *Json) -> bool` |  |
+| `as_bool(v: *Json) -> ?bool` |  |
+| `as_num(v: *Json) -> ?f64` |  |
+| `as_str(v: *Json) -> ?[]u8` |  |
+| `keys(v: *Json) -> List([]u8)` | Keys of an object in order; empty for anything else. |
+| `parse(text: []u8) -> !Json` | Parse a JSON document. Trailing whitespace is allowed, anything else is an error. |
+| `stringify(v: *Json) -> String` | Compact text: no whitespace. |
+| `pretty(v: *Json, indent: usize) -> String` | Indented text, `indent` spaces per level. |
 
 ## std.lists
 
@@ -64,24 +112,6 @@ std.lists: generic helpers over slices and Lists, written in Nexium. `import std
 | `repeat(comptime T: type, xs: []T, times: usize) -> List(T)` | Elements repeated `times` times in sequence. |
 | `starts_with(comptime T: type where T: Eq, xs: []T, prefix: []T) -> bool` | True when `xs` starts with `prefix`. |
 
-## std.bytes
-
-std.bytes: encodings and byte-level utilities, written in Nexium. `import std.bytes` then `bytes.hex(data)`, `bytes.base64(data)`, ... Decoders return `error.InvalidInput` on malformed text.
-
-| function | what it does |
-| --- | --- |
-| `hex(data: []u8) -> String` | Lower-case hexadecimal, two characters per byte. |
-| `unhex(text: []u8) -> !String` | Bytes from hexadecimal text (either case, even length). |
-| `base64(data: []u8) -> String` | Standard base64 with `=` padding. |
-| `unbase64(text: []u8) -> !String` | Bytes from standard base64 (padding optional). |
-| `fnv1a(data: []u8) -> u32` | FNV-1a, 32 bits: a fast non-cryptographic hash. |
-| `crc32(data: []u8) -> u32` | CRC-32 (IEEE), as used by zip and PNG. |
-| `read_u32_be(data: []u8, at: usize) -> u32` | Big-endian 32-bit read. |
-| `read_u32_le(data: []u8, at: usize) -> u32` | Little-endian 32-bit read. |
-| `write_u32_be(out: *mut String, v: u32)` | Append a big-endian 32-bit value. |
-| `write_u32_le(out: *mut String, v: u32)` | Append a little-endian 32-bit value. |
-| `first_difference(a: []u8, b: []u8) -> ?usize` | Bytes that differ, for a compact diff of two buffers. |
-
 ## std.num
 
 std.num: integer utilities, written in Nexium. `import std.num` then `num.gcd(12, 18)`, `num.clamp(x, 0, 10)`, ... The `math` namespace (sqrt, sin, pow on floats, ...) is a compiler builtin; this module covers what is naturally integer work.
@@ -104,3 +134,31 @@ std.num: integer utilities, written in Nexium. `import std.num` then `num.gcd(12
 | `is_power_of_two(n: u64) -> bool` | True for 1, 2, 4, 8, ... |
 | `next_power_of_two(n: u64) -> u64` | The smallest power of two >= n (n <= 2^63). |
 | `popcount(n: u64) -> u32` | Number of set bits. |
+
+## std.strings
+
+std.strings: text utilities on `[]u8` and `String`, written in Nexium. `import std.strings` then `strings.join(parts, ", ")`. The core methods (`len`, `split`, `trim`, `find`, `starts_with`, `parse_int`, ...) are compiler builtins; this module adds what is naturally written in the language itself. Slices returned here point into the argument they were cut from; `String` results are owned by the caller.
+
+| function | what it does |
+| --- | --- |
+| `join(parts: [][]u8, sep: []u8) -> String` | Concatenate `parts` with `sep` between them. |
+| `repeat(s: []u8, n: usize) -> String` | `s` repeated `n` times. |
+| `pad_left(s: []u8, width: usize, fill: u8) -> String` | Left-pad with `fill` to at least `width` bytes. |
+| `pad_right(s: []u8, width: usize, fill: u8) -> String` | Right-pad with `fill` to at least `width` bytes. |
+| `center(s: []u8, width: usize, fill: u8) -> String` | Center in `width` bytes, extra fill on the right. |
+| `count(s: []u8, needle: []u8) -> usize` | How many non-overlapping times `needle` occurs in `s`. |
+| `replace(s: []u8, from: []u8, to: []u8) -> String` | Every occurrence of `from` replaced by `to`. |
+| `index_from(s: []u8, needle: []u8, start: usize) -> ?usize` | Position of `needle` at or after `start`. |
+| `last_index(s: []u8, needle: []u8) -> ?usize` | Position of the last occurrence of `needle`. |
+| `strip_prefix(s: []u8, prefix: []u8) -> ?[]u8` | `s` without a leading `prefix`, or null when it does not start with it. |
+| `strip_suffix(s: []u8, suffix: []u8) -> ?[]u8` | `s` without a trailing `suffix`, or null when it does not end with it. |
+| `trim_left(s: []u8) -> []u8` | Leading ASCII whitespace removed. |
+| `trim_right(s: []u8) -> []u8` | Trailing ASCII whitespace removed. |
+| `is_blank(s: []u8) -> bool` | True when `s` is empty or only ASCII whitespace. |
+| `split_whitespace(s: []u8) -> List([]u8)` | Split on runs of ASCII whitespace; no empty pieces. |
+| `to_upper(s: []u8) -> String` | ASCII letters upper-cased; other bytes unchanged. |
+| `to_lower(s: []u8) -> String` | ASCII letters lower-cased; other bytes unchanged. |
+| `capitalize(s: []u8) -> String` | First ASCII letter upper-cased. |
+| `reverse(s: []u8) -> String` | Bytes in reverse order (bytes, not code points). |
+| `split_once(s: []u8, sep: []u8) -> ?([]u8, []u8)` | Cut at the first `sep`: (before, after), or null when `sep` is absent. |
+| `ellipsize(s: []u8, max: usize) -> String` | Truncate to `max` bytes, appending `...` when something was cut. |

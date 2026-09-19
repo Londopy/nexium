@@ -10,6 +10,16 @@ impl<'a> Checker<'a> {
         let s = self.check_expr(scrutinee, None);
         let st = self.tys.resolve(s.ty, false);
         let s = TExpr { ty: st, ..s };
+        // matching through a pointer binds owning payloads by reference
+        let by_ref = match &s.kind {
+            TExprKind::Deref(inner) => match self.tys.kind(self.tys.shallow(inner.ty)).clone() {
+                TyKind::Ptr(m, _) => Some(m),
+                _ => None,
+            },
+            _ => None,
+        };
+        let saved_by_ref = self.cur().pat_by_ref;
+        self.cur().pat_by_ref = by_ref;
         if arms.is_empty() {
             self.error(span, "`match` needs at least one arm");
             return self.error_expr(span);
@@ -50,6 +60,7 @@ impl<'a> Checker<'a> {
         let (bodies, ty) = self.join_exprs(bodies, expected, span);
         let arms_out: Vec<TArm> = tarms.into_iter().zip(bodies).map(|((pat, guard, _, sp), body)| TArm { pat, guard, body, span: sp }).collect();
         self.check_exhaustive(st, &arms_out, span);
+        self.cur().pat_by_ref = saved_by_ref;
         self.mk(TExprKind::Match { scrutinee: Box::new(s), arms: arms_out }, ty, span)
     }
 
@@ -98,6 +109,16 @@ impl<'a> Checker<'a> {
         (out, target)
     }
 
+    /// The type a pattern binding gets: the payload itself, or a pointer to it
+    /// when matching through a pointer and the payload is an owning value.
+    fn pat_bind_ty(&mut self, t: TyId) -> TyId {
+        let by_ref = self.cur().pat_by_ref;
+        match by_ref {
+            Some(m) if self.needs_drop(t) => self.tys.ptr(m, t),
+            _ => t,
+        }
+    }
+
     pub fn check_pattern(&mut self, pat: &Pattern, ty: TyId) -> TPat {
         let ty = self.tys.shallow(ty);
         let k = self.tys.kind(ty).clone();
@@ -107,15 +128,18 @@ impl<'a> Checker<'a> {
                 // a bare name on an optional binds its payload; on an error union, the success value
                 match k {
                     TyKind::Opt(inner) => {
-                        let l = self.declare_local(name, inner, false, *span);
+                        let bt = self.pat_bind_ty(inner);
+                        let l = self.declare_local(name, bt, false, *span);
                         TPat::Some(Box::new(TPat::Bind(l)))
                     }
                     TyKind::ErrUnion(_, inner) => {
-                        let l = self.declare_local(name, inner, false, *span);
+                        let bt = self.pat_bind_ty(inner);
+                        let l = self.declare_local(name, bt, false, *span);
                         TPat::Ok(Box::new(TPat::Bind(l)))
                     }
                     _ => {
-                        let l = self.declare_local(name, ty, false, *span);
+                        let bt = self.pat_bind_ty(ty);
+                        let l = self.declare_local(name, bt, false, *span);
                         TPat::Bind(l)
                     }
                 }

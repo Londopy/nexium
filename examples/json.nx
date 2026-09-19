@@ -1,0 +1,16 @@
+// std.json and std.args together: parse, modify, pretty-print a document,
+// and read command-line style arguments. Both modules are Nexium code.
+
+import std.json
+import std.args
+
+fn main() -> !void {
+    var doc = try json.parse("{\"name\": \"nx\", \"tags\": [1, 2, {\"deep\": [true, null]}]}")
+    json.set(&mut doc, "name", json.string("nexium"))
+    json.push(json.get_mut(&mut doc, "tags") orelse &mut doc, json.number(3))
+    println("{}", .{json.pretty(&doc, 2)})
+    println("{} {}", .{json.len(&doc), json.as_str(json.get(&doc, "name") orelse &doc) orelse "?"})
+    let argv = ["p", "-v", "--n=3", "x"]
+    var a = args.Parser.new(argv[..])
+    println("{} {} {}", .{a.flag("--verbose", "-v"), a.option("--n", "") orelse "", a.rest().len})
+}

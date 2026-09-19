@@ -18,9 +18,15 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
 - Integer and float literals coerce into `?T`.
 - `examples/own.nx` and five compile-fail cases for the `own` rules.
 - The standard library in Nexium: `import std.strings`, `std.lists`,
-  `std.bytes`, `std.num` (68 functions with tests), embedded in the
-  compiler; `docs/std.md` lists them; `examples/stdlib.nx` uses them.
+  `std.bytes`, `std.num`, `std.json`, `std.args` (96 functions with tests),
+  embedded in the compiler; `docs/std.md` lists them; `examples/stdlib.nx`
+  uses them.
 - Tuple types as type arguments: `List((A, B))`.
+- Recursive types through `List`: `enum Json { Arr(List(Json)) }`.
+- Matching through a pointer (`match p.*`) binds owning payloads by reference,
+  so `match v.* { .Arr(items) => items.append(x) }` mutates in place.
+- `*String` and `*List(T)` coerce to `[]u8` and `[]T`; `null` coerces into a
+  nested optional such as `!?T`.
 
 ### Changed
 
@@ -33,6 +39,10 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
 
 - A branch that diverges (`if (c) return x`) no longer marks what it moved as
   moved afterwards.
+- Two modules each defining a type of the same name (`Parser` in `std.json`
+  and `std.args`) collided in the generated C; type names now carry their
+  module. A user function named like a runtime identifier (`fn string`)
+  no longer collides either.
 - `nx fmt` spacing after `-> List(T)`, after a closing closure bar, and
   between an `if` condition and a parenthesized body.
 

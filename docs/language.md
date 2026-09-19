@@ -235,6 +235,25 @@ creates a new one.
 prints `error: Name` and exits with 1; a panic prints its location and exits
 with 101. `test "name" { }` blocks run with `nx test`.
 
+## Recursive types and matching through pointers
+
+A `List` may hold the type being defined, so trees and JSON values are plain
+enums: `enum Json { Null, Arr(List(Json)), Obj(List(Member)) }`. Matching
+through a pointer binds owning payloads by reference:
+
+```
+fn push(v: *mut Json, own item: Json) {
+    match v.* {
+        .Arr(items) => items.append(item),   // items: *mut List(Json), aliases the payload
+        _ => {},
+    }
+}
+```
+
+With `v: *Json` the binding is `*List(Json)`. Scalars (`.Num(n)`) are copied.
+A `*String` or `*List(T)` coerces to `[]u8` or `[]T` where a slice is
+expected.
+
 ## Trait objects
 
 `dyn Trait` is a fat pointer made from `*T` or `*mut T` where `T` implements

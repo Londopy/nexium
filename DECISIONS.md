@@ -297,6 +297,24 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     `lists.zip` needed. A tuple literal in type-argument position is read as
     a tuple type.
 
+67. **Recursive types through `List`.** `enum Json { Arr(List(Json)) }` is
+    legal: a List holds a pointer, so the C backend forward-declares a struct
+    or enum reached through a List or slice and defines it after the current
+    type. Definitions that are only ever forward-declared are emitted before
+    the functions. This is what `std.json` needed.
+68. **Matching through a pointer binds owning payloads by reference.** In
+    `match p.* { .Arr(items) => ... }` with `p: *mut Json`, `items` is a
+    `*mut List(Json)` aliasing the payload, so appending mutates the value in
+    place and returning `&items[i]` is a pointer into the caller's data, not
+    into a local. Scalars are still copied. The rule is only active for
+    `match p.*`; a match on a value binds values as before.
+69. **`fn string(...)` may not become `nx_string`.** User function names are
+    mangled with `nx_`, which the runtime also uses; the backend appends `_fn`
+    to any user name that collides with a runtime identifier instead of
+    reserving the names in the language. Struct and enum names outside the
+    root module are prefixed with their module index for the same reason:
+    `std.json` and `std.args` each have a `Parser`.
+
 ## Compiler selection
 
 60. **Native macOS builds use the system compiler.** zig 0.14.1 cannot read

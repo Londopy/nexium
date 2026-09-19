@@ -196,6 +196,8 @@ pub struct FnCtx {
     pub callees: Vec<(InstId, Span)>,
     pub moved: HashSet<LocalId>,
     pub moved_spans: HashMap<LocalId, Span>,
+    /// inside a `match p.*`: bind owning payloads as `*T` / `*mut T` (the pointer's mutability)
+    pub pat_by_ref: Option<bool>,
     pub generics: HashMap<String, TyId>,
     pub self_ty: Option<TyId>,
     pub unsafe_depth: u32,
@@ -224,6 +226,7 @@ impl FnCtx {
             callees: Vec::new(),
             moved: HashSet::new(),
             moved_spans: HashMap::new(),
+            pat_by_ref: None,
             generics: HashMap::new(),
             self_ty: None,
             unsafe_depth: 0,

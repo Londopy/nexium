@@ -152,6 +152,10 @@ impl<'a> Checker<'a> {
         }
         let kf = self.tys.kind(from).clone();
         let kt = self.tys.kind(to).clone();
+        let ptr_to_owned = match &kf {
+            TyKind::Ptr(_, i) => matches!(self.tys.kind(self.tys.shallow(*i)), TyKind::Str | TyKind::List(_)),
+            _ => false,
+        };
         // never coerces to anything
         if matches!(kf, TyKind::Never) {
             return Ok(TExpr { ty: target, ..te });
@@ -168,6 +172,24 @@ impl<'a> Checker<'a> {
                         let span = inner_e.span;
                         return Ok(TExpr { kind: TExprKind::OptWrap(Box::new(inner_e)), ty: target, span });
                     }
+                }
+                return Err(te);
+            }
+            // *String / *List(T) -> []u8 / []T: a pointer to an owning value reads as a view of it
+            (TyKind::Ptr(_, inner), TyKind::Slice(..)) if ptr_to_owned => {
+                let inner = *inner;
+                let span = te.span;
+                let d = TExpr { kind: TExprKind::Deref(Box::new(te.clone())), ty: inner, span };
+                if let Ok(v) = self.coerce(d, target) {
+                    return Ok(v);
+                }
+                return Err(te);
+            }
+            // ?_ -> ?T: a `null` (or wrapped literal) whose inner type is still open
+            (TyKind::Opt(a), TyKind::Opt(b)) => {
+                let (a, b) = (*a, *b);
+                if self.unify(a, b) {
+                    return Ok(TExpr { ty: target, ..te });
                 }
                 return Err(te);
             }

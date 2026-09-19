@@ -1599,6 +1599,18 @@ impl Gen {
         match p {
             TPat::Bind(l) => {
                 let name = self.local_name(*l);
+                let lt_raw = self.st().local_tys[*l as usize];
+                let lt = self.res(lt_raw);
+                // bound by reference (matching through a pointer): alias the payload
+                if lt != ty {
+                    if let TyKind::Ptr(_, inner) = self.p.tys.kind(lt).clone() {
+                        if self.res(inner) == ty {
+                            let cn = self.cty(lt);
+                            self.line(format!("{} {} = &({});", cn, name, s));
+                            return;
+                        }
+                    }
+                }
                 let cn = self.cty(ty);
                 self.line(format!("{} {} = {};", cn, name, s));
                 if owned {
