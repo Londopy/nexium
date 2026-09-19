@@ -13,6 +13,7 @@ import lexer
 import parser
 
 const NONE: usize = 0xFFFFFFFFFFFFFFFF
+const NONE_NAME: []u8 = ""
 
 const BUILTIN_NAMESPACES = ["math", "io", "os", "time", "random", "fmt", "utf8", "ascii", "mem", "slice", "process", "test", "alloc", "net", "thread", "sync"]
 const EFFECT_NAMES = ["allocates", "refcounts", "blocks", "shared_mutable", "nondeterministic", "panics", "ffi", "unbounded_stack"]
@@ -615,6 +616,8 @@ pub struct FnCtx {
     callee_spans: List(usize)
     moved: Map(usize, usize)
     ranges: Map(usize, Range)
+    // loop index variables known to be in range for a local slice
+    index_of: Map(usize, usize)
     in_defer: bool
     loop_depth: usize
     unsafe_depth: usize
@@ -629,7 +632,7 @@ fn new_ctx(ret: usize, module: usize, name: []u8) -> FnCtx {
         .scope_names = List(String).new(), .scope_locals = List(usize).new(), .scope_deref = List(bool).new(), .scope_marks = List(usize).new(),
         .labels = List(LabelInfo).new(), .next_label = 0, .own_effects = 0, .witnesses = List(Witness).new(),
         .callees = List(usize).new(), .callee_spans = List(usize).new(), .moved = Map(usize, usize).new(), .ranges = Map(usize, Range).new(),
-        .in_defer = false, .loop_depth = 0, .unsafe_depth = 0, .is_comptime = false, .in_parallel = 0, .self_ty = NONE,
+        .index_of = Map(usize, usize).new(), .in_defer = false, .loop_depth = 0, .unsafe_depth = 0, .is_comptime = false, .in_parallel = 0, .self_ty = NONE,
     }
 }
 
@@ -984,74 +987,77 @@ impl Checker {
         let n = self.node(m, id)
         let path = n.words.clone()
         let args = n.kids.clone()
-        let name = path[0].clone()
-        if path.len == 1 {
+        let at = n.start
+        if path.len > 2 {
+            self.fail(m, at, "type paths may have at most one module qualifier")
+            return self.tys.simple(TK.Void)
+        }
+        var targs = List(usize).new()
+        for a in args { targs.append(self.resolve_type(m, a, self_ty)) }
+        if path.len == 2 { return self.named_type(m, path[1][..], path[0][..], targs, at, self_ty) }
+        return self.named_type(m, path[0][..], NONE_NAME, targs, at, self_ty)
+    }
+
+    /// A named type with resolved arguments: `name`, or `qualifier.name`.
+    fn named_type(self: *mut Self, m: usize, name: []u8, qualifier: []u8, own targs: List(usize), at: usize, self_ty: usize) -> usize {
+        let qualified = qualifier.len > 0
+        if !qualified {
             if name == "Self" {
                 if self_ty != NONE { return self_ty }
-                self.fail(m, id, "`Self` is only valid inside an impl or trait")
+                self.fail(m, at, "`Self` is only valid inside an impl or trait")
                 return self.tys.simple(TK.Void)
             }
-            if let t = self.primitive(name[..]) {
-                if args.len > 0 { self.fail(m, id, format("`{}` takes no type arguments", .{name})[..]) }
+            if let t = self.primitive(name) {
+                if targs.len > 0 { self.fail(m, at, format("`{}` takes no type arguments", .{name})[..]) }
                 return t
             }
             if name == "List" {
-                if args.len != 1 {
-                    self.fail(m, id, "`List` takes one type argument: List(T)")
+                if targs.len != 1 {
+                    self.fail(m, at, "`List` takes one type argument: List(T)")
                     return self.tys.simple(TK.Void)
                 }
-                let e = self.resolve_type(m, args[0], self_ty)
-                return self.tys.wrap(TK.List, e, false)
+                return self.tys.wrap(TK.List, targs[0], false)
             }
             if name == "Map" {
-                if args.len != 2 {
-                    self.fail(m, id, "`Map` takes two type arguments: Map(K, V)")
+                if targs.len != 2 {
+                    self.fail(m, at, "`Map` takes two type arguments: Map(K, V)")
                     return self.tys.simple(TK.Void)
                 }
-                let kt = self.resolve_type(m, args[0], self_ty)
-                let vt = self.resolve_type(m, args[1], self_ty)
-                return self.tys.map(kt, vt)
+                return self.tys.map(targs[0], targs[1])
             }
             if name == "String" { return self.tys.simple(TK.Str) }
         }
         var module = m
-        var tname = name.clone()
-        if path.len == 2 {
-            let r = self.lookup(m, path[0][..]) orelse {
-                self.fail(m, id, format("cannot find module `{}`", .{path[0]})[..])
+        if qualified {
+            let r = self.lookup(m, qualifier) orelse {
+                self.fail(m, at, format("cannot find module `{}`", .{qualifier})[..])
                 return self.tys.simple(TK.Void)
             }
             if r.kind != ItemKind.Module {
-                self.fail(m, id, format("`{}` is not a type", .{join_words(&path, ".")})[..])
+                self.fail(m, at, format("`{}.{}` is not a type", .{qualifier, name})[..])
                 return self.tys.simple(TK.Void)
             }
             module = r.id
-            tname = path[1].clone()
-        } else if path.len > 2 {
-            self.fail(m, id, "type paths may have at most one module qualifier")
-            return self.tys.simple(TK.Void)
         }
-        let r = self.lookup(module, tname[..]) orelse {
-            self.fail(m, id, format("cannot find type `{}`", .{tname})[..])
+        let r = self.lookup(module, name) orelse {
+            self.fail(m, at, format("cannot find type `{}`", .{name})[..])
             return self.tys.simple(TK.Void)
         }
         if r.kind == ItemKind.Struct or r.kind == ItemKind.Enum {
             let n_params = if r.kind == ItemKind.Struct { self.structs[r.id].tparams.len } else { self.enums[r.id].tparams.len }
-            if args.len != n_params {
-                self.fail(m, id, format("`{}` expects {} type argument(s) but {} were given", .{tname, n_params, args.len})[..])
+            if targs.len != n_params {
+                self.fail(m, at, format("`{}` expects {} type argument(s) but {} were given", .{name, n_params, targs.len})[..])
                 return self.tys.simple(TK.Void)
             }
-            var targs = List(usize).new()
-            for a in args { targs.append(self.resolve_type(m, a, self_ty)) }
             return self.tys.of_def(if r.kind == ItemKind.Struct { TK.Struct } else { TK.Enum }, r.id, targs)
         }
         if r.kind == ItemKind.Alias { return self.resolve_alias(r.id) }
         if r.kind == ItemKind.ErrorSet { return self.tys.err_set(r.id, true) }
         if r.kind == ItemKind.Trait {
-            self.fail(m, id, format("`{}` is a trait, not a type", .{tname})[..])
+            self.fail(m, at, format("`{}` is a trait, not a type", .{name})[..])
             return self.tys.simple(TK.Void)
         }
-        self.fail(m, id, format("`{}` is not a type", .{tname})[..])
+        self.fail(m, at, format("`{}` is not a type", .{name})[..])
         return self.tys.simple(TK.Void)
     }
 
@@ -1947,10 +1953,13 @@ impl Checker {
         if k == parser.NodeKind.Continue {
             let label = n.name.clone()
             let has_label = label != "-"
-            let info = self.find_label(label[..], has_label, false, start) orelse return NONE
-            if !info.is_loop { self.fail_here(start, "`continue` needs a loop label") }
+            let li = self.find_label(label[..], has_label, false, start)
+            if li == NONE { return NONE }
+            let is_loop = self.ctx().labels[li].is_loop
+            let lid = self.ctx().labels[li].id
+            if !is_loop { self.fail_here(start, "`continue` needs a loop label") }
             let st = self.stmt_node(TKind.SContinue, start, end)
-            self.tir.nodes[st].a = info.id
+            self.tir.nodes[st].a = lid
             return st
         }
         if k == parser.NodeKind.Defer or k == parser.NodeKind.ErrDefer {
@@ -2054,6 +2063,7 @@ impl Checker {
         let start = n.start
         let end = n.end
         let compound = op != "="
+        let bop = op.clone()
         if !compound {
             // naming the target of `x = v` is not a read: a moved local is revived
             let tn = self.node(m, target_node)
@@ -2098,8 +2108,7 @@ impl Checker {
             return st
         }
         // compound: typed as the binary operation on (target, value)
-        let bop = op[0..op.len - 1]
-        let be = self.check_binary_parts(bop, target_node, value_node, tt, start, end)
+        let be = self.check_binary_parts(bop[..], target_node, value_node, tt, start, end)
         if self.tir.nodes[be].k != TKind.Binary { return NONE }
         let mode = self.tir.nodes[be].name.clone()
         let v = self.tir.nodes[be].kids[1]
@@ -2137,16 +2146,17 @@ impl Checker {
         return st
     }
 
-    fn find_label(self: *mut Self, name: []u8, has_name: bool, for_break: bool, at: usize) -> ?LabelInfo {
+    /// The index into the label stack of the named label (or the innermost loop), or NONE.
+    fn find_label(self: *mut Self, name: []u8, has_name: bool, for_break: bool, at: usize) -> usize {
         let c = self.ctx()
         var i = c.labels.len
         while i > 0 {
             i -= 1
             let l = &c.labels[i]
             if has_name {
-                if l.has_name and l.name == name { return c.labels[i] }
+                if l.has_name and l.name == name { return i }
             } else if l.is_loop {
-                return c.labels[i]
+                return i
             }
         }
         if has_name {
@@ -2154,7 +2164,7 @@ impl Checker {
         } else {
             self.fail_here(at, if for_break { "`break` outside of a loop" } else { "`continue` outside of a loop" })
         }
-        return null
+        return NONE
     }
 
     fn check_break(self: *mut Self, s: usize) -> usize {
@@ -2166,18 +2176,22 @@ impl Checker {
         let start = n.start
         let end = n.end
         if self.ctx().in_parallel > 0 { self.fail_here(start, "`break` is not allowed inside a `for parallel` body (other workers cannot be stopped); use `continue`") }
-        let info = self.find_label(label[..], has_label, true, start) orelse return NONE
+        let li = self.find_label(label[..], has_label, true, start)
+        if li == NONE { return NONE }
+        let is_loop = self.ctx().labels[li].is_loop
+        let lid = self.ctx().labels[li].id
+        let break_ty = self.ctx().labels[li].break_ty
         let st = self.stmt_node(TKind.SBreak, start, end)
-        self.tir.nodes[st].a = info.id
+        self.tir.nodes[st].a = lid
         if value_node != NONE {
-            if info.is_loop { self.fail_here(start, "loops do not produce values; use a labeled block for `break :label value`") }
-            var te = self.check_expr(value_node, info.break_ty)
-            if info.break_ty != NONE { te = self.coerce_or_error(te, info.break_ty, "break value") }
+            if is_loop { self.fail_here(start, "loops do not produce values; use a labeled block for `break :label value`") }
+            var te = self.check_expr(value_node, break_ty)
+            if break_ty != NONE { te = self.coerce_or_error(te, break_ty, "break value") }
             te = self.take_ownership(te)
             self.tir.nodes[st].kids.append(te)
-        } else if !info.is_loop and info.break_ty != NONE {
+        } else if !is_loop and break_ty != NONE {
             let v = self.tys.void()
-            if !self.unify(info.break_ty, v) { self.fail_here(start, "this labeled block produces a value; `break :label` needs one") }
+            if !self.unify(break_ty, v) { self.fail_here(start, "this labeled block produces a value; `break :label` needs one") }
         }
         return st
     }
@@ -2226,31 +2240,53 @@ impl Checker {
         let range_step = n.z
         let body_node = n.a
         if is_range {
-            if bindings.len != 1 { self.fail_here(start, "a range loop binds one variable") }
-            if is_parallel { self.fail_here(start, "`for parallel` iterates items, not a range") }
+            if bindings.len != 1 { self.fail_here(start, "a range loop binds exactly one variable: `for i in a..b`") }
+            let hint = self.tys.usize_ty()
             var st = self.check_expr(range_start, NONE)
-            let lt = self.tys.shallow(self.tir.nodes[st].ty)
-            var en = self.check_expr(range_end, lt)
-            en = self.coerce_or_error(en, self.tir.nodes[st].ty, "range end")
-            var it = self.tys.resolve(self.tir.nodes[st].ty, false)
+            let s_ty = self.tys.shallow(self.tir.nodes[st].ty)
+            var en = NONE
+            if self.tys.kind(s_ty) == TK.Infer {
+                // an untyped literal start takes the end's type, defaulting to usize
+                en = self.check_expr(range_end, hint)
+                let et = self.tys.resolve(self.tir.nodes[en].ty, false)
+                st = self.coerce_or_error(st, et, "range start")
+            } else {
+                en = self.check_expr(range_end, s_ty)
+                en = self.coerce_or_error(en, s_ty, "range end")
+            }
+            let it = self.tys.resolve(self.tir.nodes[st].ty, true)
             if !self.tys.is_integer(it) {
                 self.fail_here(start, format("range bounds must be integers but found `{}`", .{self.ty_name(it)})[..])
             }
             var step = NONE
             if range_step != NONE {
-                step = self.check_expr(range_step, it)
-                step = self.coerce_or_error(step, it, "range step")
+                step = self.arg(range_step, it, "step")
+                if self.tir.nodes[step].k == TKind.Int {
+                    let sv = self.tir.nodes[step].ival
+                    if sv == 0 { self.fail_here(self.tir.nodes[step].start, "a range step cannot be zero") }
+                    let signed = self.tys.kind(it) == TK.Int and int_signed(self.tys.list[it].name[..])
+                    if sv < 0 and !signed {
+                        self.fail_here(self.tir.nodes[step].start, format("a negative step needs a signed loop variable, but this one is `{}`", .{self.ty_name(it)})[..])
+                    }
+                }
             }
-            // an open literal range walks a usize
-            if self.tys.kind(it) == TK.Infer {
-                let u = self.tys.usize_ty()
-                _ = self.unify(it, u)
-                it = u
-            }
-            st = self.finalize_expr(st)
-            en = self.finalize_expr(en)
             self.push_scope()
             let v = self.declare_local(bindings[0][..], it, false, start, end)
+            // range fact: start <= i < end, for the default step of 1
+            if step == NONE {
+                if let sr = self.expr_range(st) {
+                    if let er = self.expr_range(en) {
+                        if er.hi > sr.lo { self.ctx().ranges.put(v, Range{ .lo = sr.lo, .hi = er.hi - 1 }) }
+                    }
+                }
+            }
+            // `for i in 0..xs.len`: i indexes xs safely
+            if self.tir.nodes[en].k == TKind.Builtin and self.tir.nodes[en].name == "Len" {
+                let arg0 = self.tir.nodes[en].kids[0]
+                if self.tir.nodes[arg0].k == TKind.Local and self.tir.nodes[st].k == TKind.Int and self.tir.nodes[st].ival == 0 and step == NONE {
+                    self.ctx().index_of.put(v, self.tir.nodes[arg0].a)
+                }
+            }
             let lid = self.new_label(label[..], label.len > 0, true, NONE)
             self.ctx().loop_depth += 1
             let vt = self.tys.void()
@@ -2258,6 +2294,7 @@ impl Checker {
             self.ctx().loop_depth -= 1
             _ = self.ctx().labels.pop()
             self.pop_scope()
+            if is_parallel { self.fail_here(start, "`for parallel` iterates slices: write `for parallel x, i in items { ... }`") }
             let node = self.stmt_node(TKind.SForRange, start, end)
             self.tir.nodes[node].a = v
             self.tir.nodes[node].b = lid
@@ -2270,8 +2307,7 @@ impl Checker {
             self.tir.nodes[node].kids.append(tb)
             return node
         }
-        self.fail_here(start, "unsupported loop (stage 2)")
-        return NONE
+        return self.check_for_items(s)
     }
 }
 
@@ -2798,6 +2834,18 @@ impl Checker {
             return be
         }
         if k == parser.NodeKind.Cast { return self.check_cast(e) }
+        if k == parser.NodeKind.FieldE { return self.check_field(e, expected) }
+        if k == parser.NodeKind.ImplicitVariant { return self.check_implicit_variant(e, expected) }
+        if k == parser.NodeKind.Index { return self.check_index(e) }
+        if k == parser.NodeKind.SliceE { return self.check_slice_op(e) }
+        if k == parser.NodeKind.StructLit { return self.check_struct_lit(e, expected) }
+        if k == parser.NodeKind.ArrayLit { return self.check_array_lit(e, expected) }
+        if k == parser.NodeKind.TupleLit { return self.check_tuple_lit(e, expected) }
+        if k == parser.NodeKind.Try { return self.check_try(e) }
+        if k == parser.NodeKind.Catch { return self.check_catch(e, expected) }
+        if k == parser.NodeKind.OrElse { return self.check_orelse(e, expected) }
+        if k == parser.NodeKind.IfCapture { return self.check_if_capture(e, expected) }
+        if k == parser.NodeKind.MethodCall { return self.check_method_call(e, expected) }
         if k == parser.NodeKind.Null {
             var t = NONE
             if expected != NONE {
@@ -3400,6 +3448,35 @@ impl Checker {
                 }
             }
         }
+        if cn.k == parser.NodeKind.FieldE {
+            // `Type.assoc(...)`, `mod.f(...)`, `ns.f(...)`, or a call through a field of function type
+            let base_node = cn.x
+            let fname = cn.name.clone()
+            let b = self.check_expr(base_node, NONE)
+            if self.is_namespace(b) {
+                let ns = self.tir.nodes[b].name.clone()
+                return self.check_namespace_call(ns[..], fname[..], args[..], expected, start, end)
+            }
+            let bt = self.tys.shallow(self.tir.nodes[b].ty)
+            if self.tys.kind(bt) == TK.Type and self.tir.nodes[b].k == TKind.TypeVal {
+                return self.check_static_call(self.tir.nodes[b].a, fname[..], args[..], expected, start, end)
+            }
+            let f = self.field_access(b, fname[..], cn.start, cn.end)
+            return self.call_value(f, args[..], start, end)
+        }
+        if cn.k == parser.NodeKind.Ident {
+            // a generic type instantiated in expression position: `List(i32)`, `Pair(i32, f64)`
+            let name = cn.name.clone()
+            var is_type = name == "List" or name == "Map" or name == "String"
+            if let it = self.lookup(m, name[..]) { if it.kind == ItemKind.Struct or it.kind == ItemKind.Enum { is_type = true } }
+            if is_type {
+                var targs = List(usize).new()
+                for a in args { targs.append(self.expr_as_type(a)) }
+                let st = self.ctx().self_ty
+                let t = self.named_type(m, name[..], NONE_NAME, targs, start, st)
+                return self.type_val(t, start, end)
+            }
+        }
         let f = self.check_expr(callee, NONE)
         let ft = self.tys.shallow(self.tir.nodes[f].ty)
         if self.tys.kind(ft) == TK.Type and self.tir.nodes[f].k == TKind.TypeVal {
@@ -3838,6 +3915,13 @@ impl Checker {
     /// Range facts from a boolean guard on a local: `x < N`, `x <= N`, `x >= N`, `x > N`.
     fn guard_narrowing(self: *mut Self, c: usize) -> List(Narrowing) {
         var out = List(Narrowing).new()
+        if self.tir.nodes[c].k == TKind.Logical and self.tir.nodes[c].flag {
+            let l = self.guard_narrowing(self.tir.nodes[c].kids[0])
+            let r = self.guard_narrowing(self.tir.nodes[c].kids[1])
+            for x in l { out.append(Narrowing{ .local = x.local, .lo = x.lo, .hi = x.hi }) }
+            for x in r { out.append(Narrowing{ .local = x.local, .lo = x.lo, .hi = x.hi }) }
+            return out
+        }
         if self.tir.nodes[c].k != TKind.Binary { return out }
         let op = self.tir.nodes[c].text.clone()
         let lhs = self.tir.nodes[c].kids[0]
@@ -3847,11 +3931,15 @@ impl Checker {
         var cur = Range{ .lo = -85070591730234615865843651857942052864, .hi = 85070591730234615865843651857942052863 }
         if let lr = self.expr_range(lhs) { cur = lr }
         let l = self.tir.nodes[lhs].a
-        if op == "<" { out.append(Narrowing{ .local = l, .lo = cur.lo, .hi = min128(cur.hi, rr.hi - 1) }) }
-        if op == "<=" { out.append(Narrowing{ .local = l, .lo = cur.lo, .hi = min128(cur.hi, rr.hi) }) }
-        if op == ">=" { out.append(Narrowing{ .local = l, .lo = max128(cur.lo, rr.lo), .hi = cur.hi }) }
-        if op == ">" { out.append(Narrowing{ .local = l, .lo = max128(cur.lo, rr.lo + 1), .hi = cur.hi }) }
-        if op == "==" { out.append(Narrowing{ .local = l, .lo = max128(cur.lo, rr.lo), .hi = min128(cur.hi, rr.hi) }) }
+        var nr = Narrowing{ .local = l, .lo = cur.lo, .hi = cur.hi }
+        var known = true
+        if op == "<" { nr.hi = min128(cur.hi, rr.hi - 1) }
+        else if op == "<=" { nr.hi = min128(cur.hi, rr.hi) }
+        else if op == ">" { nr.lo = max128(cur.lo, rr.lo + 1) }
+        else if op == ">=" { nr.lo = max128(cur.lo, rr.lo) }
+        else if op == "==" { nr.lo = max128(cur.lo, rr.lo); nr.hi = min128(cur.hi, rr.hi) }
+        else { known = false }
+        if known and nr.lo <= nr.hi { out.append(nr) }
         return out
     }
 
@@ -4462,6 +4550,1915 @@ fn rust_float(v: f64) -> String {
     for c in s { if c == '.' or c == 'e' or c == 'E' or c == 'n' or c == 'i' { has_dot = true } }
     if !has_dot { s.append(".0") }
     return s
+}
+
+// ---------------------------------------------------------------- fields, literals, indexing
+
+impl Checker {
+    /// The resolved payload types of every variant of an enum type.
+    fn enum_variant_types(self: *mut Self, t0: usize) -> List(List(usize)) {
+        let t = self.tys.shallow(t0)
+        var out = List(List(usize)).new()
+        if self.tys.kind(t) != TK.Enum { return out }
+        let d = self.tys.list[t].def
+        let m = self.enums[d].module
+        let variants = self.enums[d].variants.clone()
+        for v in variants {
+            let vn = self.node(m, v)
+            var tys = List(usize).new()
+            if vn.text != "unit" {
+                let kids = vn.kids.clone()
+                let is_tuple = vn.text == "tuple"
+                for c in kids {
+                    let ty_node = if is_tuple { c } else { self.node(m, c).x }
+                    tys.append(self.resolve_type(m, ty_node, t))
+                }
+            }
+            out.append(tys)
+        }
+        return out
+    }
+
+    fn struct_field_index(self: *mut Self, d: usize, name: []u8) -> usize {
+        let m = self.structs[d].module
+        let fields = self.structs[d].fields.clone()
+        for f, i in fields { if self.node(m, f).name == name { return i } }
+        return NONE
+    }
+
+    fn enum_variant_index(self: *mut Self, d: usize, name: []u8) -> usize {
+        let m = self.enums[d].module
+        let variants = self.enums[d].variants.clone()
+        for v, i in variants { if self.node(m, v).name == name { return i } }
+        return NONE
+    }
+
+    fn auto_deref_all(self: *mut Self, e0: usize) -> usize {
+        var e = e0
+        while true {
+            let t = self.tys.shallow(self.tir.nodes[e].ty)
+            if self.tys.kind(t) != TK.Ptr { return e }
+            let inner = self.tys.list[t].args[0]
+            e = self.wrap_node(TKind.Deref, e, inner)
+        }
+        return e
+    }
+
+    fn check_field(self: *mut Self, e: usize, expected: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        let base_node = n.x
+        let name = n.name.clone()
+        let start = n.start
+        let end = n.end
+        let b = self.check_expr(base_node, NONE)
+        if self.is_namespace(b) {
+            let ns = self.tir.nodes[b].name.clone()
+            return self.check_namespace_member(ns[..], name[..], start, end, expected)
+        }
+        let bt = self.tys.shallow(self.tir.nodes[b].ty)
+        if self.tys.kind(bt) == TK.Type and self.tir.nodes[b].k == TKind.TypeVal {
+            return self.check_static_member(self.tir.nodes[b].a, name[..], start, end, expected)
+        }
+        return self.field_access(b, name[..], start, end)
+    }
+
+    /// Dereference through every pointer, the new nodes spanning the access.
+    /// A namespace value (`io`, `math`, an imported module): a Unit node without a type.
+    fn is_namespace(self: *mut Self, e: usize) -> bool {
+        return self.tir.nodes[e].k == TKind.Unit and self.tir.nodes[e].ty == NONE
+    }
+
+    fn deref_all_at(self: *mut Self, b0: usize, start: usize, end: usize) -> usize {
+        var b = b0
+        var bt = self.tys.shallow(self.tir.nodes[b].ty)
+        while self.tys.kind(bt) == TK.Ptr {
+            let inner = self.tys.list[bt].args[0]
+            let d = self.mk(TKind.Deref, inner, start, end)
+            self.tir.nodes[d].kids.append(b)
+            b = d
+            bt = self.tys.shallow(inner)
+        }
+        return b
+    }
+
+    fn field_access(self: *mut Self, b0: usize, name: []u8, start: usize, end: usize) -> usize {
+        let b = self.deref_all_at(b0, start, end)
+        let bt = self.tys.shallow(self.tir.nodes[b].ty)
+        let k = self.tys.kind(bt)
+        if k == TK.Struct {
+            let d = self.tys.list[bt].def
+            let idx = self.struct_field_index(d, name)
+            if idx != NONE {
+                let ftys = self.struct_field_types(bt)
+                let fty = ftys[idx]
+                let r = self.mk(if self.structs[d].kind == "ref" { TKind.RefField } else { TKind.Field }, fty, start, end)
+                self.tir.nodes[r].a = idx
+                self.tir.nodes[r].kids.append(b)
+                return r
+            }
+            self.fail_here(start, format("`{}` has no field `{}`", .{self.structs[d].name, name})[..])
+            return self.error_expr(start, end)
+        }
+        if k == TK.Tuple {
+            let idx = name.parse_int(usize) catch { NONE }
+            let ts = self.tys.list[bt].args.clone()
+            if idx != NONE and idx < ts.len {
+                let r = self.mk(TKind.TupleField, ts[idx], start, end)
+                self.tir.nodes[r].a = idx
+                self.tir.nodes[r].kids.append(b)
+                return r
+            }
+            self.fail_here(start, format("tuple has no field `{}`", .{name})[..])
+            return self.error_expr(start, end)
+        }
+        if k == TK.Slice or k == TK.Array or k == TK.List or k == TK.Str or k == TK.Map {
+            if name == "len" {
+                let u = self.tys.usize_ty()
+                let r = self.builtin_node("Len", u, start, end)
+                self.tir.nodes[r].kids.append(b)
+                return r
+            }
+            if name == "ptr" and k == TK.Slice {
+                if self.ctx().unsafe_depth == 0 { self.fail_here(start, "`.ptr` of a slice is a raw pointer and requires an `unsafe` block") }
+                let pt = self.tys.wrap(TK.Ptr, self.tys.list[bt].args[0], self.tys.list[bt].flag)
+                let r = self.builtin_node("PtrAdd", pt, start, end)
+                self.tir.nodes[r].kids.append(b)
+                return r
+            }
+            self.fail_here(start, format("`{}` has no field `{}` (methods are called with parentheses)", .{self.ty_name(bt), name})[..])
+            return self.error_expr(start, end)
+        }
+        if k == TK.Opt {
+            self.fail_here(start, format("cannot access field `{}` of optional `{}`; unwrap it first with `orelse`, `.?`, or `if let`", .{name, self.ty_name(bt)})[..])
+            return self.error_expr(start, end)
+        }
+        if k == TK.ErrUnion {
+            self.fail_here(start, format("cannot access field `{}` of `{}`; use `try` first", .{name, self.ty_name(bt)})[..])
+            return self.error_expr(start, end)
+        }
+        if k == TK.Enum {
+            self.fail_here(start, format("`{}` is an enum; use `match` to access variant payloads", .{self.enums[self.tys.list[bt].def].name})[..])
+            return self.error_expr(start, end)
+        }
+        self.fail_here(start, format("`{}` has no field `{}`", .{self.ty_name(bt), name})[..])
+        return self.error_expr(start, end)
+    }
+
+    fn check_implicit_variant(self: *mut Self, e: usize, expected: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        let name = n.name.clone()
+        let args = n.kids.clone()
+        let start = n.start
+        let end = n.end
+        if expected == NONE {
+            self.fail_here(start, format("cannot infer the enum type of `.{}`; write `EnumName.{}`", .{name, name})[..])
+            return self.error_expr(start, end)
+        }
+        let exp = self.tys.shallow(expected)
+        var target = exp
+        var wrap = NONE
+        let ek = self.tys.kind(exp)
+        if ek == TK.Opt or ek == TK.ErrUnion {
+            target = self.tys.shallow(self.tys.list[exp].args[0])
+            wrap = exp
+        }
+        if self.tys.kind(target) != TK.Enum {
+            self.fail_here(start, format("`.{}` needs an enum type from context, but the expected type is `{}`", .{name, self.ty_name(exp)})[..])
+            return self.error_expr(start, end)
+        }
+        let v = self.check_variant_ctor(target, name[..], args[..], start, end)
+        if wrap != NONE { return self.coerce_or_error(v, wrap, "enum value") }
+        return v
+    }
+
+    fn check_variant_ctor(self: *mut Self, enum_ty: usize, name: []u8, args: []usize, start: usize, end: usize) -> usize {
+        let d = self.tys.list[enum_ty].def
+        let vtys = self.enum_variant_types(enum_ty)
+        let idx = self.enum_variant_index(d, name)
+        if idx == NONE {
+            self.fail_here(start, format("enum `{}` has no variant `{}`", .{self.enums[d].name, name})[..])
+            return self.error_expr(start, end)
+        }
+        let want = vtys[idx].clone()
+        if args.len != want.len {
+            self.fail_here(start, format("variant `{}.{}` takes {} value(s) but {} were given", .{self.enums[d].name, name, want.len, args.len})[..])
+            return self.error_expr(start, end)
+        }
+        let r = self.mk(TKind.EnumLit, enum_ty, start, end)
+        self.tir.nodes[r].a = idx
+        for a, i in args {
+            var te = self.check_expr(a, want[i])
+            te = self.coerce_or_error(te, want[i], "enum variant payload")
+            te = self.take_ownership(te)
+            self.tir.nodes[r].kids.append(te)
+        }
+        return r
+    }
+
+    fn check_index(self: *mut Self, e: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        let base_node = n.x
+        let index_node = n.y
+        let start = n.start
+        let end = n.end
+        var b = self.check_expr(base_node, NONE)
+        b = self.deref_all_at(b, start, end)
+        let bt = self.tys.shallow(self.tir.nodes[b].ty)
+        let k = self.tys.kind(bt)
+        var elem = NONE
+        if k == TK.Array or k == TK.Slice or k == TK.List {
+            elem = self.tys.list[bt].args[0]
+        } else if k == TK.Str {
+            elem = self.tys.u8_ty()
+        } else if k == TK.Map {
+            let kt = self.tys.list[bt].args[0]
+            let vt = self.tys.list[bt].args[1]
+            var lk = kt
+            if self.tys.kind(self.tys.shallow(kt)) == TK.Str { lk = self.tys.str_slice() }
+            var key = self.check_expr(index_node, lk)
+            key = self.coerce_or_error(key, lk, "map key")
+            let ot = self.tys.wrap(TK.Opt, vt, false)
+            let r = self.builtin_node("MapGet", ot, start, end)
+            self.tir.nodes[r].kids.append(b)
+            self.tir.nodes[r].kids.append(key)
+            return r
+        } else {
+            self.fail_here(start, format("cannot index a value of type `{}`", .{self.ty_name(bt)})[..])
+            return self.error_expr(start, end)
+        }
+        let u = self.tys.usize_ty()
+        var i = self.check_expr(index_node, u)
+        i = self.coerce_or_error(i, u, "index")
+        let proven = self.index_proven(b, i)
+        if !proven { self.add_effect(EFF_PANICS, start, "index may be out of bounds") }
+        let r = self.mk(TKind.Index, elem, start, end)
+        self.tir.nodes[r].flag = proven
+        self.tir.nodes[r].kids.append(b)
+        self.tir.nodes[r].kids.append(i)
+        return r
+    }
+
+    fn index_proven(self: *mut Self, base: usize, index: usize) -> bool {
+        let bt = self.tys.shallow(self.tir.nodes[base].ty)
+        if self.tys.kind(bt) == TK.Array {
+            if let r = self.expr_range(index) { return r.lo >= 0 and r.hi < self.tys.list[bt].n as i128 }
+        }
+        if self.tir.nodes[base].k == TKind.Local and self.tir.nodes[index].k == TKind.Local {
+            let bl = self.tir.nodes[base].a
+            let il = self.tir.nodes[index].a
+            if let sl = self.ctx().index_of.get(il) { if sl == bl { return true } }
+        }
+        return false
+    }
+
+    fn check_slice_op(self: *mut Self, e: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        let base_node = n.x
+        let start_node = n.y
+        let end_node = n.z
+        let start = n.start
+        let end = n.end
+        var b = self.check_expr(base_node, NONE)
+        b = self.deref_all_at(b, start, end)
+        let bt = self.tys.shallow(self.tir.nodes[b].ty)
+        let k = self.tys.kind(bt)
+        var mutable = false
+        var elem = NONE
+        if k == TK.Array or k == TK.List {
+            mutable = self.place_mutable(b)
+            elem = self.tys.list[bt].args[0]
+        } else if k == TK.Slice {
+            mutable = self.tys.list[bt].flag
+            elem = self.tys.list[bt].args[0]
+        } else if k == TK.Str {
+            mutable = self.place_mutable(b)
+            elem = self.tys.u8_ty()
+        } else {
+            self.fail_here(start, format("cannot slice a value of type `{}`", .{self.ty_name(bt)})[..])
+            return self.error_expr(start, end)
+        }
+        let u = self.tys.usize_ty()
+        let st = self.tys.wrap(TK.Slice, elem, mutable)
+        let r = self.mk(TKind.SliceOp, st, start, end)
+        self.tir.nodes[r].kids.append(b)
+        if start_node != NONE {
+            var s = self.check_expr(start_node, u)
+            s = self.coerce_or_error(s, u, "slice start")
+            self.tir.nodes[r].flag = true
+            self.tir.nodes[r].kids.append(s)
+        }
+        if end_node != NONE {
+            var x = self.check_expr(end_node, u)
+            x = self.coerce_or_error(x, u, "slice end")
+            self.tir.nodes[r].flag2 = true
+            self.tir.nodes[r].kids.append(x)
+        }
+        self.add_effect(EFF_PANICS, start, "slicing checks its bounds and panics when they are out of range")
+        return r
+    }
+
+    fn check_struct_lit(self: *mut Self, e: usize, expected: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        let ty_node = n.x
+        let inits = n.kids.clone()
+        let start = n.start
+        let end = n.end
+        var t = NONE
+        if ty_node != NONE {
+            // `Enum.Variant{ ... }`: a struct-payload variant
+            let tn = self.node(m, ty_node)
+            if tn.k == parser.NodeKind.TName and tn.words.len == 2 and tn.kids.len == 0 {
+                if let r = self.lookup(m, tn.words[0][..]) {
+                    if r.kind == ItemKind.Enum {
+                        let et = self.tys.of_def(TK.Enum, r.id, List(usize).new())
+                        return self.check_variant_struct_lit(et, tn.words[1].clone()[..], inits[..], start, end)
+                    }
+                }
+            }
+            let st = self.ctx().self_ty
+            t = self.resolve_type(m, ty_node, st)
+        } else {
+            if expected == NONE {
+                self.fail_here(start, "cannot infer the type of this anonymous struct literal; name the type: `Point{ ... }`")
+                return self.error_expr(start, end)
+            }
+            let ex = self.tys.shallow(expected)
+            let ek = self.tys.kind(ex)
+            if ek == TK.Opt or ek == TK.ErrUnion {
+                let inner = self.tys.list[ex].args[0]
+                let v = self.check_struct_lit_into(e, inner)
+                return self.coerce_or_error(v, ex, "struct literal")
+            }
+            t = ex
+        }
+        return self.check_struct_lit_into(e, t)
+    }
+
+    /// A struct literal of a known type.
+    fn check_struct_lit_into(self: *mut Self, e: usize, t0: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        let inits = n.kids.clone()
+        let start = n.start
+        let end = n.end
+        let t = self.tys.shallow(t0)
+        if self.tys.kind(t) != TK.Struct {
+            if inits.len == 0 and self.tys.kind(t) == TK.Void { return self.mk(TKind.Unit, t, start, end) }
+            self.fail_here(start, format("`{}` is not a struct; struct literal syntax does not apply", .{self.ty_name(t)})[..])
+            return self.error_expr(start, end)
+        }
+        let d = self.tys.list[t].def
+        let ftys = self.struct_field_types(t)
+        let n_fields = self.structs[d].fields.len
+        var seen = List(bool).new()
+        for i in 0..n_fields { seen.append(false) }
+        var idxs = List(usize).new()
+        var vals = List(usize).new()
+        for init in inits {
+            let inode = self.node(m, init)
+            let fname = inode.name.clone()
+            let value_node = inode.x
+            let fstart = inode.start
+            let idx = self.struct_field_index(d, fname[..])
+            if idx == NONE {
+                self.fail_here(fstart, format("`{}` has no field `{}`", .{self.structs[d].name, fname})[..])
+                continue
+            }
+            if seen[idx] {
+                self.fail_here(fstart, format("field `{}` is given twice", .{fname})[..])
+                continue
+            }
+            seen[idx] = true
+            var v = self.check_expr(value_node, ftys[idx])
+            v = self.coerce_or_error(v, ftys[idx], format("field `{}`", .{fname})[..])
+            v = self.take_ownership(v)
+            idxs.append(idx)
+            vals.append(v)
+        }
+        let dm = self.structs[d].module
+        let fields = self.structs[d].fields.clone()
+        for f, i in fields {
+            if seen[i] { continue }
+            let fnode = self.node(dm, f)
+            let fname = fnode.name.clone()
+            let dflt = fnode.y
+            if dflt != NONE {
+                // the default is written in the struct's module
+                var v = self.check_expr_in_module(dm, dflt, ftys[i])
+                v = self.coerce_or_error(v, ftys[i], format("default of field `{}`", .{fname})[..])
+                idxs.append(i)
+                vals.append(v)
+            } else {
+                self.fail_here(start, format("missing field `{}` in literal of `{}`", .{fname, self.structs[d].name})[..])
+            }
+        }
+        // in field order
+        let is_ref = self.structs[d].kind == "ref"
+        if is_ref {
+            self.add_effect(EFF_ALLOCATES, start, "constructing a `ref class` allocates")
+            self.add_effect(EFF_REFCOUNTS, start, "a `ref class` value is reference counted")
+        }
+        let lit = self.mk(if is_ref { TKind.RefNew } else { TKind.StructLit }, t, start, end)
+        for fi in 0..n_fields {
+            for x, j in idxs {
+                if x == fi {
+                    self.tir.nodes[lit].kids2.append(x)
+                    self.tir.nodes[lit].kids.append(vals[j])
+                }
+            }
+        }
+        return lit
+    }
+
+    /// Check an expression that lives in another module's tree (a field default).
+    fn check_expr_in_module(self: *mut Self, dm: usize, e: usize, expected: usize) -> usize {
+        let saved = self.ctx().module
+        self.ctx().module = dm
+        let r = self.check_expr(e, expected)
+        self.ctx().module = saved
+        return r
+    }
+
+    fn check_variant_struct_lit(self: *mut Self, et: usize, variant: []u8, inits: []usize, start: usize, end: usize) -> usize {
+        let m = self.cur_module()
+        let d = self.tys.list[et].def
+        let idx = self.enum_variant_index(d, variant)
+        if idx == NONE {
+            self.fail_here(start, format("enum `{}` has no variant `{}`", .{self.enums[d].name, variant})[..])
+            return self.error_expr(start, end)
+        }
+        let em = self.enums[d].module
+        let vnode = self.enums[d].variants[idx]
+        if self.node(em, vnode).text != "struct" {
+            self.fail_here(start, format("variant `{}.{}` has no named fields", .{self.enums[d].name, variant})[..])
+            return self.error_expr(start, end)
+        }
+        let field_nodes = self.node(em, vnode).kids.clone()
+        let vtys = self.enum_variant_types(et)
+        let want = vtys[idx].clone()
+        var payload = List(usize).new()
+        for i in 0..want.len { payload.append(NONE) }
+        for init in inits {
+            let inode = self.node(m, init)
+            let fname = inode.name.clone()
+            let value_node = inode.x
+            var fi = NONE
+            for f, i in field_nodes { if self.node(em, f).name == fname { fi = i } }
+            if fi == NONE {
+                self.fail_here(inode.start, format("variant `{}.{}` has no field `{}`", .{self.enums[d].name, variant, fname})[..])
+                continue
+            }
+            var v = self.check_expr(value_node, want[fi])
+            v = self.coerce_or_error(v, want[fi], format("field `{}`", .{fname})[..])
+            v = self.take_ownership(v)
+            payload[fi] = v
+        }
+        let r = self.mk(TKind.EnumLit, et, start, end)
+        self.tir.nodes[r].a = idx
+        for v, i in payload {
+            if v == NONE {
+                self.fail_here(start, format("missing field `{}` in `{}.{}`", .{self.node(em, field_nodes[i]).name, self.enums[d].name, variant})[..])
+                continue
+            }
+            self.tir.nodes[r].kids.append(v)
+        }
+        return r
+    }
+
+    fn check_array_lit(self: *mut Self, e: usize, expected: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        let elems = n.kids.clone()
+        let start = n.start
+        let end = n.end
+        var exp = NONE
+        if expected != NONE { exp = self.tys.shallow(expected) }
+        var elem_hint = NONE
+        var want_slice = false
+        var want_list = false
+        if exp != NONE {
+            let ek = self.tys.kind(exp)
+            if ek == TK.Array {
+                if self.tys.list[exp].n as usize != elems.len {
+                    self.fail_here(start, format("expected an array of {} elements but the literal has {}", .{self.tys.list[exp].n, elems.len})[..])
+                }
+                elem_hint = self.tys.list[exp].args[0]
+            } else if ek == TK.Slice {
+                elem_hint = self.tys.list[exp].args[0]
+                want_slice = true
+            } else if ek == TK.List {
+                elem_hint = self.tys.list[exp].args[0]
+                want_list = true
+            }
+        }
+        let elem_ty = if elem_hint != NONE { elem_hint } else { self.tys.fresh_infer() }
+        var out = List(usize).new()
+        for x in elems {
+            var te = self.check_expr(x, elem_ty)
+            te = self.coerce_or_error(te, elem_ty, "array element")
+            te = self.take_ownership(te)
+            out.append(te)
+        }
+        if elems.len == 0 and elem_hint == NONE {
+            self.fail_here(start, "cannot infer the element type of an empty array literal; annotate it, e.g. `let xs: [0]i32 = []`")
+        }
+        let at = self.tys.array(elems.len as u64, elem_ty)
+        let lit = self.mk(TKind.ArrayLit, at, start, end)
+        self.tir.nodes[lit].kids = out
+        if want_slice {
+            let r = self.mk(TKind.ArrayToSlice, exp, start, end)
+            self.tir.nodes[r].kids.append(lit)
+            return r
+        }
+        if want_list {
+            self.add_effect(EFF_ALLOCATES, start, "building a List allocates")
+            let st = self.tys.wrap(TK.Slice, elem_ty, false)
+            let sl = self.mk(TKind.ArrayToSlice, st, start, end)
+            self.tir.nodes[sl].kids.append(lit)
+            let r = self.builtin_node("ListFromSlice", exp, start, end)
+            self.tir.nodes[r].kids.append(sl)
+            self.tir.nodes[r].kids2.append(elem_ty)
+            return r
+        }
+        return lit
+    }
+
+    fn check_tuple_lit(self: *mut Self, e: usize, expected: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        let elems = n.kids.clone()
+        let start = n.start
+        let end = n.end
+        if elems.len == 0 {
+            let v = self.tys.void()
+            return self.mk(TKind.Unit, v, start, end)
+        }
+        var hints = List(usize).new()
+        for i in 0..elems.len { hints.append(NONE) }
+        if expected != NONE {
+            let ex = self.tys.shallow(expected)
+            if self.tys.kind(ex) == TK.Tuple and self.tys.list[ex].args.len == elems.len { hints = self.tys.list[ex].args.clone() }
+        }
+        var out = List(usize).new()
+        var tys = List(usize).new()
+        for x, i in elems {
+            var te = self.check_expr(x, hints[i])
+            if hints[i] != NONE { te = self.coerce_or_error(te, hints[i], "tuple element") }
+            te = self.take_ownership(te)
+            tys.append(self.tir.nodes[te].ty)
+            out.append(te)
+        }
+        let tt = self.tys.tuple(tys)
+        let r = self.mk(TKind.TupleLit, tt, start, end)
+        self.tir.nodes[r].kids = out
+        return r
+    }
+
+    // ----- error handling, optionals ----------------------------------------------------
+
+    fn check_try(self: *mut Self, e: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        let inner_node = n.x
+        let start = n.start
+        let end = n.end
+        let ret = self.ctx().ret
+        let ret_r = self.tys.shallow(ret)
+        if self.tys.kind(ret_r) != TK.ErrUnion {
+            self.fail_here(start, "`try` is only valid in a function that returns an error union")
+            _ = self.check_expr(inner_node, NONE)
+            return self.error_expr(start, end)
+        }
+        let inner = self.check_expr(inner_node, NONE)
+        let it = self.tys.shallow(self.tir.nodes[inner].ty)
+        if self.tys.kind(it) != TK.ErrUnion {
+            self.fail_here(start, format("`try` requires an error union but found `{}`", .{self.ty_name(it)})[..])
+            return inner
+        }
+        let payload = self.tys.list[it].args[0]
+        let r = self.mk(TKind.Try, payload, start, end)
+        self.tir.nodes[r].kids.append(inner)
+        return r
+    }
+
+    fn check_catch(self: *mut Self, e: usize, expected: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        let inner_node = n.x
+        let handler_node = n.y
+        let binding = n.name.clone()
+        let has_binding = binding != "-"
+        let start = n.start
+        let end = n.end
+        let inner = self.check_expr(inner_node, NONE)
+        let it = self.tys.shallow(self.tir.nodes[inner].ty)
+        if self.tys.kind(it) != TK.ErrUnion {
+            self.fail_here(start, format("`catch` requires an error union but found `{}`", .{self.ty_name(it)})[..])
+            return self.error_expr(start, end)
+        }
+        _ = expected
+        let payload = self.tys.list[it].args[0]
+        let set = self.tys.list[it].def
+        let has_set = self.tys.list[it].flag
+        self.push_scope()
+        var err_local = NONE
+        if has_binding {
+            let et = self.tys.err_set(set, has_set)
+            err_local = self.declare_local(binding[..], et, false, start, end)
+        }
+        let moved_before = self.moved_snapshot()
+        var h = self.check_expr(handler_node, payload)
+        if self.tys.kind(self.tys.shallow(self.tir.nodes[h].ty)) == TK.Never { self.moved_restore(&moved_before) }
+        h = self.coerce_or_error(h, payload, "catch handler")
+        self.pop_scope()
+        let r = self.mk(TKind.Catch, payload, start, end)
+        self.tir.nodes[r].a = err_local
+        self.tir.nodes[r].kids.append(inner)
+        self.tir.nodes[r].kids.append(h)
+        return r
+    }
+
+    fn check_orelse(self: *mut Self, e: usize, expected: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        let inner_node = n.x
+        let default_node = n.y
+        let start = n.start
+        let end = n.end
+        var hint = NONE
+        if expected != NONE { hint = self.tys.wrap(TK.Opt, expected, false) }
+        let inner = self.check_expr(inner_node, hint)
+        let it = self.tys.shallow(self.tir.nodes[inner].ty)
+        if self.tys.kind(it) != TK.Opt {
+            self.fail_here(start, format("`orelse` requires an optional but found `{}`", .{self.ty_name(it)})[..])
+            return self.error_expr(start, end)
+        }
+        let payload = self.tys.list[it].args[0]
+        let moved_before = self.moved_snapshot()
+        var d = self.check_expr(default_node, payload)
+        if self.tys.kind(self.tys.shallow(self.tir.nodes[d].ty)) == TK.Never { self.moved_restore(&moved_before) }
+        d = self.coerce_or_error(d, payload, "orelse default")
+        let p = self.tys.resolve(payload, false)
+        let r = self.mk(TKind.OrElse, p, start, end)
+        self.tir.nodes[r].kids.append(inner)
+        self.tir.nodes[r].kids.append(d)
+        return r
+    }
+
+    fn check_if_capture(self: *mut Self, e: usize, expected: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        let cond_node = n.x
+        let then_node = n.y
+        let els_node = n.z
+        let binding = n.name.clone()
+        let start = n.start
+        let end = n.end
+        let c = self.check_expr(cond_node, NONE)
+        let ct = self.tys.shallow(self.tir.nodes[c].ty)
+        if self.tys.kind(ct) != TK.Opt {
+            self.fail_here(self.tir.nodes[c].start, format("`if let v = x` requires an optional but found `{}`", .{self.ty_name(ct)})[..])
+            return self.error_expr(start, end)
+        }
+        let payload = self.tys.list[ct].args[0]
+        self.push_scope()
+        let local = self.declare_local(binding[..], payload, false, start, end)
+        let moved_before = self.moved_snapshot()
+        let v = self.tys.void()
+        let then_expected = if els_node != NONE { expected } else { v }
+        let tb = self.check_block(then_node, then_expected, NONE, NONE)
+        self.pop_scope()
+        let moved_then = self.moved_snapshot()
+        let then_ty = self.tir.nodes[tb].ty
+        let then_diverges = self.tys.kind(self.tys.shallow(then_ty)) == TK.Never
+        if then_diverges and els_node == NONE { self.moved_restore(&moved_before) }
+        if els_node == NONE {
+            let tk = self.tys.kind(self.tys.shallow(then_ty))
+            if ! (tk == TK.Void or tk == TK.Never) { self.fail_here(self.tir.nodes[tb].start, "an `if` without `else` produces no value") }
+            let r = self.mk(TKind.IfCapture, v, start, end)
+            self.tir.nodes[r].a = local
+            self.tir.nodes[r].kids.append(c)
+            self.tir.nodes[r].kids.append(tb)
+            return r
+        }
+        self.moved_restore(&moved_before)
+        let hint = if then_diverges { expected } else { then_ty }
+        var eb = NONE
+        if self.node(m, els_node).k == parser.NodeKind.Block {
+            eb = self.check_block(els_node, hint, NONE, NONE)
+        } else {
+            let te = self.check_expr(els_node, hint)
+            eb = self.mk(TKind.Block, self.tir.nodes[te].ty, self.tir.nodes[te].start, self.tir.nodes[te].end)
+            self.tir.nodes[eb].a = te
+        }
+        let else_diverges = self.tys.kind(self.tys.shallow(self.tir.nodes[eb].ty)) == TK.Never
+        let moved_else = self.moved_snapshot()
+        self.moved_restore(&moved_before)
+        if !then_diverges { self.moved_merge(&moved_then) }
+        if !else_diverges { self.moved_merge(&moved_else) }
+        let ty = self.join_branches(tb, eb, expected)
+        let r = self.mk(TKind.IfCapture, ty, start, end)
+        self.tir.nodes[r].a = local
+        self.tir.nodes[r].kids.append(c)
+        self.tir.nodes[r].kids.append(tb)
+        self.tir.nodes[r].kids.append(eb)
+        return r
+    }
+
+    // ----- loops over items ----------------------------------------------------------------
+
+    fn check_for_items(self: *mut Self, s: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, s)
+        let label = n.name.clone()
+        let is_parallel = n.flag2
+        let bindings = n.words.clone()
+        let start = n.start
+        let end = n.end
+        let items = n.kids2.clone()
+        let body_node = n.a
+        let n_items = items.len
+        if ! (bindings.len == n_items or bindings.len == n_items + 1) {
+            self.fail_here(start, format("this loop iterates {} value(s) and may bind an index; expected {} or {} names but found {}", .{n_items, n_items, n_items + 1, bindings.len})[..])
+            return NONE
+        }
+        var checked = List(usize).new()
+        var elems = List(usize).new()
+        for it in items {
+            let istart = self.node(m, it).start
+            let iend = self.node(m, it).end
+            var te = self.check_expr(it, NONE)
+            te = self.auto_deref_all(te)
+            let t = self.tys.shallow(self.tir.nodes[te].ty)
+            let k = self.tys.kind(t)
+            var elem = NONE
+            if k == TK.Array or k == TK.Slice or k == TK.List {
+                elem = self.tys.list[t].args[0]
+            } else if k == TK.Str {
+                elem = self.tys.u8_ty()
+            } else if k == TK.Map {
+                let kt = self.tys.list[t].args[0]
+                let ks = self.tys.wrap(TK.Slice, kt, false)
+                let b = self.builtin_node("MapKeys", ks, istart, iend)
+                self.tir.nodes[b].kids.append(te)
+                self.tir.nodes[b].kids2.append(kt)
+                self.add_effect(EFF_ALLOCATES, istart, "iterating a Map collects its keys")
+                checked.append(b)
+                elems.append(kt)
+                continue
+            } else {
+                self.fail_here(istart, format("cannot iterate a value of type `{}`; expected an array, slice, List, String, or Map", .{self.ty_name(t)})[..])
+                return NONE
+            }
+            if k == TK.Array {
+                let mu = self.place_mutable(te)
+                let st = self.tys.wrap(TK.Slice, elem, mu)
+                te = self.wrap_node(TKind.ArrayToSlice, te, st)
+            } else if k == TK.List {
+                let mu = self.place_mutable(te)
+                let st = self.tys.wrap(TK.Slice, elem, mu)
+                te = self.wrap_node(TKind.ListToSlice, te, st)
+            } else if k == TK.Str {
+                let st = self.tys.wrap(TK.Slice, elem, false)
+                te = self.wrap_node(TKind.StrToSlice, te, st)
+            }
+            checked.append(te)
+            elems.append(elem)
+        }
+        self.push_scope()
+        var item_locals = List(usize).new()
+        for te, i in checked {
+            let l = self.declare_local(bindings[i][..], elems[i], false, start, end)
+            self.ctx().locals[l].loop_item = true
+            item_locals.append(l)
+        }
+        var index = NONE
+        if bindings.len == n_items + 1 {
+            let u = self.tys.usize_ty()
+            let l = self.declare_local(bindings[n_items][..], u, false, start, end)
+            for te in checked {
+                var src = te
+                let k = self.tir.nodes[te].k
+                if k == TKind.ListToSlice or k == TKind.ArrayToSlice { src = self.tir.nodes[te].kids[0] }
+                if self.tir.nodes[src].k == TKind.Local { self.ctx().index_of.put(l, self.tir.nodes[src].a) }
+            }
+            index = l
+        }
+        let lid = self.new_label(label[..], label.len > 0, true, NONE)
+        self.ctx().loop_depth += 1
+        let v = self.tys.void()
+        if is_parallel { self.ctx().in_parallel += 1 }
+        let tb = self.check_block(body_node, v, NONE, NONE)
+        if is_parallel {
+            self.ctx().in_parallel -= 1
+            self.add_effect(EFF_BLOCKS, start, "`for parallel` joins its worker threads")
+        }
+        self.ctx().loop_depth -= 1
+        _ = self.ctx().labels.pop()
+        self.pop_scope()
+        let node = self.stmt_node(TKind.SForSlice, start, end)
+        self.tir.nodes[node].a = index
+        self.tir.nodes[node].b = lid
+        self.tir.nodes[node].flag = is_parallel
+        self.tir.nodes[node].kids = checked
+        self.tir.nodes[node].kids2 = item_locals
+        self.tir.nodes[node].kids.append(tb)
+        return node
+    }
+}
+
+// ---------------------------------------------------------------- methods, static and namespace calls
+
+/// A builtin namespace function: argument type codes, result type code, the
+/// builtin's name, and the effects it carries.
+pub struct NsFn {
+    ns: []u8
+    name: []u8
+    args: []u8
+    ret: []u8
+    op: []u8
+    effects: u64
+}
+
+const NS_FNS = [
+    NsFn{ .ns = "io", .name = "read_file", .args = "bytes", .ret = "!string", .op = "ReadFile", .effects = EFF_BLOCKS | EFF_ALLOCATES },
+    NsFn{ .ns = "io", .name = "write_file", .args = "bytes bytes", .ret = "!void", .op = "WriteFile", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "io", .name = "read_line", .args = "", .ret = "?string", .op = "ReadLine", .effects = EFF_BLOCKS | EFF_ALLOCATES },
+    NsFn{ .ns = "io", .name = "append_file", .args = "bytes bytes", .ret = "!void", .op = "AppendFile", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "io", .name = "file_kind", .args = "bytes", .ret = "i32", .op = "FsKind", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "io", .name = "file_size", .args = "bytes", .ret = "!u64", .op = "FsSize", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "io", .name = "file_modified", .args = "bytes", .ret = "!i64", .op = "FsModified", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "io", .name = "make_dir", .args = "bytes", .ret = "!void", .op = "FsMkdir", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "io", .name = "remove_file", .args = "bytes", .ret = "!void", .op = "FsRemoveFile", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "io", .name = "remove_dir", .args = "bytes", .ret = "!void", .op = "FsRemoveDir", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "io", .name = "rename", .args = "bytes bytes", .ret = "!void", .op = "FsRename", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "io", .name = "list_dir", .args = "bytes", .ret = "!List(string)", .op = "FsListDir", .effects = EFF_BLOCKS | EFF_ALLOCATES },
+    NsFn{ .ns = "io", .name = "cwd", .args = "", .ret = "!string", .op = "FsCwd", .effects = EFF_ALLOCATES },
+    NsFn{ .ns = "io", .name = "temp_dir", .args = "", .ret = "string", .op = "FsTempDir", .effects = EFF_ALLOCATES },
+    NsFn{ .ns = "io", .name = "open", .args = "bytes bytes", .ret = "!i64", .op = "FileOpen", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "io", .name = "read", .args = "i64 usize", .ret = "!string", .op = "FileRead", .effects = EFF_BLOCKS | EFF_ALLOCATES },
+    NsFn{ .ns = "io", .name = "write", .args = "i64 bytes", .ret = "!void", .op = "FileWrite", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "io", .name = "flush", .args = "i64", .ret = "!void", .op = "FileFlush", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "io", .name = "close", .args = "i64", .ret = "!void", .op = "FileClose", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "os", .name = "args", .args = "", .ret = "[]bytes", .op = "Args", .effects = 0 },
+    NsFn{ .ns = "os", .name = "environ", .args = "", .ret = "List(string)", .op = "Environ", .effects = EFF_NONDETERMINISTIC | EFF_ALLOCATES },
+    NsFn{ .ns = "os", .name = "env", .args = "bytes", .ret = "?bytes", .op = "Env", .effects = EFF_NONDETERMINISTIC },
+    NsFn{ .ns = "os", .name = "exit", .args = "i32", .ret = "never", .op = "Exit", .effects = 0 },
+    NsFn{ .ns = "os", .name = "exec", .args = "[]bytes bytes bytes", .ret = "!i32", .op = "Exec", .effects = EFF_BLOCKS | EFF_NONDETERMINISTIC | EFF_ALLOCATES },
+    NsFn{ .ns = "os", .name = "last_stdout", .args = "", .ret = "string", .op = "LastStdout", .effects = 0 },
+    NsFn{ .ns = "os", .name = "last_stderr", .args = "", .ret = "string", .op = "LastStderr", .effects = 0 },
+    NsFn{ .ns = "os", .name = "run", .args = "[]bytes", .ret = "!i32", .op = "Run", .effects = EFF_BLOCKS | EFF_NONDETERMINISTIC },
+    NsFn{ .ns = "net", .name = "connect", .args = "bytes u16 i64", .ret = "!i64", .op = "NetConnect", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "net", .name = "listen", .args = "bytes u16", .ret = "!i64", .op = "NetListen", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "net", .name = "udp_bind", .args = "bytes u16", .ret = "!i64", .op = "NetUdpBind", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "net", .name = "accept", .args = "i64 i64", .ret = "!i64", .op = "NetAccept", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "net", .name = "send", .args = "i64 bytes", .ret = "!void", .op = "NetSend", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "net", .name = "recv", .args = "i64 usize i64", .ret = "!string", .op = "NetRecv", .effects = EFF_BLOCKS | EFF_ALLOCATES },
+    NsFn{ .ns = "net", .name = "recv_from", .args = "i64 usize i64", .ret = "!string", .op = "NetRecvFrom", .effects = EFF_BLOCKS | EFF_ALLOCATES },
+    NsFn{ .ns = "net", .name = "close", .args = "i64", .ret = "!void", .op = "NetClose", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "net", .name = "peer", .args = "i64", .ret = "!string", .op = "NetPeer", .effects = EFF_BLOCKS | EFF_ALLOCATES },
+    NsFn{ .ns = "net", .name = "local", .args = "i64", .ret = "!string", .op = "NetLocal", .effects = EFF_BLOCKS | EFF_ALLOCATES },
+    NsFn{ .ns = "net", .name = "resolve", .args = "bytes", .ret = "!List(string)", .op = "NetResolve", .effects = EFF_BLOCKS | EFF_ALLOCATES },
+    NsFn{ .ns = "net", .name = "send_to", .args = "i64 bytes u16 bytes", .ret = "!void", .op = "NetSendTo", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "net", .name = "last_peer", .args = "", .ret = "string", .op = "NetLastPeer", .effects = EFF_BLOCKS | EFF_ALLOCATES },
+    NsFn{ .ns = "thread", .name = "join", .args = "i64", .ret = "void", .op = "ThreadJoin", .effects = EFF_BLOCKS | EFF_PANICS },
+    NsFn{ .ns = "thread", .name = "count", .args = "", .ret = "usize", .op = "ThreadCount", .effects = 0 },
+    NsFn{ .ns = "sync", .name = "mutex_new", .args = "", .ret = "i64", .op = "MutexNew", .effects = EFF_ALLOCATES },
+    NsFn{ .ns = "sync", .name = "cond_new", .args = "", .ret = "i64", .op = "CondNew", .effects = EFF_ALLOCATES },
+    NsFn{ .ns = "sync", .name = "lock", .args = "i64", .ret = "void", .op = "MutexLock", .effects = EFF_BLOCKS | EFF_SHARED_MUTABLE },
+    NsFn{ .ns = "sync", .name = "unlock", .args = "i64", .ret = "void", .op = "MutexUnlock", .effects = EFF_SHARED_MUTABLE },
+    NsFn{ .ns = "sync", .name = "mutex_free", .args = "i64", .ret = "void", .op = "MutexFree", .effects = EFF_SHARED_MUTABLE },
+    NsFn{ .ns = "sync", .name = "signal", .args = "i64", .ret = "void", .op = "CondSignal", .effects = EFF_SHARED_MUTABLE },
+    NsFn{ .ns = "sync", .name = "broadcast", .args = "i64", .ret = "void", .op = "CondBroadcast", .effects = EFF_SHARED_MUTABLE },
+    NsFn{ .ns = "sync", .name = "cond_free", .args = "i64", .ret = "void", .op = "CondFree", .effects = EFF_SHARED_MUTABLE },
+    NsFn{ .ns = "sync", .name = "wait", .args = "i64 i64", .ret = "void", .op = "CondWait", .effects = EFF_BLOCKS | EFF_SHARED_MUTABLE },
+    NsFn{ .ns = "time", .name = "now", .args = "", .ret = "i64", .op = "TimeNow", .effects = EFF_NONDETERMINISTIC },
+    NsFn{ .ns = "time", .name = "monotonic", .args = "", .ret = "u64", .op = "TimeMonotonic", .effects = EFF_NONDETERMINISTIC },
+    NsFn{ .ns = "time", .name = "sleep", .args = "u64", .ret = "void", .op = "Sleep", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "time", .name = "utc_offset", .args = "i64", .ret = "i64", .op = "TimeUtcOffset", .effects = EFF_NONDETERMINISTIC },
+    NsFn{ .ns = "random", .name = "int", .args = "i64 i64", .ret = "i64", .op = "RandomInt", .effects = EFF_NONDETERMINISTIC },
+    NsFn{ .ns = "random", .name = "float", .args = "", .ret = "f64", .op = "RandomFloat", .effects = EFF_NONDETERMINISTIC },
+    NsFn{ .ns = "random", .name = "seed", .args = "u64", .ret = "void", .op = "RandomSeed", .effects = 0 },
+]
+
+impl Checker {
+    /// A type from a short code used by the namespace table.
+    fn code_ty(self: *mut Self, code: []u8) -> usize {
+        if code.len > 0 and code[0] == '!' {
+            let inner = self.code_ty(code[1..])
+            return self.tys.err_union(0, false, inner)
+        }
+        if code.len > 0 and code[0] == '?' {
+            let inner = self.code_ty(code[1..])
+            return self.tys.wrap(TK.Opt, inner, false)
+        }
+        if code.len > 2 and code[0..2] == "[]" {
+            let inner = self.code_ty(code[2..])
+            return self.tys.wrap(TK.Slice, inner, false)
+        }
+        if code.len > 5 and code[0..5] == "List(" {
+            let inner = self.code_ty(code[5..code.len - 1])
+            return self.tys.wrap(TK.List, inner, false)
+        }
+        if code == "bytes" { return self.tys.str_slice() }
+        if code == "string" { return self.tys.string() }
+        if code == "void" { return self.tys.void() }
+        if code == "never" { return self.tys.never() }
+        if code == "f64" { return self.tys.float64() }
+        return self.tys.int(code)
+    }
+
+    fn split_words(codes: []u8) -> List(String) {
+        var out = List(String).new()
+        var cur = String.new()
+        for c in codes {
+            if c == ' ' {
+                if cur.len > 0 { out.append(cur.clone()) }
+                cur.clear()
+            } else {
+                cur.push_byte(c)
+            }
+        }
+        if cur.len > 0 { out.append(cur) }
+        return out
+    }
+
+    fn check_namespace_member(self: *mut Self, ns: []u8, name: []u8, start: usize, end: usize, expected: usize) -> usize {
+        _ = expected
+        let f64t = self.tys.float64()
+        if ns == "math" {
+            if name == "PI" { return self.float_node(3.141592653589793, f64t, start, end) }
+            if name == "E" { return self.float_node(2.718281828459045, f64t, start, end) }
+            if name == "TAU" { return self.float_node(6.283185307179586, f64t, start, end) }
+            if name == "INF" { return self.float_node(1.0 / 0.0, f64t, start, end) }
+            if name == "NAN" { return self.float_node(0.0 / 0.0, f64t, start, end) }
+        }
+        if ns.len > 7 and ns[0..7] == "module:" {
+            let m = ns[7..].parse_int(usize) catch { 0 }
+            let key = item_key(m, name)
+            if let item = self.items.get(key[..]) {
+                if item.kind == ItemKind.Fn and !self.node(m, self.fns[item.id].node).flag {
+                    self.fail_here(start, format("function `{}` is private to its module", .{name})[..])
+                }
+                let saved = self.ctx().module
+                self.ctx().module = m
+                let te = self.check_ident(name, start, end)
+                self.ctx().module = saved
+                return te
+            }
+            self.fail_here(start, format("module `{}` has no item `{}`", .{self.mods[m].name, name})[..])
+            return self.error_expr(start, end)
+        }
+        self.fail_here(start, format("`{}` has no member `{}`", .{ns, name})[..])
+        return self.error_expr(start, end)
+    }
+
+    fn check_namespace_call(self: *mut Self, ns: []u8, name: []u8, args: []usize, expected: usize, start: usize, end: usize) -> usize {
+        if ns.len > 7 and ns[0..7] == "module:" {
+            let m = ns[7..].parse_int(usize) catch { 0 }
+            let key = item_key(m, name)
+            if let item = self.items.get(key[..]) {
+                if item.kind == ItemKind.Fn {
+                    if !self.node(m, self.fns[item.id].node).flag { self.fail_here(start, format("function `{}` is private to its module", .{name})[..]) }
+                    return self.call_fn_def(item.id, NONE, args, expected, start, end)
+                }
+            }
+            self.fail_here(start, format("module `{}` has no function `{}`", .{self.mods[m].name, name})[..])
+            for a in args { _ = self.check_expr(a, NONE) }
+            return self.error_expr(start, end)
+        }
+        if ns == "math" { return self.check_math_call(name, args, expected, start, end) }
+        if ns == "mem" and name == "copy" {
+            if args.len != 2 {
+                self.fail_here(start, format("`mem.copy` takes 2 argument(s) but {} were given", .{args.len})[..])
+                return self.error_expr(start, end)
+            }
+            let d = self.check_expr(args[0], NONE)
+            let dt = self.tys.resolve(self.tir.nodes[d].ty, true)
+            if self.tys.kind(dt) != TK.Slice {
+                self.fail_here(start, "mem.copy takes a `[]mut T` destination")
+                return self.error_expr(start, end)
+            }
+            let e = self.tys.list[dt].args[0]
+            if !self.tys.list[dt].flag { self.fail_here(start, "mem.copy destination must be `[]mut T`") }
+            let st = self.tys.wrap(TK.Slice, e, false)
+            var s = self.check_expr(args[1], st)
+            s = self.coerce_or_error(s, st, "source")
+            self.add_effect(EFF_PANICS, start, "mem.copy panics when the source is longer than the destination")
+            let v = self.tys.void()
+            let b = self.builtin_node("SliceCopy", v, start, end)
+            self.tir.nodes[b].kids.append(d)
+            self.tir.nodes[b].kids.append(s)
+            self.tir.nodes[b].kids2.append(e)
+            return b
+        }
+        if ns == "thread" and name == "start" {
+            if args.len != 2 {
+                self.fail_here(start, format("`thread.start` takes 2 argument(s) but {} were given", .{args.len})[..])
+                return self.error_expr(start, end)
+            }
+            let f = self.check_expr(args[0], NONE)
+            let ft = self.tys.shallow(self.tir.nodes[f].ty)
+            var param = NONE
+            if self.tys.kind(ft) == TK.Fn and self.tys.list[ft].args.len == 2 {
+                let p0 = self.tys.shallow(self.tys.list[ft].args[0])
+                let r0 = self.tys.shallow(self.tys.list[ft].args[1])
+                if self.tys.kind(p0) == TK.Ptr and self.tys.kind(r0) == TK.Void { param = self.tys.list[ft].args[0] }
+            }
+            if param == NONE {
+                self.fail_here(start, "thread.start takes a function value `fn(*mut T) -> void` (a closure without captures or a named function)")
+                return self.error_expr(start, end)
+            }
+            var p = self.check_expr(args[1], param)
+            p = self.coerce_or_error(p, param, "argument")
+            self.add_effect(EFF_NONDETERMINISTIC, start, "threads interleave")
+            self.add_effect(EFF_SHARED_MUTABLE, start, "a thread shares memory with its spawner")
+            let i64t = self.tys.int("i64")
+            let b = self.builtin_node("ThreadStart", i64t, start, end)
+            self.tir.nodes[b].kids.append(f)
+            self.tir.nodes[b].kids.append(p)
+            return b
+        }
+        let lookup_ns = if ns == "process" { "os" } else { ns }
+        for f in NS_FNS {
+            if f.ns != lookup_ns or f.name != name { continue }
+            let codes = Checker.split_words(f.args)
+            if args.len != codes.len {
+                self.fail_here(start, format("`{}.{}` takes {} argument(s) but {} were given", .{ns, name, codes.len, args.len})[..])
+                return self.error_expr(start, end)
+            }
+            let ret = self.code_ty(f.ret)
+            let b = self.builtin_node(f.op, ret, start, end)
+            for a, i in args {
+                let pt = self.code_ty(codes[i][..])
+                var te = self.check_expr(a, pt)
+                te = self.coerce_or_error(te, pt, "argument")
+                self.tir.nodes[b].kids.append(te)
+            }
+            if f.effects != 0 { self.add_effect(f.effects, start, "builtin") }
+            return b
+        }
+        self.fail_here(start, format("`{}` has no function `{}`", .{ns, name})[..])
+        for a in args { _ = self.check_expr(a, NONE) }
+        return self.error_expr(start, end)
+    }
+
+    fn check_math_call(self: *mut Self, name: []u8, args: []usize, expected: usize, start: usize, end: usize) -> usize {
+        var unary = ""
+        if name == "sqrt" { unary = "MathSqrt" }
+        if name == "abs" { unary = "MathAbs" }
+        if name == "floor" { unary = "MathFloor" }
+        if name == "ceil" { unary = "MathCeil" }
+        if name == "round" { unary = "MathRound" }
+        if name == "sin" { unary = "MathSin" }
+        if name == "cos" { unary = "MathCos" }
+        if name == "tan" { unary = "MathTan" }
+        if name == "exp" { unary = "MathExp" }
+        if name == "log" { unary = "MathLog" }
+        if name == "log2" { unary = "MathLog2" }
+        if unary.len > 0 {
+            if args.len != 1 {
+                self.fail_here(start, format("`math.{}` takes 1 argument(s) but {} were given", .{name, args.len})[..])
+                return self.error_expr(start, end)
+            }
+            let x = self.check_expr(args[0], expected)
+            let t = self.tys.resolve(self.tir.nodes[x].ty, true)
+            if name == "abs" {
+                if !self.tys.is_numeric(t) { self.fail_here(start, "math.abs takes a number") }
+            } else if !self.tys.is_float(t) {
+                self.fail_here(start, format("math.{} takes a float but found `{}`; convert with `as f64`", .{name, self.ty_name(t)})[..])
+            }
+            let b = self.builtin_node(unary, t, start, end)
+            self.tir.nodes[b].kids.append(x)
+            self.tir.nodes[b].kids2.append(t)
+            return b
+        }
+        var binary = ""
+        if name == "min" { binary = "MathMin" }
+        if name == "max" { binary = "MathMax" }
+        if name == "pow" { binary = "MathPow" }
+        if name == "atan2" { binary = "MathAtan2" }
+        if binary.len > 0 {
+            if args.len != 2 {
+                self.fail_here(start, format("`math.{}` takes 2 argument(s) but {} were given", .{name, args.len})[..])
+                return self.error_expr(start, end)
+            }
+            let a = self.check_expr(args[0], expected)
+            let at = self.tys.resolve(self.tir.nodes[a].ty, false)
+            var bb = self.check_expr(args[1], at)
+            bb = self.coerce_or_error(bb, at, "second operand")
+            let t = self.tys.resolve(at, true)
+            if !self.tys.is_numeric(t) { self.fail_here(start, format("math.{} takes numbers", .{name})[..]) }
+            if (name == "pow" or name == "atan2") and !self.tys.is_float(t) { self.fail_here(start, format("math.{} takes floats", .{name})[..]) }
+            let b = self.builtin_node(binary, t, start, end)
+            self.tir.nodes[b].kids.append(a)
+            self.tir.nodes[b].kids.append(bb)
+            self.tir.nodes[b].kids2.append(t)
+            return b
+        }
+        if name == "clamp" {
+            if args.len != 3 {
+                self.fail_here(start, format("`math.clamp` takes 3 argument(s) but {} were given", .{args.len})[..])
+                return self.error_expr(start, end)
+            }
+            let a = self.check_expr(args[0], expected)
+            let at = self.tys.resolve(self.tir.nodes[a].ty, false)
+            var lo = self.check_expr(args[1], at)
+            lo = self.coerce_or_error(lo, at, "lower bound")
+            var hi = self.check_expr(args[2], at)
+            hi = self.coerce_or_error(hi, at, "upper bound")
+            let t = self.tys.resolve(at, true)
+            let b = self.builtin_node("MathClamp", t, start, end)
+            self.tir.nodes[b].kids.append(a)
+            self.tir.nodes[b].kids.append(lo)
+            self.tir.nodes[b].kids.append(hi)
+            self.tir.nodes[b].kids2.append(t)
+            return b
+        }
+        self.fail_here(start, format("`math` has no function `{}`", .{name})[..])
+        return self.error_expr(start, end)
+    }
+
+    // ----- static members and calls ------------------------------------------------------------
+
+    fn check_static_member(self: *mut Self, t0: usize, name: []u8, start: usize, end: usize, expected: usize) -> usize {
+        _ = expected
+        let t = self.tys.shallow(t0)
+        let k = self.tys.kind(t)
+        if k == TK.Enum {
+            let d = self.tys.list[t].def
+            let idx = self.enum_variant_index(d, name)
+            if idx == NONE {
+                self.fail_here(start, format("enum `{}` has no variant `{}`", .{self.enums[d].name, name})[..])
+                return self.error_expr(start, end)
+            }
+            let em = self.enums[d].module
+            if self.node(em, self.enums[d].variants[idx]).text != "unit" {
+                self.fail_here(start, format("variant `{}.{}` carries a payload; construct it with `{}.{}(...)`", .{self.enums[d].name, name, self.enums[d].name, name})[..])
+            }
+            let r = self.mk(TKind.EnumLit, t, start, end)
+            self.tir.nodes[r].a = idx
+            return r
+        }
+        if k == TK.ErrorSet and self.tys.list[t].flag {
+            let s = self.tys.list[t].def
+            let id = self.error_id(name)
+            if !self.error_set_has(s, name) {
+                self.fail_here(start, format("error set `{}` has no member `{}`", .{self.error_sets[s].name, name})[..])
+            }
+            let r = self.mk(TKind.ErrVal, t, start, end)
+            self.tir.nodes[r].a = id
+            return r
+        }
+        if k == TK.Struct or k == TK.Distinct {
+            let fid = self.find_inherent_method(t, name)
+            if fid != NONE {
+                if self.fns[fid].is_generic {
+                    self.fail_here(start, format("`{}` is generic; call it directly", .{name})[..])
+                    return self.error_expr(start, end)
+                }
+                let inst = self.instantiate(fid, List(usize).new())
+                var ps = List(usize).new()
+                for p in self.insts[inst].params { ps.append(self.insts[inst].locals[p].ty) }
+                let r = self.insts[inst].ret
+                let neg = self.insts[inst].declared_neg
+                let ft = self.tys.func(ps, r, EFF_ALL & ~neg)
+                let te = self.mk(TKind.FnToFat, ft, start, end)
+                self.tir.nodes[te].a = inst
+                return te
+            }
+            self.fail_here(start, format("`{}` has no associated item `{}`", .{self.ty_name(t), name})[..])
+            return self.error_expr(start, end)
+        }
+        self.fail_here(start, format("`{}` has no member `{}`", .{self.ty_name(t), name})[..])
+        return self.error_expr(start, end)
+    }
+
+    fn error_set_has(self: *mut Self, set: usize, name: []u8) -> bool {
+        let m = self.error_sets[set].module
+        // the set's names live on its declaration node
+        let items = self.mods[m].parsed.items.clone()
+        for it in items {
+            let n = self.node(m, it)
+            if n.k == parser.NodeKind.ErrorSet and n.name == self.error_sets[set].name {
+                for w in n.words { if w == name { return true } }
+                return false
+            }
+        }
+        return false
+    }
+
+    /// Does an impl's target type match `t`? Only non-generic impls, until stage 3.
+    fn impl_matches(self: *mut Self, impl_id: usize, t: usize) -> bool {
+        if self.impls[impl_id].tparams.len > 0 { return false }
+        let m = self.impls[impl_id].module
+        let target = self.impls[impl_id].target
+        let it = self.resolve_type(m, target, NONE)
+        return self.tys.resolve(it, true) == self.tys.resolve(t, true)
+    }
+
+    /// A method of an inherent impl first, then of a trait impl, for type `t`.
+    fn find_inherent_method(self: *mut Self, t0: usize, name: []u8) -> usize {
+        let t = self.tys.resolve(t0, true)
+        let n = self.impls.len
+        for pass in 0..2 {
+            for i in 0..n {
+                let has_trait = self.impls[i].has_trait
+                if (pass == 0 and has_trait) or (pass == 1 and !has_trait) { continue }
+                let methods = self.impls[i].methods.clone()
+                let im = self.impls[i].module
+                for fid in methods {
+                    if self.node(im, self.fns[fid].node).name == name and self.impl_matches(i, t) { return fid }
+                }
+            }
+        }
+        return NONE
+    }
+
+    fn check_static_call(self: *mut Self, t0: usize, name: []u8, args: []usize, expected: usize, start: usize, end: usize) -> usize {
+        let t = self.tys.shallow(t0)
+        let k = self.tys.kind(t)
+        let u = self.tys.usize_ty()
+        let bytes = self.tys.str_slice()
+        if k == TK.List {
+            let e = self.tys.list[t].args[0]
+            if name == "new" {
+                if !self.args_n(args, 0, "List.new", start) { return self.error_expr(start, end) }
+                let b = self.builtin_node("ListNew", t, start, end)
+                self.tir.nodes[b].kids2.append(e)
+                return b
+            }
+            if name == "with_capacity" {
+                if !self.args_n(args, 1, "List.with_capacity", start) { return self.error_expr(start, end) }
+                let n = self.arg(args[0], u, "capacity")
+                self.add_effect(EFF_ALLOCATES, start, "reserving list capacity allocates")
+                let b = self.builtin_node("ListWithCapacity", t, start, end)
+                self.tir.nodes[b].kids.append(n)
+                self.tir.nodes[b].kids2.append(e)
+                return b
+            }
+            if name == "from" {
+                if !self.args_n(args, 1, "List.from", start) { return self.error_expr(start, end) }
+                let st = self.tys.wrap(TK.Slice, e, false)
+                let s = self.arg(args[0], st, "source slice")
+                self.add_effect(EFF_ALLOCATES, start, "copying into a List allocates")
+                let b = self.builtin_node("ListFromSlice", t, start, end)
+                self.tir.nodes[b].kids.append(s)
+                self.tir.nodes[b].kids2.append(e)
+                return b
+            }
+            self.fail_here(start, format("`List` has no associated function `{}`; available: new, with_capacity, from", .{name})[..])
+            return self.error_expr(start, end)
+        }
+        if k == TK.Str {
+            if name == "new" {
+                if !self.args_n(args, 0, "String.new", start) { return self.error_expr(start, end) }
+                return self.builtin_node("StringNew", t, start, end)
+            }
+            if name == "from" {
+                if !self.args_n(args, 1, "String.from", start) { return self.error_expr(start, end) }
+                let s = self.arg(args[0], bytes, "source")
+                self.add_effect(EFF_ALLOCATES, start, "building a String allocates")
+                let b = self.builtin_node("StringFrom", t, start, end)
+                self.tir.nodes[b].kids.append(s)
+                return b
+            }
+            if name == "with_capacity" {
+                if !self.args_n(args, 1, "String.with_capacity", start) { return self.error_expr(start, end) }
+                let n = self.arg(args[0], u, "capacity")
+                self.add_effect(EFF_ALLOCATES, start, "reserving capacity allocates")
+                let b = self.builtin_node("StringWithCapacity", t, start, end)
+                self.tir.nodes[b].kids.append(n)
+                return b
+            }
+            self.fail_here(start, format("`String` has no associated function `{}`; available: new, from, with_capacity", .{name})[..])
+            return self.error_expr(start, end)
+        }
+        if k == TK.Map {
+            if name == "new" {
+                if !self.args_n(args, 0, "Map.new", start) { return self.error_expr(start, end) }
+                let b = self.builtin_node("MapNew", t, start, end)
+                self.tir.nodes[b].kids2.append(self.tys.list[t].args[0])
+                self.tir.nodes[b].kids2.append(self.tys.list[t].args[1])
+                return b
+            }
+            self.fail_here(start, format("`Map` has no associated function `{}`; available: new", .{name})[..])
+            return self.error_expr(start, end)
+        }
+        if k == TK.Enum { return self.check_variant_ctor(t, name, args, start, end) }
+        if k == TK.Struct or k == TK.Distinct {
+            let fid = self.find_inherent_method(t, name)
+            if fid != NONE {
+                let fm = self.fns[fid].module
+                let params = self.node(fm, self.fns[fid].node).kids.clone()
+                if k == TK.Struct and params.len > 0 and self.node(fm, params[0]).name == "self" {
+                    self.fail_here(start, format("`{}` is a method; call it on a value: `value.{}(...)`", .{name, name})[..])
+                    return self.error_expr(start, end)
+                }
+                return self.call_fn_def(fid, NONE, args, expected, start, end)
+            }
+            self.fail_here(start, format("`{}` has no associated function `{}`", .{self.ty_name(t), name})[..])
+            for a in args { _ = self.check_expr(a, NONE) }
+            return self.error_expr(start, end)
+        }
+        self.fail_here(start, format("`{}` has no associated function `{}`", .{self.ty_name(t), name})[..])
+        for a in args { _ = self.check_expr(a, NONE) }
+        return self.error_expr(start, end)
+    }
+
+    fn args_n(self: *mut Self, args: []usize, n: usize, what: []u8, at: usize) -> bool {
+        if args.len != n {
+            self.fail_here(at, format("`{}` takes {} argument(s) but {} were given", .{what, n, args.len})[..])
+            for a in args { _ = self.check_expr(a, NONE) }
+            return false
+        }
+        return true
+    }
+
+    fn arg(self: *mut Self, e: usize, ty: usize, what: []u8) -> usize {
+        let te = self.check_expr(e, ty)
+        return self.coerce_or_error(te, ty, what)
+    }
+
+    /// `List(i32)`, `Map(K, V)`, `Pair(i32)` in expression position: a type value.
+    fn expr_as_type(self: *mut Self, e: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        let k = n.k
+        let st = self.ctx().self_ty
+        if k == parser.NodeKind.TypeVal { return self.resolve_type(m, n.x, st) }
+        if k == parser.NodeKind.Ident {
+            let name = n.name.clone()
+            return self.named_type(m, name[..], NONE_NAME, List(usize).new(), n.start, st)
+        }
+        if k == parser.NodeKind.FieldE {
+            let base = self.node(m, n.x)
+            if base.k == parser.NodeKind.Ident {
+                return self.named_type(m, n.name.clone()[..], base.name.clone()[..], List(usize).new(), n.start, st)
+            }
+        }
+        if k == parser.NodeKind.Call {
+            let callee = self.node(m, n.x)
+            let args = n.kids.clone()
+            var targs = List(usize).new()
+            for a in args { targs.append(self.expr_as_type(a)) }
+            if callee.k == parser.NodeKind.Ident {
+                return self.named_type(m, callee.name.clone()[..], NONE_NAME, targs, n.start, st)
+            }
+        }
+        if k == parser.NodeKind.TupleLit {
+            let elems = n.kids.clone()
+            var ts = List(usize).new()
+            for a in elems { ts.append(self.expr_as_type(a)) }
+            if ts.len == 0 { return self.tys.void() }
+            return self.tys.tuple(ts)
+        }
+        self.fail_here(n.start, "expected a type argument")
+        return self.tys.void()
+    }
+
+    // ----- method calls -------------------------------------------------------------------------
+
+    fn check_method_call(self: *mut Self, e: usize, expected: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        let recv_node = n.x
+        let method = n.name.clone()
+        let args = n.kids.clone()
+        let start = n.start
+        let end = n.end
+        let recv = self.check_expr(recv_node, NONE)
+        if self.is_namespace(recv) {
+            let ns = self.tir.nodes[recv].name.clone()
+            return self.check_namespace_call(ns[..], method[..], args[..], expected, start, end)
+        }
+        let rt = self.tys.shallow(self.tir.nodes[recv].ty)
+        if self.tys.kind(rt) == TK.Type and self.tir.nodes[recv].k == TKind.TypeVal {
+            return self.check_static_call(self.tir.nodes[recv].a, method[..], args[..], expected, start, end)
+        }
+        var base_t = rt
+        while self.tys.kind(base_t) == TK.Ptr { base_t = self.tys.shallow(self.tys.list[base_t].args[0]) }
+        let bk = self.tys.kind(base_t)
+        if bk == TK.Struct or bk == TK.Enum or bk == TK.Distinct {
+            let fid = self.find_inherent_method(base_t, method[..])
+            if fid != NONE {
+                let fm = self.fns[fid].module
+                let params = self.node(fm, self.fns[fid].node).kids.clone()
+                let has_self = params.len > 0 and self.node(fm, params[0]).name == "self"
+                if !has_self {
+                    self.fail_here(start, format("`{}` is an associated function, not a method; call it as `{}.{}(...)`", .{method, self.ty_name(base_t), method})[..])
+                    return self.error_expr(start, end)
+                }
+                return self.call_fn_def(fid, recv, args[..], expected, start, end)
+            }
+            if self.is_ref_class(base_t) and method == "weak" {
+                if !self.args_n(args[..], 0, "weak", start) { return self.error_expr(start, end) }
+                let wt = self.tys.wrap(TK.Weak, base_t, false)
+                self.add_effect(EFF_REFCOUNTS, start, "creating a weak reference")
+                let b = self.builtin_node("Weak", wt, start, end)
+                self.tir.nodes[b].kids.append(recv)
+                self.tir.nodes[b].kids2.append(base_t)
+                return b
+            }
+        }
+        let recv2 = self.auto_deref_all(recv)
+        let t = self.tys.resolve(self.tir.nodes[recv2].ty, true)
+        let r = self.builtin_method(recv2, t, method[..], args[..], start, end)
+        if r != NONE { return r }
+        self.fail_here(start, format("no method `{}` on type `{}`", .{method, self.ty_name(t)})[..])
+        for a in args { _ = self.check_expr(a, NONE) }
+        return self.error_expr(start, end)
+    }
+
+    fn require_mut_recv(self: *mut Self, recv: usize, method: []u8, at: usize) {
+        if self.is_place(recv) and !self.place_mutable(recv) {
+            var what = String.from("the receiver")
+            if self.tir.nodes[recv].k == TKind.Local { what = format("`{}`", .{self.ctx().locals[self.tir.nodes[recv].a].name}) }
+            self.fail_here(at, format("`{}` mutates its receiver, but {} is immutable", .{method, what})[..])
+        }
+    }
+
+    fn bnode(self: *mut Self, op: []u8, recv: usize, ty: usize, ety: usize, start: usize, end: usize) -> usize {
+        let b = self.builtin_node(op, ty, start, end)
+        if recv != NONE { self.tir.nodes[b].kids.append(recv) }
+        if ety != NONE { self.tir.nodes[b].kids2.append(ety) }
+        return b
+    }
+
+    fn is_empty_node(self: *mut Self, recv: usize, start: usize, end: usize) -> usize {
+        let u = self.tys.usize_ty()
+        let bt = self.tys.bool_ty()
+        let len = self.bnode("Len", recv, u, NONE, start, end)
+        let zero = self.int_node(0, u, start, end)
+        return self.binary_node("==", "plain", true, len, zero, bt, start, end)
+    }
+
+    fn builtin_method(self: *mut Self, recv: usize, t: usize, method: []u8, args: []usize, start: usize, end: usize) -> usize {
+        let v = self.tys.void()
+        let bt = self.tys.bool_ty()
+        let u = self.tys.usize_ty()
+        let u8t = self.tys.u8_ty()
+        let bytes = self.tys.str_slice()
+        let string = self.tys.string()
+        let k = self.tys.kind(t)
+        if k == TK.List {
+            let e = self.tys.list[t].args[0]
+            if method == "append" or method == "push" {
+                if !self.args_n(args, 1, "append", start) { return self.error_expr(start, end) }
+                self.require_mut_recv(recv, "append", start)
+                var x = self.arg(args[0], e, "element")
+                x = self.take_ownership(x)
+                self.add_effect(EFF_ALLOCATES, start, "appending to a List may grow it")
+                let b = self.bnode("ListAppend", recv, v, e, start, end)
+                self.tir.nodes[b].kids.append(x)
+                return b
+            }
+            if method == "pop" {
+                if !self.args_n(args, 0, "pop", start) { return self.error_expr(start, end) }
+                self.require_mut_recv(recv, "pop", start)
+                let o = self.tys.wrap(TK.Opt, e, false)
+                return self.bnode("ListPop", recv, o, e, start, end)
+            }
+            if method == "clear" {
+                if !self.args_n(args, 0, "clear", start) { return self.error_expr(start, end) }
+                self.require_mut_recv(recv, "clear", start)
+                return self.bnode("ListClear", recv, v, e, start, end)
+            }
+            if method == "clone" {
+                if !self.args_n(args, 0, "clone", start) { return self.error_expr(start, end) }
+                self.add_effect(EFF_ALLOCATES, start, "cloning a List allocates")
+                return self.bnode("ListClone", recv, t, e, start, end)
+            }
+            if method == "last" or method == "first" {
+                if !self.args_n(args, 0, method, start) { return self.error_expr(start, end) }
+                let o = self.tys.wrap(TK.Opt, e, false)
+                let s = self.tys.wrap(TK.Slice, e, false)
+                let sl = self.mk(TKind.ListToSlice, s, start, end)
+                self.tir.nodes[sl].kids.append(recv)
+                let idx = self.int_node(if method == "last" { 1 } else { 0 }, u, start, end)
+                let b = self.bnode("ListLast", sl, o, e, start, end)
+                self.tir.nodes[b].kids.append(idx)
+                return b
+            }
+            if method == "insert" {
+                if !self.args_n(args, 2, "insert", start) { return self.error_expr(start, end) }
+                self.require_mut_recv(recv, "insert", start)
+                let i = self.arg(args[0], u, "index")
+                var x = self.arg(args[1], e, "element")
+                x = self.take_ownership(x)
+                self.add_effect(EFF_ALLOCATES, start, "inserting into a List may grow it")
+                self.add_effect(EFF_PANICS, start, "insert panics when the index is out of range")
+                let b = self.bnode("ListInsert", recv, v, e, start, end)
+                self.tir.nodes[b].kids.append(i)
+                self.tir.nodes[b].kids.append(x)
+                return b
+            }
+            if method == "remove" or method == "swap_remove" {
+                if !self.args_n(args, 1, method, start) { return self.error_expr(start, end) }
+                self.require_mut_recv(recv, method, start)
+                let i = self.arg(args[0], u, "index")
+                self.add_effect(EFF_PANICS, start, "remove panics when the index is out of range")
+                let b = self.bnode(if method == "remove" { "ListRemove" } else { "ListSwapRemove" }, recv, e, e, start, end)
+                self.tir.nodes[b].kids.append(i)
+                return b
+            }
+            if method == "extend" {
+                if !self.args_n(args, 1, "extend", start) { return self.error_expr(start, end) }
+                self.require_mut_recv(recv, "extend", start)
+                let st = self.tys.wrap(TK.Slice, e, false)
+                let s = self.arg(args[0], st, "elements")
+                if self.needs_drop(e) { self.fail_here(start, "`extend` copies elements; the element type owns resources, so append clones instead") }
+                self.add_effect(EFF_ALLOCATES, start, "extending a List may grow it")
+                let b = self.bnode("ListExtend", recv, v, e, start, end)
+                self.tir.nodes[b].kids.append(s)
+                return b
+            }
+            if method == "reserve" {
+                if !self.args_n(args, 1, "reserve", start) { return self.error_expr(start, end) }
+                self.require_mut_recv(recv, "reserve", start)
+                let n = self.arg(args[0], u, "capacity")
+                self.add_effect(EFF_ALLOCATES, start, "reserving allocates")
+                let b = self.bnode("ListReserve", recv, v, e, start, end)
+                self.tir.nodes[b].kids.append(n)
+                return b
+            }
+            if method == "items" or method == "as_slice" {
+                if !self.args_n(args, 0, method, start) { return self.error_expr(start, end) }
+                let mu = self.place_mutable(recv)
+                let st = self.tys.wrap(TK.Slice, e, mu)
+                let sl = self.mk(TKind.ListToSlice, st, start, end)
+                self.tir.nodes[sl].kids.append(recv)
+                return sl
+            }
+            if method == "is_empty" {
+                if !self.args_n(args, 0, "is_empty", start) { return self.error_expr(start, end) }
+                return self.is_empty_node(recv, start, end)
+            }
+            let mu = self.place_mutable(recv)
+            let st = self.tys.wrap(TK.Slice, e, mu)
+            let sl = self.mk(TKind.ListToSlice, st, start, end)
+            self.tir.nodes[sl].kids.append(recv)
+            return self.slice_method(sl, e, mu, method, args, start, end)
+        }
+        if k == TK.Str {
+            if method == "append" {
+                if !self.args_n(args, 1, "append", start) { return self.error_expr(start, end) }
+                self.require_mut_recv(recv, "append", start)
+                let s = self.arg(args[0], bytes, "text")
+                self.add_effect(EFF_ALLOCATES, start, "appending to a String may grow it")
+                let b = self.bnode("StringAppend", recv, v, NONE, start, end)
+                self.tir.nodes[b].kids.append(s)
+                return b
+            }
+            if method == "append_char" {
+                if !self.args_n(args, 1, "append_char", start) { return self.error_expr(start, end) }
+                self.require_mut_recv(recv, "append_char", start)
+                let ct = self.tys.char_ty()
+                let c = self.arg(args[0], ct, "character")
+                self.add_effect(EFF_ALLOCATES, start, "appending to a String may grow it")
+                let b = self.bnode("StringAppendChar", recv, v, NONE, start, end)
+                self.tir.nodes[b].kids.append(c)
+                return b
+            }
+            if method == "push_byte" {
+                if !self.args_n(args, 1, "push_byte", start) { return self.error_expr(start, end) }
+                self.require_mut_recv(recv, "push_byte", start)
+                let x = self.arg(args[0], u8t, "byte")
+                self.add_effect(EFF_ALLOCATES, start, "appending to a String may grow it")
+                let b = self.bnode("StringPushByte", recv, v, NONE, start, end)
+                self.tir.nodes[b].kids.append(x)
+                return b
+            }
+            if method == "clone" or method == "to_string" {
+                if !self.args_n(args, 0, method, start) { return self.error_expr(start, end) }
+                self.add_effect(EFF_ALLOCATES, start, "cloning a String allocates")
+                return self.bnode("StringClone", recv, string, NONE, start, end)
+            }
+            if method == "clear" {
+                if !self.args_n(args, 0, "clear", start) { return self.error_expr(start, end) }
+                self.require_mut_recv(recv, "clear", start)
+                return self.bnode("StringClear", recv, v, NONE, start, end)
+            }
+            if method == "pop" {
+                if !self.args_n(args, 0, "pop", start) { return self.error_expr(start, end) }
+                self.require_mut_recv(recv, "pop", start)
+                let o = self.tys.wrap(TK.Opt, u8t, false)
+                return self.bnode("StringPop", recv, o, NONE, start, end)
+            }
+            if method == "bytes" or method == "as_slice" {
+                if !self.args_n(args, 0, method, start) { return self.error_expr(start, end) }
+                let sl = self.mk(TKind.StrToSlice, bytes, start, end)
+                self.tir.nodes[sl].kids.append(recv)
+                return sl
+            }
+            let sl = self.mk(TKind.StrToSlice, bytes, start, end)
+            self.tir.nodes[sl].kids.append(recv)
+            return self.slice_method(sl, u8t, false, method, args, start, end)
+        }
+        if k == TK.Map {
+            let kt = self.tys.list[t].args[0]
+            let vt = self.tys.list[t].args[1]
+            var lookup_kt = kt
+            if self.tys.kind(self.tys.shallow(kt)) == TK.Str { lookup_kt = bytes }
+            if method == "put" or method == "insert" {
+                if !self.args_n(args, 2, "put", start) { return self.error_expr(start, end) }
+                self.require_mut_recv(recv, "put", start)
+                var kk = self.arg(args[0], kt, "key")
+                kk = self.take_ownership(kk)
+                var vv = self.arg(args[1], vt, "value")
+                vv = self.take_ownership(vv)
+                self.add_effect(EFF_ALLOCATES, start, "inserting into a Map may grow it")
+                let b = self.bnode("MapPut", recv, v, kt, start, end)
+                self.tir.nodes[b].kids2.append(vt)
+                self.tir.nodes[b].kids.append(kk)
+                self.tir.nodes[b].kids.append(vv)
+                return b
+            }
+            if method == "get" or method == "contains" or method == "remove" {
+                if !self.args_n(args, 1, method, start) { return self.error_expr(start, end) }
+                if method == "remove" { self.require_mut_recv(recv, "remove", start) }
+                let kk = self.arg(args[0], lookup_kt, "key")
+                let rt = if method == "get" { self.tys.wrap(TK.Opt, vt, false) } else { bt }
+                let op = if method == "get" { "MapGet" } else if method == "contains" { "MapContains" } else { "MapRemove" }
+                let b = self.bnode(op, recv, rt, kt, start, end)
+                self.tir.nodes[b].kids2.append(vt)
+                self.tir.nodes[b].kids.append(kk)
+                return b
+            }
+            if method == "clear" or method == "clone" or method == "keys" or method == "values" {
+                if !self.args_n(args, 0, method, start) { return self.error_expr(start, end) }
+                var rt = v
+                var op = "MapClear"
+                if method == "clear" {
+                    self.require_mut_recv(recv, "clear", start)
+                } else if method == "clone" {
+                    self.add_effect(EFF_ALLOCATES, start, "cloning a Map allocates")
+                    rt = t
+                    op = "MapClone"
+                } else if method == "keys" {
+                    self.add_effect(EFF_ALLOCATES, start, "collecting keys allocates")
+                    rt = self.tys.wrap(TK.List, kt, false)
+                    op = "MapKeys"
+                } else {
+                    self.add_effect(EFF_ALLOCATES, start, "collecting values allocates")
+                    rt = self.tys.wrap(TK.List, vt, false)
+                    op = "MapValues"
+                }
+                let b = self.bnode(op, recv, rt, kt, start, end)
+                self.tir.nodes[b].kids2.append(vt)
+                return b
+            }
+            if method == "is_empty" {
+                if !self.args_n(args, 0, "is_empty", start) { return self.error_expr(start, end) }
+                return self.is_empty_node(recv, start, end)
+            }
+            return NONE
+        }
+        if k == TK.Slice { return self.slice_method(recv, self.tys.list[t].args[0], self.tys.list[t].flag, method, args, start, end) }
+        if k == TK.Array {
+            let e = self.tys.list[t].args[0]
+            let mu = self.place_mutable(recv)
+            let st = self.tys.wrap(TK.Slice, e, mu)
+            let sl = self.mk(TKind.ArrayToSlice, st, start, end)
+            self.tir.nodes[sl].kids.append(recv)
+            return self.slice_method(sl, e, mu, method, args, start, end)
+        }
+        if k == TK.Int {
+            if method == "abs" {
+                if !self.args_n(args, 0, "abs", start) { return self.error_expr(start, end) }
+                self.add_effect(EFF_PANICS, start, "abs overflows for the minimum value")
+                return self.bnode("MathAbs", recv, t, t, start, end)
+            }
+            if method == "min" or method == "max" {
+                if !self.args_n(args, 1, method, start) { return self.error_expr(start, end) }
+                let x = self.arg(args[0], t, "operand")
+                let b = self.bnode(if method == "min" { "MathMin" } else { "MathMax" }, recv, t, t, start, end)
+                self.tir.nodes[b].kids.append(x)
+                return b
+            }
+            if method == "checked_add" or method == "checked_sub" or method == "checked_mul" {
+                if !self.args_n(args, 1, method, start) { return self.error_expr(start, end) }
+                let x = self.arg(args[0], t, "operand")
+                let o = self.tys.wrap(TK.Opt, t, false)
+                let marker = self.int_node(if method == "checked_add" { 0 } else if method == "checked_sub" { 1 } else { 2 }, t, start, end)
+                let b = self.bnode("Hash", recv, o, t, start, end)
+                self.tir.nodes[b].kids.append(x)
+                self.tir.nodes[b].kids.append(marker)
+                return b
+            }
+            if method == "to_string" {
+                if !self.args_n(args, 0, "to_string", start) { return self.error_expr(start, end) }
+                self.add_effect(EFF_ALLOCATES, start, "formatting into a String allocates")
+                return self.bnode("IntToStr", recv, string, t, start, end)
+            }
+            return NONE
+        }
+        if k == TK.Float {
+            var op = ""
+            if method == "abs" { op = "MathAbs" }
+            if method == "sqrt" { op = "MathSqrt" }
+            if method == "floor" { op = "MathFloor" }
+            if method == "ceil" { op = "MathCeil" }
+            if method == "round" { op = "MathRound" }
+            if op.len > 0 {
+                if !self.args_n(args, 0, method, start) { return self.error_expr(start, end) }
+                return self.bnode(op, recv, t, t, start, end)
+            }
+            if method == "min" or method == "max" or method == "pow" {
+                if !self.args_n(args, 1, method, start) { return self.error_expr(start, end) }
+                let x = self.arg(args[0], t, "operand")
+                let b = self.bnode(if method == "min" { "MathMin" } else if method == "max" { "MathMax" } else { "MathPow" }, recv, t, t, start, end)
+                self.tir.nodes[b].kids.append(x)
+                return b
+            }
+            if method == "to_string" {
+                if !self.args_n(args, 0, "to_string", start) { return self.error_expr(start, end) }
+                self.add_effect(EFF_ALLOCATES, start, "formatting into a String allocates")
+                return self.bnode("FloatToStr", recv, string, t, start, end)
+            }
+            return NONE
+        }
+        if k == TK.Char {
+            var op = ""
+            var rt = bt
+            if method == "is_digit" { op = "CharIsDigit" }
+            if method == "is_alpha" { op = "CharIsAlpha" }
+            if method == "is_space" { op = "CharIsSpace" }
+            if method == "to_lower" { op = "CharToLower"; rt = t }
+            if method == "to_upper" { op = "CharToUpper"; rt = t }
+            if op.len > 0 {
+                if !self.args_n(args, 0, method, start) { return self.error_expr(start, end) }
+                return self.bnode(op, recv, rt, NONE, start, end)
+            }
+            if method == "to_digit" {
+                if !self.args_n(args, 0, method, start) { return self.error_expr(start, end) }
+                let u32t = self.tys.int("u32")
+                let o = self.tys.wrap(TK.Opt, u32t, false)
+                return self.bnode("CharToDigit", recv, o, NONE, start, end)
+            }
+            return NONE
+        }
+        if k == TK.Weak {
+            if method == "upgrade" {
+                if !self.args_n(args, 0, "upgrade", start) { return self.error_expr(start, end) }
+                let inner = self.tys.list[t].args[0]
+                let o = self.tys.wrap(TK.Opt, inner, false)
+                self.add_effect(EFF_REFCOUNTS, start, "upgrading a weak reference retains")
+                return self.bnode("Upgrade", recv, o, inner, start, end)
+            }
+            return NONE
+        }
+        if k == TK.Opt {
+            self.fail_here(start, format("cannot call `{}` on an optional; unwrap it first with `orelse`, `.?`, or `if let`", .{method})[..])
+            return self.error_expr(start, end)
+        }
+        if k == TK.ErrUnion {
+            self.fail_here(start, format("cannot call `{}` on an error union; use `try` first", .{method})[..])
+            return self.error_expr(start, end)
+        }
+        return NONE
+    }
+
+    fn slice_method(self: *mut Self, recv: usize, e: usize, mutable: bool, method: []u8, args: []usize, start: usize, end: usize) -> usize {
+        let m = self.cur_module()
+        let v = self.tys.void()
+        let bt = self.tys.bool_ty()
+        let u = self.tys.usize_ty()
+        let u8t = self.tys.u8_ty()
+        let bytes = self.tys.str_slice()
+        let string = self.tys.string()
+        let es = self.tys.shallow(e)
+        let is_u8 = self.tys.kind(es) == TK.Int and self.tys.list[es].name == "u8"
+        if method == "fill" {
+            if !self.args_n(args, 1, "fill", start) { return self.error_expr(start, end) }
+            if !mutable { self.fail_here(start, "`fill` needs a mutable slice (`[]mut T`)") }
+            let x = self.arg(args[0], e, "value")
+            let b = self.bnode("SliceFill", recv, v, e, start, end)
+            self.tir.nodes[b].kids.append(x)
+            return b
+        }
+        if method == "reverse" or method == "sort" {
+            if !self.args_n(args, 0, method, start) { return self.error_expr(start, end) }
+            if !mutable { self.fail_here(start, format("`{}` needs a mutable slice (`[]mut T`)", .{method})[..]) }
+            return self.bnode(if method == "reverse" { "SliceReverse" } else { "SliceSort" }, recv, v, e, start, end)
+        }
+        if method == "contains" {
+            if !self.args_n(args, 1, "contains", start) { return self.error_expr(start, end) }
+            let an = self.node(m, args[0])
+            if is_u8 and an.k == parser.NodeKind.Lit and an.text == "str" {
+                let needle = self.arg(args[0], bytes, "needle")
+                let ot = self.tys.wrap(TK.Opt, u, false)
+                let f = self.bnode("SliceFind", recv, ot, e, start, end)
+                self.tir.nodes[f].kids.append(needle)
+                let nul = self.mk(TKind.OptNull, ot, start, end)
+                return self.binary_node("!=", "plain", true, f, nul, bt, start, end)
+            }
+            let x = self.arg(args[0], e, "value")
+            let b = self.bnode("SliceContains", recv, bt, e, start, end)
+            self.tir.nodes[b].kids.append(x)
+            return b
+        }
+        if method == "index_of" {
+            if !self.args_n(args, 1, "index_of", start) { return self.error_expr(start, end) }
+            let x = self.arg(args[0], e, "value")
+            let o = self.tys.wrap(TK.Opt, u, false)
+            let b = self.bnode("SliceIndexOf", recv, o, e, start, end)
+            self.tir.nodes[b].kids.append(x)
+            return b
+        }
+        if method == "copy_from" {
+            if !self.args_n(args, 1, "copy_from", start) { return self.error_expr(start, end) }
+            if !mutable { self.fail_here(start, "`copy_from` needs a mutable slice (`[]mut T`)") }
+            let st = self.tys.wrap(TK.Slice, e, false)
+            let s = self.arg(args[0], st, "source")
+            self.add_effect(EFF_PANICS, start, "copy_from panics when the source is longer than the destination")
+            let b = self.bnode("SliceCopy", recv, v, e, start, end)
+            self.tir.nodes[b].kids.append(s)
+            return b
+        }
+        if method == "is_empty" {
+            if !self.args_n(args, 0, "is_empty", start) { return self.error_expr(start, end) }
+            return self.is_empty_node(recv, start, end)
+        }
+        if method == "to_owned" or method == "to_list" {
+            if !self.args_n(args, 0, method, start) { return self.error_expr(start, end) }
+            self.add_effect(EFF_ALLOCATES, start, "copying into a List allocates")
+            let lt = self.tys.wrap(TK.List, e, false)
+            return self.bnode("ListFromSlice", recv, lt, e, start, end)
+        }
+        if !is_u8 { return NONE }
+        if method == "starts_with" or method == "ends_with" {
+            if !self.args_n(args, 1, method, start) { return self.error_expr(start, end) }
+            let p = self.arg(args[0], bytes, "prefix")
+            let b = self.bnode(if method == "starts_with" { "SliceStartsWith" } else { "SliceEndsWith" }, recv, bt, e, start, end)
+            self.tir.nodes[b].kids.append(p)
+            return b
+        }
+        if method == "find" {
+            if !self.args_n(args, 1, "find", start) { return self.error_expr(start, end) }
+            let needle = self.arg(args[0], bytes, "needle")
+            let o = self.tys.wrap(TK.Opt, u, false)
+            let b = self.bnode("SliceFind", recv, o, e, start, end)
+            self.tir.nodes[b].kids.append(needle)
+            return b
+        }
+        if method == "trim" {
+            if !self.args_n(args, 0, "trim", start) { return self.error_expr(start, end) }
+            return self.bnode("SliceTrim", recv, bytes, e, start, end)
+        }
+        if method == "split" {
+            if !self.args_n(args, 1, "split", start) { return self.error_expr(start, end) }
+            let sep = self.arg(args[0], bytes, "separator")
+            self.add_effect(EFF_ALLOCATES, start, "split collects the pieces into a List")
+            let lt = self.tys.wrap(TK.List, bytes, false)
+            let b = self.bnode("SliceSplit", recv, lt, e, start, end)
+            self.tir.nodes[b].kids.append(sep)
+            return b
+        }
+        if method == "lines" {
+            if !self.args_n(args, 0, "lines", start) { return self.error_expr(start, end) }
+            self.add_effect(EFF_ALLOCATES, start, "lines collects the pieces into a List")
+            let lt = self.tys.wrap(TK.List, bytes, false)
+            return self.bnode("SliceLines", recv, lt, e, start, end)
+        }
+        if method == "to_string" {
+            if !self.args_n(args, 0, "to_string", start) { return self.error_expr(start, end) }
+            self.add_effect(EFF_ALLOCATES, start, "building a String allocates")
+            return self.bnode("StringFrom", recv, string, NONE, start, end)
+        }
+        if method == "parse_int" {
+            if !self.args_n(args, 1, "parse_int", start) { return self.error_expr(start, end) }
+            let tv = self.check_expr(args[0], NONE)
+            if self.tir.nodes[tv].k != TKind.TypeVal {
+                self.fail_here(start, "parse_int takes the integer type to parse, e.g. `s.parse_int(i32)`")
+                return self.error_expr(start, end)
+            }
+            let target = self.tir.nodes[tv].a
+            if !self.tys.is_integer(target) { self.fail_here(start, "parse_int needs an integer type") }
+            let r = self.tys.err_union(0, false, target)
+            return self.bnode("SliceParseInt", recv, r, target, start, end)
+        }
+        if method == "parse_float" {
+            if !self.args_n(args, 0, "parse_float", start) { return self.error_expr(start, end) }
+            let f64t = self.tys.float64()
+            let r = self.tys.err_union(0, false, f64t)
+            return self.bnode("SliceParseFloat", recv, r, f64t, start, end)
+        }
+        if method == "eq_ignore_case" {
+            if !self.args_n(args, 1, "eq_ignore_case", start) { return self.error_expr(start, end) }
+            let o = self.arg(args[0], bytes, "other")
+            let b = self.bnode("SliceEqIgnoreCase", recv, bt, e, start, end)
+            self.tir.nodes[b].kids.append(o)
+            return b
+        }
+        _ = u8t
+        return NONE
+    }
 }
 
 pub fn new_checker(own mods: List(Mod)) -> Checker {
