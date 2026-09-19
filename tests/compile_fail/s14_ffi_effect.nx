@@ -1,0 +1,4 @@
+// EXPECT: `ffi`
+const cs = @cImport("../spec/helpers/cspec.h")
+fn pure(x: i32) -> i32 !ffi { unsafe { return cs.cs_next(x) } }
+fn main() { _ = pure(1) }
