@@ -1585,6 +1585,17 @@ impl Checker {
         return NONE
     }
 
+    /// Is the innermost local of that name a by-reference capture (read through its pointer)?
+    fn lookup_deref(self: *mut Self, name: []u8) -> bool {
+        let c = self.ctx()
+        var i = c.scope_names.len
+        while i > 0 {
+            i -= 1
+            if c.scope_names[i] == name { return c.scope_deref[i] }
+        }
+        return false
+    }
+
     fn new_label(self: *mut Self, name: []u8, has_name: bool, is_loop: bool, break_ty: usize) -> usize {
         let depth = self.scope_depth()
         let c = self.ctx()
@@ -2984,6 +2995,7 @@ impl Checker {
         if k == parser.NodeKind.IfCapture { return self.check_if_capture(e, expected) }
         if k == parser.NodeKind.MethodCall { return self.check_method_call(e, expected) }
         if k == parser.NodeKind.Match { return self.check_match(e, expected) }
+        if k == parser.NodeKind.Closure { return self.check_closure(e, expected) }
         if k == parser.NodeKind.Comptime {
             // evaluated at compile time; the stage-2 evaluator folds scalars,
             // calls are a later stage (the expression is kept as checked)
@@ -3201,6 +3213,13 @@ impl Checker {
             }
             let r = self.mk(TKind.Local, ty, start, end)
             self.tir.nodes[r].a = l
+            if self.lookup_deref(name) {
+                let pt = self.tys.shallow(ty)
+                let inner = if self.tys.kind(pt) == TK.Ptr { self.tys.list[pt].args[0] } else { ty }
+                let d = self.mk(TKind.Deref, inner, start, end)
+                self.tir.nodes[d].kids.append(r)
+                return d
+            }
             return r
         }
         let m = self.cur_module()
@@ -7733,6 +7752,225 @@ fn min64(a: u64, b: u64) -> u64 { return if a < b { a } else { b } }
 fn round_up(v: u64, a: u64) -> u64 {
     if a == 0 { return v }
     return ((v + a - 1) / a) * a
+}
+
+// ---------------------------------------------------------------- closures
+
+impl Checker {
+    fn check_closure(self: *mut Self, e: usize, expected: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        let param_nodes = n.kids.clone()
+        let capture_nodes = n.kids2.clone()
+        let ret_node = n.y
+        let body_node = n.x
+        let start = n.start
+        let end = n.end
+        // the expected function type supplies omitted parameter and return types
+        var exp = NONE
+        if expected != NONE {
+            let ex = self.tys.shallow(expected)
+            if self.tys.kind(ex) == TK.Fn { exp = ex }
+        }
+        var exp_params = List(usize).new()
+        var exp_ret = NONE
+        var exp_eff: u64 = EFF_ALL
+        if exp != NONE {
+            let all = self.tys.list[exp].args.clone()
+            for a, i in all { if i + 1 < all.len { exp_params.append(a) } }
+            exp_ret = all[all.len - 1]
+            exp_eff = self.tys.list[exp].n
+        }
+        let st = self.ctx().self_ty
+        var ptys = List(usize).new()
+        var pnames = List(String).new()
+        var pstarts = List(usize).new()
+        var pends = List(usize).new()
+        for p, i in param_nodes {
+            let pn = self.node(m, p)
+            let pname = pn.name.clone()
+            let ty_node = pn.x
+            let pstart = pn.start
+            let pend = pn.end
+            var t = NONE
+            if self.node(m, ty_node).k == parser.NodeKind.TInfer {
+                if i < exp_params.len {
+                    t = exp_params[i]
+                } else {
+                    self.fail_here(pstart, format("closure parameter `{}` needs a type annotation", .{pname})[..])
+                    t = self.tys.void()
+                }
+            } else {
+                t = self.resolve_type(m, ty_node, st)
+            }
+            ptys.append(t)
+            pnames.append(pname)
+            pstarts.append(pstart)
+            pends.append(pend)
+        }
+        var ret = NONE
+        if ret_node != NONE {
+            ret = self.resolve_type(m, ret_node, st)
+        } else if exp != NONE {
+            ret = exp_ret
+        } else {
+            ret = self.tys.fresh_infer()
+        }
+        if exp != NONE and exp_params.len != ptys.len {
+            self.fail_here(start, format("expected a closure with {} parameter(s) but it has {}", .{exp_params.len, ptys.len})[..])
+        }
+        // captures: by value moves a resource, by reference needs a `var` for `&mut`
+        var cap_locals = List(usize).new()
+        var cap_refs = List(bool).new()
+        var cap_muts = List(bool).new()
+        var cap_tys = List(usize).new()
+        var cap_names = List(String).new()
+        var cap_starts = List(usize).new()
+        var cap_ends = List(usize).new()
+        for c in capture_nodes {
+            let cn = self.node(m, c)
+            let cname = cn.name.clone()
+            let by_ref = cn.flag
+            let mutable = cn.flag2
+            let cstart = cn.start
+            let cend = cn.end
+            let l = self.lookup_local(cname[..])
+            if l == NONE {
+                self.fail_here(cstart, format("cannot capture `{}`: no such local", .{cname})[..])
+                continue
+            }
+            let lt = self.ctx().locals[l].ty
+            if by_ref and mutable and !self.ctx().locals[l].mutable {
+                self.fail_here(cstart, format("cannot capture `{}` by mutable reference; declare it with `var`", .{cname})[..])
+            }
+            if !by_ref {
+                let le = self.mk(TKind.Local, lt, cstart, cend)
+                self.tir.nodes[le].a = l
+                _ = self.take_ownership(le)
+            }
+            cap_locals.append(l)
+            cap_refs.append(by_ref)
+            cap_muts.append(mutable)
+            cap_tys.append(lt)
+            cap_names.append(cname)
+            cap_starts.append(cstart)
+            cap_ends.append(cend)
+        }
+        // the instance
+        let id = self.insts.len
+        var locals = List(Local).new()
+        var params = List(usize).new()
+        for t, i in ptys {
+            locals.append(Local{ .name = pnames[i].clone(), .ty = t, .mutable = false, .start = pstarts[i], .end = pends[i], .is_param = true, .owned = false, .loop_item = false })
+            params.append(i)
+        }
+        let fname = self.ctx().fn_name.clone()
+        self.insts.append(Inst{
+                .name = format("closure in {}", .{fname}), .mangled = format("nx_closure_{}", .{id}), .def = NONE, .targs = List(usize).new(),
+                .gen_names = self.env_names.clone(), .gen_tys = self.env_tys.clone(),
+                .params = params, .ret = ret, .locals = locals, .body = NONE,
+                .own_effects = 0, .effects = 0, .declared_neg = 0, .declared_pos = 0, .export_name = String.from("-"),
+                .is_extern = false, .is_variadic = false, .is_pub = false, .is_test = false, .test_comptime = false,
+                .is_closure = true, .start = start, .end = end, .module = m, .self_ty = st,
+                .witnesses = List(Witness).new(), .callees = List(usize).new(),
+        })
+        self.check_closure_body(id, body_node, &cap_names, &cap_refs, &cap_muts, &cap_tys, &cap_starts, &cap_ends)
+        let ft = self.tys.func(ptys, ret, exp_eff)
+        let r = self.mk(TKind.Closure, ft, start, end)
+        self.tir.nodes[r].a = id
+        for l, i in cap_locals {
+            self.tir.nodes[r].kids2.append(l)
+            self.tir.nodes[r].kids.append(if cap_refs[i] { 1 } else { 0 })
+        }
+        return r
+    }
+
+    fn check_closure_body(self: *mut Self, inst: usize, body_node: usize, names: *List(String), refs: *List(bool), muts: *List(bool), tys: *List(usize), starts: *List(usize), ends: *List(usize)) {
+        let m = self.insts[inst].module
+        let ret = self.insts[inst].ret
+        var ctx = new_ctx(ret, m, self.insts[inst].name[..])
+        ctx.self_ty = self.insts[inst].self_ty
+        ctx.locals = self.insts[inst].locals.clone()
+        ctx.scope_marks.append(0)
+        for p in self.insts[inst].params {
+            ctx.scope_names.append(ctx.locals[p].name.clone())
+            ctx.scope_locals.append(p)
+            ctx.scope_deref.append(false)
+        }
+        // captured variables become locals: by-value copies, or pointers dereferenced on use
+        for nm, i in names {
+            let lid = ctx.locals.len
+            let by_ref = refs[i]
+            let mutable = muts[i]
+            let lty = if by_ref { self.tys.wrap(TK.Ptr, tys[i], mutable) } else { tys[i] }
+            ctx.locals.append(Local{ .name = format("cap_{}", .{nm}), .ty = lty, .mutable = mutable or !by_ref, .start = starts[i], .end = ends[i], .is_param = true, .owned = false, .loop_item = false })
+            ctx.scope_names.append(nm.clone())
+            ctx.scope_locals.append(lid)
+            ctx.scope_deref.append(by_ref)
+        }
+        self.ctxs.append(ctx)
+        // an expression body is a block with that tail
+        var block_node = body_node
+        let bn = self.node(m, body_node)
+        let is_block = bn.k == parser.NodeKind.Block
+        let bstart = bn.start
+        let bend = bn.end
+        var ret_hint = ret
+        if self.tys.contains_infer(ret) { ret_hint = NONE }
+        var tb = NONE
+        if is_block {
+            tb = self.check_block(block_node, ret_hint, NONE, NONE)
+        } else {
+            // the same as check_block on a synthetic block holding the expression
+            self.push_scope()
+            var te = self.check_expr(body_node, ret_hint)
+            let tt = self.tys.shallow(self.tir.nodes[te].ty)
+            let tk = self.tys.kind(tt)
+            var is_void_expected = false
+            if ret_hint != NONE { is_void_expected = self.tys.kind(self.tys.shallow(ret_hint)) == TK.Void }
+            tb = self.mk(TKind.Block, NONE, bstart, bend)
+            var ty = self.tys.void()
+            if is_void_expected and ! (tk == TK.Void or tk == TK.Never) {
+                self.check_unused(te)
+                let s = self.mk(TKind.SExpr, tt, bstart, bend)
+                self.tir.nodes[s].kids.append(te)
+                self.tir.nodes[tb].kids.append(s)
+            } else if tk == TK.Void {
+                let s = self.mk(TKind.SExpr, tt, bstart, bend)
+                self.tir.nodes[s].kids.append(te)
+                self.tir.nodes[tb].kids.append(s)
+            } else {
+                if ret_hint != NONE and !is_void_expected { te = self.coerce_or_error(te, ret_hint, "block value") }
+                te = self.take_ownership(te)
+                ty = self.tir.nodes[te].ty
+                self.tir.nodes[tb].a = te
+            }
+            if self.tir.nodes[tb].a == NONE and self.block_diverges(tb) { ty = self.tys.never() }
+            self.tir.nodes[tb].ty = ty
+            self.pop_scope()
+        }
+        // infer the return type from the body when it was not annotated
+        if self.tys.contains_infer(ret) {
+            let bt = self.tir.nodes[tb].ty
+            var target = NONE
+            if self.tir.nodes[tb].a != NONE {
+                target = bt
+            } else if self.block_diverges(tb) {
+                target = ret
+            } else {
+                target = self.tys.void()
+            }
+            if !self.tys.contains_infer(target) { _ = self.unify(ret, target) }
+        }
+        let tb2 = self.finalize_block_as_body(tb, ret)
+        let done = self.ctxs.pop() orelse return
+        self.insts[inst].locals = done.locals.clone()
+        self.insts[inst].body = tb2
+        self.insts[inst].own_effects = done.own_effects
+        self.insts[inst].witnesses = done.witnesses.clone()
+        self.insts[inst].callees = done.callees.clone()
+        self.insts[inst].ret = self.tys.resolve(ret, true)
+    }
 }
 
 pub fn new_checker(own mods: List(Mod)) -> Checker {
