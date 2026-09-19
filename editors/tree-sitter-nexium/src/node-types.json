@@ -1593,9 +1593,34 @@
     }
   },
   {
+    "type": "for_bindings",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "identifier",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "for_statement",
     "named": true,
     "fields": {
+      "bindings": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "for_bindings",
+            "named": true
+          }
+        ]
+      },
       "body": {
         "multiple": false,
         "required": true,
@@ -1611,10 +1636,6 @@
       "multiple": true,
       "required": true,
       "types": [
-        {
-          "type": "capture",
-          "named": true
-        },
         {
           "type": "expression",
           "named": true
@@ -1828,6 +1849,16 @@
     "type": "if_expression",
     "named": true,
     "fields": {
+      "binding": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
       "condition": {
         "multiple": false,
         "required": true,
@@ -1843,7 +1874,11 @@
         "required": false,
         "types": [
           {
-            "type": "branch",
+            "type": "block",
+            "named": true
+          },
+          {
+            "type": "if_expression",
             "named": true
           }
         ]
@@ -1853,21 +1888,11 @@
         "required": true,
         "types": [
           {
-            "type": "branch",
+            "type": "block",
             "named": true
           }
         ]
       }
-    },
-    "children": {
-      "multiple": true,
-      "required": false,
-      "types": [
-        {
-          "type": "capture",
-          "named": true
-        }
-      ]
     }
   },
   {
@@ -3306,6 +3331,10 @@
   },
   {
     "type": "import",
+    "named": false
+  },
+  {
+    "type": "in",
     "named": false
   },
   {

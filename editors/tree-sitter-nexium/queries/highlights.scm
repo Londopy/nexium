@@ -12,8 +12,11 @@
 ] @keyword
 
 [
-  "if" "else" "for" "while" "match" "break" "continue" "return" "step" "parallel"
+  "if" "else" "for" "in" "while" "match" "break" "continue" "return" "step" "parallel"
 ] @keyword.control
+
+(for_bindings (identifier) @variable)
+(if_expression binding: (identifier) @variable)
 
 [
   "try" "catch" "orelse" "into"

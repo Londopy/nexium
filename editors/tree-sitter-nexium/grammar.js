@@ -207,19 +207,21 @@ module.exports = grammar({
     capture: ($) => seq('|', sep(choice($.identifier, '_')), '|'),
 
     while_statement: ($) =>
-      seq(optional($.label), 'while', '(', field('condition', $.expression), ')', field('body', $.block), optional(seq('else', $.block))),
+      seq(optional($.label), 'while', field('condition', $.expression), field('body', $.block), optional(seq('else', $.block))),
 
+    // `for x, i in items { }`, `for i in lo..hi step s { }`, `for parallel x in items { }`
     for_statement: ($) =>
       seq(
         optional($.label),
         'for',
         optional('parallel'),
-        '(',
+        field('bindings', $.for_bindings),
+        'in',
         choice(seq($.expression, '..', $.expression, optional(seq('step', $.expression))), seq($.expression, repeat(seq(',', $.expression)))),
-        ')',
-        optional($.capture),
         field('body', $.block),
       ),
+
+    for_bindings: ($) => seq(choice($.identifier, '_'), repeat(seq(',', choice($.identifier, '_')))),
 
     // `outer: for (...)` declares a label; `break :outer` refers to it
     label: ($) => seq($.identifier, ':'),
@@ -328,15 +330,24 @@ module.exports = grammar({
       );
     },
 
+    // `if c { } else if d { } else { }`; `if let v = opt { }` unwraps an optional
     if_expression: ($) =>
-      prec.right(seq('if', '(', field('condition', $.expression), ')', optional($.capture), field('then', $.branch), optional(seq('else', optional($.capture), field('else', $.branch))))),
+      prec.right(
+        seq(
+          'if',
+          optional(seq('let', field('binding', $.identifier), '=')),
+          field('condition', $.expression),
+          field('then', $.block),
+          optional(seq('else', field('else', choice($.block, $.if_expression)))),
+        ),
+      ),
 
-    // an unbraced branch is one statement: `if (c) return v`, `if (c) x = 1 else x = 2`
+    // a match arm body is an expression or one jump statement: `_ => return v`
     branch: ($) => prec.right(-2, choice($.expression, $.assignment_statement, $.return_statement, $.break_statement, $.continue_statement)),
 
     match_expression: ($) => seq('match', field('value', $.expression), '{', repeat(seq($.match_arm, optional(','))), '}'),
 
-    match_arm: ($) => seq(field('pattern', $.pattern), optional(seq('if', '(', $.expression, ')')), '=>', field('body', $.branch)),
+    match_arm: ($) => seq(field('pattern', $.pattern), optional(seq('if', $.expression)), '=>', field('body', $.branch)),
 
     closure_expression: ($) =>
       prec.right(-1, seq(
