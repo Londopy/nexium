@@ -322,6 +322,8 @@ pub struct ImplDef {
 /// the impl it belongs to (or NONE), and whether it is generic.
 pub struct FnDef {
     node: usize
+    // the module whose tree holds `node` (a trait default lives in the trait's module)
+    node_module: usize
     module: usize
     impl_id: usize
     is_generic: bool
@@ -649,6 +651,9 @@ pub struct Inst {
     mangled: String
     def: usize
     targs: List(usize)
+    // the generic environment of the body: impl and function type parameters
+    gen_names: List(String)
+    gen_tys: List(usize)
     params: List(usize)
     ret: usize
     locals: List(Local)
@@ -711,6 +716,9 @@ pub struct Checker {
     ctxs: List(FnCtx)
     main_inst: usize
     tests: List(usize)
+    // the generic environment types resolve in: parameter names bound to types
+    env_names: List(String)
+    env_tys: List(usize)
 }
 
 fn item_key(module: usize, name: []u8) -> String {
@@ -771,7 +779,7 @@ impl Checker {
             let name = self.node(m, it).name.clone()
             let name_at = self.node(m, it).start
             let generic = self.fn_is_generic(m, it)
-            self.fns.append(FnDef{ .node = it, .module = m, .impl_id = NONE, .is_generic = generic, .is_test = false, .test_name = String.new(), .test_comptime = false })
+            self.fns.append(FnDef{ .node = it, .node_module = m, .module = m, .impl_id = NONE, .is_generic = generic, .is_test = false, .test_name = String.new(), .test_comptime = false })
             self.define(m, name[..], ItemKind.Fn, self.fns.len - 1, name_at)
         } else if k == parser.NodeKind.Struct {
             let n = self.node(m, it)
@@ -815,7 +823,7 @@ impl Checker {
             let tparams = n.words.clone()
             for meth in n.kids {
                 let generic = self.fn_is_generic(m, meth) or tparams.len > 0
-                self.fns.append(FnDef{ .node = meth, .module = m, .impl_id = impl_id, .is_generic = generic, .is_test = false, .test_name = String.new(), .test_comptime = false })
+                self.fns.append(FnDef{ .node = meth, .node_module = m, .module = m, .impl_id = impl_id, .is_generic = generic, .is_test = false, .test_name = String.new(), .test_comptime = false })
                 methods.append(self.fns.len - 1)
             }
             self.impls.append(ImplDef{ .trait_name = n.name.clone(), .has_trait = n.name != "-", .target = n.x, .tparams = tparams, .methods = methods, .module = m })
@@ -852,7 +860,7 @@ impl Checker {
             self.collect_import(m, it)
         } else if k == parser.NodeKind.Test {
             let n = self.node(m, it)
-            self.fns.append(FnDef{ .node = it, .module = m, .impl_id = NONE, .is_generic = false, .is_test = true, .test_name = n.name.clone(), .test_comptime = n.flag })
+            self.fns.append(FnDef{ .node = it, .node_module = m, .module = m, .impl_id = NONE, .is_generic = false, .is_test = true, .test_name = n.name.clone(), .test_comptime = n.flag })
         }
     }
 
@@ -1015,6 +1023,8 @@ impl Checker {
                 self.fail(m, at, "`Self` is only valid inside an impl or trait")
                 return self.tys.simple(TK.Void)
             }
+            let g = self.env_lookup(name)
+            if g != NONE { return g }
             if let t = self.primitive(name) {
                 if targs.len > 0 { self.fail(m, at, format("`{}` takes no type arguments", .{name})[..]) }
                 return t
@@ -1391,6 +1401,7 @@ impl Checker {
         let is_generic = self.fns[fid].is_generic
         if is_generic { return }
         let m = self.fns[fid].module
+        let nm = self.fns[fid].node_module
         let node = self.fns[fid].node
         let impl_id = self.fns[fid].impl_id
         let is_test = self.fns[fid].is_test
@@ -1399,7 +1410,7 @@ impl Checker {
             let target = self.impls[impl_id].target
             self_ty = self.resolve_type(m, target, NONE)
         }
-        let n = self.node(m, node)
+        let n = self.node(nm, node)
         let start = n.start
         let end = n.end
         var name = n.name.clone()
@@ -1424,7 +1435,7 @@ impl Checker {
             let param_nodes = n.kids.clone()
             let ret_node = n.x
             for p in param_nodes {
-                let pn = self.node(m, p)
+                let pn = self.node(nm, p)
                 let pname = pn.name.clone()
                 let pty_node = pn.x
                 let owned = pn.flag2
@@ -1608,8 +1619,31 @@ impl Checker {
         self.inst_map.put(key, id)
         let m = self.fns[fid].module
         let node = self.fns[fid].node
+        let nm = self.fns[fid].node_module
         let impl_id = self.fns[fid].impl_id
         let is_test = self.fns[fid].is_test
+        // the environment: impl type parameters first, then the function's
+        var gen_names = List(String).new()
+        var gen_tys = List(usize).new()
+        var ti: usize = 0
+        if impl_id != NONE {
+            let tps = self.impls[impl_id].tparams.clone()
+            for tp in tps {
+                gen_names.append(tp.clone())
+                gen_tys.append(if ti < targs.len { targs[ti] } else { self.tys.void() })
+                ti += 1
+            }
+        }
+        if !is_test {
+            let tps = self.fn_type_params(fid)
+            for tp in tps {
+                gen_names.append(tp.clone())
+                gen_tys.append(if ti < targs.len { targs[ti] } else { self.tys.void() })
+                ti += 1
+            }
+        }
+        let saved_env = self.env_save()
+        self.env_set(&gen_names, &gen_tys)
         var self_ty = NONE
         if impl_id != NONE {
             let target = self.impls[impl_id].target
@@ -1632,10 +1666,10 @@ impl Checker {
             name = format("{}:{}", .{if test_comptime { "ctest" } else { "test" }, self.fns[fid].test_name})
             let v = self.tys.void()
             ret = self.tys.err_union(0, false, v)
-            start = self.node(m, node).start
-            end = self.node(m, node).end
+            start = self.node(nm, node).start
+            end = self.node(nm, node).end
         } else {
-            let n = self.node(m, node)
+            let n = self.node(nm, node)
             name = n.name.clone()
             export_name = n.text.clone()
             is_extern = n.flag2
@@ -1646,8 +1680,9 @@ impl Checker {
             let ret_node = n.x
             let words = n.words.clone()
             for p in param_nodes {
-                let pn = self.node(m, p)
-                if pn.flag { continue }
+                let pn = self.node(nm, p)
+                // a `comptime T: type` parameter is a type argument, not a local
+                if pn.flag and self.is_type_param_node(nm, p) { continue }
                 let pname = pn.name.clone()
                 let pty_node = pn.x
                 let owned = pn.flag2
@@ -1662,6 +1697,7 @@ impl Checker {
                 if w[0] == '!' { neg = neg | effect_bit(w[1..]) } else { pos = pos | effect_bit(w[..]) }
             }
         }
+        self.env_restore(&saved_env)
         var mangled = String.new()
         if is_extern {
             mangled = name.clone()
@@ -1681,7 +1717,7 @@ impl Checker {
             mangled = format("nx_{}_{}", .{sanitize(base[..]), id})
         }
         self.insts.append(Inst{
-                .name = name, .mangled = mangled, .def = fid, .targs = targs, .params = params, .ret = ret, .locals = locals, .body = NONE,
+                .name = name, .mangled = mangled, .def = fid, .targs = targs, .gen_names = gen_names, .gen_tys = gen_tys, .params = params, .ret = ret, .locals = locals, .body = NONE,
                 .own_effects = 0, .effects = 0, .declared_neg = neg, .declared_pos = pos, .export_name = export_name,
                 .is_extern = is_extern, .is_variadic = false, .is_pub = is_pub, .is_test = is_test, .test_comptime = test_comptime,
                 .is_closure = false, .start = start, .end = end, .module = m, .self_ty = self_ty,
@@ -1692,6 +1728,25 @@ impl Checker {
         if is_test and !test_comptime and ! (from_std and m != 0) { self.tests.append(id) }
         self.queue.append(id)
         return id
+    }
+
+    /// `comptime T: type` parameters, in order.
+    fn fn_type_params(self: *mut Self, fid: usize) -> List(String) {
+        var out = List(String).new()
+        let m = self.fns[fid].node_module
+        let node = self.fns[fid].node
+        if self.fns[fid].is_test { return out }
+        let params = self.node(m, node).kids.clone()
+        for p in params {
+            if self.node(m, p).flag and self.is_type_param_node(m, p) { out.append(self.node(m, p).name.clone()) }
+        }
+        return out
+    }
+
+    fn is_type_param_node(self: *mut Self, m: usize, p: usize) -> bool {
+        let ty_node = self.node(m, p).x
+        let tn = self.node(m, ty_node)
+        return tn.k == parser.NodeKind.TName and tn.words.len == 1 and tn.words[0] == "type" and tn.kids.len == 0
     }
 
     fn drain_queue(self: *mut Self) {
@@ -1710,7 +1765,7 @@ impl Checker {
             if self.fns[fid].is_generic or self.fns[fid].impl_id != NONE { continue }
             let id = self.instantiate(fid, List(usize).new())
             let m = self.fns[fid].module
-            if !self.fns[fid].is_test and self.node(m, self.fns[fid].node).name == "main" and m == 0 { self.main_inst = id }
+            if !self.fns[fid].is_test and self.node(self.fns[fid].node_module, self.fns[fid].node).name == "main" and m == 0 { self.main_inst = id }
         }
         for fid in 0..nf {
             let impl_id = self.fns[fid].impl_id
@@ -1750,7 +1805,7 @@ impl Checker {
 
     fn check_fn_body(self: *mut Self, inst: usize) {
         let fid = self.insts[inst].def
-        let m = self.fns[fid].module
+        let m = self.fns[fid].node_module
         let node = self.fns[fid].node
         let is_test = self.fns[fid].is_test
         let body = if is_test { self.node(m, node).x } else { self.node(m, node).y }
@@ -1762,6 +1817,24 @@ impl Checker {
             return
         }
         let ret = self.insts[inst].ret
+        let saved_env = self.env_save()
+        self.env_set(&self.insts[inst].gen_names.clone(), &self.insts[inst].gen_tys.clone())
+        // where-clause bounds hold for the concrete arguments
+        let wheres = self.node(m, node).kids2.clone()
+        for w in wheres {
+            let wn = self.node(m, w)
+            let pname = wn.name.clone()
+            let bounds = wn.text.clone()
+            let wstart = wn.start
+            let t = self.env_lookup(pname[..])
+            if t == NONE { continue }
+            let names = Checker.split_words(bounds[..])
+            for b in names {
+                if !self.type_satisfies_trait(t, b[..]) {
+                    self.fail(m, wstart, format("type `{}` does not implement trait `{}`", .{self.ty_name(t), b})[..])
+                }
+            }
+        }
         var ctx = new_ctx(ret, m, self.insts[inst].name[..])
         ctx.self_ty = self.insts[inst].self_ty
         ctx.locals = self.insts[inst].locals.clone()
@@ -1775,6 +1848,7 @@ impl Checker {
         let tb = self.check_block(body, ret, NONE, NONE)
         let tb2 = self.finalize_block_as_body(tb, ret)
         let done = self.ctxs.pop() orelse return
+        self.env_restore(&saved_env)
         self.insts[inst].locals = done.locals.clone()
         self.insts[inst].body = tb2
         self.insts[inst].own_effects = done.own_effects
@@ -2372,11 +2446,42 @@ impl Checker {
         let d = self.tys.list[t].def
         let m = self.structs[d].module
         let fields = self.structs[d].fields.clone()
+        let saved = self.env_save()
+        self.env_set(&self.structs[d].tparams.clone(), &self.tys.list[t].args.clone())
         for f in fields {
             let ty_node = self.node(m, f).x
-            out.append(self.resolve_type(m, ty_node, NONE))
+            out.append(self.resolve_type(m, ty_node, t))
         }
+        self.env_restore(&saved)
         return out
+    }
+
+    // ----- the generic environment ----------------------------------------------------
+
+    fn env_lookup(self: *mut Self, name: []u8) -> usize {
+        var i = self.env_names.len
+        while i > 0 {
+            i -= 1
+            if self.env_names[i] == name { return self.env_tys[i] }
+        }
+        return NONE
+    }
+
+    /// The environment as a flat list: names then types, for save and restore.
+    fn env_save(self: *mut Self) -> EnvSave {
+        return EnvSave{ .names = self.env_names.clone(), .tys = self.env_tys.clone() }
+    }
+    fn env_restore(self: *mut Self, saved: *EnvSave) {
+        self.env_names = saved.names.clone()
+        self.env_tys = saved.tys.clone()
+    }
+    fn env_set(self: *mut Self, names: *List(String), tys: *List(usize)) {
+        self.env_names = names.clone()
+        self.env_tys = tys.clone()
+    }
+    fn env_bind(self: *mut Self, name: []u8, ty: usize) {
+        self.env_names.append(String.from(name))
+        self.env_tys.append(ty)
     }
 
     /// Does a value of this type own resources released at scope exit?
@@ -3164,6 +3269,8 @@ impl Checker {
                 return te
             }
         }
+        let g = self.env_lookup(name)
+        if g != NONE { return self.type_val(g, start, end) }
         if name == "String" {
             let t = self.tys.string()
             return self.type_val(t, start, end)
@@ -3489,7 +3596,7 @@ impl Checker {
                 if item == null {
                     let b = self.check_builtin_fn(name[..], args[..], start, end)
                     if b != NONE { return b }
-                    if ! (name == "List" or name == "Map" or name == "String" or name == "Allocator") {
+                    if self.env_lookup(name[..]) == NONE and ! (name == "List" or name == "Map" or name == "String" or name == "Allocator") {
                         self.fail_here(start, format("cannot find function `{}`", .{name})[..])
                         for a in args { _ = self.check_expr(a, NONE) }
                         return self.error_expr(start, end)
@@ -3577,55 +3684,158 @@ impl Checker {
     }
 
     /// Call a non-generic definition (stage 2: no type inference of generics yet).
+    /// Call a definition, inferring generic arguments from the receiver, the
+    /// arguments, explicit type arguments, and the expected type.
     fn call_fn_def(self: *mut Self, fid: usize, self_arg: usize, args: []usize, expected: usize, start: usize, end: usize) -> usize {
         let fm = self.fns[fid].module
+        let nm = self.fns[fid].node_module
         let node = self.fns[fid].node
         let impl_id = self.fns[fid].impl_id
-        if self.fns[fid].is_generic {
-            self.fail_here(start, "generic calls are not supported yet (stage 2)")
-            for a in args { _ = self.check_expr(a, NONE) }
-            return self.error_expr(start, end)
-        }
+        let saved_env = self.env_save()
+        var names = List(String).new()
+        var tys = List(usize).new()
+        var impl_targs = List(usize).new()
         var self_ty = NONE
         if impl_id != NONE {
+            let tps = self.impls[impl_id].tparams.clone()
+            var bound = List(usize).new()
+            if self_arg != NONE {
+                // the receiver type (through a pointer) binds the impl's parameters
+                var rt = self.tys.resolve(self.tir.nodes[self_arg].ty, true)
+                if self.tys.kind(rt) == TK.Ptr { rt = self.tys.list[rt].args[0] }
+                if let b = self.match_impl_target(impl_id, rt) { bound = b }
+            }
+            for tp, i in tps {
+                let t = if i < bound.len { bound[i] } else { self.tys.fresh_infer() }
+                names.append(tp.clone())
+                tys.append(t)
+                impl_targs.append(t)
+            }
+            self.env_set(&names, &tys)
             let target = self.impls[impl_id].target
             self_ty = self.resolve_type(fm, target, NONE)
         }
-        let fname = self.node(fm, node).name.clone()
-        let param_nodes = self.node(fm, node).kids.clone()
+        let fname = self.node(nm, node).name.clone()
+        let param_nodes = self.node(nm, node).kids.clone()
+        let type_params = self.fn_type_params(fid)
+        // value parameters: everything but the type parameters
+        var value_params = List(usize).new()
+        for pn in param_nodes { if ! (self.node(nm, pn).flag and self.is_type_param_node(nm, pn)) { value_params.append(pn) } }
         let n_self: usize = if self_arg != NONE { 1 } else { 0 }
-        if args.len + n_self != param_nodes.len {
-            self.fail_here(start, format("`{}` takes {} argument(s) but {} were given", .{fname, param_nodes.len - n_self, args.len})[..])
-            for a in args { _ = self.check_expr(a, NONE) }
+        // explicit type arguments come first: `max(i32, a, b)`
+        var explicit = false
+        if type_params.len > 0 and args.len == value_params.len + type_params.len - n_self {
+            explicit = true
+            for i in 0..type_params.len { if !self.is_type_arg(args[i]) { explicit = false } }
+        }
+        var fn_targs = List(usize).new()
+        var rest_start: usize = 0
+        if explicit {
+            for tp, i in type_params {
+                let te = self.check_expr(args[i], NONE)
+                var t = self.tys.void()
+                if self.tir.nodes[te].k == TKind.TypeVal { t = self.tir.nodes[te].a } else { self.fail_here(self.tir.nodes[te].start, "expected a type argument") }
+                names.append(tp.clone())
+                tys.append(t)
+                fn_targs.append(t)
+            }
+            rest_start = type_params.len
+        } else {
+            for tp in type_params {
+                let t = self.tys.fresh_infer()
+                names.append(tp.clone())
+                tys.append(t)
+                fn_targs.append(t)
+            }
+        }
+        self.env_set(&names, &tys)
+        let n_rest = args.len - rest_start
+        let is_extern = self.node(nm, node).flag2
+        if n_rest + n_self != value_params.len {
+            var msg = format("`{}` takes {} argument(s) but {} were given", .{fname, value_params.len - n_self, n_rest})
+            if type_params.len > 0 and !explicit { msg.append(" (type parameters are inferred from the arguments)") }
+            self.fail_here(start, msg[..])
+            var i = rest_start
+            while i < args.len { _ = self.check_expr(args[i], NONE); i += 1 }
+            self.env_restore(&saved_env)
             return self.error_expr(start, end)
         }
         var targs = List(usize).new()
         var pi: usize = 0
         if self_arg != NONE {
-            let pt_node = self.node(fm, param_nodes[0]).x
+            let pt_node = self.node(nm, value_params[0]).x
             let pt = self.resolve_type(fm, pt_node, self_ty)
             let sa = self.adjust_receiver(self_arg, pt, start, end)
             targs.append(sa)
             pi = 1
         }
-        for a in args {
-            let pn = self.node(fm, param_nodes[pi])
+        // the expected type helps infer the return type's parameters
+        let ret_node = self.node(nm, node).x
+        if expected != NONE and ret_node != NONE {
+            let rt = self.resolve_type(fm, ret_node, self_ty)
+            let saved_errs = self.errors.len
+            _ = self.unify(rt, expected)
+            while self.errors.len > saved_errs { _ = self.errors.pop() }
+        }
+        var ai = rest_start
+        while ai < args.len {
+            let pn = self.node(nm, value_params[pi])
             let pname = pn.name.clone()
             let pt_node = pn.x
             let owned = pn.flag2
             pi += 1
+            // the parameter type is resolved in the callee's environment, the
+            // argument checked in the caller's
+            self.env_set(&names, &tys)
             let pt = self.resolve_type(fm, pt_node, self_ty)
-            var te = self.check_expr(a, pt)
+            self.env_restore(&saved_env)
+            var te = self.check_expr(args[ai], pt)
             te = self.coerce_or_error(te, pt, format("argument `{}`", .{pname})[..])
             if owned { te = self.take_ownership(te) }
             targs.append(te)
+            ai += 1
         }
-        _ = expected
-        let inst = self.instantiate(fid, List(usize).new())
+        self.env_restore(&saved_env)
+        // every type argument must be known now
+        var all_targs = List(usize).new()
+        for t in impl_targs {
+            let r = self.tys.resolve(t, true)
+            if self.tys.contains_infer(r) {
+                self.fail_here(start, format("cannot infer all type parameters of `{}`; pass them explicitly", .{fname})[..])
+                return self.error_expr(start, end)
+            }
+            all_targs.append(r)
+        }
+        for t in fn_targs {
+            let r = self.tys.resolve(t, true)
+            if self.tys.contains_infer(r) {
+                self.fail_here(start, format("cannot infer all type parameters of `{}`; pass them explicitly", .{fname})[..])
+                return self.error_expr(start, end)
+            }
+            all_targs.append(r)
+        }
+        // where-clause bounds
+        let wheres = self.node(nm, node).kids2.clone()
+        for w in wheres {
+            let wn = self.node(nm, w)
+            let pname = wn.name.clone()
+            let bounds = wn.text.clone()
+            var bt = NONE
+            for nm, i in names { if nm == pname { bt = tys[i] } }
+            if bt == NONE { continue }
+            let t = self.tys.resolve(bt, true)
+            let bnames = Checker.split_words(bounds[..])
+            for b in bnames {
+                if !self.type_satisfies_trait(t, b[..]) {
+                    self.fail_here(start, format("`{}` requires `{}: {}`, but `{}` does not implement `{}`", .{fname, pname, b, self.ty_name(t), b})[..])
+                }
+            }
+        }
+        let inst = self.instantiate(fid, all_targs)
         let ret = self.insts[inst].ret
         self.ctx().callees.append(inst)
         self.ctx().callee_spans.append(start)
-        if self.insts[inst].is_extern {
+        if is_extern {
             if self.ctx().unsafe_depth == 0 { self.fail_here(start, format("calling the foreign function `{}` requires an `unsafe` block", .{fname})[..]) }
             self.add_effect(EFF_FFI, start, "call to a foreign function")
         }
@@ -3633,6 +3843,69 @@ impl Checker {
         self.tir.nodes[c].a = inst
         self.tir.nodes[c].kids = targs
         return c
+    }
+
+    /// Is this argument a type (for explicit type arguments)?
+    fn is_type_arg(self: *mut Self, a: usize) -> bool {
+        let m = self.cur_module()
+        let n = self.node(m, a)
+        if n.k == parser.NodeKind.TypeVal { return true }
+        if n.k == parser.NodeKind.Ident {
+            let name = n.name.clone()
+            if self.lookup_local(name[..]) != NONE { return false }
+            if self.env_lookup(name[..]) != NONE { return true }
+            if name == "String" { return true }
+            if let it = self.lookup(m, name[..]) { return it.kind == ItemKind.Struct or it.kind == ItemKind.Enum or it.kind == ItemKind.Alias }
+            return false
+        }
+        if n.k == parser.NodeKind.Call {
+            let callee = self.node(m, n.x)
+            if callee.k != parser.NodeKind.Ident { return false }
+            let name = callee.name.clone()
+            if name == "List" or name == "Map" { return true }
+            if let it = self.lookup(m, name[..]) { return it.kind == ItemKind.Struct or it.kind == ItemKind.Enum }
+        }
+        return false
+    }
+
+    /// Does `t` satisfy a trait: the derivable ones by their rules, others by an impl.
+    fn type_satisfies_trait(self: *mut Self, t0: usize, trait_name: []u8) -> bool {
+        let t = self.tys.resolve(t0, true)
+        let k = self.tys.kind(t)
+        let derivable = trait_name == "Eq" or trait_name == "Ord" or trait_name == "Hash" or trait_name == "Format" or trait_name == "Copy"
+        if derivable {
+            if k == TK.Int or k == TK.Float or k == TK.Bool or k == TK.Char { return true }
+            if k == TK.Slice and trait_name != "Copy" {
+                let e = self.tys.list[t].args[0]
+                if trait_name == "Ord" {
+                    let es = self.tys.shallow(e)
+                    return self.tys.kind(es) == TK.Int and self.tys.list[es].name == "u8"
+                }
+                return self.type_satisfies_trait(e, trait_name)
+            }
+            if k == TK.Str and trait_name != "Copy" { return true }
+            if k == TK.Struct {
+                if list_has(&self.structs[self.tys.list[t].def].derives, trait_name) { return true }
+            }
+            if k == TK.Enum {
+                let d = self.tys.list[t].def
+                if list_has(&self.enums[d].derives, trait_name) { return true }
+                if trait_name != "Copy" {
+                    var all_unit = true
+                    let em = self.enums[d].module
+                    let variants = self.enums[d].variants.clone()
+                    for v in variants { if self.node(em, v).text != "unit" { all_unit = false } }
+                    if all_unit { return true }
+                }
+            }
+            if k == TK.Distinct { return self.type_satisfies_trait(self.distinct_underlying(self.tys.list[t].def), trait_name) }
+        }
+        let n = self.impls.len
+        for i in 0..n {
+            if !self.impls[i].has_trait or self.impls[i].trait_name != trait_name { continue }
+            if self.match_impl_target(i, t) != null { return true }
+        }
+        return false
     }
 
     /// A method receiver becomes what the `self` parameter wants: a pointer
@@ -4082,6 +4355,11 @@ impl Checker {
         self.tir.nodes[c].kids.append(inner)
         return c
     }
+}
+
+pub struct EnvSave {
+    names: List(String)
+    tys: List(usize)
 }
 
 pub struct Narrowing {
@@ -4617,14 +4895,30 @@ fn find_sub(hay: []u8, needle: []u8) -> ?usize {
     return null
 }
 
-/// Rust prints floats with `{:?}`: shortest round-trip text, always with a
-/// fractional part or an exponent.
+/// Rust prints floats with `{:?}`: the shortest round-trip text, with a
+/// fractional part in decimal form (`100.0`) and a bare exponent in
+/// exponential form (`1e-6`, `1e21`, never `1e-06`).
 fn rust_float(v: f64) -> String {
-    var s = format("{}", .{v})
-    var has_dot = false
-    for c in s { if c == '.' or c == 'e' or c == 'E' or c == 'n' or c == 'i' { has_dot = true } }
-    if !has_dot { s.append(".0") }
-    return s
+    let s = format("{}", .{v})
+    var epos = NONE
+    for c, i in s { if c == 'e' or c == 'E' { epos = i } }
+    if epos == NONE {
+        var has_dot = false
+        for c in s { if c == '.' or c == 'n' or c == 'i' { has_dot = true } }
+        var out = String.from(s[..])
+        if !has_dot { out.append(".0") }
+        return out
+    }
+    var out = String.from(s[0..epos])
+    out.append("e")
+    var rest = s[epos + 1..]
+    if rest.len > 0 and rest[0] == '+' { rest = rest[1..] }
+    var neg = false
+    if rest.len > 0 and rest[0] == '-' { neg = true; rest = rest[1..] }
+    while rest.len > 1 and rest[0] == '0' { rest = rest[1..] }
+    if neg { out.append("-") }
+    out.append(rest)
+    return out
 }
 
 // ---------------------------------------------------------------- fields, literals, indexing
@@ -4638,6 +4932,8 @@ impl Checker {
         let d = self.tys.list[t].def
         let m = self.enums[d].module
         let variants = self.enums[d].variants.clone()
+        let saved = self.env_save()
+        self.env_set(&self.enums[d].tparams.clone(), &self.tys.list[t].args.clone())
         for v in variants {
             let vn = self.node(m, v)
             var tys = List(usize).new()
@@ -4651,6 +4947,7 @@ impl Checker {
             }
             out.append(tys)
         }
+        self.env_restore(&saved)
         return out
     }
 
@@ -5828,16 +6125,85 @@ impl Checker {
         return false
     }
 
-    /// Does an impl's target type match `t`? Only non-generic impls, until stage 3.
-    fn impl_matches(self: *mut Self, impl_id: usize, t: usize) -> bool {
-        if self.impls[impl_id].tparams.len > 0 { return false }
+    /// Match an impl's target against a concrete type; the impl's type
+    /// parameters bound in order, or null.
+    fn match_impl_target(self: *mut Self, impl_id: usize, t0: usize) -> ?List(usize) {
+        let t = self.tys.resolve(t0, true)
         let m = self.impls[impl_id].module
         let target = self.impls[impl_id].target
-        let it = self.resolve_type(m, target, NONE)
-        return self.tys.resolve(it, true) == self.tys.resolve(t, true)
+        let tps = self.impls[impl_id].tparams.clone()
+        var names = List(String).new()
+        var bound = List(usize).new()
+        if !self.match_type_pattern(m, target, t, &tps, &mut names, &mut bound) { return null }
+        var out = List(usize).new()
+        for tp in tps {
+            var b = NONE
+            for nm, i in names { if nm == tp { b = bound[i] } }
+            if b == NONE { return null }
+            out.append(b)
+        }
+        return out
     }
 
-    /// A method of an inherent impl first, then of a trait impl, for type `t`.
+    /// Match a type expression with parameters against a type, binding parameters.
+    fn match_type_pattern(self: *mut Self, m: usize, pat: usize, t0: usize, params: *List(String), names: *mut List(String), bound: *mut List(usize)) -> bool {
+        let t = self.tys.shallow(t0)
+        let n = self.node(m, pat)
+        let k = n.k
+        let tk = self.tys.kind(t)
+        if k == parser.NodeKind.TName and n.words.len == 1 {
+            let name = n.words[0].clone()
+            let args = n.kids.clone()
+            if list_has(params, name[..]) and args.len == 0 {
+                for nm, i in names { if nm == name { return bound[i] == t } }
+                names.append(name.clone())
+                bound.append(t)
+                return true
+            }
+            if args.len > 0 {
+                if name == "List" and tk == TK.List and args.len == 1 { return self.match_type_pattern(m, args[0], self.tys.list[t].args[0], params, names, bound) }
+                if name == "Map" and tk == TK.Map and args.len == 2 {
+                    return self.match_type_pattern(m, args[0], self.tys.list[t].args[0], params, names, bound) and self.match_type_pattern(m, args[1], self.tys.list[t].args[1], params, names, bound)
+                }
+                if tk == TK.Struct or tk == TK.Enum {
+                    let d = self.tys.list[t].def
+                    var same = false
+                    if let r = self.lookup(m, name[..]) { same = (r.kind == ItemKind.Struct and tk == TK.Struct or r.kind == ItemKind.Enum and tk == TK.Enum) and r.id == d }
+                    let targs = self.tys.list[t].args.clone()
+                    if !same or targs.len != args.len { return false }
+                    for a, i in args { if !self.match_type_pattern(m, a, targs[i], params, names, bound) { return false } }
+                    return true
+                }
+                return false
+            }
+        }
+        if k == parser.NodeKind.TSlice or k == parser.NodeKind.TPtr {
+            let want = if k == parser.NodeKind.TSlice { TK.Slice } else { TK.Ptr }
+            if tk != want or self.tys.list[t].flag != n.flag { return false }
+            return self.match_type_pattern(m, n.x, self.tys.list[t].args[0], params, names, bound)
+        }
+        if k == parser.NodeKind.TOpt {
+            if tk != TK.Opt { return false }
+            return self.match_type_pattern(m, n.x, self.tys.list[t].args[0], params, names, bound)
+        }
+        if k == parser.NodeKind.TArray {
+            if tk != TK.Array { return false }
+            let want = self.const_eval_int(m, n.x) orelse return false
+            if want != self.tys.list[t].n as i128 { return false }
+            return self.match_type_pattern(m, n.y, self.tys.list[t].args[0], params, names, bound)
+        }
+        // a concrete type: resolve and compare
+        let saved = self.errors.len
+        let saved_env = self.env_save()
+        self.env_set(&List(String).new(), &List(usize).new())
+        let pt = self.resolve_type(m, pat, NONE)
+        self.env_restore(&saved_env)
+        while self.errors.len > saved { _ = self.errors.pop() }
+        return self.tys.resolve(pt, true) == t
+    }
+
+    /// A method of an inherent impl first, then of a trait impl, for type `t`;
+    /// a trait's default method is materialized as an impl method when first needed.
     fn find_inherent_method(self: *mut Self, t0: usize, name: []u8) -> usize {
         let t = self.tys.resolve(t0, true)
         let n = self.impls.len
@@ -5848,7 +6214,27 @@ impl Checker {
                 let methods = self.impls[i].methods.clone()
                 let im = self.impls[i].module
                 for fid in methods {
-                    if self.node(im, self.fns[fid].node).name == name and self.impl_matches(i, t) { return fid }
+                    if self.node(self.fns[fid].node_module, self.fns[fid].node).name == name and self.match_impl_target(i, t) != null { return fid }
+                }
+            }
+        }
+        for i in 0..n {
+            if !self.impls[i].has_trait { continue }
+            if self.match_impl_target(i, t) == null { continue }
+            let im = self.impls[i].module
+            let tn = self.impls[i].trait_name.clone()
+            let tr = self.lookup(im, tn[..]) orelse continue
+            if tr.kind != ItemKind.Trait { continue }
+            let tm = self.traits[tr.id].module
+            let methods = self.traits[tr.id].methods.clone()
+            for meth in methods {
+                let mn = self.node(tm, meth)
+                if mn.name == name and mn.y != NONE {
+                    let generic = self.impls[i].tparams.len > 0 or self.fn_is_generic(tm, meth)
+                    self.fns.append(FnDef{ .node = meth, .node_module = tm, .module = im, .impl_id = i, .is_generic = generic, .is_test = false, .test_name = String.new(), .test_comptime = false })
+                    let fid = self.fns.len - 1
+                    self.impls[i].methods.append(fid)
+                    return fid
                 }
             }
         }
@@ -5929,7 +6315,7 @@ impl Checker {
         if k == TK.Struct or k == TK.Distinct {
             let fid = self.find_inherent_method(t, name)
             if fid != NONE {
-                let fm = self.fns[fid].module
+                let fm = self.fns[fid].node_module
                 let params = self.node(fm, self.fns[fid].node).kids.clone()
                 if k == TK.Struct and params.len > 0 and self.node(fm, params[0]).name == "self" {
                     self.fail_here(start, format("`{}` is a method; call it on a value: `value.{}(...)`", .{name, name})[..])
@@ -6022,7 +6408,7 @@ impl Checker {
         if bk == TK.Struct or bk == TK.Enum or bk == TK.Distinct {
             let fid = self.find_inherent_method(base_t, method[..])
             if fid != NONE {
-                let fm = self.fns[fid].module
+                let fm = self.fns[fid].node_module
                 let params = self.node(fm, self.fns[fid].node).kids.clone()
                 let has_self = params.len > 0 and self.node(fm, params[0]).name == "self"
                 if !has_self {
@@ -7359,6 +7745,7 @@ pub fn new_checker(own mods: List(Mod)) -> Checker {
         .errors = List(String).new(), .error_names = List(String).new(), .error_ids = Map(String, usize).new(),
         .insts = List(Inst).new(), .inst_map = Map(String, usize).new(), .queue = List(usize).new(), .tir = Tir{ .nodes = List(T).new() },
         .ctxs = List(FnCtx).new(), .main_inst = NONE, .tests = List(usize).new(),
+        .env_names = List(String).new(), .env_tys = List(usize).new(),
     }
 }
 

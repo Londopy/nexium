@@ -204,9 +204,9 @@ fn self_hosted_checker_matches_signatures() {
 }
 
 /// The checker written in Nexium, stage 2: the full typed IR matches `nx tir`
-/// on every source it already covers (generics, closures, dyn, binary
-/// patterns, comptime calls and C imports are the remaining stages). The
-/// list only grows.
+/// on every source it already covers (closures, dyn, binary patterns,
+/// comptime calls and C imports are the remaining stages). The list only
+/// grows.
 #[test]
 fn self_hosted_checker_matches_bodies() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -237,6 +237,7 @@ fn self_hosted_checker_matches_bodies() {
         "examples/process.nx",
         "examples/ropesim.nx",
         "examples/service.nx",
+        "examples/stdlib.nx",
         "examples/tool.nx",
         "examples/tree.nx",
         "self/check.nx",
@@ -247,12 +248,14 @@ fn self_hosted_checker_matches_bodies() {
         "std/fs.nx",
         "std/http.nx",
         "std/json.nx",
+        "std/lists.nx",
         "std/net.nx",
         "std/num.nx",
         "std/process.nx",
         "std/regex.nx",
         "std/stream.nx",
         "std/strings.nx",
+        "std/testing.nx",
         "std/text.nx",
         "std/time.nx",
     ];
