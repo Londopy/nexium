@@ -725,10 +725,27 @@ fn cmd_doctor() -> i32 {
     0
 }
 
-fn compile_c(opts: &Opts, c_path: &Path, out: &Path, kind: &str) -> Result<(), ()> {
-    let cc = cc_command(opts);
+/// Start the C compiler. When it is Zig, its local cache goes under the
+/// output directory, one per nx process: Zig's cache is not safe against
+/// several `zig cc` processes starting at once on Windows (it fails with
+/// "failed to check cache ... file_open Unexpected"), and parallel builds
+/// (the test suite, a CI matrix on one machine) do exactly that. A cache
+/// the user set explicitly is respected.
+fn cc_process(opts: &Opts, cc: &CcInvocation) -> Command {
     let mut cmd = Command::new(&cc.program);
     cmd.args(&cc.args);
+    let is_zig = Path::new(&cc.program).file_stem().map(|s| s.to_string_lossy().to_lowercase() == "zig").unwrap_or(false);
+    if is_zig && std::env::var_os("ZIG_LOCAL_CACHE_DIR").is_none() {
+        let cache = opts.out_dir.join(".zig-cache").join(std::process::id().to_string());
+        let _ = std::fs::create_dir_all(&cache);
+        cmd.env("ZIG_LOCAL_CACHE_DIR", &cache);
+    }
+    cmd
+}
+
+fn compile_c(opts: &Opts, c_path: &Path, out: &Path, kind: &str) -> Result<(), ()> {
+    let cc = cc_command(opts);
+    let mut cmd = cc_process(opts, &cc);
     cmd.arg("-std=gnu11");
     match opts.mode {
         BuildMode::Debug => {
@@ -769,8 +786,7 @@ fn compile_c(opts: &Opts, c_path: &Path, out: &Path, kind: &str) -> Result<(), (
     }
     if kind == "object" {
         // an object of the generated file alone
-        let mut cmd2 = Command::new(&cc.program);
-        cmd2.args(&cc.args);
+        let mut cmd2 = cc_process(opts, &cc);
         cmd2.args(["-std=gnu11", "-w", "-fno-strict-aliasing", "-c"]);
         match opts.mode {
             BuildMode::Debug => {
@@ -1581,8 +1597,7 @@ fn cmd_size(opts: &Opts) -> i32 {
 /// Compile to an object with one section per function and datum.
 fn compile_c_sections(opts: &Opts, c_path: &Path, out: &Path) -> Result<(), ()> {
     let cc = cc_command(opts);
-    let mut cmd = Command::new(&cc.program);
-    cmd.args(&cc.args);
+    let mut cmd = cc_process(opts, &cc);
     cmd.args(["-std=gnu11", "-w", "-fno-strict-aliasing", "-ffunction-sections", "-fdata-sections", "-c"]);
     match opts.mode {
         BuildMode::Debug => cmd.arg("-O0"),

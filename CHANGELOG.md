@@ -39,6 +39,13 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
   Slices take typed arrays, arrays or strings; error unions throw
   `NexiumError` and panics throw `NexiumPanic` with the message.
 
+### Fixed
+
+- Parallel builds on Windows could fail inside Zig's own cache ("failed to
+  check cache ... file_open Unexpected") when several `zig cc` processes
+  started at once; each `nx` process now gives Zig its own cache under the
+  output directory unless `ZIG_LOCAL_CACHE_DIR` is set.
+
 ## [0.4.0] - 2026-09-19
 
 ### Added
