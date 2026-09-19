@@ -30,11 +30,13 @@ What exists and is verified on Windows, Linux, and macOS:
 - Distribution: a Windows installer with bundled Zig, a macOS/Linux install
   script with checksum verification, a VS Code extension, a Sublime syntax,
   a GitHub Action, and a release template for Nexium programs.
-- Self-hosting: the lexer, verified byte-for-byte against the Rust one.
+- Self-hosting: the lexer and parser, verified byte-for-byte against the
+  Rust ones; the checker identical on every example and std module but for
+  compile-time calls and `@cImport`.
 - nexium-gui: an immediate-mode GUI in Nexium on a 200-line C window layer.
 
-Numbers: 22.7k lines of Rust (the compiler), 3.0k of Nexium, 96 std
-functions, 19 examples and 19 compile-fail cases, 7 integration test groups.
+Numbers: 29.4k lines of Rust (the compiler), 18.7k of Nexium, 190 std
+functions, 29 examples and 24 compile-fail cases, 13 integration tests.
 
 ## Phase 1: a language you can write your tools in (0.3)
 
@@ -133,7 +135,14 @@ checked against the Rust compiler on identical inputs.
   `nx sexp`, diffed over every example and std module. Done in 0.6.0:
   identical on all 46 sources, enforced by `cargo test`.
 - Checker (`self/check.nx`): the largest stage. Types interned in a `List`,
-  effects by fixpoint, ownership, monomorphization. Verified by the
+  effects by fixpoint, ownership, monomorphization, dumped in the shape of
+  `nx tir` and diffed over every source. Done so far: declarations and
+  signatures (`--sigs`), then bodies: statements, expressions, calls,
+  builtins, matches and patterns, casts, moves, ranges, generics, closures,
+  records, trait objects, binary patterns; identical on 46 sources including
+  `check.nx` itself. Left: the compile-time interpreter (`comptime` calls
+  and tests), `@cImport`, and the diagnostics-only passes (effect
+  declarations, exhaustiveness, escaping views), verified by the
   compile-fail suite producing identical messages.
 - C emitter (`self/cgen.nx`): byte-identical C for every example.
 - Driver, tools, and the std embedding in Nexium.
@@ -141,8 +150,8 @@ checked against the Rust compiler on identical inputs.
   produce identical output. Then the Rust compiler moves to `bootstrap/`,
   kept for building the first Nexium compiler on a fresh machine.
 
-- Status (0.6.0): syntax settled, lexer and parser done; the checker is
-  next.
+- Status (0.6.1+): syntax settled, lexer and parser done; the checker
+  matches on every source but comptime calls and C imports.
 
 Exit: `cargo` is no longer needed to build `nx` from a release tarball.
 

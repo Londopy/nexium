@@ -320,7 +320,7 @@ on the same inputs:
 | --- | --- | --- | --- |
 | lexer | [`self/lexer.nx`](self/lexer.nx) | `nx tokens` | ✅ identical on every source |
 | parser | [`self/parser.nx`](self/parser.nx) | `nx sexp` | ✅ identical on all 46 sources |
-| checker | [`self/check.nx`](self/check.nx) | `nx tir` | 🚧 declarations and signatures match (`--sigs`, 41 sources); bodies in progress |
+| checker | [`self/check.nx`](self/check.nx) | `nx tir` | 🚧 the full typed IR is identical on 46 sources, including the checker itself; left: the compile-time interpreter, `@cImport`, the diagnostics-only passes |
 | C emitter | | `nx emit-c` | |
 
 `cargo test` builds each stage with the Rust compiler and diffs its output
@@ -334,10 +334,10 @@ files (`gui/font.bin`, lock files):
 
 | language | lines | share | what it is |
 | --- | --- | --- | --- |
-| Rust | 29,094 | 67.9% | the `nx` compiler |
-| Nexium | 11,751 | 27.4% | the standard library, examples, the self-hosted lexer, parser and checker, nexium-gui, tests |
-| C | 1,840 | 4.3% | the runtime `nx_rt.h` and the GUI window layer |
-| JavaScript, TypeScript | 159 | 0.4% | the VS Code extension |
+| Rust | 29,354 | 58.6% | the `nx` compiler |
+| Nexium | 18,726 | 37.4% | the standard library, examples, the self-hosted lexer, parser and checker, nexium-gui, tests |
+| C | 1,844 | 3.7% | the runtime `nx_rt.h` and the GUI window layer |
+| JavaScript, TypeScript | 159 | 0.3% | the VS Code extension |
 
 The Nexium share grows with every self-hosting stage; the Rust share is the
 bootstrap compiler and will one day be zero.
