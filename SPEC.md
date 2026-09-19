@@ -495,9 +495,12 @@ next to `nx`, the system compiler for native macOS builds, `zig` on the
 PATH. `nx fmt` is canonical and line-preserving. `nx doctor` reports the
 installation.
 
-The compiler is 22.7k lines of Rust, emits C, and embeds the runtime
-(`runtime/nx_rt.h`) and the standard library into itself. The self-hosted
-compiler under `self/` replaces it stage by stage (ROADMAP phase 4).
+The compiler emits C and embeds the runtime (`runtime/nx_rt.h`) and the
+standard library into itself. Two implementations exist and agree byte for
+byte on every source in the tree: the Rust one (29k lines) and the one in
+Nexium under `self/` (lexer, parser, checker, C emitter, driver; 18k
+lines), which builds itself. `nx tokens`, `nx sexp`, `nx tir` and `nx
+emit-c` are the oracles `cargo test` diffs the stages against.
 
 ## 17. Status summary
 
@@ -511,10 +514,9 @@ compiler under `self/` replaces it stage by stage (ROADMAP phase 4).
 | comptime, `comptime test` | implemented, tested |
 | `@cImport`, vendored C, opaque structs | implemented, tested |
 | artifacts: cabi, python, rustlib, cli | implemented, tested |
-| std: strings, lists, bytes, num, json, args | implemented, tested |
-| regions | R1 only |
-| layouts `packed`, `soa`; strategies `pool`, `stack` | planned |
-| std: fs, time, regex, net, http | planned (phases 1 and 2) |
+| std: strings, lists, bytes, num, json, args, fs, time, regex, text, testing, stream, net, http, process, thread | implemented, tested |
+| regions | R1 only (decision pending: R2 to R4 or R1 kept) |
+| layouts `packed`, `soa`; strategies `pool`, `stack` | planned (decision pending) |
 | threads, channels (`std.thread`); no async | done (0.4) |
-| packages, registry, `node`, `installer` | planned (phase 3) |
-| self-hosting | lexer done; parser next (phase 4) |
+| packages (path dependencies), `node`, `installer` artifacts | done (0.5); registry planned |
+| self-hosting: lexer, parser, checker, C emitter, driver in Nexium | done (0.6); byte-identical to the Rust compiler on every source, and the driver builds itself |
