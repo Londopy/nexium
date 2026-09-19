@@ -1506,7 +1506,11 @@ impl<'a> Checker<'a> {
             let et = self.tys.intern(TyKind::ErrorSet(set));
             self.declare_local(b, et, false, span)
         });
+        let moved_before = self.moved_snapshot();
         let h = self.check_expr(handler, Some(payload));
+        if matches!(self.tys.kind(self.tys.shallow(h.ty)), TyKind::Never) {
+            self.moved_restore(&moved_before);
+        }
         let h = self.coerce_or_error(h, payload, "catch handler");
         self.pop_scope();
         self.mk(TExprKind::Catch { expr: Box::new(inner), err_local, handler: Box::new(h) }, payload, span)
@@ -1524,7 +1528,13 @@ impl<'a> Checker<'a> {
                 return self.error_expr(span);
             }
         };
+        // a default that diverges (`orelse return x`) moves nothing for the
+        // code after it, the same as a diverging `if` branch
+        let moved_before = self.moved_snapshot();
         let d = self.check_expr(default, Some(payload));
+        if matches!(self.tys.kind(self.tys.shallow(d.ty)), TyKind::Never) {
+            self.moved_restore(&moved_before);
+        }
         let d = self.coerce_or_error(d, payload, "orelse default");
         let p = self.tys.resolve(payload, false);
         self.mk(TExprKind::OrElse { expr: Box::new(inner), default: Box::new(d) }, p, span)
