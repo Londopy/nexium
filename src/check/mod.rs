@@ -1892,8 +1892,14 @@ impl<'a> Checker<'a> {
         if let Some(tail) = tb.tail.take() {
             let tail = *tail;
             let tt = self.tys.resolve(tail.ty, false);
+            let tail_is_err_void = matches!(self.tys.kind(tt), TyKind::ErrUnion(_, e) if matches!(self.tys.kind(self.tys.shallow(*e)), TyKind::Void));
             if is_void_ret && matches!(self.tys.kind(tt), TyKind::Void | TyKind::Never) {
                 tb.stmts.push(TStmt::Expr(tail));
+            } else if is_void_ret && tail_is_err_void && matches!(self.tys.kind(ret_r), TyKind::ErrUnion(..)) {
+                // a `!void` tail in a `!void` function is returned, errors and all
+                let sp = tail.span;
+                let v = self.coerce_or_error(tail, ret, "return value");
+                tb.stmts.push(TStmt::Return { value: Some(v), span: sp });
             } else if is_void_ret {
                 // discard-with-value: unused value
                 let tn = self.type_name(tt);
