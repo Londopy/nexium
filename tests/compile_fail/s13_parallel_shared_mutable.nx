@@ -1,0 +1,6 @@
+// EXPECT: shared_mutable
+var hits: u32 = 0
+fn main() {
+    let xs = [1, 2, 3]
+    for parallel _x in xs[..] { unsafe { hits += 1 } }
+}

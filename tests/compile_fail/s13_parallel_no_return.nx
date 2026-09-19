@@ -1,0 +1,6 @@
+// EXPECT: parallel
+fn f(xs: []i32) -> i32 {
+    for parallel x in xs { if x == 2 { return x } }
+    return 0
+}
+fn main() { _ = f([1, 2, 3][..]) }

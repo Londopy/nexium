@@ -1,0 +1,3 @@
+// EXPECT: private
+import helpers.util
+fn main() { println("{}", .{util.SECRET}) }

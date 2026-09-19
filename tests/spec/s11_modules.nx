@@ -1,0 +1,11 @@
+// SPEC 11: `import a.b` loads a/b.nx relative to the root file; `pub` items are `b.item`;
+// std modules import; builtin namespaces need no import; `error` is a type.
+import helpers.util
+import std.strings
+fn describe(e: error) -> []u8 { return @errorName(e) }
+fn main() {
+    let p = util.Point{ .x = 3, .y = 4 }
+    println("{} {} {}", .{util.dist2(p, util.ORIGIN), util.secret_len(), p.x})
+    println("{} {}", .{strings.repeat("ab", 3), math.abs(-2)})
+    println("{}", .{describe(error.Oops)})
+}

@@ -1,0 +1,13 @@
+// SPEC 12: comptime evaluation of constants, calls, collections; the intrinsics; comptime tests.
+fn fib(n: u32) -> u64 { if n < 2 { return n as u64 }; return fib(n - 1) + fib(n - 2) }
+fn table() -> [8]u64 { var t: [8]u64 = undefined; for i in 0..8 { t[i] = fib(i as u32) }; return t }
+const FIBS = table()
+const DATA = @embedFile("helpers/data.txt")
+const GREETING: []u8 = comptime { var s = String.new(); s.append("hi"); s.append("!"); s[..] }
+struct Pair { a: u8, b: u32 }
+comptime test "fib at compile time" { expect_eq(fib(10), 55) }
+fn main() {
+    println("{} {} {}", .{FIBS[7], comptime fib(12), GREETING})
+    println("{} {} {} {}", .{@typeName(Pair), @sizeOf(u64), @sizeOf(Pair), @truncate(u8, 300)})
+    println("{} {}", .{DATA.len, DATA.trim()})
+}
