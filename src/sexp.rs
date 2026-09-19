@@ -233,15 +233,7 @@ fn item(o: &mut Out, it: &Item) {
 }
 
 fn fn_decl(o: &mut Out, f: &FnDecl) {
-    o.open(&format!(
-        "(fn {} name={} export={} extern={} variadic={} body={}",
-        sp(f.span),
-        f.name,
-        f.export.clone().unwrap_or_else(|| "-".into()),
-        f.extern_c,
-        f.variadic,
-        opt(&f.body)
-    ));
+    o.open(&format!("(fn {} name={} export={} extern={} variadic={} body={}", sp(f.span), f.name, f.export.clone().unwrap_or_else(|| "-".into()), f.extern_c, f.variadic, opt(&f.body)));
     attrs(o, &f.attrs);
     o.open("(params");
     for p in &f.params {

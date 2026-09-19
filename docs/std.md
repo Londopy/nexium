@@ -68,7 +68,7 @@ std.bytes: encodings and byte-level utilities, written in Nexium. `import std.by
 
 ## std.fs
 
-std.fs: files, directories and paths, written in Nexium. `import std.fs` then: if (fs.exists("notes.txt")) { ... } try fs.make_dirs("out/logs") for (try fs.list("out")) |name| { ... } for (try fs.walk("src")) |path| { ... }        // every file, recursively let cfg = fs.join(fs.parent(argv0), "app.toml") The platform calls are the `io.*` builtins (documented in the language reference); this module adds paths, sorted listings, recursive create and remove, and a walker. Paths are byte strings; `/` and `\` both separate components on every platform, and results use `/` unless the input used `\`.
+std.fs: files, directories and paths, written in Nexium. `import std.fs` then: if fs.exists("notes.txt") { ... } try fs.make_dirs("out/logs") for name in try fs.list("out") { ... } for path in try fs.walk("src") { ... }        // every file, recursively let cfg = fs.join(fs.parent(argv0), "app.toml") The platform calls are the `io.*` builtins (documented in the language reference); this module adds paths, sorted listings, recursive create and remove, and a walker. Paths are byte strings; `/` and `\` both separate components on every platform, and results use `/` unless the input used `\`.
 
 | function | what it does |
 | --- | --- |
@@ -103,7 +103,7 @@ std.fs: files, directories and paths, written in Nexium. `import std.fs` then: i
 
 ## std.http
 
-std.http: an HTTP/1.1 client and a small server, written in Nexium over std.net and std.stream. `import std.http` then: let r = try http.get("http://example.com/") println("{} {}", .{r.status, r.body.len}) if (r.header("content-type")) |ct| { ... } fn hello(req: *http.Request) -> http.Response { return http.text(200, "hello from Nexium") } var router = http.Router.new() router.get("/", hello) var server = try http.Server.bind("127.0.0.1", 8080) try server.serve(&router)                  // forever, one request at a time The client speaks HTTP/1.1 with `Connection: close`, reads bodies by Content-Length, chunked encoding, or until close, and follows up to five redirects. Plain `http://` only; TLS needs a C library through `@cImport`. The server handles one connection at a time, which is what a tool, a local dashboard or a test needs; threads come later in the roadmap.
+std.http: an HTTP/1.1 client and a small server, written in Nexium over std.net and std.stream. `import std.http` then: let r = try http.get("http://example.com/") println("{} {}", .{r.status, r.body.len}) if let ct = r.header("content-type") { ... } fn hello(req: *http.Request) -> http.Response { return http.text(200, "hello from Nexium") } var router = http.Router.new() router.get("/", hello) var server = try http.Server.bind("127.0.0.1", 8080) try server.serve(&router)                  // forever, one request at a time The client speaks HTTP/1.1 with `Connection: close`, reads bodies by Content-Length, chunked encoding, or until close, and follows up to five redirects. Plain `http://` only; TLS needs a C library through `@cImport`. The server handles one connection at a time, which is what a tool, a local dashboard or a test needs; threads come later in the roadmap.
 
 Types: `Header`, `Url`, `Response`, `Request`, `Route`, `Router`, `Server`
 
@@ -195,14 +195,14 @@ std.lists: generic helpers over slices and Lists, written in Nexium. `import std
 | `dedup(comptime T: type where T: Eq, xs: []T) -> List(T)` | Adjacent duplicates removed (sort first for global dedup). |
 | `take(comptime T: type, xs: []T, n: usize) -> []T` | The first `n` elements (or all when shorter). |
 | `drop(comptime T: type, xs: []T, n: usize) -> []T` | Everything after the first `n` elements. |
-| `window_starts(len: usize, size: usize) -> List(usize)` | Consecutive windows of `size`, as start indices; `for (windows(xs, 3)) |i|` then `xs[i..i+3]`. |
+| `window_starts(len: usize, size: usize) -> List(usize)` | Consecutive windows of `size`, as start indices; `for i in windows(xs, 3)` then `xs[i..i+3]`. |
 | `zip(comptime A: type, comptime B: type, a: []A, b: []B) -> List((A, B))` | Pairs (a[i], b[i]) up to the shorter length. |
 | `repeat(comptime T: type, xs: []T, times: usize) -> List(T)` | Elements repeated `times` times in sequence. |
 | `starts_with(comptime T: type where T: Eq, xs: []T, prefix: []T) -> bool` | True when `xs` starts with `prefix`. |
 
 ## std.net
 
-std.net: TCP and UDP with addresses, written in Nexium over the `net.*` primitives. `import std.net` then: var c = try net.TcpStream.connect("example.com", 80) try c.send("GET / HTTP/1.0\r\nHost: example.com\r\n\r\n") let reply = try c.recv_all()                 // until the peer closes c.close() var l = try net.TcpListener.bind("127.0.0.1", 8080) while (true) { var conn = try l.accept() var r = conn.reader()                     // a std.stream Reader let line = try r.read_line() try conn.send("ok\n") conn.close() } var u = try net.UdpSocket.bind("0.0.0.0", 0) try u.send_to("127.0.0.1", 9000, "ping") let d = try u.recv_from(1500)                 // d.data, d.from Every call blocks; timeouts are per socket (`set_timeout`, milliseconds, 0 waits forever) and expire with `error.Timeout`. `recv` returns an empty String when the peer has closed. Errors: `NotFound` (name lookup), `ConnectionRefused`, `Timeout`, `IoError`.
+std.net: TCP and UDP with addresses, written in Nexium over the `net.*` primitives. `import std.net` then: var c = try net.TcpStream.connect("example.com", 80) try c.send("GET / HTTP/1.0\r\nHost: example.com\r\n\r\n") let reply = try c.recv_all()                 // until the peer closes c.close() var l = try net.TcpListener.bind("127.0.0.1", 8080) while true { var conn = try l.accept() var r = conn.reader()                     // a std.stream Reader let line = try r.read_line() try conn.send("ok\n") conn.close() } var u = try net.UdpSocket.bind("0.0.0.0", 0) try u.send_to("127.0.0.1", 9000, "ping") let d = try u.recv_from(1500)                 // d.data, d.from Every call blocks; timeouts are per socket (`set_timeout`, milliseconds, 0 waits forever) and expire with `error.Timeout`. `recv` returns an empty String when the peer has closed. Errors: `NotFound` (name lookup), `ConnectionRefused`, `Timeout`, `IoError`.
 
 Types: `Addr`, `TcpStream`, `TcpListener`, `Datagram`, `UdpSocket`
 
@@ -262,7 +262,7 @@ std.num: integer utilities, written in Nexium. `import std.num` then `num.gcd(12
 
 ## std.process
 
-std.process: run programs and capture what they print, written in Nexium over the `process.*` primitives. `import std.process` then: let out = try process.run(["git", "status", "--short"]) if (out.ok()) print("{}", .{out.stdout}) let r = try process.run_with(["sort"], process.Options{ .stdin = "b\na\n", .cwd = "" }) let sh = try process.shell("echo hi")          // cmd /C on Windows, sh -c elsewhere The child inherits the environment. `error.IoError` when the program cannot be started; a non-zero exit is reported in `code`, not as an error. Output is read after stdin is fully written, so a program that produces more than a megabyte of output before reading its input can stall; feed such programs through files.
+std.process: run programs and capture what they print, written in Nexium over the `process.*` primitives. `import std.process` then: let out = try process.run(["git", "status", "--short"]) if out.ok() { print("{}", .{out.stdout}) } let r = try process.run_with(["sort"], process.Options{ .stdin = "b\na\n", .cwd = "" }) let sh = try process.shell("echo hi")          // cmd /C on Windows, sh -c elsewhere The child inherits the environment. `error.IoError` when the program cannot be started; a non-zero exit is reported in `code`, not as an error. Output is read after stdin is fully written, so a program that produces more than a megabyte of output before reading its input can stall; feed such programs through files.
 
 Types: `Output`, `Options`
 
@@ -276,7 +276,7 @@ Types: `Output`, `Options`
 
 ## std.regex
 
-std.regex: regular expressions without backtracking, written in Nexium. `import std.regex` then: let re = try regex.compile("(\\w+)@(\\w+)\\.com") if (re.is_match(text)) { ... } if (re.find(text)) |m| { println("{} at {}", .{m.text(), m.start}) } for (re.find_all(text)) |m| { println("{}", .{m.group(1).?}) } let out = re.replace_all(text, "$2:$1") let parts = try regex.compile(",\\s*") for (parts.split("a, b,c")) |p| { ... } Syntax: literals, `.` (any byte but newline), classes `[a-z]` `[^...]`, `\d \w \s \D \W \S \b \B`, escapes `\. \\ \n \t \r`, anchors `^ $`, groups `(...)` and `(?:...)`, alternation `|`, repeats `* + ? {n} {n,} {n,m}` and their lazy forms `*? +? ??`. Matching is a Pike VM (Thompson's NFA simulation), so every search is linear in the text and the pattern; there are no back-references. Patterns and text are bytes.
+std.regex: regular expressions without backtracking, written in Nexium. `import std.regex` then: let re = try regex.compile("(\\w+)@(\\w+)\\.com") if re.is_match(text) { ... } if let m = re.find(text) { println("{} at {}", .{m.text(), m.start}) } for m in re.find_all(text) { println("{}", .{m.group(1).?}) } let out = re.replace_all(text, "$2:$1") let parts = try regex.compile(",\\s*") for p in parts.split("a, b,c") { ... } Syntax: literals, `.` (any byte but newline), classes `[a-z]` `[^...]`, `\d \w \s \D \W \S \b \B`, escapes `\. \\ \n \t \r`, anchors `^ $`, groups `(...)` and `(?:...)`, alternation `|`, repeats `* + ? {n} {n,} {n,m}` and their lazy forms `*? +? ??`. Matching is a Pike VM (Thompson's NFA simulation), so every search is linear in the text and the pattern; there are no back-references. Patterns and text are bytes.
 
 Types: `Regex`, `Match`
 
@@ -296,7 +296,7 @@ Types: `Regex`, `Match`
 
 ## std.stream
 
-std.stream: buffered readers and writers over files and the standard streams, written in Nexium. `import std.stream` then: var r = try stream.Reader.open("big.log") while (try r.read_line()) |line| { ... }        // no whole-file allocation r.close() var w = try stream.Writer.open("out.txt") try w.write_line("hello") try w.close()                                    // flushes, then closes var input = stream.Reader.stdin() var out = stream.Writer.stdout() try stream.copy(&mut input, &mut out) try out.flush() Readers buffer 64 KB at a time; writers gather output and flush when the buffer fills, on `flush`, and on `close`. A Writer must be flushed or closed before the program ends, or buffered output is lost.
+std.stream: buffered readers and writers over files and the standard streams, written in Nexium. `import std.stream` then: var r = try stream.Reader.open("big.log") while true {                                    // no whole-file allocation let line = (try r.read_line()) orelse break ... } r.close() var w = try stream.Writer.open("out.txt") try w.write_line("hello") try w.close()                                    // flushes, then closes var input = stream.Reader.stdin() var out = stream.Writer.stdout() try stream.copy(&mut input, &mut out) try out.flush() Readers buffer 64 KB at a time; writers gather output and flush when the buffer fills, on `flush`, and on `close`. A Writer must be flushed or closed before the program ends, or buffered output is lost.
 
 Types: `Reader`, `Writer`
 
@@ -368,7 +368,7 @@ std.testing: conveniences for `test` blocks, written in Nexium. `import std.test
 
 ## std.text
 
-std.text: UTF-8 text by code point, written in Nexium. `import std.text` then: let n = text.char_count("héllo")            // 5, not 6 for (text.chars("héllo")) |cp| { ... }        // code points as u32 let w = text.width("日本語")                   // 6 columns on a terminal let s = text.to_upper("straße")               // "STRASSE" is not attempted: "STRAßE" let t = text.truncate("héllo wörld", 5)       // "héllo", never mid-character let ok = text.is_valid("...") Strings are bytes; this module reads them as UTF-8, tolerating bad input (an invalid byte decodes as U+FFFD and advances one byte). Case mapping covers ASCII, Latin-1, Latin Extended-A, Greek and Cyrillic, which is what is cheap to do without tables. `width` follows the usual terminal convention: East Asian wide and fullwidth forms take two columns, combining marks and zero-width characters take none.
+std.text: UTF-8 text by code point, written in Nexium. `import std.text` then: let n = text.char_count("héllo")            // 5, not 6 for cp in text.chars("héllo") { ... }        // code points as u32 let w = text.width("日本語")                   // 6 columns on a terminal let s = text.to_upper("straße")               // "STRASSE" is not attempted: "STRAßE" let t = text.truncate("héllo wörld", 5)       // "héllo", never mid-character let ok = text.is_valid("...") Strings are bytes; this module reads them as UTF-8, tolerating bad input (an invalid byte decodes as U+FFFD and advances one byte). Case mapping covers ASCII, Latin-1, Latin Extended-A, Greek and Cyrillic, which is what is cheap to do without tables. `width` follows the usual terminal convention: East Asian wide and fullwidth forms take two columns, combining marks and zero-width characters take none.
 
 Types: `Decoded`
 

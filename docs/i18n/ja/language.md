@@ -100,7 +100,8 @@ artifact cabi { name = "lib", exports = [f] }
   `String`、単位 enum、`derive(Eq)` / `derive(Ord)` した型に使えます。論理
   `and`、`or`、`!`。
 - `x |> f(a)` は `f(x, a)`。
-- `if (c) a else b` は式。`if (opt) |v| { } else { }` はアンラップします。
+- `if c { a } else { b }` は式。`if let v = opt { } else { }` はアンラップします。
+  条件に括弧は付けず、本体は常に波括弧で囲みます。
 - `match v { pat => expr, ... }` は整数（リテラル、範囲 `1..=9`）、文字列、
   bool、文字、enum（`.Variant(p)`）、オプショナル（`null`、束縛）、エラー
   共用体（`error.Name`、束縛）、タプル、バイトスライス（バイナリパターン）に
@@ -122,12 +123,12 @@ artifact cabi { name = "lib", exports = [f] }
 ## 文とループ
 
 ```
-while (cond) { }
-for (items) |x| { }               // 配列、スライス、リスト、文字列、マップのキー
-for (items) |x, i| { }            // インデックス付き
-for (a, b) |x, y| { }             // 同時走査。長さは一致していること
-for (0..n) |i| { }
-outer: for (...) |a| { for (...) |b| { continue :outer } }
+while cond { }
+for x in items { }               // 配列、スライス、リスト、文字列、マップのキー
+for x, i in items { }            // インデックス付き
+for x, y in a, b { }             // 同時走査。長さは一致していること
+for i in 0..n { }
+outer: for a in ... { for b in ... { continue :outer } }
 break, continue, return
 _ = expr                          // 明示的な破棄。未使用の値はエラー
 ```
@@ -177,7 +178,7 @@ let written = try <<4:4, 5:4, 0:8, 1500:16/big, "ab">> into buf[..]
   `clear`、`pop`、`bytes`、`len`、および `[]u8` のメソッド。
 - `Map(K, V)`（キー：整数、bool、char、`[]u8`、`String`）：`new`、`put`、
   `get`、`contains`、`remove`、`clear`、`clone`、`keys`、`values`、`len`、
-  `m[key]`。`for (m) |k|` はキーを走査。
+  `m[key]`。`for k in m` はキーを走査。
 - スライス：`len`、`fill`、`reverse`、`sort`、`contains`、`index_of`、
   `copy_from`、`to_owned`、`is_empty`。`[]u8` はさらに `starts_with`、
   `ends_with`、`find`、`trim`、`split`、`lines`、`to_string`、`parse_int(T)`、
@@ -222,7 +223,7 @@ NotFound IoError InvalidInput BufferTooSmall`。任意の `error.Name` は新し
 
 ## 並列ループ
 
-`for parallel (items) |x, i| { ... }` はインデックス範囲を本体ごとスレッドプール
+`for parallel x, i in items { ... }` はインデックス範囲を本体ごとスレッドプール
 で実行します（仕様 7.2）。本体は `shared_mutable` エフェクトを持てず、`return`
 や `break` もできず（`continue` を使う）、結果は `i` で添字付けした可変スライス
 に書きます。ワーカーでのパニックは全ワーカー終了後に呼び出し側で再送出されます。

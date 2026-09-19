@@ -40,7 +40,7 @@ tool.
 ```
 fn checksum(data: []u8) -> u32 export(c) {
     var h: u32 = 2166136261
-    for (data) |b| {
+    for b in data {
         h ^= b as u32
         h *%= 16777619
     }
@@ -150,17 +150,17 @@ fn area(s: Shape) -> f64 {
 error ParseError { Empty, NotANumber }
 
 fn parse_num(text: []u8) -> ParseError!i64 {
-    if (text.len == 0) return error.Empty
+    if text.len == 0 { return error.Empty }
     var total: i64 = 0
-    for (text) |c| {
-        if (c < '0' or c > '9') return error.NotANumber
+    for c in text {
+        if c < '0' or c > '9' { return error.NotANumber }
         total = total * 10 + (c - '0') as i64
     }
     return total
 }
 
 fn max(comptime T: type where T: Ord, a: T, b: T) -> T {
-    return if (a > b) a else b
+    return if a > b { a } else { b }
 }
 
 fn main() -> !void {
@@ -170,9 +170,9 @@ fn main() -> !void {
         -1
     }
     var xs = List(i32).new()
-    for (0..10) |i| { xs.append((i * i) as i32) }
+    for i in 0..10 { xs.append((i * i) as i32) }
     let found = outer: {
-        for (xs) |x, i| { if (x > 30) break :outer i as i64 }
+        for x, i in xs { if x > 30 { break :outer i as i64 } }
         -1
     }
     println("{} {} {} {} {}", .{n, bad, max(3, 9), xs.len, found})
@@ -240,7 +240,7 @@ for layout, and foreign calls carry the `ffi` effect.
 <summary><b>Parallel loops and arenas</b></summary>
 
 ```
-for parallel (positions) |p, i| {
+for parallel p, i in positions {
     out[i] = integrate(p)          // no shared_mutable allowed in here
 }
 

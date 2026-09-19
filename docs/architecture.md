@@ -45,8 +45,8 @@ self-hosted lexer in `self/lexer.nx` is checked against.
 
 Recursive descent, one function per grammar rule, producing an `ast::Module`
 of items: functions, structs, enums, traits, impls, constants, globals,
-imports, tests, artifacts. Conditions are parenthesised (`if (c)`), struct
-literals are `Point{ .x = 1 }`, anonymous ones are `.{ .x = 1 }`, captures on
+imports, tests, artifacts. Conditions are bare (`if c {`; a struct literal
+there needs parentheses), struct literals are `Point{ .x = 1 }`, anonymous ones are `.{ .x = 1 }`, captures on
 closures are explicit `|[x, &mut y] a: i32|`.
 
 The parser is where the continuation rules live: a line that starts with

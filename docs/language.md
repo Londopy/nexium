@@ -119,9 +119,9 @@ edges (`@weak(x)` or `x.weak()`, then `w.upgrade()`).
   `== != < <= > >=` on numbers, chars, bools, `[]u8`, `String`, unit enums,
   and types that `derive(Eq)` / `derive(Ord)`. Logical `and`, `or`, `!`.
 - `x |> f(a)` is `f(x, a)`.
-- `if (c) a else b` is an expression; `if (opt) |v| { } else { }` unwraps.
-  Without braces the body is one statement, so `if (c) x = 1 else x = 2` and
-  `if (c) return v` are fine.
+- `if c { a } else { b }` is an expression; `if let v = opt { } else { }`
+  unwraps. Conditions take no parentheses and bodies always take braces, so
+  a one-liner is `if c { return v }`; `else` may start the next line.
 - `match v { pat => expr, ... }` on integers (literals, ranges `1..=9`),
   strings, bools, chars, enums (`.Variant(p)`), optionals (`null`, binding),
   error unions (`error.Name`, binding), tuples, and byte slices (binary
@@ -145,14 +145,14 @@ edges (`@weak(x)` or `x.weak()`, then `w.upgrade()`).
 ## Statements and loops
 
 ```
-while (cond) { }
-for (items) |x| { }               // arrays, slices, lists, strings, map keys
-for (items) |x, i| { }            // with index
-for (a, b) |x, y| { }             // lockstep; lengths must match
-for (0..10 step 2) |i| { }         // 0 2 4 6 8; `for (10..0 step -1)` counts down (signed)
-while (cond) { } else { }          // the else runs when cond turns false, not after a break
-for (0..n) |i| { }
-outer: for (...) |a| { for (...) |b| { continue :outer } }
+while cond { }
+for x in items { }               // arrays, slices, lists, strings, map keys
+for x, i in items { }            // with index
+for x, y in a, b { }             // lockstep; lengths must match
+for i in 0..10 step 2 { }        // 0 2 4 6 8; `for i in 10..0 step -1` counts down (signed)
+while cond { } else { }          // the else runs when cond turns false, not after a break
+for i in 0..n { }
+outer: for a in ... { for b in ... { continue :outer } }
 break, continue, return
 _ = expr                          // explicit discard; unused values are errors
 ```
@@ -204,7 +204,7 @@ the inferred set per function.
   `bytes`, `len`, plus `[]u8` methods.
 - `Map(K, V)` (keys: integers, bool, char, `[]u8`, `String`): `new`, `put`,
   `get`, `contains`, `remove`, `clear`, `clone`, `keys`, `values`, `len`,
-  `m[key]`; `for (m) |k|` iterates keys.
+  `m[key]`; `for k in m` iterates keys.
 - Slices: `len`, `fill`, `reverse`, `sort`, `contains`, `index_of`,
   `copy_from`, `to_owned`, `is_empty`; `[]u8` also `starts_with`,
   `ends_with`, `find`, `trim`, `split`, `lines`, `to_string`, `parse_int(T)`,
@@ -308,7 +308,7 @@ may mention `Self` only in receiver position.
 
 ## Parallel loops
 
-`for parallel (items) |x, i| { ... }` runs the body over the index range on a
+`for parallel x, i in items { ... }` runs the body over the index range on a
 thread pool (spec 7.2). The body may not have the `shared_mutable` effect,
 may not `return` or `break` (use `continue`), and writes results through a
 mutable slice indexed by `i`. A panic in a worker is re-raised in the caller

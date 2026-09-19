@@ -41,7 +41,7 @@
 
 递归下降，每条文法规则一个函数，产出由各种项组成的 `ast::Module`：函数、
 struct、enum、trait、impl、常量、全局量、import、测试、artifact。条件带括号
-（`if (c)`），结构体字面量是 `Point{ .x = 1 }`，匿名的是 `.{ .x = 1 }`，闭包
+（不带括号：`if c {`），结构体字面量是 `Point{ .x = 1 }`，匿名的是 `.{ .x = 1 }`，闭包
 的捕获是显式的 `|[x, &mut y] a: i32|`。
 
 行延续规则住在语法分析器里：以 `|>`、`.method(`、`catch`、`orelse`、`and`、

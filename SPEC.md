@@ -222,20 +222,23 @@ Compound assignment: `= += -= *= /= %= &= |= ^= <<= >>= +%= -%= *%=`.
 
 ### 6.2 Control flow
 
-- `if (c) a else b` is an expression when both branches have a type. An
-  `if` without `else` is a statement. Without braces, the body is one
-  statement, so `if (c) x = 1 else x = 2` and `if (c) return v` are valid.
-- `if (opt) |v| { } else { }` unwraps an optional.
-- `while (c) { }`, `for (items) |x| { }`, `for (items) |x, i| { }`,
-  `for (a, b) |x, y| { }` (lengths must match), `for (lo..hi) |i| { }`,
-  `for (lo..hi step s) |i| { }` (a negative step counts down and needs a
-  signed loop variable; a zero step is an error). `while (c) { } else { }`
+- `if c { a } else { b }` is an expression when both branches have a type.
+  An `if` without `else` is a statement. The condition is a bare expression
+  (no parentheses) and every body is a block, so a one-liner is
+  `if c { return v }` or `let m = if a > b { a } else { b }`. A struct
+  literal in a condition needs parentheses, `if (Point{ .x = 1 }) == p { }`,
+  because the `{` would otherwise open the body.
+- `if let v = opt { } else { }` unwraps an optional.
+- `while c { }`, `for x in items { }`, `for x, i in items { }`,
+  `for x, y in a, b { }` (lengths must match), `for i in lo..hi { }`,
+  `for i in lo..hi step s { }` (a negative step counts down and needs a
+  signed loop variable; a zero step is an error). `while c { } else { }`
   runs the else block when the condition turns false, not after a `break`.
   Iteration works over arrays, slices, lists, strings, and map keys.
   Loop bodies take braces.
 - `break`, `continue`, `return`, each optionally with a label:
-  `outer: for (...) |a| { ... continue :outer }`. A labeled block yields a
-  value with `break :label value`.
+  `outer: for a in ... { ... continue :outer }`. A labeled block yields a
+  value with `break :label value`. `else` may start the next line.
 - `match v { pattern => expr, ... }` (section 7).
 - Blocks are expressions whose value is their trailing expression.
 
@@ -424,7 +427,7 @@ checks on literals, and `comptime test` blocks run here. Intrinsics:
 
 ## 13. Concurrency
 
-`for parallel (items) |x, i| { ... }` runs the body over the index range on
+`for parallel x, i in items { ... }` runs the body over the index range on
 a pool of hardware threads. The body may not have the `shared_mutable`
 effect (directly or through calls), may not `return` or `break`, and
 writes results through a mutable slice indexed by `i`. A panic in a worker
