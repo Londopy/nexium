@@ -35,6 +35,9 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
   on exported or fn-value functions, moves out of map lookups, `match`
   exhaustiveness, returned views into locals. `cargo test` runs it over
   every compile-fail case and expects every message the Rust checker gives.
+- `self/cimport.nx`, the C header importer in Nexium, and `@cImport` in
+  `self/check.nx`: every source in the tree now matches the oracle,
+  `examples/cimport.nx` and nexium-gui included (54 sources).
 
 ### Fixed
 
