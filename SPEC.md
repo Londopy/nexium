@@ -521,3 +521,4 @@ emit-c` are the oracles `cargo test` diffs the stages against.
 | threads, channels (`std.thread`); no async | done (0.4) |
 | packages (path dependencies), `node`, `installer` artifacts | done (0.5); registry planned |
 | self-hosting: lexer, parser, checker, C emitter, driver in Nexium | done (0.6); byte-identical to the Rust compiler on every source, and the driver builds itself |
+| conformance: `tests/spec`, one recorded program per claim | sections 2 to 14 covered; 15 and 16 by the ship tests |

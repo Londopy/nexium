@@ -36,7 +36,8 @@ What exists and is verified on Windows, Linux, and macOS:
 - nexium-gui: an immediate-mode GUI in Nexium on a 200-line C window layer.
 
 Numbers: 29.4k lines of Rust (the compiler), 18.7k of Nexium, 190 std
-functions, 29 examples and 24 compile-fail cases, 13 integration tests.
+functions, 32 examples, 32 spec conformance cases and 41 compile-fail
+cases, 19 integration tests, verified on three platforms by CI.
 
 ## Phase 1: a language you can write your tools in (0.3)
 
@@ -167,6 +168,9 @@ Exit: `cargo` is no longer needed to build `nx` from a release tarball.
 A 1.0 means the language stops changing under people's feet.
 
 - The specification in `SPEC.md` is complete and every section has tests.
+  Done: `tests/spec` holds one recorded program per claim in sections 2
+  to 14, diffed through every self-hosting stage; the artifact and
+  toolchain sections (15, 16) are covered by the ship tests.
 - Regions: the full rule set (R1 to R4 in the archived design) or an
   explicit decision to keep R1 only, with the escape cases documented.
 - Layouts: `packed` and `soa` implemented or removed from the spec.

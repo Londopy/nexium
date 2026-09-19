@@ -353,7 +353,7 @@ self/           the compiler in Nexium, stage by stage
 gui/            nexium-gui: immediate-mode GUI in Nexium, demo, and the C platform layer
 editors/        VS Code extension and Sublime Text syntax
 examples/       programs with recorded output, run by `cargo test`
-tests/          integration tests and compile-fail cases
+tests/          integration tests, the spec conformance suite (tests/spec) and compile-fail cases
 docs/           how it works, language reference, embedding guide, i18n/ translations
 assets/         logo and banner
 nexium-spec.txt          the design
