@@ -443,10 +443,14 @@ fn needs_space(toks: &[&Token], i: usize, ctx: &LineCtx) -> bool {
     }
     // unary minus / address-of / pointer types
     if matches!(a, Minus | Amp | Star) {
-        let binary = matches!(pp, Some(t) if ends_operand(t));
+        // `step -2`: the word before a unary minus is a clause, not an operand
+        let binary = matches!(pp, Some(t) if ends_operand(t) && !is_kw(t, "step"));
         if !binary {
             return false;
         }
+    }
+    if is_kw(a, "step") && matches!(b, Minus) {
+        return true;
     }
     if matches!(b, Minus | Amp | Star) && !ends_operand(a) {
         // unary after an operator or opener: `x = -1`, `f(&x)`, `: *mut T`

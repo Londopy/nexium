@@ -148,6 +148,8 @@ while (cond) { }
 for (items) |x| { }               // arrays, slices, lists, strings, map keys
 for (items) |x, i| { }            // with index
 for (a, b) |x, y| { }             // lockstep; lengths must match
+for (0..10 step 2) |i| { }         // 0 2 4 6 8; `for (10..0 step -1)` counts down (signed)
+while (cond) { } else { }          // the else runs when cond turns false, not after a break
 for (0..n) |i| { }
 outer: for (...) |a| { for (...) |b| { continue :outer } }
 break, continue, return

@@ -105,6 +105,8 @@ pub enum TStmt {
     While {
         cond: TExpr,
         body: TBlock,
+        /// runs when the condition turns false, not after a `break`
+        els: Option<TBlock>,
         label: LabelId,
         span: Span,
     },
@@ -112,6 +114,9 @@ pub enum TStmt {
         var: LocalId,
         start: TExpr,
         end: TExpr,
+        /// `step s`: the loop runs while `i < end` for a positive step and
+        /// while `i > end` for a negative one
+        step: Option<TExpr>,
         body: TBlock,
         label: LabelId,
         span: Span,

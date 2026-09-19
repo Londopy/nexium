@@ -344,7 +344,7 @@ impl<'a> Checker<'a> {
                     Some(TStmt::Defer { body: Box::new(tb), span: *span })
                 }
             }
-            Stmt::While { cond, body, label, span } => {
+            Stmt::While { cond, body, els, label, span } => {
                 let bt = self.tys.bool();
                 let c = self.check_expr(cond, Some(bt));
                 let c = self.coerce_or_error(c, bt, "while condition");
@@ -354,7 +354,8 @@ impl<'a> Checker<'a> {
                 let tb = self.check_block(body, Some(void), None);
                 self.cur().loop_depth -= 1;
                 self.cur().labels.pop();
-                Some(TStmt::While { cond: c, body: tb, label: lid, span: *span })
+                let te = els.as_ref().map(|b| self.check_block(b, Some(void), None));
+                Some(TStmt::While { cond: c, body: tb, els: te, label: lid, span: *span })
             }
             Stmt::For { iter, bindings, body, label, parallel, span } => self.check_for(iter, bindings, body, label.clone(), *parallel, *span),
             Stmt::Using { strategy, body, span } => {
@@ -486,7 +487,7 @@ impl<'a> Checker<'a> {
 
     fn check_for(&mut self, iter: &ForIter, bindings: &[String], body: &Block, label: Option<String>, parallel: bool, span: Span) -> Option<TStmt> {
         match iter {
-            ForIter::Range { start, end } => {
+            ForIter::Range { start, end, step } => {
                 if bindings.len() != 1 {
                     self.error(span, "a range loop binds exactly one variable: `for (a..b) |i|`");
                 }
@@ -510,19 +511,35 @@ impl<'a> Checker<'a> {
                     let tn = self.type_name(it);
                     self.error(span, format!("range bounds must be integers but found `{}`", tn));
                 }
+                let step = step.as_ref().map(|x| {
+                    let x = self.arg(x, it, "step");
+                    if let TExprKind::Int(0) = x.kind {
+                        self.error(x.span, "a range step cannot be zero");
+                    }
+                    if let TExprKind::Int(v) = x.kind {
+                        let signed = matches!(self.tys.kind(it), TyKind::Int(k) if k.is_signed());
+                        if v < 0 && !signed {
+                            let tn = self.type_name(it);
+                            self.error(x.span, format!("a negative step needs a signed loop variable, but this one is `{}`", tn));
+                        }
+                    }
+                    x
+                });
                 self.push_scope();
                 let var = self.declare_local(&bindings[0], it, false, span);
-                // range fact: start <= i < end
-                if let (Some((slo, _)), Some((_, ehi))) = (self.expr_range(&s), self.expr_range(&e)) {
-                    if ehi > slo {
-                        self.cur().ranges.insert(var, (slo, ehi - 1));
+                // range fact: start <= i < end (only for the default step of 1)
+                if step.is_none() {
+                    if let (Some((slo, _)), Some((_, ehi))) = (self.expr_range(&s), self.expr_range(&e)) {
+                        if ehi > slo {
+                            self.cur().ranges.insert(var, (slo, ehi - 1));
+                        }
                     }
                 }
                 // `for (0..xs.len) |i|` => i indexes xs safely
                 if let TExprKind::Builtin { op: Builtin::Len, args, .. } = &e.kind {
                     if let TExprKind::Local(sl) = &args[0].kind {
                         let sl = *sl;
-                        if matches!(s.kind, TExprKind::Int(0)) {
+                        if matches!(s.kind, TExprKind::Int(0)) && step.is_none() {
                             self.cur().index_of.insert(var, sl);
                         }
                     }
@@ -537,7 +554,7 @@ impl<'a> Checker<'a> {
                 if parallel {
                     self.error(span, "`for parallel` iterates slices: write `for parallel (items) |x, i| { ... }`");
                 }
-                Some(TStmt::ForRange { var, start: s, end: e, body: tb, label: lid, span })
+                Some(TStmt::ForRange { var, start: s, end: e, step, body: tb, label: lid, span })
             }
             ForIter::Items(items) => {
                 // bindings: one per item, plus an optional trailing index

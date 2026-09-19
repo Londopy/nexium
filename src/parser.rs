@@ -1061,7 +1061,8 @@ impl Parser {
             let cond = self.parse_expr()?;
             self.expect(&Tok::RParen)?;
             let body = self.parse_block(None)?;
-            return Ok(Stmt::While { cond, body, label, span: start.to(self.prev_span()) });
+            let els = if self.eat_ident("else") { Some(self.parse_block(None)?) } else { None };
+            return Ok(Stmt::While { cond, body, els, label, span: start.to(self.prev_span()) });
         }
         // for
         let parallel = self.eat_ident("parallel");
@@ -1069,7 +1070,8 @@ impl Parser {
         let first = self.parse_expr()?;
         let iter = if self.eat(&Tok::DotDot) {
             let end = self.parse_expr()?;
-            ForIter::Range { start: first, end }
+            let step = if self.eat_ident("step") { Some(self.parse_expr()?) } else { None };
+            ForIter::Range { start: first, end, step }
         } else {
             let mut items = vec![first];
             while self.eat(&Tok::Comma) {

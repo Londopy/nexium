@@ -346,6 +346,8 @@ pub enum Stmt {
     While {
         cond: Expr,
         body: Block,
+        /// runs when the condition turns false (not after a `break`)
+        els: Option<Block>,
         label: Option<String>,
         span: Span,
     },
@@ -375,7 +377,7 @@ pub enum Stmt {
 
 #[derive(Clone, Debug)]
 pub enum ForIter {
-    Range { start: Expr, end: Expr },
+    Range { start: Expr, end: Expr, step: Option<Expr> },
     Items(Vec<Expr>), // parallel iteration when more than one
 }
 

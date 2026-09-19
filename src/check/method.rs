@@ -25,7 +25,7 @@ impl<'a> Checker<'a> {
         true
     }
 
-    fn arg(&mut self, e: &Expr, ty: TyId, what: &str) -> TExpr {
+    pub fn arg(&mut self, e: &Expr, ty: TyId, what: &str) -> TExpr {
         let te = self.check_expr(e, Some(ty));
         self.coerce_or_error(te, ty, what)
     }

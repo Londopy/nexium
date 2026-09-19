@@ -1,0 +1,42 @@
+// Range loops with a step, counting down with a negative one, and `while`
+// with an `else` that runs only when the condition turns false.
+
+enum Light { Red, Yellow, Green }
+enum Mode { Normal, Blink }
+
+fn advice(l: Light, m: Mode) -> []u8 {
+    return match (l, m) {
+        (.Red, .Normal) => "stop",
+        (.Red, .Blink) => "stop, then go",
+        (.Yellow, _) => "slow",
+        (.Green, .Normal) => "go",
+        (.Green, .Blink) => "go carefully",
+    }
+}
+
+fn find(xs: []i32, want: i32) {
+    var i: usize = 0
+    while (i < xs.len) {
+        if (xs[i] == want) {
+            println("found {} at {}", .{want, i})
+            break
+        }
+        i += 1
+    } else {
+        println("{} is not there", .{want})
+    }
+}
+
+fn main() {
+    for (0..10 step 3) |i| { print("{} ", .{i}) }
+    println("")
+    var down: i32 = 5
+    for (down..0 step -2) |i| { print("{} ", .{i}) }
+    println("")
+    let xs = [4, 8, 15, 16, 23, 42]
+    find(xs[..], 15)
+    find(xs[..], 7)
+    println("{}", .{advice(Light.Red, Mode.Blink)})
+    println("{}", .{advice(Light.Yellow, Mode.Normal)})
+    println("{}", .{advice(Light.Green, Mode.Normal)})
+}

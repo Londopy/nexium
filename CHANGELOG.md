@@ -30,6 +30,13 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
   `is_match`, `replace_all` with `$1` references, `split`, and `Match.group`.
 - A local that was moved out can be assigned again; the assignment
   re-initializes it instead of being reported as a use after move.
+- `for (a..b step s) |i|` walks a range with a step; a negative step counts
+  down (the loop variable must be signed). `while (c) { } else { }` runs the
+  else block when the condition turns false, but not after a `break`.
+- `match` exhaustiveness now uses the full matrix algorithm, so tuples of
+  enums, nested optionals and enum payloads are checked precisely instead of
+  demanding a catch-all arm.
+- `nx test FILE --filter NAME` runs the tests whose names contain NAME.
 - `examples/tool.nx`: a log scanner (walk a tree, parse timestamps, filter
   by a date window and a regex, tally by level) in 142 lines, the phase 1
   exit example of the roadmap; runs on `examples/data/logs` by default.

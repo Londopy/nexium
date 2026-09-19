@@ -335,7 +335,8 @@ impl<'c, 'a> Interp<'c, 'a> {
             TStmt::Continue { label, .. } => Some(Flow::Continue(*label)),
             TStmt::Defer { body, .. } => self.exec_stmt(body, env),
             TStmt::ErrDefer { .. } => Some(Flow::Next),
-            TStmt::While { cond, body, label, .. } => {
+            TStmt::While { cond, body, els, label, .. } => {
+                let mut broke = false;
                 loop {
                     if !self.step() {
                         return None;
@@ -346,18 +347,32 @@ impl<'c, 'a> Interp<'c, 'a> {
                     }
                     match self.exec_block(body, env)?.0 {
                         Flow::Next => {}
-                        Flow::Break(l, _) if l == *label => break,
+                        Flow::Break(l, _) if l == *label => {
+                            broke = true;
+                            break;
+                        }
                         Flow::Continue(l) if l == *label => continue,
                         other => return Some(other),
                     }
                 }
+                if let (false, Some(eb)) = (broke, els) {
+                    return Some(self.exec_block(eb, env)?.0);
+                }
                 Some(Flow::Next)
             }
-            TStmt::ForRange { var, start, end, body, label, .. } => {
+            TStmt::ForRange { var, start, end, step, body, label, span } => {
                 let s = self.eval(start, env)?.as_int()?;
                 let e = self.eval(end, env)?.as_int()?;
+                let st = match step {
+                    Some(x) => self.eval(x, env)?.as_int()?,
+                    None => 1,
+                };
+                if st == 0 {
+                    self.panic = Some(("a range step cannot be zero".into(), *span));
+                    return None;
+                }
                 let mut i = s;
-                while i < e {
+                while if st > 0 { i < e } else { i > e } {
                     if !self.step() {
                         return None;
                     }
@@ -368,7 +383,7 @@ impl<'c, 'a> Interp<'c, 'a> {
                         Flow::Continue(l) if l == *label => {}
                         other => return Some(other),
                     }
-                    i += 1;
+                    i += st;
                 }
                 Some(Flow::Next)
             }

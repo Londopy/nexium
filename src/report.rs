@@ -96,13 +96,19 @@ impl<'a> Walker<'a> {
             }
             TStmt::Expr(e) | TStmt::Return { value: Some(e), .. } | TStmt::Break { value: Some(e), .. } => self.expr(e),
             TStmt::Defer { body, .. } | TStmt::ErrDefer { body, .. } => self.stmt(body),
-            TStmt::While { cond, body, .. } => {
+            TStmt::While { cond, body, els, .. } => {
                 self.expr(cond);
                 self.block(body);
+                if let Some(eb) = els {
+                    self.block(eb);
+                }
             }
-            TStmt::ForRange { start, end, body, .. } => {
+            TStmt::ForRange { start, end, step, body, .. } => {
                 self.expr(start);
                 self.expr(end);
+                if let Some(st) = step {
+                    self.expr(st);
+                }
                 self.block(body);
             }
             TStmt::ForSlice { items, body, .. } => {

@@ -163,6 +163,13 @@ fn parse_opts(args: &[String]) -> Opts {
                 i += 1;
                 o.cc = args.get(i).cloned();
             }
+            "--filter" => {
+                // `nx test file.nx --filter NAME`: the runner takes the filter as its argument
+                i += 1;
+                if let Some(f) = args.get(i) {
+                    o.rest.push(f.clone());
+                }
+            }
             "--" => {
                 o.rest.extend(args[i + 1..].iter().cloned());
                 break;

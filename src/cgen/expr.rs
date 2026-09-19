@@ -385,7 +385,7 @@ impl Gen {
             TStmt::ErrDefer { body, .. } => {
                 self.st().scopes.last_mut().unwrap().defers.push((true, (**body).clone()));
             }
-            TStmt::While { cond, body, label, .. } => {
+            TStmt::While { cond, body, els, label, .. } => {
                 let depth = self.st().scopes.len();
                 self.st().loop_labels.push((*label, depth));
                 self.line("for (;;) {");
@@ -399,10 +399,19 @@ impl Gen {
                 self.body.last_mut().unwrap().push_str(&inner);
                 self.line(format!("  nx_cont_{}: ;", label));
                 self.line("}");
-                self.line(format!("nx_brk_{}: ;", label));
                 self.st().loop_labels.pop();
+                // the `else` sits between the loop and its break label: a false
+                // condition falls into it, a `break` jumps over it
+                if let Some(eb) = els {
+                    self.line("{");
+                    self.push_scope(true);
+                    self.block_stmt(eb);
+                    self.pop_scope_emit();
+                    self.line("}");
+                }
+                self.line(format!("nx_brk_{}: ;", label));
             }
-            TStmt::ForRange { var, start, end, body, label, .. } => {
+            TStmt::ForRange { var, start, end, step, body, label, .. } => {
                 let s = self.expr(start);
                 let e = self.simple(end);
                 let name = self.local_name(*var);
@@ -412,7 +421,20 @@ impl Gen {
                 self.st().loop_labels.push((*label, depth));
                 let et = self.tmp();
                 self.line(format!("{} {} = {};", cn, et, e));
-                self.line(format!("for ({} {} = {}; {} < {}; {}++) {{", cn, name, s, name, et, name));
+                match step {
+                    None => self.line(format!("for ({} {} = {}; {} < {}; {}++) {{", cn, name, s, name, et, name)),
+                    Some(st) => {
+                        let sv = self.simple(st);
+                        let stt = self.tmp();
+                        self.line(format!("{} {} = {};", cn, stt, sv));
+                        // a constant step picks its direction at compile time
+                        match st.kind {
+                            TExprKind::Int(v) if v > 0 => self.line(format!("for ({} {} = {}; {} < {}; {} += {}) {{", cn, name, s, name, et, name, stt)),
+                            TExprKind::Int(_) => self.line(format!("for ({} {} = {}; {} > {}; {} += {}) {{", cn, name, s, name, et, name, stt)),
+                            _ => self.line(format!("for ({} {} = {}; {} > 0 ? {} < {} : {} > {}; {} += {}) {{", cn, name, s, stt, name, et, name, et, name, stt)),
+                        }
+                    }
+                }
                 self.push_buf();
                 self.push_scope(true);
                 self.block_stmt(body);
