@@ -147,11 +147,13 @@ checked against the Rust compiler on identical inputs.
   identical on every source in the tree, its own included.
 - Driver, tools, and the std embedding in Nexium.
 - Bootstrap: Rust `nx` builds `nx1`; `nx1` builds `nx2`; `nx1` and `nx2`
-  produce identical output. Then the Rust compiler moves to `bootstrap/`,
-  kept for building the first Nexium compiler on a fresh machine.
+  produce identical output. Done for the emitter (`cargo test` runs the
+  three stages); the driver's tools come next, then the Rust compiler
+  moves to `bootstrap/`, kept for building the first Nexium compiler on a
+  fresh machine.
 
 - Status (0.6.1+): syntax settled; lexer, parser, checker and C emitter
-  done; the driver and the bootstrap are next.
+  done and bootstrapped to a fixed point; the driver's tools are next.
 
 Exit: `cargo` is no longer needed to build `nx` from a release tarball.
 

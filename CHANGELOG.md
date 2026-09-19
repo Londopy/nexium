@@ -41,6 +41,10 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
 - `self/cgen.nx`, the C emitter in Nexium: byte-identical to `nx emit-c` on
   every source in the tree (54, its own 96k-line translation unit
   included); `cargo test` diffs them.
+- The bootstrap closes: `nx1` (the emitter in Nexium, built by the Rust
+  compiler) emits the C of itself, `zig cc` builds `nx2` from it with no
+  Rust involved, and `nx2` emits byte-identical C for itself and other
+  programs. `cargo test` performs the three stages.
 
 ### Fixed
 
