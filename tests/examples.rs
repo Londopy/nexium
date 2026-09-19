@@ -21,6 +21,27 @@ fn normalize(s: &str) -> String {
     s.replace("\r\n", "\n").replace('\\', "/")
 }
 
+/// Two oracle outputs must match; on a mismatch, name the first line that
+/// differs (the whole texts run to megabytes, which CI logs drop).
+fn assert_same_text(expected: &str, got: &str, what: &str) {
+    if expected == got {
+        return;
+    }
+    let (el, gl): (Vec<&str>, Vec<&str>) = (expected.lines().collect(), got.lines().collect());
+    let first = el.iter().zip(gl.iter()).position(|(a, b)| a != b).unwrap_or(el.len().min(gl.len()));
+    panic!(
+        "{} at line {} ({} vs {} lines):
+  oracle: {}
+  mine:   {}",
+        what,
+        first + 1,
+        el.len(),
+        gl.len(),
+        el.get(first).unwrap_or(&"<end>"),
+        gl.get(first).unwrap_or(&"<end>")
+    );
+}
+
 fn run_example(name: &str, subcommand: &str) {
     let src = PathBuf::from("examples").join(format!("{}.nx", name)); // relative: diagnostics print this path
     let expected_path = root().join("examples").join(format!("{}.expected", name));
@@ -171,7 +192,7 @@ fn self_hosted_lexer_matches_oracle() {
     for f in files {
         let oracle = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).arg("tokens").arg(&f).output().unwrap();
         let mine = std::process::Command::new(&exe).arg(&f).output().unwrap();
-        assert_eq!(String::from_utf8_lossy(&oracle.stdout), String::from_utf8_lossy(&mine.stdout), "token stream differs for {}", f.display());
+        assert_same_text(&String::from_utf8_lossy(&oracle.stdout), &String::from_utf8_lossy(&mine.stdout), &format!("token stream differs for {}", f.display()));
         assert_eq!(oracle.status.code(), mine.status.code(), "exit code differs for {}", f.display());
     }
 }
@@ -198,7 +219,7 @@ fn self_hosted_parser_matches_oracle() {
     for f in files {
         let oracle = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).arg("sexp").arg(&f).output().unwrap();
         let mine = std::process::Command::new(&exe).arg(&f).output().unwrap();
-        assert_eq!(String::from_utf8_lossy(&oracle.stdout), String::from_utf8_lossy(&mine.stdout), "parse tree differs for {}", f.display());
+        assert_same_text(&String::from_utf8_lossy(&oracle.stdout), &String::from_utf8_lossy(&mine.stdout), &format!("parse tree differs for {}", f.display()));
         assert_eq!(oracle.status.code(), mine.status.code(), "exit code differs for {}", f.display());
     }
 }
@@ -241,7 +262,7 @@ fn self_hosted_checker_matches_signatures() {
             f.display(),
             String::from_utf8_lossy(&mine.stderr)
         );
-        assert_eq!(expected, String::from_utf8_lossy(&mine.stdout), "signatures differ for {}", f.display());
+        assert_same_text(&expected, &String::from_utf8_lossy(&mine.stdout), &format!("signatures differ for {}", f.display()));
         compared += 1;
     }
     assert!(compared > 50, "expected the whole tree, compared {} files", compared);
@@ -354,7 +375,7 @@ fn bootstrap_reaches_a_fixed_point() {
             f,
             String::from_utf8_lossy(&b.stderr)
         );
-        assert!(a.stdout == b.stdout, "nx1 and nx2 emit different C for {}", f);
+        assert_same_text(&String::from_utf8_lossy(&a.stdout), &String::from_utf8_lossy(&b.stdout), &format!("nx1 and nx2 emit different C for {}", f));
     }
 }
 
@@ -515,7 +536,7 @@ fn self_hosted_checker_matches_bodies() {
             f,
             String::from_utf8_lossy(&mine.stderr)
         );
-        assert_eq!(String::from_utf8_lossy(&oracle.stdout), String::from_utf8_lossy(&mine.stdout), "typed IR differs for {}", f);
+        assert_same_text(&String::from_utf8_lossy(&oracle.stdout), &String::from_utf8_lossy(&mine.stdout), &format!("typed IR differs for {}", f));
     }
 }
 
