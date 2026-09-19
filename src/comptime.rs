@@ -983,7 +983,7 @@ impl<'c, 'a> Interp<'c, 'a> {
         for seg in segs {
             let size_bits = match &seg.size {
                 TBinSize::Bits(b) => *b as usize,
-                TBinSize::Expr(e) => self.eval(e, env)?.as_int()? as usize * 8,
+                TBinSize::Expr(e) => self.eval(e, env)?.as_int()? as usize,
                 TBinSize::Rest => total_bits - bit,
             };
             if bit + size_bits > total_bits {

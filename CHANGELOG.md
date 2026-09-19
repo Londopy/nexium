@@ -29,8 +29,9 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
   expression now ends a `while true`; a non-void function that ended in such
   a loop was accepted without a return value.
 - A binary segment sized by an expression (`payload:len*8`) is in bits like a
-  constant size; the generated C scaled it by eight again, so such patterns
-  never matched and such constructions wrote past the intended width.
+  constant size; the generated C and the compile-time interpreter scaled it
+  by eight again, so such patterns never matched and such constructions
+  wrote past the intended width.
 - A `!void` tail expression (a `match` whose arms print, a call) at the end
   of a function returning `!void` is returned; it was reported as unused.
 

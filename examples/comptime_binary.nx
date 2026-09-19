@@ -1,0 +1,13 @@
+// A binary pattern with a computed segment size, matched at compile time.
+fn body_len(buf: []u8) -> usize {
+    match buf {
+        <<n:8, body:n*8, _rest:bytes>> => body.len,
+        _ => 0,
+    }
+}
+
+const N: usize = comptime body_len("\x03abcdef")
+
+fn main() {
+    println("{}", .{N})
+}
