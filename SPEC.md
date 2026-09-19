@@ -469,7 +469,10 @@ a static archive, and a C header. `artifact python { name = "pkg" }`
 produces a ctypes-based package and a wheel. `artifact rustlib { name =
 "crate" }` produces a Cargo crate with `extern "C"` declarations, `#[repr(C)]`
 structs, and safe wrappers returning `Result<T, NexiumError>`. `artifact
-cli` names the executable. **planned**: `node`, `installer`.
+cli` names the executable. `artifact installer { name, publisher, version,
+url, license, readme, files, add_to_path }` produces an Inno Setup script
+and setup program on Windows and an `install.sh` with a tarball elsewhere
+(see `docs/releasing-your-program.md`). **planned**: `node`.
 
 Exported functions take and return scalars, `layout(c)` structs, and slices
 (as pointer plus length); they cannot return slices into their own storage,

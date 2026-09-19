@@ -27,6 +27,12 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
   scope), and rename (a local within its function, an item across the
   file). They work from the parsed source, so they answer in files that do
   not type-check yet.
+- `artifact installer`: `nx ship` produces an installer for a program. On
+  Windows an Inno Setup script (compiled to `<Name>-<version>-setup-x64.exe`
+  when Inno Setup 6 is installed) with license page, per-user or
+  all-users install, Start menu entry, optional PATH entry and uninstaller;
+  on Linux and macOS an `install.sh` with `--prefix` and `--uninstall` plus
+  a tarball. Listed `files` are copied next to the program.
 
 ## [0.4.0] - 2026-09-19
 

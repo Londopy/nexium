@@ -473,6 +473,16 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     effects is worth waiting for. When the file checks, the typed answers
     can replace the syntactic ones without changing the protocol.
 
+85. **Installers are generated scripts for the platform's own tool.** The
+    `installer` artifact writes an Inno Setup script on Windows and a POSIX
+    shell script elsewhere, and only runs Inno's compiler when it is
+    present. Writing the script is always possible and inspectable; the
+    setup program needs a tool this compiler should not embed. The Windows
+    script is the same shape as Nexium's own installer (PATH handling
+    included) so the two stay correct together, and the app id is a hash of
+    the program name so upgrades replace the previous install. A `.msi` or
+    a `.deb` are left to the release template's optional jobs.
+
 ## Compiler selection
 
 60. **Native macOS builds use the system compiler.** zig 0.14.1 cannot read

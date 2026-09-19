@@ -66,6 +66,36 @@ binary into an installer:
 Each job is a few lines and is annotated in the template. Turn one on by
 setting its `if:` to `true`.
 
+## An installer for your program
+
+Declare it next to the `cli` artifact and `nx ship` produces one:
+
+```nexium
+artifact cli { name = "taskdesk" }
+artifact installer {
+    name = "TaskDesk", publisher = "Londopy", version = "1.2.0",
+    url = "https://example.com/taskdesk",
+    license = "LICENSE", readme = "README.md",
+    files = ["assets", "config.toml"],   // copied next to the program
+    add_to_path = true,
+}
+```
+
+- On Windows, `nx ship` writes `nx-out/taskdesk/TaskDesk.iss` and, when
+  [Inno Setup 6](https://jrsoftware.org/isinfo.php) is installed (or the
+  `ISCC` environment variable points at `ISCC.exe`),
+  `TaskDesk-1.2.0-setup-x64.exe`: a wizard with license page, install for
+  one user or all, Start menu entry, an optional PATH entry, and an
+  uninstaller. The app id derives from the name, so a newer setup upgrades
+  in place. Silent install: `setup.exe /VERYSILENT /CURRENTUSER`.
+- On Linux and macOS, it writes `install.sh` (`--prefix DIR`, default
+  `~/.local`; `--uninstall`) and `taskdesk-1.2.0-<os>.tar.gz` holding the
+  program, the script and the listed files.
+
+In the release template, the Windows job installs Inno Setup with
+`choco install innosetup` before `nx ship`, and every job uploads
+`nx-out/<name>/`.
+
 ## Shipping a library instead
 
 If the program declares `artifact cabi`, `artifact python`, or

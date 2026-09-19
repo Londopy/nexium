@@ -10,6 +10,7 @@ mod doc;
 mod effects;
 mod fmt;
 mod ide;
+mod installer;
 mod lexer;
 mod lsp;
 mod manifest;
@@ -1771,6 +1772,32 @@ fn audit_expr(e: &ast::Expr, out: &mut Vec<(diag::Span, usize)>) {
     }
 }
 
+fn artifact_list(a: &check::ArtifactInfo, key: &str) -> Vec<String> {
+    a.fields
+        .iter()
+        .find(|(k, _)| k == key)
+        .map(|(_, v)| match v {
+            ArtifactValue::List(items) => items
+                .iter()
+                .filter_map(|x| match x {
+                    ArtifactValue::Str(s) | ArtifactValue::Ident(s) => Some(s.clone()),
+                    _ => None,
+                })
+                .collect(),
+            ArtifactValue::Str(s) | ArtifactValue::Ident(s) => vec![s.clone()],
+            _ => vec![],
+        })
+        .unwrap_or_default()
+}
+
+fn artifact_bool(a: &check::ArtifactInfo, key: &str) -> Option<bool> {
+    a.fields.iter().find(|(k, _)| k == key).and_then(|(_, v)| match v {
+        ArtifactValue::Bool(b) => Some(*b),
+        ArtifactValue::Ident(s) => Some(s == "true"),
+        _ => None,
+    })
+}
+
 fn artifact_str(a: &check::ArtifactInfo, key: &str) -> Option<String> {
     a.fields.iter().find(|(k, _)| k == key).and_then(|(_, v)| match v {
         ArtifactValue::Str(s) | ArtifactValue::Ident(s) => Some(s.clone()),
@@ -1797,10 +1824,15 @@ fn cmd_ship(opts: &Opts) -> i32 {
     // one library build serves cabi + python; the cli build is separate
     let lib_arts: Vec<&check::ArtifactInfo> = artifacts.iter().filter(|a| matches!(a.kind.as_str(), "cabi" | "python" | "shared" | "rustlib")).collect();
     let cli_arts: Vec<&check::ArtifactInfo> = artifacts.iter().filter(|a| matches!(a.kind.as_str(), "cli" | "app")).collect();
+    let installer_art: Option<&check::ArtifactInfo> = artifacts.iter().find(|a| a.kind == "installer");
     for a in &artifacts {
-        if !matches!(a.kind.as_str(), "cabi" | "python" | "shared" | "cli" | "app" | "lib" | "rustlib" | "link") {
-            eprintln!("note: artifact `{}` is not produced by this version of nx (supported: cabi, python, shared, cli); skipped", a.kind);
+        if !matches!(a.kind.as_str(), "cabi" | "python" | "shared" | "cli" | "app" | "lib" | "rustlib" | "link" | "installer") {
+            eprintln!("note: artifact `{}` is not produced by this version of nx (supported: cabi, python, shared, cli, installer); skipped", a.kind);
         }
+    }
+    if installer_art.is_some() && cli_arts.is_empty() {
+        eprintln!("error: `artifact installer` needs an `artifact cli {{ name = ... }}` to install");
+        return 1;
     }
     let target = opts.target.clone().unwrap_or_else(host_target);
     if !lib_arts.is_empty() {
@@ -1954,9 +1986,54 @@ fn cmd_ship(opts: &Opts) -> i32 {
             c_sources: opts.c_sources.clone(),
         };
         let _ = std::fs::create_dir_all(&o.out_dir);
-        match cmd_build(&o, false) {
-            Ok(p) => produced.push(p),
+        let exe_path = match cmd_build(&o, false) {
+            Ok(p) => p,
             Err(()) => return 1,
+        };
+        produced.push(exe_path.clone());
+        if let Some(ia) = installer_art {
+            // the program's files sit next to the executable so the installer templates can list them
+            let src_dir = dir_of(&opts.file);
+            let spec = installer::Spec {
+                name: artifact_str(ia, "name").unwrap_or_else(|| name.clone()),
+                exe: exe_name(&name, &opts.target),
+                version: artifact_str(ia, "version").unwrap_or_else(|| "0.1.0".into()),
+                publisher: artifact_str(ia, "publisher").unwrap_or_default(),
+                url: artifact_str(ia, "url").unwrap_or_default(),
+                license: artifact_str(ia, "license"),
+                readme: artifact_str(ia, "readme"),
+                files: artifact_list(ia, "files"),
+                add_to_path: artifact_bool(ia, "add_to_path").unwrap_or(false),
+            };
+            let out_dir = exe_path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."));
+            for f in spec.files.iter().chain(spec.readme.iter()).chain(spec.license.iter()) {
+                let from = Path::new(&src_dir).join(f);
+                let to = out_dir.join(f);
+                if from.is_dir() {
+                    if let Err(e) = copy_dir(&from, &to) {
+                        eprintln!("error: cannot copy {}: {}", from.display(), e);
+                        return 1;
+                    }
+                } else if from.exists() {
+                    if let Some(parent) = to.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    if let Err(e) = std::fs::copy(&from, &to) {
+                        eprintln!("error: cannot copy {}: {}", from.display(), e);
+                        return 1;
+                    }
+                } else {
+                    eprintln!("error: installer file `{}` not found next to {}", f, opts.file.display());
+                    return 1;
+                }
+            }
+            match installer::produce(&spec, &exe_path, is_windows_target(&opts.target)) {
+                Ok(files) => produced.extend(files),
+                Err(e) => {
+                    eprintln!("error: {}", e);
+                    return 1;
+                }
+            }
         }
         o.keep_c = false;
     }
@@ -1965,6 +2042,20 @@ fn cmd_ship(opts: &Opts) -> i32 {
         println!("  {}", p.display());
     }
     0
+}
+
+fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let dest = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir(&entry.path(), &dest)?;
+        } else {
+            std::fs::copy(entry.path(), dest)?;
+        }
+    }
+    Ok(())
 }
 
 impl Program {

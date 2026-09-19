@@ -231,3 +231,58 @@ fn packages_resolve_path_dependencies() {
     assert!(lock.contains("greet\tpath\t../greet"), "lock file: {}", lock);
     assert!(lock.contains("words\tpath"), "transitive dependency missing from the lock: {}", lock);
 }
+
+/// `artifact installer`: `nx ship` writes an Inno Setup script on Windows and
+/// an install script elsewhere, next to the built program, listing its files.
+#[test]
+fn installer_artifact_writes_scripts() {
+    let root = root();
+    let base = root.join("nx-out").join("installer-test");
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(base.join("assets")).unwrap();
+    std::fs::write(
+        base.join("assets").join("data.txt"),
+        "data
+",
+    )
+    .unwrap();
+    std::fs::write(
+        base.join("LICENSE"),
+        "MIT
+",
+    )
+    .unwrap();
+    std::fs::write(
+        base.join("README.md"),
+        "# Greeter
+",
+    )
+    .unwrap();
+    std::fs::write(
+        base.join("greeter.nx"),
+        "artifact cli { name = \"greeter\" }
+artifact installer { name = \"Greeter\", publisher = \"Londopy\", version = \"1.0.0\", license = \"LICENSE\", readme = \"README.md\", files = [\"assets\"], add_to_path = true }
+fn main() { println(\"hi\", .{}) }
+",
+    )
+    .unwrap();
+    // an installed Inno Setup would also compile the script; the script itself is what this checks
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).args(["ship", "greeter.nx"]).env("ISCC", "").current_dir(&base).output().expect("run nx ship");
+    assert!(
+        out.status.success(),
+        "nx ship failed:
+{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let dir = base.join("nx-out").join("greeter");
+    assert!(dir.join("assets").join("data.txt").exists(), "files were not copied next to the program");
+    if cfg!(windows) {
+        let iss = std::fs::read_to_string(dir.join("Greeter.iss")).expect("Greeter.iss");
+        assert!(iss.contains("AppName=Greeter") && iss.contains("AppVersion=1.0.0") && iss.contains("addtopath") && iss.contains(r"assets\*"), "script: {}", iss);
+        assert!(iss.contains("AppId={{"), "the app id must escape its brace for Inno: {}", iss);
+    } else {
+        let sh = std::fs::read_to_string(dir.join("install.sh")).expect("install.sh");
+        assert!(sh.contains("copy_tree 'assets'") && sh.contains("exe='greeter'"), "script: {}", sh);
+        assert!(dir.join("greeter-1.0.0-linux.tar.gz").exists() || dir.join("greeter-1.0.0-macos.tar.gz").exists(), "no archive in {}", dir.display());
+    }
+}

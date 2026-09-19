@@ -109,7 +109,7 @@ Goal: sharing code beyond a sibling file.
 - `node` artifact: `nx ship` to an npm package (N-API through the C ABI),
   since Python and Node together cover most "one native piece" needs.
 - `installer` artifact: `nx ship` producing an installer for a Nexium
-  program, reusing this repository's Inno and script templates.
+  program, reusing this repository's Inno and script templates. Done.
 - Editor support: tree-sitter grammar for Neovim, Helix, and Zed, and the
   language server's completion, go-to-definition and rename: done.
 - Linguist PR, when the usage bar is met.
