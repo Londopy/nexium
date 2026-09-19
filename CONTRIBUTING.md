@@ -53,6 +53,12 @@ Decisions already taken where the specification was silent are recorded in
 `DECISIONS.md`. If you disagree with one, open an issue that references its
 number.
 
+## Known issues
+
+Open bugs and limitations live in `KNOWN_ISSUES.md`, each with a repro and
+the likely fix. Add what you find there; when you fix one, remove its entry,
+add a `Fixed` line to the changelog, and land a regression test with it.
+
 ## Changelog
 
 `CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com/) and is

@@ -269,6 +269,7 @@ using arena {
 - [Linguist](linguist): the ready-to-apply pull request that will make GitHub recognize `.nx` once the usage bar is met.
 - [Translations](docs/i18n): this README in six languages; the language reference and the architecture tour in Spanish, Chinese, and Japanese.
 - [Decisions](DECISIONS.md): every call made where the specification was open.
+- [Known issues](KNOWN_ISSUES.md): open bugs, gaps and limitations, with repros.
 
 ## Commands
 
@@ -357,6 +358,7 @@ assets/         logo and banner
 nexium-spec.txt          the design
 nexium-systems-spec.txt  the archived systems language; sections 4 to 9 are the syntax reference
 DECISIONS.md    decisions made where the specification was open
+KNOWN_ISSUES.md open bugs and limitations; fixes move to the changelog
 ```
 
 ## Contributing
