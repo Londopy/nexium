@@ -139,11 +139,10 @@ checked against the Rust compiler on identical inputs.
   `nx tir` and diffed over every source. Done so far: declarations and
   signatures (`--sigs`), then bodies: statements, expressions, calls,
   builtins, matches and patterns, casts, moves, ranges, generics, closures,
-  records, trait objects, binary patterns, the compile-time interpreter;
-  identical on 50 sources including `check.nx` itself. Left: `@cImport`,
-  and the diagnostics-only passes (effect declarations, exhaustiveness,
-  escaping views), verified by the compile-fail suite producing identical
-  messages.
+  records, trait objects, binary patterns, the compile-time interpreter,
+  the diagnostics passes (effect bounds, exhaustiveness, escaping views);
+  identical on 50 sources including `check.nx` itself, and every
+  compile-fail case rejected with the same messages. Left: `@cImport`.
 - C emitter (`self/cgen.nx`): byte-identical C for every example.
 - Driver, tools, and the std embedding in Nexium.
 - Bootstrap: Rust `nx` builds `nx1`; `nx1` builds `nx2`; `nx1` and `nx2`
