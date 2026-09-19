@@ -22,6 +22,14 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
   embedded in the compiler; `docs/std.md` lists them; `examples/stdlib.nx`
   uses them.
 - Tuple types as type arguments: `List((A, B))`.
+- A Windows installer (`nexium-<version>-setup-x64.exe`): license, overview,
+  per-user or all-users, components (bundled Zig, std and examples, docs, VS
+  Code extension), PATH and `.nx` file-type tasks, `nx doctor` on finish.
+- An install script for macOS and Linux (`installers/install.sh`) that
+  verifies checksums and sets up a C compiler.
+- `nx doctor`, and `nx` finds a Zig bundled next to itself (`NX_ZIG` too).
+- Releases carry `SHA256SUMS.txt`, per-file checksums, and install
+  instructions in the notes; the tarballs include examples, std, and docs.
 - Recursive types through `List`: `enum Json { Arr(List(Json)) }`.
 - Matching through a pointer (`match p.*`) binds owning payloads by reference,
   so `match v.* { .Arr(items) => items.append(x) }` mutates in place.

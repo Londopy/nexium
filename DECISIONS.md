@@ -315,6 +315,25 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     root module are prefixed with their module index for the same reason:
     `std.json` and `std.args` each have a `Parser`.
 
+## Installers
+
+70. **The Windows installer bundles Zig.** Python's installer ships its
+    runtime; Nexium's ships its C toolchain, so "install and run" needs
+    nothing else. `nx` looks for `zig` next to itself before the PATH, so
+    the bundled copy wins without configuration, and the component can be
+    unchecked by people who keep their own Zig. Inno Setup was chosen over
+    WiX because it gives the license, overview, components, tasks, and
+    finish pages with no XML and is preinstalled on GitHub's runners.
+71. **macOS and Linux get a script, not a package.** `install.sh` verifies
+    the checksum, installs under `~/.nexium`, and edits the shell startup
+    files; `.pkg` and `.deb` would need signing or repositories to be worth
+    more than that. Zig is downloaded only on Linux when no compiler exists,
+    because on macOS the Xcode tools are the compiler that works.
+72. **Zig stays required by the design, not by the user.** As long as C is
+    the backend, a C compiler is needed to build programs; the installers
+    make that invisible. Dropping the requirement entirely means a native
+    backend, which is self-hosting stage 4 territory and not planned yet.
+
 ## Compiler selection
 
 60. **Native macOS builds use the system compiler.** zig 0.14.1 cannot read

@@ -59,6 +59,19 @@ jobs:
           printf 'fn main() { assert_eq!(ropesim::checksum(b"hello"), 1335831723); assert!(ropesim::divide(1, 0).is_err()); println!("rust ok"); }\n' > nx-out/rusttest/src/main.rs
           (cd nx-out/rusttest && cargo run -q)
 
+      - name: Build the Windows installer (preview, no bundled Zig)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist-win | Out-Null
+          Copy-Item target/debug/nx.exe, README.md, LICENSE, CHANGELOG.md dist-win/
+          Copy-Item -Recurse examples, std, docs dist-win/
+          pip install pillow
+          python scripts/make_icon.py
+          $src = (Resolve-Path dist-win).Path
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=0.0.0" "/DSourceDir=$src" installers\windows\nexium.iss
+          Get-ChildItem installers\windows\Output
+
       - name: Call the shipped library from Python
         shell: bash
         run: |

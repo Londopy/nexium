@@ -95,16 +95,28 @@ boundary rather than aborting the host process.
 
 ## Install
 
-The only runtime requirement is a C compiler: [Zig](https://ziglang.org/download/)
-on your `PATH` (`zig cc` also cross-compiles to any target), or on macOS the
-Xcode command line tools, which `nx` uses for native builds. `--cc clang` or
-`NX_CC=gcc` picks another one.
+**Windows**: download and run the installer from the
+[Releases](https://github.com/Londopy/nexium/releases) page. It installs
+`nx`, a bundled Zig toolchain (the C compiler `nx` uses), the standard
+library, examples, docs, and the VS Code extension, and adds `nx` to your
+PATH. Nothing else to install.
 
-Prebuilt `nx` binaries for Windows, Linux, and macOS are on the
-[Releases](https://github.com/Londopy/nexium/releases) page. Unpack and put
-`nx` on your `PATH`.
+**macOS and Linux**:
 
-Or build from source with Rust 1.75 or newer:
+```bash
+curl -fsSL https://raw.githubusercontent.com/Londopy/nexium/main/installers/install.sh | sh
+```
+
+It verifies the download against the release checksums, installs to
+`~/.nexium`, sets up a C compiler (the Xcode tools on macOS; Zig is downloaded
+on Linux when nothing is found), and adds `nx` to your PATH.
+
+Then, in a new console, `nx doctor` shows what will be used. All the details,
+including verifying checksums and every environment variable, are in
+[docs/install.md](docs/install.md).
+
+Or build from source with Rust 1.75 or newer (you provide the C compiler:
+Zig on the PATH, or `NX_CC`):
 
 ```bash
 cargo install nexium
@@ -245,6 +257,7 @@ using arena {
 - [How Nexium works](docs/architecture.md): the pipeline from source to binary, effects inference, ownership, the runtime, and shipping.
 - [Language reference](docs/language.md): every construct the compiler implements.
 - [Embedding](docs/embedding.md): calling shipped libraries from Python, Rust, and C.
+- [Installing](docs/install.md): the Windows installer, the macOS/Linux script, source builds, checksums, and how `nx` finds a C compiler.
 - [Standard library](docs/std.md): the modules written in Nexium (`std.strings`, `std.lists`, `std.bytes`, `std.num`, `std.json`, `std.args`).
 - [nexium-gui](docs/gui.md): the immediate-mode GUI library and how to write a widget.
 - [Releasing your program](docs/releasing-your-program.md): binaries for three platforms from a tag, installers optional.
@@ -272,6 +285,7 @@ using arena {
 | `nx refcounts file.nx` | every retain and release site |
 | `nx leaks file.nx` | run with allocation tracking and report leaks |
 | `nx lsp` | language server over stdio |
+| `nx doctor` | which C compiler will be used, and whether the installation works |
 
 Options: `--mode debug|safe|fast|small`, `--target x86_64-linux-gnu` (any
 target `zig cc` knows), `--out-dir`, `--keep-c`, `--cc`, and for C interop

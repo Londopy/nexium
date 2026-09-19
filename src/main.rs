@@ -49,6 +49,7 @@ usage:
   nx emit-c <file.nx>              print the generated C
   nx parse <file.nx>               dump the syntax tree
   nx tokens <file.nx>              dump the token stream (start end KIND payload)
+  nx doctor                        show which C compiler nx will use and whether it works
   nx version
 
 options:
@@ -445,21 +446,107 @@ struct CcInvocation {
     args: Vec<String>,
 }
 
-/// Which C compiler to run: `--cc`, then the `NX_CC` environment variable, then
-/// the system compiler for a native build on macOS (zig 0.14 cannot read the
-/// libSystem stubs of Xcode 16.3+ SDKs, so `zig cc` links nothing there),
-/// otherwise `zig cc`, which also cross-compiles.
-fn cc_command(opts: &Opts) -> CcInvocation {
-    let explicit = opts.cc.clone().or_else(|| std::env::var("NX_CC").ok().filter(|s| !s.trim().is_empty()));
-    match explicit {
-        Some(cc) => {
-            let mut parts = cc.split_whitespace();
-            let program = parts.next().unwrap_or("cc").to_string();
-            CcInvocation { program, args: parts.map(|s| s.to_string()).collect() }
+/// A Zig installed next to `nx`: `<dir>/zig/zig` (the Windows installer) or
+/// `<dir>/../zig/zig` (`~/.nexium/bin/nx` with `~/.nexium/zig`).
+fn bundled_zig() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    let name = if cfg!(windows) { "zig.exe" } else { "zig" };
+    for cand in [dir.join("zig").join(name), dir.join("..").join("zig").join(name)] {
+        if cand.is_file() {
+            return Some(cand);
         }
-        None if cfg!(target_os = "macos") && opts.target.is_none() => CcInvocation { program: "cc".into(), args: vec![] },
-        None => CcInvocation { program: "zig".into(), args: vec!["cc".into()] },
     }
+    None
+}
+
+/// Which C compiler to run and why, in order: `--cc`, `NX_CC`, `NX_ZIG`, a Zig
+/// bundled next to `nx`, the system compiler for a native build on macOS
+/// (zig 0.14 cannot read the libSystem stubs of Xcode 16.3+ SDKs), then `zig`
+/// on the PATH, which also cross-compiles.
+fn cc_command_why(opts: &Opts) -> (CcInvocation, &'static str) {
+    if let Some(cc) = &opts.cc {
+        let mut parts = cc.split_whitespace();
+        let program = parts.next().unwrap_or("cc").to_string();
+        return (CcInvocation { program, args: parts.map(|s| s.to_string()).collect() }, "--cc");
+    }
+    if let Some(cc) = std::env::var("NX_CC").ok().filter(|s| !s.trim().is_empty()) {
+        let mut parts = cc.split_whitespace();
+        let program = parts.next().unwrap_or("cc").to_string();
+        return (CcInvocation { program, args: parts.map(|s| s.to_string()).collect() }, "NX_CC");
+    }
+    if let Some(z) = std::env::var("NX_ZIG").ok().filter(|s| !s.trim().is_empty()) {
+        return (CcInvocation { program: z, args: vec!["cc".into()] }, "NX_ZIG");
+    }
+    if let Some(z) = bundled_zig() {
+        return (CcInvocation { program: z.to_string_lossy().to_string(), args: vec!["cc".into()] }, "bundled with nx");
+    }
+    if cfg!(target_os = "macos") && opts.target.is_none() {
+        return (CcInvocation { program: "cc".into(), args: vec![] }, "system compiler (macOS)");
+    }
+    (CcInvocation { program: "zig".into(), args: vec!["cc".into()] }, "zig on PATH")
+}
+
+fn cc_command(opts: &Opts) -> CcInvocation {
+    cc_command_why(opts).0
+}
+
+/// `nx doctor`: what this installation will use, and whether it works.
+fn cmd_doctor() -> i32 {
+    println!("nx {}", VERSION);
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("nx"));
+    println!("executable:  {}", exe.display());
+    let opts = Opts {
+        file: PathBuf::new(),
+        mode: BuildMode::Debug,
+        target: None,
+        out: None,
+        out_dir: PathBuf::from("nx-out"),
+        keep_c: false,
+        cc: None,
+        rest: vec![],
+        defines: vec![],
+        include_dirs: vec![],
+        link_libs: vec![],
+        link_paths: vec![],
+        c_sources: vec![],
+    };
+    let (cc, why) = cc_command_why(&opts);
+    let shown = if cc.args.is_empty() { cc.program.clone() } else { format!("{} {}", cc.program, cc.args.join(" ")) };
+    println!("C compiler:  {}  ({})", shown, why);
+    let probe = if cc.program.ends_with("zig") || cc.program.ends_with("zig.exe") { vec!["version"] } else { vec!["--version"] };
+    let ok = match Command::new(&cc.program).args(&probe).output() {
+        Ok(o) if o.status.success() => {
+            let text = String::from_utf8_lossy(&o.stdout);
+            println!("             {}", text.lines().next().unwrap_or("").trim());
+            true
+        }
+        Ok(o) => {
+            println!("             does not run: {}", String::from_utf8_lossy(&o.stderr).lines().next().unwrap_or("").trim());
+            false
+        }
+        Err(e) => {
+            println!("             not found: {}", e);
+            false
+        }
+    };
+    println!("std modules: {}", stdlib::MODULES.iter().map(|(n, _)| *n).collect::<Vec<_>>().join(", "));
+    if let Some(dir) = exe.parent() {
+        let on_path = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).any(|d| d == dir)).unwrap_or(false);
+        println!("on PATH:     {}", if on_path { "yes" } else { "no (add the executable's directory to PATH to run `nx` from anywhere)" });
+    }
+    if !ok {
+        println!();
+        println!("no working C compiler. Options:");
+        println!("  - Windows: run the installer from https://github.com/Londopy/nexium/releases (it bundles Zig)");
+        println!("  - macOS:   xcode-select --install");
+        println!("  - Linux:   the install script (installers/install.sh) downloads Zig, or install zig / gcc");
+        println!("  - any:     put zig on the PATH, or set NX_ZIG=/path/to/zig or NX_CC=gcc");
+        return 1;
+    }
+    println!();
+    println!("everything works. Try: nx run examples/hello.nx");
+    0
 }
 
 fn compile_c(opts: &Opts, c_path: &Path, out: &Path, kind: &str) -> Result<(), ()> {
@@ -568,7 +655,7 @@ fn compile_c(opts: &Opts, c_path: &Path, out: &Path, kind: &str) -> Result<(), (
     let status = match cmd.status() {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("error: cannot run the C compiler `{}`: {}\n  install zig (https://ziglang.org/download) or pass --cc <compiler>", cc.program, e);
+            eprintln!("error: cannot run the C compiler `{}`: {}\n  run `nx doctor` for options (the installers bundle Zig; or put zig on the PATH, or set NX_CC)", cc.program, e);
             return Err(());
         }
     };
@@ -1565,6 +1652,7 @@ fn real_main() -> i32 {
             println!("nx {}", VERSION);
             0
         }
+        "doctor" => cmd_doctor(),
         "tokens" => {
             let o = parse_opts(rest);
             match std::fs::read_to_string(&o.file) {

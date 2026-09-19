@@ -1,0 +1,23 @@
+Nexium for Windows
+
+This installs the Nexium compiler, nx.exe, and everything it needs to build
+programs. Nothing else has to be installed first.
+
+What you get
+  - nx.exe, the compiler and tool driver (build, run, test, fmt, doc, ship, ...)
+  - the bundled Zig toolchain, which nx uses as its C compiler and linker
+    (uncheck the component if you already have Zig and prefer your own)
+  - the standard library sources, the examples, and the documentation
+  - the VS Code extension as a .vsix file, with an option to install it
+
+What the installer can change
+  - add the install folder to your PATH (for this user, or for all users
+    when you choose an all-users install), so `nx` works in any console
+  - register the .nx file type with an icon and a "Run with Nexium" entry
+
+After installing, open a new console and run:
+  nx doctor        checks the installation and shows which compiler is used
+  nx run examples\hello.nx
+
+Uninstalling removes the files and the PATH entry. Programs you compiled are
+untouched.
