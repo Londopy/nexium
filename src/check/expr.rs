@@ -1012,7 +1012,9 @@ impl<'a> Checker<'a> {
         let bt = self.tys.shallow(base.ty);
         if let TyKind::Array(n, _) = self.tys.kind(bt).clone() {
             if let Some((lo, hi)) = self.expr_range(index) {
-                return lo >= 0 && hi < n as i128;
+                if lo >= 0 && hi < n as i128 {
+                    return true;
+                }
             }
         }
         if let (TExprKind::Local(bl), TExprKind::Local(il)) = (&base.kind, &index.kind) {
@@ -1710,8 +1712,16 @@ impl<'a> Checker<'a> {
             }
         }
         if let TExprKind::Logical { and: true, lhs, rhs } = &c.kind {
+            // both sides hold: a local named twice (`x > 0 and x < 10`) gets
+            // the intersection, not whichever fact was inserted last
             out.extend(self.guard_narrowing(lhs));
-            out.extend(self.guard_narrowing(rhs));
+            for (l, (lo, hi)) in self.guard_narrowing(rhs) {
+                match out.iter_mut().find(|(k, _)| *k == l) {
+                    Some((_, r)) => *r = (r.0.max(lo), r.1.min(hi)),
+                    None => out.push((l, (lo, hi))),
+                }
+            }
+            out.retain(|(_, (lo, hi))| lo <= hi);
         }
         out
     }
