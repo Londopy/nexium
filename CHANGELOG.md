@@ -18,6 +18,23 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
   buffered `reader()`/`writer()`), `TcpListener` (bind, accept with
   timeout, port), `UdpSocket` (bind, send_to, recv_from), `parse_addr`,
   `port_of`, `resolve`. `std.stream` readers and writers work over sockets.
+- `std.http`: a client (`get`, `post`, `request` with headers; HTTP/1.1,
+  Content-Length and chunked bodies, up to five redirects) and a server
+  (`Server.bind`, `serve`, `serve_one`, `Router` with exact and `/*` routes,
+  `serve_static`, `Request.param`/`header`, response helpers `text`, `html`,
+  `json`, `redirect`, `not_found`). Plain `http://`; TLS is left to
+  `@cImport`.
+- `examples/service.nx`: an HTTP service and a client in one program, the
+  phase 2 exit example; `examples/errors_more.nx` covers the fixes below.
+
+### Fixed
+
+- Free functions with the same name in two imported modules (`fs.copy` and
+  `stream.copy`) collided in the generated C.
+- Returning a caught error value (`catch |e| { return e }`) from a function
+  returning `!T` produced a bare error id instead of an error union.
+- An untyped integer literal now coerces into `!T` (`return 7` in a
+  function returning `!i32`).
 
 ## [0.3.0] - 2026-09-19
 

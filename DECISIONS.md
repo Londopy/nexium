@@ -420,6 +420,16 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     seconds to refuse a loopback connection, which is why the tests give
     refusals a generous timeout.
 
+81. **HTTP is a library, not a runtime feature, and it is single-threaded.**
+    `std.http` is written on `std.net` and `std.stream` alone: a client that
+    always sends `Connection: close` (one connection per request keeps the
+    parser trivial and the behaviour obvious), and a server that answers one
+    request at a time. Handlers are plain `fn(*Request) -> Response` values
+    in a `Router`, so a service is a set of functions and no framework. TLS
+    stays outside the standard library until a vetted C binding exists.
+    Concurrency arrives with threads later in the phase; the API will not
+    change when it does, because each connection is already independent.
+
 ## Compiler selection
 
 60. **Native macOS builds use the system compiler.** zig 0.14.1 cannot read

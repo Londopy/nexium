@@ -1520,7 +1520,12 @@ impl<'a> Checker<'a> {
         } else if def.decl.name.starts_with("test:") {
             format!("nx_test_{}", id)
         } else if targs.is_empty() && def.impl_id.is_none() {
-            format!("nx_{}", sanitize(&base_name))
+            // `fs.copy` and `stream.copy` must not both become `nx_copy`
+            if def.module == 0 || def.decl.export.is_some() {
+                format!("nx_{}", sanitize(&base_name))
+            } else {
+                format!("nx_m{}_{}", def.module, sanitize(&base_name))
+            }
         } else {
             format!("nx_{}_{}", sanitize(&base_name), id)
         };

@@ -118,6 +118,7 @@ fn walk_expr(e: &TExpr, used: &mut BTreeSet<LocalId>, declared: &mut BTreeSet<Lo
         | TExprKind::Try(x)
         | TExprKind::OptWrap(x)
         | TExprKind::ErrWrap(x)
+        | TExprKind::ErrToUnion(x)
         | TExprKind::ArrayToSlice(x)
         | TExprKind::ListToSlice(x)
         | TExprKind::StrToSlice(x)

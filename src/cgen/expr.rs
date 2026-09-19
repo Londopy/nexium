@@ -1149,6 +1149,11 @@ impl Gen {
                     format!("(({}){{ .err = 0, .val = {} }})", cn, v)
                 }
             }
+            TExprKind::ErrToUnion(inner) => {
+                let cn = self.cty(e.ty);
+                let v = self.simple(inner);
+                format!("(({}){{ .err = {} }})", cn, v)
+            }
             TExprKind::ErrVal(id) => {
                 let t = self.res(e.ty);
                 match self.p.tys.kind(t) {

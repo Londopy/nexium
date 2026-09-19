@@ -192,6 +192,13 @@ impl<'a> Checker<'a> {
                         return Ok(TExpr { kind: TExprKind::OptWrap(Box::new(inner_e)), ty: target, span });
                     }
                 }
+                // a literal into `!T`: the same, on the success side
+                if let TyKind::ErrUnion(_, inner) = kt {
+                    if let Ok(inner_e) = self.coerce(te.clone(), inner) {
+                        let span = inner_e.span;
+                        return Ok(TExpr { kind: TExprKind::ErrWrap(Box::new(inner_e)), ty: target, span });
+                    }
+                }
                 return Err(te);
             }
             // *String / *List(T) -> []u8 / []T: a pointer to an owning value reads as a view of it
@@ -232,7 +239,11 @@ impl<'a> Checker<'a> {
                         }
                     }
                 }
-                return Ok(TExpr { ty: target, ..te });
+                if matches!(te.kind, TExprKind::ErrVal(_)) {
+                    return Ok(TExpr { ty: target, ..te });
+                }
+                let span = te.span;
+                return Ok(TExpr { kind: TExprKind::ErrToUnion(Box::new(te)), ty: target, span });
             }
             // T -> !T
             (_, TyKind::ErrUnion(_, inner)) => {

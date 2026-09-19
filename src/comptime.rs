@@ -830,6 +830,7 @@ impl<'c, 'a> Interp<'c, 'a> {
             TExprKind::OptWrap(inner) => Some(Value::Opt(Some(Box::new(self.eval(inner, env)?)))),
             TExprKind::OptNull => Some(Value::Opt(None)),
             TExprKind::ErrWrap(inner) => Some(Value::Ok(Box::new(self.eval(inner, env)?))),
+            TExprKind::ErrToUnion(inner) => self.eval(inner, env),
             TExprKind::ErrVal(id) => Some(Value::Err(*id)),
             TExprKind::ArrayToSlice(inner) => match self.eval(inner, env)? {
                 Value::Array(a) => Some(Value::Array(a)),

@@ -15,6 +15,7 @@ by `scripts/std_docs.py` from the doc comments.
 | [`std.args`](#stdargs) | command-line argument parsing, written in Nexium. |
 | [`std.bytes`](#stdbytes) | encodings and byte-level utilities, written in Nexium. |
 | [`std.fs`](#stdfs) | files, directories and paths, written in Nexium. |
+| [`std.http`](#stdhttp) | an HTTP/1.1 client and a small server, written in Nexium over |
 | [`std.json`](#stdjson) | a JSON parser and serializer, written in Nexium. |
 | [`std.lists`](#stdlists) | generic helpers over slices and Lists, written in Nexium. |
 | [`std.net`](#stdnet) | TCP and UDP with addresses, written in Nexium over the `net.*` |
@@ -97,6 +98,48 @@ std.fs: files, directories and paths, written in Nexium. `import std.fs` then: i
 | `stem(path: []u8) -> []u8` | The base name without its extension: `a/b.tar.gz` -> `b.tar`. |
 | `with_extension(path: []u8, ext: []u8) -> String` | The path with its extension replaced (or added): `a/b.txt`, `md` -> `a/b.md`. |
 | `normalize(path: []u8) -> String` | `a/./b/../c//d` -> `a/c/d`. A leading `..` is kept. |
+
+## std.http
+
+std.http: an HTTP/1.1 client and a small server, written in Nexium over std.net and std.stream. `import std.http` then: let r = try http.get("http://example.com/") println("{} {}", .{r.status, r.body.len}) if (r.header("content-type")) |ct| { ... } fn hello(req: *http.Request) -> http.Response { return http.text(200, "hello from Nexium") } var router = http.Router.new() router.get("/", hello) var server = try http.Server.bind("127.0.0.1", 8080) try server.serve(&router)                  // forever, one request at a time The client speaks HTTP/1.1 with `Connection: close`, reads bodies by Content-Length, chunked encoding, or until close, and follows up to five redirects. Plain `http://` only; TLS needs a C library through `@cImport`. The server handles one connection at a time, which is what a tool, a local dashboard or a test needs; threads come later in the roadmap.
+
+Types: `Header`, `Url`, `Response`, `Request`, `Route`, `Router`, `Server`
+
+| function | what it does |
+| --- | --- |
+| `parse_url(s: []u8) -> ?Url` | Parse `http://host[:port][/path]`; null for anything else. |
+| `(method) header(self: *Self, name: []u8) -> ?[]u8` | A header value, case-insensitive; null when absent. |
+| `(method) with_header(self: *mut Self, name: []u8, value: []u8)` | Add or replace a header (builder style). |
+| `(method) ok(self: *Self) -> bool` |  |
+| `reason_for(status: u16) -> []u8` | The standard reason phrase for a status. |
+| `respond(status: u16, content_type: []u8, body: []u8) -> Response` | A response with a body and a content type. |
+| `text(status: u16, body: []u8) -> Response` |  |
+| `html(status: u16, body: []u8) -> Response` |  |
+| `json(status: u16, body: []u8) -> Response` |  |
+| `not_found() -> Response` |  |
+| `redirect(location: []u8) -> Response` | A redirect to `location`. |
+| `content_type_for(path: []u8) -> []u8` | The content type for a file name, by extension. |
+| `read_response(r: *mut stream.Reader) -> !Response` | Read a full response from a reader over the connection. |
+| `send_request(w: *mut stream.Writer, method: []u8, url: *Url, headers: *List(Header), body: []u8) -> !void` | Write a request; `headers` may add or override the defaults. |
+| `request(method: []u8, url_text: []u8, headers: *List(Header), body: []u8) -> !Response` | this client cannot speak (including `https://`). |
+| `get(url: []u8) -> !Response` |  |
+| `post(url: []u8, content_type: []u8, body: []u8) -> !Response` |  |
+| `(method) header(self: *Self, name: []u8) -> ?[]u8` |  |
+| `(method) param(self: *Self, name: []u8) -> ?[]u8` | The value of a query parameter (`?a=1&b=2`), not decoded. |
+| `read_request(r: *mut stream.Reader, peer: []u8) -> !?Request` | connection was closed before a request line. |
+| `write_response(w: *mut stream.Writer, resp: *Response) -> !void` | Write a response with `Content-Length` and `Connection: close`. |
+| `(method) new() -> Router` |  |
+| `(method) route(self: *mut Self, method: []u8, path: []u8, handler: fn(*Request) -> Response)` |  |
+| `(method) get(self: *mut Self, path: []u8, handler: fn(*Request) -> Response)` |  |
+| `(method) post(self: *mut Self, path: []u8, handler: fn(*Request) -> Response)` |  |
+| `(method) serve_static(self: *mut Self, root: []u8)` | Serve files under `root` for paths no route claims. |
+| `(method) handle(self: *Self, req: *Request) -> Response` | The response for a request. |
+| `static_file(root: []u8, path: []u8) -> Response` | directories. |
+| `(method) bind(host: []u8, port: u16) -> !Server` |  |
+| `(method) port(self: *Self) -> !u16` |  |
+| `(method) serve_one(self: *Self, router: *Router, timeout_ms: i64) -> !void` | when nobody connects within `timeout_ms` (0 waits forever). |
+| `(method) serve(self: *Self, router: *Router) -> !void` | Serve forever, one request at a time. |
+| `(method) close(self: *mut Self)` |  |
 
 ## std.json
 

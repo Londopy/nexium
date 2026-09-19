@@ -470,6 +470,8 @@ pub enum TExprKind {
     OptWrap(Box<TExpr>),
     OptNull,
     ErrWrap(Box<TExpr>),
+    /// an `error` value becoming the error side of a `!T`
+    ErrToUnion(Box<TExpr>),
     ErrVal(u32),
     ArrayToSlice(Box<TExpr>),
     ListToSlice(Box<TExpr>),

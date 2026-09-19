@@ -118,12 +118,12 @@ impl TcpStream {
     }
 
     /// A buffered reader over the socket (lines, chunks); does not own it.
-    pub fn reader(self: *Self) -> stream.Reader{
+    pub fn reader(self: *Self) -> stream.Reader {
         return stream.Reader.from_socket(self.sock)
     }
 
     /// A buffered writer over the socket; flush it before waiting for a reply.
-    pub fn writer(self: *Self) -> stream.Writer{
+    pub fn writer(self: *Self) -> stream.Writer {
         return stream.Writer.from_socket(self.sock)
     }
 

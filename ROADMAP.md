@@ -78,6 +78,8 @@ Goal: services and clients without leaving the language.
 - `std.http`: a client (HTTP/1.1, chunked, redirects) and a small server
   (routing, static files) on top of sockets. TLS through `@cImport` of a C
   library (`libtls` or OpenSSL), documented, optional.
+- Status: sockets, `std.net`, `std.http` and `examples/service.nx` are done
+  (single-threaded); TLS and threads are open.
 - Threads (spec 7.2): spawn, join, channels with move semantics, `Mutex`
   as a `ref class`; `shared_mutable` becomes the effect that gates them.
 - Process: `process.run` gains stdin/stdout capture, environment, working

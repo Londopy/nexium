@@ -178,7 +178,14 @@ impl<'a> Walker<'a> {
                     self.expr(x);
                 }
             }
-            TExprKind::Deref(x) | TExprKind::Try(x) | TExprKind::OptWrap(x) | TExprKind::ErrWrap(x) | TExprKind::ArrayToSlice(x) | TExprKind::ListToSlice(x) | TExprKind::StrToSlice(x) => self.expr(x),
+            TExprKind::Deref(x)
+            | TExprKind::Try(x)
+            | TExprKind::OptWrap(x)
+            | TExprKind::ErrWrap(x)
+            | TExprKind::ErrToUnion(x)
+            | TExprKind::ArrayToSlice(x)
+            | TExprKind::ListToSlice(x)
+            | TExprKind::StrToSlice(x) => self.expr(x),
             TExprKind::AddrOf { expr, .. } | TExprKind::Unary { expr, .. } | TExprKind::Cast { expr, .. } | TExprKind::Unwrap { expr, .. } => self.expr(expr),
             TExprKind::Binary { lhs, rhs, .. } | TExprKind::Logical { lhs, rhs, .. } => {
                 self.expr(lhs);

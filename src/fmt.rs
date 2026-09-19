@@ -391,7 +391,13 @@ fn needs_space(toks: &[&Token], i: usize, ctx: &LineCtx) -> bool {
         if let Ident(s) = a {
             let declared = matches!(pp, Some(t) if is_kw(t, "struct") || is_kw(t, "enum") || is_kw(t, "record") || is_kw(t, "class") || is_kw(t, "trait") || is_kw(t, "impl") || is_kw(t, "error") || is_kw(t, "for") || is_kw(t, "using") || is_kw(t, "artifact"));
             let uppercase = s.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false);
-            let type_pos = matches!(pp, Some(Arrow) | Some(Colon) | Some(Bang) | Some(Question) | Some(Star));
+            // `-> http.Response {`: look back over a dotted path to the arrow
+            let mut k = i - 1;
+            while k >= 2 && matches!(toks[k - 1].tok, Dot) && matches!(toks[k - 2].tok, Ident(_)) {
+                k -= 2;
+            }
+            let before = if k >= 1 { Some(&toks[k - 1].tok) } else { None };
+            let type_pos = matches!(before, Some(Arrow) | Some(Colon) | Some(Bang) | Some(Question) | Some(Star));
             if uppercase && !declared && !type_pos && !ctx.in_enum_body && !crate::lexer::is_keyword(s) {
                 return false;
             }
