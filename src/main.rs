@@ -729,6 +729,33 @@ fn cmd_doctor() -> i32 {
     0
 }
 
+thread_local! {
+    /// this process's private Zig cache, removed when the command finishes
+    static ZIG_CACHE: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Remove the per-process Zig cache. Caches left behind by processes that
+/// crashed or were killed are swept once they are an hour old; a younger
+/// sibling may belong to a build running right now (`cargo test` runs many).
+fn cleanup_zig_cache() {
+    let mine = ZIG_CACHE.with(|c| c.borrow_mut().take());
+    if let Some(dir) = mine {
+        let _ = std::fs::remove_dir_all(&dir);
+        if let Some(parent) = dir.parent() {
+            let stale = std::time::Duration::from_secs(3600);
+            if let Ok(rd) = std::fs::read_dir(parent) {
+                for e in rd.flatten() {
+                    let old = e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).map(|age| age > stale).unwrap_or(false);
+                    if old {
+                        let _ = std::fs::remove_dir_all(e.path());
+                    }
+                }
+            }
+            let _ = std::fs::remove_dir(parent);
+        }
+    }
+}
+
 /// Start the C compiler. When it is Zig, its local cache goes under the
 /// output directory, one per nx process: Zig's cache is not safe against
 /// several `zig cc` processes starting at once on Windows (it fails with
@@ -742,6 +769,7 @@ fn cc_process(opts: &Opts, cc: &CcInvocation) -> Command {
     if is_zig && std::env::var_os("ZIG_LOCAL_CACHE_DIR").is_none() {
         let cache = opts.out_dir.join(".zig-cache").join(std::process::id().to_string());
         let _ = std::fs::create_dir_all(&cache);
+        ZIG_CACHE.with(|c| *c.borrow_mut() = Some(cache.clone()));
         cmd.env("ZIG_LOCAL_CACHE_DIR", &cache);
     }
     cmd
@@ -2115,7 +2143,14 @@ fn main() {
     // Deeply nested source (long else-if chains, big match arms) recurses deeply
     // in the checker and the C emitter; run on a thread with a generous stack,
     // as every compiler that walks trees recursively does.
-    let child = std::thread::Builder::new().stack_size(512 << 20).spawn(real_main).expect("spawn compiler thread");
+    let child = std::thread::Builder::new()
+        .stack_size(512 << 20)
+        .spawn(|| {
+            let code = real_main();
+            cleanup_zig_cache();
+            code
+        })
+        .expect("spawn compiler thread");
     let code = child.join().unwrap_or(101);
     exit(code);
 }
