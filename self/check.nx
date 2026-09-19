@@ -7276,6 +7276,16 @@ impl Checker {
                 return self.named_type(m, callee.name.clone()[..], NONE_NAME, targs, n.start, st)
             }
         }
+        if k == parser.NodeKind.MethodCall {
+            // `mod.Type(A)`: a generic type of another module reads as a method call
+            let recv = self.node(m, n.x)
+            if recv.k == parser.NodeKind.Ident {
+                let args = n.kids.clone()
+                var targs = List(usize).new()
+                for a in args { targs.append(self.expr_as_type(a)) }
+                return self.named_type(m, n.name.clone()[..], recv.name.clone()[..], targs, n.start, st)
+            }
+        }
         if k == parser.NodeKind.TupleLit {
             let elems = n.kids.clone()
             var ts = List(usize).new()
