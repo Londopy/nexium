@@ -257,7 +257,7 @@ fn render_negative(mask: u64) -> String {
 }
 
 /// The effects present in a mask, `allocates panics`.
-fn render_effects(mask: u64) -> String {
+pub fn render_effects(mask: u64) -> String {
     var out = String.new()
     for e, i in EFFECT_NAMES {
         if (mask & ((1 as u64) << (i as u64))) != 0 {
@@ -5020,6 +5020,9 @@ fn tquote(b: []u8) -> String {
     s.append("\"")
     return s
 }
+
+/// The words of a space-separated list (a segment description, a where clause).
+pub fn split_words(codes: []u8) -> List(String) { return Checker.split_words(codes) }
 
 fn eff_list(mask: u64) -> String {
     return format("({})", .{render_effects(mask)})
