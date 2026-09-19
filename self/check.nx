@@ -318,6 +318,23 @@ pub struct ImplDef {
     module: usize
 }
 
+/// A function value used where its type forbids effects: checked once every
+/// body is known and effects have propagated.
+pub struct Obligation {
+    inst: usize
+    neg: u64
+    at: usize
+    module: usize
+}
+
+/// A trait's method table for one concrete type: the instances in trait
+/// declaration order. Indexed by `DynFrom`.
+pub struct VTable {
+    trait_id: usize
+    ty: usize
+    insts: List(usize)
+}
+
 /// A function declaration: the node (in its module's tree), its module,
 /// the impl it belongs to (or NONE), and whether it is generic.
 pub struct FnDef {
@@ -724,6 +741,8 @@ pub struct Checker {
     // one local bound to a value while a record constraint is evaluated
     cv_local: usize
     cv_val: CV
+    vtables: List(VTable)
+    obligations: List(Obligation)
 }
 
 fn item_key(module: usize, name: []u8) -> String {
@@ -1790,6 +1809,28 @@ impl Checker {
         }
         self.drain_queue()
         self.propagate_effects()
+        self.check_obligations()
+    }
+
+    /// Closures, function references and trait objects coerced to bounded
+    /// types must not have the effects those types forbid.
+    fn check_obligations(self: *mut Self) {
+        let obs = self.obligations.clone()
+        for o in obs {
+            let violated = self.insts[o.inst].effects & o.neg
+            if violated == 0 { continue }
+            var what = format("`{}`", .{self.insts[o.inst].name})
+            if self.insts[o.inst].is_closure { what = String.from("this closure") }
+            for nm, i in EFFECT_NAMES {
+                if (violated & (1 << (i as u64))) == 0 { continue }
+                self.fail(o.module, o.at, format("{} has the `{}` effect, but the function type it is used as forbids it (`!{}`)", .{what, nm, nm})[..])
+            }
+        }
+    }
+
+    fn oblige(self: *mut Self, inst: usize, neg: u64, at: usize) {
+        if neg == 0 { return }
+        self.obligations.append(Obligation{ .inst = inst, .neg = neg, .at = at, .module = self.cur_module() })
     }
 
     /// effects(f) = own(f) plus the effects of every callee, to a fixpoint.
@@ -2808,6 +2849,22 @@ impl Checker {
             if self.unify(self.tys.list[from].args[0], self.tys.list[to].args[0]) { return self.retype(e, target) }
             return NONE
         }
+        // *T -> dyn Trait (a fat pointer; the pointee must implement the trait)
+        if kf == TK.Ptr and kt == TK.Dyn {
+            let inner = self.tys.resolve(self.tys.list[from].args[0], true)
+            let trait_id = self.tys.list[to].def
+            let tname = self.traits[trait_id].name.clone()
+            if !self.type_satisfies_trait(inner, tname[..]) { return NONE }
+            let vt = self.vtable_for(trait_id, inner, self.tir.nodes[e].start)
+            if vt == NONE { return NONE }
+            // every method must satisfy the trait object's negative bounds
+            let need_neg = EFF_ALL & ~self.tys.list[to].n
+            let vinsts = self.vtables[vt].insts.clone()
+            for vi in vinsts { self.oblige(vi, need_neg, self.tir.nodes[e].start) }
+            let r = self.wrap_node(TKind.DynFrom, e, target)
+            self.tir.nodes[r].a = vt
+            return r
+        }
         if kf == TK.Fn and kt == TK.Fn {
             let pa = self.tys.list[from].args.clone()
             let pb = self.tys.list[to].args.clone()
@@ -2816,8 +2873,10 @@ impl Checker {
                 let need_neg = EFF_ALL & ~self.tys.list[to].n
                 if need_neg != 0 {
                     let k = self.tir.nodes[e].k
-                    if ! (k == TKind.FnToFat or k == TKind.Closure) {
-                        if (self.tys.list[from].n & ~self.tys.list[to].n) != 0 { return NONE }
+                    if k == TKind.FnToFat or k == TKind.Closure {
+                        self.oblige(self.tir.nodes[e].a, need_neg, self.tir.nodes[e].start)
+                    } else if (self.tys.list[from].n & ~self.tys.list[to].n) != 0 {
+                        return NONE
                     }
                 }
                 return self.retype(e, target)
@@ -6352,6 +6411,85 @@ impl Checker {
         return NONE
     }
 
+    /// Build (or reuse) the vtable of `trait_id` for the concrete type `t`;
+    /// NONE when `t` does not implement the trait.
+    fn vtable_for(self: *mut Self, trait_id: usize, t0: usize, at: usize) -> usize {
+        let t = self.tys.resolve(t0, true)
+        for v, i in self.vtables { if v.trait_id == trait_id and v.ty == t { return i } }
+        let tname = self.traits[trait_id].name.clone()
+        let tm = self.traits[trait_id].module
+        var has_impl = false
+        let n = self.impls.len
+        for i in 0..n {
+            if self.impls[i].has_trait and self.impls[i].trait_name == tname and self.match_impl_target(i, t) != null { has_impl = true }
+        }
+        if !has_impl { return NONE }
+        var insts = List(usize).new()
+        let methods = self.traits[trait_id].methods.clone()
+        for meth in methods {
+            let mname = self.node(tm, meth).name.clone()
+            let fid = self.find_inherent_method(t, mname[..])
+            if fid == NONE {
+                self.fail_here(at, format("`{}` implements `{}` but has no method `{}`", .{self.ty_name(t), tname, mname})[..])
+                return NONE
+            }
+            if self.fns[fid].is_generic {
+                self.fail_here(at, format("method `{}` is generic and cannot be called through `dyn {}`", .{mname, tname})[..])
+                return NONE
+            }
+            // impl type params from the concrete type
+            var targs = List(usize).new()
+            let impl_id = self.fns[fid].impl_id
+            if impl_id != NONE {
+                if let b = self.match_impl_target(impl_id, t) { targs = b }
+            }
+            insts.append(self.instantiate(fid, targs))
+        }
+        self.vtables.append(VTable{ .trait_id = trait_id, .ty = t, .insts = insts })
+        return self.vtables.len - 1
+    }
+
+    /// The signature of trait method `idx` seen through a trait object:
+    /// parameter types after `self`, the return type, and whether the
+    /// receiver is mutable. `Self` may only appear in receiver position.
+    fn dyn_method_sig(self: *mut Self, trait_id: usize, idx: usize, at: usize, params: *mut List(usize), ret: *mut usize, mutable: *mut bool) -> bool {
+        let tm = self.traits[trait_id].module
+        let tname = self.traits[trait_id].name.clone()
+        let meth = self.traits[trait_id].methods[idx]
+        let mname = self.node(tm, meth).name.clone()
+        let all = self.node(tm, meth).kids.clone()
+        if all.len == 0 or self.node(tm, all[0]).name != "self" { return false }
+        let st_node = self.node(tm, all[0]).x
+        mutable.*= self.node(tm, st_node).k == parser.NodeKind.TPtr and self.node(tm, st_node).flag
+        let placeholder = self.tys.named(TK.Type, "Self")
+        for pn, i in all {
+            if i == 0 { continue }
+            if self.node(tm, pn).flag { continue }
+            let t = self.resolve_type(tm, self.node(tm, pn).x, placeholder)
+            if self.type_mentions(t, placeholder) {
+                self.fail_here(at, format("method `{}` uses `Self` in a parameter and cannot be called through `dyn {}`", .{mname, tname})[..])
+                return false
+            }
+            params.append(t)
+        }
+        let ret_node = self.node(tm, meth).x
+        var r = self.tys.void()
+        if ret_node != NONE { r = self.resolve_type(tm, ret_node, placeholder) }
+        if self.type_mentions(r, placeholder) {
+            self.fail_here(at, format("method `{}` returns `Self` and cannot be called through `dyn {}`", .{mname, tname})[..])
+            return false
+        }
+        ret.*= r
+        return true
+    }
+
+    fn type_mentions(self: *mut Self, t0: usize, needle: usize) -> bool {
+        let t = self.tys.shallow(t0)
+        if t == needle { return true }
+        for a in self.tys.list[t].args.clone() { if self.type_mentions(a, needle) { return true } }
+        return false
+    }
+
     fn check_static_call(self: *mut Self, t0: usize, name: []u8, args: []usize, expected: usize, start: usize, end: usize) -> usize {
         let t = self.tys.shallow(t0)
         let k = self.tys.kind(t)
@@ -6533,6 +6671,43 @@ impl Checker {
         var base_t = rt
         while self.tys.kind(base_t) == TK.Ptr { base_t = self.tys.shallow(self.tys.list[base_t].args[0]) }
         let bk = self.tys.kind(base_t)
+        if bk == TK.Dyn {
+            let recv2 = self.auto_deref_all(recv)
+            let trait_id = self.tys.list[base_t].def
+            let permitted = self.tys.list[base_t].n
+            let tm = self.traits[trait_id].module
+            let tname = self.traits[trait_id].name.clone()
+            let methods = self.traits[trait_id].methods.clone()
+            var idx = NONE
+            for meth, i in methods { if self.node(tm, meth).name == method { idx = i } }
+            if idx == NONE {
+                self.fail_here(start, format("trait `{}` has no method `{}`", .{tname, method})[..])
+                for a in args { _ = self.check_expr(a, NONE) }
+                return self.error_expr(start, end)
+            }
+            var ps = List(usize).new()
+            var ret = NONE
+            var mutable = false
+            if !self.dyn_method_sig(trait_id, idx, start, &mut ps, &mut ret, &mut mutable) { return self.error_expr(start, end) }
+            if mutable and self.is_place(recv2) and !self.place_mutable(recv2) {
+                self.fail_here(start, format("`{}` mutates its receiver, but this trait object is immutable", .{method})[..])
+            }
+            if args.len != ps.len {
+                self.fail_here(start, format("`{}` takes {} argument(s) but {} were given", .{method, ps.len, args.len})[..])
+                return self.error_expr(start, end)
+            }
+            var targs = List(usize).new()
+            for a, i in args { targs.append(self.arg(a, ps[i], "argument")) }
+            // a dynamic call acquires every effect the trait object permits
+            if permitted != 0 {
+                self.add_effect(permitted, start, "calling through a trait object acquires the effects its type permits")
+            }
+            let r = self.mk(TKind.DynCall, ret, start, end)
+            self.tir.nodes[r].a = idx
+            self.tir.nodes[r].kids.append(recv2)
+            for ta in targs { self.tir.nodes[r].kids.append(ta) }
+            return r
+        }
         if bk == TK.Struct or bk == TK.Enum or bk == TK.Distinct {
             let fid = self.find_inherent_method(base_t, method[..])
             if fid != NONE {
@@ -7989,6 +8164,7 @@ impl Checker {
                 .witnesses = List(Witness).new(), .callees = List(usize).new(),
         })
         self.check_closure_body(id, body_node, &cap_names, &cap_refs, &cap_muts, &cap_tys, &cap_starts, &cap_ends)
+        if exp_eff != EFF_ALL { self.oblige(id, EFF_ALL & ~exp_eff, start) }
         let ft = self.tys.func(ptys, ret, exp_eff)
         let r = self.mk(TKind.Closure, ft, start, end)
         self.tir.nodes[r].a = id
@@ -8098,7 +8274,7 @@ pub fn new_checker(own mods: List(Mod)) -> Checker {
         .insts = List(Inst).new(), .inst_map = Map(String, usize).new(), .queue = List(usize).new(), .tir = Tir{ .nodes = List(T).new() },
         .ctxs = List(FnCtx).new(), .main_inst = NONE, .tests = List(usize).new(),
         .env_names = List(String).new(), .env_tys = List(usize).new(),
-        .record_new_mode = false, .cv_local = NONE, .cv_val = cv_none(),
+        .record_new_mode = false, .cv_local = NONE, .cv_val = cv_none(), .vtables = List(VTable).new(), .obligations = List(Obligation).new(),
     }
 }
 
