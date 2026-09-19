@@ -209,6 +209,20 @@ fn dir_of(p: &Path) -> String {
     }
 }
 
+/// Queue the embedded std modules a module imports (`import std.x`).
+fn std_imports_of(m: &ast::Module, pending: &mut Vec<String>) {
+    for item in &m.items {
+        if let ast::Item::Import(im) = item {
+            if im.path.len() == 2 && im.path[0] == "std" && stdlib::source(&im.path[1]).is_some() {
+                let mname = im.path.join(".");
+                if !pending.contains(&mname) {
+                    pending.push(mname);
+                }
+            }
+        }
+    }
+}
+
 fn load(root: &Path) -> Result<Loaded, ()> {
     let mut sm = SourceMap::default();
     let mut modules = Vec::new();
@@ -271,7 +285,11 @@ fn load(root: &Path) -> Result<Loaded, ()> {
         dirs.push(dir_of(&path));
         modules.push(m);
     }
-    for mname in std_pending {
+    // std modules may import each other; new names join the end of the queue
+    let mut si = 0;
+    while si < std_pending.len() {
+        let mname = std_pending[si].clone();
+        si += 1;
         let short = mname.trim_start_matches("std.").to_string();
         let src = stdlib::source(&short).unwrap();
         let file = sm.add(format!("<std>/{}.nx", short), src.to_string());
@@ -282,6 +300,7 @@ fn load(root: &Path) -> Result<Loaded, ()> {
             eprint!("{}", sm.render(d));
             had_error = true;
         }
+        std_imports_of(&m, &mut std_pending);
         names.push(mname);
         dirs.push("std".into());
         modules.push(m);
@@ -1074,13 +1093,18 @@ pub fn repl_check(text: &str, start: usize, seed: Vec<(String, tir::Value)>) -> 
             }
         }
     }
-    for mname in std_pending {
+    let mut si = 0;
+    while si < std_pending.len() {
+        let mname = std_pending[si].clone();
+        si += 1;
         let short = mname.trim_start_matches("std.").to_string();
         let src = stdlib::source(&short).unwrap();
         let f = sm.add(format!("<std>/{}.nx", short), src.to_string());
         let (tk, _) = lexer::Lexer::new(src, f).lex();
         let mut pp = parser::Parser::new(tk, f);
-        modules.push(pp.parse_module());
+        let m = pp.parse_module();
+        std_imports_of(&m, &mut std_pending);
+        modules.push(m);
         names.push(mname);
         dirs.push("std".into());
     }

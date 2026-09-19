@@ -389,6 +389,16 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     payloads through pointers, and moves in loops, and it found two compiler
     bugs on its first run (literal field order, reassignment after a move).
 
+78. **Text is bytes; code points are a library.** `String` and `[]u8` stay
+    byte-oriented and `std.text` decodes UTF-8 on demand, so the core never
+    pays for or argues about a character model. Case mapping covers only
+    the alphabets whose upper/lower pairs are a fixed offset (ASCII, Latin-1,
+    Latin Extended-A, Greek, Cyrillic); full Unicode tables would be larger
+    than the rest of the standard library. Terminal width follows the
+    wcwidth convention. A program's `nx test` runs its own tests and its
+    file modules' tests, never the embedded std modules' tests, which the
+    compiler's suite covers.
+
 ## Compiler selection
 
 60. **Native macOS builds use the system compiler.** zig 0.14.1 cannot read

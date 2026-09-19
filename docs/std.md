@@ -20,6 +20,8 @@ by `scripts/std_docs.py` from the doc comments.
 | [`std.num`](#stdnum) | integer utilities, written in Nexium. |
 | [`std.regex`](#stdregex) | regular expressions without backtracking, written in Nexium. |
 | [`std.strings`](#stdstrings) | text utilities on `[]u8` and `String`, written in Nexium. |
+| [`std.testing`](#stdtesting) | conveniences for `test` blocks, written in Nexium. |
+| [`std.text`](#stdtext) | UTF-8 text by code point, written in Nexium. |
 | [`std.time`](#stdtime) | dates, durations and timers, written in Nexium. |
 
 ## std.args
@@ -220,6 +222,52 @@ std.strings: text utilities on `[]u8` and `String`, written in Nexium. `import s
 | `reverse(s: []u8) -> String` | Bytes in reverse order (bytes, not code points). |
 | `split_once(s: []u8, sep: []u8) -> ?([]u8, []u8)` | Cut at the first `sep`: (before, after), or null when `sep` is absent. |
 | `ellipsize(s: []u8, max: usize) -> String` | Truncate to `max` bytes, appending `...` when something was cut. |
+
+## std.testing
+
+std.testing: conveniences for `test` blocks, written in Nexium. `import std.testing` then, inside a test: testing.expect_approx(area, 3.14159, 0.001) testing.expect_err(i32, parse("nope")) testing.expect_contains(output, "42 items") testing.expect_lines(rendered, expected)    // reports the first differing line try testing.snapshot("report", rendered)     // compares to snapshots/report.txt Snapshots live in `snapshots/<name>.txt` under the current directory. A missing file is written and the test passes; a mismatch fails with the first differing line. Set `NX_UPDATE_SNAPSHOTS=1` to rewrite them all.
+
+| function | what it does |
+| --- | --- |
+| `approx(a: f64, b: f64, eps: f64) -> bool` | Are two floats within `eps` of each other? |
+| `expect_approx(a: f64, b: f64, eps: f64)` | Panics unless `a` and `b` are within `eps`. |
+| `is_err(comptime T: type, own r: !T) -> bool` | Did the call fail? (Any error counts.) |
+| `expect_err(comptime T: type, own r: !T)` | Panics unless the result is an error. |
+| `expect_error(comptime T: type, own r: !T, err: error)` | Panics unless the result is exactly `err`. |
+| `expect_contains(hay: []u8, needle: []u8)` | Panics unless `hay` contains `needle`. |
+| `expect_lines(actual: []u8, expected: []u8)` | Compares line by line; panics naming the first line that differs. |
+| `snapshot_in(dir: []u8, name: []u8, actual: []u8) -> !void` | NX_UPDATE_SNAPSHOTS is set. |
+| `snapshot(name: []u8, actual: []u8) -> !void` | `snapshot_in("snapshots", name, actual)`. |
+
+## std.text
+
+std.text: UTF-8 text by code point, written in Nexium. `import std.text` then: let n = text.char_count("héllo")            // 5, not 6 for (text.chars("héllo")) |cp| { ... }        // code points as u32 let w = text.width("日本語")                   // 6 columns on a terminal let s = text.to_upper("straße")               // "STRASSE" is not attempted: "STRAßE" let t = text.truncate("héllo wörld", 5)       // "héllo", never mid-character let ok = text.is_valid("...") Strings are bytes; this module reads them as UTF-8, tolerating bad input (an invalid byte decodes as U+FFFD and advances one byte). Case mapping covers ASCII, Latin-1, Latin Extended-A, Greek and Cyrillic, which is what is cheap to do without tables. `width` follows the usual terminal convention: East Asian wide and fullwidth forms take two columns, combining marks and zero-width characters take none.
+
+Types: `Decoded`
+
+| function | what it does |
+| --- | --- |
+| `decode_at(s: []u8, i: usize) -> Decoded` | U+FFFD with length 1 so callers always make progress. |
+| `push(out: *mut String, cp: u32)` | Append a code point as UTF-8. |
+| `encode(cp: u32) -> String` | A code point as a String. |
+| `is_valid(s: []u8) -> bool` | Is the text well-formed UTF-8? |
+| `chars(s: []u8) -> List(u32)` | All code points. |
+| `char_count(s: []u8) -> usize` | The number of code points. |
+| `byte_offset(s: []u8, n: usize) -> usize` | The byte offset of the `n`th code point (or `s.len` when past the end). |
+| `char_at(s: []u8, n: usize) -> ?u32` | The `n`th code point, or null. |
+| `slice(s: []u8, from: usize, to: usize) -> []u8` | Code points `from` (inclusive) to `to` (exclusive), as a slice of `s`. |
+| `truncate(s: []u8, n: usize) -> []u8` | The first `n` code points; never cuts a character in half. |
+| `reverse(s: []u8) -> String` | The code points in reverse order. |
+| `is_zero_width(cp: u32) -> bool` | Does the code point take no columns (combining marks, zero-width, controls)? |
+| `is_wide(cp: u32) -> bool` | Does the code point take two columns (East Asian wide and fullwidth)? |
+| `char_width(cp: u32) -> usize` | Columns a code point takes on a terminal: 0, 1 or 2. |
+| `width(s: []u8) -> usize` | Columns the text takes on a terminal. |
+| `pad_right(s: []u8, columns: usize) -> String` | Pad on the right to `columns` terminal columns (by width, not bytes). |
+| `upper_char(cp: u32) -> u32` | Latin-1, Latin Extended-A (pairs), Greek, Cyrillic. |
+| `lower_char(cp: u32) -> u32` | Lower-case a code point; the inverse of `upper_char`. |
+| `to_upper(s: []u8) -> String` |  |
+| `to_lower(s: []u8) -> String` |  |
+| `eq_ignore_case(a: []u8, b: []u8) -> bool` | Compare ignoring case, using the same mapping as `to_lower`. |
 
 ## std.time
 

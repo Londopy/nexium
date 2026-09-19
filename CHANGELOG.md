@@ -37,6 +37,18 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
   enums, nested optionals and enum payloads are checked precisely instead of
   demanding a catch-all arm.
 - `nx test FILE --filter NAME` runs the tests whose names contain NAME.
+- `std.text`: UTF-8 by code point (`decode_at`, `chars`, `char_count`,
+  `char_at`, `slice`, `truncate`, `reverse`, `encode`, `is_valid`), terminal
+  `width` (wide and zero-width aware), and case mapping for ASCII, Latin-1,
+  Latin Extended-A, Greek and Cyrillic (`to_upper`, `to_lower`,
+  `eq_ignore_case`).
+- `std.testing`: `approx`, `expect_approx`, `is_err`, `expect_err`,
+  `expect_error`, `expect_contains`, `expect_lines` (names the first
+  differing line) and file snapshots (`snapshot`, `snapshot_in`;
+  `NX_UPDATE_SNAPSHOTS=1` rewrites them).
+- Embedded std modules can import each other; `error` is a type name (the
+  anonymous error set), and `own` is accepted on generic parameters.
+- `nx test` no longer runs the tests of imported std modules.
 - `examples/tool.nx`: a log scanner (walk a tree, parse timestamps, filter
   by a date window and a regex, tally by level) in 142 lines, the phase 1
   exit example of the roadmap; runs on `examples/data/logs` by default.

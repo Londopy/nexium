@@ -65,6 +65,7 @@ default (`verbose: u8 = 0`).
 | `*T`, `*mut T` | pointer to one value (`&x`, `&mut x`, `p.*`) |
 | `?T` | optional; `null` is the empty value |
 | `!T`, `Set!T` | error union |
+| `error` | any error value (the anonymous error set) |
 | `List(T)`, `String`, `Map(K, V)` | owning collections (values, section 5.3) |
 | `fn(A, B) -> R !effects` | function value (closures and functions coerce to it) |
 | `(A, B)` | tuple; fields `.0`, `.1`; also allowed as a type argument, `List((A, B))` |

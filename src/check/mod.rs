@@ -1112,6 +1112,7 @@ impl<'a> Checker<'a> {
             "char" => self.tys.char(),
             "void" => self.tys.void(),
             "never" => self.tys.never(),
+            "error" => self.tys.intern(TyKind::ErrorSet(None)),
             "type" => self.tys.type_ty(),
             "anytype" => self.tys.fresh_infer(),
             _ => return None,
@@ -1481,7 +1482,8 @@ impl<'a> Checker<'a> {
             }
             let ty = self.resolve_type(&p.ty, &generics, self_ty, def.module);
             let lid = locals.len() as LocalId;
-            if p.owned && !self.needs_drop(ty) {
+            // in a generic function the instantiation decides whether `own` matters
+            if p.owned && !self.needs_drop(ty) && def.type_params.is_empty() {
                 let tn = self.type_name(ty);
                 self.error(p.span, format!("`own` applies to owning types (`List`, `String`, `Map`, or structs holding them); `{}` is copied anyway", tn));
             }
@@ -1563,7 +1565,10 @@ impl<'a> Checker<'a> {
                 self.error(span, "exported functions cannot take `own` parameters; the host language cannot hand over ownership");
             }
         }
-        if is_test && !test_comptime {
+        // an imported std module's tests belong to the compiler's own suite,
+        // not to every program that imports it
+        let from_std = self.module_names.get(def.module as usize).map(|n| n.starts_with("std.")).unwrap_or(false);
+        if is_test && !test_comptime && !(from_std && def.module != 0) {
             self.tests.push(id);
         }
         // store generics for the body check
