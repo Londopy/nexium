@@ -17,14 +17,22 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
   coercions, dynamic calls, effect bounds on function values.
   `examples/generics.nx`, `examples/tests.nx`, `examples/tour.nx`,
   `examples/records.nx`, `examples/dyn.nx` and `std/thread.nx` join the
-  body comparison (44 sources).
+  body comparison; and binary patterns and construction: `examples/binary.nx`
+  and `examples/binary_sizes.nx` join too (46 sources).
 - `examples/records.nx`: compile-time, `.new` and run-time constraint checks.
+- `examples/binary_sizes.nx`: float, signed, little-endian and computed-size
+  segments, a remainder written back out.
 
 ### Fixed
 
 - A `break` inside an `orelse` default, a call argument or any other nested
   expression now ends a `while true`; a non-void function that ended in such
   a loop was accepted without a return value.
+- A binary segment sized by an expression (`payload:len*8`) is in bits like a
+  constant size; the generated C scaled it by eight again, so such patterns
+  never matched and such constructions wrote past the intended width.
+- A `!void` tail expression (a `match` whose arms print, a call) at the end
+  of a function returning `!void` is returned; it was reported as unused.
 
 ## [0.6.1] - 2026-09-19
 
