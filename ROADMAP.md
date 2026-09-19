@@ -130,8 +130,8 @@ Goal: `nx` built by `nx`. Runs in parallel with phases 1 to 3; each stage is
 checked against the Rust compiler on identical inputs.
 
 - Parser (`self/parser.nx`): id-arena AST, dumped in the shape of
-  `nx parse`, diffed over every example and std module. Needs the tuple
-  and enum machinery the JSON module proved.
+  `nx sexp`, diffed over every example and std module. Done in 0.6.0:
+  identical on all 46 sources, enforced by `cargo test`.
 - Checker (`self/check.nx`): the largest stage. Types interned in a `List`,
   effects by fixpoint, ownership, monomorphization. Verified by the
   compile-fail suite producing identical messages.
@@ -140,6 +140,9 @@ checked against the Rust compiler on identical inputs.
 - Bootstrap: Rust `nx` builds `nx1`; `nx1` builds `nx2`; `nx1` and `nx2`
   produce identical output. Then the Rust compiler moves to `bootstrap/`,
   kept for building the first Nexium compiler on a fresh machine.
+
+- Status (0.6.0): syntax settled, lexer and parser done; the checker is
+  next.
 
 Exit: `cargo` is no longer needed to build `nx` from a release tarball.
 
