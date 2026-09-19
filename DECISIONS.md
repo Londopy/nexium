@@ -154,9 +154,12 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     functions (including variadics), typedefs, structs of scalars/pointers/
     arrays, enums, and integer/float/string macros. `const T*` maps to `*T`,
     other pointers to `*mut T`, `void*` to `*mut u8`, C `long` to i32 on
-    Windows and i64 elsewhere. Unsupported declarations (unions, bit-fields,
-    function pointers, function-like macros such as `stdout`) are imported as
-    names that explain themselves when used. Imported structs keep their C
+    Windows and i64 elsewhere. A struct with fields that cannot be translated
+    (function pointers, bit-fields, nested definitions) becomes an opaque type
+    usable through pointers, because that is how Apple's `FILE` is defined
+    and every stdio function takes `FILE*`. Unsupported declarations (unions,
+    function-pointer typedefs, function-like macros such as `stdout`) are
+    imported as names that explain themselves when used. Imported structs keep their C
     spelling in the generated code, so the header stays the single source of
     truth for layout. `@cstr("...")` gives a NUL-terminated `*u8`.
 41. **Vendored C** is declared with `artifact link { c_sources = [...],

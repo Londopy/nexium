@@ -24,5 +24,11 @@ fn main() {
         println("distance {} version {} name {}", .{cv.cv_distance(a, b), cv.CVENDOR_VERSION, cv.CVENDOR_NAME})
         let xs: [4]u32 = [1, 2, 3, 4]
         println("sum {} fast {} slow {}", .{cv.cv_sum(xs[..].ptr, 4), cv.cv_mode_speed(cv.CV_FAST), cv.cv_mode_speed(cv.CV_SLOW)})
+
+        // an opaque handle: its struct has a function pointer field, so it is only used through pointers
+        let counter = cv.cv_counter_new(40)
+        _ = cv.cv_counter_tick(counter)
+        println("counter {}", .{cv.cv_counter_tick(counter)})
+        cv.cv_counter_free(counter)
     }
 }

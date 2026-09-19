@@ -363,21 +363,17 @@ impl CParser {
                         _ => Ok(Vec::new()), // opaque struct: usable through pointers
                     },
                 };
-                match fields {
-                    Ok(f) => {
-                        if seen.insert(name.clone()) {
-                            ci.structs.push((name.clone(), name.clone(), f));
-                        }
-                        let te = TypeExpr::named(&name, self.span);
-                        self.typedefs.insert(name.clone(), Ok(te.clone()));
-                        if let Some(t) = tag {
-                            self.typedefs.insert(format!("struct {}", t), Ok(te));
-                        }
-                    }
-                    Err(why) => {
-                        self.typedefs.insert(name.clone(), Err(why.clone()));
-                        ci.unsupported.insert(name, why);
-                    }
+                // fields we cannot translate make the struct opaque (usable through
+                // pointers, like a forward declaration), not unusable: Apple's FILE
+                // holds function pointers and every stdio function takes FILE*
+                let f = fields.unwrap_or_default();
+                if seen.insert(name.clone()) {
+                    ci.structs.push((name.clone(), name.clone(), f));
+                }
+                let te = TypeExpr::named(&name, self.span);
+                self.typedefs.insert(name.clone(), Ok(te.clone()));
+                if let Some(t) = tag {
+                    self.typedefs.insert(format!("struct {}", t), Ok(te));
                 }
                 return Some(());
             }
@@ -415,18 +411,12 @@ impl CParser {
                     return Some(());
                 }
                 let tag = tag.clone();
-                match self.struct_fields(b) {
-                    Ok(f) => {
-                        if seen.insert(tag.clone()) {
-                            ci.structs.push((tag.clone(), format!("struct {}", tag), f));
-                        }
-                        self.typedefs.insert(format!("struct {}", tag), Ok(TypeExpr::named(&tag, self.span)));
-                    }
-                    Err(why) => {
-                        self.typedefs.insert(format!("struct {}", tag), Err(why.clone()));
-                        ci.unsupported.insert(tag, why);
-                    }
+                // untranslatable fields: opaque, see the typedef case above
+                let f = self.struct_fields(b).unwrap_or_default();
+                if seen.insert(tag.clone()) {
+                    ci.structs.push((tag.clone(), format!("struct {}", tag), f));
                 }
+                self.typedefs.insert(format!("struct {}", tag), Ok(TypeExpr::named(&tag, self.span)));
             }
             return Some(());
         }

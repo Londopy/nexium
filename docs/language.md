@@ -254,8 +254,11 @@ unsafe {
 `@cImport` runs the C preprocessor and imports functions, typedefs, structs,
 enums, and literal macros. `const T*` becomes `*T`, other pointers `*mut T`,
 `void*` becomes `*mut u8`. Foreign calls need `unsafe` and carry the `ffi`
-effect. Declarations that cannot be translated (unions, bit-fields, function
-pointers, function-like macros) are named in the error when used.
+effect. A struct whose fields cannot be translated (function pointers,
+bit-fields, nested definitions) is imported as an opaque type, usable through
+pointers like a forward declaration; that is how `FILE` works on every libc.
+Declarations that cannot be translated at all (unions, function-pointer
+typedefs, function-like macros) are named in the error when used.
 
 ## Compile-time tests
 
