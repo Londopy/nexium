@@ -226,6 +226,42 @@ fn self_hosted_checker_matches_signatures() {
 /// The checker written in Nexium, stage 2: the full typed IR matches `nx tir`
 /// on every source it already covers (C imports and the diagnostics-only
 /// passes are the remaining stages). The list only grows.
+/// The checker written in Nexium, stage 3: every compile-fail case is
+/// rejected with every message the Rust checker produces (the notes too).
+#[test]
+fn self_hosted_checker_rejects_compile_fail_cases() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = root.join("nx-out").join("self_check_fail");
+    let exe = out_dir.join(if cfg!(windows) { "self_check.exe" } else { "self_check" });
+    let build = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).args(["build", "self/check.nx", "-o"]).arg(&exe).arg("--out-dir").arg(&out_dir).current_dir(root).output().expect("run nx");
+    assert!(
+        build.status.success(),
+        "building self/check.nx failed:
+{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let dir = root.join("tests").join("compile_fail");
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(&dir).expect("compile_fail dir").filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().map(|x| x == "nx").unwrap_or(false)).collect();
+    entries.sort();
+    for path in entries {
+        let text = std::fs::read_to_string(&path).unwrap();
+        let expects: Vec<&str> = text.lines().filter_map(|l| l.strip_prefix("// EXPECT:")).map(|s| s.trim()).collect();
+        let out = std::process::Command::new(&exe).arg(&path).current_dir(root).output().expect("run self check");
+        assert!(!out.status.success(), "self/check.nx accepted {}", path.display());
+        let diag = String::from_utf8_lossy(&out.stderr);
+        for e in expects {
+            assert!(
+                diag.contains(e),
+                "self/check.nx on {} did not report `{}`; it said:
+{}",
+                path.display(),
+                e,
+                diag
+            );
+        }
+    }
+}
+
 #[test]
 fn self_hosted_checker_matches_bodies() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
