@@ -2,7 +2,7 @@
   "name": "nexium",
   "displayName": "Nexium",
   "description": "Syntax highlighting, diagnostics, and hover for the Nexium programming language (via `nx lsp`).",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "publisher": "Londopy",
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/Londopy/nexium" },
