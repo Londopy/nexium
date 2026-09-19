@@ -132,6 +132,25 @@ impl<'a> Checker<'a> {
                 }
                 e
             }
+            // `opt.?`, `opt orelse d`, `try res` on a local move the whole local
+            TExprKind::Unwrap { expr: inner, .. } | TExprKind::OrElse { expr: inner, .. } | TExprKind::Try(inner) if matches!(inner.kind, TExprKind::Local(_)) => {
+                let l = match inner.kind {
+                    TExprKind::Local(l) => l,
+                    _ => unreachable!(),
+                };
+                let cur = self.cur.as_ref().unwrap();
+                let local = &cur.locals[l as usize];
+                if local.is_param && !local.owned {
+                    let n = local.name.clone();
+                    let tn = self.type_name(t);
+                    self.error_note(e.span, format!("cannot move the `{}` out of the parameter `{}`; parameters are borrowed", tn, n), None, "use `.clone()` to take an owned copy");
+                } else {
+                    let cur = self.cur.as_mut().unwrap();
+                    cur.moved.insert(l);
+                    cur.moved_spans.insert(l, e.span);
+                }
+                e
+            }
             _ if is_borrowed_view(&e) => {
                 let tn = self.type_name(t);
                 self.error_note(e.span, format!("cannot move a `{}` out of a field or element", tn), None, "use `.clone()` for an owned copy");

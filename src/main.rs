@@ -193,12 +193,21 @@ struct Loaded {
 }
 
 /// Load the root file and every module it imports (files next to it).
+/// The directory a source file lives in, as a string; "." for a bare file name
+/// (whose `parent()` is the empty path, not `None`).
+fn dir_of(p: &Path) -> String {
+    match p.parent() {
+        Some(d) if !d.as_os_str().is_empty() => d.to_string_lossy().to_string(),
+        _ => ".".into(),
+    }
+}
+
 fn load(root: &Path) -> Result<Loaded, ()> {
     let mut sm = SourceMap::default();
     let mut modules = Vec::new();
     let mut names = Vec::new();
     let mut dirs = Vec::new();
-    let root_dir = root.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."));
+    let root_dir = PathBuf::from(dir_of(root));
     let root_name = root.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "main".into());
     let mut queue: Vec<(String, PathBuf)> = vec![(root_name, root.to_path_buf())];
     let mut seen: HashMap<String, ()> = HashMap::new();
@@ -252,7 +261,7 @@ fn load(root: &Path) -> Result<Loaded, ()> {
             }
         }
         names.push(name);
-        dirs.push(path.parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| ".".into()));
+        dirs.push(dir_of(&path));
         modules.push(m);
     }
     for mname in std_pending {
@@ -579,9 +588,7 @@ fn compile_c(opts: &Opts, c_path: &Path, out: &Path, kind: &str) -> Result<(), (
     for d in opts.include_dirs.iter().chain(li.include.iter()) {
         cmd.arg(format!("-I{}", d));
     }
-    if let Some(dir) = opts.file.parent() {
-        cmd.arg(format!("-I{}", dir.display()));
-    }
+    cmd.arg(format!("-I{}", dir_of(&opts.file)));
     for src in opts.c_sources.iter().chain(li.c_sources.iter()) {
         cmd.arg(src);
     }
@@ -618,9 +625,7 @@ fn compile_c(opts: &Opts, c_path: &Path, out: &Path, kind: &str) -> Result<(), (
         for d in opts.include_dirs.iter().chain(li.include.iter()) {
             cmd2.arg(format!("-I{}", d));
         }
-        if let Some(dir) = opts.file.parent() {
-            cmd2.arg(format!("-I{}", dir.display()));
-        }
+        cmd2.arg(format!("-I{}", dir_of(&opts.file)));
         cmd2.arg(c_path).arg("-o").arg(out);
         return match cmd2.status() {
             Ok(st) if st.success() => Ok(()),
@@ -897,7 +902,7 @@ fn analyze_text(path: &str, text: &str) -> (Vec<lsp::Diagnostic>, Option<(Loaded
     all.extend(p.diags.clone());
     let mut result = None;
     if all.is_empty() {
-        let dir = Path::new(path).parent().map(|d| d.to_string_lossy().to_string()).unwrap_or_else(|| ".".into());
+        let dir = dir_of(Path::new(path));
         // imported modules are loaded from disk
         let mut loaded = Loaded { sm, modules: vec![m], names: vec![Path::new(path).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "main".into())], dirs: vec![dir.clone()] };
         for item in loaded.modules[0].items.clone() {
@@ -924,7 +929,7 @@ fn analyze_text(path: &str, text: &str) -> (Vec<lsp::Diagnostic>, Option<(Loaded
                     let mm = pp.parse_module();
                     loaded.modules.push(mm);
                     loaded.names.push(im.path.join("."));
-                    loaded.dirs.push(candidate.parent().map(|d| d.to_string_lossy().to_string()).unwrap_or_else(|| ".".into()));
+                    loaded.dirs.push(dir_of(&candidate));
                 }
             }
         }
@@ -1058,7 +1063,7 @@ pub fn repl_check(text: &str, start: usize, seed: Vec<(String, tir::Value)>) -> 
                 let mut pp = parser::Parser::new(tk, f);
                 modules.push(pp.parse_module());
                 names.push(im.path.join("."));
-                dirs.push(candidate.parent().map(|d| d.to_string_lossy().to_string()).unwrap_or_else(|| ".".into()));
+                dirs.push(dir_of(&candidate));
             }
         }
     }

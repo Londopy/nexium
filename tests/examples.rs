@@ -133,6 +133,16 @@ fn gui_headless_tests_pass() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(std::fs::metadata(&shot).map(|m| m.len() > 640 * 440 * 3).unwrap_or(false), "screenshot not written");
+    // the same build from inside the directory, with a bare file name: the
+    // declared C source must still be compiled in
+    let out =
+        std::process::Command::new(env!("CARGO_BIN_EXE_nx")).args(["build", "demo.nx", "--out-dir"]).arg(root.join("nx-out").join("demo-bare")).current_dir(root.join("gui")).output().expect("run nx");
+    assert!(
+        out.status.success(),
+        "build with a bare file name failed:
+{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 /// Every module of the standard library (written in Nexium, embedded in the

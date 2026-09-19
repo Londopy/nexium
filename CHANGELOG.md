@@ -22,6 +22,16 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
   the other std modules run at the prompt. A statement the interpreter
   cannot evaluate is reported with the position of the failing expression.
 
+### Fixed
+
+- Building a program by its bare file name (`nx run app.nx` from inside its
+  directory) dropped the C sources declared in `artifact link`: the empty
+  parent directory produced a lone `-I` that swallowed the next argument.
+- `opt.?`, `opt orelse d` and `try res` on a local holding an owning value
+  now move the local: it is no longer dropped a second time at scope end
+  (this crashed GUI programs on exit), and a later use is reported as a use
+  after move.
+
 ## [0.2.0] - 2026-09-19
 
 ### Added

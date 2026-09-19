@@ -677,6 +677,22 @@ impl Gen {
                 return t;
             }
         }
+        // `opt.?`, `opt orelse d`, `try res` on a local: the payload moves out, so
+        // the source is zeroed afterwards (a zeroed optional is null, a zeroed
+        // resource is empty) and its drop becomes a no-op
+        if let TExprKind::Unwrap { expr: inner, .. } | TExprKind::OrElse { expr: inner, .. } | TExprKind::Try(inner) = &e.kind {
+            if let TExprKind::Local(l) = &inner.kind {
+                let rt = self.res(e.ty);
+                if self.needs_drop(e.ty) && !self.is_ref(rt) {
+                    let name = self.local_name(*l);
+                    let cn = self.cty(e.ty);
+                    let v = self.expr(e);
+                    let t = self.tmp();
+                    self.line(format!("{} {} = {}; memset(&{}, 0, sizeof {});", cn, t, v, name, name));
+                    return t;
+                }
+            }
+        }
         self.expr(e)
     }
 
