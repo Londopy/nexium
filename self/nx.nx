@@ -88,6 +88,10 @@ fn parse_opts(args: [][]u8) -> ?Opts {
     } else if let z = os.env("NX_ZIG") {
         o.cc.append(String.from(z))
         o.cc.append(String.from("cc"))
+    } else if is_macos_target(o.target[..]) and o.target.len == 0 {
+        // zig 0.14 cannot link against the current Xcode SDK; the system
+        // compiler can (the Rust driver makes the same choice)
+        o.cc.append(String.from("cc"))
     } else {
         o.cc.append(String.from("zig"))
         o.cc.append(String.from("cc"))

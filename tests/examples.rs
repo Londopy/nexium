@@ -17,6 +17,29 @@ fn have_cc() -> bool {
     Command::new("zig").arg("version").output().map(|o| o.status.success()).unwrap_or(false)
 }
 
+/// The C compiler that links programs on this host: zig, except on macOS,
+/// where zig 0.14 cannot link against the current Xcode SDK and the drivers
+/// use the system compiler. Preprocessing (`@cImport`) always goes through
+/// zig, on every host, so that both checkers see the same headers.
+fn host_cc() -> Command {
+    if cfg!(target_os = "macos") {
+        Command::new("cc")
+    } else {
+        let mut c = Command::new("zig");
+        c.arg("cc");
+        c
+    }
+}
+
+/// Point a self-hosted driver at the linker `host_cc` names.
+fn driver_cc(cmd: &mut Command) -> &mut Command {
+    if cfg!(target_os = "macos") {
+        cmd.env("NX_CC", "cc")
+    } else {
+        cmd.env("NX_ZIG", "zig")
+    }
+}
+
 fn normalize(s: &str) -> String {
     s.replace("\r\n", "\n").replace('\\', "/")
 }
@@ -357,10 +380,10 @@ fn bootstrap_reaches_a_fixed_point() {
     let c2 = out_dir.join("nx2.c");
     std::fs::write(&c2, &emit.stdout).unwrap();
     let nx2 = out_dir.join(if cfg!(windows) { "nx2.exe" } else { "nx2" });
-    let cc = std::process::Command::new("zig").args(["cc", "-std=gnu11", "-O0", "-w", "-fno-strict-aliasing", "-o"]).arg(&nx2).arg(&c2).current_dir(root).output().expect("run zig cc");
+    let cc = host_cc().args(["-std=gnu11", "-O0", "-w", "-fno-strict-aliasing", "-o"]).arg(&nx2).arg(&c2).current_dir(root).output().expect("run the C compiler");
     assert!(
         cc.status.success(),
-        "zig cc could not build nx2:
+        "the C compiler could not build nx2:
 {}",
         String::from_utf8_lossy(&cc.stderr)
     );
@@ -394,13 +417,13 @@ fn self_hosted_driver_builds_itself() {
     let build = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).args(["build", "self/nx.nx", "-o"]).arg(&nx_a).arg("--out-dir").arg(&out_dir).current_dir(root).output().expect("run nx");
     assert!(build.status.success(), "building the driver failed:\n{}", String::from_utf8_lossy(&build.stderr));
     let nx_b = out_dir.join(if cfg!(windows) { "nx_b.exe" } else { "nx_b" });
-    let again = std::process::Command::new(&nx_a).args(["build", "self/nx.nx", "-o"]).arg(&nx_b).arg("--out-dir").arg(&out_dir).env("NX_ZIG", "zig").current_dir(root).output().unwrap();
+    let again = driver_cc(&mut std::process::Command::new(&nx_a)).args(["build", "self/nx.nx", "-o"]).arg(&nx_b).arg("--out-dir").arg(&out_dir).current_dir(root).output().unwrap();
     assert!(again.status.success(), "the driver could not build itself:\n{}", String::from_utf8_lossy(&again.stderr));
-    let run = std::process::Command::new(&nx_b).args(["run", "examples/hello.nx", "--out-dir"]).arg(&out_dir).env("NX_ZIG", "zig").current_dir(root).output().unwrap();
+    let run = driver_cc(&mut std::process::Command::new(&nx_b)).args(["run", "examples/hello.nx", "--out-dir"]).arg(&out_dir).current_dir(root).output().unwrap();
     assert!(run.status.success(), "the rebuilt driver could not run hello:\n{}", String::from_utf8_lossy(&run.stderr));
     let expected = std::fs::read_to_string(root.join("examples").join("hello.expected")).unwrap();
     assert_eq!(normalize(&expected), normalize(&String::from_utf8_lossy(&run.stdout)));
-    let test = std::process::Command::new(&nx_b).args(["test", "examples/tests.nx", "--out-dir"]).arg(&out_dir).env("NX_ZIG", "zig").current_dir(root).output().unwrap();
+    let test = driver_cc(&mut std::process::Command::new(&nx_b)).args(["test", "examples/tests.nx", "--out-dir"]).arg(&out_dir).current_dir(root).output().unwrap();
     let expected = std::fs::read_to_string(root.join("examples").join("tests.expected")).unwrap();
     assert_eq!(normalize(&expected), normalize(&String::from_utf8_lossy(&test.stdout)));
 }

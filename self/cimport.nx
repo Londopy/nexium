@@ -1005,6 +1005,10 @@ fn trim_parens(s: []u8) -> []u8 {
 }
 
 fn is_float_spelling(f: []u8) -> bool {
+    // a hexadecimal float (`0x1.fffffep+127f`, macOS's MAXFLOAT) is not
+    // imported: the Rust importer's number parser does not read them, and
+    // the two must agree on every header
+    if f.len > 1 and f[0] == '0' and (f[1] == 'x' or f[1] == 'X') { return false }
     var seen_dot = false
     var seen_e = false
     for c in f { if c == '.' { seen_dot = true }; if c == 'e' or c == 'E' { seen_e = true } }

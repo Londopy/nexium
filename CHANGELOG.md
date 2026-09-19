@@ -48,7 +48,7 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
 - `tests/spec`: the specification's conformance cases, one program per
   claim SPEC.md makes with its recorded output and exit code, run by
   `cargo test` and diffed through every self-hosting stage; sections 2 to
-  7 so far.
+  14 (artifacts and the toolchain are covered by the ship tests).
 - `self/nx.nx`, the `nx` driver in Nexium: build, run, test, check, emit-c
   and tir over the self-hosted pipeline, invoking the C compiler as the
   Rust driver does; the standard library is embedded in it. It builds
@@ -95,8 +95,19 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
 - `@cImport` retries a preprocessor run that failed without a diagnostic
   and reports the exit code when it keeps failing, instead of an empty
   message.
+- `self/cimport.nx` imported hexadecimal float macros (macOS's `MAXFLOAT`)
+  that the Rust importer skips, so the two disagreed on `<math.h>` there;
+  neither imports them now.
+- `self/nx.nx` links native macOS builds with the system compiler, as the
+  Rust driver does (zig 0.14 cannot link against the current Xcode SDK);
+  `cargo test` builds the bootstrap's second stage with that compiler too.
 - The tree-sitter grammar parses `x orelse return null` and the other jumps
   after `orelse` and `catch`, and `/little-signed` segment modifiers.
+- `List(thread.Worker(Job))`: a generic type of another module takes its
+  type arguments from the caller's scope, and is accepted in expression
+  position (`List(thread.Worker(Job)).new()`). The arguments were looked
+  up in the other module ("cannot find type `Job`"), and the expression
+  form was rejected as not a type.
 
 ## [0.6.1] - 2026-09-19
 
