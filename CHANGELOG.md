@@ -38,6 +38,9 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
 - `self/cimport.nx`, the C header importer in Nexium, and `@cImport` in
   `self/check.nx`: every source in the tree now matches the oracle,
   `examples/cimport.nx` and nexium-gui included (54 sources).
+- `self/cgen.nx`, the C emitter in Nexium: byte-identical to `nx emit-c` on
+  every source in the tree (54, its own 96k-line translation unit
+  included); `cargo test` diffs them.
 
 ### Fixed
 
