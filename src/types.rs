@@ -35,14 +35,18 @@ impl IntTy {
         }
     }
     pub fn min(self) -> i128 {
-        if self.is_signed() {
+        if self == IntTy::I128 {
+            i128::MIN
+        } else if self.is_signed() {
             -(1i128 << (self.bits() - 1))
         } else {
             0
         }
     }
     pub fn max(self) -> i128 {
-        if self.is_signed() {
+        if self == IntTy::I128 {
+            i128::MAX
+        } else if self.is_signed() {
             (1i128 << (self.bits() - 1)) - 1
         } else if self.bits() == 128 {
             i128::MAX
