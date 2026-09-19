@@ -2197,7 +2197,7 @@ impl<'a> Checker<'a> {
                     match a {
                         Expr::TypeVal { ty, .. } => targs.push(ty.clone()),
                         Expr::Ident { name: n, span: s } => targs.push(TypeExpr::Named { path: vec![n.clone()], args: vec![], span: *s }),
-                        Expr::Call { .. } | Expr::Field { .. } | Expr::TupleLit { .. } => match expr_to_type_expr(a) {
+                        Expr::Call { .. } | Expr::Field { .. } | Expr::MethodCall { .. } | Expr::TupleLit { .. } => match expr_to_type_expr(a) {
                             Some(te) => targs.push(te),
                             None => {
                                 self.error(a.span(), "expected a type argument");
@@ -2715,6 +2715,14 @@ pub fn expr_to_type_expr(e: &Expr) -> Option<TypeExpr> {
                 *ta = targs?;
                 *s = *span;
                 return Some(t);
+            }
+            None
+        }
+        // `mod.Type(A)`: a generic type of another module reads as a method call
+        Expr::MethodCall { receiver, method, args, span } => {
+            if let Expr::Ident { name, .. } = &**receiver {
+                let targs: Option<Vec<TypeExpr>> = args.iter().map(expr_to_type_expr).collect();
+                return Some(TypeExpr::Named { path: vec![name.clone(), method.clone()], args: targs?, span: *span });
             }
             None
         }

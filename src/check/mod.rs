@@ -1016,7 +1016,9 @@ impl<'a> Checker<'a> {
                 _ => {}
             }
         }
-        // module-qualified `mod.Type`
+        // module-qualified `mod.Type`; the type arguments are still the
+        // caller's: `List(thread.Worker(Job))` names the caller's `Job`
+        let caller = module;
         let (module, name) = if path.len() == 2 {
             match self.lookup_item(module, &path[0]) {
                 Some(ItemRef::Module(m)) => (m, &path[1]),
@@ -1045,7 +1047,7 @@ impl<'a> Checker<'a> {
                     self.error(span, format!("`{}` expects {} type argument(s) but {} were given", dn, n_params, args.len()));
                     return self.tys.void();
                 }
-                let targs: Vec<TyId> = args.iter().map(|a| self.resolve_type(a, generics, self_ty, module)).collect();
+                let targs: Vec<TyId> = args.iter().map(|a| self.resolve_type(a, generics, self_ty, caller)).collect();
                 let t = self.tys.intern(TyKind::Struct(id, targs));
                 self.note_used(t);
                 t
@@ -1058,7 +1060,7 @@ impl<'a> Checker<'a> {
                     self.error(span, format!("`{}` expects {} type argument(s) but {} were given", dn, n_params, args.len()));
                     return self.tys.void();
                 }
-                let targs: Vec<TyId> = args.iter().map(|a| self.resolve_type(a, generics, self_ty, module)).collect();
+                let targs: Vec<TyId> = args.iter().map(|a| self.resolve_type(a, generics, self_ty, caller)).collect();
                 let t = self.tys.intern(TyKind::Enum(id, targs));
                 self.note_used(t);
                 t
