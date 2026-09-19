@@ -866,8 +866,12 @@ impl Gen {
                 self.line(format!("bool {} = {};", t, l));
                 self.line(format!("if ({}{}) {{", if *and { "" } else { "!" }, t));
                 self.push_buf();
+                // temporaries the right side creates live in its C block, so
+                // they are released there and not at the statement's end
+                self.push_scope(false);
                 let r = self.expr(rhs);
                 self.line(format!("{} = {};", t, r));
+                self.pop_scope_emit();
                 let inner = self.pop_buf();
                 self.body.last_mut().unwrap().push_str(&inner);
                 self.line("}");
