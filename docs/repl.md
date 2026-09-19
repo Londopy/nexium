@@ -3,7 +3,7 @@
 `nx` with no arguments at a terminal, or `nx repl` anywhere, opens a prompt:
 
 ```
-Nexium 0.3.0 (nx repl, zig bundled with nx) on windows
+Nexium 0.4.0 (nx repl, zig bundled with nx) on windows
 Type :help for commands, :quit to exit.
 > let xs = [3, 1, 2]
 > import std.lists

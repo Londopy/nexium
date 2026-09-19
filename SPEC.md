@@ -1,6 +1,6 @@
 # The Nexium Language Specification
 
-Version 0.3, describing Nexium as implemented by `nx` 0.3.0. This document is
+Version 0.4, describing Nexium as implemented by `nx` 0.4.0. This document is
 normative for what the compiler does today; `nexium-spec.txt` is the
 original design, `DECISIONS.md` records every call made where that design
 was open, and `ROADMAP.md` says what comes next. Anything marked **planned**
@@ -398,11 +398,11 @@ returns `error.InvalidRecord` instead.
 items are `b.item`. `import std.name` loads a standard library module that
 is written in Nexium and embedded in the compiler: `strings`, `lists`,
 `bytes`, `num`, `json`, `args`, `fs`, `time`, `regex`, `text`, `testing`,
-`stream` (see `docs/std.md`); std modules may import each other. The
-builtin namespaces `math`, `io`, `os`, `process`, `time`, `random`, `mem`
-are always in scope and need no import. `error` names the anonymous error
-set as a type. **planned**: `std.net`, `std.http`, packages with a manifest
-(ROADMAP phases 2 and 3).
+`stream`, `net`, `http`, `thread`, `process` (see `docs/std.md`); std
+modules may import each other. The builtin namespaces `math`, `io`, `os`,
+`process`, `time`, `random`, `mem`, `net`, `thread`, `sync` are always in
+scope and need no import. `error` names the anonymous error set as a type.
+**planned**: packages with a manifest (ROADMAP phase 3).
 
 The builtin methods of `List`, `String`, `Map`, slices, integers, floats,
 and chars are listed in `docs/language.md`. They are implemented in the
