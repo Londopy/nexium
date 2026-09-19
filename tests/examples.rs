@@ -199,17 +199,14 @@ fn self_hosted_checker_matches_signatures() {
     files.sort();
     let mut compared = 0;
     for f in files {
-        let oracle = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).arg("tir").arg(&f).arg("--sigs").current_dir(root).output().unwrap();
+        let oracle = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).arg("tir").arg(&f).arg("--sigs").env("NX_ZIG", "zig").current_dir(root).output().unwrap();
         if !oracle.status.success() {
             // a deliberately failing example: nothing to compare
             continue;
         }
         let expected = String::from_utf8_lossy(&oracle.stdout).to_string();
-        if expected.contains("(module ") && expected.contains(" cimport:") {
-            // a C header somewhere in the import graph
-            continue;
-        }
-        let mine = std::process::Command::new(&exe).arg(&f).arg("--sigs").current_dir(root).output().unwrap();
+        // both sides preprocess C headers with the zig on the PATH
+        let mine = std::process::Command::new(&exe).arg(&f).arg("--sigs").env("NX_ZIG", "zig").current_dir(root).output().unwrap();
         assert!(
             mine.status.success(),
             "self/check.nx rejected {}:
@@ -220,12 +217,12 @@ fn self_hosted_checker_matches_signatures() {
         assert_eq!(expected, String::from_utf8_lossy(&mine.stdout), "signatures differ for {}", f.display());
         compared += 1;
     }
-    assert!(compared > 35, "expected the whole tree, compared {} files", compared);
+    assert!(compared > 50, "expected the whole tree, compared {} files", compared);
 }
 
 /// The checker written in Nexium, stage 2: the full typed IR matches `nx tir`
-/// on every source it already covers (C imports and the diagnostics-only
-/// passes are the remaining stages). The list only grows.
+/// on every source: every example, std module, GUI and self-hosting file.
+/// The list only grows.
 /// The checker written in Nexium, stage 3: every compile-fail case is
 /// rejected with every message the Rust checker produces (the notes too).
 #[test]
@@ -278,6 +275,7 @@ fn self_hosted_checker_matches_bodies() {
         "examples/arena.nx",
         "examples/binary.nx",
         "examples/binary_sizes.nx",
+        "examples/cimport.nx",
         "examples/comptime.nx",
         "examples/comptime_binary.nx",
         "examples/control.nx",
@@ -305,7 +303,10 @@ fn self_hosted_checker_matches_bodies() {
         "examples/tool.nx",
         "examples/tour.nx",
         "examples/tree.nx",
+        "gui/demo.nx",
+        "gui/nexium_gui.nx",
         "self/check.nx",
+        "self/cimport.nx",
         "self/lexer.nx",
         "self/parser.nx",
         "std/args.nx",
@@ -327,7 +328,7 @@ fn self_hosted_checker_matches_bodies() {
     ];
     for f in files {
         let path = root.join(f);
-        let oracle = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).arg("tir").arg(&path).current_dir(root).output().unwrap();
+        let oracle = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).arg("tir").arg(&path).env("NX_ZIG", "zig").current_dir(root).output().unwrap();
         assert!(
             oracle.status.success(),
             "nx tir rejected {}:
@@ -335,7 +336,7 @@ fn self_hosted_checker_matches_bodies() {
             f,
             String::from_utf8_lossy(&oracle.stderr)
         );
-        let mine = std::process::Command::new(&exe).arg(&path).current_dir(root).output().unwrap();
+        let mine = std::process::Command::new(&exe).arg(&path).env("NX_ZIG", "zig").current_dir(root).output().unwrap();
         assert!(
             mine.status.success(),
             "self/check.nx rejected {}:
