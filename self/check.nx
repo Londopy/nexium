@@ -339,6 +339,8 @@ pub struct ConstDef {
     is_pub: bool
     ty: usize
     in_progress: bool
+    // the checked initializer (a TIR node), once resolved
+    value: usize
 }
 
 pub struct GlobalDef {
@@ -815,7 +817,7 @@ impl Checker {
             self.impls.append(ImplDef{ .trait_name = n.name.clone(), .has_trait = n.name != "-", .target = n.x, .tparams = tparams, .methods = methods, .module = m })
         } else if k == parser.NodeKind.Const {
             let n = self.node(m, it)
-            let d = ConstDef{ .name = n.name.clone(), .node = it, .module = m, .start = n.start, .end = n.end, .is_pub = n.flag, .ty = NONE, .in_progress = false }
+            let d = ConstDef{ .name = n.name.clone(), .node = it, .module = m, .start = n.start, .end = n.end, .is_pub = n.flag, .ty = NONE, .in_progress = false, .value = NONE }
             let name = d.name.clone()
             let at = d.start
             self.consts.append(d)
@@ -1130,14 +1132,23 @@ impl Checker {
         let node = self.consts[id].node
         let ty_node = self.node(m, node).x
         let value_node = self.node(m, node).y
-        var t: usize = NONE
-        if ty_node != NONE {
-            t = self.resolve_type(m, ty_node, NONE)
-        } else {
-            t = self.infer_const_type(m, value_node, NONE)
-        }
+        let cname = self.consts[id].name.clone()
+        // the initializer is checked like any expression, in a compile-time context
+        let v = self.tys.void()
+        var ctx = new_ctx(v, m, format("const {}", .{cname})[..])
+        ctx.is_comptime = true
+        ctx.scope_marks.append(0)
+        self.ctxs.append(ctx)
+        var expected = NONE
+        if ty_node != NONE { expected = self.resolve_type(m, ty_node, NONE) }
+        var te = self.check_expr(value_node, expected)
+        if expected != NONE { te = self.coerce_or_error(te, expected, "constant initializer") }
+        te = self.finalize_expr(te)
+        let t = self.tys.resolve(self.tir.nodes[te].ty, true)
+        _ = self.ctxs.pop()
         self.consts[id].in_progress = false
         self.consts[id].ty = t
+        self.consts[id].value = te
         return t
     }
 
@@ -1231,7 +1242,21 @@ impl Checker {
             let m = self.globals[i].module
             let node = self.globals[i].node
             let ty_node = self.node(m, node).x
-            self.globals[i].ty = self.resolve_type(m, ty_node, NONE)
+            let value_node = self.node(m, node).y
+            let ty = self.resolve_type(m, ty_node, NONE)
+            self.globals[i].ty = ty
+            if value_node != NONE {
+                let gname = self.globals[i].name.clone()
+                let v = self.tys.void()
+                var ctx = new_ctx(v, m, format("global {}", .{gname})[..])
+                ctx.is_comptime = true
+                ctx.scope_marks.append(0)
+                self.ctxs.append(ctx)
+                var te = self.check_expr(value_node, ty)
+                te = self.coerce_or_error(te, ty, "global initializer")
+                _ = self.finalize_expr(te)
+                _ = self.ctxs.pop()
+            }
         }
     }
 
@@ -1673,6 +1698,7 @@ impl Checker {
     fn check_program(self: *mut Self) {
         let n = self.consts.len
         for i in 0..n { _ = self.resolve_const(i) }
+        self.resolve_globals()
         let nf = self.fns.len
         for fid in 0..nf {
             if self.fns[fid].is_generic or self.fns[fid].impl_id != NONE { continue }
@@ -2930,7 +2956,8 @@ impl Checker {
             self.tir.nodes[be].kids.append(tb)
             return be
         }
-        self.fail_here(start, "unsupported expression (stage 2)")
+        let snippet = self.source_text(m, start, if end - start > 40 { start + 40 } else { end })
+        self.fail_here(start, format("unsupported expression (stage 2): `{}`", .{snippet})[..])
         return self.error_expr(start, end)
     }
 
@@ -3071,6 +3098,11 @@ impl Checker {
             }
             if item.kind == ItemKind.Const {
                 let ty = self.resolve_const(item.id)
+                // a scalar constant is inlined as its value
+                let init = self.consts[item.id].value
+                if init != NONE {
+                    if let v = self.eval_const(init) { return self.value_node(&v, ty, start, end) }
+                }
                 let te = self.mk(TKind.Const, ty, start, end)
                 self.tir.nodes[te].a = item.id
                 return te
@@ -3552,7 +3584,7 @@ impl Checker {
         if self_arg != NONE {
             let pt_node = self.node(fm, param_nodes[0]).x
             let pt = self.resolve_type(fm, pt_node, self_ty)
-            let sa = self.adjust_receiver(self_arg, pt, start)
+            let sa = self.adjust_receiver(self_arg, pt, start, end)
             targs.append(sa)
             pi = 1
         }
@@ -3585,7 +3617,7 @@ impl Checker {
 
     /// A method receiver becomes what the `self` parameter wants: a pointer
     /// to a place, or the value itself.
-    fn adjust_receiver(self: *mut Self, recv: usize, want: usize, at: usize) -> usize {
+    fn adjust_receiver(self: *mut Self, recv: usize, want: usize, at: usize, end: usize) -> usize {
         let wt = self.tys.shallow(want)
         let rt = self.tys.shallow(self.tir.nodes[recv].ty)
         if self.tys.kind(wt) == TK.Ptr and self.tys.kind(rt) != TK.Ptr {
@@ -3594,7 +3626,7 @@ impl Checker {
                 self.fail_here(at, "this method needs a mutable receiver; declare the variable with `var`")
             }
             let pt = self.tys.wrap(TK.Ptr, self.tir.nodes[recv].ty, mutable)
-            let r = self.mk(TKind.AddrOf, pt, self.tir.nodes[recv].start, self.tir.nodes[recv].end)
+            let r = self.mk(TKind.AddrOf, pt, at, end)
             self.tir.nodes[r].flag = mutable
             self.tir.nodes[r].kids.append(recv)
             return r
@@ -3789,6 +3821,7 @@ impl Checker {
         var c = self.check_expr(cond_node, bt)
         c = self.coerce_or_error(c, bt, "if condition")
         let narrowing = self.guard_narrowing(c)
+        let ranges_before = self.ctx().ranges.clone()
         self.push_scope()
         for nr in narrowing { self.ctx().ranges.put(nr.local, Range{ .lo = nr.lo, .hi = nr.hi }) }
         let moved_before = self.moved_snapshot()
@@ -3796,6 +3829,7 @@ impl Checker {
         let then_expected = if els_node != NONE { expected } else { v }
         let tb = self.check_block(then_node, then_expected, NONE, NONE)
         self.pop_scope()
+        self.ctx().ranges = ranges_before
         let moved_then = self.moved_snapshot()
         let then_ty = self.tir.nodes[tb].ty
         let then_diverges = self.tys.kind(self.tys.shallow(then_ty)) == TK.Never
@@ -4271,7 +4305,7 @@ impl Checker {
         if k == TKind.Unreachable { p.line(format("{})", .{self.head("unreachable", e)})[..]); return }
         if k == TKind.Undefined { p.line(format("{})", .{self.head("undefined", e)})[..]); return }
         if k == TKind.TypeVal { p.line(format("{} {})", .{self.head("type_val", e), self.ty_name(a)})[..]); return }
-        if k == TKind.Value { p.line(format("{} {})", .{self.head("value", e), self.tir.nodes[e].text})[..]); return }
+        if k == TKind.Value { p.line(format("{} {})", .{self.head("value", e), self.value_text(e)})[..]); return }
         if k == TKind.Closure {
             var caps = String.new()
             let locals = self.tir.nodes[e].kids2.clone()
@@ -6461,6 +6495,177 @@ impl Checker {
     }
 }
 
+// ---------------------------------------------------------------- compile-time values (stage 2: scalars)
+
+/// A compile-time value: kind 0 int, 1 float, 2 bool, 3 char, 4 str, 5 other (kept by reference).
+pub struct CV {
+    kind: u8
+    ival: i128
+    fval: f64
+    flag: bool
+    text: String
+}
+
+fn cv_int(v: i128) -> CV { return CV{ .kind = 0, .ival = v, .fval = 0.0, .flag = false, .text = String.new() } }
+fn cv_float(v: f64) -> CV { return CV{ .kind = 1, .ival = 0, .fval = v, .flag = false, .text = String.new() } }
+fn cv_bool(v: bool) -> CV { return CV{ .kind = 2, .ival = 0, .fval = 0.0, .flag = v, .text = String.new() } }
+fn cv_char(v: i128) -> CV { return CV{ .kind = 3, .ival = v, .fval = 0.0, .flag = false, .text = String.new() } }
+fn cv_str(s: []u8) -> CV { return CV{ .kind = 4, .ival = 0, .fval = 0.0, .flag = false, .text = String.from(s) } }
+
+impl Checker {
+    /// The value of a constant expression, when the stage-2 evaluator knows it:
+    /// literals, unary and binary arithmetic on scalars, casts, and references
+    /// to other constants. Null means "not a scalar the evaluator handles".
+    fn eval_const(self: *mut Self, e: usize) -> ?CV {
+        let k = self.tir.nodes[e].k
+        if k == TKind.Int { return cv_int(self.tir.nodes[e].ival) }
+        if k == TKind.Float { return cv_float(self.tir.nodes[e].fval) }
+        if k == TKind.Bool { return cv_bool(self.tir.nodes[e].flag) }
+        if k == TKind.Char { return cv_char(self.tir.nodes[e].ival) }
+        if k == TKind.Str { return cv_str(self.tir.nodes[e].text[..]) }
+        if k == TKind.Value {
+            let nm = self.tir.nodes[e].name.clone()
+            if nm == "int" { return cv_int(self.tir.nodes[e].ival) }
+            if nm == "float" { return cv_float(self.tir.nodes[e].fval) }
+            if nm == "bool" { return cv_bool(self.tir.nodes[e].flag) }
+            if nm == "char" { return cv_char(self.tir.nodes[e].ival) }
+            if nm == "str" { return cv_str(self.tir.nodes[e].text[..]) }
+            return null
+        }
+        if k == TKind.Const {
+            let id = self.tir.nodes[e].a
+            if self.consts[id].value != NONE { return self.eval_const(self.consts[id].value) }
+            return null
+        }
+        if k == TKind.Cast {
+            let inner = self.eval_const(self.tir.nodes[e].kids[0]) orelse return null
+            let kind = self.tir.nodes[e].name.clone()
+            let tt = self.tys.shallow(self.tir.nodes[e].ty)
+            if kind.len >= 10 and kind[0..10] == "int_to_int" {
+                if inner.kind != 0 and inner.kind != 3 { return null }
+                if self.tys.kind(tt) == TK.Int {
+                    let nm = self.tys.list[tt].name.clone()
+                    if inner.ival < int_min(nm[..]) or inner.ival > int_max(nm[..]) { return null }
+                }
+                return cv_int(inner.ival)
+            }
+            if kind == "int_to_float" { if inner.kind != 0 { return null }; return cv_float(inner.ival as f64) }
+            if kind == "float_to_float" { if inner.kind != 1 { return null }; return cv_float(inner.fval) }
+            if kind == "float_to_int" { if inner.kind != 1 { return null }; return cv_int(inner.fval as i128) }
+            if kind == "bits" {
+                if self.tys.kind(tt) == TK.Int and inner.kind == 2 { return cv_int(if inner.flag { 1 } else { 0 }) }
+                if self.tys.kind(tt) == TK.Char and inner.kind == 0 { return cv_char(inner.ival) }
+                if self.tys.kind(tt) == TK.Int and inner.kind == 3 { return cv_int(inner.ival) }
+                return inner
+            }
+            return null
+        }
+        if k == TKind.Unary {
+            let inner = self.eval_const(self.tir.nodes[e].kids[0]) orelse return null
+            let op = self.tir.nodes[e].text.clone()
+            if op == "-" {
+                if inner.kind == 0 { return cv_int(-inner.ival) }
+                if inner.kind == 1 { return cv_float(-inner.fval) }
+                return null
+            }
+            if op == "!" { if inner.kind != 2 { return null }; return cv_bool(!inner.flag) }
+            if op == "~" { if inner.kind != 0 { return null }; return cv_int(~inner.ival) }
+            return null
+        }
+        if k == TKind.Logical {
+            let a = self.eval_const(self.tir.nodes[e].kids[0]) orelse return null
+            if a.kind != 2 { return null }
+            let is_and = self.tir.nodes[e].flag
+            if is_and and !a.flag { return cv_bool(false) }
+            if !is_and and a.flag { return cv_bool(true) }
+            let b = self.eval_const(self.tir.nodes[e].kids[1]) orelse return null
+            if b.kind != 2 { return null }
+            return cv_bool(b.flag)
+        }
+        if k == TKind.Binary {
+            let a = self.eval_const(self.tir.nodes[e].kids[0]) orelse return null
+            let b = self.eval_const(self.tir.nodes[e].kids[1]) orelse return null
+            let op = self.tir.nodes[e].text.clone()
+            if a.kind == 0 and b.kind == 0 {
+                let x = a.ival
+                let y = b.ival
+                if op == "+" or op == "+%" or op == "+|" { return cv_int(x + y) }
+                if op == "-" or op == "-%" or op == "-|" { return cv_int(x - y) }
+                if op == "*" or op == "*%" or op == "*|" { return cv_int(x * y) }
+                if op == "/" { if y == 0 { return null }; return cv_int(x / y) }
+                if op == "%" { if y == 0 { return null }; return cv_int(x % y) }
+                if op == "&" { return cv_int(x & y) }
+                if op == "|" { return cv_int(x | y) }
+                if op == "^" { return cv_int(x ^ y) }
+                if op == "<<" { if y < 0 or y > 127 { return null }; return cv_int(x << (y as u32)) }
+                if op == ">>" { if y < 0 or y > 127 { return null }; return cv_int(x >> (y as u32)) }
+                if op == "==" { return cv_bool(x == y) }
+                if op == "!=" { return cv_bool(x != y) }
+                if op == "<" { return cv_bool(x < y) }
+                if op == "<=" { return cv_bool(x <= y) }
+                if op == ">" { return cv_bool(x > y) }
+                if op == ">=" { return cv_bool(x >= y) }
+                return null
+            }
+            if a.kind == 1 and b.kind == 1 {
+                let x = a.fval
+                let y = b.fval
+                if op == "+" { return cv_float(x + y) }
+                if op == "-" { return cv_float(x - y) }
+                if op == "*" { return cv_float(x * y) }
+                if op == "/" { return cv_float(x / y) }
+                if op == "==" { return cv_bool(x == y) }
+                if op == "!=" { return cv_bool(x != y) }
+                if op == "<" { return cv_bool(x < y) }
+                if op == "<=" { return cv_bool(x <= y) }
+                if op == ">" { return cv_bool(x > y) }
+                if op == ">=" { return cv_bool(x >= y) }
+                return null
+            }
+            if a.kind == 2 and b.kind == 2 {
+                if op == "==" { return cv_bool(a.flag == b.flag) }
+                if op == "!=" { return cv_bool(a.flag != b.flag) }
+                if op == "&" { return cv_bool(a.flag and b.flag) }
+                if op == "|" { return cv_bool(a.flag or b.flag) }
+                if op == "^" { return cv_bool(a.flag != b.flag) }
+                return null
+            }
+            if a.kind == 3 and b.kind == 3 {
+                if op == "==" { return cv_bool(a.ival == b.ival) }
+                if op == "!=" { return cv_bool(a.ival != b.ival) }
+                if op == "<" { return cv_bool(a.ival < b.ival) }
+                if op == "<=" { return cv_bool(a.ival <= b.ival) }
+                if op == ">" { return cv_bool(a.ival > b.ival) }
+                if op == ">=" { return cv_bool(a.ival >= b.ival) }
+                return null
+            }
+            return null
+        }
+        return null
+    }
+
+    /// A `(value ...)` node for a scalar compile-time value.
+    fn value_node(self: *mut Self, v: *CV, ty: usize, start: usize, end: usize) -> usize {
+        let r = self.mk(TKind.Value, ty, start, end)
+        let names = ["int", "float", "bool", "char", "str"]
+        self.tir.nodes[r].name = String.from(names[v.kind as usize])
+        self.tir.nodes[r].ival = v.ival
+        self.tir.nodes[r].fval = v.fval
+        self.tir.nodes[r].flag = v.flag
+        self.tir.nodes[r].text = v.text.clone()
+        return r
+    }
+
+    fn value_text(self: *mut Self, e: usize) -> String {
+        let nm = self.tir.nodes[e].name.clone()
+        if nm == "int" { return format("(int {})", .{self.tir.nodes[e].ival}) }
+        if nm == "float" { return format("(float {})", .{rust_float(self.tir.nodes[e].fval)}) }
+        if nm == "bool" { return format("(bool {})", .{self.tir.nodes[e].flag}) }
+        if nm == "char" { return format("(char {})", .{self.tir.nodes[e].ival}) }
+        return format("(str {})", .{tquote(self.tir.nodes[e].text[..])})
+    }
+}
+
 pub fn new_checker(own mods: List(Mod)) -> Checker {
     return Checker{
         .mods = mods, .tys = Types{ .list = List(Ty).new(), .index = Map(String, usize).new(), .subst = List(usize).new(), .infer_kinds = List(u8).new() },
@@ -6496,9 +6701,9 @@ fn main() -> !void {
     var c = new_checker(mods)
     c.collect()
     c.reserve_errors()
-    c.resolve_globals()
     var out = String.new()
     if sigs {
+        c.resolve_globals()
         c.print_sigs(&mut out)
     } else {
         c.check_program()
