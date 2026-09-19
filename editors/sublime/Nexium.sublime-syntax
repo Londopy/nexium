@@ -130,7 +130,7 @@ contexts:
   keywords:
     - match: '\b(if|else|for|while|match|break|continue|return|try|catch|defer|errdefer|orelse|unreachable|parallel|using)\b'
       scope: keyword.control.nexium
-    - match: '\b(fn|let|var|const|struct|enum|record|ref|class|trait|impl|pub|import|comptime|unsafe|error|type|distinct|where|into|artifact|test|export|as|in|dyn|weak|extern|derive|layout)\b'
+    - match: '\b(fn|let|var|const|struct|enum|record|ref|class|trait|impl|pub|import|comptime|unsafe|error|type|distinct|where|into|artifact|test|export|as|in|dyn|weak|extern|derive|layout|own)\b'
       scope: keyword.other.nexium
     - match: '\b(and|or)\b'
       scope: keyword.operator.logical.nexium

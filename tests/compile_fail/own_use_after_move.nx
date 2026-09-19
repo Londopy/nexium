@@ -1,0 +1,7 @@
+// EXPECT: use of `s` after it was moved
+fn eat(own s: String) { _ = s.len }
+fn main() {
+    var s = String.from("x")
+    eat(s)
+    println("{}", .{s.len})
+}

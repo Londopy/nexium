@@ -133,6 +133,13 @@ impl Gen {
         }
         let body = f.body.clone().unwrap();
         self.push_scope(false);
+        // `own` parameters belong to this function now: drop them at exit (unless moved)
+        for &p in &f.params {
+            if f.locals[p as usize].owned {
+                let name = self.local_name(p);
+                self.register_drop(&name, f.locals[p as usize].ty);
+            }
+        }
         let v = self.block_value(&body);
         // tail value of the body: return it
         if let Some(v) = v {
@@ -743,8 +750,18 @@ impl Gen {
                 if !f.is_extern {
                     a.push("c".into());
                 }
-                for x in args {
-                    let v = self.simple(x);
+                for (i, x) in args.iter().enumerate() {
+                    let owned_param = f.params.get(i).map(|&p| f.locals[p as usize].owned).unwrap_or(false);
+                    let v = if owned_param {
+                        // handed over: a local is moved (zeroed), a temporary is not dropped here
+                        if matches!(x.kind, TExprKind::Local(_)) {
+                            self.expr_owned(x)
+                        } else {
+                            self.simple_owned(x)
+                        }
+                    } else {
+                        self.simple(x)
+                    };
                     a.push(v);
                 }
                 let name = self.fn_c_name(*inst);

@@ -325,7 +325,12 @@ impl Parser {
             }
             let start = self.span();
             let comptime = self.eat_ident("comptime");
+            // `own` is a modifier only when a parameter name follows it
+            let owned = self.at_ident("own") && matches!(self.peek_at(1), Tok::Ident(_)) && self.eat_ident("own");
             let (name, nsp) = self.expect_ident()?;
+            if owned && name == "self" {
+                return self.error(nsp, "`self` cannot be an owned parameter; receivers are borrowed (`*Self` or `*mut Self`)");
+            }
             self.expect(&Tok::Colon)?;
             let ty = self.parse_type()?;
             if self.eat_ident("where") {
@@ -333,7 +338,7 @@ impl Parser {
                 wheres.push(w);
             }
             let span = start.to(self.prev_span());
-            params.push(Param { name, ty, comptime, span });
+            params.push(Param { name, ty, comptime, owned, span });
             if !self.eat(&Tok::Comma) {
                 break;
             }
@@ -1145,12 +1150,12 @@ impl Parser {
                 } else {
                     None
                 };
-                let handler = self.parse_or()?;
+                let handler = self.parse_or_or_jump()?;
                 let span = e.span().to(handler.span());
                 e = Expr::Catch { expr: Box::new(e), binding, handler: Box::new(handler), span };
             } else if self.at_ident("orelse") {
                 self.bump();
-                let default = self.parse_or()?;
+                let default = self.parse_or_or_jump()?;
                 let span = e.span().to(default.span());
                 e = Expr::OrElse { expr: Box::new(e), default: Box::new(default), span };
             } else {
@@ -1763,7 +1768,7 @@ impl Parser {
             let pstart = self.span();
             let (name, _) = self.expect_ident()?;
             let ty = if self.eat(&Tok::Colon) { self.parse_type()? } else { TypeExpr::Infer { span: pstart } };
-            params.push(Param { name, ty, comptime: false, span: pstart.to(self.prev_span()) });
+            params.push(Param { name, ty, comptime: false, owned: false, span: pstart.to(self.prev_span()) });
             if !self.eat(&Tok::Comma) {
                 break;
             }
@@ -1776,6 +1781,18 @@ impl Parser {
     }
 
     /// An expression, or a `return`/`break`/`continue` statement wrapped as a block expression.
+    /// An `orelse` / `catch` right-hand side: an `or`-level expression, or a
+    /// jump (`return`, `break`, `continue`) wrapped as a diverging block.
+    fn parse_or_or_jump(&mut self) -> PResult<Expr> {
+        if matches!(self.peek(), Tok::Ident(s) if s == "return" || s == "break" || s == "continue") {
+            let start = self.span();
+            let stmt = self.parse_stmt()?;
+            let sp = start.to(self.prev_span());
+            return Ok(Expr::Block(Block { stmts: vec![stmt], tail: None, label: None, span: sp }));
+        }
+        self.parse_or()
+    }
+
     fn parse_expr_or_jump(&mut self) -> PResult<Expr> {
         let start = self.span();
         let stmt = self.parse_stmt()?;
@@ -1803,12 +1820,16 @@ impl Parser {
         let then = if self.at(&Tok::LBrace) {
             self.parse_block(None)?
         } else {
-            // single-expression form: `if (c) a else b`, or `if (c) break :outer v`
-            let e = self.parse_expr_or_jump()?;
-            let sp = e.span();
-            match e {
-                Expr::Block(b) => b,
-                e => Block { stmts: vec![], tail: Some(Box::new(e)), label: None, span: sp },
+            // single-statement form: `if (c) a else b`, `if (c) break :outer v`,
+            // or `if (c) x = v` (an assignment, which is a statement, so the
+            // whole `if` is one too)
+            let sstart = self.span();
+            let stmt = self.parse_stmt()?;
+            let sp = sstart.to(self.prev_span());
+            match stmt {
+                Stmt::Expr(Expr::Block(b)) => b,
+                Stmt::Expr(e) => Block { stmts: vec![], tail: Some(Box::new(e)), label: None, span: sp },
+                other => Block { stmts: vec![other], tail: None, label: None, span: sp },
             }
         };
         // allow `else` on the next line
@@ -1820,7 +1841,14 @@ impl Parser {
             } else if self.at(&Tok::LBrace) {
                 Some(Box::new(Expr::Block(self.parse_block(None)?)))
             } else {
-                Some(Box::new(self.parse_expr()?))
+                // `else x = v` / `else return v` are statements too
+                let sstart = self.span();
+                let stmt = self.parse_stmt()?;
+                let sp = sstart.to(self.prev_span());
+                Some(Box::new(match stmt {
+                    Stmt::Expr(e) => e,
+                    other => Expr::Block(Block { stmts: vec![other], tail: None, label: None, span: sp }),
+                }))
             }
         } else {
             None

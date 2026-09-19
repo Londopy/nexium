@@ -1,0 +1,4 @@
+// EXPECT: `self` cannot be an owned parameter
+struct P { x: i32 }
+impl P { fn take(own self: P) -> i32 { return self.x } }
+fn main() { let p = P{ .x = 1 }; println("{}", .{p.take()}) }

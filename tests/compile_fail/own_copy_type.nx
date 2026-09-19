@@ -1,0 +1,3 @@
+// EXPECT: `own` applies to owning types
+fn f(own n: i32) -> i32 { return n }
+fn main() { println("{}", .{f(1)}) }

@@ -710,6 +710,10 @@ impl<'a> Checker<'a> {
                         self.error(span, format!("`{}` is generic; call it directly", name));
                         return self.error_expr(span);
                     }
+                    if def.decl.params.iter().any(|p| p.owned) {
+                        self.error(span, format!("`{}` takes `own` parameters and cannot be used as a function value; call it directly", name));
+                        return self.error_expr(span);
+                    }
                     let inst = self.instantiate(fid, vec![], span);
                     let (ps, r) = self.fn_sig(inst);
                     let neg = self.funcs[inst as usize].declared_neg;
@@ -1238,6 +1242,16 @@ impl<'a> Checker<'a> {
                         let c = self.arg(&args[0], ct, "character");
                         self.add_effect(Effects::ALLOCATES, span, "appending to a String may grow it");
                         self.builtin(Builtin::StringAppendChar, vec![recv, c], vec![], void, span)
+                    }
+                    "push_byte" => {
+                        if !self.check_args_n(args, 1, "push_byte", span) {
+                            return Some(self.error_expr(span));
+                        }
+                        self.require_mut_recv(&recv, "push_byte", span);
+                        let u8t = self.tys.int(IntTy::U8);
+                        let b = self.arg(&args[0], u8t, "byte");
+                        self.add_effect(Effects::ALLOCATES, span, "appending to a String may grow it");
+                        self.builtin(Builtin::StringPushByte, vec![recv, b], vec![], void, span)
                     }
                     "clone" | "to_string" => {
                         if !self.check_args_n(args, 0, method, span) {

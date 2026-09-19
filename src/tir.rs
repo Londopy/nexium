@@ -18,6 +18,8 @@ pub struct Local {
     pub mutable: bool,
     pub span: Span,
     pub is_param: bool,
+    /// an `own` parameter: moved in by the caller, dropped here at scope exit
+    pub owned: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -197,6 +199,7 @@ pub enum Builtin {
     StringWithCapacity,
     StringAppend,
     StringAppendChar,
+    StringPushByte,
     StringClone,
     StringClear,
     StringPop,

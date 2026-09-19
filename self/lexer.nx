@@ -200,8 +200,8 @@ impl Lexer {
     fn peek_at(self: *Self, n: usize) -> u8 {
         return if (self.pos + n < self.src.len) self.src[self.pos + n] else 0
     }
-    fn push(self: *mut Self, kind: Kind, start: usize, text: String) {
-        self.toks.append(Token{ .kind = kind, .start = start, .end = self.pos, .text = text.clone() })
+    fn push(self: *mut Self, kind: Kind, start: usize, own text: String) {
+        self.toks.append(Token{ .kind = kind, .start = start, .end = self.pos, .text = text })
     }
     fn push_plain(self: *mut Self, kind: Kind, start: usize) {
         self.push(kind, start, String.new())

@@ -502,7 +502,7 @@ impl<'a> Checker<'a> {
             let decl = FnDecl {
                 attrs: attrs.clone(),
                 name: f.name.clone(),
-                params: f.params.iter().map(|(n, t)| Param { name: n.clone(), ty: t.clone(), comptime: false, span }).collect(),
+                params: f.params.iter().map(|(n, t)| Param { name: n.clone(), ty: t.clone(), comptime: false, owned: false, span }).collect(),
                 ret: Some(f.ret.clone()),
                 effects: vec![],
                 wheres: vec![],
@@ -1469,7 +1469,11 @@ impl<'a> Checker<'a> {
             }
             let ty = self.resolve_type(&p.ty, &generics, self_ty, def.module);
             let lid = locals.len() as LocalId;
-            locals.push(Local { name: p.name.clone(), ty, mutable: false, span: p.span, is_param: true });
+            if p.owned && !self.needs_drop(ty) {
+                let tn = self.type_name(ty);
+                self.error(p.span, format!("`own` applies to owning types (`List`, `String`, `Map`, or structs holding them); `{}` is copied anyway", tn));
+            }
+            locals.push(Local { name: p.name.clone(), ty, mutable: p.owned, span: p.span, is_param: true, owned: p.owned });
             params.push(lid);
         }
         let ret = match &def.decl.ret {
@@ -1542,6 +1546,9 @@ impl<'a> Checker<'a> {
             self.exports.push(id);
             if !targs.is_empty() {
                 self.error(span, "generic functions cannot be exported");
+            }
+            if def.decl.params.iter().any(|p| p.owned) {
+                self.error(span, "exported functions cannot take `own` parameters; the host language cannot hand over ownership");
             }
         }
         if is_test && !test_comptime {

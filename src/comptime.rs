@@ -1112,7 +1112,7 @@ impl<'c, 'a> Interp<'c, 'a> {
                 Value::Str(s) | Value::OwnedStr(s) => Some(Value::Str(s.clone())),
                 _ => None,
             },
-            Builtin::StringAppend | Builtin::StringAppendChar => {
+            Builtin::StringAppend | Builtin::StringAppendChar | Builtin::StringPushByte => {
                 let (l, path) = self.place_path(&args[0], env)?;
                 let add: Vec<u8> = match &vs[1] {
                     Value::Str(s) | Value::OwnedStr(s) => s.clone(),
@@ -1120,6 +1120,7 @@ impl<'c, 'a> Interp<'c, 'a> {
                         let mut b = [0u8; 4];
                         char::from_u32(*c)?.encode_utf8(&mut b).as_bytes().to_vec()
                     }
+                    Value::Int(i) => vec![*i as u8],
                     _ => return None,
                 };
                 let root = env.get_mut(&l)?;

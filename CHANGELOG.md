@@ -8,6 +8,23 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
 
 ## [Unreleased]
 
+### Added
+
+- `own` parameters: `fn f(own s: String)` takes ownership of its argument
+  (moved at the call site, dropped or moved on by the callee).
+- `orelse return v` and `catch |e| return v`: jumps on the right of `orelse`
+  and `catch`.
+- `String.push_byte(b)` appends one raw byte.
+- Integer and float literals coerce into `?T`.
+- `examples/own.nx` and five compile-fail cases for the `own` rules.
+
+### Changed
+
+- Moves are tracked per branch: a value moved in one `if` branch or `match`
+  arm stays usable in the others.
+- An unbraced `if` or `else` body is one statement, so `if (c) x = 1` works.
+- `self/lexer.nx` moves token text with `own` instead of cloning it.
+
 ## [0.1.0] - 2026-09-18
 
 First public release.

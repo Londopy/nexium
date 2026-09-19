@@ -1,0 +1,3 @@
+// EXPECT: exported functions cannot take `own` parameters
+pub fn f(own s: String) -> usize export(c) { return s.len }
+fn main() { _ = f(String.from("a")) }

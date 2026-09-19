@@ -82,8 +82,24 @@ integers, `bool` to integer, a unit enum to integer. `@truncate(T, x)` wraps.
 (archived 5.10): a `let` holding `*mut T` still mutates through it.
 
 Collections own a heap buffer (5.3). `let b = a` moves `a`; using `a`
-afterwards is a compile error; `a.clone()` copies. Parameters are borrowed:
-a function receiving a `List` reads it; to mutate, take `*mut List(T)`.
+afterwards is a compile error; `a.clone()` copies. Moves are tracked per
+branch: a value moved in one `if` branch or `match` arm is still available in
+the others, and counts as moved after the construct. Parameters are borrowed:
+a function receiving a `List` reads it; to mutate, take `*mut List(T)`. To
+take ownership, mark the parameter `own`:
+
+```
+fn token(kind: u8, own text: String) -> Token {
+    return Token{ .kind = kind, .text = text }     // moved in, moved on: no clone
+}
+let t = token(1, name)                             // `name` is moved; using it again is an error
+```
+
+An `own` parameter is mutable, is dropped when the function returns unless it
+was moved on, and only makes sense for owning types. Receivers cannot be
+`own`, exported functions cannot take `own` parameters, and a function with
+one cannot be used as a function value (its type would not say who owns the
+argument).
 `List(T)` and `String` coerce to `[]T` / `[]u8` when passed where a slice is
 expected. Moving out of a field or element is an error. Owned values are
 released when their scope ends; that is the only automatic action at scope
@@ -101,6 +117,8 @@ edges (`@weak(x)` or `x.weak()`, then `w.upgrade()`).
   and types that `derive(Eq)` / `derive(Ord)`. Logical `and`, `or`, `!`.
 - `x |> f(a)` is `f(x, a)`.
 - `if (c) a else b` is an expression; `if (opt) |v| { } else { }` unwraps.
+  Without braces the body is one statement, so `if (c) x = 1 else x = 2` and
+  `if (c) return v` are fine.
 - `match v { pat => expr, ... }` on integers (literals, ranges `1..=9`),
   strings, bools, chars, enums (`.Variant(p)`), optionals (`null`, binding),
   error unions (`error.Name`, binding), tuples, and byte slices (binary
@@ -108,7 +126,10 @@ edges (`@weak(x)` or `x.weak()`, then `w.upgrade()`).
 - Blocks are expressions whose value is the final expression. A labeled block
   yields through `break :label value`.
 - `try e` propagates an error; `e catch |err| handler`; `opt orelse default`;
-  `opt.?` unwraps (panics on null).
+  `opt.?` unwraps (panics on null). The right-hand side of `orelse` and
+  `catch` may be a jump: `let v = opt orelse return null`,
+  `let v = r catch |e| return -1`.
+- An integer or float literal coerces into `?T`: `f(1)` where `f(x: ?i32)`.
 - `defer stmt` runs at scope exit, `errdefer stmt` only when the scope exits
   through an error; both in reverse order of registration.
 - Closures: `|[captures] params| -> R { body }`. Captures are explicit:
@@ -173,8 +194,9 @@ the inferred set per function.
 - `List(T)`: `new`, `with_capacity`, `from`, `append`, `pop`, `clear`, `clone`,
   `last`, `first`, `insert`, `remove`, `swap_remove`, `extend`, `reserve`,
   `items`, `is_empty`, `len`, plus slice methods.
-- `String`: `new`, `from`, `with_capacity`, `append`, `append_char`, `clone`,
-  `clear`, `pop`, `bytes`, `len`, plus `[]u8` methods.
+- `String`: `new`, `from`, `with_capacity`, `append`, `append_char` (a code
+  point, UTF-8 encoded), `push_byte` (one raw byte), `clone`, `clear`, `pop`,
+  `bytes`, `len`, plus `[]u8` methods.
 - `Map(K, V)` (keys: integers, bool, char, `[]u8`, `String`): `new`, `put`,
   `get`, `contains`, `remove`, `clear`, `clone`, `keys`, `values`, `len`,
   `m[key]`; `for (m) |k|` iterates keys.

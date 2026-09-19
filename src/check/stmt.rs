@@ -16,7 +16,7 @@ impl<'a> Checker<'a> {
     pub fn declare_local(&mut self, name: &str, ty: TyId, mutable: bool, span: Span) -> LocalId {
         let cur = self.cur();
         let id = cur.locals.len() as LocalId;
-        cur.locals.push(Local { name: name.to_string(), ty, mutable, span, is_param: false });
+        cur.locals.push(Local { name: name.to_string(), ty, mutable, span, is_param: false, owned: false });
         cur.scopes.last_mut().unwrap().push((name.to_string(), ScopeEntry { local: id, auto_deref: false }));
         id
     }

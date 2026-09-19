@@ -80,6 +80,27 @@ impl<'a> Checker<'a> {
 
     /// Consume a value into a new owner: locals of resource types are moved,
     /// fields cannot be moved out of, parameters are borrowed.
+    /// The moved-set at this point, for branch-aware move tracking.
+    pub fn moved_snapshot(&mut self) -> (HashSet<LocalId>, HashMap<LocalId, Span>) {
+        let c = self.cur();
+        (c.moved.clone(), c.moved_spans.clone())
+    }
+    pub fn moved_restore(&mut self, s: &(HashSet<LocalId>, HashMap<LocalId, Span>)) {
+        let c = self.cur();
+        c.moved = s.0.clone();
+        c.moved_spans = s.1.clone();
+    }
+    /// After a branch: anything moved in it counts as moved from here on.
+    pub fn moved_merge(&mut self, s: &(HashSet<LocalId>, HashMap<LocalId, Span>)) {
+        let c = self.cur();
+        for l in &s.0 {
+            c.moved.insert(*l);
+            if let Some(sp) = s.1.get(l) {
+                c.moved_spans.entry(*l).or_insert(*sp);
+            }
+        }
+    }
+
     pub fn take_ownership(&mut self, e: TExpr) -> TExpr {
         let t = self.tys.resolve(e.ty, false);
         if !self.needs_drop(t) {
@@ -100,7 +121,7 @@ impl<'a> Checker<'a> {
                 let l = *l;
                 let cur = self.cur.as_ref().unwrap();
                 let local = &cur.locals[l as usize];
-                if local.is_param {
+                if local.is_param && !local.owned {
                     let n = local.name.clone();
                     let tn = self.type_name(t);
                     self.error_note(e.span, format!("cannot move `{}` out of a parameter; parameters are borrowed", n), None, format!("use `{}.clone()` to take an owned copy of the `{}`", n, tn));
@@ -140,6 +161,13 @@ impl<'a> Checker<'a> {
             (TyKind::Infer(_), _) | (_, TyKind::Infer(_)) => {
                 if self.unify(from, to) {
                     return Ok(TExpr { ty: target, ..te });
+                }
+                // a literal into `?T`: pin it to T, then wrap
+                if let TyKind::Opt(inner) = kt {
+                    if let Ok(inner_e) = self.coerce(te.clone(), inner) {
+                        let span = inner_e.span;
+                        return Ok(TExpr { kind: TExprKind::OptWrap(Box::new(inner_e)), ty: target, span });
+                    }
                 }
                 return Err(te);
             }
@@ -582,6 +610,10 @@ impl<'a> Checker<'a> {
                 let def = self.fns[fid as usize].clone();
                 if def.is_generic {
                     self.error(span, format!("`{}` is generic; call it with arguments so its type parameters can be inferred", name));
+                    return self.error_expr(span);
+                }
+                if def.decl.params.iter().any(|p| p.owned) {
+                    self.error(span, format!("`{}` takes `own` parameters and cannot be used as a function value; call it directly", name));
                     return self.error_expr(span);
                 }
                 let inst = self.instantiate(fid, vec![], span);
@@ -1421,9 +1453,11 @@ impl<'a> Checker<'a> {
         for (l, r) in &narrowing {
             self.cur().ranges.insert(*l, *r);
         }
+        let moved_before = self.moved_snapshot();
         let then_expected = if els.is_some() { expected } else { Some(self.tys.void()) };
         let tb = self.check_block(then, then_expected, None);
         self.pop_scope();
+        let moved_then = self.moved_snapshot();
         let then_ty = tb.ty;
         match els {
             None => {
@@ -1435,6 +1469,8 @@ impl<'a> Checker<'a> {
                 self.mk(TExprKind::If { cond: Box::new(c), then: tb, els: None }, void, span)
             }
             Some(e) => {
+                // the else branch starts from the moves before the `if`
+                self.moved_restore(&moved_before);
                 let hint = if matches!(self.tys.kind(self.tys.shallow(then_ty)), TyKind::Never) { expected } else { Some(then_ty) };
                 let eb = match e {
                     Expr::Block(b) => self.check_block(b, hint, None),
@@ -1445,6 +1481,7 @@ impl<'a> Checker<'a> {
                         TBlock { stmts: vec![], tail: Some(Box::new(te)), label: None, ty, span: sp }
                     }
                 };
+                self.moved_merge(&moved_then);
                 let (tb, eb, ty) = self.join_branches(tb, eb, expected);
                 self.mk(TExprKind::If { cond: Box::new(c), then: tb, els: Some(eb) }, ty, span)
             }
@@ -1554,9 +1591,11 @@ impl<'a> Checker<'a> {
         };
         self.push_scope();
         let local = self.declare_local(binding, payload, false, span);
+        let moved_before = self.moved_snapshot();
         let then_expected = if els.is_some() { expected } else { Some(self.tys.void()) };
         let tb = self.check_block(then, then_expected, None);
         self.pop_scope();
+        let moved_then = self.moved_snapshot();
         let then_ty = tb.ty;
         match els {
             None => {
@@ -1567,6 +1606,8 @@ impl<'a> Checker<'a> {
                 self.mk(TExprKind::IfCapture { cond: Box::new(c), local, then: tb, els: None }, void, span)
             }
             Some(e) => {
+                // the else branch starts from the moves before the `if`
+                self.moved_restore(&moved_before);
                 let hint = if matches!(self.tys.kind(self.tys.shallow(then_ty)), TyKind::Never) { expected } else { Some(then_ty) };
                 let eb = match e {
                     Expr::Block(b) => self.check_block(b, hint, None),
@@ -1577,6 +1618,7 @@ impl<'a> Checker<'a> {
                         TBlock { stmts: vec![], tail: Some(Box::new(te)), label: None, ty, span: sp }
                     }
                 };
+                self.moved_merge(&moved_then);
                 let (tb, eb, ty) = self.join_branches(tb, eb, expected);
                 self.mk(TExprKind::IfCapture { cond: Box::new(c), local, then: tb, els: Some(eb) }, ty, span)
             }
@@ -2158,6 +2200,8 @@ impl<'a> Checker<'a> {
             let pt = self.resolve_type(&p.ty, &generics, self_ty, def.module);
             let te = self.check_expr(a, Some(pt));
             let te = self.coerce_or_error(te, pt, &format!("argument `{}`", p.name));
+            // an `own` parameter takes the argument: the caller's local is moved
+            let te = if p.owned { self.take_ownership(te) } else { te };
             targs_e.push(te);
         }
         // extra arguments of a C variadic: untyped literals take C's default promotions
@@ -2344,7 +2388,7 @@ impl<'a> Checker<'a> {
         let mut params = Vec::new();
         for (i, p) in c.params.iter().enumerate() {
             let lid = locals.len() as LocalId;
-            locals.push(Local { name: p.name.clone(), ty: ptys[i], mutable: false, span: p.span, is_param: true });
+            locals.push(Local { name: p.name.clone(), ty: ptys[i], mutable: false, span: p.span, is_param: true, owned: false });
             params.push(lid);
         }
         let env_tys: Vec<(TyId, bool)> = captures.iter().map(|(_, r, t)| (*t, *r)).collect();
@@ -2411,7 +2455,7 @@ impl<'a> Checker<'a> {
             let lid = ctx.locals.len() as LocalId;
             let mutable = c.captures[i].mutable;
             let lty = if *by_ref { self.tys.ptr(mutable, *ty) } else { *ty };
-            ctx.locals.push(Local { name: format!("cap_{}", name), ty: lty, mutable: mutable || !*by_ref, span: c.captures[i].span, is_param: true });
+            ctx.locals.push(Local { name: format!("cap_{}", name), ty: lty, mutable: mutable || !*by_ref, span: c.captures[i].span, is_param: true, owned: false });
             ctx.scopes[0].push((name, ScopeEntry { local: lid, auto_deref: *by_ref }));
         }
         let saved = self.cur.take();

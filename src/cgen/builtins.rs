@@ -484,6 +484,12 @@ impl Gen {
                 self.line(format!("nx_str_append_char(c, &({}), {});", l, ch));
                 "0".into()
             }
+            Builtin::StringPushByte => {
+                let b = self.simple(&args[1]);
+                let l = self.place(&args[0]);
+                self.line(format!("{{ uint8_t _b = (uint8_t)({}); nx_str_append(c, &({}), &_b, 1); }}", b, l));
+                "0".into()
+            }
             Builtin::StringClear => {
                 let l = self.place(&args[0]);
                 self.line(format!("({}).len = 0;", l));

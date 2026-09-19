@@ -1,0 +1,45 @@
+// `own` parameters: the callee takes ownership. The caller's value is moved
+// (using it afterwards is a compile error), and the callee either moves it on
+// or drops it when it returns. Without `own`, parameters are borrowed.
+
+struct Token {
+    kind: u8
+    text: String
+}
+
+// moves the String into the struct: no clone, no copy
+fn token(kind: u8, own text: String) -> Token {
+    return Token{ .kind = kind, .text = text }
+}
+
+// consumes and drops its argument at exit
+fn shout(own s: String) {
+    s.append("!")
+    println("{}", .{s})
+}
+
+// takes a List, keeps only its length
+fn count(own xs: List(i32)) -> usize {
+    return xs.len
+}
+
+fn main() {
+    let t = token(1, String.from("ident"))
+    println("{} {}", .{t.kind, t.text})
+
+    var s = String.from("hello")
+    s.append(", world")
+    shout(s)
+
+    var xs = List(i32).new()
+    for (0..5) |i| { xs.append(i as i32) }
+    println("count {}", .{count(xs)})
+
+    var toks = List(Token).new()
+    for (["a", "bb", "ccc"]) |w| {
+        toks.append(token(w.len as u8, String.from(w)))
+    }
+    var total: usize = 0
+    for (toks) |tk| { total += tk.text.len }
+    println("tokens {} chars {}", .{toks.len, total})
+}

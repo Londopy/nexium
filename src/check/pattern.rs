@@ -16,7 +16,11 @@ impl<'a> Checker<'a> {
         }
         let mut tarms: Vec<(TPat, Option<TExpr>, TExpr, Span)> = Vec::new();
         let mut hint = expected;
+        let moved_before = self.moved_snapshot();
+        let mut moved_arms = Vec::new();
         for arm in arms {
+            // each arm starts from the moves before the `match`
+            self.moved_restore(&moved_before);
             self.push_scope();
             let pat = self.check_pattern(&arm.pat, st);
             let guard = arm.guard.as_ref().map(|g| {
@@ -32,6 +36,11 @@ impl<'a> Checker<'a> {
             let body = self.take_ownership(body);
             self.pop_scope();
             tarms.push((pat, guard, body, arm.span));
+            moved_arms.push(self.moved_snapshot());
+        }
+        self.moved_restore(&moved_before);
+        for m in &moved_arms {
+            self.moved_merge(m);
         }
         // join arm types
         let bodies: Vec<TExpr> = tarms.iter().map(|(_, _, b, _)| b.clone()).collect();

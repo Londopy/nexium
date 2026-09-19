@@ -200,7 +200,7 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     to close before the parser: parameters cannot be taken by value (moving a
     `String` into a struct field costs a `.clone()`), there is no raw-byte
     push on `String` (`append_char` encodes), and `return` is a statement, so
-    `orelse return` is not available.
+    `orelse return` is not available. All three are closed in items 61 to 63.
 
 ## nexium-gui
 
@@ -253,6 +253,32 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     languages; the two documents people read first, the language reference and
     the architecture tour, into three. The rest follows as the English text
     settles.
+
+## Language gaps closed before the parser
+
+61. **`own` parameters.** `fn f(own s: String)` takes ownership: the caller's
+    argument is moved (a local is zeroed after the copy so its scope-exit
+    drop is a no-op; a temporary is handed over without a caller-side drop),
+    and the callee owns it: mutable, movable into a struct or another call,
+    dropped at return otherwise. `own` is a contextual modifier, only
+    recognized before a parameter name. It is rejected on receivers, on
+    copy types (where it would mean nothing), on exported functions (the
+    host cannot hand over ownership), and a function with `own` parameters
+    cannot become a function value because `fn(String)` says nothing about
+    ownership. The spec is silent on the syntax; `own` reads as the
+    counterpart of "borrowed" and does not collide with any identifier in
+    the examples.
+62. **Moves are branch-aware.** The moved-set is snapshotted before an `if`
+    or `match`, each branch or arm starts from that snapshot, and afterwards
+    the union counts as moved. Before this, moving a String in the `then`
+    branch made it unusable in `else`, which the lexer hit at once.
+63. **Jumps in expression position, narrowly.** `return`, `break`, and
+    `continue` are still statements, but the right-hand side of `orelse` and
+    `catch` accepts one (wrapped as a diverging block), and an unbraced `if`
+    body or `else` body is parsed as a statement, so assignments and jumps
+    work there without braces. `String.push_byte(u8)` appends a raw byte;
+    `append_char` keeps encoding code points. Integer and float literals
+    coerce into `?T`.
 
 ## Compiler selection
 

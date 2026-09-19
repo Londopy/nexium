@@ -44,6 +44,8 @@ pub struct Param {
     pub name: String,
     pub ty: TypeExpr,
     pub comptime: bool,
+    /// `own name: T`: the callee takes ownership (the argument is moved)
+    pub owned: bool,
     pub span: Span,
 }
 

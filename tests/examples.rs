@@ -38,7 +38,7 @@ fn examples_reproduce_recorded_output() {
         eprintln!("skipping: zig not found");
         return;
     }
-    for name in ["hello", "tour", "binary", "ownership", "generics", "control", "ctest", "arena", "dyn", "parallel", "cimport", "process", "tree"] {
+    for name in ["hello", "tour", "binary", "ownership", "generics", "control", "ctest", "arena", "dyn", "parallel", "cimport", "process", "tree", "own"] {
         run_example(name, "run");
     }
     run_example("tests", "test");
