@@ -247,6 +247,7 @@ using arena {
 - [nexium-gui](docs/gui.md): the immediate-mode GUI library and how to write a widget.
 - [Releasing your program](docs/releasing-your-program.md): binaries for three platforms from a tag, installers optional.
 - [Editor support](editors): VS Code extension, Sublime syntax, LSP.
+- [Linguist](linguist): the ready-to-apply pull request that will make GitHub recognize `.nx` once the usage bar is met.
 - [Translations](docs/i18n): this README in six languages; the language reference and the architecture tour in Spanish, Chinese, and Japanese.
 - [Decisions](DECISIONS.md): every call made where the specification was open.
 

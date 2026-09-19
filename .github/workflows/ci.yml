@@ -45,6 +45,17 @@ jobs:
       - name: Build
         run: cargo build --locked
 
+      - name: Toolchain diagnostics (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          zig version
+          zig env
+          xcrun --show-sdk-path || true
+          echo '#include <stdio.h>' > /tmp/t.c
+          echo 'int main(void){puts("ok");return 0;}' >> /tmp/t.c
+          zig cc -v /tmp/t.c -o /tmp/t 2>&1 | tail -20 || true
+          zig cc /tmp/t.c -lc -o /tmp/t2 && /tmp/t2
+
       - name: Test
         run: cargo test --locked
 

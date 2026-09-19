@@ -526,7 +526,12 @@ fn compile_c(opts: &Opts, c_path: &Path, out: &Path, kind: &str) -> Result<(), (
     cmd.arg("-o");
     cmd.arg(out);
     if !is_windows_target(&opts.target) {
-        cmd.arg("-lm");
+        // libm is part of libSystem on macOS; a separate -lm there makes zig skip
+        // its implicit libc link on machines without an SDK. Ask for libc explicitly.
+        if !is_macos_target(&opts.target) {
+            cmd.arg("-lm");
+        }
+        cmd.arg("-lc");
     }
     let status = match cmd.status() {
         Ok(s) => s,

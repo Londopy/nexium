@@ -50,6 +50,7 @@ First public release.
   packaged as a `.vsix` on every release) and a Sublime Text syntax.
 - `setup-nexium` GitHub Action and a release workflow template for programs
   written in Nexium (`docs/releasing-your-program.md`).
+- `linguist/`: the prepared GitHub Linguist entry, samples, heuristic, and apply script.
 - Translations under `docs/i18n/`: the README in Spanish, Chinese, Japanese,
   Korean, French, and German; the language reference and architecture tour in
   Spanish, Chinese, and Japanese.
