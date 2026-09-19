@@ -12,10 +12,13 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
 
 - `nx tir`: the checked program as S-expressions, the oracle for the
   self-hosted checker; `--sigs` prints declarations and signatures only.
-- `self/check.nx`, stage 1 of the checker in Nexium: module loading,
-  declarations, type interning, and the signatures of non-generic
-  functions, constants and globals; `cargo test` diffs it against
-  `nx tir --sigs` over 41 sources.
+- `self/check.nx`, the checker in Nexium: module loading, declarations,
+  type interning, signatures (`cargo test` diffs `--sigs` over 41 sources),
+  and function bodies: statements, expressions, calls, builtin methods and
+  namespaces, matches and patterns, casts, coercions, ownership moves and
+  the range analysis. It produces the oracle's exact typed IR for 35
+  sources, itself among them; generics, closures, trait objects, binary
+  patterns, compile-time calls and C imports remain.
 
 ### Fixed
 
@@ -24,7 +27,15 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
   per line so a bit-or inside a closure body is not taken for its closing bar.
 - A `String` built for the right side of `and`/`or` produced C that did not
   compile (its release was emitted outside the block that declared it).
-- `i128` range bounds overflowed inside the compiler.
+- `i128` range bounds overflowed inside the compiler; an `i128` literal
+  beyond `i64` was emitted as undefined C for the minimum; `parse_int`
+  rejected values above 2^65.
+- A range fact from an `if` guard (`if i == 1 { ... }`) outlived its block
+  and could prove a later `xs[i]` in range, eliding its bounds check.
+- `return xs[i]` into a `?T` or `!T` moved the element without a clone, and
+  a diverging `orelse` default or `catch` handler marked its operand moved.
+- Floats print as the shortest text that reads back exactly
+  (`3.141592653589793`, not `3.1415926535897931`).
 - The tree-sitter parser is regenerated for 0.6.0 (its version is embedded).
 
 ## [0.6.0] - 2026-09-19
