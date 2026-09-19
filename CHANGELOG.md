@@ -8,6 +8,19 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
 
 ## [Unreleased]
 
+### Added
+
+- `self/check.nx` checks closures: parameter and return types from the
+  expected function type, by-value and by-reference captures, inferred
+  return types; `examples/generics.nx`, `examples/tests.nx` and
+  `std/thread.nx` join the body comparison (41 sources).
+
+### Fixed
+
+- A `break` inside an `orelse` default, a call argument or any other nested
+  expression now ends a `while true`; a non-void function that ended in such
+  a loop was accepted without a return value.
+
 ## [0.6.1] - 2026-09-19
 
 ### Added
