@@ -1,0 +1,7 @@
+// EXPECT: cannot move
+fn consume(own s: String) -> usize { return s.len }
+fn main() {
+    var xs = List(String).new()
+    xs.append(String.from("a"))
+    _ = consume(xs[0])
+}

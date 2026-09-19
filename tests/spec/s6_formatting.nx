@@ -1,0 +1,7 @@
+// SPEC 6.5: the format placeholders.
+fn main() {
+    println("{x} {X} {b} {o} {e} {c}", .{255, 255, 5, 8, 1234.5, 65})
+    println("{:.2} [{>6}] [{<6}] {{}} {}", .{3.14159, 42, 42, true})
+    let s = format("{}-{}", .{"a", 1})
+    println("{} {}", .{s, s.len})
+}

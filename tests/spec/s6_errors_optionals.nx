@@ -1,0 +1,31 @@
+// SPEC 6.3: try, catch with a jump, orelse return, .?, defer and errdefer.
+error Parse { Empty, Bad }
+fn parse(s: []u8) -> Parse!i64 {
+    if s.len == 0 { return error.Empty }
+    let v = s.parse_int(i64) catch { return error.Bad }
+    return v
+}
+fn sum(a: []u8, b: []u8) -> Parse!i64 {
+    defer println("sum done", .{})
+    errdefer println("sum failed", .{})
+    let x = try parse(a)
+    let y = parse(b) catch |e| {
+        println("caught {}", .{e})
+        return e
+    }
+    return x + y
+}
+fn first(xs: []i64) -> ?i64 {
+    if xs.len == 0 { return null }
+    return xs[0]
+}
+fn main() {
+    println("{}", .{sum("1", "2") catch -1})
+    println("{}", .{sum("", "2") catch -1})
+    println("{}", .{sum("1", "x") catch -1})
+    let xs = [9, 8]
+    let f = first(xs[..]) orelse 0
+    let g = first(xs[0..0]) orelse 0
+    let h = (first(xs[..])).?
+    println("{} {} {}", .{f, g, h})
+}

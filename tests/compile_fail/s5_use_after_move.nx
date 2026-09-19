@@ -1,0 +1,7 @@
+// EXPECT: after it was moved
+fn consume(own s: String) -> usize { return s.len }
+fn main() {
+    let s = String.from("abc")
+    _ = consume(s)
+    println("{}", .{s.len})
+}

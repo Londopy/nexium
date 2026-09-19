@@ -270,8 +270,9 @@ Formatting is compiled: each placeholder becomes a typed write.
 algorithm over constructors, so tuples of enums, nested optionals, enum
 payloads and error sets are checked precisely; integers, strings and
 other unbounded types need a `_ =>` arm. Patterns: literals (integers, chars, strings, bools, negative
-literals), integer ranges `1..=9`, enum variants `.Variant(p, q)` or
-`.Variant { field: p }`, `null` and a binding on optionals (the binding is
+literals), integer ranges `1..=9`, enum variants `.Variant(p, q)` (a struct
+variant's fields bind positionally, in declaration order), `null` and a
+binding on optionals (the binding is
 the payload), `error.Name` and a binding on error unions (the binding is
 the success value), tuples, wildcards, or-patterns `.A | .B`, and guards
 `pattern if cond`.

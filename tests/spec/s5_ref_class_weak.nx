@@ -1,0 +1,21 @@
+// SPEC 5.4: ref class copies retain; weak references do not keep the object alive; @refCount reads the count.
+ref class Node { v: i32 }
+fn main() {
+    let a = Node{ .v = 7 }
+    let w = a.weak ()
+    {
+        let b = a
+        println("{} {}", .{@refCount(a), b.v})
+    }
+    println("{}", .{@refCount(a)})
+    if let u = w.upgrade() { println("alive {}", .{u.v}) }
+    _ = a
+    var w2: ?Node = null
+    {
+        let c = Node{ .v = 9 }
+        let wc = c.weak ()
+        w2 = wc.upgrade()
+        _ = c
+    }
+    println("{}", .{w2 != null})
+}

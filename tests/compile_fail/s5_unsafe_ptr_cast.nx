@@ -1,0 +1,7 @@
+// EXPECT: unsafe
+fn main() {
+    var x: i32 = 1
+    let p: *mut i32 = &mut x
+    let q = p as *mut u8
+    _ = q
+}
