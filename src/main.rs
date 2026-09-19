@@ -17,6 +17,7 @@ mod manifest;
 mod parser;
 mod repl;
 mod report;
+mod sexp;
 mod ship;
 mod ship_node;
 mod size;
@@ -55,6 +56,7 @@ usage:
   nx parse <file.nx>               dump the syntax tree
   nx tokens <file.nx>              dump the token stream (start end KIND payload)
   nx repl                          interactive session (also: `nx` with no arguments)
+  nx sexp <file.nx>                the syntax tree as S-expressions (the self-hosted parser's oracle)
   nx doctor                        show which C compiler nx will use and whether it works
   nx init [name]                   write a nexium.toml (and a main.nx) in this directory
   nx add <name> --git URL [--tag T] | --path DIR   add a dependency and fetch it
@@ -2149,6 +2151,30 @@ fn real_main() -> i32 {
                     1
                 }
             }
+        }
+        "sexp" => {
+            // the root file only, without its imports: the oracle for the self-hosted parser
+            let o = parse_opts(rest);
+            let text = match std::fs::read_to_string(&o.file) {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("error: cannot read {}: {}", o.file.display(), e);
+                    return 1;
+                }
+            };
+            let (toks, ldiags) = lexer::Lexer::new(&text, 0).lex();
+            let mut p = parser::Parser::new(toks, 0);
+            let m = p.parse_module();
+            if !ldiags.is_empty() || !p.diags.is_empty() {
+                let mut sm = SourceMap::default();
+                sm.add(o.file.to_string_lossy().to_string(), text.clone());
+                for d in ldiags.iter().chain(p.diags.iter()) {
+                    eprint!("{}", sm.render(d));
+                }
+                return 1;
+            }
+            print!("{}", sexp::module(&m));
+            0
         }
         "parse" => {
             let o = parse_opts(rest);
