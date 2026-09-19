@@ -31,6 +31,25 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
 - The tree-sitter grammar, the VS Code and Sublime syntaxes, every example,
   the standard library, the GUI, the self-hosting sources, and all
   documentation (including the translations) use the new syntax.
+- Moving a `String` or `List` out of a `for` loop variable is a compile
+  error (`use x.clone()`); it silently produced a double free before. A
+  loop variable is a view of the element.
+
+### Added
+
+- `self/parser.nx`: the parser written in Nexium now parses the 0.6 syntax
+  and prints the same tree as `nx sexp` for every example, std module, GUI
+  and self-hosting source; `cargo test` diffs the two (roadmap phase 4).
+
+### Fixed
+
+- `unreachable` as the last statement of a function returning an error
+  union or struct produced C that did not compile.
+- A program whose imported module also defines `main` (as `self/lexer.nx`
+  does, for running the lexer on its own) took the wrong entry point.
+- `nx` left one Zig cache directory behind per process under
+  `nx-out/.zig-cache`; it is removed when the command finishes, and stale
+  ones are swept.
 
 ## [0.5.0] - 2026-09-19
 
