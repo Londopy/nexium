@@ -563,7 +563,10 @@ NX_INLINE void nx_w_float(nx_sink* s, double v, int prec, bool exp, int width, b
     else if (exp) { snprintf(buf, sizeof buf, "%.*e", prec < 0 ? 6 : prec, v); }
     else if (prec >= 0) { snprintf(buf, sizeof buf, "%.*f", prec, v); }
     else if (v == floor(v) && fabs(v) < 1e16) { snprintf(buf, sizeof buf, "%.1f", v); }
-    else { snprintf(buf, sizeof buf, "%.17g", v); double back = strtod(buf, NULL); if (back == v) { snprintf(buf, sizeof buf, "%.15g", v); if (strtod(buf, NULL) != v) snprintf(buf, sizeof buf, "%.17g", v); } }
+    else { /* the shortest text that reads back as the same value */
+        int p = 1;
+        for (; p <= 17; p++) { snprintf(buf, sizeof buf, "%.*g", p, v); if (strtod(buf, NULL) == v) break; }
+    }
     nx_w_pad(s, buf, strlen(buf), width, left);
 }
 NX_INLINE void nx_w_bool(nx_sink* s, bool b) { nx_w_cstr(s, b ? "true" : "false"); }
