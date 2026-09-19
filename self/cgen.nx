@@ -144,15 +144,15 @@ fn int_literal(v: i128, name: []u8) -> String {
         if v > I64_MIN and v <= I64_MAX { return format("((nx_i128){}LL)", .{v}) }
         // assembled unsigned so the minimum's high word never shifts a
         // negative value (undefined in C); the cast keeps the bit pattern
-        let bits = v as u128
+        let bits = @truncate(u128, v)
         let hi = (bits >> 64) as u64
-        let lo = bits as u64
+        let lo = @truncate(u64, bits)
         return format("((nx_i128)(((nx_u128){}ULL << 64) | (nx_u128){}ULL))", .{hi, lo})
     }
     if name == "u128" {
         if v <= U64_MAX { return format("((nx_u128){}ULL)", .{v}) }
         let hi = (v >> 64) as u64
-        let lo = v as u64
+        let lo = @truncate(u64, v)
         return format("(((nx_u128){}ULL << 64) | (nx_u128){}ULL)", .{hi, lo})
     }
     if name[0] == 'i' {
@@ -991,12 +991,6 @@ impl Gen {
         return String.from(v)
     }
 
-    fn emit_vtable_type(self: *mut Self, tr: usize) {
-        let key = format("vtable:{}", .{tr})
-        if self.thunks_by_key.contains(key[..]) { return }
-        self.errors.append(String.from("trait objects are not emitted yet (stage 2)"))
-    }
-
     // ----- data ----------------------------------------------------------------
 
     /// Interned string literal: returns a C expression of type `const char*`.
@@ -1570,7 +1564,7 @@ impl Gen {
         }
         if k == check.TKind.SForSlice {
             if self.c.tir.nodes[s].flag {
-                self.errors.append(String.from("`for parallel` is not emitted yet (stage 2)"))
+                self.parallel_for(s)
                 return
             }
             let index = a
@@ -2320,10 +2314,9 @@ impl Gen {
             let f = self.clone_fn(ety)
             return format("{}(c, &{})", .{f, vt})
         }
-        if k == check.TKind.BinConstruct or k == check.TKind.DynFrom or k == check.TKind.DynCall {
-            self.errors.append(format("expression kind {} is not emitted yet (stage 2)", .{self.c.tir.nodes[e].start}))
-            return String.from("0")
-        }
+        if k == check.TKind.BinConstruct { return self.bin_construct(e) }
+        if k == check.TKind.DynFrom { return self.dyn_from(e) }
+        if k == check.TKind.DynCall { return self.dyn_call(e) }
         return String.from("0")
     }
 
@@ -2346,13 +2339,17 @@ impl Gen {
             let lt = self.cur.local_tys[local]
             let cn = self.cty(lt)
             let fname = self.field_name(self.c.tir.nodes[kids[0]].ty, idx)
+            self.line("{")
+            self.push_buf()
             self.line(format("{} {} = {}.{};", .{cn, name, v, fname})[..])
             let ok = self.expr(kids[i])
             if as_error {
-                self.line(format("if (!({})) {{ {}.err = {}u; }}", .{ok, out, self.c.error_id("InvalidRecord")})[..])
+                self.line(format("if (!({})) {}.err = {}u;", .{ok, out, self.err_id("InvalidRecord")})[..])
             } else {
                 self.line(format("if (!({})) nx_panic(\"record constraint violated\", {});", .{ok, loc})[..])
             }
+            self.splice_buf()
+            self.line("}")
             i += 1
         }
         if as_error {
@@ -2655,10 +2652,7 @@ impl Gen {
             if conds.len == 0 { return String.from("1") }
             return format("({})", .{join_strings(&conds, " && ")})
         }
-        if k == check.TKind.PBinary {
-            self.errors.append(String.from("binary patterns are not emitted yet (stage 2)"))
-            return String.from("1")
-        }
+        if k == check.TKind.PBinary { return self.bin_pattern_test(kids[..], s, ty) }
         return String.from("1")
     }
 
@@ -2706,6 +2700,7 @@ impl Gen {
             for q, i in kids { self.pattern_bind(q, format("{}.f{}", .{s, i})[..], ts[i], owned) }
             return
         }
+        if k == check.TKind.PBinary { self.bin_pattern_bind(kids[..], s, ty) }
     }
 
     // ----- thunks --------------------------------------------------------------
@@ -2721,6 +2716,7 @@ impl Gen {
         var args = String.from("c")
         let is_extern = self.c.insts[inst].is_extern
         if is_extern { args = String.new() }
+        if self.c.insts[inst].is_closure { args.append(", env") }
         for p, i in self.c.insts[inst].params.clone() {
             let cn = self.cty(self.c.insts[inst].locals[p].ty)
             params.append(format(", {} a{}", .{cn, i})[..])
@@ -2860,6 +2856,7 @@ impl Gen {
         let tys = self.c.tir.nodes[e].kids2.clone()
         let ety = self.c.tir.nodes[e].ty
         let loc = self.node_loc(e)
+        let fast = self.mode == MODE_FAST
         if name == "Print" or name == "Println" or name == "Eprintln" {
             let s = self.tmp()
             let stream = if name == "Eprintln" { "c->err" } else { "c->out" }
@@ -2899,8 +2896,1539 @@ impl Gen {
             self.line(format("{{ char _pb[256]; snprintf(_pb, sizeof _pb, \"%.*s\", (int)({}.len > 255 ? 255 : {}.len), (const char*){}.ptr); nx_panic(_pb, {}); }}", .{m, m, m, loc})[..])
             return String.from("0")
         }
-        self.errors.append(format("builtin `{}` is not emitted yet (stage 2)", .{name}))
+        if name == "Len" {
+            let t = self.res(self.c.tir.nodes[args[0]].ty)
+            if self.c.tys.kind(t) == check.TK.Array {
+                _ = self.simple(args[0])
+                return format("((size_t){})", .{self.c.tys.list[t].n})
+            }
+            let v = self.simple(args[0])
+            return format("(({}).len)", .{v})
+        }
+        if name == "PtrAdd" {
+            if self.c.tir.nodes[args[0]].k == check.TKind.Str {
+                let lit = self.string_literal(self.c.tir.nodes[args[0]].text[..])
+                return format("((uint8_t*){})", .{lit})
+            }
+            let v = self.simple(args[0])
+            return format("(({}).ptr)", .{v})
+        }
+        if name == "ListNew" {
+            let cn = self.cty(ety)
+            return format("(({}){{NULL, 0, 0, c->arena}})", .{cn})
+        }
+        if name == "ListWithCapacity" {
+            let cn = self.cty(ety)
+            let en = self.cty(tys[0])
+            let n = self.simple(args[0])
+            let t = self.tmp()
+            self.line(format("{} {} = {{0}}; {}.ar = c->arena; nx_list_reserve(c, (nx_rawlist*)&{}, sizeof({}), _Alignof({}), {});", .{cn, t, t, t, en, en, n})[..])
+            return t
+        }
+        if name == "ListFromSlice" {
+            let cn = self.cty(ety)
+            let en = self.cty(tys[0])
+            let s = self.simple(args[0])
+            let t = self.tmp()
+            self.line(format("{} {} = {{0}}; {}.ar = c->arena; nx_list_reserve(c, (nx_rawlist*)&{}, sizeof({}), _Alignof({}), {}.len);", .{cn, t, t, t, en, en, s})[..])
+            if self.needs_drop(tys[0]) {
+                let cf = self.clone_fn(tys[0])
+                self.line(format("for (size_t i = 0; i < {}.len; i++) {}.ptr[i] = {}(c, &{}.ptr[i]);", .{s, t, cf, s})[..])
+            } else {
+                self.line(format("if ({}.len) memcpy({}.ptr, {}.ptr, {}.len * sizeof({}));", .{s, t, s, s, en})[..])
+            }
+            self.line(format("{}.len = {}.len;", .{t, s})[..])
+            return t
+        }
+        if name == "ListAppend" {
+            let en = self.cty(tys[0])
+            let v = self.expr_owned(args[1])
+            let vt = self.bind_tmp(v[..], tys[0])
+            let l = self.place(args[0])
+            let lp = self.tmp()
+            let ln = self.cty(self.c.tir.nodes[args[0]].ty)
+            self.line(format("{}* {} = &({});", .{ln, lp, l})[..])
+            self.line(format("if ({}->len == {}->cap) nx_list_grow(c, (nx_rawlist*){}, sizeof({}), _Alignof({}), {}->len + 1);", .{lp, lp, lp, en, en, lp})[..])
+            self.line(format("{}->ptr[{}->len++] = {};", .{lp, lp, vt})[..])
+            return String.from("0")
+        }
+        if name == "ListPop" or name == "StringPop" {
+            let l = self.place(args[0])
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            self.line(format("{} {}; if (({}).len) {{ {}.has = true; {}.val = ({}).ptr[--({}).len]; }} else {}.has = false;", .{cn, t, l, t, t, l, l, t})[..])
+            return t
+        }
+        if name == "ListClear" {
+            let l = self.place(args[0])
+            if self.needs_drop(tys[0]) {
+                let d = self.drop_fn(tys[0])
+                self.line(format("for (size_t i = 0; i < ({}).len; i++) {}(c, &({}).ptr[i]);", .{l, d, l})[..])
+            }
+            self.line(format("({}).len = 0;", .{l})[..])
+            return String.from("0")
+        }
+        if name == "ListClone" or name == "StringClone" or name == "MapClone" {
+            let v = self.simple(args[0])
+            let f = self.clone_fn(ety)
+            return format("{}(c, &{})", .{f, v})
+        }
+        if name == "ListLast" {
+            let s = self.simple(args[0])
+            let last = self.c.tir.nodes[args[1]].k == check.TKind.Int and self.c.tir.nodes[args[1]].ival == 1
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            let idx = if last { format("{}.len - 1", .{s}) } else { String.from("0") }
+            self.line(format("{} {}; if ({}.len) {{ {}.has = true; {}.val = {}.ptr[{}]; }} else {}.has = false;", .{cn, t, s, t, t, s, idx, t})[..])
+            return t
+        }
+        if name == "ListInsert" {
+            let en = self.cty(tys[0])
+            let i = self.simple(args[1])
+            let v = self.expr_owned(args[2])
+            let vt = self.bind_tmp(v[..], tys[0])
+            let l = self.place(args[0])
+            let ln = self.cty(self.c.tir.nodes[args[0]].ty)
+            let lp = self.tmp()
+            self.line(format("{}* {} = &({});", .{ln, lp, l})[..])
+            self.line(format("if ({} > {}->len) nx_panic_bounds({}, {}->len, {});", .{i, lp, i, lp, loc})[..])
+            self.line(format("if ({}->len == {}->cap) nx_list_grow(c, (nx_rawlist*){}, sizeof({}), _Alignof({}), {}->len + 1);", .{lp, lp, lp, en, en, lp})[..])
+            self.line(format("memmove({}->ptr + {} + 1, {}->ptr + {}, ({}->len - {}) * sizeof({}));", .{lp, i, lp, i, lp, i, en})[..])
+            self.line(format("{}->ptr[{}] = {}; {}->len++;", .{lp, i, vt, lp})[..])
+            return String.from("0")
+        }
+        if name == "ListRemove" or name == "ListSwapRemove" {
+            let en = self.cty(tys[0])
+            let i = self.simple(args[1])
+            let l = self.place(args[0])
+            let ln = self.cty(self.c.tir.nodes[args[0]].ty)
+            let lp = self.tmp()
+            let t = self.tmp()
+            self.line(format("{}* {} = &({});", .{ln, lp, l})[..])
+            self.line(format("if ({} >= {}->len) nx_panic_bounds({}, {}->len, {});", .{i, lp, i, lp, loc})[..])
+            self.line(format("{} {} = {}->ptr[{}];", .{en, t, lp, i})[..])
+            if name == "ListRemove" {
+                self.line(format("memmove({}->ptr + {}, {}->ptr + {} + 1, ({}->len - {} - 1) * sizeof({}));", .{lp, i, lp, i, lp, i, en})[..])
+            } else {
+                self.line(format("{}->ptr[{}] = {}->ptr[{}->len - 1];", .{lp, i, lp, lp})[..])
+            }
+            self.line(format("{}->len--;", .{lp})[..])
+            return t
+        }
+        if name == "ListExtend" {
+            let en = self.cty(tys[0])
+            let s = self.simple(args[1])
+            let l = self.place(args[0])
+            let ln = self.cty(self.c.tir.nodes[args[0]].ty)
+            let lp = self.tmp()
+            self.line(format("{}* {} = &({});", .{ln, lp, l})[..])
+            self.line(format("nx_list_reserve(c, (nx_rawlist*){}, sizeof({}), _Alignof({}), {}.len);", .{lp, en, en, s})[..])
+            self.line(format("if ({}.len) memcpy({}->ptr + {}->len, {}.ptr, {}.len * sizeof({})); {}->len += {}.len;", .{s, lp, lp, s, s, en, lp, s})[..])
+            return String.from("0")
+        }
+        if name == "ListReserve" {
+            let en = self.cty(tys[0])
+            let n = self.simple(args[1])
+            let l = self.place(args[0])
+            self.line(format("nx_list_reserve(c, (nx_rawlist*)&({}), sizeof({}), _Alignof({}), {});", .{l, en, en, n})[..])
+            return String.from("0")
+        }
+        if name == "ListItems" { return self.simple(args[0]) }
+        if name == "StringNew" or name == "StringWithCapacity" {
+            let t = self.tmp()
+            self.line(format("nx_string {} = {{0}}; {}.ar = c->arena;", .{t, t})[..])
+            if name == "StringWithCapacity" {
+                let n = self.simple(args[0])
+                self.line(format("nx_str_reserve(c, &{}, {});", .{t, n})[..])
+            }
+            return t
+        }
+        if name == "StringFrom" {
+            let s = self.simple(args[0])
+            let t = self.tmp()
+            self.line(format("nx_string {} = nx_str_from(c, {});", .{t, s})[..])
+            return t
+        }
+        if name == "StringAppend" {
+            let s = self.simple(args[1])
+            let l = self.place(args[0])
+            self.line(format("nx_str_append(c, &({}), {}.ptr, {}.len);", .{l, s, s})[..])
+            return String.from("0")
+        }
+        if name == "StringAppendChar" {
+            let ch = self.simple(args[1])
+            let l = self.place(args[0])
+            self.line(format("nx_str_append_char(c, &({}), {});", .{l, ch})[..])
+            return String.from("0")
+        }
+        if name == "StringPushByte" {
+            let b = self.simple(args[1])
+            let l = self.place(args[0])
+            self.line(format("{{ uint8_t _b = (uint8_t)({}); nx_str_append(c, &({}), &_b, 1); }}", .{b, l})[..])
+            return String.from("0")
+        }
+        if name == "StringClear" {
+            let l = self.place(args[0])
+            self.line(format("({}).len = 0;", .{l})[..])
+            return String.from("0")
+        }
+        if name == "StringBytes" {
+            let v = self.simple(args[0])
+            return format("nx_str_slice({})", .{v})
+        }
+        if name == "MapNew" {
+            let kn = self.cty(tys[0])
+            let vn = if self.is_void(tys[1]) { String.from("char") } else { self.cty(tys[1]) }
+            let kind = self.map_key_kind(tys[0])
+            return format("nx_map_new(c, sizeof({}), sizeof({}), {})", .{kn, vn, kind})
+        }
+        if name == "MapPut" {
+            let kn = self.cty(tys[0])
+            let vn = self.cty(tys[1])
+            let kv = self.expr_owned(args[1])
+            let kt = self.bind_tmp(kv[..], tys[0])
+            let vv = self.expr_owned(args[2])
+            let vt = self.bind_tmp(vv[..], tys[1])
+            let m = self.place(args[0])
+            let ok = self.tmp()
+            let ov = self.tmp()
+            self.line(format("{} {}; {} {};", .{kn, ok, vn, ov})[..])
+            self.line(format("if (nx_map_put(c, &({}), &{}, &{}, &{}, &{})) {{", .{m, kt, vt, ok, ov})[..])
+            if self.needs_drop(tys[0]) {
+                let d = self.drop_fn(tys[0])
+                self.line(format("  {}(c, &{});", .{d, ok})[..])
+            }
+            if self.needs_drop(tys[1]) {
+                let d = self.drop_fn(tys[1])
+                self.line(format("  {}(c, &{});", .{d, ov})[..])
+            }
+            self.line("}")
+            return String.from("0")
+        }
+        if name == "MapGet" {
+            let vn = self.cty(tys[1])
+            let m = self.simple(args[0])
+            let kv = self.simple(args[1])
+            let kt = self.bind_tmp(kv[..], self.c.tir.nodes[args[1]].ty)
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            let p = self.tmp()
+            self.line(format("{} {}; {}* {} = ({}*)nx_map_get(&({}), &{});", .{cn, t, vn, p, vn, m, kt})[..])
+            self.line(format("if ({}) {{ {}.has = true; {}.val = *{}; }} else {}.has = false;", .{p, t, t, p, t})[..])
+            return t
+        }
+        if name == "MapContains" {
+            let m = self.simple(args[0])
+            let kv = self.simple(args[1])
+            let kt = self.bind_tmp(kv[..], self.c.tir.nodes[args[1]].ty)
+            return format("(nx_map_get(&({}), &{}) != NULL)", .{m, kt})
+        }
+        if name == "MapRemove" {
+            let kn = self.cty(tys[0])
+            let vn = self.cty(tys[1])
+            let kv = self.simple(args[1])
+            let kt = self.bind_tmp(kv[..], self.c.tir.nodes[args[1]].ty)
+            let m = self.place(args[0])
+            let ok = self.tmp()
+            let ov = self.tmp()
+            let r = self.tmp()
+            self.line(format("{} {}; {} {}; bool {} = nx_map_remove(&({}), &{}, &{}, &{});", .{kn, ok, vn, ov, r, m, kt, ok, ov})[..])
+            if self.needs_drop(tys[0]) or self.needs_drop(tys[1]) {
+                self.line(format("if ({}) {{", .{r})[..])
+                if self.needs_drop(tys[0]) {
+                    let d = self.drop_fn(tys[0])
+                    self.line(format("  {}(c, &{});", .{d, ok})[..])
+                }
+                if self.needs_drop(tys[1]) {
+                    let d = self.drop_fn(tys[1])
+                    self.line(format("  {}(c, &{});", .{d, ov})[..])
+                }
+                self.line("}")
+            }
+            return r
+        }
+        if name == "MapClear" {
+            let m = self.place(args[0])
+            let d = self.drop_fn(self.c.tir.nodes[args[0]].ty)
+            self.line(format("{}(c, &({}));", .{d, m})[..])
+            return String.from("0")
+        }
+        if name == "MapKeys" or name == "MapValues" {
+            let m = self.simple(args[0])
+            let is_keys = name == "MapKeys"
+            let et = if is_keys { tys[0] } else { tys[1] }
+            let en = self.cty(et)
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            self.line(format("{} {} = {{0}}; {}.ar = c->arena; nx_list_reserve(c, (nx_rawlist*)&{}, sizeof({}), _Alignof({}), ({}).len);", .{cn, t, t, t, en, en, m})[..])
+            self.line(format("{{ size_t i = 0; void* kp; void* vp; while (nx_map_next(&({}), &i, &kp, &vp)) {{", .{m})[..])
+            let src = format("(*({}*){})", .{en, if is_keys { "kp" } else { "vp" }})
+            let cp = self.copy_value(src[..], et)
+            self.line(format("  {}.ptr[{}.len++] = {};", .{t, t, cp})[..])
+            self.line("} }")
+            return t
+        }
+        if name == "SliceEq" {
+            let av = self.simple(args[0])
+            let bv = self.simple(args[1])
+            return self.eq_expr(self.c.tir.nodes[args[0]].ty, av[..], bv[..])
+        }
+        if name == "SliceFind" {
+            if tys.len == 2 {
+                let av = self.simple(args[0])
+                let bv = self.simple(args[1])
+                return format("nx_sl_cmp({}, {})", .{av, bv})
+            }
+            let av = self.simple(args[0])
+            let n = self.simple(args[1])
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            self.line(format("{} {}; {{ size_t _i; {}.has = nx_sl_find({}, {}, &_i); {}.val = _i; }}", .{cn, t, t, av, n, t})[..])
+            return t
+        }
+        if name == "SliceCopy" {
+            let en = self.cty(tys[0])
+            let d = self.simple(args[0])
+            let s = self.simple(args[1])
+            if !fast { self.line(format("if ({}.len > {}.len) nx_panic(\"copy source is longer than the destination\", {});", .{s, d, loc})[..]) }
+            self.line(format("if ({}.len) memmove({}.ptr, {}.ptr, {}.len * sizeof({}));", .{s, d, s, s, en})[..])
+            return String.from("0")
+        }
+        if name == "SliceFill" {
+            let d = self.simple(args[0])
+            let v = self.simple(args[1])
+            self.line(format("for (size_t i = 0; i < {}.len; i++) {}.ptr[i] = {};", .{d, d, v})[..])
+            return String.from("0")
+        }
+        if name == "SliceReverse" {
+            let en = self.cty(tys[0])
+            let d = self.simple(args[0])
+            self.line(format("for (size_t i = 0; i + 1 < {}.len; i++, {}.len > 0) {{ if (i >= {}.len - 1 - i) break; {} _x = {}.ptr[i]; {}.ptr[i] = {}.ptr[{}.len - 1 - i]; {}.ptr[{}.len - 1 - i] = _x; }}", .{d, d, d, en, d, d, d, d, d, d})[..])
+            return String.from("0")
+        }
+        if name == "SliceSort" {
+            let en = self.cty(tys[0])
+            let d = self.simple(args[0])
+            let cmpf = self.qsort_cmp(tys[0])
+            self.line(format("if ({}.len > 1) qsort({}.ptr, {}.len, sizeof({}), {});", .{d, d, d, en, cmpf})[..])
+            return String.from("0")
+        }
+        if name == "SliceContains" or name == "SliceIndexOf" {
+            let av = self.simple(args[0])
+            let v = self.simple(args[1])
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            let eq = self.eq_expr(tys[0], format("{}.ptr[_i]", .{av})[..], v[..])
+            if name == "SliceContains" {
+                self.line(format("bool {} = false; for (size_t _i = 0; _i < {}.len; _i++) if ({}) {{ {} = true; break; }}", .{t, av, eq, t})[..])
+            } else {
+                self.line(format("{} {}; {}.has = false; for (size_t _i = 0; _i < {}.len; _i++) if ({}) {{ {}.has = true; {}.val = _i; break; }}", .{cn, t, t, av, eq, t, t})[..])
+            }
+            return t
+        }
+        if name == "SliceStartsWith" or name == "SliceEndsWith" or name == "SliceEqIgnoreCase" {
+            let av = self.simple(args[0])
+            let bv = self.simple(args[1])
+            let f = if name == "SliceStartsWith" { "nx_sl_starts_with" } else if name == "SliceEndsWith" { "nx_sl_ends_with" } else { "nx_sl_eq_ignore_case" }
+            return format("{}({}, {})", .{f, av, bv})
+        }
+        if name == "SliceTrim" {
+            let av = self.simple(args[0])
+            return format("nx_sl_trim({})", .{av})
+        }
+        if name == "SliceSplit" or name == "SliceLines" {
+            let av = self.simple(args[0])
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            self.line(format("{} {} = {{0}}; {}.ar = c->arena;", .{cn, t, t})[..])
+            let sep = if name == "SliceSplit" { self.simple(args[1]) } else { String.from("nx_lit(\"\\n\", 1)") }
+            self.line(format("{{ size_t _s = 0; for (;;) {{ nx_sl_u8 _rest = {{ {}.ptr + _s, {}.len - _s }}; size_t _i; bool _f = {}.len && nx_sl_find(_rest, {}, &_i); nx_sl_u8 _piece = {{ _rest.ptr, _f ? _i : _rest.len }};", .{av, av, sep, sep})[..])
+            if name == "SliceLines" {
+                self.line("  if (_piece.len && _piece.ptr[_piece.len - 1] == '\\r') _piece.len--;")
+                self.line(format("  if (!_f && _piece.len == 0 && {}.len) break;", .{av})[..])
+            }
+            self.line(format("  if ({}.len == {}.cap) nx_list_grow(c, (nx_rawlist*)&{}, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), {}.len + 1);", .{t, t, t, t})[..])
+            self.line(format("  {}.ptr[{}.len++] = _piece; if (!_f) break; _s += _i + {}.len; }} }}", .{t, t, sep})[..])
+            return t
+        }
+        if name == "SliceParseInt" {
+            let av = self.simple(args[0])
+            let cn = self.cty(ety)
+            let target = self.cty(tys[0])
+            var lo = String.new()
+            var hi = String.new()
+            self.int_bounds_pub(tys[0], &mut lo, &mut hi)
+            let t = self.tmp()
+            let inv = self.err_id("InvalidInput")
+            let ovf = self.err_id("Overflow")
+            self.line(format("{} {}; {{ nx_i128 _v = 0; int _r = nx_parse_int({}, {}, {}, &_v); {}.err = _r == 0 ? 0 : (_r == 1 ? {}u : {}u); if (_r == 0) {}.val = ({})_v; }}", .{cn, t, av, lo, hi, t, inv, ovf, t, target})[..])
+            return t
+        }
+        if name == "SliceParseFloat" {
+            let av = self.simple(args[0])
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            let inv = self.err_id("InvalidInput")
+            self.line(format("{} {}; {{ double _v = 0; bool _ok = nx_parse_float({}, &_v); {}.err = _ok ? 0 : {}u; {}.val = _v; }}", .{cn, t, av, t, inv, t})[..])
+            return t
+        }
+        if name == "MathSqrt" or name == "MathFloor" or name == "MathCeil" or name == "MathRound" or name == "MathSin" or name == "MathCos"
+            or name == "MathTan" or name == "MathExp" or name == "MathLog" or name == "MathLog2" {
+            let x = self.simple(args[0])
+            let ft = self.res(tys[0])
+            let is_f32 = self.c.tys.kind(ft) == check.TK.Float and self.c.tys.list[ft].name == "f32"
+            let f = if name == "MathSqrt" { "sqrt" } else if name == "MathFloor" { "floor" } else if name == "MathCeil" { "ceil" } else if name == "MathRound" { "round" }
+            else if name == "MathSin" { "sin" } else if name == "MathCos" { "cos" } else if name == "MathTan" { "tan" } else if name == "MathExp" { "exp" }
+            else if name == "MathLog" { "log" } else { "log2" }
+            if is_f32 { return format("{}f({})", .{f, x}) }
+            return format("{}({})", .{f, x})
+        }
+        if name == "MathAbs" {
+            let x = self.simple(args[0])
+            let t = self.res(tys[0])
+            if self.c.tys.kind(t) == check.TK.Float {
+                if self.c.tys.list[t].name == "f32" { return format("fabsf({})", .{x}) }
+                return format("fabs({})", .{x})
+            }
+            let m = self.int_mangle(t)
+            return format("nx_abs_{}({}, {})", .{m, x, loc})
+        }
+        if name == "MathMin" or name == "MathMax" {
+            let av = self.simple(args[0])
+            let bv = self.simple(args[1])
+            if name == "MathMin" { return format("(({}) < ({}) ? ({}) : ({}))", .{av, bv, av, bv}) }
+            return format("(({}) > ({}) ? ({}) : ({}))", .{av, bv, av, bv})
+        }
+        if name == "MathClamp" {
+            let av = self.simple(args[0])
+            let lo = self.simple(args[1])
+            let hi = self.simple(args[2])
+            return format("(({}) < ({}) ? ({}) : (({}) > ({}) ? ({}) : ({})))", .{av, lo, lo, av, hi, hi, av})
+        }
+        if name == "MathPow" or name == "MathAtan2" {
+            let av = self.simple(args[0])
+            let bv = self.simple(args[1])
+            return format("{}({}, {})", .{if name == "MathPow" { "pow" } else { "atan2" }, av, bv})
+        }
+        if name == "Hash" {
+            // checked arithmetic returning an optional
+            let av = self.simple(args[0])
+            let bv = self.simple(args[1])
+            var marker: i128 = 0
+            if self.c.tir.nodes[args[2]].k == check.TKind.Int { marker = self.c.tir.nodes[args[2]].ival }
+            let f = if marker == 0 { "add" } else if marker == 1 { "sub" } else { "mul" }
+            let cn = self.cty(ety)
+            let en = self.cty(tys[0])
+            let t = self.tmp()
+            self.line(format("{} {}; {{ {} _r; {}.has = !__builtin_{}_overflow({}, {}, &_r); {}.val = _r; }}", .{cn, t, en, t, f, av, bv, t})[..])
+            return t
+        }
+        if name == "Truncate" {
+            let v = self.simple(args[0])
+            let cn = self.cty(ety)
+            let rt = self.res(ety)
+            var ut: []u8 = "uint64_t"
+            if self.c.tys.kind(rt) == check.TK.Int {
+                let bits = check.int_bits(self.c.tys.list[rt].name[..])
+                ut = if bits == 8 { "uint8_t" } else if bits == 16 { "uint16_t" } else if bits == 32 { "uint32_t" } else if bits == 64 { "uint64_t" } else { "nx_u128" }
+            }
+            return format("(({})({})({}))", .{cn, ut, v})
+        }
+        if name == "ErrorName" {
+            let v = self.simple(args[0])
+            return format("nx_lit(nx_error_name({}), strlen(nx_error_name({})))", .{v, v})
+        }
+        if name == "Weak" {
+            let v = self.simple(args[0])
+            let cn = self.cty(ety)
+            return format("(({})nx_weak_new({}))", .{cn, v})
+        }
+        if name == "Upgrade" {
+            let v = self.simple(args[0])
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            self.line(format("{} {}; {}.has = nx_weak_upgrade({}); {}.val = {};", .{cn, t, t, v, t, v})[..])
+            return t
+        }
+        if name == "RefCount" {
+            let v = self.simple(args[0])
+            return format("(({})->rc)", .{v})
+        }
+        if name == "RefEq" {
+            let av = self.simple(args[0])
+            let bv = self.simple(args[1])
+            return format("(({}) == ({}))", .{av, bv})
+        }
+        if name == "CharIsDigit" {
+            let v = self.simple(args[0])
+            return format("(({}) >= '0' && ({}) <= '9')", .{v, v})
+        }
+        if name == "CharIsAlpha" {
+            let v = self.simple(args[0])
+            return format("((({}) >= 'a' && ({}) <= 'z') || (({}) >= 'A' && ({}) <= 'Z'))", .{v, v, v, v})
+        }
+        if name == "CharIsSpace" {
+            let v = self.simple(args[0])
+            return format("(({}) == ' ' || ({}) == '\\t' || ({}) == '\\n' || ({}) == '\\r')", .{v, v, v, v})
+        }
+        if name == "CharToLower" {
+            let v = self.simple(args[0])
+            return format("((({}) >= 'A' && ({}) <= 'Z') ? ({}) + 32 : ({}))", .{v, v, v, v})
+        }
+        if name == "CharToUpper" {
+            let v = self.simple(args[0])
+            return format("((({}) >= 'a' && ({}) <= 'z') ? ({}) - 32 : ({}))", .{v, v, v, v})
+        }
+        if name == "CharToDigit" {
+            let v = self.simple(args[0])
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            self.line(format("{} {}; {}.has = ({}) >= '0' && ({}) <= '9'; {}.val = ({}) - '0';", .{cn, t, t, v, v, t, v})[..])
+            return t
+        }
+        if name == "ReadFile" {
+            let p = self.simple(args[0])
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            let io = self.err_id("IoError")
+            self.line(format("{} {}; {{ nx_string _s; if (nx_read_file(c, {}, &_s)) {{ {}.err = 0; {}.val = _s; }} else {}.err = {}u; }}", .{cn, t, p, t, t, t, io})[..])
+            return t
+        }
+        if name == "WriteFile" or name == "AppendFile" {
+            let p = self.simple(args[0])
+            let d = self.simple(args[1])
+            let cn = self.cty(ety)
+            let io = self.err_id("IoError")
+            let f = if name == "WriteFile" { "nx_write_file" } else { "nx_append_file" }
+            return format("(({}){{ .err = {}({}, {}) ? 0 : {}u }})", .{cn, f, p, d, io})
+        }
+        if name == "FsKind" {
+            let p = self.simple(args[0])
+            return format("nx_fs_kind({})", .{p})
+        }
+        if name == "FsSize" or name == "FsModified" {
+            let p = self.simple(args[0])
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            let nf = self.err_id("NotFound")
+            let io = self.err_id("IoError")
+            let pick = if name == "FsSize" { "(uint64_t)_sz" } else { "_mt" }
+            self.line(format("{} {}; {{ int64_t _sz = 0, _mt = 0; int32_t _r = nx_fs_stat({}, &_sz, &_mt); if (_r == 0) {{ {}.err = 0; {}.val = {}; }} else {}.err = _r == 1 ? {}u : {}u; }}", .{cn, t, p, t, t, pick, t, nf, io})[..])
+            return t
+        }
+        if name == "FsMkdir" or name == "FsRemoveFile" or name == "FsRemoveDir" {
+            let p = self.simple(args[0])
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            let nf = self.err_id("NotFound")
+            let io = self.err_id("IoError")
+            let f = if name == "FsMkdir" { "nx_fs_mkdir" } else if name == "FsRemoveFile" { "nx_fs_remove_file" } else { "nx_fs_remove_dir" }
+            self.line(format("{} {}; {{ int32_t _r = {}({}); {}.err = _r == 0 ? 0 : _r == 1 ? {}u : {}u; }}", .{cn, t, f, p, t, nf, io})[..])
+            return t
+        }
+        if name == "FsRename" {
+            let av = self.simple(args[0])
+            let bv = self.simple(args[1])
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            let nf = self.err_id("NotFound")
+            let io = self.err_id("IoError")
+            self.line(format("{} {}; {{ int32_t _r = nx_fs_rename({}, {}); {}.err = _r == 0 ? 0 : _r == 1 ? {}u : {}u; }}", .{cn, t, av, bv, t, nf, io})[..])
+            return t
+        }
+        if name == "FsListDir" {
+            let p = self.simple(args[0])
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            let nf = self.err_id("NotFound")
+            let io = self.err_id("IoError")
+            self.line(format("{} {}; {{ nx_rawlist _l; int32_t _r = nx_fs_list_dir(c, {}, &_l); if (_r == 0) {{ {}.err = 0; memcpy(&{}.val, &_l, sizeof _l); }} else {}.err = _r == 1 ? {}u : {}u; }}", .{cn, t, p, t, t, t, nf, io})[..])
+            return t
+        }
+        if name == "FsCwd" {
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            let io = self.err_id("IoError")
+            self.line(format("{} {}; {{ nx_string _s; if (nx_fs_cwd(c, &_s)) {{ {}.err = 0; {}.val = _s; }} else {}.err = {}u; }}", .{cn, t, t, t, t, io})[..])
+            return t
+        }
+        if name == "FsTempDir" { return String.from("nx_fs_temp_dir(c)") }
+        if name == "FileOpen" {
+            let p = self.simple(args[0])
+            let md = self.simple(args[1])
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            let nf = self.err_id("NotFound")
+            let io = self.err_id("IoError")
+            self.line(format("{} {}; {{ int64_t _h = nx_file_open({}, {}); if (_h >= 0) {{ {}.err = 0; {}.val = _h; }} else {}.err = _h == -1 ? {}u : {}u; }}", .{cn, t, p, md, t, t, t, nf, io})[..])
+            return t
+        }
+        if name == "FileRead" {
+            let h = self.simple(args[0])
+            let n = self.simple(args[1])
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            let io = self.err_id("IoError")
+            self.line(format("{} {}; {{ nx_string _s; if (nx_file_read(c, {}, {}, &_s)) {{ {}.err = 0; {}.val = _s; }} else {}.err = {}u; }}", .{cn, t, h, n, t, t, t, io})[..])
+            return t
+        }
+        if name == "FileWrite" {
+            let h = self.simple(args[0])
+            let d = self.simple(args[1])
+            let cn = self.cty(ety)
+            let io = self.err_id("IoError")
+            return format("(({}){{ .err = nx_file_write({}, {}) ? 0 : {}u }})", .{cn, h, d, io})
+        }
+        if name == "FileFlush" or name == "FileClose" {
+            let h = self.simple(args[0])
+            let cn = self.cty(ety)
+            let io = self.err_id("IoError")
+            let f = if name == "FileFlush" { "nx_file_flush" } else { "nx_file_close" }
+            return format("(({}){{ .err = {}({}) ? 0 : {}u }})", .{cn, f, h, io})
+        }
+        if name == "NetConnect" or name == "NetListen" or name == "NetAccept" or name == "NetUdpBind" {
+            var a = List(String).new()
+            for x in args { a.append(self.simple(x)) }
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            let f = if name == "NetConnect" { "nx_tcp_connect" } else if name == "NetListen" { "nx_tcp_listen" } else if name == "NetAccept" { "nx_tcp_accept" } else { "nx_udp_bind" }
+            let errs = self.net_errs()
+            self.line(format("{} {}; {{ int64_t _h = 0; int32_t _r = {}({}, &_h); if (_r == 0) {{ {}.err = 0; {}.val = _h; }} else {}.err = {}; }}", .{cn, t, f, join_strings(&a, ", "), t, t, t, errs})[..])
+            return t
+        }
+        if name == "NetSend" or name == "NetClose" or name == "NetSendTo" {
+            var a = List(String).new()
+            for x in args { a.append(self.simple(x)) }
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            let f = if name == "NetSend" { "nx_net_send" } else if name == "NetClose" { "nx_net_close" } else { "nx_udp_send_to" }
+            let errs = self.net_errs()
+            self.line(format("{} {}; {{ int32_t _r = {}({}); {}.err = _r == 0 ? 0 : {}; }}", .{cn, t, f, join_strings(&a, ", "), t, errs})[..])
+            return t
+        }
+        if name == "NetRecv" or name == "NetRecvFrom" {
+            var a = List(String).new()
+            for x in args { a.append(self.simple(x)) }
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            let f = if name == "NetRecv" { "nx_net_recv" } else { "nx_udp_recv_from" }
+            let errs = self.net_errs()
+            self.line(format("{} {}; {{ nx_string _s; int32_t _r = {}(c, {}, &_s); if (_r == 0) {{ {}.err = 0; {}.val = _s; }} else {}.err = {}; }}", .{cn, t, f, join_strings(&a, ", "), t, t, t, errs})[..])
+            return t
+        }
+        if name == "NetPeer" or name == "NetLocal" {
+            let s = self.simple(args[0])
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            let local = if name == "NetLocal" { "true" } else { "false" }
+            let errs = self.net_errs()
+            self.line(format("{} {}; {{ nx_string _s; int32_t _r = nx_net_name(c, {}, {}, &_s); if (_r == 0) {{ {}.err = 0; {}.val = _s; }} else {}.err = {}; }}", .{cn, t, s, local, t, t, t, errs})[..])
+            return t
+        }
+        if name == "NetResolve" {
+            let h = self.simple(args[0])
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            let errs = self.net_errs()
+            self.line(format("{} {}; {{ nx_rawlist _l; int32_t _r = nx_net_resolve(c, {}, &_l); if (_r == 0) {{ {}.err = 0; memcpy(&{}.val, &_l, sizeof _l); }} else {}.err = {}; }}", .{cn, t, h, t, t, t, errs})[..])
+            return t
+        }
+        if name == "NetLastPeer" { return String.from("nx_net_last_peer(c)") }
+        if name == "ThreadStart" {
+            let f = self.simple(args[0])
+            let p = self.simple(args[1])
+            return format("nx_thread_start(c, (void*){}.fn, {}.env, (void*)({}))", .{f, f, p})
+        }
+        if name == "ThreadJoin" {
+            let h = self.simple(args[0])
+            self.line(format("nx_thread_join({}, {});", .{h, loc})[..])
+            return String.from("0")
+        }
+        if name == "ThreadCount" { return String.from("nx_hw_threads()") }
+        if name == "MutexNew" { return String.from("nx_mutex_new()") }
+        if name == "CondNew" { return String.from("nx_cond_new()") }
+        if name == "MutexLock" or name == "MutexUnlock" or name == "MutexFree" or name == "CondSignal" or name == "CondBroadcast" or name == "CondFree" {
+            let h = self.simple(args[0])
+            let f = if name == "MutexLock" { "nx_mutex_lock" } else if name == "MutexUnlock" { "nx_mutex_unlock" } else if name == "MutexFree" { "nx_mutex_free" }
+            else if name == "CondSignal" { "nx_cond_signal" } else if name == "CondBroadcast" { "nx_cond_broadcast" } else { "nx_cond_free" }
+            self.line(format("{}({});", .{f, h})[..])
+            return String.from("0")
+        }
+        if name == "CondWait" {
+            let cv = self.simple(args[0])
+            let mu = self.simple(args[1])
+            self.line(format("nx_cond_wait({}, {});", .{cv, mu})[..])
+            return String.from("0")
+        }
+        if name == "Environ" {
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            self.line(format("{} {}; {{ nx_rawlist _l; nx_environ(c, &_l); memcpy(&{}, &_l, sizeof _l); }}", .{cn, t, t})[..])
+            return t
+        }
+        if name == "ReadLine" {
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            self.line(format("{} {}; {{ nx_string _s; {}.has = nx_read_line(c, &_s); if ({}.has) {}.val = _s; }}", .{cn, t, t, t, t})[..])
+            return t
+        }
+        if name == "Args" {
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            self.line(format("{} {}; {{ size_t _n; nx_sl_u8* _a = nx_args(c, &_n); {}.ptr = _a; {}.len = _n; }}", .{cn, t, t, t})[..])
+            return t
+        }
+        if name == "Env" {
+            let n = self.simple(args[0])
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            self.line(format("{} {}; {{ char _nb[256]; size_t _l = {}.len < 255 ? {}.len : 255; memcpy(_nb, {}.ptr, _l); _nb[_l] = 0; const char* _v = getenv(_nb); {}.has = _v != NULL; if (_v) {{ {}.val.ptr = (uint8_t*)_v; {}.val.len = strlen(_v); }} }}", .{cn, t, n, n, n, t, t, t})[..])
+            return t
+        }
+        if name == "Exit" {
+            let v = self.simple(args[0])
+            self.line(format("exit((int)({}));", .{v})[..])
+            return String.from("0")
+        }
+        if name == "Run" {
+            let argv = self.simple(args[0])
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            let io = self.err_id("IoError")
+            self.line(format("{} {}; {{ int _code = 0; if (nx_run(c, {}.ptr, {}.len, &_code)) {{ {}.err = 0; {}.val = _code; }} else {}.err = {}u; }}", .{cn, t, argv, argv, t, t, t, io})[..])
+            return t
+        }
+        if name == "Exec" {
+            let argv = self.simple(args[0])
+            let input = self.simple(args[1])
+            let cwd = self.simple(args[2])
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            let io = self.err_id("IoError")
+            self.line(format("{} {}; {{ int _code = 0; if (nx_run_capture(c, {}.ptr, {}.len, {}, {}, &_code)) {{ {}.err = 0; {}.val = _code; }} else {}.err = {}u; }}", .{cn, t, argv, argv, input, cwd, t, t, t, io})[..])
+            return t
+        }
+        if name == "LastStdout" { return String.from("nx_last_stdout(c)") }
+        if name == "LastStderr" { return String.from("nx_last_stderr(c)") }
+        if name == "TimeNow" { return String.from("nx_time_now_ms()") }
+        if name == "TimeUtcOffset" {
+            let v = self.simple(args[0])
+            return format("nx_time_utc_offset_min({})", .{v})
+        }
+        if name == "TimeMonotonic" { return String.from("nx_time_monotonic_ns()") }
+        if name == "Sleep" {
+            let v = self.simple(args[0])
+            self.line(format("nx_sleep_ms({});", .{v})[..])
+            return String.from("0")
+        }
+        if name == "RandomInt" {
+            let av = self.simple(args[0])
+            let bv = self.simple(args[1])
+            return format("nx_random_int(c, {}, {}, {})", .{av, bv, loc})
+        }
+        if name == "RandomFloat" { return String.from("nx_random_float(c)") }
+        if name == "RandomSeed" {
+            let v = self.simple(args[0])
+            self.line(format("c->rng = {}; c->rng_seeded = true;", .{v})[..])
+            return String.from("0")
+        }
+        self.errors.append(format("builtin {} is not supported by the C backend", .{name}))
         return String.from("0")
+    }
+
+    /// The error id for a socket result code `_r` (1 not found, 2 refused, 3 timeout, other io).
+    fn net_errs(self: *mut Self) -> String {
+        return format("(_r == 1 ? {}u : _r == 2 ? {}u : _r == 3 ? {}u : {}u)", .{self.err_id("NotFound"), self.err_id("ConnectionRefused"), self.err_id("Timeout"), self.err_id("IoError")})
+    }
+
+    fn map_key_kind(self: *mut Self, k: usize) -> u32 {
+        let kk = self.kind(k)
+        if kk == check.TK.Slice { return 1 }
+        if kk == check.TK.Str { return 2 }
+        return 0
+    }
+
+    fn int_bounds_pub(self: *mut Self, t0: usize, lo: *mut String, hi: *mut String) {
+        let t = self.res(t0)
+        let k = self.c.tys.kind(t)
+        if k == check.TK.Int {
+            let nm = self.c.tys.list[t].name.clone()
+            lo.*= int_literal(check.int_min(nm[..]), "i128")
+            hi.*= int_literal(check.int_max(nm[..]), "i128")
+            return
+        }
+        if k == check.TK.Distinct {
+            self.int_bounds_pub(self.c.distinct_underlying(self.c.tys.list[t].def), lo, hi)
+            return
+        }
+        lo.*= String.from("0")
+        hi.*= String.from("0")
+    }
+
+    fn qsort_cmp(self: *mut Self, t0: usize) -> String {
+        let t = self.res(t0)
+        let key = format("qsort:{}", .{t})
+        if let n = self.thunks_by_key.get(key[..]) { return n.clone() }
+        let m = self.mangle(t)
+        let name = format("nx_qcmp_{}", .{m})
+        self.thunks_by_key.put(key, name.clone())
+        let cn = self.cty(t)
+        let cmp = self.cmp_expr(t, format("(*(const {}*)a)", .{cn})[..], format("(*(const {}*)b)", .{cn})[..])
+        self.protos_out.append(format("static int {}(const void* a, const void* b);\n", .{name})[..])
+        self.helpers_out.append(format("static int {}(const void* a, const void* b) {{ return {}; }}\n", .{name, cmp})[..])
+        return name
+    }
+
+    // ----- trait objects -----------------------------------------------------
+
+    fn trait_method_name(self: *mut Self, tr: usize, i: usize) -> String {
+        let tm = self.c.traits[tr].module
+        return self.c.node(tm, self.c.traits[tr].methods[i]).name.clone()
+    }
+
+    /// The vtable struct of a trait and the fat pointer type over it.
+    fn emit_vtable_type(self: *mut Self, tr: usize) {
+        let tname = self.c.traits[tr].name.clone()
+        let key = format("vtable:{}", .{tr})
+        if self.thunks_by_key.contains(key[..]) { return }
+        self.thunks_by_key.put(key, tname.clone())
+        let methods = self.c.traits[tr].methods.clone()
+        var fields = String.new()
+        // method signatures are taken from any vtable instance; without one, emit generic pointers
+        var sample = NONE
+        for v, i in self.c.vtables { if sample == NONE and v.trait_id == tr { sample = i } }
+        for m, i in methods {
+            let mname = sanitize_ident(self.c.node(self.c.traits[tr].module, m).name[..])
+            var sig = String.new()
+            if sample != NONE and i < self.c.vtables[sample].insts.len {
+                let inst = self.c.vtables[sample].insts[i]
+                let ret_t = self.c.insts[inst].ret
+                let ret = if self.is_void(ret_t) { String.from("void") } else { self.cty(ret_t) }
+                var params = String.from("nx_ctx*, void*")
+                for p, k in self.c.insts[inst].params.clone() {
+                    if k == 0 { continue }
+                    let cn = self.cty(self.c.insts[inst].locals[p].ty)
+                    params.append(format(", {}", .{cn})[..])
+                }
+                sig = format("{} (*{})({})", .{ret, mname, params})
+            } else {
+                sig = format("void (*{})(nx_ctx*, void*)", .{mname})
+            }
+            fields.append(format(" {};", .{sig})[..])
+        }
+        self.fwd_out.append(format("typedef struct nx_vt_{} nx_vt_{};\ntypedef struct nx_dyn_{} {{ void* data; const nx_vt_{}* vt; }} nx_dyn_{};\n", .{tname, tname, tname, tname, tname})[..])
+        self.types_out.append(format("struct nx_vt_{} {{{} }};\n", .{tname, fields})[..])
+    }
+
+    /// The vtable instance for (trait, type): thunks adapt `void* self` to the receiver type.
+    fn vtable_instance(self: *mut Self, vt: usize) -> String {
+        let tr = self.c.vtables[vt].trait_id
+        let ty = self.c.vtables[vt].ty
+        let insts = self.c.vtables[vt].insts.clone()
+        let key = format("vtinst:{}", .{vt})
+        if let n = self.thunks_by_key.get(key[..]) { return n.clone() }
+        let tname = self.c.traits[tr].name.clone()
+        let name = format("nx_vt_{}_{}", .{tname, self.mangle(ty)})
+        self.thunks_by_key.put(key, name.clone())
+        self.emit_vtable_type(tr)
+        var entries = List(String).new()
+        for inst, i in insts {
+            let thunk = format("nx_vtthunk_{}_{}", .{vt, i})
+            let ret_t = self.c.insts[inst].ret
+            let ret = if self.is_void(ret_t) { String.from("void") } else { self.cty(ret_t) }
+            var params = List(String).new()
+            params.append(String.from("nx_ctx* c"))
+            params.append(String.from("void* self"))
+            var args = List(String).new()
+            args.append(String.from("c"))
+            let ps = self.c.insts[inst].params.clone()
+            let recv_ty = self.c.insts[inst].locals[ps[0]].ty
+            let recv_c = self.cty(recv_ty)
+            let tcn = self.cty(ty)
+            if self.kind(recv_ty) == check.TK.Ptr { args.append(format("({})self", .{recv_c})) } else { args.append(format("*({}*)self", .{tcn})) }
+            for p, k in ps {
+                if k == 0 { continue }
+                let cn = self.cty(self.c.insts[inst].locals[p].ty)
+                params.append(format("{} a{}", .{cn, k}))
+                args.append(format("a{}", .{k}))
+            }
+            let target = self.fn_c_name(inst)
+            self.helpers_out.append(format("static {} {}({}) {{ {}{}({}); }}\n", .{ret, thunk, join_strings(&params, ", "), if ret == "void" { "" } else { "return " }, target, join_strings(&args, ", ")})[..])
+            entries.append(format(".{} = {}", .{sanitize_ident(self.trait_method_name(tr, i)[..]), thunk}))
+        }
+        self.helpers_out.append(format("static const nx_vt_{} {} = {{ {} }};\n", .{tname, name, join_strings(&entries, ", ")})[..])
+        return name
+    }
+
+    fn dyn_from(self: *mut Self, e: usize) -> String {
+        let inner = self.c.tir.nodes[e].kids[0]
+        let v = self.expr(inner)
+        let vt = self.vtable_instance(self.c.tir.nodes[e].a)
+        let cn = self.cty(self.c.tir.nodes[e].ty)
+        return format("(({}){{ (void*)({}), &{} }})", .{cn, v, vt})
+    }
+
+    fn dyn_call(self: *mut Self, e: usize) -> String {
+        let kids = self.c.tir.nodes[e].kids.clone()
+        let ety = self.c.tir.nodes[e].ty
+        let recv = kids[0]
+        let r = self.simple(recv)
+        let rt = self.res(self.c.tir.nodes[recv].ty)
+        var tr: usize = 0
+        if self.c.tys.kind(rt) == check.TK.Dyn { tr = self.c.tys.list[rt].def }
+        let mname = sanitize_ident(self.trait_method_name(tr, self.c.tir.nodes[e].a)[..])
+        var args = List(String).new()
+        args.append(String.from("c"))
+        args.append(format("{}.data", .{r}))
+        for x, i in kids { if i > 0 { args.append(self.simple(x)) } }
+        let call = format("{}.vt->{}({})", .{r, mname, join_strings(&args, ", ")})
+        if self.is_void(ety) { return call }
+        return self.bind_tmp(call[..], ety)
+    }
+
+    // ----- exports -------------------------------------------------------------
+
+    /// The scalar C type of an exportable value, or "" when it is not a scalar.
+    fn scalar_c(self: *mut Self, t0: usize) -> String {
+        let t = self.res(t0)
+        let k = self.c.tys.kind(t)
+        if k == check.TK.Int { return String.from(int_c_name(self.c.tys.list[t].name[..])) }
+        if k == check.TK.Float { return String.from(if self.c.tys.list[t].name == "f32" { "float" } else { "double" }) }
+        if k == check.TK.Bool { return String.from("bool") }
+        if k == check.TK.Char { return String.from("uint32_t") }
+        if k == check.TK.Distinct { return self.scalar_c(self.c.distinct_underlying(self.c.tys.list[t].def)) }
+        return String.new()
+    }
+
+    fn type_name_pretty(self: *mut Self, t0: usize) -> String {
+        let t = self.res(t0)
+        let k = self.c.tys.kind(t)
+        if k == check.TK.List { return String.from("List") }
+        if k == check.TK.Str { return String.from("String") }
+        if k == check.TK.Map { return String.from("Map") }
+        if k == check.TK.Opt { return String.from("optional") }
+        if k == check.TK.ErrUnion { return String.from("error union") }
+        if k == check.TK.Struct { return self.c.structs[self.c.tys.list[t].def].name.clone() }
+        if k == check.TK.Enum { return self.c.enums[self.c.tys.list[t].def].name.clone() }
+        return self.c.ty_name(t)
+    }
+
+    /// The parameter's kind: 0 scalar, 1 slice of scalars, 2 layout(c) struct;
+    /// 3 when it has no C representation (an error was reported).
+    fn param_kind(self: *mut Self, t0: usize, what: []u8, fname: []u8, elem_c: *mut String, mutable: *mut bool) -> u8 {
+        if self.scalar_c(t0).len > 0 { return 0 }
+        let t = self.res(t0)
+        let k = self.c.tys.kind(t)
+        if k == check.TK.Slice {
+            let ec = self.scalar_c(self.c.tys.list[t].args[0])
+            if ec.len == 0 {
+                self.errors.append(format("export `{}`: {} is a slice of a non-scalar type, which has no C representation", .{fname, what}))
+                return 3
+            }
+            elem_c.*= ec
+            mutable.*= self.c.tys.list[t].flag
+            return 1
+        }
+        if k == check.TK.Struct {
+            let d = self.c.tys.list[t].def
+            if self.c.structs[d].layout != "c" or self.c.structs[d].kind == "ref" {
+                self.errors.append(format("export `{}`: {} has type `{}`, which needs `layout(c)` to cross the boundary", .{fname, what, self.c.structs[d].name}))
+                return 3
+            }
+            let ftys = self.c.struct_field_types(t)
+            let dm = self.c.structs[d].module
+            for f, i in self.c.structs[d].fields.clone() {
+                if self.scalar_c(ftys[i]).len == 0 {
+                    self.errors.append(format("export `{}`: field `{}` of `{}` is not a scalar", .{fname, self.c.node(dm, f).name, self.c.structs[d].name}))
+                    return 3
+                }
+            }
+            elem_c.*= self.cty(t)
+            return 2
+        }
+        let tn = self.type_name_pretty(t)
+        self.errors.append(format("export `{}`: {} has type `{}`, which has no C representation (use scalars, slices of scalars, or `layout(c)` structs)", .{fname, what, tn}))
+        return 3
+    }
+
+    fn export_wrapper(self: *mut Self, inst: usize) -> String {
+        let fname = self.c.insts[inst].name.clone()
+        let ps = self.c.insts[inst].params.clone()
+        var params = List(String).new()
+        var args = List(String).new()
+        args.append(String.from("&ctx"))
+        for p in ps {
+            let lname = self.c.insts[inst].locals[p].name.clone()
+            let lt = self.c.insts[inst].locals[p].ty
+            var elem_c = String.new()
+            var mutable = false
+            let kind = self.param_kind(lt, format("parameter `{}`", .{lname})[..], fname[..], &mut elem_c, &mut mutable)
+            if kind == 3 { return String.new() }
+            if kind == 0 {
+                params.append(format("{} {}", .{self.scalar_c(lt), lname}))
+                let cn = self.cty(lt)
+                args.append(format("({})({})", .{cn, lname}))
+            } else if kind == 1 {
+                params.append(format("{}{}* {}", .{if mutable { "" } else { "const " }, elem_c, lname}))
+                params.append(format("size_t {}_len", .{lname}))
+                let cn = self.cty(lt)
+                args.append(format("(({}){{ ({}*){}, {}_len }})", .{cn, elem_c, lname, lname}))
+            } else {
+                params.append(format("{} {}", .{elem_c, lname}))
+                args.append(lname.clone())
+            }
+        }
+        let ret_t = self.res(self.c.insts[inst].ret)
+        let is_eu = self.c.tys.kind(ret_t) == check.TK.ErrUnion
+        let payload = if is_eu { self.c.tys.list[ret_t].args[0] } else { ret_t }
+        var ret_c = String.new()
+        var has_ret = false
+        if !self.is_void(payload) {
+            var elem_c = String.new()
+            var mutable = false
+            let kind = self.param_kind(payload, "the return value", fname[..], &mut elem_c, &mut mutable)
+            if kind == 3 { return String.new() }
+            if kind == 1 {
+                self.errors.append(format("export `{}`: returning a slice across the boundary is not allowed (its lifetime cannot be expressed); return through a caller-provided buffer", .{fname}))
+                return String.new()
+            }
+            ret_c = if kind == 0 { self.scalar_c(payload) } else { elem_c }
+            has_ret = true
+        }
+        let status = is_eu or (self.c.insts[inst].effects & check.EFF_PANICS) != 0
+        let effects = check.render_effects(self.c.insts[inst].effects)
+        let target = self.fn_c_name(inst)
+        var out = String.new()
+        let panic_id = self.err_id("Panic")
+        out.append(format("/* export: {}{} */\n", .{fname, if effects.len == 0 { String.new() } else { format(" ({})", .{effects}) }})[..])
+        let joined = if params.len == 0 { String.from("void") } else { join_strings(&params, ", ") }
+        if !status {
+            let rc = if has_ret { ret_c.clone() } else { String.from("void") }
+            out.append(format("NX_EXPORT {} {}({}) {{\n", .{rc, fname, joined})[..])
+            out.append("  nx_ctx ctx = nx_default_ctx(0, NULL);\n")
+            if has_ret {
+                out.append(format("  return ({}){}({});\n", .{rc, target, join_strings(&args, ", ")})[..])
+            } else {
+                out.append(format("  {}({});\n", .{target, join_strings(&args, ", ")})[..])
+            }
+            out.append("}\n")
+        } else {
+            var all = List(String).new()
+            for p in params { all.append(p.clone()) }
+            if has_ret { all.append(format("{}* out", .{ret_c})) }
+            let alljoined = if all.len == 0 { String.from("void") } else { join_strings(&all, ", ") }
+            out.append(format("NX_EXPORT int32_t {}({}) {{\n", .{fname, alljoined})[..])
+            out.append("  nx_ctx ctx = nx_default_ctx(0, NULL);\n  nx_boundary _nxb; nx_boundary* prev = nx_tls_boundary; nx_tls_boundary = &_nxb;\n")
+            out.append(format("  if (setjmp(_nxb.jb)) {{ nx_tls_boundary = prev; return {}; }}\n", .{panic_id})[..])
+            if is_eu {
+                let rcn = self.cty(ret_t)
+                out.append(format("  {} r = {}({});\n  nx_tls_boundary = prev;\n  if (r.err) return (int32_t)r.err;\n", .{rcn, target, join_strings(&args, ", ")})[..])
+                if has_ret { out.append("  if (out) *out = r.val;\n") }
+            } else if has_ret {
+                let rcn = self.cty(ret_t)
+                out.append(format("  {} r = {}({});\n  nx_tls_boundary = prev;\n  if (out) *out = r;\n", .{rcn, target, join_strings(&args, ", ")})[..])
+            } else {
+                out.append(format("  {}({});\n  nx_tls_boundary = prev;\n", .{target, join_strings(&args, ", ")})[..])
+            }
+            out.append("  return 0;\n}\n")
+        }
+        return out
+    }
+
+    // ----- for parallel ---------------------------------------------------------
+
+    /// Locals a block uses that are declared outside of it, ascending.
+    fn free_locals(self: *mut Self, b: usize) -> List(usize) {
+        var used = List(usize).new()
+        var declared = List(usize).new()
+        self.walk_block(b, &mut used, &mut declared)
+        var out = List(usize).new()
+        for u in used { if !list_has_usize(&declared, u) and !list_has_usize(&out, u) { out.append(u) } }
+        sort_usize(&mut out)
+        return out
+    }
+
+    fn walk_block(self: *mut Self, b: usize, used: *mut List(usize), declared: *mut List(usize)) {
+        for s in self.c.tir.nodes[b].kids.clone() { self.walk_stmt(s, used, declared) }
+        let tail = self.c.tir.nodes[b].a
+        if tail != NONE { self.walk_expr(tail, used, declared) }
+    }
+
+    fn walk_stmt(self: *mut Self, s: usize, used: *mut List(usize), declared: *mut List(usize)) {
+        let k = self.c.tir.nodes[s].k
+        let kids = self.c.tir.nodes[s].kids.clone()
+        let a = self.c.tir.nodes[s].a
+        if k == check.TKind.SLet {
+            declared.append(a)
+            if kids.len > 0 { self.walk_expr(kids[0], used, declared) }
+        } else if k == check.TKind.SAssign {
+            self.walk_expr(kids[0], used, declared)
+            self.walk_expr(kids[1], used, declared)
+        } else if k == check.TKind.SExpr or k == check.TKind.SReturn or k == check.TKind.SBreak {
+            if kids.len > 0 { self.walk_expr(kids[0], used, declared) }
+        } else if k == check.TKind.SDefer or k == check.TKind.SErrDefer {
+            self.walk_stmt(kids[0], used, declared)
+        } else if k == check.TKind.SWhile {
+            self.walk_expr(kids[0], used, declared)
+            self.walk_block(kids[1], used, declared)
+            if kids.len > 2 { self.walk_block(kids[2], used, declared) }
+        } else if k == check.TKind.SForRange {
+            declared.append(a)
+            self.walk_expr(kids[0], used, declared)
+            self.walk_expr(kids[1], used, declared)
+            if self.c.tir.nodes[s].flag { self.walk_expr(kids[2], used, declared) }
+            self.walk_block(kids[kids.len - 1], used, declared)
+        } else if k == check.TKind.SForSlice {
+            let locals = self.c.tir.nodes[s].kids2.clone()
+            for l, i in locals {
+                declared.append(l)
+                self.walk_expr(kids[i], used, declared)
+            }
+            if a != NONE { declared.append(a) }
+            self.walk_block(kids[kids.len - 1], used, declared)
+        } else if k == check.TKind.SBlock or k == check.TKind.SUsing {
+            self.walk_block(kids[0], used, declared)
+        } else if k == check.TKind.SDrop {
+            used.append(a)
+        }
+    }
+
+    fn walk_pat(self: *mut Self, p: usize, declared: *mut List(usize)) {
+        let k = self.c.tir.nodes[p].k
+        let kids = self.c.tir.nodes[p].kids.clone()
+        if k == check.TKind.PBind { declared.append(self.c.tir.nodes[p].a); return }
+        if k == check.TKind.PVariant or k == check.TKind.POr or k == check.TKind.PTuple or k == check.TKind.PSome or k == check.TKind.POk {
+            for q in kids { self.walk_pat(q, declared) }
+            return
+        }
+        if k == check.TKind.PBinary {
+            for seg in kids {
+                let desc = self.c.tir.nodes[seg].name.clone()
+                let words = check.split_words(desc[..])
+                if words[0] == "bind" or words[0] == "rest" { declared.append(words[1][..].parse_int(usize) catch { NONE }) }
+            }
+        }
+    }
+
+    fn walk_expr(self: *mut Self, e: usize, used: *mut List(usize), declared: *mut List(usize)) {
+        let k = self.c.tir.nodes[e].k
+        let kids = self.c.tir.nodes[e].kids.clone()
+        let a = self.c.tir.nodes[e].a
+        if k == check.TKind.Local { used.append(a); return }
+        if k == check.TKind.If {
+            self.walk_expr(kids[0], used, declared)
+            self.walk_block(kids[1], used, declared)
+            if kids.len > 2 { self.walk_block(kids[2], used, declared) }
+            return
+        }
+        if k == check.TKind.IfCapture {
+            self.walk_expr(kids[0], used, declared)
+            declared.append(a)
+            self.walk_block(kids[1], used, declared)
+            if kids.len > 2 { self.walk_block(kids[2], used, declared) }
+            return
+        }
+        if k == check.TKind.Match {
+            self.walk_expr(kids[0], used, declared)
+            var i: usize = 1
+            while i < kids.len {
+                let akids = self.c.tir.nodes[kids[i]].kids.clone()
+                self.walk_pat(akids[0], declared)
+                var j: usize = 1
+                while j < akids.len { self.walk_expr(akids[j], used, declared); j += 1 }
+                i += 1
+            }
+            return
+        }
+        if k == check.TKind.BlockExpr { self.walk_block(kids[0], used, declared); return }
+        if k == check.TKind.Catch {
+            self.walk_expr(kids[0], used, declared)
+            if a != NONE { declared.append(a) }
+            self.walk_expr(kids[1], used, declared)
+            return
+        }
+        if k == check.TKind.Closure {
+            for l in self.c.tir.nodes[e].kids2.clone() { used.append(l) }
+            return
+        }
+        if k == check.TKind.RecordCheck {
+            self.walk_expr(kids[0], used, declared)
+            let fields = self.c.tir.nodes[e].kids2.clone()
+            var i: usize = 1
+            while i < kids.len {
+                declared.append(fields[(i - 1) * 2 + 1])
+                self.walk_expr(kids[i], used, declared)
+                i += 1
+            }
+            return
+        }
+        if k == check.TKind.BinConstruct {
+            self.walk_expr(kids[kids.len - 1], used, declared)
+            var i: usize = 0
+            while i + 1 < kids.len {
+                for sk in self.c.tir.nodes[kids[i]].kids.clone() { self.walk_expr(sk, used, declared) }
+                i += 1
+            }
+            return
+        }
+        // every other kind: its expression children, in order
+        for x in kids { self.walk_expr(x, used, declared) }
+    }
+
+    /// Lower a parallel slice loop: evaluate the slices, build the environment,
+    /// emit the worker function, and dispatch through the runtime.
+    fn parallel_for(self: *mut Self, s: usize) {
+        let kids = self.c.tir.nodes[s].kids.clone()
+        let index = self.c.tir.nodes[s].a
+        let label = self.c.tir.nodes[s].b
+        let locals = self.c.tir.nodes[s].kids2.clone()
+        let body = kids[kids.len - 1]
+        // slices are evaluated once in the parent
+        var slices = List(String).new()
+        var slice_tys = List(usize).new()
+        for l, i in locals {
+            let sc = self.expr(kids[i])
+            let st = self.bind_tmp(sc[..], self.c.tir.nodes[kids[i]].ty)
+            slices.append(st)
+            slice_tys.append(self.c.tir.nodes[kids[i]].ty)
+        }
+        let first = slices[0].clone()
+        let loc = self.node_loc(s)
+        for sl, i in slices {
+            if i == 0 { continue }
+            self.line(format("if ({}.len != {}.len) nx_panic(\"parallel iteration over slices of different lengths\", {});", .{sl, first, loc})[..])
+        }
+        // free locals of the body become pointers in the environment
+        var free = List(usize).new()
+        for l in self.free_locals(body) {
+            if list_has_usize(&locals, l) or l == index { continue }
+            free.append(l)
+        }
+        let n = self.tmp()
+        let env_ty = format("nx_parenv_{}", .{n})
+        let fn_name = format("nx_par_{}", .{n})
+        var fields = String.new()
+        for ty, k in slice_tys {
+            let cn = self.cty(ty)
+            fields.append(format(" {} s{};", .{cn, k})[..])
+        }
+        for l in free {
+            let cn = self.cty(self.cur.local_tys[l])
+            fields.append(format(" {}* l{};", .{cn, l})[..])
+        }
+        self.types_out.append(format("typedef struct {} {{{} char _pad; }} {};\n", .{env_ty, fields, env_ty})[..])
+        let env = self.tmp()
+        var inits = List(String).new()
+        for sl, k in slices { inits.append(format(".s{} = {}", .{k, sl})) }
+        for l in free {
+            let name = self.local_name(l)
+            inits.append(format(".l{} = &({})", .{l, name}))
+        }
+        self.line(format("{} {} = {{ {} }};", .{env_ty, env, join_strings(&inits, ", ")})[..])
+        self.line(format("nx_parallel_for(c, {}.len, {}, &{}, {});", .{first, fn_name, env, loc})[..])
+
+        // emit the worker function with its own state, mapping free locals through the environment
+        var saved = empty_fn_state()
+        saved.inst = self.cur.inst
+        saved.locals = self.cur.locals.clone()
+        saved.local_tys = self.cur.local_tys.clone()
+        saved.ret = self.cur.ret
+        saved.is_test = self.cur.is_test
+        saved.loop_labels = self.cur.loop_labels.clone()
+        saved.loop_depths = self.cur.loop_depths.clone()
+        saved.block_labels = self.cur.block_labels.clone()
+        saved.block_brks = self.cur.block_brks.clone()
+        saved.block_outs = self.cur.block_outs.clone()
+        var saved_scopes = List(Scope).new()
+        while self.cur.scopes.len > 0 {
+            let sc = self.cur.scopes.pop() orelse break
+            saved_scopes.append(sc)
+        }
+        var saved_body = List(String).new()
+        while self.body.len > 0 {
+            let b = self.body.pop() orelse break
+            saved_body.append(b)
+        }
+        let saved_tmp = self.tmp
+        var worker = empty_fn_state()
+        worker.inst = saved.inst
+        worker.locals = saved.locals.clone()
+        for l in free { worker.locals[l] = format("(*_penv->l{})", .{l}) }
+        worker.local_tys = saved.local_tys.clone()
+        worker.ret = saved.ret
+        self.cur = worker
+        self.body = List(String).new()
+        self.body.append(String.new())
+        self.line(format("{}* _penv = ({}*)_pv; NX_UNUSED(_penv);", .{env_ty, env_ty})[..])
+        let idx = if index != NONE { self.local_name(index) } else { self.tmp() }
+        self.cur.loop_labels.append(label)
+        self.cur.loop_depths.append(0)
+        self.line(format("for (size_t {} = _b; {} < _e; {}++) {{", .{idx, idx, idx})[..])
+        self.push_buf()
+        for l, k in locals {
+            let name = self.local_name(l)
+            let cn = self.cty(self.cur.local_tys[l])
+            self.line(format("{} {} = _penv->s{}.ptr[{}];", .{cn, name, k, idx})[..])
+        }
+        self.push_scope(true)
+        self.block_stmt(body)
+        self.pop_scope_emit()
+        self.splice_buf()
+        self.line(format("  nx_cont_{}: ;", .{label})[..])
+        self.line("}")
+        let code = self.pop_buf()
+        self.protos_out.append(format("static void {}(nx_ctx* c, void* _pv, size_t _b, size_t _e);\n", .{fn_name})[..])
+        self.funcs_out.append(format("static void {}(nx_ctx* c, void* _pv, size_t _b, size_t _e) {{\n  NX_UNUSED(c);\n{}}}\n\n", .{fn_name, code})[..])
+        // restore the parent
+        self.cur = saved
+        while saved_scopes.len > 0 {
+            let sc = saved_scopes.pop() orelse break
+            self.cur.scopes.append(sc)
+        }
+        self.body = List(String).new()
+        while saved_body.len > 0 {
+            let b = saved_body.pop() orelse break
+            self.body.append(b)
+        }
+        if saved_tmp > self.tmp { self.tmp = saved_tmp }
+    }
+
+    // ----- binary patterns ---------------------------------------------------
+
+    fn bytes_of(self: *mut Self, s: []u8, ty: usize) -> String {
+        let k = self.kind(ty)
+        if k == check.TK.Str { return format("nx_str_slice({})", .{s}) }
+        if k == check.TK.Array { return format("nx_lit((const char*){}.v, {})", .{s, self.c.tys.list[self.res(ty)].n}) }
+        return String.from(s)
+    }
+
+    /// A segment's description, decoded: kind ("value"/"bind"/"rest"), the bound
+    /// local, the size ("bits N" / "expr" / "rest"), endian, signed, float, utf8.
+    fn seg_info(self: *mut Self, seg: usize, kind: *mut String, local: *mut usize, size: *mut String, bits: *mut u64, endian: *mut String, signed: *mut bool, float: *mut bool, utf8: *mut bool) {
+        let desc = self.c.tir.nodes[seg].name.clone()
+        let words = check.split_words(desc[..])
+        kind.*= words[0].clone()
+        var wi: usize = 1
+        local.*= NONE
+        if words[0] == "bind" or words[0] == "rest" { local.*= words[1][..].parse_int(usize) catch { NONE }; wi = 2 }
+        let sw = words[wi].clone()
+        if sw == "size=expr" { size.*= String.from("expr"); wi += 1 }
+        else if sw == "size=rest" { size.*= String.from("rest"); wi += 1 }
+        else { size.*= String.from("bits"); bits.*= words[wi + 1][..].parse_int(u64) catch { 0 }; wi += 2 }
+        endian.*= String.from(words[wi][7..])
+        signed.*= words[wi + 1] == "signed=true"
+        float.*= words[wi + 2] == "float=true"
+        utf8.*= words[wi + 3] == "utf8=true"
+    }
+
+    /// The size expression node of a segment, or NONE.
+    fn seg_size_expr(self: *mut Self, seg: usize, kind: []u8, size: []u8) -> usize {
+        if size != "expr" { return NONE }
+        let skids = self.c.tir.nodes[seg].kids.clone()
+        return skids[skids.len - 1]
+    }
+
+    fn seg_value_expr(self: *mut Self, seg: usize) -> usize { return self.c.tir.nodes[seg].kids[0] }
+
+    fn bits_read_expr(self: *mut Self, buf: []u8, bit: []u8, sz: []u8, endian: []u8, float: bool, signed: bool, is_32: bool) -> String {
+        var raw = format("nx_bits_read({}.ptr, {}, {})", .{buf, bit, sz})
+        if endian == "little" { raw = format("nx_bswap({}, {} / 8)", .{raw, sz}) }
+        else if endian == "native" { raw = format("(nx_is_little_endian() ? nx_bswap({}, {} / 8) : {})", .{raw, sz, raw}) }
+        if float {
+            if is_32 { return format("({{ uint32_t _b = (uint32_t){}; float _f; memcpy(&_f, &_b, 4); _f; }})", .{raw}) }
+            return format("({{ uint64_t _b = (uint64_t){}; double _f; memcpy(&_f, &_b, 8); _f; }})", .{raw})
+        }
+        if signed { return format("nx_sign_extend({}, {})", .{raw, sz}) }
+        return raw
+    }
+
+    /// Binary pattern test: computes into a temporary flag; bindings are recomputed in bind.
+    fn bin_pattern_test(self: *mut Self, segs: []usize, s: []u8, ty: usize) -> String {
+        let buf = self.bytes_of(s, ty)
+        let flag = self.tmp()
+        self.line(format("bool {} = false;", .{flag})[..])
+        self.line("do {")
+        self.push_buf()
+        let bit = self.tmp()
+        self.line(format("size_t {} = 0; NX_UNUSED({});", .{bit, bit})[..])
+        let total = format("({}.len * 8)", .{buf})
+        // static total size when all segments are constant
+        var const_bits: u64 = 0
+        var all_const = true
+        var any_rest = false
+        for seg in segs {
+            var kind = String.new()
+            var local = NONE
+            var size = String.new()
+            var bits: u64 = 0
+            var endian = String.new()
+            var signed = false
+            var float = false
+            var utf8 = false
+            self.seg_info(seg, &mut kind, &mut local, &mut size, &mut bits, &mut endian, &mut signed, &mut float, &mut utf8)
+            if size != "bits" { all_const = false } else { const_bits += bits }
+            if size == "rest" { any_rest = true }
+        }
+        if all_const { self.line(format("if ({} != {}) break;", .{total, const_bits})[..]) }
+        for seg in segs {
+            var kind = String.new()
+            var local = NONE
+            var size = String.new()
+            var bits: u64 = 0
+            var endian = String.new()
+            var signed = false
+            var float = false
+            var utf8 = false
+            self.seg_info(seg, &mut kind, &mut local, &mut size, &mut bits, &mut endian, &mut signed, &mut float, &mut utf8)
+            var size_c = String.new()
+            if size == "bits" { size_c = format("{}", .{bits}) }
+            else if size == "expr" {
+                // size expressions may use earlier bindings: bind them progressively
+                let v = self.expr(self.seg_size_expr(seg, kind[..], size[..]))
+                size_c = format("((size_t)({}))", .{v})
+            } else { size_c = format("({} - {})", .{total, bit}) }
+            let sz = self.tmp()
+            self.line(format("size_t {} = {};", .{sz, size_c})[..])
+            if !all_const { self.line(format("if ({} + {} > {}) break;", .{bit, sz, total})[..]) }
+            let sty = self.c.tir.nodes[seg].ty
+            let is_bytes = self.kind(sty) == check.TK.Slice or size == "rest"
+            if kind == "bind" or kind == "rest" {
+                let name = self.local_name(local)
+                if is_bytes {
+                    self.line(format("if (({} & 7) || ({} & 7)) break;", .{bit, sz})[..])
+                    self.line(format("nx_sl_u8 {} = {{ {}.ptr + {} / 8, {} / 8 }};", .{name, buf, bit, sz})[..])
+                    if utf8 { self.line(format("if (!nx_utf8_valid({})) break;", .{name})[..]) }
+                } else {
+                    let cn = self.cty(sty)
+                    let read = self.bits_read_expr(buf[..], bit[..], sz[..], endian[..], float, signed, size == "bits" and bits == 32)
+                    self.line(format("{} {} = {};", .{cn, name, read})[..])
+                }
+            } else {
+                let v = self.seg_value_expr(seg)
+                if is_bytes {
+                    let vc = self.simple(v)
+                    self.line(format("if (({} & 7) || {} != {}.len * 8) break;", .{bit, sz, vc})[..])
+                    self.line(format("if (memcmp({}.ptr + {} / 8, {}.ptr, {}.len) != 0) break;", .{buf, bit, vc, vc})[..])
+                } else {
+                    let cn = self.cty(sty)
+                    let read = self.bits_read_expr(buf[..], bit[..], sz[..], endian[..], float, signed, size == "bits" and bits == 32)
+                    let vc = self.expr(v)
+                    self.line(format("if ((({})({})) != (({})({}))) break;", .{cn, read, cn, vc})[..])
+                }
+            }
+            self.line(format("{} += {};", .{bit, sz})[..])
+        }
+        if !all_const and !any_rest { self.line(format("if ({} != {}) break;", .{bit, total})[..]) }
+        self.line(format("{} = true;", .{flag})[..])
+        self.splice_buf()
+        self.line("} while (0);")
+        return flag
+    }
+
+    fn bin_pattern_bind(self: *mut Self, segs: []usize, s: []u8, ty: usize) {
+        // bindings were declared inside the test's do-block; redo them in this scope
+        let buf = self.bytes_of(s, ty)
+        let bit = self.tmp()
+        self.line(format("size_t {} = 0; NX_UNUSED({});", .{bit, bit})[..])
+        let total = format("({}.len * 8)", .{buf})
+        for seg in segs {
+            var kind = String.new()
+            var local = NONE
+            var size = String.new()
+            var bits: u64 = 0
+            var endian = String.new()
+            var signed = false
+            var float = false
+            var utf8 = false
+            self.seg_info(seg, &mut kind, &mut local, &mut size, &mut bits, &mut endian, &mut signed, &mut float, &mut utf8)
+            var size_c = String.new()
+            if size == "bits" { size_c = format("{}", .{bits}) }
+            else if size == "expr" {
+                let v = self.expr(self.seg_size_expr(seg, kind[..], size[..]))
+                size_c = format("((size_t)({}))", .{v})
+            } else { size_c = format("({} - {})", .{total, bit}) }
+            let sz = self.tmp()
+            self.line(format("size_t {} = {};", .{sz, size_c})[..])
+            let sty = self.c.tir.nodes[seg].ty
+            let is_bytes = self.kind(sty) == check.TK.Slice or size == "rest"
+            if kind == "bind" or kind == "rest" {
+                let name = self.local_name(local)
+                if is_bytes {
+                    self.line(format("nx_sl_u8 {} = {{ {}.ptr + {} / 8, {} / 8 }};", .{name, buf, bit, sz})[..])
+                } else {
+                    let cn = self.cty(sty)
+                    let read = self.bits_read_expr(buf[..], bit[..], sz[..], endian[..], float, signed, size == "bits" and bits == 32)
+                    self.line(format("{} {} = {};", .{cn, name, read})[..])
+                }
+            }
+            self.line(format("{} += {};", .{bit, sz})[..])
+        }
+    }
+
+    fn bin_construct(self: *mut Self, e: usize) -> String {
+        let kids = self.c.tir.nodes[e].kids.clone()
+        let target = kids[kids.len - 1]
+        let buf = self.simple(target)
+        let cn = self.cty(self.c.tir.nodes[e].ty)
+        let out = self.tmp()
+        self.line(format("{} {};", .{cn, out})[..])
+        self.line("{")
+        self.push_buf()
+        let bit = self.tmp()
+        self.line(format("size_t {} = 0;", .{bit})[..])
+        let total = format("({}.len * 8)", .{buf})
+        let fail = self.err_id("BufferTooSmall")
+        self.line(format("{}.err = 0;", .{out})[..])
+        self.line("do {")
+        self.push_buf()
+        var i: usize = 0
+        while i + 1 < kids.len {
+            let seg = kids[i]
+            i += 1
+            var kind = String.new()
+            var local = NONE
+            var size = String.new()
+            var bits: u64 = 0
+            var endian = String.new()
+            var signed = false
+            var float = false
+            var utf8 = false
+            self.seg_info(seg, &mut kind, &mut local, &mut size, &mut bits, &mut endian, &mut signed, &mut float, &mut utf8)
+            let sty = self.c.tir.nodes[seg].ty
+            let is_bytes = self.kind(sty) == check.TK.Slice or size == "rest"
+            let v = if kind == "value" { self.simple(self.seg_value_expr(seg)) } else { String.from("0") }
+            var size_c = String.new()
+            if size == "bits" { size_c = format("{}", .{bits}) }
+            else if size == "expr" {
+                let sv = self.expr(self.seg_size_expr(seg, kind[..], size[..]))
+                size_c = format("((size_t)({}))", .{sv})
+            } else { size_c = format("({}.len * 8)", .{v}) }
+            let sz = self.tmp()
+            self.line(format("size_t {} = {};", .{sz, size_c})[..])
+            self.line(format("if ({} + {} > {}) {{ {}.err = {}u; break; }}", .{bit, sz, total, out, fail})[..])
+            if is_bytes {
+                self.line(format("if (({} & 7) || {} > {}.len * 8) {{ {}.err = {}u; break; }}", .{bit, sz, v, out, fail})[..])
+                self.line(format("memcpy({}.ptr + {} / 8, {}.ptr, {} / 8);", .{buf, bit, v, sz})[..])
+            } else {
+                var raw = String.new()
+                if float {
+                    if size == "bits" and bits == 32 { raw = format("({{ float _f = (float)({}); uint32_t _b; memcpy(&_b, &_f, 4); (uint64_t)_b; }})", .{v}) }
+                    else { raw = format("({{ double _f = (double)({}); uint64_t _b; memcpy(&_b, &_f, 8); _b; }})", .{v}) }
+                } else {
+                    raw = format("(uint64_t)({})", .{v})
+                }
+                if endian == "little" { raw = format("nx_bswap({}, {} / 8)", .{raw, sz}) }
+                else if endian == "native" { raw = format("(nx_is_little_endian() ? nx_bswap({}, {} / 8) : {})", .{raw, sz, raw}) }
+                self.line(format("nx_bits_write({}.ptr, {}, {}, {});", .{buf, bit, sz, raw})[..])
+            }
+            self.line(format("{} += {};", .{bit, sz})[..])
+        }
+        self.line(format("{}.val = (nx_sl_u8){{ {}.ptr, {} / 8 }};", .{out, buf, bit})[..])
+        self.splice_buf()
+        self.line("} while (0);")
+        self.splice_buf()
+        self.line("}")
+        return out
     }
 
     // ----- entry -----------------------------------------------------------------
@@ -2995,8 +4523,11 @@ impl Gen {
         }
         // exports and entry
         var tail = String.new()
-        if self.entry == ENTRY_MAIN { tail = self.main_wrapper() }
-        else if self.entry == ENTRY_TESTS { tail = self.test_runner() }
+        for i in 0..n {
+            if self.c.insts[i].export_name != "-" { tail.append(self.export_wrapper(i)[..]) }
+        }
+        if self.entry == ENTRY_MAIN { tail.append(self.main_wrapper()[..]) }
+        else if self.entry == ENTRY_TESTS { tail.append(self.test_runner()[..]) }
         var out = String.new()
         out.append("/* generated by nx */\n")
         let mode_name = if self.mode == MODE_DEBUG { "DEBUG" } else if self.mode == MODE_SAFE { "SAFE" } else if self.mode == MODE_FAST { "FAST" } else { "SMALL" }
@@ -3030,12 +4561,36 @@ impl Gen {
         out.append(self.funcs_out[..])
         out.append("\n/* ---- entry ---- */\n")
         out.append(tail[..])
+        // library-level helpers: error names and the last panic message
+        var any_export = false
+        for i in 0..n { if self.c.insts[i].export_name != "-" { any_export = true } }
+        if any_export {
+            let lib = sanitize_ident(self.lib_name[..])
+            out.append(format("NX_EXPORT const char* {}_error_name(int32_t code) {{ return nx_error_name((uint32_t)code); }}\nNX_EXPORT const char* {}_last_panic(void) {{ return nx_tls_last_panic; }}\n", .{lib, lib})[..])
+        }
         return out
     }
 }
 
 fn const_mangled(c: *check.Checker, id: usize) -> String { return format("nxc_{}_{}", .{c.consts[id].name, id}) }
 fn global_mangled(c: *check.Checker, id: usize) -> String { return format("nxg_{}_{}", .{c.globals[id].name, id}) }
+
+/// The file name without directories and extension.
+fn stem_of(path: []u8) -> []u8 {
+    var start: usize = 0
+    var i = path.len
+    while i > 0 {
+        if path[i - 1] == '/' or path[i - 1] == '\\' { start = i; break }
+        i -= 1
+    }
+    var end = path.len
+    var j = path.len
+    while j > start {
+        if path[j - 1] == '.' { end = j - 1; break }
+        j -= 1
+    }
+    return path[start..end]
+}
 
 fn join_strings(xs: *List(String), sep: []u8) -> String {
     var out = String.new()
@@ -3049,6 +4604,21 @@ fn join_strings(xs: *List(String), sep: []u8) -> String {
 fn list_has_usize(xs: *List(usize), x: usize) -> bool {
     for y in xs { if y == x { return true } }
     return false
+}
+
+fn sort_usize(xs: *mut List(usize)) {
+    let n = xs.len
+    var i: usize = 1
+    while i < n {
+        var j = i
+        while j > 0 and xs[j - 1] > xs[j] {
+            let t = xs[j - 1]
+            xs[j - 1] = xs[j]
+            xs[j] = t
+            j -= 1
+        }
+        i += 1
+    }
 }
 
 fn list_remove_usize(xs: *mut List(usize), x: usize) {
@@ -3096,7 +4666,9 @@ fn main() -> !void {
         for e in c.errors { eprintln("error: {}", .{e}) }
         os.exit(1)
     }
+    if entry == ENTRY_MAIN and c.main_inst == NONE { entry = if c.tests.len > 0 { ENTRY_TESTS } else { ENTRY_LIBRARY } }
     var g = new_gen(&mut c, MODE_DEBUG, entry)
+    g.lib_name = String.from(stem_of(args[1]))
     let out = g.generate()
     if g.errors.len > 0 {
         for e in g.errors { eprintln("error: {}", .{e}) }
