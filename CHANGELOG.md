@@ -8,6 +8,8 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-19
+
 ### Added
 
 - `own` parameters: `fn f(own s: String)` takes ownership of its argument
@@ -105,5 +107,6 @@ First public release.
   Korean, French, and German; the language reference and architecture tour in
   Spanish, Chinese, and Japanese.
 
-[Unreleased]: https://github.com/Londopy/nexium/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Londopy/nexium/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Londopy/nexium/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Londopy/nexium/releases/tag/v0.1.0
