@@ -844,6 +844,8 @@ impl Checker {
             let n = self.node(m, it)
             let name = n.name.clone()
             let at = n.start
+            let names = n.words.clone()
+            for w in names { _ = self.error_id(w[..]) }
             self.error_sets.append(ErrorSetDef{ .name = name.clone(), .module = m })
             self.define(m, name[..], ItemKind.ErrorSet, self.error_sets.len - 1, at)
         } else if k == parser.NodeKind.Import {
@@ -2762,7 +2764,7 @@ impl Checker {
             return Range{ .lo = max128(inner.lo, tr.lo), .hi = min128(inner.hi, tr.hi) }
         }
         if k == TKind.Binary {
-            let op = self.tir.nodes[e].name.clone()
+            let op = self.tir.nodes[e].text.clone()
             let a = self.expr_range(self.tir.nodes[e].kids[0]) orelse return null
             let b = self.expr_range(self.tir.nodes[e].kids[1]) orelse return null
             var r = Range{ .lo = 0, .hi = 0 }
@@ -2812,7 +2814,7 @@ impl Checker {
     /// The range of a checked operation before clamping to its type: null on overflow of i128.
     fn expr_range_raw(self: *mut Self, e: usize) -> ?Range {
         if self.tir.nodes[e].k != TKind.Binary { return self.expr_range(e) }
-        let op = self.tir.nodes[e].name.clone()
+        let op = self.tir.nodes[e].text.clone()
         let a = self.expr_range(self.tir.nodes[e].kids[0]) orelse return null
         let b = self.expr_range(self.tir.nodes[e].kids[1]) orelse return null
         if op == "+" {
@@ -3626,10 +3628,20 @@ impl Checker {
     fn adjust_receiver(self: *mut Self, recv: usize, want: usize, at: usize, end: usize) -> usize {
         let wt = self.tys.shallow(want)
         let rt = self.tys.shallow(self.tir.nodes[recv].ty)
-        if self.tys.kind(wt) == TK.Ptr and self.tys.kind(rt) != TK.Ptr {
+        let wk = self.tys.kind(wt)
+        let rk = self.tys.kind(rt)
+        if wk == TK.Ptr and rk == TK.Ptr {
+            if self.tys.list[wt].flag and !self.tys.list[rt].flag {
+                self.fail_here(at, "this method mutates its receiver, but the receiver is an immutable pointer")
+            }
+            return recv
+        }
+        if wk == TK.Ptr {
             let mutable = self.tys.list[wt].flag
             if mutable and self.is_place(recv) and !self.place_mutable(recv) {
-                self.fail_here(at, "this method needs a mutable receiver; declare the variable with `var`")
+                var what = String.from("the receiver")
+                if self.tir.nodes[recv].k == TKind.Local { what = format("`{}`", .{self.ctx().locals[self.tir.nodes[recv].a].name}) }
+                self.fail_here(at, format("this method mutates its receiver, but {} is immutable", .{what})[..])
             }
             let pt = self.tys.wrap(TK.Ptr, self.tir.nodes[recv].ty, mutable)
             let r = self.mk(TKind.AddrOf, pt, at, end)
@@ -3637,11 +3649,12 @@ impl Checker {
             self.tir.nodes[r].kids.append(recv)
             return r
         }
-        if self.tys.kind(wt) != TK.Ptr and self.tys.kind(rt) == TK.Ptr {
-            let inner = self.tys.list[rt].args[0]
-            return self.wrap_node(TKind.Deref, recv, inner)
+        if rk == TK.Ptr {
+            let r = self.mk(TKind.Deref, want, at, end)
+            self.tir.nodes[r].kids.append(recv)
+            return r
         }
-        return self.coerce_or_error(recv, want, "receiver")
+        return recv
     }
 
     fn check_builtin_fn(self: *mut Self, name: []u8, args: []usize, start: usize, end: usize) -> usize {
@@ -3993,56 +4006,66 @@ impl Checker {
         let st = self.ctx().self_ty
         let target = self.resolve_type(m, ty_node, st)
         let inner = self.check_expr(inner_node, NONE)
-        let from = self.tys.resolve(self.tir.nodes[inner].ty, false)
+        let from = self.tys.resolve(self.tir.nodes[inner].ty, true)
         let to = self.tys.shallow(target)
         let kf = self.tys.kind(from)
         let kt = self.tys.kind(to)
-        var kind = String.from("bits")
-        var checked = false
-        if kf == TK.Infer and self.tys.is_integer(from) and kt == TK.Int {
-            // an untyped literal simply takes the type
-            _ = self.unify(from, to)
-            let r = self.retype(inner, target)
-            let c = self.mk(TKind.Cast, target, start, end)
-            self.tir.nodes[c].name = String.from("int_to_int checked=false")
-            self.tir.nodes[c].kids.append(r)
-            return c
-        }
-        if (kf == TK.Int or (kf == TK.Infer and self.tys.is_integer(from))) and kt == TK.Int {
-            var src = from
-            if kf == TK.Infer {
-                let i64t = self.tys.int("i64")
-                _ = self.unify(from, i64t)
-                src = i64t
+        var uf = from
+        var ut = to
+        if kf == TK.Distinct { uf = self.tys.shallow(self.distinct_underlying(self.tys.list[from].def)) }
+        if kt == TK.Distinct { ut = self.tys.shallow(self.distinct_underlying(self.tys.list[to].def)) }
+        let kuf = self.tys.kind(uf)
+        let kut = self.tys.kind(ut)
+        var kind = String.new()
+        if (kf == TK.Distinct or kt == TK.Distinct) and uf == ut {
+            kind = String.from("bits")
+        } else if kuf == TK.Int and kut == TK.Int {
+            let an = self.tys.list[uf].name.clone()
+            let bn = self.tys.list[ut].name.clone()
+            let fits = int_min(an[..]) >= int_min(bn[..]) and int_max(an[..]) <= int_max(bn[..])
+            var proven = fits
+            if !proven {
+                if let r = self.expr_range(inner) { proven = r.lo >= int_min(bn[..]) and r.hi <= int_max(bn[..]) }
             }
-            let fr = self.type_range(src) orelse Range{ .lo = 0, .hi = 0 }
-            let tr = self.type_range(to) orelse Range{ .lo = 0, .hi = 0 }
-            var lo = fr.lo
-            var hi = fr.hi
-            if let r = self.expr_range(inner) {
-                lo = r.lo
-                hi = r.hi
-            }
-            checked = lo < tr.lo or hi > tr.hi
-            if checked { self.add_effect(EFF_PANICS, start, "narrowing conversion panics when the value does not fit") }
-            kind = format("int_to_int checked={}", .{checked})
-        } else if (kf == TK.Int or (kf == TK.Infer and self.tys.is_integer(from))) and kt == TK.Float {
+            if !proven { self.add_effect(EFF_PANICS, start, "narrowing cast panics when the value does not fit (use `@truncate` to wrap)") }
+            kind = format("int_to_int checked={}", .{!proven})
+        } else if kuf == TK.Int and kut == TK.Float {
             kind = String.from("int_to_float")
-        } else if (kf == TK.Float or (kf == TK.Infer and self.tys.is_float(from))) and kt == TK.Int {
+        } else if kuf == TK.Float and kut == TK.Int {
+            self.add_effect(EFF_PANICS, start, "float to integer cast panics when out of range")
             kind = String.from("float_to_int")
-            self.add_effect(EFF_PANICS, start, "float to integer conversion panics when the value does not fit")
-        } else if (kf == TK.Float or (kf == TK.Infer and self.tys.is_float(from))) and kt == TK.Float {
+        } else if kuf == TK.Float and kut == TK.Float {
             kind = String.from("float_to_float")
-        } else if kf == TK.Ptr and kt == TK.Ptr {
+        } else if kuf == TK.Bool and kut == TK.Int {
+            kind = String.from("bits")
+        } else if kuf == TK.Char and kut == TK.Int {
+            if int_max(self.tys.list[ut].name[..]) < 0x10FFFF {
+                self.add_effect(EFF_PANICS, start, "char to narrow integer cast panics when out of range")
+                kind = String.from("int_to_int checked=true")
+            } else {
+                kind = String.from("bits")
+            }
+        } else if kuf == TK.Int and kut == TK.Char {
+            self.add_effect(EFF_PANICS, start, "integer to char cast panics for invalid scalar values")
+            kind = String.from("int_to_int checked=true")
+        } else if kuf == TK.Enum and kut == TK.Int {
+            let d = self.tys.list[uf].def
+            let em = self.enums[d].module
+            let variants = self.enums[d].variants.clone()
+            for v in variants { if self.node(em, v).text != "unit" { self.fail_here(start, "only enums without payloads convert to integers") } }
+            kind = String.from("bits")
+        } else if kuf == TK.Ptr and kut == TK.Ptr {
+            if self.ctx().unsafe_depth == 0 { self.fail_here(start, "pointer casts require an `unsafe` block") }
             kind = String.from("ptr_to_ptr")
-        } else if from == to {
-            kind = String.from("bits")
-        } else if kf == TK.Distinct or kt == TK.Distinct or kf == TK.Char or kt == TK.Char or kf == TK.Bool or kt == TK.Bool or kf == TK.Enum or kt == TK.Enum {
-            kind = String.from("bits")
+        } else if (kuf == TK.Int and kut == TK.Ptr) or (kuf == TK.Ptr and kut == TK.Int and self.tys.list[ut].name == "usize") {
+            if self.ctx().unsafe_depth == 0 { self.fail_here(start, "casting between pointers and integers requires an `unsafe` block") }
+            kind = String.from("ptr_to_ptr")
         } else {
+            if self.unify(from, to) { return inner }
             self.fail_here(start, format("cannot cast `{}` to `{}`", .{self.ty_name(from), self.ty_name(to)})[..])
+            return self.error_expr(start, end)
         }
-        let c = self.mk(TKind.Cast, target, start, end)
+        let c = self.mk(TKind.Cast, to, start, end)
         self.tir.nodes[c].name = kind
         self.tir.nodes[c].kids.append(inner)
         return c
