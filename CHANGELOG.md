@@ -12,8 +12,11 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
 
 - `self/check.nx` checks closures: parameter and return types from the
   expected function type, by-value and by-reference captures, inferred
-  return types; `examples/generics.nx`, `examples/tests.nx` and
-  `std/thread.nx` join the body comparison (41 sources).
+  return types; and records: constraint checks, compile-time decisions on
+  constant fields, `Record.new`. `examples/generics.nx`, `examples/tests.nx`,
+  `examples/tour.nx`, `examples/records.nx` and `std/thread.nx` join the
+  body comparison (43 sources).
+- `examples/records.nx`: compile-time, `.new` and run-time constraint checks.
 
 ### Fixed
 
