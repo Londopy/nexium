@@ -18,3 +18,4 @@ editors/** linguist-vendored=false
 *.json text eol=lf
 *.expected text eol=lf
 *.log text eol=lf
+*.html text eol=lf
