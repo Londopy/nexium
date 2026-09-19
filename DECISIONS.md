@@ -251,6 +251,16 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     the architecture tour, into three. The rest follows as the English text
     settles.
 
+## Compiler selection
+
+60. **Native macOS builds use the system compiler.** zig 0.14.1 cannot read
+    the libSystem text stubs shipped with Xcode 16.3 and later, so `zig cc`
+    on a current Mac links a program with no libc at all (`_puts` undefined
+    in a hello world). Rather than pin CI to an old runner and leave users
+    stuck, `nx` picks `cc` for native macOS builds and `zig cc` everywhere
+    else and for every cross-compile. `--cc` and the `NX_CC` environment
+    variable override both.
+
 ## Repository
 
 28. License: MIT, copyright Londopy.

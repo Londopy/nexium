@@ -95,9 +95,10 @@ boundary rather than aborting the host process.
 
 ## Install
 
-The only runtime requirement is [Zig](https://ziglang.org/download/) on your
-`PATH`, used as the C compiler (`zig cc` also cross-compiles; `--cc clang`
-works too).
+The only runtime requirement is a C compiler: [Zig](https://ziglang.org/download/)
+on your `PATH` (`zig cc` also cross-compiles to any target), or on macOS the
+Xcode command line tools, which `nx` uses for native builds. `--cc clang` or
+`NX_CC=gcc` picks another one.
 
 Prebuilt `nx` binaries for Windows, Linux, and macOS are on the
 [Releases](https://github.com/Londopy/nexium/releases) page. Unpack and put

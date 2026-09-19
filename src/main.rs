@@ -56,7 +56,7 @@ options:
   -o <path>                        output path
   --out-dir <dir>                  artifact directory (default: nx-out)
   --keep-c                         keep the generated C next to the output
-  --cc <path>                      C compiler to use (default: `zig cc`)
+  --cc <path>                      C compiler to use (default: `zig cc`; the system `cc` for native builds on macOS; NX_CC overrides)
   -I <dir>                         header search path for @cImport and vendored C
   --link <lib>, --link-path <dir>  link a C library (`artifact link {{ libs = [...] }}` does the same)
   --c-source <file.c>              compile a C source into the program (vendored C, spec 17.1)
@@ -419,13 +419,19 @@ struct CcInvocation {
     args: Vec<String>,
 }
 
+/// Which C compiler to run: `--cc`, then the `NX_CC` environment variable, then
+/// the system compiler for a native build on macOS (zig 0.14 cannot read the
+/// libSystem stubs of Xcode 16.3+ SDKs, so `zig cc` links nothing there),
+/// otherwise `zig cc`, which also cross-compiles.
 fn cc_command(opts: &Opts) -> CcInvocation {
-    match &opts.cc {
+    let explicit = opts.cc.clone().or_else(|| std::env::var("NX_CC").ok().filter(|s| !s.trim().is_empty()));
+    match explicit {
         Some(cc) => {
             let mut parts = cc.split_whitespace();
             let program = parts.next().unwrap_or("cc").to_string();
             CcInvocation { program, args: parts.map(|s| s.to_string()).collect() }
         }
+        None if cfg!(target_os = "macos") && opts.target.is_none() => CcInvocation { program: "cc".into(), args: vec![] },
         None => CcInvocation { program: "zig".into(), args: vec!["cc".into()] },
     }
 }

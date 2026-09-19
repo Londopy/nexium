@@ -51,6 +51,8 @@ First public release.
 - `setup-nexium` GitHub Action and a release workflow template for programs
   written in Nexium (`docs/releasing-your-program.md`).
 - `linguist/`: the prepared GitHub Linguist entry, samples, heuristic, and apply script.
+- Native macOS builds use the system `cc` (zig 0.14 cannot link against the
+  Xcode 26 SDK); `NX_CC` selects the C compiler without a flag.
 - Translations under `docs/i18n/`: the README in Spanish, Chinese, Japanese,
   Korean, French, and German; the language reference and architecture tour in
   Spanish, Chinese, and Japanese.

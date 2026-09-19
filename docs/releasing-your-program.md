@@ -43,7 +43,9 @@ annotation. The whole thing is:
 ```
 
 `setup-nexium` downloads the matching `nx` binary from Nexium's Releases and
-puts it and Zig on `PATH`. Pinning `version` keeps your builds reproducible;
+puts it and Zig on `PATH`. On the macOS runner `nx` uses the system compiler
+for native builds, since zig 0.14 cannot link against the newest Xcode SDKs;
+zig is still what cross-compiles. Pinning `version` keeps your builds reproducible;
 `latest` is the default.
 
 ## Installers, when you want them
