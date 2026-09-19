@@ -33,6 +33,11 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
   all-users install, Start menu entry, optional PATH entry and uninstaller;
   on Linux and macOS an `install.sh` with `--prefix` and `--uninstall` plus
   a tarball. Listed `files` are copied next to the program.
+- `artifact node { name = "pkg" }`: `nx ship` produces an npm package for an
+  exported library: `index.js` calling the shared library through koffi
+  (no build step, no node-gyp), `index.d.ts` typings, `package.json`.
+  Slices take typed arrays, arrays or strings; error unions throw
+  `NexiumError` and panics throw `NexiumPanic` with the message.
 
 ## [0.4.0] - 2026-09-19
 

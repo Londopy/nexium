@@ -82,6 +82,24 @@ fn ship_produces_library_and_header() {
     assert!(crate_dir.join("Cargo.toml").exists(), "no rust crate produced");
     let build = Command::new("cargo").arg("build").arg("-q").current_dir(&crate_dir).output().expect("run cargo");
     assert!(build.status.success(), "generated crate does not build: {}", String::from_utf8_lossy(&build.stderr));
+    // the npm package: generated files present, and when npm is around, it runs
+    let node_dir = lib.join("node");
+    assert!(node_dir.join("index.js").exists() && node_dir.join("index.d.ts").exists() && node_dir.join("package.json").exists(), "no node package produced");
+    let dts = std::fs::read_to_string(node_dir.join("index.d.ts")).unwrap();
+    assert!(dts.contains("export function dot(a: Float64Array | ArrayLike<number>, b: Float64Array | ArrayLike<number>): number;"), "typings: {}", dts);
+    let npm = if cfg!(windows) { "npm.cmd" } else { "npm" };
+    if Command::new(npm).arg("--version").output().map(|o| o.status.success()).unwrap_or(false) {
+        let install = Command::new(npm).args(["install", "--silent", "--no-audit", "--no-fund"]).current_dir(&node_dir).output().expect("run npm");
+        if install.status.success() {
+            let script = "const m = require('.'); const pos = new Float64Array([0, 1, 2]); const r = m.simulate(pos, 0.1, 3); let err = ''; try { m.dot([1, 2], [1]); } catch (e) { err = e.errorName; } let panic = ''; try { m.divide(1n, 0n); } catch (e) { panic = e.name; } console.log(JSON.stringify({ dot: m.dot([1, 2, 3], [4, 5, 6]), sum: m.checksum('hello') > 0, moved: pos[1] !== 1, r: r > 0, err, panic, div: String(m.divide(84n, 2n)) }));";
+            let run = Command::new("node").args(["-e", script]).current_dir(&node_dir).output().expect("run node");
+            let out = String::from_utf8_lossy(&run.stdout);
+            assert!(run.status.success(), "node package failed: {}", String::from_utf8_lossy(&run.stderr));
+            assert_eq!(out.trim(), r#"{"dot":32,"sum":true,"moved":true,"r":true,"err":"InvalidInput","panic":"NexiumPanic","div":"42"}"#);
+        } else {
+            eprintln!("skipping the node run: npm install failed (offline?)");
+        }
+    }
     let _ = std::fs::remove_dir_all(&out_dir);
 }
 

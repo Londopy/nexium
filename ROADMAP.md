@@ -106,8 +106,9 @@ Goal: sharing code beyond a sibling file.
   `docs/packages.md`).
 - `nx publish` and a minimal registry (static index in a git repository,
   the way early Cargo worked), only once there are packages to publish.
-- `node` artifact: `nx ship` to an npm package (N-API through the C ABI),
-  since Python and Node together cover most "one native piece" needs.
+- `node` artifact: `nx ship` to an npm package, since Python and Node
+  together cover most "one native piece" needs. Done, through koffi rather
+  than N-API (decision 86).
 - `installer` artifact: `nx ship` producing an installer for a Nexium
   program, reusing this repository's Inno and script templates. Done.
 - Editor support: tree-sitter grammar for Neovim, Helix, and Zed, and the

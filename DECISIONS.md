@@ -483,6 +483,15 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     the program name so upgrades replace the previous install. A `.msi` or
     a `.deb` are left to the release template's optional jobs.
 
+86. **The npm package is FFI, not N-API.** The `node` artifact generates
+    plain JavaScript that loads the shared library through koffi, the same
+    way the Python package uses ctypes: one shared library serves C,
+    Python, Rust and Node, the consumer needs no compiler or node-gyp, and
+    the generated code is readable. N-API would give a marginally faster
+    call and no dependency, at the price of a C build on every install
+    and a second copy of the export boundary to keep correct. 64-bit
+    integers cross as BigInt, which is what JavaScript has for them.
+
 ## Compiler selection
 
 60. **Native macOS builds use the system compiler.** zig 0.14.1 cannot read

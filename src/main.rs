@@ -18,6 +18,7 @@ mod parser;
 mod repl;
 mod report;
 mod ship;
+mod ship_node;
 mod size;
 mod stdlib;
 mod tir;
@@ -1822,12 +1823,12 @@ fn cmd_ship(opts: &Opts) -> i32 {
     let artifacts = prog.artifacts.clone();
     let mut produced = Vec::new();
     // one library build serves cabi + python; the cli build is separate
-    let lib_arts: Vec<&check::ArtifactInfo> = artifacts.iter().filter(|a| matches!(a.kind.as_str(), "cabi" | "python" | "shared" | "rustlib")).collect();
+    let lib_arts: Vec<&check::ArtifactInfo> = artifacts.iter().filter(|a| matches!(a.kind.as_str(), "cabi" | "python" | "shared" | "rustlib" | "node")).collect();
     let cli_arts: Vec<&check::ArtifactInfo> = artifacts.iter().filter(|a| matches!(a.kind.as_str(), "cli" | "app")).collect();
     let installer_art: Option<&check::ArtifactInfo> = artifacts.iter().find(|a| a.kind == "installer");
     for a in &artifacts {
-        if !matches!(a.kind.as_str(), "cabi" | "python" | "shared" | "cli" | "app" | "lib" | "rustlib" | "link" | "installer") {
-            eprintln!("note: artifact `{}` is not produced by this version of nx (supported: cabi, python, shared, cli, installer); skipped", a.kind);
+        if !matches!(a.kind.as_str(), "cabi" | "python" | "shared" | "cli" | "app" | "lib" | "rustlib" | "link" | "installer" | "node") {
+            eprintln!("note: artifact `{}` is not produced by this version of nx (supported: cabi, python, node, rustlib, shared, cli, installer); skipped", a.kind);
         }
     }
     if installer_art.is_some() && cli_arts.is_empty() {
@@ -1966,6 +1967,23 @@ fn cmd_ship(opts: &Opts) -> i32 {
                     return 1;
                 }
             }
+        }
+        if lib_arts.iter().any(|a| a.kind == "node") {
+            let npm_name = lib_arts.iter().filter(|a| a.kind == "node").filter_map(|a| artifact_str(a, "name")).next().unwrap_or_else(|| lib_name.clone());
+            let pkg_dir = dir.join("node");
+            if std::fs::create_dir_all(&pkg_dir).is_err() {
+                eprintln!("error: cannot create {}", pkg_dir.display());
+                return 1;
+            }
+            let _ = std::fs::write(pkg_dir.join("index.js"), ship_node::module(&lib_name, &version, &infos, &shared_name));
+            let _ = std::fs::write(pkg_dir.join("index.d.ts"), ship_node::typings(&infos));
+            let _ = std::fs::write(pkg_dir.join("package.json"), ship_node::package_json(&npm_name, &version, &shared_name));
+            let _ = std::fs::write(pkg_dir.join("README.md"), format!("# {}\n\nA native library built with Nexium, callable from Node.js through koffi.\n\n```sh\nnpm install\nnode -e \"const m = require('.'); console.log(Object.keys(m))\"\n```\n\nThe package holds one platform's shared library; publish one per platform or\nuse `os` and `cpu` fields to gate installs.\n", npm_name));
+            if std::fs::copy(&shared_path, pkg_dir.join(&shared_name)).is_err() {
+                eprintln!("error: cannot place the library in {}", pkg_dir.display());
+                return 1;
+            }
+            produced.push(pkg_dir.join("package.json"));
         }
     }
     if !cli_arts.is_empty() {

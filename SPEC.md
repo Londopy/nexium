@@ -472,7 +472,9 @@ structs, and safe wrappers returning `Result<T, NexiumError>`. `artifact
 cli` names the executable. `artifact installer { name, publisher, version,
 url, license, readme, files, add_to_path }` produces an Inno Setup script
 and setup program on Windows and an `install.sh` with a tarball elsewhere
-(see `docs/releasing-your-program.md`). **planned**: `node`.
+(see `docs/releasing-your-program.md`). `artifact node { name = "pkg" }`
+produces an npm package: `index.js` calling the shared library through
+`koffi`, `index.d.ts`, `package.json`.
 
 Exported functions take and return scalars, `layout(c)` structs, and slices
 (as pointer plus length); they cannot return slices into their own storage,
