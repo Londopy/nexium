@@ -1,0 +1,194 @@
+// std.bytes: encodings and byte-level utilities, written in Nexium.
+//
+// `import std.bytes` then `bytes.hex(data)`, `bytes.base64(data)`, ...
+// Decoders return `error.InvalidInput` on malformed text.
+
+const HEX = "0123456789abcdef"
+const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+/// Lower-case hexadecimal, two characters per byte.
+pub fn hex(data: []u8) -> String {
+    var out = String.with_capacity(data.len * 2)
+    for (data) |b| {
+        out.push_byte(HEX[(b >> 4) as usize])
+        out.push_byte(HEX[(b & 15) as usize])
+    }
+    return out
+}
+
+fn hex_value(c: u8) -> ?u8 {
+    if (c >= '0' and c <= '9') return c - '0'
+    if (c >= 'a' and c <= 'f') return c - 'a' + 10
+    if (c >= 'A' and c <= 'F') return c - 'A' + 10
+    return null
+}
+
+/// Bytes from hexadecimal text (either case, even length).
+pub fn unhex(text: []u8) -> !String {
+    if (text.len % 2 != 0) return error.InvalidInput
+    var out = String.with_capacity(text.len / 2)
+    var i: usize = 0
+    while (i < text.len) {
+        let hi = hex_value(text[i]) orelse return error.InvalidInput
+        let lo = hex_value(text[i + 1]) orelse return error.InvalidInput
+        out.push_byte(hi * 16 + lo)
+        i += 2
+    }
+    return out
+}
+
+/// Standard base64 with `=` padding.
+pub fn base64(data: []u8) -> String {
+    var out = String.with_capacity((data.len + 2) / 3 * 4)
+    var i: usize = 0
+    while (i + 3 <= data.len) {
+        let n = (data[i] as u32) << 16| (data[i + 1] as u32) << 8| data[i + 2] as u32
+        out.push_byte(B64[(n >> 18) as usize & 63])
+        out.push_byte(B64[(n >> 12) as usize & 63])
+        out.push_byte(B64[(n >> 6) as usize & 63])
+        out.push_byte(B64[n as usize & 63])
+        i += 3
+    }
+    let rest = data.len - i
+    if (rest == 1) {
+        let n = (data[i] as u32) << 16
+        out.push_byte(B64[(n >> 18) as usize & 63])
+        out.push_byte(B64[(n >> 12) as usize & 63])
+        out.append("==")
+    } else if (rest == 2) {
+        let n = (data[i] as u32) << 16| (data[i + 1] as u32) << 8
+        out.push_byte(B64[(n >> 18) as usize & 63])
+        out.push_byte(B64[(n >> 12) as usize & 63])
+        out.push_byte(B64[(n >> 6) as usize & 63])
+        out.append("=")
+    }
+    return out
+}
+
+fn b64_value(c: u8) -> ?u32 {
+    if (c >= 'A' and c <= 'Z') return (c - 'A') as u32
+    if (c >= 'a' and c <= 'z') return (c - 'a') as u32 + 26
+    if (c >= '0' and c <= '9') return (c - '0') as u32 + 52
+    if (c == '+') return 62
+    if (c == '/') return 63
+    return null
+}
+
+/// Bytes from standard base64 (padding optional).
+pub fn unbase64(text: []u8) -> !String {
+    var out = String.with_capacity(text.len / 4 * 3)
+    var acc: u32 = 0
+    var bits: u32 = 0
+    for (text) |c| {
+        if (c == '=' or c == '\n' or c == '\r') continue
+        let v = b64_value(c) orelse return error.InvalidInput
+        acc = (acc << 6) |v
+        bits += 6
+        if (bits >= 8) {
+            bits -= 8
+            out.push_byte(((acc >> bits) & 255) as u8)
+        }
+    }
+    return out
+}
+
+/// FNV-1a, 32 bits: a fast non-cryptographic hash.
+pub fn fnv1a(data: []u8) -> u32 {
+    var h: u32 = 2166136261
+    for (data) |b| {
+        h ^= b as u32
+        h *%= 16777619
+    }
+    return h
+}
+
+/// CRC-32 (IEEE), as used by zip and PNG.
+pub fn crc32(data: []u8) -> u32 {
+    var crc: u32 = 0xFFFFFFFF
+    for (data) |b| {
+        crc ^= b as u32
+        for (0..8) |_| {
+            let mask = 0 -% (crc & 1)
+            crc = (crc >> 1) ^ (0xEDB88320 & mask)
+        }
+    }
+    return crc ^ 0xFFFFFFFF
+}
+
+/// Big-endian 32-bit read.
+pub fn read_u32_be(data: []u8, at: usize) -> u32 {
+    return (data[at] as u32) << 24| (data[at + 1] as u32) << 16| (data[at + 2] as u32) << 8|data[at + 3] as u32
+}
+
+/// Little-endian 32-bit read.
+pub fn read_u32_le(data: []u8, at: usize) -> u32 {
+    return (data[at + 3] as u32) << 24| (data[at + 2] as u32) << 16| (data[at + 1] as u32) << 8|data[at] as u32
+}
+
+/// Append a big-endian 32-bit value.
+pub fn write_u32_be(out: *mut String, v: u32) {
+    out.push_byte((v >> 24) as u8)
+    out.push_byte(((v >> 16) & 255) as u8)
+    out.push_byte(((v >> 8) & 255) as u8)
+    out.push_byte((v & 255) as u8)
+}
+
+/// Append a little-endian 32-bit value.
+pub fn write_u32_le(out: *mut String, v: u32) {
+    out.push_byte((v & 255) as u8)
+    out.push_byte(((v >> 8) & 255) as u8)
+    out.push_byte(((v >> 16) & 255) as u8)
+    out.push_byte((v >> 24) as u8)
+}
+
+/// Bytes that differ, for a compact diff of two buffers.
+pub fn first_difference(a: []u8, b: []u8) -> ?usize {
+    let n = if (a.len < b.len) a.len else b.len
+    for (0..n) |i| { if (a[i] != b[i]) return i }
+    if (a.len != b.len) return n
+    return null
+}
+
+test "hex" {
+    expect_eq(hex("AZ"), "415a")
+    expect_eq(hex(""), "")
+    let back = try unhex("415A")
+    expect_eq(back, "AZ")
+    expect((unhex("41z") catch |e| String.from(@errorName(e))) == "InvalidInput")
+    expect((unhex("4") catch |e| String.from(@errorName(e))) == "InvalidInput")
+}
+
+test "base64 round trips" {
+    expect_eq(base64("Man"), "TWFu")
+    expect_eq(base64("Ma"), "TWE=")
+    expect_eq(base64("M"), "TQ==")
+    expect_eq(base64(""), "")
+    expect_eq(base64("hello, nexium"), "aGVsbG8sIG5leGl1bQ==")
+    let back = try unbase64("aGVsbG8sIG5leGl1bQ==")
+    expect_eq(back, "hello, nexium")
+    let unpadded = try unbase64("TWE")
+    expect_eq(unpadded, "Ma")
+    expect((unbase64("T*E=") catch |e| String.from(@errorName(e))) == "InvalidInput")
+}
+
+test "hashes" {
+    expect_eq(fnv1a("hello"), 1335831723)
+    expect_eq(crc32("123456789"), 0xCBF43926)
+    expect_eq(crc32(""), 0)
+}
+
+test "integers in and out" {
+    var buf = String.new()
+    write_u32_be(&mut buf, 0x01020304)
+    write_u32_le(&mut buf, 0x01020304)
+    expect_eq(buf.len, 8)
+    expect_eq(read_u32_be(buf, 0), 0x01020304)
+    expect_eq(read_u32_le(buf, 4), 0x01020304)
+    expect_eq(buf[4], 4)
+}
+
+test "first_difference" {
+    expect_eq(first_difference("abc", "abd") orelse 99, 2)
+    expect_eq(first_difference("abc", "abcd") orelse 99, 3)
+    expect(first_difference("abc", "abc") == null)
+}

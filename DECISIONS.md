@@ -280,6 +280,23 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     `append_char` keeps encoding code points. Integer and float literals
     coerce into `?T`.
 
+## The standard library
+
+64. **`std/` is Nexium source embedded in the compiler.** `import std.strings`
+    loads `std/strings.nx` from the `nx` binary the way the runtime header is
+    embedded: nothing to install, one artifact, and the library is versioned
+    with the compiler that compiles it. Std modules load after the program's
+    own files so the root stays module 0.
+65. **What stays builtin.** `List`, `String`, `Map`, slices, formatting, and
+    the platform namespaces need the compiler for ownership, effects, and the
+    C runtime, and stay in Rust. Everything that is plain Nexium over those
+    (`strings`, `lists`, `bytes`, `num` today) lives in `std/`, readable and
+    testable with `nx test`. Module names never collide with the builtin
+    namespaces, so `import std.math` still means the builtin.
+66. **Tuple types are legal type arguments** (`List((A, B))`), which
+    `lists.zip` needed. A tuple literal in type-argument position is read as
+    a tuple type.
+
 ## Compiler selection
 
 60. **Native macOS builds use the system compiler.** zig 0.14.1 cannot read

@@ -38,7 +38,7 @@ fn examples_reproduce_recorded_output() {
         eprintln!("skipping: zig not found");
         return;
     }
-    for name in ["hello", "tour", "binary", "ownership", "generics", "control", "ctest", "arena", "dyn", "parallel", "cimport", "process", "tree", "own"] {
+    for name in ["hello", "tour", "binary", "ownership", "generics", "control", "ctest", "arena", "dyn", "parallel", "cimport", "process", "tree", "own", "stdlib"] {
         run_example(name, "run");
     }
     run_example("tests", "test");
@@ -133,6 +133,23 @@ fn gui_headless_tests_pass() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(std::fs::metadata(&shot).map(|m| m.len() > 640 * 440 * 3).unwrap_or(false), "screenshot not written");
+}
+
+/// Every module of the standard library (written in Nexium, embedded in the
+/// compiler) passes its own tests and is canonically formatted.
+#[test]
+fn std_modules_pass_their_tests() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut files: Vec<std::path::PathBuf> =
+        std::fs::read_dir(root.join("std")).unwrap().filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().map(|x| x == "nx").unwrap_or(false)).collect();
+    files.sort();
+    assert!(!files.is_empty());
+    for f in files {
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).arg("test").arg(&f).current_dir(root).output().unwrap();
+        assert!(out.status.success(), "std tests failed for {}:\n{}{}", f.display(), String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        let fmt = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).arg("fmt").arg(&f).arg("--check").current_dir(root).output().unwrap();
+        assert!(fmt.status.success(), "{} is not canonically formatted", f.display());
+    }
 }
 
 #[test]

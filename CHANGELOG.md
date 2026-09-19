@@ -17,6 +17,10 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
 - `String.push_byte(b)` appends one raw byte.
 - Integer and float literals coerce into `?T`.
 - `examples/own.nx` and five compile-fail cases for the `own` rules.
+- The standard library in Nexium: `import std.strings`, `std.lists`,
+  `std.bytes`, `std.num` (68 functions with tests), embedded in the
+  compiler; `docs/std.md` lists them; `examples/stdlib.nx` uses them.
+- Tuple types as type arguments: `List((A, B))`.
 
 ### Changed
 
@@ -24,6 +28,13 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
   arm stays usable in the others.
 - An unbraced `if` or `else` body is one statement, so `if (c) x = 1` works.
 - `self/lexer.nx` moves token text with `own` instead of cloning it.
+
+### Fixed
+
+- A branch that diverges (`if (c) return x`) no longer marks what it moved as
+  moved afterwards.
+- `nx fmt` spacing after `-> List(T)`, after a closing closure bar, and
+  between an `if` condition and a parenthesized body.
 
 ## [0.1.0] - 2026-09-18
 

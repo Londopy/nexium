@@ -1,0 +1,106 @@
+# The standard library
+
+Modules written in Nexium and embedded in the compiler. `import std.<module>`
+makes it available as `<module>.function(...)`; nothing to install or link.
+The core containers (`List`, `String`, `Map`), formatting, and the `math`,
+`io`, `os`, `time`, `random`, `mem`, and `process` namespaces are compiler
+builtins and are documented in [`language.md`](language.md).
+
+Sources are in [`std/`](../std); each module carries its own `test` blocks,
+run by `nx test std/<module>.nx` and by `cargo test`.
+
+## std.strings
+
+std.strings: text utilities on `[]u8` and `String`, written in Nexium. `import std.strings` then `strings.join(parts, ", ")`. The core methods (`len`, `split`, `trim`, `find`, `starts_with`, `parse_int`, ...) are compiler builtins; this module adds what is naturally written in the language itself. Slices returned here point into the argument they were cut from; `String` results are owned by the caller.
+
+| function | what it does |
+| --- | --- |
+| `join(parts: [][]u8, sep: []u8) -> String` | Concatenate `parts` with `sep` between them. |
+| `repeat(s: []u8, n: usize) -> String` | `s` repeated `n` times. |
+| `pad_left(s: []u8, width: usize, fill: u8) -> String` | Left-pad with `fill` to at least `width` bytes. |
+| `pad_right(s: []u8, width: usize, fill: u8) -> String` | Right-pad with `fill` to at least `width` bytes. |
+| `center(s: []u8, width: usize, fill: u8) -> String` | Center in `width` bytes, extra fill on the right. |
+| `count(s: []u8, needle: []u8) -> usize` | How many non-overlapping times `needle` occurs in `s`. |
+| `replace(s: []u8, from: []u8, to: []u8) -> String` | Every occurrence of `from` replaced by `to`. |
+| `index_from(s: []u8, needle: []u8, start: usize) -> ?usize` | Position of `needle` at or after `start`. |
+| `last_index(s: []u8, needle: []u8) -> ?usize` | Position of the last occurrence of `needle`. |
+| `strip_prefix(s: []u8, prefix: []u8) -> ?[]u8` | `s` without a leading `prefix`, or null when it does not start with it. |
+| `strip_suffix(s: []u8, suffix: []u8) -> ?[]u8` | `s` without a trailing `suffix`, or null when it does not end with it. |
+| `trim_left(s: []u8) -> []u8` | Leading ASCII whitespace removed. |
+| `trim_right(s: []u8) -> []u8` | Trailing ASCII whitespace removed. |
+| `is_blank(s: []u8) -> bool` | True when `s` is empty or only ASCII whitespace. |
+| `split_whitespace(s: []u8) -> List([]u8)` | Split on runs of ASCII whitespace; no empty pieces. |
+| `to_upper(s: []u8) -> String` | ASCII letters upper-cased; other bytes unchanged. |
+| `to_lower(s: []u8) -> String` | ASCII letters lower-cased; other bytes unchanged. |
+| `capitalize(s: []u8) -> String` | First ASCII letter upper-cased. |
+| `reverse(s: []u8) -> String` | Bytes in reverse order (bytes, not code points). |
+| `split_once(s: []u8, sep: []u8) -> ?([]u8, []u8)` | Cut at the first `sep`: (before, after), or null when `sep` is absent. |
+| `ellipsize(s: []u8, max: usize) -> String` | Truncate to `max` bytes, appending `...` when something was cut. |
+
+## std.lists
+
+std.lists: generic helpers over slices and Lists, written in Nexium. `import std.lists` then `lists.sum(xs)`, `lists.map(f, xs)`, ... Functions take slices, so arrays, Lists, and slices all work; results that are new collections are returned as owned `List`s.
+
+| function | what it does |
+| --- | --- |
+| `sum(comptime T: type, xs: []T) -> T` | Sum of the elements. |
+| `min(comptime T: type where T: Ord, xs: []T) -> ?T` | Smallest element, or null when empty. |
+| `max(comptime T: type where T: Ord, xs: []T) -> ?T` | Largest element, or null when empty. |
+| `arg_max(comptime T: type where T: Ord, xs: []T) -> ?usize` | Position of the largest element, or null when empty. |
+| `all(comptime T: type, xs: []T, pred: fn(T) -> bool) -> bool` | True when every element satisfies `pred`. |
+| `any(comptime T: type, xs: []T, pred: fn(T) -> bool) -> bool` | True when some element satisfies `pred`. |
+| `count_if(comptime T: type, xs: []T, pred: fn(T) -> bool) -> usize` | How many elements satisfy `pred`. |
+| `filter(comptime T: type, xs: []T, pred: fn(T) -> bool) -> List(T)` | The elements that satisfy `pred`, in order. |
+| `map(comptime T: type, comptime U: type, xs: []T, f: fn(T) -> U) -> List(U)` | `f` applied to every element. |
+| `fold(comptime T: type, comptime A: type, xs: []T, init: A, f: fn(A, T) -> A) -> A` | Left fold: `f(f(f(init, x0), x1), x2)`. |
+| `find(comptime T: type, xs: []T, pred: fn(T) -> bool) -> ?T` | First element satisfying `pred`, or null. |
+| `position(comptime T: type, xs: []T, pred: fn(T) -> bool) -> ?usize` | Position of the first element satisfying `pred`, or null. |
+| `reversed(comptime T: type, xs: []T) -> List(T)` | A reversed copy. |
+| `dedup(comptime T: type where T: Eq, xs: []T) -> List(T)` | Adjacent duplicates removed (sort first for global dedup). |
+| `take(comptime T: type, xs: []T, n: usize) -> []T` | The first `n` elements (or all when shorter). |
+| `drop(comptime T: type, xs: []T, n: usize) -> []T` | Everything after the first `n` elements. |
+| `window_starts(len: usize, size: usize) -> List(usize)` | Consecutive windows of `size`, as start indices; `for (windows(xs, 3)) |i|` then `xs[i..i+3]`. |
+| `zip(comptime A: type, comptime B: type, a: []A, b: []B) -> List((A, B))` | Pairs (a[i], b[i]) up to the shorter length. |
+| `repeat(comptime T: type, xs: []T, times: usize) -> List(T)` | Elements repeated `times` times in sequence. |
+| `starts_with(comptime T: type where T: Eq, xs: []T, prefix: []T) -> bool` | True when `xs` starts with `prefix`. |
+
+## std.bytes
+
+std.bytes: encodings and byte-level utilities, written in Nexium. `import std.bytes` then `bytes.hex(data)`, `bytes.base64(data)`, ... Decoders return `error.InvalidInput` on malformed text.
+
+| function | what it does |
+| --- | --- |
+| `hex(data: []u8) -> String` | Lower-case hexadecimal, two characters per byte. |
+| `unhex(text: []u8) -> !String` | Bytes from hexadecimal text (either case, even length). |
+| `base64(data: []u8) -> String` | Standard base64 with `=` padding. |
+| `unbase64(text: []u8) -> !String` | Bytes from standard base64 (padding optional). |
+| `fnv1a(data: []u8) -> u32` | FNV-1a, 32 bits: a fast non-cryptographic hash. |
+| `crc32(data: []u8) -> u32` | CRC-32 (IEEE), as used by zip and PNG. |
+| `read_u32_be(data: []u8, at: usize) -> u32` | Big-endian 32-bit read. |
+| `read_u32_le(data: []u8, at: usize) -> u32` | Little-endian 32-bit read. |
+| `write_u32_be(out: *mut String, v: u32)` | Append a big-endian 32-bit value. |
+| `write_u32_le(out: *mut String, v: u32)` | Append a little-endian 32-bit value. |
+| `first_difference(a: []u8, b: []u8) -> ?usize` | Bytes that differ, for a compact diff of two buffers. |
+
+## std.num
+
+std.num: integer utilities, written in Nexium. `import std.num` then `num.gcd(12, 18)`, `num.clamp(x, 0, 10)`, ... The `math` namespace (sqrt, sin, pow on floats, ...) is a compiler builtin; this module covers what is naturally integer work.
+
+| function | what it does |
+| --- | --- |
+| `gcd(a: u64, b: u64) -> u64` | Greatest common divisor (Euclid); gcd(0, 0) is 0. |
+| `lcm(a: u64, b: u64) -> u64` | Least common multiple; lcm(0, n) is 0. |
+| `clamp(x: i64, lo: i64, hi: i64) -> i64` | `x` limited to `lo..=hi`. |
+| `abs_diff(a: i64, b: i64) -> u64` | |a - b| without overflow on the way. |
+| `pow(base: u64, exp: u32) -> ?u64` | `base` to the `exp`, by squaring; null on overflow. |
+| `isqrt(n: u64) -> u64` | Integer square root: the largest `r` with `r * r <= n`. |
+| `is_prime(n: u64) -> bool` | Trial division; fine for the sizes people type by hand. |
+| `factors(n: u64) -> List(u64)` | The prime factors of `n` with multiplicity, ascending. |
+| `digits(n: u64) -> List(u8)` | Decimal digits of `n`, most significant first. |
+| `digit_sum(n: u64) -> u64` | Sum of the decimal digits. |
+| `to_base(n: u64, base: u64) -> String` | `n` in base 2..36, upper-case digits. |
+| `from_base(text: []u8, base: u64) -> ?u64` | Parse in base 2..36 (either case); null on an invalid digit or overflow. |
+| `round_up(n: u64, m: u64) -> u64` | Round up to a multiple of `m` (m > 0). |
+| `is_power_of_two(n: u64) -> bool` | True for 1, 2, 4, 8, ... |
+| `next_power_of_two(n: u64) -> u64` | The smallest power of two >= n (n <= 2^63). |
+| `popcount(n: u64) -> u32` | Number of set bits. |

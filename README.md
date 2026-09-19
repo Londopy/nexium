@@ -245,6 +245,7 @@ using arena {
 - [How Nexium works](docs/architecture.md): the pipeline from source to binary, effects inference, ownership, the runtime, and shipping.
 - [Language reference](docs/language.md): every construct the compiler implements.
 - [Embedding](docs/embedding.md): calling shipped libraries from Python, Rust, and C.
+- [Standard library](docs/std.md): the modules written in Nexium (`std.strings`, `std.lists`, `std.bytes`, `std.num`).
 - [nexium-gui](docs/gui.md): the immediate-mode GUI library and how to write a widget.
 - [Releasing your program](docs/releasing-your-program.md): binaries for three platforms from a tag, installers optional.
 - [Editor support](editors): VS Code extension, Sublime syntax, LSP.
@@ -310,9 +311,9 @@ files (`gui/font.bin`, lock files):
 
 | language | lines | share | what it is |
 | --- | --- | --- | --- |
-| Rust | 22,393 | 86.9% | the `nx` compiler |
-| Nexium | 2,111 | 8.2% | examples, the self-hosted lexer, nexium-gui, tests |
-| C | 1,108 | 4.3% | the runtime `nx_rt.h` and the GUI window layer |
+| Rust | 22,652 | 83.9% | the `nx` compiler |
+| Nexium | 3,046 | 11.3% | the standard library, examples, the self-hosted lexer, nexium-gui, tests |
+| C | 1,127 | 4.2% | the runtime `nx_rt.h` and the GUI window layer |
 | JavaScript, TypeScript | 159 | 0.6% | the VS Code extension |
 
 The Nexium share grows with every self-hosting stage; the Rust share is the
@@ -323,6 +324,7 @@ bootstrap compiler and will one day be zero.
 ```
 src/            the compiler (lexer, parser, checker, comptime, C backend, driver)
 runtime/        nx_rt.h, embedded into every generated C file
+std/            the standard library in Nexium, embedded in the compiler
 self/           the compiler in Nexium, stage by stage
 gui/            nexium-gui: immediate-mode GUI in Nexium, demo, and the C platform layer
 editors/        VS Code extension and Sublime Text syntax

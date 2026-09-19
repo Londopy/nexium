@@ -213,6 +213,29 @@ fn type_position_before(t: &Tok) -> bool {
 }
 
 /// Should a space separate `toks[i-1]` and `toks[i]`?
+/// Does the `)` at `at` close the condition of an `if`, `while`, or `for`?
+fn closes_control_head(toks: &[&Token], at: usize) -> bool {
+    let mut depth = 0;
+    let mut j = at;
+    loop {
+        match &toks[j].tok {
+            Tok::RParen => depth += 1,
+            Tok::LParen => {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            _ => {}
+        }
+        if j == 0 {
+            return false;
+        }
+        j -= 1;
+    }
+    j > 0 && matches!(&toks[j - 1].tok, Tok::Ident(k) if k == "if" || k == "while" || k == "for")
+}
+
 fn needs_space(toks: &[&Token], i: usize, ctx: &LineCtx) -> bool {
     use Tok::*;
     let a = &toks[i - 1].tok;
@@ -311,6 +334,9 @@ fn needs_space(toks: &[&Token], i: usize, ctx: &LineCtx) -> bool {
         if is_kw(a, "impl") || is_kw(a, "fn") || is_kw(a, "export") || is_kw(a, "derive") || is_kw(a, "layout") {
             return false;
         }
+        if matches!(a, RParen) && closes_control_head(toks, i - 1) {
+            return true;
+        }
         return !(ends_operand(a) || matches!(a, Question | Star))
             || is_kw(a, "return")
             || is_kw(a, "if")
@@ -391,8 +417,10 @@ fn needs_space(toks: &[&Token], i: usize, ctx: &LineCtx) -> bool {
                 j -= 1;
             }
             let head = if j > 0 { Some(&toks[j - 1].tok) } else { None };
+            let before_head = if j > 1 { Some(&toks[j - 2].tok) } else { None };
             if let Some(Ident(h)) = head {
-                if h.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false) {
+                let in_return_type = matches!(before_head, Some(Arrow));
+                if h.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false) && !in_return_type {
                     return false;
                 }
             }
@@ -426,6 +454,11 @@ fn needs_space(toks: &[&Token], i: usize, ctx: &LineCtx) -> bool {
     }
     // closure parameter bars: `|[a] x: i32|`, `|x|`
     if matches!(a, Pipe) {
+        let bars_so_far = toks[..i].iter().filter(|t| matches!(t.tok, Pipe)).count();
+        let closing = bars_so_far % 2 == 0;
+        if closing && (is_word(b) || matches!(b, LParen | Minus | Bang | At)) {
+            return true;
+        }
         return matches!(b, LBrace) || (is_binary_op(b) && !matches!(b, Pipe)) || false;
     }
     if matches!(b, Pipe) {

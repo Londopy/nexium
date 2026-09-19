@@ -36,7 +36,10 @@ impl<'a> Checker<'a> {
             let body = self.take_ownership(body);
             self.pop_scope();
             tarms.push((pat, guard, body, arm.span));
-            moved_arms.push(self.moved_snapshot());
+            // a diverging arm cannot fall through: its moves do not count afterwards
+            if !matches!(self.tys.kind(bt), TyKind::Never) {
+                moved_arms.push(self.moved_snapshot());
+            }
         }
         self.moved_restore(&moved_before);
         for m in &moved_arms {

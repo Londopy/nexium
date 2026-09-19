@@ -7,9 +7,11 @@ to `nexium-spec.txt` (the design) and, where marked "archived", to
 ## Files and modules
 
 A file is a module. `import foo.bar` loads `foo/bar.nx` next to the root file;
-its `pub` items are reached as `bar.item`. `import std.math` (or any std
-module) is accepted but not required: the builtin namespaces `math`, `io`,
-`os`, `time`, `random`, and `mem` are always in scope.
+its `pub` items are reached as `bar.item`. `import std.strings` (and
+`std.lists`, `std.bytes`, `std.num`) loads a module of the standard library,
+which is written in Nexium and embedded in the compiler; see
+[`std.md`](std.md). The builtin namespaces `math`, `io`, `os`, `time`,
+`random`, `mem`, and `process` are always in scope and need no import.
 
 ## Lexical structure (archived 4)
 
@@ -65,7 +67,7 @@ default (`verbose: u8 = 0`).
 | `!T`, `Set!T` | error union |
 | `List(T)`, `String`, `Map(K, V)` | owning collections (values, section 5.3) |
 | `fn(A, B) -> R !effects` | function value (closures and functions coerce to it) |
-| `(A, B)` | tuple; fields `.0`, `.1` |
+| `(A, B)` | tuple; fields `.0`, `.1`; also allowed as a type argument, `List((A, B))` |
 | `weak T` | weak reference to a `ref class` |
 
 Integer literals take the type the context asks for and default to `i64`;

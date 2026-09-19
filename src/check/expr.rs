@@ -1458,6 +1458,11 @@ impl<'a> Checker<'a> {
         let tb = self.check_block(then, then_expected, None);
         self.pop_scope();
         let moved_then = self.moved_snapshot();
+        let then_diverges = matches!(self.tys.kind(self.tys.shallow(tb.ty)), TyKind::Never);
+        if then_diverges && els.is_none() {
+            // `if (c) return x` moved nothing for the code after it
+            self.moved_restore(&moved_before);
+        }
         let then_ty = tb.ty;
         match els {
             None => {
@@ -1481,7 +1486,15 @@ impl<'a> Checker<'a> {
                         TBlock { stmts: vec![], tail: Some(Box::new(te)), label: None, ty, span: sp }
                     }
                 };
-                self.moved_merge(&moved_then);
+                let else_diverges = matches!(self.tys.kind(self.tys.shallow(eb.ty)), TyKind::Never);
+                let moved_else = self.moved_snapshot();
+                self.moved_restore(&moved_before);
+                if !then_diverges {
+                    self.moved_merge(&moved_then);
+                }
+                if !else_diverges {
+                    self.moved_merge(&moved_else);
+                }
                 let (tb, eb, ty) = self.join_branches(tb, eb, expected);
                 self.mk(TExprKind::If { cond: Box::new(c), then: tb, els: Some(eb) }, ty, span)
             }
@@ -1596,6 +1609,11 @@ impl<'a> Checker<'a> {
         let tb = self.check_block(then, then_expected, None);
         self.pop_scope();
         let moved_then = self.moved_snapshot();
+        let then_diverges = matches!(self.tys.kind(self.tys.shallow(tb.ty)), TyKind::Never);
+        if then_diverges && els.is_none() {
+            // `if (c) return x` moved nothing for the code after it
+            self.moved_restore(&moved_before);
+        }
         let then_ty = tb.ty;
         match els {
             None => {
@@ -1618,7 +1636,15 @@ impl<'a> Checker<'a> {
                         TBlock { stmts: vec![], tail: Some(Box::new(te)), label: None, ty, span: sp }
                     }
                 };
-                self.moved_merge(&moved_then);
+                let else_diverges = matches!(self.tys.kind(self.tys.shallow(eb.ty)), TyKind::Never);
+                let moved_else = self.moved_snapshot();
+                self.moved_restore(&moved_before);
+                if !then_diverges {
+                    self.moved_merge(&moved_then);
+                }
+                if !else_diverges {
+                    self.moved_merge(&moved_else);
+                }
                 let (tb, eb, ty) = self.join_branches(tb, eb, expected);
                 self.mk(TExprKind::IfCapture { cond: Box::new(c), local, then: tb, els: Some(eb) }, ty, span)
             }
@@ -2036,7 +2062,7 @@ impl<'a> Checker<'a> {
                     match a {
                         Expr::TypeVal { ty, .. } => targs.push(ty.clone()),
                         Expr::Ident { name: n, span: s } => targs.push(TypeExpr::Named { path: vec![n.clone()], args: vec![], span: *s }),
-                        Expr::Call { .. } | Expr::Field { .. } => match expr_to_type_expr(a) {
+                        Expr::Call { .. } | Expr::Field { .. } | Expr::TupleLit { .. } => match expr_to_type_expr(a) {
                             Some(te) => targs.push(te),
                             None => {
                                 self.error(a.span(), "expected a type argument");
@@ -2554,6 +2580,11 @@ pub fn expr_to_type_expr(e: &Expr) -> Option<TypeExpr> {
                 return Some(t);
             }
             None
+        }
+        // `List((A, B))`: a tuple expression in type-argument position is a tuple type
+        Expr::TupleLit { elems, span } => {
+            let ts: Option<Vec<TypeExpr>> = elems.iter().map(expr_to_type_expr).collect();
+            Some(TypeExpr::Tuple { elems: ts?, span: *span })
         }
         _ => None,
     }

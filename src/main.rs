@@ -15,6 +15,7 @@ mod parser;
 mod report;
 mod ship;
 mod size;
+mod stdlib;
 mod tir;
 mod types;
 
@@ -199,6 +200,7 @@ fn load(root: &Path) -> Result<Loaded, ()> {
     let mut queue: Vec<(String, PathBuf)> = vec![(root_name, root.to_path_buf())];
     let mut seen: HashMap<String, ()> = HashMap::new();
     let mut had_error = false;
+    let mut std_pending: Vec<String> = Vec::new();
     while let Some((name, path)) = queue.pop() {
         if seen.contains_key(&name) {
             continue;
@@ -228,6 +230,15 @@ fn load(root: &Path) -> Result<Loaded, ()> {
         for item in &m.items {
             if let ast::Item::Import(im) = item {
                 if im.path[0] == "std" {
+                    // std modules written in Nexium are embedded in the compiler; the
+                    // rest of `std.*` are builtin namespaces. They load after the files
+                    // so the root stays module 0.
+                    if im.path.len() == 2 && stdlib::source(&im.path[1]).is_some() {
+                        let mname = im.path.join(".");
+                        if !std_pending.contains(&mname) {
+                            std_pending.push(mname);
+                        }
+                    }
                     continue;
                 }
                 let rel: PathBuf = im.path.iter().collect();
@@ -239,6 +250,21 @@ fn load(root: &Path) -> Result<Loaded, ()> {
         }
         names.push(name);
         dirs.push(path.parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| ".".into()));
+        modules.push(m);
+    }
+    for mname in std_pending {
+        let short = mname.trim_start_matches("std.").to_string();
+        let src = stdlib::source(&short).unwrap();
+        let file = sm.add(format!("<std>/{}.nx", short), src.to_string());
+        let (toks, ldiags) = lexer::Lexer::new(src, file).lex();
+        let mut p = parser::Parser::new(toks, file);
+        let m = p.parse_module();
+        for d in ldiags.iter().chain(p.diags.iter()) {
+            eprint!("{}", sm.render(d));
+            had_error = true;
+        }
+        names.push(mname);
+        dirs.push("std".into());
         modules.push(m);
     }
     if had_error {
@@ -788,6 +814,16 @@ fn analyze_text(path: &str, text: &str) -> (Vec<lsp::Diagnostic>, Option<(Loaded
         for item in loaded.modules[0].items.clone() {
             if let ast::Item::Import(im) = item {
                 if im.path[0] == "std" {
+                    if im.path.len() == 2 {
+                        if let Some(src) = stdlib::source(&im.path[1]) {
+                            let f = loaded.sm.add(format!("<std>/{}.nx", im.path[1]), src.to_string());
+                            let (tk, _) = lexer::Lexer::new(src, f).lex();
+                            let mut pp = parser::Parser::new(tk, f);
+                            loaded.modules.push(pp.parse_module());
+                            loaded.names.push(im.path.join("."));
+                            loaded.dirs.push("std".into());
+                        }
+                    }
                     continue;
                 }
                 let rel: PathBuf = im.path.iter().collect();
