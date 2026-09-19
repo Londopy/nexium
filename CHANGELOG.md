@@ -8,6 +8,30 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking: control flow drops its parentheses and bodies always take
+  braces** (decision 87). `if c { }`, `while c { }`, `for x, i in items { }`,
+  `for i in lo..hi step s { }`, `for parallel x in items { }`, and
+  `if let v = opt { }` replace `if (c)`, `while (c)`, `for (items) |x, i|`,
+  and `if (opt) |v|`. The one-statement forms become braced one-liners:
+  `if c { return v }`, `let m = if a > b { a } else { b }`. A struct literal
+  in a condition needs parentheses (`if (Point{ .x = 1 }) == p { }`).
+  Match-arm guards are `pat if cond =>`. `catch |e|` and closure
+  parameters are unchanged.
+- `nx fmt` migrates 0.5 sources to the new syntax as part of formatting;
+  `nx fmt --migrate-only` upgrades the syntax and leaves the layout alone.
+  The migration edits by token span, keeps comments and blank lines, and
+  is idempotent, so running it on a mixed tree is safe.
+- The formatter puts a space before the body brace of any control head
+  (`if k == Kind.Defer {`), where before an uppercase name would have been
+  glued to `{` as a struct literal.
+- The language server resolves `for` bindings and `if let` bindings to
+  their declaration.
+- The tree-sitter grammar, the VS Code and Sublime syntaxes, every example,
+  the standard library, the GUI, the self-hosting sources, and all
+  documentation (including the translations) use the new syntax.
+
 ## [0.5.0] - 2026-09-19
 
 ### Added

@@ -121,6 +121,11 @@ Exit: a second person's package is used by a third person's program.
 
 ## Phase 4: the compiler in Nexium (0.6 to 1.0)
 
+0.6 opens with the syntax settled for 1.0 (decision 87): `if c { }`,
+`while c { }`, `for x in items { }`, `if let v = opt { }`, braces always,
+no semicolons. `nx fmt` migrates 0.5 sources. Nothing else about the
+surface syntax is planned to change before 1.0.
+
 Goal: `nx` built by `nx`. Runs in parallel with phases 1 to 3; each stage is
 checked against the Rust compiler on identical inputs.
 

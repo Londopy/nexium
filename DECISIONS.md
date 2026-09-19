@@ -28,12 +28,13 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
 5. **Struct literals are `Point{ .x = 1 }` and anonymous `.{ .x = 1 }`**,
    following the archived 4.1 example. Enum variants are `.Variant(args)` with
    the type inferred, or `Enum.Variant(args)`.
-6. **Conditions take parentheses** (`if (x)`, `while (x)`, `for (xs) |x|`),
+6. ~~**Conditions take parentheses** (`if (x)`, `while (x)`, `for (xs) |x|`),
    matching every example in the archived document. This also makes `Name{`
-   unambiguous.
+   unambiguous.~~ Superseded by 87 in 0.6.
 7. **Optionals**: `null` is the empty value, `.?` unwraps (panics),
-   `x orelse d`, `if (x) |v| { }`. A bare binding in a `match` on an optional
-   binds the payload; `null` matches the empty case.
+   `x orelse d`, `if let v = x { }` (was `if (x) |v| { }` before 87). A bare
+   binding in a `match` on an optional binds the payload; `null` matches the
+   empty case.
 8. **Numeric casts are `value as T`**, checked at runtime when narrowing
    (contributes `panics` unless the range analysis proves it). `@truncate(T, x)`
    wraps. Distinct types convert with `as` in both directions.
@@ -491,6 +492,38 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     call and no dependency, at the price of a C build on every install
     and a second copy of the export boundary to keep correct. 64-bit
     integers cross as BigInt, which is what JavaScript has for them.
+
+## Syntax, second pass
+
+87. **Control flow is `if c { }`, `while c { }`, `for x in items { }`;
+    bodies always take braces.** Nexium is meant to read as a high-level
+    language by default and a systems language only where it has to, and
+    the C-family ceremony around a condition (`(`, `)`, then `{`) carried
+    no information: the grammar already knows a condition follows `if`, and
+    the brace already marks the body. The line, not a semicolon, ends a
+    statement (decision 12), so the brace stays as the one structural
+    boundary and indentation never becomes syntax. Consequences:
+    - `if c { return v }` replaces the unbraced `if (c) return v`; a body is
+      a block, always, so there is one form to read and no dangling-else
+      question.
+    - `for x, i in items { }`, `for i in lo..hi step s { }`, and
+      `for parallel x in items { }` replace `for (items) |x, i|`. The
+      capture spelling was Zig's; `in` is what the loop means, and
+      `for items |x|` would have collided with bit-or.
+    - `if let v = opt { }` replaces `if (opt) |v| { }`. `catch |e|` and
+      closure parameters keep their bars: those are functions' parameters,
+      not loop variables.
+    - A condition is parsed without struct literals (Rust's rule), so
+      `if p == Point{ .x = 1 } {` needs parentheses around the literal;
+      inside `( )`, `[ ]`, and argument lists a literal is unambiguous again.
+      `Name{` stays the literal spelling everywhere else, so decision 6's
+      concern is answered by the parser rather than by parentheses.
+    - `match` arms were already newline-separated with optional commas.
+    - Migration is `nx fmt`: the formatter rewrites 0.5 syntax by token span
+      (comments and blank lines survive; `--migrate-only` keeps the layout)
+      and is idempotent on new sources. The compiler does not accept the
+      old forms; a mixed codebase would have meant two grammars forever.
+    This is the last planned change to the surface syntax before 1.0.
 
 ## Compiler selection
 
