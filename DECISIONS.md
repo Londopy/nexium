@@ -334,6 +334,30 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     make that invisible. Dropping the requirement entirely means a native
     backend, which is self-hosting stage 4 territory and not planned yet.
 
+## The interactive session
+
+73. **The REPL is the compile-time interpreter with a persistent program.**
+    Each line is appended to a synthetic module and the whole thing is
+    re-checked, so the prompt and the compiler can never disagree; only the
+    new statements run, against values kept by name from earlier lines. The
+    interpreter is allowed I/O in this mode and nowhere else. Re-checking
+    everything per line is cheap at REPL scale and simpler than an
+    incremental checker; values are plain data, so they survive the type
+    table being rebuilt. Compile-only features (`@cImport`, `for parallel`,
+    `using arena`) are reported, not emulated.
+
+74. **Interpreter pointers name a call frame.** A `Value::Ptr` is
+    (frame, local, path): the frame index says which suspended caller's
+    environment holds the local, so a pointer passed into a function still
+    points at the caller's variable, and `match p.*` binds owning payloads
+    as pointers into that place, exactly as the compiled program does. Paths
+    step into enum payloads, optionals and error unions (index 0) as well as
+    fields and elements. `Map` is an insertion-ordered list of pairs in the
+    interpreter; it only needs to be correct, not fast. When a statement
+    cannot be evaluated the message names the source position of the first
+    expression that failed, because "cannot be evaluated" without a location
+    was the most common dead end in the REPL.
+
 ## Compiler selection
 
 60. **Native macOS builds use the system compiler.** zig 0.14.1 cannot read

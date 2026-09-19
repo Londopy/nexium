@@ -80,6 +80,7 @@ Source: "{#SourceDir}\examples\*"; DestDir: "{app}\examples"; Components: std; F
 Source: "{#SourceDir}\std\*"; DestDir: "{app}\std"; Components: std; Flags: recursesubdirs ignoreversion skipifsourcedoesntexist
 Source: "{#SourceDir}\docs\*"; DestDir: "{app}\docs"; Components: docs; Flags: recursesubdirs ignoreversion skipifsourcedoesntexist
 Source: "{#SourceDir}\editors\nexium.vsix"; DestDir: "{app}\editors"; Components: vscode; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#SourceDir}\nexium.ico"; DestDir: "{app}"; Components: core; Flags: ignoreversion skipifsourcedoesntexist
 
 [Registry]
 ; .nx file type: icon and a right-click "Open with Nexium (nx run)"
@@ -90,6 +91,7 @@ Root: HKA; Subkey: "Software\Classes\Nexium.Source\shell\run"; ValueType: string
 Root: HKA; Subkey: "Software\Classes\Nexium.Source\shell\run\command"; ValueType: string; ValueName: ""; ValueData: "cmd.exe /k """"{app}\nx.exe"" run ""%1"""""; Tasks: assoc
 
 [Icons]
+Name: "{group}\Nexium {#AppVersion} (64-bit)"; Filename: "{app}\nx.exe"; IconFilename: "{app}\nexium.ico"; WorkingDir: "{userdocs}"; Comment: "The Nexium interactive session (nx repl)"
 Name: "{group}\Nexium README"; Filename: "{app}\README.md"
 Name: "{group}\Nexium language reference"; Filename: "{app}\docs\language.md"; Components: docs
 Name: "{group}\Nexium examples"; Filename: "{app}\examples"; Components: std
@@ -98,8 +100,9 @@ Name: "{group}\Uninstall Nexium"; Filename: "{uninstallexe}"
 
 [Run]
 Filename: "{cmd}"; Parameters: "/c code --install-extension ""{app}\editors\nexium.vsix"""; StatusMsg: "Installing the VS Code extension..."; Tasks: installvsix; Flags: runhidden waituntilterminated
+Filename: "{app}\nx.exe"; Description: "Launch the Nexium interactive session"; Flags: postinstall skipifsilent nowait
+Filename: "{cmd}"; Parameters: "/k ""{app}\nx.exe"" doctor"; Description: "Open a console and check the installation (nx doctor)"; Flags: postinstall skipifsilent nowait unchecked
 Filename: "{app}\README.md"; Description: "Open the README"; Flags: postinstall shellexec skipifsilent unchecked
-Filename: "{cmd}"; Parameters: "/k ""{app}\nx.exe"" doctor"; Description: "Open a console and check the installation (nx doctor)"; Flags: postinstall skipifsilent nowait
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\nx-out"

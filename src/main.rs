@@ -12,6 +12,7 @@ mod fmt;
 mod lexer;
 mod lsp;
 mod parser;
+mod repl;
 mod report;
 mod ship;
 mod size;
@@ -49,6 +50,7 @@ usage:
   nx emit-c <file.nx>              print the generated C
   nx parse <file.nx>               dump the syntax tree
   nx tokens <file.nx>              dump the token stream (start end KIND payload)
+  nx repl                          interactive session (also: `nx` with no arguments)
   nx doctor                        show which C compiler nx will use and whether it works
   nx version
 
@@ -996,6 +998,91 @@ fn token_line(t: &lexer::Token, text: &str) -> String {
     }
 }
 
+/// One line of the C compiler in use, for banners.
+pub fn compiler_summary() -> String {
+    let opts = Opts {
+        file: PathBuf::new(),
+        mode: BuildMode::Debug,
+        target: None,
+        out: None,
+        out_dir: PathBuf::from("nx-out"),
+        keep_c: false,
+        cc: None,
+        rest: vec![],
+        defines: vec![],
+        include_dirs: vec![],
+        link_libs: vec![],
+        link_paths: vec![],
+        c_sources: vec![],
+    };
+    let (cc, why) = cc_command_why(&opts);
+    let base = Path::new(&cc.program).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or(cc.program.clone());
+    if why.starts_with(&base) {
+        why.to_string()
+    } else {
+        format!("{} via {}", base, why)
+    }
+}
+
+/// Check a synthetic REPL program and run its new statements. Errors come back
+/// rendered, ready to print.
+pub fn repl_check(text: &str, start: usize, seed: Vec<(String, tir::Value)>) -> Result<tir::ReplOutcome, String> {
+    let mut sm = SourceMap::default();
+    let file = sm.add("<repl>".to_string(), text.to_string());
+    let (toks, ldiags) = lexer::Lexer::new(text, file).lex();
+    let mut p = parser::Parser::new(toks, file);
+    let m = p.parse_module();
+    let mut all: Vec<diag::Diag> = ldiags;
+    all.extend(p.diags.clone());
+    if !all.is_empty() {
+        return Err(all.iter().map(|d| sm.render(d)).collect::<String>());
+    }
+    let cwd = std::env::current_dir().map(|d| d.to_string_lossy().to_string()).unwrap_or_else(|_| ".".into());
+    let mut modules = vec![m];
+    let mut names = vec!["main".to_string()];
+    let mut dirs = vec![cwd.clone()];
+    let mut std_pending: Vec<String> = Vec::new();
+    for item in modules[0].items.clone() {
+        if let ast::Item::Import(im) = item {
+            if im.path[0] == "std" {
+                if im.path.len() == 2 && stdlib::source(&im.path[1]).is_some() && !std_pending.contains(&im.path.join(".")) {
+                    std_pending.push(im.path.join("."));
+                }
+                continue;
+            }
+            let rel: PathBuf = im.path.iter().collect();
+            let candidate = Path::new(&cwd).join(&rel).with_extension("nx");
+            if let Ok(t) = std::fs::read_to_string(&candidate) {
+                let f = sm.add(candidate.to_string_lossy().to_string(), t.clone());
+                let (tk, _) = lexer::Lexer::new(&t, f).lex();
+                let mut pp = parser::Parser::new(tk, f);
+                modules.push(pp.parse_module());
+                names.push(im.path.join("."));
+                dirs.push(candidate.parent().map(|d| d.to_string_lossy().to_string()).unwrap_or_else(|| ".".into()));
+            }
+        }
+    }
+    for mname in std_pending {
+        let short = mname.trim_start_matches("std.").to_string();
+        let src = stdlib::source(&short).unwrap();
+        let f = sm.add(format!("<std>/{}.nx", short), src.to_string());
+        let (tk, _) = lexer::Lexer::new(src, f).lex();
+        let mut pp = parser::Parser::new(tk, f);
+        modules.push(pp.parse_module());
+        names.push(mname);
+        dirs.push("std".into());
+    }
+    let mut c = check::Checker::new(&sm);
+    c.source_dirs = dirs;
+    c.repl_mode = true;
+    c.repl_request = Some((start, seed));
+    let (res, diags) = c.check_program(&modules, &names);
+    match res {
+        Ok(prog) => Ok(prog.repl.unwrap_or_default()),
+        Err(()) => Err(diags.iter().filter(|d| d.level == diag::Level::Error).map(|d| sm.render(d)).collect::<String>()),
+    }
+}
+
 fn offset_to_pos(text: &str, off: usize) -> (usize, usize) {
     let mut line = 0;
     let mut col = 0;
@@ -1643,6 +1730,10 @@ fn main() {
 fn real_main() -> i32 {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.is_empty() {
+        // like `python`: no arguments at a terminal opens the REPL
+        if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+            return repl::run();
+        }
         usage();
     }
     let cmd = args[0].as_str();
@@ -1653,6 +1744,7 @@ fn real_main() -> i32 {
             0
         }
         "doctor" => cmd_doctor(),
+        "repl" => repl::run(),
         "tokens" => {
             let o = parse_opts(rest);
             match std::fs::read_to_string(&o.file) {

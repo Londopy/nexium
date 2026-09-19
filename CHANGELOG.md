@@ -11,6 +11,16 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
 ### Added
 
 - `SPEC.md`, the language specification as implemented, and `ROADMAP.md`.
+- `nx repl`, and `nx` with no arguments at a terminal: an interactive session
+  on the compiler's interpreter, with bindings kept across lines, the real
+  diagnostics, I/O, and `:load`. The Windows installer adds a Start menu
+  entry that opens it, and offers to launch it when setup finishes.
+- The compile-time interpreter now evaluates `Map`, the mutating `List`,
+  `String` and slice methods (`insert`, `remove`, `sort`, `split`, `trim`,
+  `parse_int`, ...), `expect_eq`, `assert`, UTF-8 helpers and the reference
+  class operations, and pointers stay valid across calls, so `std.json` and
+  the other std modules run at the prompt. A statement the interpreter
+  cannot evaluate is reported with the position of the failing expression.
 
 ## [0.2.0] - 2026-09-19
 

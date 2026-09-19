@@ -254,6 +254,8 @@ impl FnCtx {
 }
 
 pub struct Program {
+    /// set by `nx repl`: the outcome of running the new statements
+    pub repl: Option<crate::tir::ReplOutcome>,
     pub funcs: Vec<TFunc>,
     pub structs: Vec<StructDef>,
     pub enums: Vec<EnumDef>,
@@ -325,6 +327,11 @@ pub struct Checker<'a> {
     pub cimport_opts: Option<crate::cimport::ImportOptions>,
     pub cimport_headers: Vec<(String, bool)>,
     pub cimport_unsupported: HashMap<(u32, String), String>,
+    /// `nx repl`: unused values in `main` are shown instead of rejected, and the
+    /// interpreter may perform I/O
+    pub repl_mode: bool,
+    /// `nx repl`: run `main`'s statements from this index with these seed bindings
+    pub repl_request: Option<(usize, Vec<(String, Value)>)>,
     pub record_new_mode: bool,
 }
 
@@ -373,6 +380,8 @@ impl<'a> Checker<'a> {
             cimport_opts: None,
             cimport_headers: Vec::new(),
             cimport_unsupported: HashMap::new(),
+            repl_mode: false,
+            repl_request: None,
             record_new_mode: false,
         }
     }
@@ -1646,10 +1655,15 @@ impl<'a> Checker<'a> {
         self.check_effect_bounds();
         self.check_embedded_constraints();
 
+        let repl = match self.repl_request.take() {
+            Some((start, seed)) if !self.has_errors() => Some(crate::comptime::run_repl(&mut self, start, seed)),
+            _ => None,
+        };
         if self.has_errors() {
             return (Err(()), self.diags);
         }
         let prog = Program {
+            repl,
             funcs: self.funcs,
             structs: self.structs,
             enums: self.enums,

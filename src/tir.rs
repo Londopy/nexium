@@ -538,6 +538,18 @@ pub struct TBinSeg {
 }
 
 /// Compile-time values.
+/// The result of executing the new statements of a REPL line.
+#[derive(Clone, Debug, Default)]
+pub struct ReplOutcome {
+    /// every `let`/`var` binding of the synthetic main, by name, with its current value
+    pub bindings: Vec<(String, Value)>,
+    /// the same bindings rendered with their types, for display
+    pub shown: Vec<(String, String)>,
+    /// the value of a trailing expression statement: (type name, rendered value)
+    pub printed: Option<(String, String)>,
+    pub panic: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     Int(i128),
@@ -557,11 +569,14 @@ pub enum Value {
     Undefined,
     /// owned collection values (comptime only)
     List(Vec<Value>),
+    /// a Map as insertion-ordered pairs (comptime and REPL only)
+    Map(Vec<(Value, Value)>),
     OwnedStr(Vec<u8>),
     Fn(InstId),
     Never,
     /// compile-time pointer: a local and a path of field/element indices into it
-    Ptr(LocalId, Vec<usize>),
+    /// a pointer to a place: (call frame, local, path of field/element indices)
+    Ptr(u32, LocalId, Vec<usize>),
 }
 
 impl Value {

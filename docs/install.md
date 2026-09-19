@@ -19,7 +19,10 @@ wizard offers:
 - **Tasks**: add `nx` to the PATH (checked by default), register the `.nx`
   file type with an icon and a "Run with Nexium" context entry, and install
   the VS Code extension if `code` is on the PATH.
-- **Finish**: open the README, or open a console that runs `nx doctor`.
+- **Finish**: launch the interactive session, open the README, or open a
+  console that runs `nx doctor`.
+- **Start menu**: "Nexium <version> (64-bit)" opens the interactive session,
+  so typing `nx` in the Windows search bar works like typing `python`.
 
 Nothing else is required. Uninstall from Settings; it removes the files and
 the PATH entry, and leaves programs you compiled alone.

@@ -152,6 +152,24 @@ fn std_modules_pass_their_tests() {
     }
 }
 
+/// The REPL evaluates lines, keeps bindings, accepts items, reports errors, and prints.
+#[test]
+fn repl_session() {
+    use std::io::Write;
+    let script = "let x = 2\nx * 21\nfn sq(n: i32) -> i32 { return n * n }\nsq(x)\nprintln(\"hi {}\", .{x})\nimport std.strings\nstrings.to_upper(\"ok\")\nlet s = String.from(\"a\")\ns\nundefined_name\nvar xs = List(i32).new()\nxs.append(7)\nxs\n:quit\n";
+    let mut child =
+        std::process::Command::new(env!("CARGO_BIN_EXE_nx")).arg("repl").stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn().unwrap();
+    child.stdin.take().unwrap().write_all(script.as_bytes()).unwrap();
+    let out = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "repl exited with {:?}\n{}", out.status, stderr);
+    for expected in ["i64: 42", "i32: 4", "hi 2", "String: \"OK\"", "String: \"a\"", "List(i32): [7]"] {
+        assert!(stdout.contains(expected), "missing {:?} in:\n{}", expected, stdout);
+    }
+    assert!(stderr.contains("undefined_name"), "the error for an unknown name was not reported:\n{}", stderr);
+}
+
 #[test]
 fn examples_are_canonically_formatted() {
     // `nx fmt --check` must pass on every example: formatting is idempotent and the sources are canonical

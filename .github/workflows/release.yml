@@ -93,6 +93,7 @@ jobs:
         run: |
           pip install pillow
           python scripts/make_icon.py
+          Copy-Item assets\icon.ico dist-win\nexium.ico
           $ver = "${{ github.ref_name }}".TrimStart("v")
           $src = (Resolve-Path dist-win).Path
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$ver" "/DSourceDir=$src" installers\windows\nexium.iss

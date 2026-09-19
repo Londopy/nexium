@@ -97,6 +97,9 @@ impl<'a> Checker<'a> {
 
     /// Report an unused non-void value in statement position.
     fn check_unused(&mut self, te: &TExpr) {
+        if self.repl_mode && self.cur().fn_name == "main" {
+            return; // the REPL prints it
+        }
         let t = self.tys.shallow(te.ty);
         match self.tys.kind(t).clone() {
             TyKind::Void | TyKind::Never => {}

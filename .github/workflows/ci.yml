@@ -68,6 +68,7 @@ jobs:
           Copy-Item -Recurse examples, std, docs dist-win/
           pip install pillow
           python scripts/make_icon.py
+          Copy-Item assets\icon.ico dist-win\nexium.ico
           $src = (Resolve-Path dist-win).Path
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=0.0.0" "/DSourceDir=$src" installers\windows\nexium.iss
           Get-ChildItem installers\windows\Output

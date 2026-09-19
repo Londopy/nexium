@@ -259,6 +259,7 @@ using arena {
 - [How Nexium works](docs/architecture.md): the pipeline from source to binary, effects inference, ownership, the runtime, and shipping.
 - [Language reference](docs/language.md): every construct the compiler implements.
 - [Embedding](docs/embedding.md): calling shipped libraries from Python, Rust, and C.
+- [The interactive session](docs/repl.md): `nx` at a prompt, like `python`.
 - [Installing](docs/install.md): the Windows installer, the macOS/Linux script, source builds, checksums, and how `nx` finds a C compiler.
 - [Standard library](docs/std.md): the modules written in Nexium (`std.strings`, `std.lists`, `std.bytes`, `std.num`, `std.json`, `std.args`).
 - [nexium-gui](docs/gui.md): the immediate-mode GUI library and how to write a widget.
@@ -288,6 +289,7 @@ using arena {
 | `nx leaks file.nx` | run with allocation tracking and report leaks |
 | `nx lsp` | language server over stdio |
 | `nx doctor` | which C compiler will be used, and whether the installation works |
+| `nx repl`, or just `nx` | an interactive session: type code, see values, keep bindings |
 
 Options: `--mode debug|safe|fast|small`, `--target x86_64-linux-gnu` (any
 target `zig cc` knows), `--out-dir`, `--keep-c`, `--cc`, and for C interop

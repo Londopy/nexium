@@ -57,6 +57,8 @@ misses nothing for the tool's own needs.
   (`a?.b`) if the spec's ergonomics survive review.
 - Tools: `nx fmt` gains line joining for trailing commas only; `nx doc`
   covers std; `nx test --filter` and `--verbose`.
+- Done ahead of the phase: `nx repl` (the interactive session on the
+  interpreter) and a Start menu entry that opens it.
 
 Exit: `examples/tool.nx`, a real utility (a log grep with regex, dates, and
 file walking) under 300 lines, runs on all three platforms from the release.
