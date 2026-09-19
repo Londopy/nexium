@@ -116,6 +116,18 @@ impl<'a> Checker<'a> {
             }
             return e;
         }
+        // `return local` into a `?T` or `!T` wraps the local; the move is the local's
+        if let TExprKind::OptWrap(inner) | TExprKind::ErrWrap(inner) = &e.kind {
+            if matches!(inner.kind, TExprKind::Local(_)) {
+                let inner = (**inner).clone();
+                let inner = self.take_ownership(inner);
+                let (ty, span) = (e.ty, e.span);
+                return match e.kind {
+                    TExprKind::OptWrap(_) => TExpr { kind: TExprKind::OptWrap(Box::new(inner)), ty, span },
+                    _ => TExpr { kind: TExprKind::ErrWrap(Box::new(inner)), ty, span },
+                };
+            }
+        }
         match &e.kind {
             TExprKind::Local(l) => {
                 let l = *l;
@@ -2627,6 +2639,8 @@ pub fn is_borrowed_view(e: &TExpr) -> bool {
         TExprKind::Field { .. } | TExprKind::RefField { .. } | TExprKind::TupleField { .. } | TExprKind::Index { .. } | TExprKind::Deref(_) => true,
         TExprKind::Builtin { op: Builtin::MapGet | Builtin::ListLast, .. } => true,
         TExprKind::OrElse { expr, .. } | TExprKind::Unwrap { expr, .. } | TExprKind::Try(expr) => is_borrowed_view(expr),
+        // `return xs[i]` into a `?T` or `!T` wraps the element first; the view is still moved
+        TExprKind::OptWrap(expr) | TExprKind::ErrWrap(expr) => is_borrowed_view(expr),
         _ => false,
     }
 }

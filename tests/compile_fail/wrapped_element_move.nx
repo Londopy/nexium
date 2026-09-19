@@ -1,0 +1,11 @@
+// EXPECT: cannot move a `?Item` out of a field or element
+struct Item { name: String, id: usize }
+fn find(xs: *List(Item), id: usize) -> ?Item {
+    for x, i in xs { if x.id == id { return xs[i] } }
+    return null
+}
+fn main() {
+    var xs = List(Item).new()
+    xs.append(Item{ .name = String.from("a"), .id = 1 })
+    if let it = find(&xs, 1) { println("{}", .{it.name}) }
+}
