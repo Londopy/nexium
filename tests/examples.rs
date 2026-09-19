@@ -331,6 +331,32 @@ fn bootstrap_reaches_a_fixed_point() {
     }
 }
 
+/// The driver written in Nexium builds itself, and the result builds and
+/// runs a program: `cargo` is not needed past the first compiler.
+#[test]
+fn self_hosted_driver_builds_itself() {
+    if !have_cc() {
+        eprintln!("skipping: zig not found");
+        return;
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = root.join("nx-out").join("self_driver");
+    let _ = std::fs::create_dir_all(&out_dir);
+    let nx_a = out_dir.join(if cfg!(windows) { "nx_a.exe" } else { "nx_a" });
+    let build = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).args(["build", "self/nx.nx", "-o"]).arg(&nx_a).arg("--out-dir").arg(&out_dir).current_dir(root).output().expect("run nx");
+    assert!(build.status.success(), "building the driver failed:\n{}", String::from_utf8_lossy(&build.stderr));
+    let nx_b = out_dir.join(if cfg!(windows) { "nx_b.exe" } else { "nx_b" });
+    let again = std::process::Command::new(&nx_a).args(["build", "self/nx.nx", "-o"]).arg(&nx_b).arg("--out-dir").arg(&out_dir).env("NX_ZIG", "zig").current_dir(root).output().unwrap();
+    assert!(again.status.success(), "the driver could not build itself:\n{}", String::from_utf8_lossy(&again.stderr));
+    let run = std::process::Command::new(&nx_b).args(["run", "examples/hello.nx", "--out-dir"]).arg(&out_dir).env("NX_ZIG", "zig").current_dir(root).output().unwrap();
+    assert!(run.status.success(), "the rebuilt driver could not run hello:\n{}", String::from_utf8_lossy(&run.stderr));
+    let expected = std::fs::read_to_string(root.join("examples").join("hello.expected")).unwrap();
+    assert_eq!(normalize(&expected), normalize(&String::from_utf8_lossy(&run.stdout)));
+    let test = std::process::Command::new(&nx_b).args(["test", "examples/tests.nx", "--out-dir"]).arg(&out_dir).env("NX_ZIG", "zig").current_dir(root).output().unwrap();
+    let expected = std::fs::read_to_string(root.join("examples").join("tests.expected")).unwrap();
+    assert_eq!(normalize(&expected), normalize(&String::from_utf8_lossy(&test.stdout)));
+}
+
 /// The checker written in Nexium, stage 3: every compile-fail case is
 /// rejected with every message the Rust checker produces (the notes too).
 #[test]

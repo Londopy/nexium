@@ -1,0 +1,408 @@
+// The `nx` command in Nexium: the driver over the self-hosted lexer,
+// parser, checker and C emitter. It loads a program, checks it, emits C
+// and hands that to the C compiler, the way the Rust driver does.
+//
+//     nx build file.nx [-o out] [--out-dir dir] [--mode debug|safe|fast|small]
+//     nx run file.nx [-- args]
+//     nx test file.nx [-- --verbose] [filter]
+//     nx check file.nx
+//     nx emit-c file.nx
+//     nx tir file.nx [--sigs]
+//
+// Options everywhere: --std <dir> (std sources beside the embedded copies),
+// --cc <command>, --target <triple>, --keep-c, -D<name>, -I<dir>.
+
+import parser
+import check
+import cgen
+
+const NONE: usize = 0xFFFFFFFFFFFFFFFF
+
+pub struct Opts {
+    command: String
+    file: String
+    out: String
+    out_dir: String
+    mode: u8
+    std_dir: String
+    cc: List(String)
+    target: String
+    keep_c: bool
+    defines: List(String)
+    include_dirs: List(String)
+    rest: List(String)
+    sigs: bool
+}
+
+fn usage() {
+    eprintln("usage: nx <build|run|test|check|emit-c|tir> <file.nx> [options] [-- args]", .{})
+    eprintln("  -o <path>          output file", .{})
+    eprintln("  --out-dir <dir>    where C and binaries go (default nx-out)", .{})
+    eprintln("  --mode <m>         debug (default), safe, fast, small", .{})
+    eprintln("  --std <dir>        standard library sources (embedded copies otherwise)", .{})
+    eprintln("  --cc <command>     C compiler (default zig cc; NX_CC and NX_ZIG override)", .{})
+    eprintln("  --target <triple>  cross-compile", .{})
+    eprintln("  --keep-c           keep the generated C", .{})
+}
+
+fn parse_opts(args: [][]u8) -> ?Opts {
+    if args.len < 3 { return null }
+    var o = Opts{
+        .command = String.from(args[1]), .file = String.from(args[2]), .out = String.new(), .out_dir = String.from("nx-out"), .mode = cgen.MODE_DEBUG,
+        .std_dir = String.from("std"), .cc = List(String).new(), .target = String.new(), .keep_c = false,
+        .defines = List(String).new(), .include_dirs = List(String).new(), .rest = List(String).new(), .sigs = false,
+    }
+    var cc_text = String.new()
+    var i: usize = 3
+    while i < args.len {
+        let a = args[i]
+        if a == "--" {
+            i += 1
+            while i < args.len { o.rest.append(String.from(args[i])); i += 1 }
+            break
+        }
+        if a == "-o" and i + 1 < args.len { o.out = String.from(args[i + 1]); i += 2; continue }
+        if a == "--out-dir" and i + 1 < args.len { o.out_dir = String.from(args[i + 1]); i += 2; continue }
+        if a == "--std" and i + 1 < args.len { o.std_dir = String.from(args[i + 1]); i += 2; continue }
+        if a == "--cc" and i + 1 < args.len { cc_text = String.from(args[i + 1]); i += 2; continue }
+        if a == "--target" and i + 1 < args.len { o.target = String.from(args[i + 1]); i += 2; continue }
+        if a == "--mode" and i + 1 < args.len {
+            let m = args[i + 1]
+            if m == "debug" { o.mode = cgen.MODE_DEBUG } else if m == "safe" { o.mode = cgen.MODE_SAFE }
+            else if m == "fast" { o.mode = cgen.MODE_FAST } else if m == "small" { o.mode = cgen.MODE_SMALL }
+            else { eprintln("error: unknown mode `{}`", .{m}); return null }
+            i += 2
+            continue
+        }
+        if a == "--keep-c" { o.keep_c = true; i += 1; continue }
+        if a == "--sigs" { o.sigs = true; i += 1; continue }
+        if a.len > 2 and a[0..2] == "-D" { o.defines.append(String.from(a[2..])); i += 1; continue }
+        if a.len > 2 and a[0..2] == "-I" { o.include_dirs.append(String.from(a[2..])); i += 1; continue }
+        // anything else after the file is an argument to the program
+        o.rest.append(String.from(a))
+        i += 1
+    }
+    if cc_text.len == 0 { if let v = os.env("NX_CC") { cc_text = String.from(v) } }
+    if cc_text.len > 0 {
+        for w in cc_text[..].split(" ") { if w.len > 0 { o.cc.append(String.from(w)) } }
+    } else if let z = os.env("NX_ZIG") {
+        o.cc.append(String.from(z))
+        o.cc.append(String.from("cc"))
+    } else {
+        o.cc.append(String.from("zig"))
+        o.cc.append(String.from("cc"))
+    }
+    return o
+}
+
+fn is_windows_target(target: []u8) -> bool {
+    if target.len == 0 { return os.env("COMSPEC") != null and os.env("WINDIR") != null }
+    return target.find("windows") != null
+}
+
+fn is_macos_target(target: []u8) -> bool {
+    if target.len == 0 { return os.env("HOME") != null and io.file_kind("/System/Library/CoreServices") == 2 }
+    return target.find("macos") != null or target.find("darwin") != null
+}
+
+fn dir_of(path: []u8) -> []u8 {
+    var i = path.len
+    while i > 0 {
+        if path[i - 1] == '/' or path[i - 1] == '\\' { return path[0..i - 1] }
+        i -= 1
+    }
+    return "."
+}
+
+fn stem_of(path: []u8) -> []u8 {
+    var start: usize = 0
+    var i = path.len
+    while i > 0 {
+        if path[i - 1] == '/' or path[i - 1] == '\\' { start = i; break }
+        i -= 1
+    }
+    var end = path.len
+    var j = path.len
+    while j > start {
+        if path[j - 1] == '.' { end = j - 1; break }
+        j -= 1
+    }
+    return path[start..end]
+}
+
+/// Load and check; the checker is returned for the emitter. Null after
+/// errors, which have been printed.
+fn check_program(o: *Opts) -> ?check.Checker {
+    let mods = check.load(o.file[..], o.std_dir[..]) catch { return null }
+    var c = check.new_checker(mods)
+    c.cc = o.cc.clone()
+    c.target = o.target.clone()
+    c.collect()
+    c.reserve_errors()
+    c.check_program()
+    if c.errors.len > 0 {
+        for e in c.errors { eprintln("error: {}", .{e}) }
+        return null
+    }
+    return c
+}
+
+/// The C of the program with the given entry: "" after errors.
+fn emit(c: *mut check.Checker, o: *Opts, entry: u8) -> String {
+    var g = cgen.new_gen(c, o.mode, entry)
+    g.lib_name = String.from(stem_of(o.file[..]))
+    let out = g.generate()
+    if g.errors.len > 0 {
+        for e in g.errors { eprintln("error: {}", .{e}) }
+        return String.new()
+    }
+    return out
+}
+
+/// Write the C next to a current copy of the runtime header.
+fn write_c(o: *Opts, stem: []u8, text: []u8) -> ?String {
+    io.make_dir(o.out_dir[..]) catch { }
+    let path = format("{}/{}.c", .{o.out_dir, stem})
+    io.write_file(path[..], text) catch {
+        eprintln("error: cannot write {}", .{path})
+        return null
+    }
+    let rt = format("{}/nx_rt.h", .{o.out_dir})
+    var current = false
+    let existing = io.read_file(rt[..]) catch { String.new() }
+    current = existing[..] == cgen.RUNTIME_H
+    if !current { io.write_file(rt[..], cgen.RUNTIME_H) catch { } }
+    return path
+}
+
+/// `artifact link { c_sources, libs, include, lib_paths }` declared in the sources.
+fn link_info(c: *check.Checker, o: *Opts, c_sources: *mut List(String), libs: *mut List(String), include: *mut List(String), lib_paths: *mut List(String)) {
+    let windows = is_windows_target(o.target[..])
+    let macos = is_macos_target(o.target[..])
+    let n_mods = c.mods.len
+    for m in 0..n_mods {
+        let root_dir = c.mods[m].dir.clone()
+        for it in c.mods[m].parsed.items.clone() {
+            let n = c.node(m, it)
+            if n.k != parser.NodeKind.Artifact or n.name != "link" { continue }
+            for f in n.kids.clone() {
+                let fnode = c.node(m, f)
+                let key = fnode.name.clone()
+                let v = c.node(m, fnode.x)
+                var vals = List(String).new()
+                if v.k == parser.NodeKind.ArrayLit {
+                    for e in v.kids.clone() {
+                        let en = c.node(m, e)
+                        if en.k == parser.NodeKind.Lit and en.text == "str" { vals.append(en.name.clone()) }
+                    }
+                } else if v.k == parser.NodeKind.Lit and v.text == "str" {
+                    vals.append(v.name.clone())
+                }
+                for x in vals {
+                    let rel = format("{}/{}", .{root_dir, x})
+                    if key == "c_sources" { c_sources.append(rel) }
+                    else if key == "libs" { libs.append(x.clone()) }
+                    else if key == "libs_windows" and windows { libs.append(x.clone()) }
+                    else if key == "libs_linux" and !windows and !macos { libs.append(x.clone()) }
+                    else if key == "libs_macos" and macos { libs.append(x.clone()) }
+                    else if key == "include" { include.append(rel) }
+                    else if key == "lib_paths" { lib_paths.append(rel) }
+                }
+            }
+        }
+    }
+}
+
+/// Run the C compiler on the generated file. Zig's shared cache refuses a
+/// concurrent run now and then: that is retried.
+fn compile_c(c: *check.Checker, o: *Opts, c_path: []u8, out: []u8, kind: []u8) -> bool {
+    var argv = List(String).new()
+    for x in o.cc { argv.append(x.clone()) }
+    argv.append(String.from("-std=gnu11"))
+    if o.mode == cgen.MODE_DEBUG { argv.append(String.from("-O0")); argv.append(String.from("-g")) }
+    else if o.mode == cgen.MODE_SMALL { argv.append(String.from("-Os")) }
+    else { argv.append(String.from("-O2")) }
+    argv.append(String.from("-w"))
+    argv.append(String.from("-fno-strict-aliasing"))
+    for d in o.defines { argv.append(format("-D{}", .{d})) }
+    var c_sources = List(String).new()
+    var libs = List(String).new()
+    var include = List(String).new()
+    var lib_paths = List(String).new()
+    link_info(c, o, &mut c_sources, &mut libs, &mut include, &mut lib_paths)
+    for d in o.include_dirs { argv.append(format("-I{}", .{d})) }
+    for d in include { argv.append(format("-I{}", .{d})) }
+    argv.append(format("-I{}", .{dir_of(o.file[..])}))
+    for s in c_sources { argv.append(s.clone()) }
+    for d in lib_paths { argv.append(format("-L{}", .{d})) }
+    for l in libs { argv.append(format("-l{}", .{l})) }
+    if o.target.len > 0 {
+        argv.append(String.from("-target"))
+        argv.append(o.target.clone())
+    }
+    if kind == "object" { argv.append(String.from("-c")) }
+    argv.append(String.from(c_path))
+    argv.append(String.from("-o"))
+    argv.append(String.from(out))
+    let windows = is_windows_target(o.target[..])
+    if windows { argv.append(String.from("-lws2_32")) }
+    if !windows {
+        // libm is part of libSystem on macOS; a separate -lm there makes zig skip
+        // its implicit libc link on machines without an SDK. Ask for libc explicitly.
+        if !is_macos_target(o.target[..]) { argv.append(String.from("-lm")) }
+        argv.append(String.from("-lc"))
+    }
+    var views = List([]u8).new()
+    for a in argv { views.append(a[..]) }
+    var code: i32 = 1
+    for attempt in 0..5 {
+        code = os.exec(views[..], "", "") catch {
+            eprintln("error: cannot run the C compiler `{}`; put zig on the PATH or set NX_CC", .{argv[0]})
+            return false
+        }
+        let err = os.last_stderr()
+        if code != 0 and err[..].find("failed to check cache") != null and attempt + 1 < 5 {
+            time.sleep(300 *((attempt as u64) + 1))
+            continue
+        }
+        if err.len > 0 { eprintln("{}", .{err[..].trim()}) }
+        let outp = os.last_stdout()
+        if outp.len > 0 { print("{}", .{outp}) }
+        break
+    }
+    if code != 0 {
+        eprintln("error: C compilation failed (this is a compiler bug; run `nx emit-c` to inspect the output)", .{})
+        return false
+    }
+    return true
+}
+
+fn exe_name(stem: []u8, target: []u8) -> String {
+    if is_windows_target(target) { return format("{}.exe", .{stem}) }
+    return String.from(stem)
+}
+
+fn absolute(path: []u8) -> String {
+    if path.len > 0 and (path[0] == '/' or (path.len > 1 and path[1] == ':')) { return String.from(path) }
+    let cwd = io.cwd() catch { return String.from(path) }
+    return format("{}/{}", .{cwd, path})
+}
+
+fn cmd_build(o: *Opts, run: bool, out_path: *mut String) -> bool {
+    var c = check_program(o) orelse return false
+    let stem = stem_of(o.file[..])
+    let has_main = c.main_inst != NONE
+    if !has_main and !run { eprintln("note: no `main` found; building a library object", .{}) }
+    let text = emit(&mut c, o, if has_main { cgen.ENTRY_MAIN } else { cgen.ENTRY_LIBRARY })
+    if text.len == 0 { return false }
+    let c_path = write_c(o, stem, text[..]) orelse return false
+    var out = o.out.clone()
+    if out.len == 0 {
+        if has_main { out = format("{}/{}", .{o.out_dir, exe_name(stem, o.target[..])}) } else { out = format("{}/{}.o", .{o.out_dir, stem}) }
+    }
+    if !compile_c(&c, o, c_path[..], out[..], if has_main { "exe" } else { "object" }) { return false }
+    if !o.keep_c { io.remove_file(c_path[..]) catch { } }
+    out_path.*= out
+    return true
+}
+
+fn run_program(exe: []u8, rest: *List(String)) -> i32 {
+    var argv = List([]u8).new()
+    let abs = absolute(exe)
+    argv.append(abs[..])
+    for a in rest { argv.append(a[..]) }
+    let code = os.run(argv[..]) catch {
+        eprintln("error: cannot run {}", .{exe})
+        return 1
+    }
+    return code
+}
+
+fn cmd_run(o: *Opts) -> i32 {
+    var exe = String.new()
+    if !cmd_build(o, true, &mut exe) { return 1 }
+    return run_program(exe[..], &o.rest)
+}
+
+fn cmd_test(o: *Opts) -> i32 {
+    var c = check_program(o) orelse return 1
+    if c.tests.len == 0 {
+        println("no tests found", .{})
+        return 0
+    }
+    let stem = stem_of(o.file[..])
+    let text = emit(&mut c, o, cgen.ENTRY_TESTS)
+    if text.len == 0 { return 1 }
+    let tstem = format("{}_test", .{stem})
+    let c_path = write_c(o, tstem[..], text[..]) orelse return 1
+    let out = format("{}/{}", .{o.out_dir, exe_name(tstem[..], o.target[..])})
+    if !compile_c(&c, o, c_path[..], out[..], "exe") { return 1 }
+    if !o.keep_c { io.remove_file(c_path[..]) catch { } }
+    return run_program(out[..], &o.rest)
+}
+
+fn cmd_check(o: *Opts) -> i32 {
+    let c = check_program(o) orelse return 1
+    _ = c
+    println("ok", .{})
+    return 0
+}
+
+fn cmd_emit_c(o: *Opts) -> i32 {
+    var c = check_program(o) orelse return 1
+    var entry = cgen.ENTRY_MAIN
+    if c.main_inst == NONE { entry = if c.tests.len > 0 { cgen.ENTRY_TESTS } else { cgen.ENTRY_LIBRARY } }
+    let text = emit(&mut c, o, entry)
+    if text.len == 0 { return 1 }
+    print("{}", .{text})
+    return 0
+}
+
+fn cmd_tir(o: *Opts) -> i32 {
+    let mods = check.load(o.file[..], o.std_dir[..]) catch { return 1 }
+    var c = check.new_checker(mods)
+    c.cc = o.cc.clone()
+    c.target = o.target.clone()
+    c.collect()
+    c.reserve_errors()
+    var out = String.new()
+    if o.sigs {
+        c.resolve_globals()
+        c.print_sigs(&mut out)
+    } else {
+        c.check_program()
+        c.print_program(&mut out)
+    }
+    print("{}", .{out})
+    for e in c.errors { eprintln("error: {}", .{e}) }
+    if c.errors.len > 0 { return 1 }
+    return 0
+}
+
+fn main() -> u8 {
+    let args = os.args()
+    let o = parse_opts(args) orelse {
+        usage()
+        return 2
+    }
+    var code: i32 = 0
+    if o.command == "build" {
+        var out = String.new()
+        code = if cmd_build(&o, false, &mut out) { 0 } else { 1 }
+        if code == 0 { println("built {}", .{out}) }
+    } else if o.command == "run" {
+        code = cmd_run(&o)
+    } else if o.command == "test" {
+        code = cmd_test(&o)
+    } else if o.command == "check" {
+        code = cmd_check(&o)
+    } else if o.command == "emit-c" {
+        code = cmd_emit_c(&o)
+    } else if o.command == "tir" {
+        code = cmd_tir(&o)
+    } else {
+        usage()
+        return 2
+    }
+    return (if code < 0 or code > 255 { 1 } else { code }) as u8
+}
