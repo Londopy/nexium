@@ -5,10 +5,15 @@
 ; where SourceDir holds: nx.exe, README.md, LICENSE, CHANGELOG.md, docs\,
 ; examples\, std\, zig\ (the bundled Zig toolchain), editors\nexium.vsix.
 ;
-; What the wizard offers: license, an overview page, install for this user or
-; all users, components (compiler, bundled Zig, examples, docs, VS Code
-; extension), tasks (add to PATH, register .nx, install the extension), and a
-; finish page that can open the README or a console running `nx doctor`.
+; What the wizard offers: a welcome page, license, an overview page, install
+; for this user or all users, components (compiler, bundled Zig, examples,
+; docs, VS Code extension), tasks (add to PATH, register .nx, a console entry
+; in Explorer's folder menu, a desktop shortcut, install the extension), a
+; page presenting the publisher's other projects with open and download
+; buttons, and a finish page that can open the README, the changelog, or a
+; console running `nx doctor`.
+;
+; The wizard images are drawn by scripts/make_wizard_images.py.
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
@@ -29,14 +34,22 @@ AppPublisher={#AppPublisher}
 AppPublisherURL={#AppURL}
 AppSupportURL={#AppURL}/issues
 AppUpdatesURL={#AppURL}/releases
+AppComments=The Nexium language: compiler, bundled C toolchain, standard library and docs
+AppContact={#AppURL}/issues
+VersionInfoVersion={#AppVersion}
+VersionInfoDescription=Nexium {#AppVersion} setup
+VersionInfoProductName=Nexium
 DefaultDirName={autopf}\Nexium
 DefaultGroupName=Nexium
 DisableProgramGroupPage=yes
+DisableWelcomePage=no
 LicenseFile={#SourceDir}\LICENSE
 InfoBeforeFile={#SourcePath}\BEFORE.txt
 OutputDir={#SourcePath}\Output
 OutputBaseFilename=nexium-{#AppVersion}-setup-x64
 SetupIconFile={#SourcePath}\..\..\assets\icon.ico
+WizardImageFile={#SourcePath}\wizard-large.bmp
+WizardSmallImageFile={#SourcePath}\wizard-small.bmp
 UninstallDisplayIcon={app}\nx.exe
 UninstallDisplayName={#AppName} {#AppVersion}
 Compression=lzma2/ultra64
@@ -68,6 +81,8 @@ Name: "vscode"; Description: "VS Code extension (.vsix file)"; Types: full custo
 [Tasks]
 Name: "addtopath"; Description: "Add nx to the PATH"; GroupDescription: "Environment:"
 Name: "assoc"; Description: "Register the .nx file type (icon and ""Open with"")"; GroupDescription: "File types:"; Flags: unchecked
+Name: "foldermenu"; Description: "Add ""Open Nexium console here"" to the folder right-click menu"; GroupDescription: "Explorer:"; Flags: unchecked
+Name: "desktopicon"; Description: "Create a desktop shortcut to the Nexium console"; GroupDescription: "Shortcuts:"; Flags: unchecked
 Name: "installvsix"; Description: "Install the VS Code extension now (needs 'code' on the PATH)"; GroupDescription: "Editors:"; Components: vscode; Flags: unchecked
 
 [Files]
@@ -89,6 +104,10 @@ Root: HKA; Subkey: "Software\Classes\Nexium.Source"; ValueType: string; ValueNam
 Root: HKA; Subkey: "Software\Classes\Nexium.Source\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\nx.exe,0"; Tasks: assoc
 Root: HKA; Subkey: "Software\Classes\Nexium.Source\shell\run"; ValueType: string; ValueName: ""; ValueData: "Run with Nexium"; Tasks: assoc
 Root: HKA; Subkey: "Software\Classes\Nexium.Source\shell\run\command"; ValueType: string; ValueName: ""; ValueData: "cmd.exe /k """"{app}\nx.exe"" run ""%1"""""; Tasks: assoc
+; right-click a folder's background: a console with nx on the PATH, in that folder
+Root: HKA; Subkey: "Software\Classes\Directory\Background\shell\NexiumConsole"; ValueType: string; ValueName: ""; ValueData: "Open Nexium console here"; Flags: uninsdeletekey; Tasks: foldermenu
+Root: HKA; Subkey: "Software\Classes\Directory\Background\shell\NexiumConsole"; ValueType: string; ValueName: "Icon"; ValueData: "{app}\nx.exe,0"; Tasks: foldermenu
+Root: HKA; Subkey: "Software\Classes\Directory\Background\shell\NexiumConsole\command"; ValueType: string; ValueName: ""; ValueData: "cmd.exe /k ""set PATH={app};%PATH% && ""{app}\nx.exe"" version"""; Tasks: foldermenu
 
 [Icons]
 Name: "{group}\Nexium {#AppVersion} (64-bit)"; Filename: "{app}\nx.exe"; IconFilename: "{app}\nexium.ico"; WorkingDir: "{userdocs}"; Comment: "The Nexium interactive session (nx repl)"
@@ -96,18 +115,111 @@ Name: "{group}\Nexium README"; Filename: "{app}\README.md"
 Name: "{group}\Nexium language reference"; Filename: "{app}\docs\language.md"; Components: docs
 Name: "{group}\Nexium examples"; Filename: "{app}\examples"; Components: std
 Name: "{group}\Nexium console"; Filename: "{cmd}"; Parameters: "/k ""{app}\nx.exe"" doctor"; WorkingDir: "{app}\examples"
+Name: "{group}\What's new in Nexium"; Filename: "{app}\CHANGELOG.md"
+Name: "{group}\Nexium on GitHub"; Filename: "{#AppURL}"
 Name: "{group}\Uninstall Nexium"; Filename: "{uninstallexe}"
+Name: "{autodesktop}\Nexium console"; Filename: "{cmd}"; Parameters: "/k ""{app}\nx.exe"" doctor"; WorkingDir: "{userdocs}"; IconFilename: "{app}\nexium.ico"; Tasks: desktopicon
 
 [Run]
 Filename: "{cmd}"; Parameters: "/c code --install-extension ""{app}\editors\nexium.vsix"""; StatusMsg: "Installing the VS Code extension..."; Tasks: installvsix; Flags: runhidden waituntilterminated
 Filename: "{app}\nx.exe"; Description: "Launch the Nexium interactive session"; Flags: postinstall skipifsilent nowait
 Filename: "{cmd}"; Parameters: "/k ""{app}\nx.exe"" doctor"; Description: "Open a console and check the installation (nx doctor)"; Flags: postinstall skipifsilent nowait unchecked
 Filename: "{app}\README.md"; Description: "Open the README"; Flags: postinstall shellexec skipifsilent unchecked
+Filename: "{app}\CHANGELOG.md"; Description: "Show what's new in {#AppVersion}"; Flags: postinstall shellexec skipifsilent unchecked
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\nx-out"
 
 [Code]
+// ---- "More from Londopy": a page after the tasks presenting the publisher's
+// other projects, each with a button that opens its GitHub page and one that
+// opens its latest release. Nothing is downloaded by the installer itself.
+
+const
+  ProjectCount = 3;
+
+var
+  MorePage: TWizardPage;
+  ProjectUrls: array[0..ProjectCount - 1] of string;
+
+procedure OpenProjectClick(Sender: TObject);
+var
+  Url: string;
+  Code: Integer;
+begin
+  Url := ProjectUrls[TNewButton(Sender).Tag div 2];
+  if TNewButton(Sender).Tag mod 2 = 1 then
+    Url := Url + '/releases/latest';
+  ShellExec('open', Url, '', '', SW_SHOWNORMAL, ewNoWait, Code);
+end;
+
+procedure AddProject(Index: Integer; Top: Integer; const Name, Blurb, Url: string);
+var
+  Title, Text: TNewStaticText;
+  OpenBtn, DownloadBtn: TNewButton;
+begin
+  ProjectUrls[Index] := Url;
+  Title := TNewStaticText.Create(MorePage);
+  Title.Parent := MorePage.Surface;
+  Title.Left := 0;
+  Title.Top := Top;
+  Title.Caption := Name;
+  Title.Font.Style := [fsBold];
+  Text := TNewStaticText.Create(MorePage);
+  Text.Parent := MorePage.Surface;
+  Text.Left := 0;
+  Text.Top := Top + ScaleY(18);
+  Text.Width := MorePage.SurfaceWidth - ScaleX(220);
+  Text.WordWrap := True;
+  Text.AutoSize := False;
+  Text.Height := ScaleY(48);
+  Text.Caption := Blurb;
+  OpenBtn := TNewButton.Create(MorePage);
+  OpenBtn.Parent := MorePage.Surface;
+  OpenBtn.Left := MorePage.SurfaceWidth - ScaleX(210);
+  OpenBtn.Top := Top + ScaleY(14);
+  OpenBtn.Width := ScaleX(100);
+  OpenBtn.Height := ScaleY(23);
+  OpenBtn.Caption := 'Open on GitHub';
+  OpenBtn.Tag := Index * 2;
+  OpenBtn.OnClick := @OpenProjectClick;
+  DownloadBtn := TNewButton.Create(MorePage);
+  DownloadBtn.Parent := MorePage.Surface;
+  DownloadBtn.Left := MorePage.SurfaceWidth - ScaleX(104);
+  DownloadBtn.Top := Top + ScaleY(14);
+  DownloadBtn.Width := ScaleX(104);
+  DownloadBtn.Height := ScaleY(23);
+  DownloadBtn.Caption := 'Download';
+  DownloadBtn.Tag := Index * 2 + 1;
+  DownloadBtn.OnClick := @OpenProjectClick;
+end;
+
+procedure InitializeWizard();
+var
+  Intro: TNewStaticText;
+begin
+  MorePage := CreateCustomPage(wpSelectTasks, 'More from Londopy',
+    'Other free tools by the author of Nexium. Nothing here is installed unless you download it yourself.');
+  Intro := TNewStaticText.Create(MorePage);
+  Intro.Parent := MorePage.Surface;
+  Intro.Left := 0;
+  Intro.Top := 0;
+  Intro.Width := MorePage.SurfaceWidth;
+  Intro.WordWrap := True;
+  Intro.AutoSize := False;
+  Intro.Height := ScaleY(28);
+  Intro.Caption := 'Each button opens a page in your browser. "Download" goes to the latest release.';
+  AddProject(0, ScaleY(40), 'HideDesktopApps',
+    'A lightweight system-tray app that hides and shows desktop icons, the taskbar and all windows with hotkeys. For ricing, streaming and focus.',
+    'https://github.com/Londopy/HideDesktopApps');
+  AddProject(1, ScaleY(116), 'capture-bypass',
+    'A DLL injection tool that bypasses screen-capture protection on Windows 10 and 11, so protected windows show up in recordings.',
+    'https://github.com/Londopy/capture-bypass');
+  AddProject(2, ScaleY(192), 'gesture-synth',
+    'A chord instrument you play with your hands in front of a camera: hand tracking drives a polyphonic synth in the browser.',
+    'https://github.com/Londopy/gesture-synth');
+end;
+
 // PATH handling: append or remove {app} in the user's or the machine's PATH,
 // depending on the install mode chosen in the wizard.
 
