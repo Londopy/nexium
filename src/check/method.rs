@@ -681,8 +681,16 @@ impl<'a> Checker<'a> {
                     self.add_effect(Effects::BLOCKS, span, "sleeping blocks");
                     self.builtin(Builtin::Sleep, vec![ms], vec![], void, span)
                 }
+                "utc_offset" => {
+                    if !self.check_args_n(args, 1, "time.utc_offset", span) {
+                        return self.error_expr(span);
+                    }
+                    let ms = self.arg(&args[0], i64t, "milliseconds since the epoch");
+                    self.add_effect(Effects::NONDETERMINISTIC, span, "the local time zone varies across machines");
+                    self.builtin(Builtin::TimeUtcOffset, vec![ms], vec![], i64t, span)
+                }
                 _ => {
-                    self.error(span, format!("`time` has no function `{}`; available: now, monotonic, sleep", name));
+                    self.error(span, format!("`time` has no function `{}`; available: now, monotonic, sleep, utc_offset", name));
                     self.error_expr(span)
                 }
             },

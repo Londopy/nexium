@@ -36,6 +36,8 @@ pub struct Interp<'c, 'a> {
     frames: Vec<Env>,
     /// the function whose body is executing, for the types of its locals
     cur_fn: Option<InstId>,
+    /// temporaries created for `&rvalue`, numbered down from the top of the id space
+    temps: u32,
 }
 
 /// The root value a pointer refers to: a local in a suspended caller frame or
@@ -58,7 +60,7 @@ fn frame_get<'e>(frames: &'e [Env], env: &'e Env, fi: u32, l: LocalId) -> Option
 
 /// Evaluate an expression with no locals. Reports compile-time panics as errors.
 pub fn eval_const_expr(c: &mut Checker, e: &TExpr) -> Option<Value> {
-    let mut it = Interp { c, steps: 0, panic: None, budget_exceeded: false, pending: None, failed_at: None, frames: vec![], cur_fn: None };
+    let mut it = Interp { c, steps: 0, panic: None, budget_exceeded: false, pending: None, failed_at: None, frames: vec![], cur_fn: None, temps: 0 };
     let mut env = Env::new();
     let r = it.eval(e, &mut env);
     let panic = it.panic.take();
@@ -74,7 +76,7 @@ pub fn eval_const_expr(c: &mut Checker, e: &TExpr) -> Option<Value> {
 
 /// Evaluate with one local bound; silent on failure (used to probe record constraints).
 pub fn eval_with_local(c: &mut Checker, e: &TExpr, local: LocalId, v: Value) -> Option<Value> {
-    let mut it = Interp { c, steps: 0, panic: None, budget_exceeded: false, pending: None, failed_at: None, frames: vec![], cur_fn: None };
+    let mut it = Interp { c, steps: 0, panic: None, budget_exceeded: false, pending: None, failed_at: None, frames: vec![], cur_fn: None, temps: 0 };
     let mut env = Env::new();
     env.insert(local, v);
     it.eval(e, &mut env)
@@ -82,7 +84,7 @@ pub fn eval_with_local(c: &mut Checker, e: &TExpr, local: LocalId, v: Value) -> 
 
 /// Run a function instance at compile time with the given arguments.
 pub fn call_instance(c: &mut Checker, inst: InstId, args: Vec<Value>) -> Result<Option<Value>, (String, Span)> {
-    let mut it = Interp { c, steps: 0, panic: None, budget_exceeded: false, pending: None, failed_at: None, frames: vec![], cur_fn: None };
+    let mut it = Interp { c, steps: 0, panic: None, budget_exceeded: false, pending: None, failed_at: None, frames: vec![], cur_fn: None, temps: 0 };
     let r = it.call(inst, args);
     if let Some(p) = it.panic.take() {
         return Err(p);
@@ -575,10 +577,17 @@ impl<'c, 'a> Interp<'c, 'a> {
                 }
                 _ => None,
             },
-            TExprKind::AddrOf { expr, .. } => {
-                let (fi, l, path) = self.place_path(expr, env)?;
-                Some(Value::Ptr(fi, l, path))
-            }
+            TExprKind::AddrOf { expr, .. } => match self.place_path(expr, env) {
+                Some((fi, l, path)) => Some(Value::Ptr(fi, l, path)),
+                None => {
+                    // the address of a temporary: give the value a slot of its own
+                    let v = self.eval(expr, env)?;
+                    let id = u32::MAX - self.temps;
+                    self.temps += 1;
+                    env.insert(id, v);
+                    Some(Value::Ptr(self.frames.len() as u32, id, vec![]))
+                }
+            },
             TExprKind::Call { inst, args } => {
                 let mut vs = Vec::new();
                 for a in args {
@@ -1698,6 +1707,8 @@ impl<'c, 'a> Interp<'c, 'a> {
                 Some(Value::Opt(std::env::var(&name).ok().map(|v| Box::new(Value::OwnedStr(v.into_bytes())))))
             }
             Builtin::TimeNow if self.c.repl_mode => Some(Value::Int(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i128).unwrap_or(0))),
+            // the interpreter has no time zone database: local time is UTC at the prompt
+            Builtin::TimeUtcOffset if self.c.repl_mode => Some(Value::Int(0)),
             Builtin::Sleep if self.c.repl_mode => {
                 std::thread::sleep(std::time::Duration::from_millis(vs[0].as_int()?.max(0) as u64));
                 Some(Value::Void)
@@ -1841,7 +1852,7 @@ pub fn run_repl(c: &mut Checker, start: usize, seed: Vec<(String, Value)>) -> cr
         Some(i) => i,
         None => return out,
     };
-    let mut it = Interp { c, steps: 0, panic: None, budget_exceeded: false, pending: None, failed_at: None, frames: vec![], cur_fn: None };
+    let mut it = Interp { c, steps: 0, panic: None, budget_exceeded: false, pending: None, failed_at: None, frames: vec![], cur_fn: None, temps: 0 };
     if !it.ensure_body(inst) {
         return out;
     }

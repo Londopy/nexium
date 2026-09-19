@@ -19,6 +19,7 @@ by `scripts/std_docs.py` from the doc comments.
 | [`std.lists`](#stdlists) | generic helpers over slices and Lists, written in Nexium. |
 | [`std.num`](#stdnum) | integer utilities, written in Nexium. |
 | [`std.strings`](#stdstrings) | text utilities on `[]u8` and `String`, written in Nexium. |
+| [`std.time`](#stdtime) | dates, durations and timers, written in Nexium. |
 
 ## std.args
 
@@ -198,3 +199,48 @@ std.strings: text utilities on `[]u8` and `String`, written in Nexium. `import s
 | `reverse(s: []u8) -> String` | Bytes in reverse order (bytes, not code points). |
 | `split_once(s: []u8, sep: []u8) -> ?([]u8, []u8)` | Cut at the first `sep`: (before, after), or null when `sep` is absent. |
 | `ellipsize(s: []u8, max: usize) -> String` | Truncate to `max` bytes, appending `...` when something was cut. |
+
+## std.time
+
+std.time: dates, durations and timers, written in Nexium. `import std.time` then: let now = time.now_utc()                    // a DateTime println("{}", .{now.iso()})                 // 2026-09-19T04:15:14.123Z println("{}", .{now.format("%Y-%m-%d %H:%M")}) let local = time.now_local()                // with the machine's UTC offset let d = time.Duration.minutes(90) println("{}", .{d.text()})                  // 1h 30m var sw = time.Stopwatch.start() ... work ... println("took {}", .{sw.elapsed().text()}) Instants are milliseconds since 1970-01-01T00:00:00Z (`time.now()`), as `i64`; negative values are before the epoch. Calendar arithmetic is the proleptic Gregorian calendar; the only platform call is the local UTC offset, and only `now_local` and `local` use it.
+
+Types: `DateTime`, `Duration`, `Stopwatch`
+
+| function | what it does |
+| --- | --- |
+| `is_leap(year: i32) -> bool` |  |
+| `days_in_month(year: i32, month: u8) -> u8` |  |
+| `utc(ms: i64) -> DateTime` | Break an instant down in UTC. |
+| `local(ms: i64) -> DateTime` | Break an instant down in the machine's local time zone. |
+| `with_offset(ms: i64, offset_min: i32) -> DateTime` | Break an instant down at a fixed offset in minutes east of UTC. |
+| `now_utc() -> DateTime` | The current instant, in UTC. |
+| `now_local() -> DateTime` | The current instant, in local time. |
+| `date(year: i32, month: u8, day: u8) -> ?DateTime` | A date at midnight UTC; `null` when the fields do not name a real day. |
+| `(method) to_ms(self: *Self) -> i64` | Milliseconds since the epoch (the offset is subtracted back out). |
+| `(method) to_utc(self: *Self) -> DateTime` | The same instant expressed in UTC. |
+| `(method) weekday(self: *Self) -> u8` | Day of the week, 0 = Monday ... 6 = Sunday. |
+| `(method) day_of_year(self: *Self) -> u16` | Day of the year, 1-based. |
+| `(method) date_text(self: *Self) -> String` | `YYYY-MM-DD`. |
+| `(method) time_text(self: *Self) -> String` | `HH:MM:SS`. |
+| `(method) offset_text(self: *Self) -> String` | The offset as `Z`, or `+HH:MM` / `-HH:MM`. |
+| `(method) iso(self: *Self) -> String` | ISO 8601 / RFC 3339: `2026-09-19T04:15:14.123Z`, `...+02:00`. |
+| `(method) format(self: *Self, spec: []u8) -> String` | Unknown letters are copied through. |
+| `parse_iso(s: []u8) -> ?DateTime` | text is not a date. |
+| `(method) millis(n: i64) -> Duration` |  |
+| `(method) seconds(n: i64) -> Duration` |  |
+| `(method) minutes(n: i64) -> Duration` |  |
+| `(method) hours(n: i64) -> Duration` |  |
+| `(method) days(n: i64) -> Duration` |  |
+| `(method) between(a: i64, b: i64) -> Duration` | The span from `a` to `b` (instants in ms). |
+| `(method) since(ms: i64) -> Duration` | The span from an instant to now. |
+| `(method) total_seconds(self: *Self) -> f64` |  |
+| `(method) total_minutes(self: *Self) -> f64` |  |
+| `(method) total_hours(self: *Self) -> f64` |  |
+| `(method) plus(self: *Self, other: Duration) -> Duration` |  |
+| `(method) minus(self: *Self, other: Duration) -> Duration` |  |
+| `(method) text(self: *Self) -> String` | Human text: `250ms`, `3.5s`, `2m 05s`, `1h 02m`, `3d 04h`. |
+| `add(ms: i64, d: Duration) -> i64` | `instant + duration`. |
+| `(method) start() -> Stopwatch` |  |
+| `(method) elapsed_ms(self: *Self) -> f64` | Elapsed time in milliseconds, fractional. |
+| `(method) elapsed(self: *Self) -> Duration` | Elapsed time as a Duration (whole milliseconds). |
+| `(method) lap(self: *mut Self) -> Duration` | Restart and return what had elapsed. |

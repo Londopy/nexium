@@ -285,6 +285,7 @@ pub enum Builtin {
     Exit,
     Run,
     TimeNow,
+    TimeUtcOffset,
     TimeMonotonic,
     Sleep,
     Random,

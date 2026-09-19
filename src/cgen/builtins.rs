@@ -979,6 +979,10 @@ impl Gen {
                 t
             }
             Builtin::TimeNow => "nx_time_now_ms()".into(),
+            Builtin::TimeUtcOffset => {
+                let v = self.simple(&args[0]);
+                format!("nx_time_utc_offset_min({})", v)
+            }
             Builtin::TimeMonotonic => "nx_time_monotonic_ns()".into(),
             Builtin::Sleep => {
                 let v = self.simple(&args[0]);

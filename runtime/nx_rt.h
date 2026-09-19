@@ -740,6 +740,21 @@ NX_INLINE int64_t nx_time_now_ms(void) {
     return (int64_t)tv.tv_sec * 1000 + tv.tv_usec / 1000;
 #endif
 }
+/* minutes east of UTC of local time at the given instant (0 when unknown) */
+NX_INLINE int64_t nx_time_utc_offset_min(int64_t epoch_ms) {
+    time_t t = (time_t)(epoch_ms / 1000);
+    struct tm loc, utc;
+#if defined(_WIN32)
+    if (localtime_s(&loc, &t) != 0 || gmtime_s(&utc, &t) != 0) return 0;
+#else
+    if (!localtime_r(&t, &loc) || !gmtime_r(&t, &utc)) return 0;
+#endif
+    int64_t lmin = ((int64_t)loc.tm_yday * 1440) + loc.tm_hour * 60 + loc.tm_min;
+    int64_t umin = ((int64_t)utc.tm_yday * 1440) + utc.tm_hour * 60 + utc.tm_min;
+    int64_t diff = lmin - umin;
+    if (loc.tm_year != utc.tm_year) diff += loc.tm_year > utc.tm_year ? 365 * 1440 : -365 * 1440;
+    return diff;
+}
 NX_INLINE uint64_t nx_time_monotonic_ns(void) {
 #if defined(_WIN32)
     LARGE_INTEGER f, c; QueryPerformanceFrequency(&f); QueryPerformanceCounter(&c);

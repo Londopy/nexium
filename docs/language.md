@@ -226,6 +226,8 @@ the inferred set per function.
   `process.run(argv: [][]u8) -> !i32` (spawns, waits, returns the exit code;
   `error.IoError` when the program cannot be started).
 - `time.now() -> i64` (ms since the epoch), `time.monotonic() -> u64` (ns),
+  `time.utc_offset(ms) -> i64` (minutes east of UTC of local time at that
+  instant; `std.time` builds dates on these),
   `time.sleep(ms)`.
 - `random.int(lo, hi)`, `random.float()`, `random.seed(n)`.
 - `mem.copy(dst, src)`.

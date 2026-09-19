@@ -371,6 +371,15 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     on every platform and results keep the separator the input used, because
     a tool written on Windows should produce paths its own users recognize.
 
+76. **Dates are arithmetic; the platform only supplies an offset.** `std.time`
+    breaks instants down with the civil-from-days algorithm in Nexium and
+    carries a UTC offset in minutes on every `DateTime`, so UTC, fixed-offset
+    and local times are one type. The one primitive, `time.utc_offset(ms)`,
+    asks the C library for the local offset at that instant; there is no
+    time zone database in the runtime and no zone names, because that is a
+    large dependency for a rare need and `@cImport` can bring one in. The
+    interpreter reports offset 0, so local time at the REPL is UTC.
+
 ## Compiler selection
 
 60. **Native macOS builds use the system compiler.** zig 0.14.1 cannot read

@@ -18,6 +18,12 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
   `io` primitives in the runtime: `append_file`, `file_kind`, `file_size`,
   `file_modified`, `make_dir`, `remove_file`, `remove_dir`, `rename`,
   `list_dir`, `cwd`, `temp_dir`; they also work at the REPL.
+- `std.time`: `DateTime` (`utc`, `local`, `with_offset`, `now_utc`,
+  `now_local`, `date`, `parse_iso`, `to_ms`, `weekday`, `day_of_year`,
+  `iso`, `format` with `%Y %m %d %H %M %S %3 %z %a %b %j`), `Duration`
+  (`seconds` ... `days`, `between`, `since`, `text` such as `1h 02m`),
+  `Stopwatch` on the monotonic clock, `is_leap`, `days_in_month`. Under it,
+  `time.utc_offset(ms)` in the runtime (0 at the REPL).
 
 ## [0.2.1] - 2026-09-19
 
