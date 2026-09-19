@@ -77,6 +77,26 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
 - A constant of `List`, `String`, `Map`, `ref class` or weak type (or one
   containing them) is rejected with a hint to store a slice; it used to
   fail in the C compiler, or worse, be freed by whoever copied it.
+- Slicing an empty slice (`text[..]`, `"".split(",")`, an empty binary
+  pattern) added an offset to a null pointer, which is undefined in C: a
+  debug build made by zig 0.14 trapped with "applying zero offset to null
+  pointer". The generated C goes through `nx_padd`, which skips the add.
+- `if t < 1000 and t > -1000 { t + 1 }`: both halves of an `and` guard
+  narrow the range; the second fact used to replace the first, so the
+  addition was not proven and a `!panics` bound on the function failed.
+- An array indexed by the index of a `for x, i in xs` over it is proven in
+  bounds; the proof was skipped for arrays.
+- `self/check.nx` kept range facts on a `var` only until its next
+  assignment was checked, so a guarded `t = t - 10` was not proven; the
+  facts now hold while the right side is checked, as in the Rust checker.
+- The generated C no longer collides with macOS's `mach` headers, which
+  define `ts_32` and friends as macros: a local named `ts` at slot 32
+  failed to compile on macOS.
+- `@cImport` retries a preprocessor run that failed without a diagnostic
+  and reports the exit code when it keeps failing, instead of an empty
+  message.
+- The tree-sitter grammar parses `x orelse return null` and the other jumps
+  after `orelse` and `catch`, and `/little-signed` segment modifiers.
 
 ## [0.6.1] - 2026-09-19
 
