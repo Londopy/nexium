@@ -777,6 +777,32 @@ fn cc_process(opts: &Opts, cc: &CcInvocation) -> Command {
     cmd
 }
 
+/// Run the C compiler. Zig's cache of its own libc and sanitizer builds is
+/// shared by every process on the machine and is not safe against several of
+/// them starting at once on Windows ("failed to check cache ... file_open
+/// Unexpected"); that failure is transient, so the build is retried a few
+/// times with a pause. The compiler's diagnostics are passed through.
+fn run_cc(cmd: &mut Command) -> std::io::Result<std::process::ExitStatus> {
+    let mut attempt = 0;
+    loop {
+        attempt += 1;
+        let out = cmd.output()?;
+        let err = String::from_utf8_lossy(&out.stderr).to_string();
+        if !out.status.success() && err.contains("failed to check cache") && attempt < 5 {
+            std::thread::sleep(std::time::Duration::from_millis(300 * attempt));
+            continue;
+        }
+        if !out.stdout.is_empty() {
+            use std::io::Write;
+            let _ = std::io::stdout().write_all(&out.stdout);
+        }
+        if !err.is_empty() {
+            eprint!("{}", err);
+        }
+        return Ok(out.status);
+    }
+}
+
 fn compile_c(opts: &Opts, c_path: &Path, out: &Path, kind: &str) -> Result<(), ()> {
     let cc = cc_command(opts);
     let mut cmd = cc_process(opts, &cc);
@@ -842,7 +868,7 @@ fn compile_c(opts: &Opts, c_path: &Path, out: &Path, kind: &str) -> Result<(), (
         }
         cmd2.arg(format!("-I{}", dir_of(&opts.file)));
         cmd2.arg(c_path).arg("-o").arg(out);
-        return match cmd2.status() {
+        return match run_cc(&mut cmd2) {
             Ok(st) if st.success() => Ok(()),
             _ => {
                 eprintln!("error: C compilation failed");
@@ -877,7 +903,7 @@ fn compile_c(opts: &Opts, c_path: &Path, out: &Path, kind: &str) -> Result<(), (
         }
         cmd.arg("-lc");
     }
-    let status = match cmd.status() {
+    let status = match run_cc(&mut cmd) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("error: cannot run the C compiler `{}`: {}\n  run `nx doctor` for options (the installers bundle Zig; or put zig on the PATH, or set NX_CC)", cc.program, e);
@@ -1653,7 +1679,7 @@ fn compile_c_sections(opts: &Opts, c_path: &Path, out: &Path) -> Result<(), ()> 
         cmd.arg(t);
     }
     cmd.arg(c_path).arg("-o").arg(out);
-    match cmd.status() {
+    match run_cc(&mut cmd) {
         Ok(s) if s.success() => Ok(()),
         Ok(_) => {
             eprintln!("error: C compilation failed");

@@ -8,6 +8,8 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-09-19
+
 ### Added
 
 - `nx tir`: the checked program as S-expressions, the oracle for the
@@ -22,6 +24,9 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
 
 ### Fixed
 
+- A C compilation that fails because Zig's shared cache was being written by
+  another `nx` at the same time ("failed to check cache") is retried, so
+  parallel builds on Windows no longer fail at random.
 - The formatter spaces bit-or like the other operators (`a | b`, not
   `a| b`) and no longer glues `-> !List(T) {`; closure bars are classified
   per line so a bit-or inside a closure body is not taken for its closing bar.
@@ -355,7 +360,8 @@ First public release.
   Korean, French, and German; the language reference and architecture tour in
   Spanish, Chinese, and Japanese.
 
-[Unreleased]: https://github.com/Londopy/nexium/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/Londopy/nexium/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/Londopy/nexium/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/Londopy/nexium/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/Londopy/nexium/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Londopy/nexium/compare/v0.3.0...v0.4.0
