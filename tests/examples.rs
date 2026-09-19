@@ -162,8 +162,10 @@ fn self_hosted_parser_matches_oracle() {
 #[test]
 fn self_hosted_checker_matches_signatures() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let exe = root.join("nx-out").join(if cfg!(windows) { "self_check.exe" } else { "self_check" });
-    let build = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).args(["build", "self/check.nx", "-o"]).arg(&exe).current_dir(root).output().expect("run nx");
+    // its own output directory: the bodies test compiles the same file at the same time
+    let out_dir = root.join("nx-out").join("self_check_sigs");
+    let exe = out_dir.join(if cfg!(windows) { "self_check.exe" } else { "self_check" });
+    let build = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).args(["build", "self/check.nx", "-o"]).arg(&exe).arg("--out-dir").arg(&out_dir).current_dir(root).output().expect("run nx");
     assert!(
         build.status.success(),
         "building self/check.nx failed:
@@ -208,8 +210,9 @@ fn self_hosted_checker_matches_signatures() {
 #[test]
 fn self_hosted_checker_matches_bodies() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let exe = root.join("nx-out").join(if cfg!(windows) { "self_check2.exe" } else { "self_check2" });
-    let build = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).args(["build", "self/check.nx", "-o"]).arg(&exe).current_dir(root).output().expect("run nx");
+    let out_dir = root.join("nx-out").join("self_check_bodies");
+    let exe = out_dir.join(if cfg!(windows) { "self_check.exe" } else { "self_check" });
+    let build = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).args(["build", "self/check.nx", "-o"]).arg(&exe).arg("--out-dir").arg(&out_dir).current_dir(root).output().expect("run nx");
     assert!(
         build.status.success(),
         "building self/check.nx failed:
