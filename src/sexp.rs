@@ -24,6 +24,8 @@ use std::fmt::Write;
 pub struct Out {
     buf: String,
     depth: usize,
+    /// the source text, so float literals print as written
+    src: Vec<u8>,
 }
 
 impl Out {
@@ -64,14 +66,6 @@ pub fn quote(bytes: &[u8]) -> String {
     s
 }
 
-fn float(f: f64) -> String {
-    if f.is_finite() && f == f.trunc() && f.abs() < 1e15 {
-        format!("{:.1}", f)
-    } else {
-        format!("{}", f)
-    }
-}
-
 fn opt<T>(v: &Option<T>) -> String {
     if v.is_some() {
         "yes".into()
@@ -84,8 +78,8 @@ fn names(o: &mut Out, head: &str, v: &[String]) {
     o.line(&format!("({} {})", head, v.join(" ")));
 }
 
-pub fn module(m: &Module) -> String {
-    let mut o = Out { buf: String::new(), depth: 0 };
+pub fn module(m: &Module, src: &str) -> String {
+    let mut o = Out { buf: String::new(), depth: 0, src: src.as_bytes().to_vec() };
     o.open("(module");
     for it in &m.items {
         item(&mut o, it);
@@ -485,10 +479,13 @@ fn stmt(o: &mut Out, s: &Stmt) {
     }
 }
 
-fn lit(v: &Lit) -> String {
+fn lit(o: &Out, v: &Lit, span: Span) -> String {
     match v {
         Lit::Int(i) => format!("int {}", i),
-        Lit::Float(f) => format!("float {}", float(*f)),
+        Lit::Float(_) => {
+            let text = o.src.get(span.start as usize..span.end as usize).map(|b| String::from_utf8_lossy(b).replace('_', "")).unwrap_or_default();
+            format!("float {}", text)
+        }
         Lit::Str(s) => format!("str {}", quote(s)),
         Lit::Bytes(s) => format!("bytes {}", quote(s)),
         Lit::Char(c) => format!("char {}", c),
@@ -528,7 +525,10 @@ fn segments(o: &mut Out, segs: &[BinSegment]) {
 
 fn expr(o: &mut Out, e: &Expr) {
     match e {
-        Expr::Lit { value, span } => o.line(&format!("(lit {} {})", sp(*span), lit(value))),
+        Expr::Lit { value, span } => {
+            let l = lit(o, value, *span);
+            o.line(&format!("(lit {} {})", sp(*span), l));
+        }
         Expr::Ident { name, span } => o.line(&format!("(ident {} name={})", sp(*span), name)),
         Expr::Field { base, name, span } => {
             o.open(&format!("(field {} name={}", sp(*span), name));
@@ -753,7 +753,12 @@ fn pattern(o: &mut Out, p: &Pattern) {
     match p {
         Pattern::Wildcard { span } => o.line(&format!("(pwild {})", sp(*span))),
         Pattern::Binding { name, span } => o.line(&format!("(pbind {} name={})", sp(*span), name)),
-        Pattern::Lit { value, negative, span } => o.line(&format!("(plit {} neg={} {})", sp(*span), negative, lit(value))),
+        Pattern::Lit { value, negative, span } => {
+            // a negative literal's span covers the minus; the number itself follows it
+            let lspan = if *negative { Span { file: span.file, start: span.start + 1, end: span.end } } else { *span };
+            let l = lit(o, value, lspan);
+            o.line(&format!("(plit {} neg={} {})", sp(*span), negative, l));
+        }
         Pattern::Variant { path, args, span } => {
             o.open(&format!("(pvariant {} path={}", sp(*span), path.join(".")));
             for a in args {

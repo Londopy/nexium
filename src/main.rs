@@ -2173,7 +2173,7 @@ fn real_main() -> i32 {
                 }
                 return 1;
             }
-            print!("{}", sexp::module(&m));
+            print!("{}", sexp::module(&m, &text));
             0
         }
         "parse" => {
