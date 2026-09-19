@@ -17,3 +17,4 @@ editors/** linguist-vendored=false
 *.yml text eol=lf
 *.json text eol=lf
 *.expected text eol=lf
+*.log text eol=lf
