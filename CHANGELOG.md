@@ -34,6 +34,8 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
   wrote past the intended width.
 - A `!void` tail expression (a `match` whose arms print, a call) at the end
   of a function returning `!void` is returned; it was reported as unused.
+- `%` on floats compiles: the generated C applied the integer operator to
+  doubles and the C compiler rejected it; it is `fmod` now.
 
 ## [0.6.1] - 2026-09-19
 

@@ -1374,6 +1374,7 @@ impl Gen {
         let m = self.int_mangle(ty);
         let loc = self.loc(span);
         match mode {
+            ArithMode::Float if op == BinOp::Rem => format!("fmod({}, {})", l, r),
             ArithMode::Float | ArithMode::Plain => match op {
                 BinOp::Shl => format!("(({}) << ({}))", l, r),
                 BinOp::Shr => format!("(({}) >> ({}))", l, r),
