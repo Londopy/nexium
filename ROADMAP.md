@@ -32,7 +32,7 @@ What exists and is verified on Windows, Linux, and macOS:
   a GitHub Action, and a release template for Nexium programs.
 - Self-hosting: the lexer and parser, verified byte-for-byte against the
   Rust ones; the checker identical on every example and std module but for
-  compile-time calls and `@cImport`.
+  `@cImport`.
 - nexium-gui: an immediate-mode GUI in Nexium on a 200-line C window layer.
 
 Numbers: 29.4k lines of Rust (the compiler), 18.7k of Nexium, 190 std
@@ -139,11 +139,11 @@ checked against the Rust compiler on identical inputs.
   `nx tir` and diffed over every source. Done so far: declarations and
   signatures (`--sigs`), then bodies: statements, expressions, calls,
   builtins, matches and patterns, casts, moves, ranges, generics, closures,
-  records, trait objects, binary patterns; identical on 46 sources including
-  `check.nx` itself. Left: the compile-time interpreter (`comptime` calls
-  and tests), `@cImport`, and the diagnostics-only passes (effect
-  declarations, exhaustiveness, escaping views), verified by the
-  compile-fail suite producing identical messages.
+  records, trait objects, binary patterns, the compile-time interpreter;
+  identical on 50 sources including `check.nx` itself. Left: `@cImport`,
+  and the diagnostics-only passes (effect declarations, exhaustiveness,
+  escaping views), verified by the compile-fail suite producing identical
+  messages.
 - C emitter (`self/cgen.nx`): byte-identical C for every example.
 - Driver, tools, and the std embedding in Nexium.
 - Bootstrap: Rust `nx` builds `nx1`; `nx1` builds `nx2`; `nx1` and `nx2`
@@ -151,7 +151,7 @@ checked against the Rust compiler on identical inputs.
   kept for building the first Nexium compiler on a fresh machine.
 
 - Status (0.6.1+): syntax settled, lexer and parser done; the checker
-  matches on every source but comptime calls and C imports.
+  matches on every source but C imports.
 
 Exit: `cargo` is no longer needed to build `nx` from a release tarball.
 

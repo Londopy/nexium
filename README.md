@@ -320,7 +320,7 @@ on the same inputs:
 | --- | --- | --- | --- |
 | lexer | [`self/lexer.nx`](self/lexer.nx) | `nx tokens` | ✅ identical on every source |
 | parser | [`self/parser.nx`](self/parser.nx) | `nx sexp` | ✅ identical on all 46 sources |
-| checker | [`self/check.nx`](self/check.nx) | `nx tir` | 🚧 the full typed IR is identical on 46 sources, including the checker itself; left: the compile-time interpreter, `@cImport`, the diagnostics-only passes |
+| checker | [`self/check.nx`](self/check.nx) | `nx tir` | 🚧 the full typed IR is identical on 50 sources (every example and std module but `@cImport` users), including the checker itself; left: `@cImport` and the diagnostics-only passes |
 | C emitter | | `nx emit-c` | |
 
 `cargo test` builds each stage with the Rust compiler and diffs its output
