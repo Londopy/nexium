@@ -198,6 +198,35 @@ fn is_effect_name(t: &Tok) -> bool {
 }
 
 /// Ends an operand: a word or a closer, so the next `-`/`&`/`*` is binary.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BarRole {
+    Opening,
+    Closing,
+    Binary,
+}
+
+/// What the `|` at `at` is: the bars of a line are classified left to right,
+/// so a bit-or inside a closure body is not mistaken for its closing bar.
+fn bar_role(toks: &[&Token], at: usize) -> BarRole {
+    let mut open = false;
+    let mut role = BarRole::Binary;
+    for (k, t) in toks.iter().enumerate().take(at + 1) {
+        if !matches!(t.tok, Tok::Pipe) {
+            continue;
+        }
+        role = if open {
+            open = false;
+            BarRole::Closing
+        } else if k > 0 && ends_operand(&toks[k - 1].tok) {
+            BarRole::Binary
+        } else {
+            open = true;
+            BarRole::Opening
+        };
+    }
+    role
+}
+
 fn ends_operand(t: &Tok) -> bool {
     (is_word(t) && !is_keyword_tok(t)) || matches!(t, Tok::RParen | Tok::RBracket | Tok::RBrace | Tok::DotQuestion | Tok::DotStar) || is_kw(t, "true") || is_kw(t, "false") || is_kw(t, "null")
 }
@@ -454,7 +483,8 @@ fn needs_space(toks: &[&Token], i: usize, ctx: &LineCtx) -> bool {
             let head = if j > 0 { Some(&toks[j - 1].tok) } else { None };
             let before_head = if j > 1 { Some(&toks[j - 2].tok) } else { None };
             if let Some(Ident(h)) = head {
-                let in_return_type = matches!(before_head, Some(Arrow));
+                // `-> List(T) {`, `-> !List(T) {`, `-> ?Pair(T) {`: a return type, not a literal
+                let in_return_type = matches!(before_head, Some(Arrow)) || (matches!(before_head, Some(Bang) | Some(Question)) && j > 2 && matches!(toks[j - 3].tok, Arrow));
                 if h.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false) && !in_return_type {
                     return false;
                 }
@@ -492,17 +522,18 @@ fn needs_space(toks: &[&Token], i: usize, ctx: &LineCtx) -> bool {
         return !matches!(a, LParen | LBracket | DotLBrace | Colon | Arrow) || matches!(a, Colon | Arrow);
     }
     // closure parameter bars: `|[a] x: i32|`, `|x|`
+    // closure parameter bars open where no operand precedes them (`= |x|`,
+    // `catch |e|`, `f(|x| x)`) and close at the next bar; any other bar is
+    // bit-or: `a | b`
     if matches!(a, Pipe) {
-        let bars_so_far = toks[..i].iter().filter(|t| matches!(t.tok, Pipe)).count();
-        let closing = bars_so_far % 2 == 0;
-        if closing && (is_word(b) || matches!(b, LParen | Minus | Bang | At)) {
-            return true;
+        match bar_role(toks, i - 1) {
+            BarRole::Binary => return true,
+            BarRole::Opening => return false,
+            BarRole::Closing => return is_word(b) || matches!(b, LParen | Minus | Bang | At | LBrace) || (is_binary_op(b) && !matches!(b, Pipe)),
         }
-        return matches!(b, LBrace) || (is_binary_op(b) && !matches!(b, Pipe)) || false;
     }
     if matches!(b, Pipe) {
-        // `for (xs) |x|`, `catch |e|`, `let f = |x| ...` open a bar with a space; a closing bar follows its parameter directly
-        return matches!(a, RParen | Eq | Comma | LParen | FatArrow) || is_keyword_tok(a);
+        return !matches!(bar_role(toks, i), BarRole::Closing);
     }
     if is_binary_op(a) || is_binary_op(b) {
         return true;

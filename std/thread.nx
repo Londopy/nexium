@@ -42,7 +42,7 @@ pub struct Thread(T, R){
 pub fn spawn(comptime T: type, comptime R: type, f: fn(*mut T) -> R, own arg: T) -> Thread(T, R) {
     var cell = List(Task(T, R)).with_capacity(1)
     cell.append(Task(T, R){ .f = f, .arg = arg, .result = List(R).new() })
-    let entry = |task: *mut Task(T, R) | {
+    let entry = |task: *mut Task(T, R)| {
         let g = task.f
         let r = g(&mut task.arg)
         task.result.append(r)
@@ -84,7 +84,7 @@ pub struct Worker(T){
 pub fn run(comptime T: type, f: fn(*mut T) -> void, own arg: T) -> Worker(T) {
     var cell = List(WorkerTask(T)).with_capacity(1)
     cell.append(WorkerTask(T){ .f = f, .arg = arg })
-    let entry = |task: *mut WorkerTask(T) | {
+    let entry = |task: *mut WorkerTask(T)| {
         let g = task.f
         g(&mut task.arg)
     }

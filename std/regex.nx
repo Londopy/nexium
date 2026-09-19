@@ -475,7 +475,7 @@ impl Vm {
     }
 
     /// Search from `from`; the leftmost match, with preference by pattern order.
-    fn search(self: *mut Self, from: usize, anchored: bool, ncaps: usize) -> ?List(usize){
+    fn search(self: *mut Self, from: usize, anchored: bool, ncaps: usize) -> ?List(usize) {
         var clist = List(Thread).new()
         var nlist = List(Thread).new()
         var matched: ?List(usize) = null

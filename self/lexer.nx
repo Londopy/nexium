@@ -92,17 +92,17 @@ fn append_utf8(out: *mut String, cp: u32) {
     if cp < 0x80 {
         push_byte(out, cp as u8)
     } else if cp < 0x800 {
-        push_byte(out, (0xC0| (cp >> 6)) as u8)
-        push_byte(out, (0x80| (cp & 0x3F)) as u8)
+        push_byte(out, (0xC0 | (cp >> 6)) as u8)
+        push_byte(out, (0x80 | (cp & 0x3F)) as u8)
     } else if cp < 0x10000 {
-        push_byte(out, (0xE0| (cp >> 12)) as u8)
-        push_byte(out, (0x80| ((cp >> 6) & 0x3F)) as u8)
-        push_byte(out, (0x80| (cp & 0x3F)) as u8)
+        push_byte(out, (0xE0 | (cp >> 12)) as u8)
+        push_byte(out, (0x80 | ((cp >> 6) & 0x3F)) as u8)
+        push_byte(out, (0x80 | (cp & 0x3F)) as u8)
     } else {
-        push_byte(out, (0xF0| (cp >> 18)) as u8)
-        push_byte(out, (0x80| ((cp >> 12) & 0x3F)) as u8)
-        push_byte(out, (0x80| ((cp >> 6) & 0x3F)) as u8)
-        push_byte(out, (0x80| (cp & 0x3F)) as u8)
+        push_byte(out, (0xF0 | (cp >> 18)) as u8)
+        push_byte(out, (0x80 | ((cp >> 12) & 0x3F)) as u8)
+        push_byte(out, (0x80 | ((cp >> 6) & 0x3F)) as u8)
+        push_byte(out, (0x80 | (cp & 0x3F)) as u8)
     }
 }
 

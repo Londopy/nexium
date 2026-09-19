@@ -14,7 +14,7 @@ const FONT = @embedFile("font.bin")
 // ---------------------------------------------------------------- colors
 
 pub fn rgb(r: u8, g: u8, b: u8) -> u32 {
-    return (r as u32) << 16| (g as u32) << 8| (b as u32)
+    return (r as u32) << 16 | (g as u32) << 8 | (b as u32)
 }
 
 // Mix two colors: t = 0 gives a, t = 1 gives b.

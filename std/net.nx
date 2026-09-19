@@ -52,7 +52,7 @@ pub fn port_of(s: []u8) -> ?u16 {
 }
 
 /// The addresses a name resolves to, numeric, in resolver order.
-pub fn resolve(host: []u8) -> !List(String){
+pub fn resolve(host: []u8) -> !List(String) {
     return net.resolve(host)
 }
 

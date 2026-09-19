@@ -193,7 +193,7 @@ fn parse_status(line: []u8) -> ?(u16, []u8) {
     return (status, reason)
 }
 
-fn read_headers(r: *mut stream.Reader) -> !List(Header){
+fn read_headers(r: *mut stream.Reader) -> !List(Header) {
     var headers = List(Header).new()
     var n: usize = 0
     while true {

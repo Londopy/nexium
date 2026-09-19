@@ -54,7 +54,7 @@ pub enum NodeKind {
     PWild, PBind, PLit, PVariant, PError, PNull, PRange, POr, PBinary, PTuple,
 }
 
-const NONE: usize = 0xFFFFFFFFFFFFFFFF
+pub const NONE: usize = 0xFFFFFFFFFFFFFFFF
 
 pub struct Tree {
     nodes: List(Node)
@@ -370,7 +370,7 @@ impl Parser {
         return item
     }
 
-    fn parse_type_params(self: *mut Self) -> !List(String){
+    fn parse_type_params(self: *mut Self) -> !List(String) {
         var out = List(String).new()
         if self.at(lexer.Kind.LParen) {
             self.bump()
@@ -433,7 +433,7 @@ impl Parser {
         return self.tree.add(n)
     }
 
-    fn parse_params(self: *mut Self, wheres: *mut List(usize)) -> !List(usize){
+    fn parse_params(self: *mut Self, wheres: *mut List(usize)) -> !List(usize) {
         try self.expect(lexer.Kind.LParen)
         var params = List(usize).new()
         while true {
@@ -555,7 +555,7 @@ impl Parser {
         return self.tree.add(n)
     }
 
-    fn parse_fields(self: *mut Self) -> !List(usize){
+    fn parse_fields(self: *mut Self) -> !List(usize) {
         try self.expect(lexer.Kind.LBrace)
         var fields = List(usize).new()
         while true {
@@ -1533,7 +1533,7 @@ impl Parser {
         return self.parse_postfix()
     }
 
-    fn parse_args(self: *mut Self) -> !List(usize){
+    fn parse_args(self: *mut Self) -> !List(usize) {
         try self.expect(lexer.Kind.LParen)
         let saved = self.no_struct_lit
         self.no_struct_lit = false
@@ -1545,7 +1545,7 @@ impl Parser {
         return r
     }
 
-    fn parse_args_inner(self: *mut Self) -> !List(usize){
+    fn parse_args_inner(self: *mut Self) -> !List(usize) {
         var args = List(usize).new()
         while true {
             if self.at(lexer.Kind.RParen) { break }
@@ -1727,7 +1727,7 @@ impl Parser {
         return self.fail(self.span_of(e), "expected a type")
     }
 
-    fn parse_struct_lit_fields(self: *mut Self) -> !List(usize){
+    fn parse_struct_lit_fields(self: *mut Self) -> !List(usize) {
         try self.expect(lexer.Kind.LBrace)
         var fields = List(usize).new()
         while true {
@@ -2292,7 +2292,7 @@ impl Parser {
         return self.fail(start, format("expected a pattern but found {}", .{got}))
     }
 
-    fn parse_pattern_args(self: *mut Self) -> !List(usize){
+    fn parse_pattern_args(self: *mut Self) -> !List(usize) {
         var args = List(usize).new()
         if self.at(lexer.Kind.LParen) {
             self.bump()
@@ -2318,7 +2318,7 @@ impl Parser {
         return lhs
     }
 
-    fn parse_bin_segments(self: *mut Self) -> !List(usize){
+    fn parse_bin_segments(self: *mut Self) -> !List(usize) {
         try self.expect(lexer.Kind.LtLt)
         var segs = List(usize).new()
         while true {
@@ -3021,6 +3021,25 @@ impl Printer {
             self.close()
         }
     }
+}
+
+/// A parsed file: the arena, its top-level items, and any errors, for the
+/// checker (`self/check.nx`) to walk.
+pub struct Parsed {
+    tree: Tree
+    items: List(usize)
+    errors: List(String)
+}
+
+pub fn parse_source(src: []u8) -> Parsed {
+    var lx = lexer.new_lexer(src)
+    lx.lex()
+    var errors = List(String).new()
+    for e in lx.errors { errors.append(String.from(e)) }
+    var p = Parser{ .toks = lx.toks.clone(), .pos = 0, .tree = Tree{ .nodes = List(Node).new() }, .errors = List(String).new(), .no_struct_lit = false }
+    let items = p.parse_module()
+    for e in p.errors { errors.append(String.from(e)) }
+    return Parsed{ .tree = Tree{ .nodes = p.tree.nodes.clone() }, .items = items, .errors = errors }
 }
 
 /// Parse `src` and print the tree; errors are returned as text.

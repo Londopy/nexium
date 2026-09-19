@@ -65,17 +65,17 @@ pub fn push(out: *mut String, cp: u32) {
     if cp < 0x80 {
         out.push_byte(cp as u8)
     } else if cp < 0x800 {
-        out.push_byte((0xC0| (cp >> 6)) as u8)
-        out.push_byte((0x80| (cp & 0x3F)) as u8)
+        out.push_byte((0xC0 | (cp >> 6)) as u8)
+        out.push_byte((0x80 | (cp & 0x3F)) as u8)
     } else if cp < 0x10000 {
-        out.push_byte((0xE0| (cp >> 12)) as u8)
-        out.push_byte((0x80| ((cp >> 6) & 0x3F)) as u8)
-        out.push_byte((0x80| (cp & 0x3F)) as u8)
+        out.push_byte((0xE0 | (cp >> 12)) as u8)
+        out.push_byte((0x80 | ((cp >> 6) & 0x3F)) as u8)
+        out.push_byte((0x80 | (cp & 0x3F)) as u8)
     } else {
-        out.push_byte((0xF0| (cp >> 18)) as u8)
-        out.push_byte((0x80| ((cp >> 12) & 0x3F)) as u8)
-        out.push_byte((0x80| ((cp >> 6) & 0x3F)) as u8)
-        out.push_byte((0x80| (cp & 0x3F)) as u8)
+        out.push_byte((0xF0 | (cp >> 18)) as u8)
+        out.push_byte((0x80 | ((cp >> 12) & 0x3F)) as u8)
+        out.push_byte((0x80 | ((cp >> 6) & 0x3F)) as u8)
+        out.push_byte((0x80 | (cp & 0x3F)) as u8)
     }
 }
 

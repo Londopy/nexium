@@ -48,7 +48,7 @@ pub fn read(path: []u8) -> !String {
 }
 
 /// The lines of a file, without their line endings.
-pub fn read_lines(path: []u8) -> !List(String){
+pub fn read_lines(path: []u8) -> !List(String) {
     let text = try io.read_file(path)
     var out = List(String).new()
     for l in text.lines() { out.append(String.from(l)) }
@@ -74,7 +74,7 @@ pub fn copy(from: []u8, to: []u8) -> !void {
 // ------------------------------------------------------------------ directories
 
 /// The names in a directory, sorted, without `.` and `..`.
-pub fn list(path: []u8) -> !List(String){
+pub fn list(path: []u8) -> !List(String) {
     var names = try io.list_dir(path)
     sort_names(&mut names)
     return names
@@ -119,7 +119,7 @@ pub fn rename(from: []u8, to: []u8) -> !void {
 
 /// Every file under `root`, recursively, as paths joined onto `root`, sorted
 /// directory by directory. Directories themselves are not listed.
-pub fn walk(root: []u8) -> !List(String){
+pub fn walk(root: []u8) -> !List(String) {
     var out = List(String).new()
     try walk_into(root, &mut out)
     return out
