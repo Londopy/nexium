@@ -35,6 +35,10 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
   panic inside a thread is re-raised by `join`. Starting a thread carries
   the `nondeterministic` and `shared_mutable` effects.
 - `own` is accepted on parameters of methods in generic `impl` blocks.
+- `process.exec(argv, stdin, cwd)` runs a program with stdin fed, a working
+  directory, and stdout/stderr captured (`process.last_stdout`,
+  `process.last_stderr`); `std.process` wraps it as `run`, `run_with`,
+  `shell` returning an `Output` with `code`, `stdout`, `stderr`.
 
 ### Fixed
 

@@ -21,6 +21,7 @@ pub const MODULES: &[(&str, &str)] = &[
     ("net", include_str!("../std/net.nx")),
     ("http", include_str!("../std/http.nx")),
     ("thread", include_str!("../std/thread.nx")),
+    ("process", include_str!("../std/process.nx")),
 ];
 
 pub fn source(name: &str) -> Option<&'static str> {

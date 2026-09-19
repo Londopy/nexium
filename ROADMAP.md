@@ -81,7 +81,9 @@ Goal: services and clients without leaving the language.
 - Status: sockets, `std.net`, `std.http`, `std.thread` (threads, channels,
   mutexes) and `examples/service.nx` are done; TLS stays optional through
   `@cImport`. The async decision is taken: threads and channels, no colored
-  functions (decision 82). Open: `process.run` captures and signals.
+  functions (decision 82). `std.process` captures output, feeds stdin and
+  sets the working directory. Phase 2 is complete; POSIX signals are left
+  for a program that needs them.
 - Threads (spec 7.2): spawn, join, channels with move semantics, `Mutex`
   as a `ref class`; `shared_mutable` becomes the effect that gates them.
 - Process: `process.run` gains stdin/stdout capture, environment, working

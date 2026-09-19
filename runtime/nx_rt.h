@@ -38,6 +38,7 @@
 #include <spawn.h>
 #include <sys/wait.h>
 #include <dirent.h>
+#include <fcntl.h>
 #include <sys/socket.h>
 #include <sys/select.h>
 #include <netinet/in.h>
@@ -856,6 +857,121 @@ NX_INLINE bool nx_run(nx_ctx* c, const nx_sl_u8* argv, size_t argc, int* code) {
     return true;
 #endif
 }
+NX_INLINE bool nx_cpath(nx_sl_u8 path, char* buf, size_t cap) {
+    if (path.len >= cap) return false;
+    memcpy(buf, path.ptr, path.len); buf[path.len] = 0;
+    return true;
+}
+/* Run a program with its stdin fed from `input`, in `cwd` when given, and
+   its stdout and stderr captured. The captured text is kept for
+   nx_last_stdout / nx_last_stderr to hand over. */
+static nx_string nx_cap_out, nx_cap_err;
+NX_INLINE void nx_cap_reset(nx_ctx* c) {
+    nx_str_free(c, &nx_cap_out); nx_str_free(c, &nx_cap_err);
+    nx_cap_out.ptr = NULL; nx_cap_out.len = 0; nx_cap_out.cap = 0; nx_cap_out.ar = c->arena;
+    nx_cap_err.ptr = NULL; nx_cap_err.len = 0; nx_cap_err.cap = 0; nx_cap_err.ar = c->arena;
+}
+NX_INLINE nx_string nx_last_stdout(nx_ctx* c) {
+    nx_string s = nx_cap_out;
+    nx_cap_out.ptr = NULL; nx_cap_out.len = 0; nx_cap_out.cap = 0; nx_cap_out.ar = c->arena;
+    return s;
+}
+NX_INLINE nx_string nx_last_stderr(nx_ctx* c) {
+    nx_string s = nx_cap_err;
+    nx_cap_err.ptr = NULL; nx_cap_err.len = 0; nx_cap_err.cap = 0; nx_cap_err.ar = c->arena;
+    return s;
+}
+#if defined(_WIN32)
+NX_INLINE void nx_win_drain(nx_ctx* c, HANDLE h, nx_string* out) {
+    char buf[65536]; DWORD n;
+    while (ReadFile(h, buf, sizeof buf, &n, NULL) && n > 0) nx_str_append(c, out, (const uint8_t*)buf, n);
+}
+#endif
+NX_INLINE bool nx_run_capture(nx_ctx* c, const nx_sl_u8* argv, size_t argc, nx_sl_u8 input, nx_sl_u8 cwd, int* code) {
+    if (argc == 0) return false;
+    fflush(stdout); fflush(stderr);
+    nx_cap_reset(c);
+    char dir[4096];
+    const char* cwdp = NULL;
+    if (cwd.len > 0) { if (!nx_cpath(cwd, dir, sizeof dir)) return false; cwdp = dir; }
+#if defined(_WIN32)
+    nx_string cmd; cmd.ptr = NULL; cmd.len = 0; cmd.cap = 0; cmd.ar = NULL;
+    for (size_t i = 0; i < argc; i++) {
+        if (i) nx_str_append(c, &cmd, (const uint8_t*)" ", 1);
+        nx_sl_u8 a = argv[i];
+        bool quote = a.len == 0;
+        for (size_t j = 0; j < a.len && !quote; j++) quote = a.ptr[j] == ' ' || a.ptr[j] == '\t' || a.ptr[j] == '"';
+        if (quote) nx_str_append(c, &cmd, (const uint8_t*)"\"", 1);
+        size_t bs = 0;
+        for (size_t j = 0; j < a.len; j++) {
+            uint8_t ch = a.ptr[j];
+            if (ch == '\\') { bs++; continue; }
+            if (ch == '"') { for (size_t k = 0; k < bs * 2 + 1; k++) nx_str_append(c, &cmd, (const uint8_t*)"\\", 1); bs = 0; nx_str_append(c, &cmd, &ch, 1); continue; }
+            for (size_t k = 0; k < bs; k++) nx_str_append(c, &cmd, (const uint8_t*)"\\", 1);
+            bs = 0;
+            nx_str_append(c, &cmd, &ch, 1);
+        }
+        for (size_t k = 0; k < bs * (quote ? 2 : 1); k++) nx_str_append(c, &cmd, (const uint8_t*)"\\", 1);
+        if (quote) nx_str_append(c, &cmd, (const uint8_t*)"\"", 1);
+    }
+    nx_str_append(c, &cmd, (const uint8_t*)"", 1);
+    SECURITY_ATTRIBUTES sa; sa.nLength = sizeof sa; sa.bInheritHandle = TRUE; sa.lpSecurityDescriptor = NULL;
+    HANDLE in_r = NULL, in_w = NULL, out_r = NULL, out_w = NULL, err_r = NULL, err_w = NULL;
+    if (!CreatePipe(&in_r, &in_w, &sa, 1 << 20) || !CreatePipe(&out_r, &out_w, &sa, 1 << 20) || !CreatePipe(&err_r, &err_w, &sa, 1 << 20)) { nx_str_free(c, &cmd); return false; }
+    SetHandleInformation(in_w, HANDLE_FLAG_INHERIT, 0);
+    SetHandleInformation(out_r, HANDLE_FLAG_INHERIT, 0);
+    SetHandleInformation(err_r, HANDLE_FLAG_INHERIT, 0);
+    STARTUPINFOA si; PROCESS_INFORMATION pi;
+    memset(&si, 0, sizeof si); si.cb = sizeof si; memset(&pi, 0, sizeof pi);
+    si.dwFlags = STARTF_USESTDHANDLES; si.hStdInput = in_r; si.hStdOutput = out_w; si.hStdError = err_w;
+    BOOL ok = CreateProcessA(NULL, (char*)cmd.ptr, NULL, NULL, TRUE, 0, NULL, cwdp, &si, &pi);
+    nx_str_free(c, &cmd);
+    CloseHandle(in_r); CloseHandle(out_w); CloseHandle(err_w);
+    if (!ok) { CloseHandle(in_w); CloseHandle(out_r); CloseHandle(err_r); return false; }
+    if (input.len > 0) { DWORD w; WriteFile(in_w, input.ptr, (DWORD)input.len, &w, NULL); }
+    CloseHandle(in_w);
+    nx_win_drain(c, out_r, &nx_cap_out);
+    nx_win_drain(c, err_r, &nx_cap_err);
+    CloseHandle(out_r); CloseHandle(err_r);
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD ec = 1;
+    GetExitCodeProcess(pi.hProcess, &ec);
+    CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
+    *code = (int)ec;
+    return true;
+#else
+    char** av = (char**)nx_alloc_bytes(c, (argc + 1) * sizeof(char*), 8);
+    for (size_t i = 0; i < argc; i++) {
+        av[i] = (char*)nx_alloc_bytes(c, argv[i].len + 1, 1);
+        memcpy(av[i], argv[i].ptr, argv[i].len); av[i][argv[i].len] = 0;
+    }
+    av[argc] = NULL;
+    int inp[2], outp[2], errp[2];
+    if (pipe(inp) != 0 || pipe(outp) != 0 || pipe(errp) != 0) return false;
+    pid_t pid = fork();
+    if (pid < 0) return false;
+    if (pid == 0) {
+        dup2(inp[0], 0); dup2(outp[1], 1); dup2(errp[1], 2);
+        close(inp[0]); close(inp[1]); close(outp[0]); close(outp[1]); close(errp[0]); close(errp[1]);
+        if (cwdp && chdir(cwdp) != 0) _exit(126);
+        execvp(av[0], av);
+        _exit(127);
+    }
+    close(inp[0]); close(outp[1]); close(errp[1]);
+    for (size_t i = 0; i < argc; i++) nx_free_bytes(c, av[i], argv[i].len + 1);
+    nx_free_bytes(c, av, (argc + 1) * sizeof(char*));
+    if (input.len > 0) { size_t off = 0; while (off < input.len) { ssize_t w = write(inp[1], input.ptr + off, input.len - off); if (w <= 0) break; off += (size_t)w; } }
+    close(inp[1]);
+    char buf[65536]; ssize_t n;
+    while ((n = read(outp[0], buf, sizeof buf)) > 0) nx_str_append(c, &nx_cap_out, (const uint8_t*)buf, (size_t)n);
+    while ((n = read(errp[0], buf, sizeof buf)) > 0) nx_str_append(c, &nx_cap_err, (const uint8_t*)buf, (size_t)n);
+    close(outp[0]); close(errp[0]);
+    int st = 0;
+    if (waitpid(pid, &st, 0) < 0) return false;
+    *code = WIFEXITED(st) ? WEXITSTATUS(st) : 128 + (WIFSIGNALED(st) ? WTERMSIG(st) : 0);
+    return true;
+#endif
+}
 NX_INLINE bool nx_read_file(nx_ctx* c, nx_sl_u8 path, nx_string* out) {
     char p[4096];
     if (path.len >= sizeof p) return false;
@@ -893,11 +1009,6 @@ NX_INLINE bool nx_append_file(nx_sl_u8 path, nx_sl_u8 data) {
 
 /* ------------------------------------------------------------- file system */
 /* Results: 0 ok, 1 not found, 2 any other failure. */
-NX_INLINE bool nx_cpath(nx_sl_u8 path, char* buf, size_t cap) {
-    if (path.len >= cap) return false;
-    memcpy(buf, path.ptr, path.len); buf[path.len] = 0;
-    return true;
-}
 NX_INLINE int32_t nx_fs_errcode(void) { return errno == ENOENT ? 1 : 2; }
 /* 0 = nothing there, 1 = file (or anything not a directory), 2 = directory */
 NX_INLINE int32_t nx_fs_kind(nx_sl_u8 path) {

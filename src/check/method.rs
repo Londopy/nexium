@@ -696,6 +696,30 @@ impl<'a> Checker<'a> {
                     let never = self.tys.never();
                     self.builtin(Builtin::Exit, vec![c], vec![], never, span)
                 }
+                "exec" => {
+                    // process.exec(argv, stdin, cwd) -> !i32, with the output kept for last_stdout/last_stderr
+                    if !self.check_args_n(args, 3, "process.exec", span) {
+                        return self.error_expr(span);
+                    }
+                    let argv_t = self.tys.slice(false, bytes);
+                    let argv = self.arg(&args[0], argv_t, "command and arguments");
+                    let input = self.arg(&args[1], bytes, "stdin");
+                    let cwd = self.arg(&args[2], bytes, "working directory (empty = inherit)");
+                    self.add_effect(Effects::BLOCKS, span, "running a process waits for it to finish");
+                    self.add_effect(Effects::NONDETERMINISTIC, span, "a child process can do anything");
+                    self.add_effect(Effects::ALLOCATES, span, "the output is captured into Strings");
+                    let i32t = self.tys.int(IntTy::I32);
+                    let r = self.tys.err_union(None, i32t);
+                    self.builtin(Builtin::Exec, vec![argv, input, cwd], vec![], r, span)
+                }
+                "last_stdout" | "last_stderr" => {
+                    if !self.check_args_n(args, 0, &format!("process.{}", name), span) {
+                        return self.error_expr(span);
+                    }
+                    let string = self.tys.string();
+                    let op = if name == "last_stdout" { Builtin::LastStdout } else { Builtin::LastStderr };
+                    self.builtin(op, vec![], vec![], string, span)
+                }
                 "run" => {
                     if !self.check_args_n(args, 1, "process.run", span) {
                         return self.error_expr(span);

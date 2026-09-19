@@ -20,6 +20,7 @@ by `scripts/std_docs.py` from the doc comments.
 | [`std.lists`](#stdlists) | generic helpers over slices and Lists, written in Nexium. |
 | [`std.net`](#stdnet) | TCP and UDP with addresses, written in Nexium over the `net.*` |
 | [`std.num`](#stdnum) | integer utilities, written in Nexium. |
+| [`std.process`](#stdprocess) | run programs and capture what they print, written in Nexium |
 | [`std.regex`](#stdregex) | regular expressions without backtracking, written in Nexium. |
 | [`std.stream`](#stdstream) | buffered readers and writers over files and the standard |
 | [`std.strings`](#stdstrings) | text utilities on `[]u8` and `String`, written in Nexium. |
@@ -258,6 +259,20 @@ std.num: integer utilities, written in Nexium. `import std.num` then `num.gcd(12
 | `is_power_of_two(n: u64) -> bool` | True for 1, 2, 4, 8, ... |
 | `next_power_of_two(n: u64) -> u64` | The smallest power of two >= n (n <= 2^63). |
 | `popcount(n: u64) -> u32` | Number of set bits. |
+
+## std.process
+
+std.process: run programs and capture what they print, written in Nexium over the `process.*` primitives. `import std.process` then: let out = try process.run(["git", "status", "--short"]) if (out.ok()) print("{}", .{out.stdout}) let r = try process.run_with(["sort"], process.Options{ .stdin = "b\na\n", .cwd = "" }) let sh = try process.shell("echo hi")          // cmd /C on Windows, sh -c elsewhere The child inherits the environment. `error.IoError` when the program cannot be started; a non-zero exit is reported in `code`, not as an error. Output is read after stdin is fully written, so a program that produces more than a megabyte of output before reading its input can stall; feed such programs through files.
+
+Types: `Output`, `Options`
+
+| function | what it does |
+| --- | --- |
+| `(method) ok(self: *Self) -> bool` |  |
+| `(method) text(self: *Self) -> []u8` | stdout without a trailing newline. |
+| `run_with(argv: [][]u8, opts: Options) -> !Output` |  |
+| `run(argv: [][]u8) -> !Output` | Run and capture, inheriting the working directory, with no stdin. |
+| `shell(command: []u8) -> !Output` | Run a command line through the platform shell. |
 
 ## std.regex
 

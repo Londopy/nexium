@@ -1114,6 +1114,21 @@ impl Gen {
                 self.line(format!("{} {}; {{ int _code = 0; if (nx_run(c, {}.ptr, {}.len, &_code)) {{ {}.err = 0; {}.val = _code; }} else {}.err = {}u; }}", cn, t, argv, argv, t, t, t, io));
                 t
             }
+            Builtin::Exec => {
+                let argv = self.simple(&args[0]);
+                let input = self.simple(&args[1]);
+                let cwd = self.simple(&args[2]);
+                let cn = self.cty(e.ty);
+                let t = self.tmp();
+                let io = self.err_id("IoError");
+                self.line(format!(
+                    "{} {}; {{ int _code = 0; if (nx_run_capture(c, {}.ptr, {}.len, {}, {}, &_code)) {{ {}.err = 0; {}.val = _code; }} else {}.err = {}u; }}",
+                    cn, t, argv, argv, input, cwd, t, t, t, io
+                ));
+                t
+            }
+            Builtin::LastStdout => "nx_last_stdout(c)".into(),
+            Builtin::LastStderr => "nx_last_stderr(c)".into(),
             Builtin::TimeNow => "nx_time_now_ms()".into(),
             Builtin::TimeUtcOffset => {
                 let v = self.simple(&args[0]);

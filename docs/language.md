@@ -253,7 +253,11 @@ the inferred set per function.
 - `os.args() -> [][]u8`, `os.env(name) -> ?[]u8`, `os.environ() ->
   List(String)` (every `NAME=value`), `os.exit(code)`,
   `process.run(argv: [][]u8) -> !i32` (spawns, waits, returns the exit code;
-  `error.IoError` when the program cannot be started).
+  `error.IoError` when the program cannot be started), `process.exec(argv,
+  stdin, cwd) -> !i32` (the same with stdin fed from `stdin`, run in `cwd`
+  when non-empty, and stdout/stderr captured) followed by
+  `process.last_stdout()` / `process.last_stderr() -> String`; `std.process`
+  wraps these.
 - `time.now() -> i64` (ms since the epoch), `time.monotonic() -> u64` (ns),
   `time.utc_offset(ms) -> i64` (minutes east of UTC of local time at that
   instant; `std.time` builds dates on these),
