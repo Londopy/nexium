@@ -8,6 +8,8 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-19
+
 ### Changed
 
 - **Breaking: control flow drops its parentheses and bodies always take
@@ -323,7 +325,8 @@ First public release.
   Korean, French, and German; the language reference and architecture tour in
   Spanish, Chinese, and Japanese.
 
-[Unreleased]: https://github.com/Londopy/nexium/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/Londopy/nexium/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/Londopy/nexium/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/Londopy/nexium/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Londopy/nexium/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Londopy/nexium/compare/v0.2.1...v0.3.0

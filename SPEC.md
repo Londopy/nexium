@@ -1,6 +1,6 @@
 # The Nexium Language Specification
 
-Version 0.5, describing Nexium as implemented by `nx` 0.5.0. This document is
+Version 0.6, describing Nexium as implemented by `nx` 0.6.0. This document is
 normative for what the compiler does today; `nexium-spec.txt` is the
 original design, `DECISIONS.md` records every call made where that design
 was open, and `ROADMAP.md` says what comes next. Anything marked **planned**
