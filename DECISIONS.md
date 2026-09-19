@@ -445,6 +445,22 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     joins before the shared values go out of scope. Atomic counts and a
     `Mutex` as a `ref class` can come when a program needs them.
 
+## Sharing code (phase 3)
+
+83. **Packages are git tags first, a registry later.** A dependency is a
+    repository at a tag or a directory on disk, checked out shallowly into
+    `nexium_modules/` and pinned by commit in `nexium.lock`; that gives
+    reproducible builds and vendoring with nothing to host. A package is a
+    manifest plus `src/`; `import dep` is `src/lib.nx` so the common case
+    needs no module name, and a package's own imports resolve inside it
+    (the loader tags each module with its package and the checker looks
+    for `pkg.name` first), so two packages may both have a `util`. Names
+    are claimed first-come across the graph and versions are not
+    resolved: with no registry there is no version to compare, and a
+    conflict is an error a person should see. The TOML reader is a small
+    subset written in the compiler, because the crate takes no
+    dependencies.
+
 ## Compiler selection
 
 60. **Native macOS builds use the system compiler.** zig 0.14.1 cannot read

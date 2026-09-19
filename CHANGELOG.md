@@ -8,6 +8,17 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
 
 ## [Unreleased]
 
+### Added
+
+- Packages: a `nexium.toml` manifest with `[dependencies]` from a git tag
+  (`{ git = "...", tag = "..." }`) or a directory (`{ path = "..." }`);
+  `import dep` loads the dependency's `src/lib.nx` and `import dep.module`
+  its `src/module.nx`; a package's own imports stay inside the package.
+  `nx init` writes a manifest, `nx add` records and fetches a dependency,
+  `nx fetch` clones every git dependency (transitively) into
+  `nexium_modules/` and writes `nexium.lock` with the resolved commits.
+  See `docs/packages.md`.
+
 ## [0.4.0] - 2026-09-19
 
 ### Added

@@ -296,6 +296,8 @@ pub struct Checker<'a> {
     pub error_sets: Vec<ErrorSetDef>,
     pub items: HashMap<(u32, String), ItemRef>,
     pub module_names: Vec<String>,
+    /// the package each module belongs to, "" outside packages (set by the loader)
+    pub module_pkgs: Vec<String>,
     pub module_imports: HashMap<(u32, String), (u32, Option<String>)>,
     pub error_names: Vec<String>,
     pub error_ids: HashMap<String, u32>,
@@ -352,6 +354,7 @@ impl<'a> Checker<'a> {
             error_sets: Vec::new(),
             items: HashMap::new(),
             module_names: Vec::new(),
+            module_pkgs: Vec::new(),
             module_imports: HashMap::new(),
             error_names: Vec::new(),
             error_ids: HashMap::new(),
@@ -684,7 +687,11 @@ impl<'a> Checker<'a> {
             }
             Item::Import(im) => {
                 let target = im.path.join(".");
-                let target_mod = self.module_names.iter().position(|n| *n == target || n.ends_with(&format!("/{}", target.replace('.', "/"))) || *n == target.replace('.', "/"));
+                // inside package `foo`, `import util` is the module named `foo.util`
+                let scoped = self.module_pkgs.get(module as usize).filter(|p| !p.is_empty()).map(|p| format!("{}.{}", p, target));
+                let target_mod = scoped
+                    .and_then(|s| self.module_names.iter().position(|n| *n == s))
+                    .or_else(|| self.module_names.iter().position(|n| *n == target || n.ends_with(&format!("/{}", target.replace('.', "/"))) || *n == target.replace('.', "/")));
                 match target_mod {
                     Some(mid) => {
                         let mid = mid as u32;
@@ -705,7 +712,10 @@ impl<'a> Checker<'a> {
                         {
                             // nothing to do; namespaces resolve by name
                         } else {
-                            self.error(im.span, format!("cannot find module `{}`; expected a file `{}.nx` next to this one", target, target.replace('.', "/")));
+                            self.error(
+                                im.span,
+                                format!("cannot find module `{}`; expected a file `{}.nx` next to this one, or a dependency `{}` in nexium.toml", target, target.replace('.', "/"), im.path[0]),
+                            );
                         }
                     }
                 }

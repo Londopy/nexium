@@ -402,7 +402,10 @@ is written in Nexium and embedded in the compiler: `strings`, `lists`,
 modules may import each other. The builtin namespaces `math`, `io`, `os`,
 `process`, `time`, `random`, `mem`, `net`, `thread`, `sync` are always in
 scope and need no import. `error` names the anonymous error set as a type.
-**planned**: packages with a manifest (ROADMAP phase 3).
+Packages: `import dep` and `import dep.module` load a dependency named in
+the program's `nexium.toml` (`src/lib.nx` and `src/module.nx` of the
+package); inside a package, imports resolve to the package's own `src/`.
+See `docs/packages.md`. **planned**: a registry (ROADMAP phase 3).
 
 The builtin methods of `List`, `String`, `Map`, slices, integers, floats,
 and chars are listed in `docs/language.md`. They are implemented in the

@@ -11,6 +11,7 @@ mod effects;
 mod fmt;
 mod lexer;
 mod lsp;
+mod manifest;
 mod parser;
 mod repl;
 mod report;
@@ -52,6 +53,9 @@ usage:
   nx tokens <file.nx>              dump the token stream (start end KIND payload)
   nx repl                          interactive session (also: `nx` with no arguments)
   nx doctor                        show which C compiler nx will use and whether it works
+  nx init [name]                   write a nexium.toml (and a main.nx) in this directory
+  nx add <name> --git URL [--tag T] | --path DIR   add a dependency and fetch it
+  nx fetch                         clone the dependencies into nexium_modules/ and write nexium.lock
   nx version
 
 options:
@@ -198,6 +202,8 @@ struct Loaded {
     modules: Vec<ast::Module>,
     names: Vec<String>,
     dirs: Vec<String>,
+    /// the package each module belongs to ("" for the program's own files and std)
+    pkgs: Vec<String>,
 }
 
 /// Load the root file and every module it imports (files next to it).
@@ -229,13 +235,26 @@ fn load(root: &Path) -> Result<Loaded, ()> {
     let mut modules = Vec::new();
     let mut names = Vec::new();
     let mut dirs = Vec::new();
+    let mut mod_pkgs: Vec<String> = Vec::new();
     let root_dir = PathBuf::from(dir_of(root));
     let root_name = root.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "main".into());
-    let mut queue: Vec<(String, PathBuf)> = vec![(root_name, root.to_path_buf())];
+    // packages: the manifest above the root file names the dependencies
+    let pkgs: Vec<(String, PathBuf)> = match manifest::find(&root_dir) {
+        Some(mf) => match manifest::packages(&mf) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("error: {}", e);
+                return Err(());
+            }
+        },
+        None => Vec::new(),
+    };
+    // (module name, file, the package the module belongs to: name and src dir)
+    let mut queue: Vec<(String, PathBuf, Option<(String, PathBuf)>)> = vec![(root_name, root.to_path_buf(), None)];
     let mut seen: HashMap<String, ()> = HashMap::new();
     let mut had_error = false;
     let mut std_pending: Vec<String> = Vec::new();
-    while let Some((name, path)) = queue.pop() {
+    while let Some((name, path, pkg)) = queue.pop() {
         if seen.contains_key(&name) {
             continue;
         }
@@ -279,15 +298,37 @@ fn load(root: &Path) -> Result<Loaded, ()> {
                     }
                     continue;
                 }
+                // a dependency: `import foo` is its src/lib.nx, `import foo.bar` its src/bar.nx
+                if let Some((pn, src)) = pkgs.iter().find(|(n, _)| *n == im.path[0]) {
+                    let rel: PathBuf = if im.path.len() == 1 { PathBuf::from("lib") } else { im.path[1..].iter().collect() };
+                    let candidate = src.join(&rel).with_extension("nx");
+                    if candidate.exists() {
+                        queue.push((im.path.join("."), candidate, Some((pn.clone(), src.clone()))));
+                    } else {
+                        eprintln!("error: package `{}` has no module `{}` (expected {})", pn, im.path.join("."), candidate.display());
+                        had_error = true;
+                    }
+                    continue;
+                }
+                // inside a package, imports are relative to its src and named under the package
+                if let Some((pn, src)) = &pkg {
+                    let rel: PathBuf = im.path.iter().collect();
+                    let candidate = src.join(&rel).with_extension("nx");
+                    if candidate.exists() {
+                        queue.push((format!("{}.{}", pn, im.path.join(".")), candidate, Some((pn.clone(), src.clone()))));
+                    }
+                    continue;
+                }
                 let rel: PathBuf = im.path.iter().collect();
                 let candidate = root_dir.join(&rel).with_extension("nx");
                 if candidate.exists() {
-                    queue.push((im.path.join("."), candidate));
+                    queue.push((im.path.join("."), candidate, None));
                 }
             }
         }
         names.push(name);
         dirs.push(dir_of(&path));
+        mod_pkgs.push(pkg.as_ref().map(|(n, _)| n.clone()).unwrap_or_default());
         modules.push(m);
     }
     // std modules may import each other; new names join the end of the queue
@@ -308,12 +349,13 @@ fn load(root: &Path) -> Result<Loaded, ()> {
         std_imports_of(&m, &mut std_pending);
         names.push(mname);
         dirs.push("std".into());
+        mod_pkgs.push(String::new());
         modules.push(m);
     }
     if had_error {
         return Err(());
     }
-    Ok(Loaded { sm, modules, names, dirs })
+    Ok(Loaded { sm, modules, names, dirs, pkgs: mod_pkgs })
 }
 
 /// `artifact link { c_sources = [...], libs = [...], include = [...] }` declared in the sources.
@@ -394,6 +436,7 @@ fn link_info(loaded: &Loaded, opts: &Opts) -> LinkInfo {
 fn check(loaded: &Loaded, opts: &Opts) -> Result<Program, ()> {
     let mut c = check::Checker::new(&loaded.sm);
     c.source_dirs = loaded.dirs.clone();
+    c.module_pkgs = loaded.pkgs.clone();
     let li = link_info(loaded, opts);
     let cc = cc_command(opts);
     let mut cc_vec = vec![cc.program.clone()];
@@ -534,6 +577,94 @@ fn cc_command(opts: &Opts) -> CcInvocation {
 }
 
 /// `nx doctor`: what this installation will use, and whether it works.
+fn cmd_init(rest: &[String]) -> i32 {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let name = rest.first().cloned().unwrap_or_else(|| cwd.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "app".into()));
+    let name: String = name.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
+    match manifest::init(&cwd, &name) {
+        Ok(files) => {
+            for f in files {
+                println!("wrote {}", f.display());
+            }
+            0
+        }
+        Err(e) => {
+            eprintln!("error: {}", e);
+            1
+        }
+    }
+}
+
+fn cmd_add(rest: &[String]) -> i32 {
+    let mut name = None;
+    let (mut git, mut tag, mut path) = (None, None, None);
+    let mut i = 0;
+    while i < rest.len() {
+        match rest[i].as_str() {
+            "--git" => {
+                i += 1;
+                git = rest.get(i).cloned();
+            }
+            "--tag" => {
+                i += 1;
+                tag = rest.get(i).cloned();
+            }
+            "--path" => {
+                i += 1;
+                path = rest.get(i).cloned();
+            }
+            other if name.is_none() && !other.starts_with("--") => name = Some(other.to_string()),
+            other => {
+                eprintln!("error: unexpected argument `{}`", other);
+                return 1;
+            }
+        }
+        i += 1;
+    }
+    let Some(name) = name else {
+        eprintln!("usage: nx add <name> --git URL [--tag TAG] | --path DIR");
+        return 1;
+    };
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let Some(mf) = manifest::find(&cwd) else {
+        eprintln!("error: no {} here or above; run `nx init` first", manifest::MANIFEST);
+        return 1;
+    };
+    let dep = manifest::Dep { name, git, tag, path };
+    if let Err(e) = manifest::add(&mf.dir.join(manifest::MANIFEST), &dep) {
+        eprintln!("error: {}", e);
+        return 1;
+    }
+    println!("added `{}` to {}", dep.name, mf.dir.join(manifest::MANIFEST).display());
+    cmd_fetch()
+}
+
+fn cmd_fetch() -> i32 {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let Some(mf) = manifest::find(&cwd) else {
+        eprintln!("error: no {} here or above; run `nx init` first", manifest::MANIFEST);
+        return 1;
+    };
+    match manifest::fetch(&mf) {
+        Ok(lines) => {
+            for l in &lines {
+                let parts: Vec<&str> = l.split('\t').collect();
+                if parts.len() >= 4 && parts[1] != "path" {
+                    println!("{} {} ({})", parts[0], parts[2], &parts[3][..parts[3].len().min(10)]);
+                } else if parts.len() >= 3 {
+                    println!("{} path {}", parts[0], parts[2]);
+                }
+            }
+            println!("wrote {}", mf.dir.join(manifest::LOCK).display());
+            0
+        }
+        Err(e) => {
+            eprintln!("error: {}", e);
+            1
+        }
+    }
+}
+
 fn cmd_doctor() -> i32 {
     println!("nx {}", VERSION);
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("nx"));
@@ -953,7 +1084,13 @@ fn analyze_text(path: &str, text: &str) -> (Vec<lsp::Diagnostic>, Option<(Loaded
     if all.is_empty() {
         let dir = dir_of(Path::new(path));
         // imported modules are loaded from disk
-        let mut loaded = Loaded { sm, modules: vec![m], names: vec![Path::new(path).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "main".into())], dirs: vec![dir.clone()] };
+        let mut loaded = Loaded {
+            sm,
+            modules: vec![m],
+            names: vec![Path::new(path).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "main".into())],
+            dirs: vec![dir.clone()],
+            pkgs: Vec::new(),
+        };
         for item in loaded.modules[0].items.clone() {
             if let ast::Item::Import(im) = item {
                 if im.path[0] == "std" {
@@ -1803,6 +1940,9 @@ fn real_main() -> i32 {
             0
         }
         "doctor" => cmd_doctor(),
+        "init" => cmd_init(rest),
+        "add" => cmd_add(rest),
+        "fetch" => cmd_fetch(),
         "repl" => repl::run(),
         "tokens" => {
             let o = parse_opts(rest);

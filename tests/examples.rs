@@ -200,3 +200,34 @@ fn examples_are_canonically_formatted() {
         String::from_utf8_lossy(&out.stdout)
     );
 }
+
+/// Packages: a manifest with a path dependency, `import dep` (src/lib.nx),
+/// `import dep.module`, a package importing its own sibling, and a
+/// transitive dependency.
+#[test]
+fn packages_resolve_path_dependencies() {
+    let root = root();
+    let base = root.join("nx-out").join("pkg-test");
+    let _ = std::fs::remove_dir_all(&base);
+    let write = |rel: &str, text: &str| {
+        let p = base.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, text).unwrap();
+    };
+    write("words/nexium.toml", "[package]\nname = \"words\"\nversion = \"0.1.0\"\n");
+    write("words/src/lib.nx", "pub fn planet() -> []u8 { return \"world\" }\n");
+    write("greet/nexium.toml", "[package]\nname = \"greet\"\nversion = \"0.1.0\"\n\n[dependencies]\nwords = { path = \"../words\" }\n");
+    write("greet/src/lib.nx", "import util\nimport words\npub fn hello() -> String { return util.wrap(words.planet()) }\n");
+    write("greet/src/util.nx", "pub fn wrap(s: []u8) -> String { var out = String.from(\"hello, \"); out.append(s); return out }\n");
+    write("greet/src/extra.nx", "pub fn punct() -> []u8 { return \"!\" }\n");
+    write("app/nexium.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\ngreet = { path = \"../greet\" }\n");
+    write("app/main.nx", "import greet\nimport greet.extra\nfn main() {\n    println(\"{}{}\", .{greet.hello(), extra.punct()})\n}\n");
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).args(["run", "main.nx"]).current_dir(base.join("app")).output().expect("run nx");
+    assert!(out.status.success(), "package program failed:\n{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello, world!");
+    let fetch = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).arg("fetch").current_dir(base.join("app")).output().expect("run nx fetch");
+    assert!(fetch.status.success(), "nx fetch failed:\n{}", String::from_utf8_lossy(&fetch.stderr));
+    let lock = std::fs::read_to_string(base.join("app").join("nexium.lock")).unwrap();
+    assert!(lock.contains("greet\tpath\t../greet"), "lock file: {}", lock);
+    assert!(lock.contains("words\tpath"), "transitive dependency missing from the lock: {}", lock);
+}

@@ -102,7 +102,8 @@ Goal: sharing code beyond a sibling file.
 
 - Packages: a `nexium.toml` manifest, `import pkg.module`, versioned
   dependencies fetched from git tags first (no registry required), lock
-  file, vendoring.
+  file, vendoring. Status: done (`nx init`, `nx add`, `nx fetch`,
+  `docs/packages.md`).
 - `nx publish` and a minimal registry (static index in a git repository,
   the way early Cargo worked), only once there are packages to publish.
 - `node` artifact: `nx ship` to an npm package (N-API through the C ABI),
