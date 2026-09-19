@@ -64,6 +64,33 @@ fn examples_reproduce_recorded_output() {
     run_example("tests", "test");
 }
 
+/// The specification's conformance cases: `tests/spec/<section>_*.nx`, one
+/// per claim SPEC.md makes, each with its recorded output and exit code
+/// (`// EXIT: n`, 0 when absent).
+#[test]
+fn spec_cases_reproduce_recorded_output() {
+    if !have_cc() {
+        eprintln!("skipping: zig not found");
+        return;
+    }
+    let dir = root().join("tests").join("spec");
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(&dir).expect("spec dir").filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().map(|x| x == "nx").unwrap_or(false)).collect();
+    entries.sort();
+    assert!(!entries.is_empty());
+    let out_dir = std::env::temp_dir().join(format!("nx-spec-{}", std::process::id()));
+    for path in entries {
+        let text = std::fs::read_to_string(&path).unwrap();
+        let want_code: i32 = text.lines().find_map(|l| l.strip_prefix("// EXIT:")).map(|s| s.trim().parse().unwrap()).unwrap_or(0);
+        let rel = PathBuf::from("tests").join("spec").join(path.file_name().unwrap());
+        let out = Command::new(nx()).arg("run").arg(&rel).arg("--out-dir").arg(&out_dir).current_dir(root()).output().expect("run nx");
+        let got = normalize(&format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)));
+        let expected = normalize(&std::fs::read_to_string(path.with_extension("expected")).unwrap_or_default());
+        assert_eq!(got.trim(), expected.trim(), "output of {} differs", rel.display());
+        assert_eq!(out.status.code().unwrap_or(-1), want_code, "exit code of {} differs", rel.display());
+    }
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
 #[test]
 fn compile_fail_cases_are_rejected() {
     let dir = root().join("tests").join("compile_fail");

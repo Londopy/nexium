@@ -1435,6 +1435,11 @@ impl Gen {
                     format!("(({})({}))", cn, v)
                 }
             }
+            CastKind::Bits if matches!(self.kind_of(inner.ty), TyKind::Enum(..)) => {
+                // a unit enum's integer is its tag
+                let t = if self.is_simple(inner) { v } else { self.bind_tmp(&v, inner.ty) };
+                format!("(({})({}).tag)", cn, t)
+            }
             CastKind::IntToFloat | CastKind::FloatToFloat | CastKind::Bits | CastKind::PtrToPtr => format!("(({})({}))", cn, v),
             CastKind::FloatToInt => {
                 if self.opts.mode == BuildMode::FastRelease {

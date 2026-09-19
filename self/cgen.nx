@@ -2448,6 +2448,11 @@ impl Gen {
             }
             return format("(({})({}))", .{cn, v})
         }
+        if kind == "bits" and self.kind(self.c.tir.nodes[inner].ty) == check.TK.Enum {
+            // a unit enum's integer is its tag
+            let t = if self.is_simple(inner) { v } else { self.bind_tmp(v[..], self.c.tir.nodes[inner].ty) }
+            return format("(({})({}).tag)", .{cn, t})
+        }
         if kind == "float_to_int" {
             if self.mode == MODE_FAST { return format("(({})({}))", .{cn, v}) }
             var lo = String.new()
