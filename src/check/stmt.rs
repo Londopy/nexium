@@ -82,7 +82,18 @@ impl<'a> Checker<'a> {
             // a block that diverges has type never
             let diverges = stmts.iter().any(|s| self.stmt_diverges(s));
             if diverges {
-                ty = self.tys.never();
+                // a labeled block that ends in `break :label v` still yields the value
+                ty = match label_ty {
+                    Some(lt) => {
+                        let r = self.tys.resolve(lt, true);
+                        if self.tys.contains_infer(r) {
+                            self.tys.never()
+                        } else {
+                            lt
+                        }
+                    }
+                    None => self.tys.never(),
+                };
             } else if let Some(lt) = label_ty {
                 // labeled block without a tail: value comes from `break :label v`
                 ty = lt;

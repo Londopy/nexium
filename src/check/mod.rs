@@ -2007,17 +2007,12 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// An expression's type already says whether it diverges: a block whose
+    /// statements escape is `never`, unless the escape is a `break` to its own
+    /// label, which makes the block a value instead.
     pub fn expr_diverges(&self, e: &TExpr) -> bool {
         let t = self.tys.shallow(e.ty);
-        if matches!(self.tys.kind(t), TyKind::Never) {
-            return true;
-        }
-        match &e.kind {
-            TExprKind::Block(b) => self.block_diverges(b),
-            TExprKind::If { then, els: Some(els), .. } => self.block_diverges(then) && self.block_diverges(els),
-            TExprKind::Match { arms, .. } => !arms.is_empty() && arms.iter().all(|a| self.expr_diverges(&a.body)),
-            _ => false,
-        }
+        matches!(self.tys.kind(t), TyKind::Never)
     }
 
     /// Does the type satisfy a trait bound?  Primitive types satisfy the builtin
