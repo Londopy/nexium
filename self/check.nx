@@ -218,20 +218,20 @@ impl Types {
 }
 
 /// Integer type facts by name.
-fn int_bits(name: []u8) -> u32 {
+pub fn int_bits(name: []u8) -> u32 {
     if name == "i8" or name == "u8" { return 8 }
     if name == "i16" or name == "u16" { return 16 }
     if name == "i32" or name == "u32" { return 32 }
     if name == "i128" or name == "u128" { return 128 }
     return 64
 }
-fn int_signed(name: []u8) -> bool { return name[0] == 'i' }
-fn int_min(name: []u8) -> i128 {
+pub fn int_signed(name: []u8) -> bool { return name[0] == 'i' }
+pub fn int_min(name: []u8) -> i128 {
     if !int_signed(name) { return 0 }
     if name == "i128" { return -170141183460469231731687303715884105727 - 1 }
     return - ((1 as i128) << (int_bits(name) - 1))
 }
-fn int_max(name: []u8) -> i128 {
+pub fn int_max(name: []u8) -> i128 {
     if name == "i128" { return 170141183460469231731687303715884105727 }
     if name == "u128" { return 170141183460469231731687303715884105727 }
     if int_signed(name) { return ((1 as i128) << (int_bits(name) - 1)) - 1 }
@@ -372,6 +372,8 @@ pub struct GlobalDef {
     start: usize
     end: usize
     ty: usize
+    // the evaluated initializer, a `(value ...)` node (NONE when absent)
+    init: usize
 }
 
 pub struct AliasDef {
@@ -402,6 +404,8 @@ pub struct Mod {
     source: String
     // the directory its relative paths (`@embedFile`) resolve against
     dir: String
+    // the path diagnostics and generated code name it by (`<std>/x.nx` for std)
+    path: String
     parsed: parser.Parsed
 }
 
@@ -410,7 +414,7 @@ pub struct Mod {
 /// Read the root file and everything it imports, in the driver's order:
 /// files depth-first from a stack (so the last import of a file loads
 /// first), then the std modules in the order they were first named.
-fn load(root: []u8, std_dir: []u8) -> !List(Mod) {
+pub fn load(root: []u8, std_dir: []u8) -> !List(Mod) {
     var mods = List(Mod).new()
     let root_dir = dir_of(root)
     let root_name = stem_of(root)
@@ -460,7 +464,7 @@ fn load(root: []u8, std_dir: []u8) -> !List(Mod) {
                 queue_paths.append(rel)
             }
         }
-        mods.append(Mod{ .name = name, .source = text, .dir = String.from(dir_of(path[..])), .parsed = parsed })
+        mods.append(Mod{ .name = name, .source = text, .dir = String.from(dir_of(path[..])), .path = path.clone(), .parsed = parsed })
     }
     var si: usize = 0
     while si < std_pending.len {
@@ -487,7 +491,7 @@ fn load(root: []u8, std_dir: []u8) -> !List(Mod) {
                 }
             }
         }
-        mods.append(Mod{ .name = mname, .source = text, .dir = String.from(std_dir), .parsed = parsed })
+        mods.append(Mod{ .name = mname, .source = text, .dir = String.from(std_dir), .path = format("<std>/{}.nx", .{short}), .parsed = parsed })
     }
     return mods
 }
@@ -691,6 +695,8 @@ pub struct Inst {
     is_test: bool
     test_comptime: bool
     is_closure: bool
+    // a closure's captures: by reference or by value, in order
+    closure_by_ref: List(bool)
     start: usize
     end: usize
     module: usize
@@ -899,7 +905,7 @@ impl Checker {
         let opts = cimport.ImportOptions{ .cc = self.cc.clone(), .target = self.target.clone(), .include_dirs = self.include_dirs(), .windows = windows }
         let mid = self.mods.len
         self.mods.append(Mod{
-                .name = format("cimport:{}", .{header}), .source = String.new(), .dir = String.new(),
+                .name = format("cimport:{}", .{header}), .source = String.new(), .dir = String.new(), .path = String.new(),
                 .parsed = parser.Parsed{ .tree = parser.Tree{ .nodes = List(parser.Node).new() }, .items = List(usize).new(), .errors = List(String).new() },
         })
         let bend = bnode.end
@@ -1037,7 +1043,7 @@ impl Checker {
             self.define(m, name[..], ItemKind.Const, self.consts.len - 1, at)
         } else if k == parser.NodeKind.Global {
             let n = self.node(m, it)
-            let d = GlobalDef{ .name = n.name.clone(), .node = it, .module = m, .start = n.start, .end = n.end, .ty = NONE }
+            let d = GlobalDef{ .name = n.name.clone(), .node = it, .module = m, .start = n.start, .end = n.end, .ty = NONE, .init = NONE }
             let name = d.name.clone()
             let at = d.start
             self.globals.append(d)
@@ -1532,7 +1538,9 @@ impl Checker {
                 var te = self.check_expr(value_node, ty)
                 te = self.coerce_or_error(te, ty, "global initializer")
                 te = self.finalize_expr(te)
-                if self.eval_const_expr(te) == null {
+                if let v = self.eval_const_expr(te) {
+                    self.globals[i].init = self.value_node(&v, ty, self.tir.nodes[te].start, self.tir.nodes[te].end)
+                } else {
                     self.fail_here(self.tir.nodes[te].start, "global initializer must be evaluable at compile time (globals are initialized at compile time or not at all)")
                 }
                 _ = self.ctxs.pop()
@@ -2032,7 +2040,7 @@ impl Checker {
                 .name = name, .mangled = mangled, .def = fid, .targs = targs, .gen_names = gen_names, .gen_tys = gen_tys, .params = params, .ret = ret, .locals = locals, .body = NONE,
                 .own_effects = 0, .effects = 0, .declared_neg = neg, .declared_pos = pos, .export_name = export_name,
                 .is_extern = is_extern, .is_variadic = is_variadic, .is_pub = is_pub, .is_test = is_test, .test_comptime = test_comptime,
-                .is_closure = false, .start = start, .end = end, .module = m, .self_ty = self_ty,
+                .is_closure = false, .closure_by_ref = List(bool).new(), .start = start, .end = end, .module = m, .self_ty = self_ty,
                 .witnesses = List(Witness).new(), .callees = List(usize).new(),
         })
         // a std module's tests belong to the compiler's own suite
@@ -5478,7 +5486,7 @@ fn find_sub(hay: []u8, needle: []u8) -> ?usize {
 /// Rust prints floats with `{:?}`: the shortest round-trip text, with a
 /// fractional part in decimal form (`100.0`) and a bare exponent in
 /// exponential form (`1e-6`, `1e21`, never `1e-06`).
-fn rust_float(v: f64) -> String {
+pub fn rust_float(v: f64) -> String {
     let s = format("{}", .{v})
     var epos = NONE
     for c, i in s { if c == 'e' or c == 'E' { epos = i } }
@@ -11378,7 +11386,7 @@ impl Checker {
                 .params = params, .ret = ret, .locals = locals, .body = NONE,
                 .own_effects = 0, .effects = 0, .declared_neg = 0, .declared_pos = 0, .export_name = String.from("-"),
                 .is_extern = false, .is_variadic = false, .is_pub = false, .is_test = false, .test_comptime = false,
-                .is_closure = true, .start = start, .end = end, .module = m, .self_ty = st,
+                .is_closure = true, .closure_by_ref = cap_refs.clone(), .start = start, .end = end, .module = m, .self_ty = st,
                 .witnesses = List(Witness).new(), .callees = List(usize).new(),
         })
         self.check_closure_body(id, body_node, &cap_names, &cap_refs, &cap_muts, &cap_tys, &cap_starts, &cap_ends)
