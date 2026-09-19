@@ -1363,6 +1363,100 @@ NX_INLINE nx_string nx_net_last_peer(nx_ctx* c) {
     return s;
 }
 
+/* ------------------------------------------------------------- threads */
+/* A spawned thread runs a Nexium function value `fn(*mut X)` with its own
+   context; a panic inside it is re-raised by the joiner. Handles are
+   pointers to the task record, freed by join. */
+typedef struct nx_thread_task {
+    nx_ctx ctx;
+    void* fnp;
+    void* env;
+    void* arg;
+    bool panicked;
+    bool started;
+    char msg[256];
+    char loc[256];
+#if defined(_WIN32)
+    HANDLE h;
+#else
+    pthread_t h;
+#endif
+} nx_thread_task;
+static void nx_thread_run(nx_thread_task* t) {
+    nx_boundary b;
+    nx_boundary* prev = nx_tls_boundary;
+    nx_tls_boundary = &b;
+    if (setjmp(b.jb)) {
+        t->panicked = true;
+        snprintf(t->msg, sizeof t->msg, "%s", b.msg);
+        snprintf(t->loc, sizeof t->loc, "%s", b.loc);
+    } else {
+        ((void (*)(nx_ctx*, void*, void*))t->fnp)(&t->ctx, t->env, t->arg);
+    }
+    nx_tls_boundary = prev;
+}
+#if defined(_WIN32)
+static DWORD WINAPI nx_thread_entry(LPVOID p) { nx_thread_run((nx_thread_task*)p); return 0; }
+#else
+static void* nx_thread_entry(void* p) { nx_thread_run((nx_thread_task*)p); return NULL; }
+#endif
+NX_INLINE int64_t nx_thread_start(nx_ctx* c, void* fnp, void* env, void* arg) {
+    nx_thread_task* t = (nx_thread_task*)malloc(sizeof *t);
+    if (!t) nx_panic("out of memory starting a thread", "thread.start");
+    t->ctx = *c;
+    t->ctx.live_allocs = 0; t->ctx.live_bytes = 0; t->ctx.total_allocs = 0; t->ctx.peak_bytes = 0;
+    nx_ctx_track_self(&t->ctx);
+    t->ctx.rng ^= (uint64_t)(uintptr_t)t * 0x9E3779B97F4A7C15ULL;
+    t->fnp = fnp; t->env = env; t->arg = arg;
+    t->panicked = false; t->started = true;
+#if defined(_WIN32)
+    t->h = CreateThread(NULL, 0, nx_thread_entry, t, 0, NULL);
+    if (!t->h) { t->started = false; nx_thread_run(t); }
+#else
+    if (pthread_create(&t->h, NULL, nx_thread_entry, t) != 0) { t->started = false; nx_thread_run(t); }
+#endif
+    return (int64_t)(intptr_t)t;
+}
+NX_INLINE void nx_thread_join(int64_t h, const char* loc) {
+    nx_thread_task* t = (nx_thread_task*)(intptr_t)h;
+    if (!t) return;
+    if (t->started) {
+#if defined(_WIN32)
+        WaitForSingleObject(t->h, INFINITE);
+        CloseHandle(t->h);
+#else
+        pthread_join(t->h, NULL);
+#endif
+    }
+    bool panicked = t->panicked;
+    char msg[512];
+    snprintf(msg, sizeof msg, "in a thread: %s (at %s)", t->msg, t->loc);
+    free(t);
+    if (panicked) nx_panic(msg, loc);
+}
+/* mutexes and condition variables, as heap handles */
+#if defined(_WIN32)
+NX_INLINE int64_t nx_mutex_new(void) { CRITICAL_SECTION* m = (CRITICAL_SECTION*)malloc(sizeof *m); InitializeCriticalSection(m); return (int64_t)(intptr_t)m; }
+NX_INLINE void nx_mutex_lock(int64_t m) { EnterCriticalSection((CRITICAL_SECTION*)(intptr_t)m); }
+NX_INLINE void nx_mutex_unlock(int64_t m) { LeaveCriticalSection((CRITICAL_SECTION*)(intptr_t)m); }
+NX_INLINE void nx_mutex_free(int64_t m) { DeleteCriticalSection((CRITICAL_SECTION*)(intptr_t)m); free((void*)(intptr_t)m); }
+NX_INLINE int64_t nx_cond_new(void) { CONDITION_VARIABLE* cv = (CONDITION_VARIABLE*)malloc(sizeof *cv); InitializeConditionVariable(cv); return (int64_t)(intptr_t)cv; }
+NX_INLINE void nx_cond_wait(int64_t cv, int64_t m) { SleepConditionVariableCS((CONDITION_VARIABLE*)(intptr_t)cv, (CRITICAL_SECTION*)(intptr_t)m, INFINITE); }
+NX_INLINE void nx_cond_signal(int64_t cv) { WakeConditionVariable((CONDITION_VARIABLE*)(intptr_t)cv); }
+NX_INLINE void nx_cond_broadcast(int64_t cv) { WakeAllConditionVariable((CONDITION_VARIABLE*)(intptr_t)cv); }
+NX_INLINE void nx_cond_free(int64_t cv) { free((void*)(intptr_t)cv); }
+#else
+NX_INLINE int64_t nx_mutex_new(void) { pthread_mutex_t* m = (pthread_mutex_t*)malloc(sizeof *m); pthread_mutex_init(m, NULL); return (int64_t)(intptr_t)m; }
+NX_INLINE void nx_mutex_lock(int64_t m) { pthread_mutex_lock((pthread_mutex_t*)(intptr_t)m); }
+NX_INLINE void nx_mutex_unlock(int64_t m) { pthread_mutex_unlock((pthread_mutex_t*)(intptr_t)m); }
+NX_INLINE void nx_mutex_free(int64_t m) { pthread_mutex_destroy((pthread_mutex_t*)(intptr_t)m); free((void*)(intptr_t)m); }
+NX_INLINE int64_t nx_cond_new(void) { pthread_cond_t* cv = (pthread_cond_t*)malloc(sizeof *cv); pthread_cond_init(cv, NULL); return (int64_t)(intptr_t)cv; }
+NX_INLINE void nx_cond_wait(int64_t cv, int64_t m) { pthread_cond_wait((pthread_cond_t*)(intptr_t)cv, (pthread_mutex_t*)(intptr_t)m); }
+NX_INLINE void nx_cond_signal(int64_t cv) { pthread_cond_signal((pthread_cond_t*)(intptr_t)cv); }
+NX_INLINE void nx_cond_broadcast(int64_t cv) { pthread_cond_broadcast((pthread_cond_t*)(intptr_t)cv); }
+NX_INLINE void nx_cond_free(int64_t cv) { pthread_cond_destroy((pthread_cond_t*)(intptr_t)cv); free((void*)(intptr_t)cv); }
+#endif
+
 NX_INLINE bool nx_read_line(nx_ctx* c, nx_string* out) {
     nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;
     int ch; bool any = false;

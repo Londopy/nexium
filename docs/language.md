@@ -241,6 +241,15 @@ the inferred set per function.
   `net.last_peer()` naming the sender. A timeout of 0 waits forever.
   Errors: `NotFound` (name lookup), `ConnectionRefused`, `Timeout`,
   `IoError`. Not available at the REPL.
+- Threads (`std.thread` builds `Thread`, `Channel` and `Mutex` on these):
+  `thread.start(f: fn(*mut T) -> void, arg: *mut T) -> i64` runs `f(arg)` on
+  a new thread with its own context, `thread.join(h)` waits for it and
+  re-raises its panic, `thread.count() -> usize` is the hardware thread
+  count. `sync.mutex_new() -> i64`, `sync.lock(m)`, `sync.unlock(m)`,
+  `sync.mutex_free(m)`, `sync.cond_new() -> i64`, `sync.wait(cv, m)`,
+  `sync.signal(cv)`, `sync.broadcast(cv)`, `sync.cond_free(cv)`. Starting a
+  thread carries `nondeterministic` and `shared_mutable`; joining, locking
+  and waiting `block`. Not available at the REPL.
 - `os.args() -> [][]u8`, `os.env(name) -> ?[]u8`, `os.environ() ->
   List(String)` (every `NAME=value`), `os.exit(code)`,
   `process.run(argv: [][]u8) -> !i32` (spawns, waits, returns the exit code;

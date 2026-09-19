@@ -25,6 +25,7 @@ by `scripts/std_docs.py` from the doc comments.
 | [`std.strings`](#stdstrings) | text utilities on `[]u8` and `String`, written in Nexium. |
 | [`std.testing`](#stdtesting) | conveniences for `test` blocks, written in Nexium. |
 | [`std.text`](#stdtext) | UTF-8 text by code point, written in Nexium. |
+| [`std.thread`](#stdthread) | threads, channels and mutexes, written in Nexium over the |
 | [`std.time`](#stdtime) | dates, durations and timers, written in Nexium. |
 
 ## std.args
@@ -379,6 +380,33 @@ Types: `Decoded`
 | `to_upper(s: []u8) -> String` |  |
 | `to_lower(s: []u8) -> String` |  |
 | `eq_ignore_case(a: []u8, b: []u8) -> bool` | Compare ignoring case, using the same mapping as `to_lower`. |
+
+## std.thread
+
+std.thread: threads, channels and mutexes, written in Nexium over the `thread.*` and `sync.*` primitives. `import std.thread` then: fn work(job: *mut Job) -> i64 { ... } var t = thread.spawn(Job, i64, work, Job{ .from = 0, .to = 1000 }) let total = t.join()                        // the function's result fn produce(p: *mut Producer) { ... }        // no result: a Worker var ch = thread.channel(String)             // shared by pointer var producer = thread.run(Producer, produce, Producer{ .out = &mut ch }) let msg = ch.recv() orelse break            // null once closed and drained producer.join() var counter = thread.mutex(i64, 0) let n = counter.lock()                      // *mut i64 while held n.* += 1 counter.unlock() A thread function takes a pointer to its argument, which the `Thread` owns until `join` returns the result. Channels and mutexes are values that threads share by pointer; the owner must join every thread using them before letting them go out of scope, and call `free` when done. Panics inside a thread surface from `join`.
+
+Types: `Task(T,`, `Thread(T,`, `WorkerTask(T){`, `Worker(T){`, `Channel(T){`, `Mutex(T){`
+
+| function | what it does |
+| --- | --- |
+| `spawn(comptime T: type, comptime R: type, f: fn(*mut T) -> R, own arg: T) -> Thread(T, R)` | Run `f(&mut arg)` on a new thread. |
+| `(method) join(self: *mut Self) -> R` | Wait for the thread and take its result. Joining twice panics. |
+| `(method) arg(self: *Self) -> *T` | The argument after the thread finished (for results written in place). |
+| `run(comptime T: type, f: fn(*mut T) -> void, own arg: T) -> Worker(T)` | Run `f(&mut arg)` on a new thread, for functions without a result. |
+| `(method) join(self: *mut Self)` | Wait for the thread. Joining twice panics. |
+| `(method) arg(self: *Self) -> *T` | The argument after the thread finished (for results written in place). |
+| `count() -> usize` | The number of hardware threads. |
+| `channel(comptime T: type) -> Channel(T)` |  |
+| `(method) send(self: *mut Self, own value: T)` |  |
+| `(method) recv(self: *mut Self) -> ?T` | The next value, waiting for one; null when closed and empty. |
+| `(method) try_recv(self: *mut Self) -> ?T` | The next value if one is queued, without waiting. |
+| `(method) close(self: *mut Self)` | No more values will be sent; receivers drain what is left, then see null. |
+| `(method) len(self: *mut Self) -> usize` |  |
+| `(method) free(self: *mut Self)` | Release the lock and condition variable; after every user has stopped. |
+| `mutex(comptime T: type, own value: T) -> Mutex(T)` |  |
+| `(method) lock(self: *mut Self) -> *mut T` | Take the lock; the pointer is valid until `unlock`. |
+| `(method) unlock(self: *mut Self)` |  |
+| `(method) free(self: *mut Self)` | Release the lock; after every user has stopped. |
 
 ## std.time
 

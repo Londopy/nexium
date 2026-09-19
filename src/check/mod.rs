@@ -700,7 +700,8 @@ impl<'a> Checker<'a> {
                     None => {
                         // std modules are builtin namespaces
                         let last = im.path.last().unwrap().clone();
-                        if im.path[0] == "std" || matches!(last.as_str(), "math" | "io" | "os" | "time" | "random" | "fmt" | "utf8" | "ascii" | "mem" | "slice" | "process" | "test" | "alloc" | "net")
+                        if im.path[0] == "std"
+                            || matches!(last.as_str(), "math" | "io" | "os" | "time" | "random" | "fmt" | "utf8" | "ascii" | "mem" | "slice" | "process" | "test" | "alloc" | "net" | "thread" | "sync")
                         {
                             // nothing to do; namespaces resolve by name
                         } else {
@@ -1484,7 +1485,7 @@ impl<'a> Checker<'a> {
             let ty = self.resolve_type(&p.ty, &generics, self_ty, def.module);
             let lid = locals.len() as LocalId;
             // in a generic function the instantiation decides whether `own` matters
-            if p.owned && !self.needs_drop(ty) && def.type_params.is_empty() {
+            if p.owned && !self.needs_drop(ty) && generics.is_empty() {
                 let tn = self.type_name(ty);
                 self.error(p.span, format!("`own` applies to owning types (`List`, `String`, `Map`, or structs holding them); `{}` is copied anyway", tn));
             }

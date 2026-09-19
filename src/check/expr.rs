@@ -753,7 +753,26 @@ impl<'a> Checker<'a> {
                 }
                 if matches!(
                     name,
-                    "List" | "Map" | "math" | "io" | "os" | "time" | "random" | "context" | "process" | "utf8" | "ascii" | "mem" | "slice" | "fmt" | "test" | "alloc" | "Ordering" | "net"
+                    "List"
+                        | "Map"
+                        | "math"
+                        | "io"
+                        | "os"
+                        | "time"
+                        | "random"
+                        | "context"
+                        | "process"
+                        | "utf8"
+                        | "ascii"
+                        | "mem"
+                        | "slice"
+                        | "fmt"
+                        | "test"
+                        | "alloc"
+                        | "Ordering"
+                        | "net"
+                        | "thread"
+                        | "sync"
                 ) {
                     let t = self.tys.intern(TyKind::Namespace(name.to_string()));
                     return self.mk(TExprKind::Unit, t, span);

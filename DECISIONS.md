@@ -430,6 +430,21 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     Concurrency arrives with threads later in the phase; the API will not
     change when it does, because each connection is already independent.
 
+82. **Threads, no async.** The concurrency model is blocking threads with
+    channels and mutexes, and nothing else: no event loop, no colored
+    functions, no `await`. The effect system already says which calls
+    block, which is the information an async design would add, and a
+    thread per connection or per job is what the programs this language
+    targets need. The runtime primitive is deliberately untyped
+    (`thread.start` takes any `fn(*mut T)` and a pointer); `std.thread`
+    supplies the typed `Thread(T, R)`, `Worker(T)`, `Channel(T)` and
+    `Mutex(T)` in Nexium, keeping every thread's argument in a one-element
+    List so its address is stable while the Thread value moves. Refcounted
+    `ref class` values are not thread-safe yet (their counts are not
+    atomic); channels and mutexes are shared by pointer, and the spawner
+    joins before the shared values go out of scope. Atomic counts and a
+    `Mutex` as a `ref class` can come when a program needs them.
+
 ## Compiler selection
 
 60. **Native macOS builds use the system compiler.** zig 0.14.1 cannot read

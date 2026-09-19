@@ -1,0 +1,290 @@
+// std.thread: threads, channels and mutexes, written in Nexium over the
+// `thread.*` and `sync.*` primitives.
+//
+// `import std.thread` then:
+//
+//     fn work(job: *mut Job) -> i64 { ... }
+//     var t = thread.spawn(Job, i64, work, Job{ .from = 0, .to = 1000 })
+//     let total = t.join()                        // the function's result
+//
+//     fn produce(p: *mut Producer) { ... }        // no result: a Worker
+//     var ch = thread.channel(String)             // shared by pointer
+//     var producer = thread.run(Producer, produce, Producer{ .out = &mut ch })
+//     let msg = ch.recv() orelse break            // null once closed and drained
+//     producer.join()
+//
+//     var counter = thread.mutex(i64, 0)
+//     let n = counter.lock()                      // *mut i64 while held
+//     n.* += 1
+//     counter.unlock()
+//
+// A thread function takes a pointer to its argument, which the `Thread`
+// owns until `join` returns the result. Channels and mutexes are values
+// that threads share by pointer; the owner must join every thread using
+// them before letting them go out of scope, and call `free` when done.
+// Panics inside a thread surface from `join`.
+
+/// The argument, function and result of one thread.
+pub struct Task(T, R){
+    f: fn(*mut T) -> R
+    arg: T
+    result: List(R)
+}
+
+/// A running or finished thread.
+pub struct Thread(T, R){
+    cell: List(Task(T, R))
+    handle: i64
+    joined: bool
+}
+
+/// Run `f(&mut arg)` on a new thread.
+pub fn spawn(comptime T: type, comptime R: type, f: fn(*mut T) -> R, own arg: T) -> Thread(T, R) {
+    var cell = List(Task(T, R)).with_capacity(1)
+    cell.append(Task(T, R){ .f = f, .arg = arg, .result = List(R).new() })
+    let entry = |task: *mut Task(T, R) | {
+        let g = task.f
+        let r = g(&mut task.arg)
+        task.result.append(r)
+    }
+    let handle = thread.start(entry, &mut cell[0])
+    return Thread(T, R){ .cell = cell, .handle = handle, .joined = false }
+}
+
+impl(T, R) Thread(T, R) {
+    /// Wait for the thread and take its result. Joining twice panics.
+    pub fn join(self: *mut Self) -> R {
+        if (self.joined) panic("thread joined twice")
+        thread.join(self.handle)
+        self.joined = true
+        return self.cell[0].result.pop().?
+    }
+
+    /// The argument after the thread finished (for results written in place).
+    pub fn arg(self: *Self) -> *T {
+        if (!self.joined) panic("the argument is shared with the running thread until join")
+        return &self.cell[0].arg
+    }
+}
+
+/// The argument and function of a thread without a result.
+pub struct WorkerTask(T){
+    f: fn(*mut T) -> void
+    arg: T
+}
+
+/// A running or finished thread whose function returns nothing.
+pub struct Worker(T){
+    cell: List(WorkerTask(T))
+    handle: i64
+    joined: bool
+}
+
+/// Run `f(&mut arg)` on a new thread, for functions without a result.
+pub fn run(comptime T: type, f: fn(*mut T) -> void, own arg: T) -> Worker(T) {
+    var cell = List(WorkerTask(T)).with_capacity(1)
+    cell.append(WorkerTask(T){ .f = f, .arg = arg })
+    let entry = |task: *mut WorkerTask(T) | {
+        let g = task.f
+        g(&mut task.arg)
+    }
+    let handle = thread.start(entry, &mut cell[0])
+    return Worker(T){ .cell = cell, .handle = handle, .joined = false }
+}
+
+impl(T) Worker(T) {
+    /// Wait for the thread. Joining twice panics.
+    pub fn join(self: *mut Self) {
+        if (self.joined) panic("thread joined twice")
+        thread.join(self.handle)
+        self.joined = true
+    }
+
+    /// The argument after the thread finished (for results written in place).
+    pub fn arg(self: *Self) -> *T {
+        if (!self.joined) panic("the argument is shared with the running thread until join")
+        return &self.cell[0].arg
+    }
+}
+
+/// The number of hardware threads.
+pub fn count() -> usize {
+    return thread.count()
+}
+
+// ------------------------------------------------------------------ channels
+
+/// An unbounded queue between threads. `recv` blocks while it is empty
+/// and open, and returns null once it is closed and drained.
+pub struct Channel(T){
+    items: List(T)
+    lock: i64
+    cond: i64
+    closed: bool
+}
+
+pub fn channel(comptime T: type) -> Channel(T) {
+    return Channel(T){ .items = List(T).new(), .lock = sync.mutex_new(), .cond = sync.cond_new(), .closed = false }
+}
+
+impl(T) Channel(T) {
+    pub fn send(self: *mut Self, own value: T) {
+        sync.lock(self.lock)
+        self.items.append(value)
+        sync.signal(self.cond)
+        sync.unlock(self.lock)
+    }
+
+    /// The next value, waiting for one; null when closed and empty.
+    pub fn recv(self: *mut Self) -> ?T {
+        sync.lock(self.lock)
+        while (self.items.len == 0 and !self.closed) { sync.wait(self.cond, self.lock) }
+        var out: ?T = null
+        if (self.items.len > 0) out = self.items.remove(0)
+        sync.unlock(self.lock)
+        return out
+    }
+
+    /// The next value if one is queued, without waiting.
+    pub fn try_recv(self: *mut Self) -> ?T {
+        sync.lock(self.lock)
+        var out: ?T = null
+        if (self.items.len > 0) out = self.items.remove(0)
+        sync.unlock(self.lock)
+        return out
+    }
+
+    /// No more values will be sent; receivers drain what is left, then see null.
+    pub fn close(self: *mut Self) {
+        sync.lock(self.lock)
+        self.closed = true
+        sync.broadcast(self.cond)
+        sync.unlock(self.lock)
+    }
+
+    pub fn len(self: *mut Self) -> usize {
+        sync.lock(self.lock)
+        let n = self.items.len
+        sync.unlock(self.lock)
+        return n
+    }
+
+    /// Release the lock and condition variable; after every user has stopped.
+    pub fn free(self: *mut Self) {
+        sync.cond_free(self.cond)
+        sync.mutex_free(self.lock)
+    }
+}
+
+// ------------------------------------------------------------------ mutexes
+
+/// A value guarded by a lock.
+pub struct Mutex(T){
+    lock: i64
+    value: T
+}
+
+pub fn mutex(comptime T: type, own value: T) -> Mutex(T) {
+    return Mutex(T){ .lock = sync.mutex_new(), .value = value }
+}
+
+impl(T) Mutex(T) {
+    /// Take the lock; the pointer is valid until `unlock`.
+    pub fn lock(self: *mut Self) -> *mut T{
+        sync.lock(self.lock)
+        return &mut self.value
+    }
+
+    pub fn unlock(self: *mut Self) {
+        sync.unlock(self.lock)
+    }
+
+    /// Release the lock; after every user has stopped.
+    pub fn free(self: *mut Self) {
+        sync.mutex_free(self.lock)
+    }
+}
+
+// ------------------------------------------------------------------ tests
+
+struct Range {
+    from: i64
+    to: i64
+}
+
+fn sum_range(r: *mut Range) -> i64 {
+    var s: i64 = 0
+    var i = r.from
+    while (i < r.to) {
+        s += i
+        i += 1
+    }
+    return s
+}
+
+struct Producer {
+    out: *mut Channel(i64)
+    n: i64
+}
+
+fn produce(p: *mut Producer) {
+    var i: i64 = 0
+    while (i < p.n) {
+        p.out.send(i)
+        i += 1
+    }
+    p.out.close()
+}
+
+struct Bumper {
+    counter: *mut Mutex(i64)
+    times: i64
+}
+
+fn bump(b: *mut Bumper) {
+    var i: i64 = 0
+    while (i < b.times) {
+        let n = b.counter.lock()
+        n.*+= 1
+        b.counter.unlock()
+        i += 1
+    }
+}
+
+test "spawn and join" {
+    var a = spawn(Range, i64, sum_range, Range{ .from = 0, .to = 1000 })
+    var b = spawn(Range, i64, sum_range, Range{ .from = 1000, .to = 2000 })
+    let total = a.join() + b.join()
+    expect_eq(total, 1999000)
+    expect(count() >= 1)
+}
+
+test "channel" {
+    var ch = channel(i64)
+    var p = run(Producer, produce, Producer{ .out = &mut ch, .n = 100 })
+    var sum: i64 = 0
+    var got: i64 = 0
+    while (true) {
+        let v = ch.recv() orelse break
+        sum += v
+        got += 1
+    }
+    p.join()
+    expect_eq(got, 100)
+    expect_eq(sum, 4950)
+    expect(ch.try_recv() == null)
+    ch.free()
+}
+
+test "mutex" {
+    var counter = mutex(i64, 0)
+    var ts = List(Worker(Bumper)).new()
+    for (0..4) |_| {
+        ts.append(run(Bumper, bump, Bumper{ .counter = &mut counter, .times = 2500 }))
+    }
+    for (0..ts.len) |i| { ts[i].join() }
+    let n = counter.lock()
+    expect_eq(n.*, 10000)
+    counter.unlock()
+    counter.free()
+}

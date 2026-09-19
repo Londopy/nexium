@@ -429,9 +429,14 @@ is re-raised in the caller after every worker finishes. The loop has the
 `blocks` effect. Data races through captured mutable locals are the
 programmer's responsibility (**decided**, 39).
 
-**planned** (ROADMAP phase 2): threads, channels with move semantics,
-mutexes as `ref class` values gated by `shared_mutable`. Async is an open
-decision; the default answer is threads without colored functions.
+Threads: `thread.start(f, arg)` runs a `fn(*mut T) -> void` value on a new
+thread with its own context and returns a handle; `thread.join` waits and
+re-raises a panic from the thread. `sync.*` provides mutexes and condition
+variables as handles. `std.thread` builds `Thread(T, R)`, `Worker(T)`,
+`Channel(T)` and `Mutex(T)` on these. Starting a thread carries the
+`nondeterministic` and `shared_mutable` effects; joining, locking and
+waiting `block`. There is no async: blocking threads and channels are the
+concurrency model (decision 82).
 
 ## 14. C interoperability
 
@@ -499,6 +504,6 @@ compiler under `self/` replaces it stage by stage (ROADMAP phase 4).
 | regions | R1 only |
 | layouts `packed`, `soa`; strategies `pool`, `stack` | planned |
 | std: fs, time, regex, net, http | planned (phases 1 and 2) |
-| threads, channels; async decision | planned (phase 2) |
+| threads, channels (`std.thread`); no async | done (0.4) |
 | packages, registry, `node`, `installer` | planned (phase 3) |
 | self-hosting | lexer done; parser next (phase 4) |

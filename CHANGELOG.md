@@ -26,6 +26,15 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
   `@cImport`.
 - `examples/service.nx`: an HTTP service and a client in one program, the
   phase 2 exit example; `examples/errors_more.nx` covers the fixes below.
+- Threads in the runtime (`thread.start`, `thread.join`, `thread.count`,
+  `sync.mutex_new`/`lock`/`unlock`/`mutex_free`, `sync.cond_new`/`wait`/
+  `signal`/`broadcast`/`cond_free`) and `std.thread` on top: `spawn` returns
+  a `Thread(T, R)` whose `join` yields the function's result, `run` returns
+  a `Worker(T)` for functions without one, `Channel(T)` (`send`, `recv`,
+  `try_recv`, `close`), `Mutex(T)` (`lock` returns `*mut T`, `unlock`). A
+  panic inside a thread is re-raised by `join`. Starting a thread carries
+  the `nondeterministic` and `shared_mutable` effects.
+- `own` is accepted on parameters of methods in generic `impl` blocks.
 
 ### Fixed
 
@@ -35,6 +44,8 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
   returning `!T` produced a bare error id instead of an error union.
 - An untyped integer literal now coerces into `!T` (`return 7` in a
   function returning `!i32`).
+- The formatter kept the space in `-> http.Response {` (a dotted type before
+  a block is not a struct literal).
 
 ## [0.3.0] - 2026-09-19
 

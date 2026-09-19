@@ -828,6 +828,97 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
+            "thread" => match name {
+                "start" => {
+                    // thread.start(f: fn(*mut X) -> void, arg: *mut X) -> i64
+                    if !self.check_args_n(args, 2, "thread.start", span) {
+                        return self.error_expr(span);
+                    }
+                    let f = self.check_expr(&args[0], None);
+                    let ft = self.tys.shallow(f.ty);
+                    let param = match self.tys.kind(ft).clone() {
+                        TyKind::Fn(ps, r, _) if ps.len() == 1 && matches!(self.tys.kind(self.tys.shallow(ps[0])), TyKind::Ptr(..)) && matches!(self.tys.kind(self.tys.shallow(r)), TyKind::Void) => {
+                            ps[0]
+                        }
+                        _ => {
+                            self.error(args[0].span(), "thread.start takes a function value `fn(*mut T) -> void` (a closure without captures or a named function)");
+                            return self.error_expr(span);
+                        }
+                    };
+                    let p = self.arg(&args[1], param, "argument");
+                    self.add_effect(Effects::NONDETERMINISTIC, span, "threads interleave");
+                    self.add_effect(Effects::SHARED_MUTABLE, span, "a thread shares memory with its spawner");
+                    let i64t = self.tys.int(IntTy::I64);
+                    self.builtin(Builtin::ThreadStart, vec![f, p], vec![], i64t, span)
+                }
+                "join" => {
+                    if !self.check_args_n(args, 1, "thread.join", span) {
+                        return self.error_expr(span);
+                    }
+                    let i64t = self.tys.int(IntTy::I64);
+                    let h = self.arg(&args[0], i64t, "thread handle");
+                    self.add_effect(Effects::BLOCKS, span, "joining waits for the thread");
+                    self.add_effect(Effects::PANICS, span, "a panic in the thread is re-raised by join");
+                    self.builtin(Builtin::ThreadJoin, vec![h], vec![], void, span)
+                }
+                "count" => {
+                    if !self.check_args_n(args, 0, "thread.count", span) {
+                        return self.error_expr(span);
+                    }
+                    let usizet = self.tys.usize();
+                    self.builtin(Builtin::ThreadCount, vec![], vec![], usizet, span)
+                }
+                _ => {
+                    self.error(span, format!("`thread` has no function `{}`; available: start, join, count (see std.thread)", name));
+                    self.error_expr(span)
+                }
+            },
+            "sync" => {
+                let i64t = self.tys.int(IntTy::I64);
+                match name {
+                    "mutex_new" | "cond_new" => {
+                        if !self.check_args_n(args, 0, &format!("sync.{}", name), span) {
+                            return self.error_expr(span);
+                        }
+                        self.add_effect(Effects::ALLOCATES, span, "a lock is allocated");
+                        let op = if name == "mutex_new" { Builtin::MutexNew } else { Builtin::CondNew };
+                        self.builtin(op, vec![], vec![], i64t, span)
+                    }
+                    "lock" | "unlock" | "mutex_free" | "signal" | "broadcast" | "cond_free" => {
+                        if !self.check_args_n(args, 1, &format!("sync.{}", name), span) {
+                            return self.error_expr(span);
+                        }
+                        let h = self.arg(&args[0], i64t, "handle");
+                        let op = match name {
+                            "lock" => {
+                                self.add_effect(Effects::BLOCKS, span, "locking waits for the holder");
+                                Builtin::MutexLock
+                            }
+                            "unlock" => Builtin::MutexUnlock,
+                            "mutex_free" => Builtin::MutexFree,
+                            "signal" => Builtin::CondSignal,
+                            "broadcast" => Builtin::CondBroadcast,
+                            _ => Builtin::CondFree,
+                        };
+                        self.add_effect(Effects::SHARED_MUTABLE, span, "locks guard shared memory");
+                        self.builtin(op, vec![h], vec![], void, span)
+                    }
+                    "wait" => {
+                        if !self.check_args_n(args, 2, "sync.wait", span) {
+                            return self.error_expr(span);
+                        }
+                        let cv = self.arg(&args[0], i64t, "condition variable");
+                        let mu = self.arg(&args[1], i64t, "locked mutex");
+                        self.add_effect(Effects::BLOCKS, span, "waiting blocks until signalled");
+                        self.add_effect(Effects::SHARED_MUTABLE, span, "locks guard shared memory");
+                        self.builtin(Builtin::CondWait, vec![cv, mu], vec![], void, span)
+                    }
+                    _ => {
+                        self.error(span, format!("`sync` has no function `{}`; available: mutex_new, lock, unlock, mutex_free, cond_new, wait, signal, broadcast, cond_free (see std.thread)", name));
+                        self.error_expr(span)
+                    }
+                }
+            }
             "time" => match name {
                 "now" => {
                     if !self.check_args_n(args, 0, "time.now", span) {

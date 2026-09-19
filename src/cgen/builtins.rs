@@ -1043,6 +1043,39 @@ impl Gen {
                 t
             }
             Builtin::NetLastPeer => "nx_net_last_peer(c)".into(),
+            Builtin::ThreadStart => {
+                let f = self.simple(&args[0]);
+                let p = self.simple(&args[1]);
+                format!("nx_thread_start(c, (void*){}.fn, {}.env, (void*)({}))", f, f, p)
+            }
+            Builtin::ThreadJoin => {
+                let h = self.simple(&args[0]);
+                let loc = self.loc(e.span);
+                self.line(format!("nx_thread_join({}, {});", h, loc));
+                "0".into()
+            }
+            Builtin::ThreadCount => "nx_hw_threads()".into(),
+            Builtin::MutexNew => "nx_mutex_new()".into(),
+            Builtin::CondNew => "nx_cond_new()".into(),
+            Builtin::MutexLock | Builtin::MutexUnlock | Builtin::MutexFree | Builtin::CondSignal | Builtin::CondBroadcast | Builtin::CondFree => {
+                let h = self.simple(&args[0]);
+                let f = match op {
+                    Builtin::MutexLock => "nx_mutex_lock",
+                    Builtin::MutexUnlock => "nx_mutex_unlock",
+                    Builtin::MutexFree => "nx_mutex_free",
+                    Builtin::CondSignal => "nx_cond_signal",
+                    Builtin::CondBroadcast => "nx_cond_broadcast",
+                    _ => "nx_cond_free",
+                };
+                self.line(format!("{}({});", f, h));
+                "0".into()
+            }
+            Builtin::CondWait => {
+                let cv = self.simple(&args[0]);
+                let mu = self.simple(&args[1]);
+                self.line(format!("nx_cond_wait({}, {});", cv, mu));
+                "0".into()
+            }
             Builtin::Environ => {
                 let cn = self.cty(e.ty);
                 let t = self.tmp();
