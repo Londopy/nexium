@@ -713,6 +713,121 @@ impl<'a> Checker<'a> {
                     self.error_expr(span)
                 }
             },
+            "net" => {
+                let i64t = self.tys.int(IntTy::I64);
+                let u16t = self.tys.int(IntTy::U16);
+                let usizet = self.tys.usize();
+                let string = self.tys.string();
+                let void = self.tys.void();
+                let u8t = self.tys.int(IntTy::U8);
+                let bytes = self.tys.slice(false, u8t);
+                self.add_effect(Effects::BLOCKS, span, "network I/O blocks");
+                match name {
+                    "connect" => {
+                        if !self.check_args_n(args, 3, "net.connect", span) {
+                            return self.error_expr(span);
+                        }
+                        let h = self.arg(&args[0], bytes, "host");
+                        let p = self.arg(&args[1], u16t, "port");
+                        let to = self.arg(&args[2], i64t, "timeout in ms (0 = none)");
+                        let r = self.tys.err_union(None, i64t);
+                        self.builtin(Builtin::NetConnect, vec![h, p, to], vec![], r, span)
+                    }
+                    "listen" | "udp_bind" => {
+                        if !self.check_args_n(args, 2, &format!("net.{}", name), span) {
+                            return self.error_expr(span);
+                        }
+                        let h = self.arg(&args[0], bytes, "host");
+                        let p = self.arg(&args[1], u16t, "port");
+                        let r = self.tys.err_union(None, i64t);
+                        let op = if name == "listen" { Builtin::NetListen } else { Builtin::NetUdpBind };
+                        self.builtin(op, vec![h, p], vec![], r, span)
+                    }
+                    "accept" => {
+                        if !self.check_args_n(args, 2, "net.accept", span) {
+                            return self.error_expr(span);
+                        }
+                        let l = self.arg(&args[0], i64t, "listener");
+                        let to = self.arg(&args[1], i64t, "timeout in ms (0 = none)");
+                        let r = self.tys.err_union(None, i64t);
+                        self.builtin(Builtin::NetAccept, vec![l, to], vec![], r, span)
+                    }
+                    "send" => {
+                        if !self.check_args_n(args, 2, "net.send", span) {
+                            return self.error_expr(span);
+                        }
+                        let s = self.arg(&args[0], i64t, "socket");
+                        let d = self.arg(&args[1], bytes, "data");
+                        let r = self.tys.err_union(None, void);
+                        self.builtin(Builtin::NetSend, vec![s, d], vec![], r, span)
+                    }
+                    "recv" | "recv_from" => {
+                        if !self.check_args_n(args, 3, &format!("net.{}", name), span) {
+                            return self.error_expr(span);
+                        }
+                        let s = self.arg(&args[0], i64t, "socket");
+                        let n = self.arg(&args[1], usizet, "byte count");
+                        let to = self.arg(&args[2], i64t, "timeout in ms (0 = none)");
+                        self.add_effect(Effects::ALLOCATES, span, "receiving allocates the chunk");
+                        let r = self.tys.err_union(None, string);
+                        let op = if name == "recv" { Builtin::NetRecv } else { Builtin::NetRecvFrom };
+                        self.builtin(op, vec![s, n, to], vec![], r, span)
+                    }
+                    "close" => {
+                        if !self.check_args_n(args, 1, "net.close", span) {
+                            return self.error_expr(span);
+                        }
+                        let s = self.arg(&args[0], i64t, "socket");
+                        let r = self.tys.err_union(None, void);
+                        self.builtin(Builtin::NetClose, vec![s], vec![], r, span)
+                    }
+                    "peer" | "local" => {
+                        if !self.check_args_n(args, 1, &format!("net.{}", name), span) {
+                            return self.error_expr(span);
+                        }
+                        let s = self.arg(&args[0], i64t, "socket");
+                        self.add_effect(Effects::ALLOCATES, span, "the address is copied into a String");
+                        let r = self.tys.err_union(None, string);
+                        let op = if name == "peer" { Builtin::NetPeer } else { Builtin::NetLocal };
+                        self.builtin(op, vec![s], vec![], r, span)
+                    }
+                    "resolve" => {
+                        if !self.check_args_n(args, 1, "net.resolve", span) {
+                            return self.error_expr(span);
+                        }
+                        let h = self.arg(&args[0], bytes, "host");
+                        self.add_effect(Effects::ALLOCATES, span, "addresses are copied into Strings");
+                        let l = self.tys.list(string);
+                        let r = self.tys.err_union(None, l);
+                        self.builtin(Builtin::NetResolve, vec![h], vec![], r, span)
+                    }
+                    "send_to" => {
+                        if !self.check_args_n(args, 4, "net.send_to", span) {
+                            return self.error_expr(span);
+                        }
+                        let s = self.arg(&args[0], i64t, "socket");
+                        let h = self.arg(&args[1], bytes, "host");
+                        let p = self.arg(&args[2], u16t, "port");
+                        let d = self.arg(&args[3], bytes, "data");
+                        let r = self.tys.err_union(None, void);
+                        self.builtin(Builtin::NetSendTo, vec![s, h, p, d], vec![], r, span)
+                    }
+                    "last_peer" => {
+                        if !self.check_args_n(args, 0, "net.last_peer", span) {
+                            return self.error_expr(span);
+                        }
+                        self.add_effect(Effects::ALLOCATES, span, "the address is copied into a String");
+                        self.builtin(Builtin::NetLastPeer, vec![], vec![], string, span)
+                    }
+                    _ => {
+                        self.error(
+                            span,
+                            format!("`net` has no function `{}`; available: connect, listen, accept, send, recv, close, peer, local, resolve, udp_bind, send_to, recv_from, last_peer", name),
+                        );
+                        self.error_expr(span)
+                    }
+                }
+            }
             "time" => match name {
                 "now" => {
                     if !self.check_args_n(args, 0, "time.now", span) {

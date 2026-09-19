@@ -33,23 +33,35 @@ pub struct Reader {
     pos: usize
     eof: bool
     owns: bool
+    socket: bool
 }
 
 impl Reader {
     /// Open a file for reading.
     pub fn open(path: []u8) -> !Reader {
         let h = try io.open(path, "r")
-        return Reader{ .handle = h, .buf = String.new(), .pos = 0, .eof = false, .owns = true }
+        return Reader{ .handle = h, .buf = String.new(), .pos = 0, .eof = false, .owns = true, .socket = false }
     }
 
     /// Standard input.
     pub fn stdin() -> Reader {
-        return Reader{ .handle = STDIN, .buf = String.new(), .pos = 0, .eof = false, .owns = false }
+        return Reader{ .handle = STDIN, .buf = String.new(), .pos = 0, .eof = false, .owns = false, .socket = false }
     }
 
     /// Wrap a handle from `io.open`; `close` will not close it.
     pub fn from_handle(handle: i64) -> Reader {
-        return Reader{ .handle = handle, .buf = String.new(), .pos = 0, .eof = false, .owns = false }
+        return Reader{ .handle = handle, .buf = String.new(), .pos = 0, .eof = false, .owns = false, .socket = false }
+    }
+
+    /// Wrap a connected socket from `net.connect` or `net.accept`; `close`
+    /// will not close it.
+    pub fn from_socket(sock: i64) -> Reader {
+        return Reader{ .handle = sock, .buf = String.new(), .pos = 0, .eof = false, .owns = false, .socket = true }
+    }
+
+    fn pull(self: *mut Self, n: usize) -> !String {
+        if (self.socket) return net.recv(self.handle, n, 0)
+        return io.read(self.handle, n)
     }
 
     // Drop consumed bytes and pull in the next chunk; false at end of input.
@@ -60,7 +72,7 @@ impl Reader {
             self.buf = rest
             self.pos = 0
         }
-        let chunk = try io.read(self.handle, CHUNK)
+        let chunk = try self.pull(CHUNK)
         if (chunk.len == 0) {
             self.eof = true
             return false
@@ -110,8 +122,8 @@ impl Reader {
     pub fn read_all(self: *mut Self) -> !String {
         var out = String.from(self.buf[self.pos..self.buf.len])
         self.pos = self.buf.len
-        while (true) {
-            let chunk = try io.read(self.handle, CHUNK)
+        while (!self.eof) {
+            let chunk = try self.pull(CHUNK)
             if (chunk.len == 0) break
             out.append(chunk)
         }
@@ -134,32 +146,38 @@ pub struct Writer {
     handle: i64
     buf: String
     owns: bool
+    socket: bool
 }
 
 impl Writer {
     /// Create or replace a file.
     pub fn open(path: []u8) -> !Writer {
         let h = try io.open(path, "w")
-        return Writer{ .handle = h, .buf = String.new(), .owns = true }
+        return Writer{ .handle = h, .buf = String.new(), .owns = true, .socket = false }
     }
 
     /// Open a file for appending.
     pub fn append(path: []u8) -> !Writer {
         let h = try io.open(path, "a")
-        return Writer{ .handle = h, .buf = String.new(), .owns = true }
+        return Writer{ .handle = h, .buf = String.new(), .owns = true, .socket = false }
     }
 
     pub fn stdout() -> Writer {
-        return Writer{ .handle = STDOUT, .buf = String.new(), .owns = false }
+        return Writer{ .handle = STDOUT, .buf = String.new(), .owns = false, .socket = false }
     }
 
     pub fn stderr() -> Writer {
-        return Writer{ .handle = STDERR, .buf = String.new(), .owns = false }
+        return Writer{ .handle = STDERR, .buf = String.new(), .owns = false, .socket = false }
     }
 
     /// Wrap a handle from `io.open`; `close` will not close it.
     pub fn from_handle(handle: i64) -> Writer {
-        return Writer{ .handle = handle, .buf = String.new(), .owns = false }
+        return Writer{ .handle = handle, .buf = String.new(), .owns = false, .socket = false }
+    }
+
+    /// Wrap a connected socket; `close` will not close it.
+    pub fn from_socket(sock: i64) -> Writer {
+        return Writer{ .handle = sock, .buf = String.new(), .owns = false, .socket = true }
     }
 
     pub fn write(self: *mut Self, data: []u8) -> !void {
@@ -175,10 +193,11 @@ impl Writer {
     /// Hand buffered output to the handle.
     pub fn flush(self: *mut Self) -> !void {
         if (self.buf.len > 0) {
-            try io.write(self.handle, self.buf)
+            if (self.socket) try net.send(self.handle, self.buf)
+            else try io.write(self.handle, self.buf)
             self.buf.clear()
         }
-        return io.flush(self.handle)
+        if (!self.socket) return io.flush(self.handle)
     }
 
     /// Flush, then release the file (the standard streams stay open).

@@ -18,6 +18,7 @@ pub const MODULES: &[(&str, &str)] = &[
     ("text", include_str!("../std/text.nx")),
     ("testing", include_str!("../std/testing.nx")),
     ("stream", include_str!("../std/stream.nx")),
+    ("net", include_str!("../std/net.nx")),
 ];
 
 pub fn source(name: &str) -> Option<&'static str> {

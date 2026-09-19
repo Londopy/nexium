@@ -682,6 +682,9 @@ fn compile_c(opts: &Opts, c_path: &Path, out: &Path, kind: &str) -> Result<(), (
     cmd.arg(c_path);
     cmd.arg("-o");
     cmd.arg(out);
+    if is_windows_target(&opts.target) {
+        cmd.arg("-lws2_32");
+    }
     if !is_windows_target(&opts.target) {
         // libm is part of libSystem on macOS; a separate -lm there makes zig skip
         // its implicit libc link on machines without an SDK. Ask for libc explicitly.

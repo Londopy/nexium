@@ -17,6 +17,7 @@ by `scripts/std_docs.py` from the doc comments.
 | [`std.fs`](#stdfs) | files, directories and paths, written in Nexium. |
 | [`std.json`](#stdjson) | a JSON parser and serializer, written in Nexium. |
 | [`std.lists`](#stdlists) | generic helpers over slices and Lists, written in Nexium. |
+| [`std.net`](#stdnet) | TCP and UDP with addresses, written in Nexium over the `net.*` |
 | [`std.num`](#stdnum) | integer utilities, written in Nexium. |
 | [`std.regex`](#stdregex) | regular expressions without backtracking, written in Nexium. |
 | [`std.stream`](#stdstream) | buffered readers and writers over files and the standard |
@@ -154,6 +155,43 @@ std.lists: generic helpers over slices and Lists, written in Nexium. `import std
 | `repeat(comptime T: type, xs: []T, times: usize) -> List(T)` | Elements repeated `times` times in sequence. |
 | `starts_with(comptime T: type where T: Eq, xs: []T, prefix: []T) -> bool` | True when `xs` starts with `prefix`. |
 
+## std.net
+
+std.net: TCP and UDP with addresses, written in Nexium over the `net.*` primitives. `import std.net` then: var c = try net.TcpStream.connect("example.com", 80) try c.send("GET / HTTP/1.0\r\nHost: example.com\r\n\r\n") let reply = try c.recv_all()                 // until the peer closes c.close() var l = try net.TcpListener.bind("127.0.0.1", 8080) while (true) { var conn = try l.accept() var r = conn.reader()                     // a std.stream Reader let line = try r.read_line() try conn.send("ok\n") conn.close() } var u = try net.UdpSocket.bind("0.0.0.0", 0) try u.send_to("127.0.0.1", 9000, "ping") let d = try u.recv_from(1500)                 // d.data, d.from Every call blocks; timeouts are per socket (`set_timeout`, milliseconds, 0 waits forever) and expire with `error.Timeout`. `recv` returns an empty String when the peer has closed. Errors: `NotFound` (name lookup), `ConnectionRefused`, `Timeout`, `IoError`.
+
+Types: `Addr`, `TcpStream`, `TcpListener`, `Datagram`, `UdpSocket`
+
+| function | what it does |
+| --- | --- |
+| `parse_addr(s: []u8) -> ?Addr` | Split `host:port` or `[v6]:port`; null when there is no valid port. |
+| `port_of(s: []u8) -> ?u16` | The port at the end of `host:port`, or null. |
+| `resolve(host: []u8) -> !List(String)` | The addresses a name resolves to, numeric, in resolver order. |
+| `(method) connect(host: []u8, port: u16) -> !TcpStream` | Connect with a 10 second timeout. |
+| `(method) connect_timeout(host: []u8, port: u16, timeout_ms: i64) -> !TcpStream` | Connect; `timeout_ms` 0 waits as long as the OS does. |
+| `(method) from_socket(sock: i64) -> TcpStream` | Wrap a socket from `net.accept` or `net.connect`. |
+| `(method) set_timeout(self: *mut Self, ms: i64)` | The receive timeout in milliseconds; 0 waits forever. |
+| `(method) send(self: *Self, data: []u8) -> !void` |  |
+| `(method) recv(self: *Self, n: usize) -> !String` | Up to `n` bytes; empty when the peer has closed. |
+| `(method) recv_all(self: *Self) -> !String` | Everything until the peer closes. |
+| `(method) peer(self: *Self) -> !String` | The remote address as `ip:port`. |
+| `(method) local(self: *Self) -> !String` | The local address as `ip:port`. |
+| `(method) reader(self: *Self) -> stream.Reader` | A buffered reader over the socket (lines, chunks); does not own it. |
+| `(method) writer(self: *Self) -> stream.Writer` | A buffered writer over the socket; flush it before waiting for a reply. |
+| `(method) close(self: *mut Self)` |  |
+| `(method) bind(host: []u8, port: u16) -> !TcpListener` | Bind and listen; port 0 picks a free port (see `local`). |
+| `(method) local(self: *Self) -> !String` | The bound address as `ip:port`. |
+| `(method) port(self: *Self) -> !u16` | The bound port. |
+| `(method) accept(self: *Self) -> !TcpStream` | Wait for a connection. |
+| `(method) accept_timeout(self: *Self, timeout_ms: i64) -> !TcpStream` | Wait up to `timeout_ms` for a connection (`error.Timeout` otherwise). |
+| `(method) close(self: *mut Self)` |  |
+| `(method) bind(host: []u8, port: u16) -> !UdpSocket` | Bind; port 0 picks a free port. |
+| `(method) set_timeout(self: *mut Self, ms: i64)` |  |
+| `(method) local(self: *Self) -> !String` |  |
+| `(method) port(self: *Self) -> !u16` |  |
+| `(method) send_to(self: *Self, host: []u8, port: u16, data: []u8) -> !void` |  |
+| `(method) recv_from(self: *Self, n: usize) -> !Datagram` | One datagram of at most `n` bytes. |
+| `(method) close(self: *mut Self)` |  |
+
 ## std.num
 
 std.num: integer utilities, written in Nexium. `import std.num` then `num.gcd(12, 18)`, `num.clamp(x, 0, 10)`, ... The `math` namespace (sqrt, sin, pow on floats, ...) is a compiler builtin; this module covers what is naturally integer work.
@@ -208,6 +246,7 @@ Types: `Reader`, `Writer`
 | `(method) open(path: []u8) -> !Reader` | Open a file for reading. |
 | `(method) stdin() -> Reader` | Standard input. |
 | `(method) from_handle(handle: i64) -> Reader` | Wrap a handle from `io.open`; `close` will not close it. |
+| `(method) from_socket(sock: i64) -> Reader` | will not close it. |
 | `(method) read_line(self: *mut Self) -> !?String` | The next line without its `\n` (or `\r\n`); null at end of input. |
 | `(method) read(self: *mut Self, n: usize) -> !String` | Up to `n` bytes; empty at end of input. |
 | `(method) read_all(self: *mut Self) -> !String` | Everything that is left. |
@@ -217,6 +256,7 @@ Types: `Reader`, `Writer`
 | `(method) stdout() -> Writer` |  |
 | `(method) stderr() -> Writer` |  |
 | `(method) from_handle(handle: i64) -> Writer` | Wrap a handle from `io.open`; `close` will not close it. |
+| `(method) from_socket(sock: i64) -> Writer` | Wrap a connected socket; `close` will not close it. |
 | `(method) write(self: *mut Self, data: []u8) -> !void` |  |
 | `(method) write_line(self: *mut Self, data: []u8) -> !void` |  |
 | `(method) flush(self: *mut Self) -> !void` | Hand buffered output to the handle. |

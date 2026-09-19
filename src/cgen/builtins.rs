@@ -3,6 +3,11 @@
 use super::*;
 
 impl Gen {
+    /// The error id for a socket result code `_r` (1 not found, 2 refused, 3 timeout, other io).
+    fn net_errs(&self) -> String {
+        format!("(_r == 1 ? {}u : _r == 2 ? {}u : _r == 3 ? {}u : {}u)", self.err_id("NotFound"), self.err_id("ConnectionRefused"), self.err_id("Timeout"), self.err_id("IoError"))
+    }
+
     fn err_id(&self, name: &str) -> usize {
         self.p.error_names.iter().position(|n| n == name).map(|i| i + 1).unwrap_or(0)
     }
@@ -978,6 +983,66 @@ impl Gen {
                 let f = if op == Builtin::FileFlush { "nx_file_flush" } else { "nx_file_close" };
                 format!("(({}){{ .err = {}({}) ? 0 : {}u }})", cn, f, h, io)
             }
+            Builtin::NetConnect | Builtin::NetListen | Builtin::NetAccept | Builtin::NetUdpBind => {
+                let a: Vec<String> = args.iter().map(|x| self.simple(x)).collect();
+                let cn = self.cty(e.ty);
+                let t = self.tmp();
+                let f = match op {
+                    Builtin::NetConnect => "nx_tcp_connect",
+                    Builtin::NetListen => "nx_tcp_listen",
+                    Builtin::NetAccept => "nx_tcp_accept",
+                    _ => "nx_udp_bind",
+                };
+                let errs = self.net_errs();
+                self.line(format!("{} {}; {{ int64_t _h = 0; int32_t _r = {}({}, &_h); if (_r == 0) {{ {}.err = 0; {}.val = _h; }} else {}.err = {}; }}", cn, t, f, a.join(", "), t, t, t, errs));
+                t
+            }
+            Builtin::NetSend | Builtin::NetClose | Builtin::NetSendTo => {
+                let a: Vec<String> = args.iter().map(|x| self.simple(x)).collect();
+                let cn = self.cty(e.ty);
+                let t = self.tmp();
+                let f = match op {
+                    Builtin::NetSend => "nx_net_send",
+                    Builtin::NetClose => "nx_net_close",
+                    _ => "nx_udp_send_to",
+                };
+                let errs = self.net_errs();
+                self.line(format!("{} {}; {{ int32_t _r = {}({}); {}.err = _r == 0 ? 0 : {}; }}", cn, t, f, a.join(", "), t, errs));
+                t
+            }
+            Builtin::NetRecv | Builtin::NetRecvFrom => {
+                let a: Vec<String> = args.iter().map(|x| self.simple(x)).collect();
+                let cn = self.cty(e.ty);
+                let t = self.tmp();
+                let f = if op == Builtin::NetRecv { "nx_net_recv" } else { "nx_udp_recv_from" };
+                let errs = self.net_errs();
+                self.line(format!("{} {}; {{ nx_string _s; int32_t _r = {}(c, {}, &_s); if (_r == 0) {{ {}.err = 0; {}.val = _s; }} else {}.err = {}; }}", cn, t, f, a.join(", "), t, t, t, errs));
+                t
+            }
+            Builtin::NetPeer | Builtin::NetLocal => {
+                let s = self.simple(&args[0]);
+                let cn = self.cty(e.ty);
+                let t = self.tmp();
+                let local = if op == Builtin::NetLocal { "true" } else { "false" };
+                let errs = self.net_errs();
+                self.line(format!(
+                    "{} {}; {{ nx_string _s; int32_t _r = nx_net_name(c, {}, {}, &_s); if (_r == 0) {{ {}.err = 0; {}.val = _s; }} else {}.err = {}; }}",
+                    cn, t, s, local, t, t, t, errs
+                ));
+                t
+            }
+            Builtin::NetResolve => {
+                let h = self.simple(&args[0]);
+                let cn = self.cty(e.ty);
+                let t = self.tmp();
+                let errs = self.net_errs();
+                self.line(format!(
+                    "{} {}; {{ nx_rawlist _l; int32_t _r = nx_net_resolve(c, {}, &_l); if (_r == 0) {{ {}.err = 0; memcpy(&{}.val, &_l, sizeof _l); }} else {}.err = {}; }}",
+                    cn, t, h, t, t, t, errs
+                ));
+                t
+            }
+            Builtin::NetLastPeer => "nx_net_last_peer(c)".into(),
             Builtin::Environ => {
                 let cn = self.cty(e.ty);
                 let t = self.tmp();

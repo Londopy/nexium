@@ -740,7 +740,10 @@ impl<'a> Checker<'a> {
                     let tt = self.tys.type_ty();
                     return self.mk(TExprKind::TypeVal(t), tt, span);
                 }
-                if matches!(name, "List" | "Map" | "math" | "io" | "os" | "time" | "random" | "context" | "process" | "utf8" | "ascii" | "mem" | "slice" | "fmt" | "test" | "alloc" | "Ordering") {
+                if matches!(
+                    name,
+                    "List" | "Map" | "math" | "io" | "os" | "time" | "random" | "context" | "process" | "utf8" | "ascii" | "mem" | "slice" | "fmt" | "test" | "alloc" | "Ordering" | "net"
+                ) {
                     let t = self.tys.intern(TyKind::Namespace(name.to_string()));
                     return self.mk(TExprKind::Unit, t, span);
                 }

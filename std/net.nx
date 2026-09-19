@@ -1,0 +1,302 @@
+// std.net: TCP and UDP with addresses, written in Nexium over the `net.*`
+// primitives.
+//
+// `import std.net` then:
+//
+//     var c = try net.TcpStream.connect("example.com", 80)
+//     try c.send("GET / HTTP/1.0\r\nHost: example.com\r\n\r\n")
+//     let reply = try c.recv_all()                 // until the peer closes
+//     c.close()
+//
+//     var l = try net.TcpListener.bind("127.0.0.1", 8080)
+//     while (true) {
+//         var conn = try l.accept()
+//         var r = conn.reader()                     // a std.stream Reader
+//         let line = try r.read_line()
+//         try conn.send("ok\n")
+//         conn.close()
+//     }
+//
+//     var u = try net.UdpSocket.bind("0.0.0.0", 0)
+//     try u.send_to("127.0.0.1", 9000, "ping")
+//     let d = try u.recv_from(1500)                 // d.data, d.from
+//
+// Every call blocks; timeouts are per socket (`set_timeout`, milliseconds,
+// 0 waits forever) and expire with `error.Timeout`. `recv` returns an empty
+// String when the peer has closed. Errors: `NotFound` (name lookup),
+// `ConnectionRefused`, `Timeout`, `IoError`.
+
+import std.stream
+
+/// A host and a port.
+pub struct Addr {
+    host: String
+    port: u16
+}
+
+/// Split `host:port` or `[v6]:port`; null when there is no valid port.
+pub fn parse_addr(s: []u8) -> ?Addr {
+    var i = s.len
+    while (i > 0 and s[i - 1] != ':') { i -= 1 }
+    if (i == 0 or i == s.len) return null
+    let port = s[i..s.len].parse_int(u16) catch return null
+    var host = s[0..i - 1]
+    if (host.len >= 2 and host[0] == '[' and host[host.len - 1] == ']') host = host[1..host.len - 1]
+    return Addr{ .host = String.from(host), .port = port }
+}
+
+/// The port at the end of `host:port`, or null.
+pub fn port_of(s: []u8) -> ?u16 {
+    let a = parse_addr(s) orelse return null
+    return a.port
+}
+
+/// The addresses a name resolves to, numeric, in resolver order.
+pub fn resolve(host: []u8) -> !List(String){
+    return net.resolve(host)
+}
+
+// ------------------------------------------------------------------ TCP
+
+/// A connected TCP socket.
+pub struct TcpStream {
+    sock: i64
+    timeout_ms: i64
+    open: bool
+}
+
+impl TcpStream {
+    /// Connect with a 10 second timeout.
+    pub fn connect(host: []u8, port: u16) -> !TcpStream {
+        return TcpStream.connect_timeout(host, port, 10000)
+    }
+
+    /// Connect; `timeout_ms` 0 waits as long as the OS does.
+    pub fn connect_timeout(host: []u8, port: u16, timeout_ms: i64) -> !TcpStream {
+        let s = try net.connect(host, port, timeout_ms)
+        return TcpStream{ .sock = s, .timeout_ms = timeout_ms, .open = true }
+    }
+
+    /// Wrap a socket from `net.accept` or `net.connect`.
+    pub fn from_socket(sock: i64) -> TcpStream {
+        return TcpStream{ .sock = sock, .timeout_ms = 0, .open = true }
+    }
+
+    /// The receive timeout in milliseconds; 0 waits forever.
+    pub fn set_timeout(self: *mut Self, ms: i64) {
+        self.timeout_ms = ms
+    }
+
+    pub fn send(self: *Self, data: []u8) -> !void {
+        return net.send(self.sock, data)
+    }
+
+    /// Up to `n` bytes; empty when the peer has closed.
+    pub fn recv(self: *Self, n: usize) -> !String {
+        return net.recv(self.sock, n, self.timeout_ms)
+    }
+
+    /// Everything until the peer closes.
+    pub fn recv_all(self: *Self) -> !String {
+        var out = String.new()
+        while (true) {
+            let chunk = try self.recv(65536)
+            if (chunk.len == 0) break
+            out.append(chunk)
+        }
+        return out
+    }
+
+    /// The remote address as `ip:port`.
+    pub fn peer(self: *Self) -> !String {
+        return net.peer(self.sock)
+    }
+
+    /// The local address as `ip:port`.
+    pub fn local(self: *Self) -> !String {
+        return net.local(self.sock)
+    }
+
+    /// A buffered reader over the socket (lines, chunks); does not own it.
+    pub fn reader(self: *Self) -> stream.Reader{
+        return stream.Reader.from_socket(self.sock)
+    }
+
+    /// A buffered writer over the socket; flush it before waiting for a reply.
+    pub fn writer(self: *Self) -> stream.Writer{
+        return stream.Writer.from_socket(self.sock)
+    }
+
+    pub fn close(self: *mut Self) {
+        if (self.open) {
+            net.close(self.sock) catch { }
+            self.open = false
+        }
+    }
+}
+
+/// A listening TCP socket.
+pub struct TcpListener {
+    sock: i64
+    open: bool
+}
+
+impl TcpListener {
+    /// Bind and listen; port 0 picks a free port (see `local`).
+    pub fn bind(host: []u8, port: u16) -> !TcpListener {
+        let s = try net.listen(host, port)
+        return TcpListener{ .sock = s, .open = true }
+    }
+
+    /// The bound address as `ip:port`.
+    pub fn local(self: *Self) -> !String {
+        return net.local(self.sock)
+    }
+
+    /// The bound port.
+    pub fn port(self: *Self) -> !u16 {
+        let a = try net.local(self.sock)
+        return port_of(a) orelse return error.IoError
+    }
+
+    /// Wait for a connection.
+    pub fn accept(self: *Self) -> !TcpStream {
+        return self.accept_timeout(0)
+    }
+
+    /// Wait up to `timeout_ms` for a connection (`error.Timeout` otherwise).
+    pub fn accept_timeout(self: *Self, timeout_ms: i64) -> !TcpStream {
+        let s = try net.accept(self.sock, timeout_ms)
+        return TcpStream{ .sock = s, .timeout_ms = 0, .open = true }
+    }
+
+    pub fn close(self: *mut Self) {
+        if (self.open) {
+            net.close(self.sock) catch { }
+            self.open = false
+        }
+    }
+}
+
+// ------------------------------------------------------------------ UDP
+
+/// A received datagram and who sent it (`ip:port`).
+pub struct Datagram {
+    data: String
+    from: String
+}
+
+/// A bound UDP socket.
+pub struct UdpSocket {
+    sock: i64
+    timeout_ms: i64
+    open: bool
+}
+
+impl UdpSocket {
+    /// Bind; port 0 picks a free port.
+    pub fn bind(host: []u8, port: u16) -> !UdpSocket {
+        let s = try net.udp_bind(host, port)
+        return UdpSocket{ .sock = s, .timeout_ms = 0, .open = true }
+    }
+
+    pub fn set_timeout(self: *mut Self, ms: i64) {
+        self.timeout_ms = ms
+    }
+
+    pub fn local(self: *Self) -> !String {
+        return net.local(self.sock)
+    }
+
+    pub fn port(self: *Self) -> !u16 {
+        let a = try net.local(self.sock)
+        return port_of(a) orelse return error.IoError
+    }
+
+    pub fn send_to(self: *Self, host: []u8, port: u16, data: []u8) -> !void {
+        return net.send_to(self.sock, host, port, data)
+    }
+
+    /// One datagram of at most `n` bytes.
+    pub fn recv_from(self: *Self, n: usize) -> !Datagram {
+        let data = try net.recv_from(self.sock, n, self.timeout_ms)
+        return Datagram{ .data = data, .from = net.last_peer() }
+    }
+
+    pub fn close(self: *mut Self) {
+        if (self.open) {
+            net.close(self.sock) catch { }
+            self.open = false
+        }
+    }
+}
+
+// ------------------------------------------------------------------ tests
+
+test "addresses" {
+    let a = parse_addr("example.com:8080").?
+    expect_eq(a.host, "example.com")
+    expect_eq(a.port, 8080)
+    let v6 = parse_addr("[::1]:443").?
+    expect_eq(v6.host, "::1")
+    expect_eq(v6.port, 443)
+    expect(parse_addr("nope") == null)
+    expect(parse_addr("host:") == null)
+    expect(parse_addr("host:99999") == null)
+    expect_eq(port_of("127.0.0.1:5").?, 5)
+}
+
+test "tcp over loopback" {
+    var l = try TcpListener.bind("127.0.0.1", 0)
+    let port = try l.port()
+    expect(port > 0)
+    var c = try TcpStream.connect_timeout("127.0.0.1", port, 5000)
+    var s = try l.accept_timeout(5000)
+    s.set_timeout(5000)
+    c.set_timeout(5000)
+    try c.send("hello\nworld\n")
+    var r = s.reader()
+    expect_eq((try r.read_line()).?, "hello")
+    expect_eq((try r.read_line()).?, "world")
+    var w = s.writer()
+    try w.write("pong")
+    try w.flush()
+    expect_eq(try c.recv(64), "pong")
+    expect((try c.peer()).len > 0)
+    c.close()
+    expect_eq(try s.recv(64), "")
+    s.close()
+    var timed_out = false
+    _ = l.accept_timeout(100) catch |e| {
+        timed_out = e == error.Timeout
+        TcpStream.from_socket(-1)
+    }
+    expect(timed_out)
+    l.close()
+}
+
+test "udp to self" {
+    var u = try UdpSocket.bind("127.0.0.1", 0)
+    u.set_timeout(5000)
+    let port = try u.port()
+    try u.send_to("127.0.0.1", port, "datagram")
+    let d = try u.recv_from(64)
+    expect_eq(d.data, "datagram")
+    expect(port_of(d.from).?== port)
+    u.close()
+}
+
+test "refused and unknown" {
+    var refused = false
+    _ = TcpStream.connect_timeout("127.0.0.1", 1, 8000) catch |e| {
+        refused = e == error.ConnectionRefused
+        TcpStream.from_socket(-1)
+    }
+    expect(refused)
+    var unknown = false
+    _ = resolve("no-such-host.invalid") catch |e| {
+        unknown = e == error.NotFound
+        List(String).new()
+    }
+    expect(unknown)
+}

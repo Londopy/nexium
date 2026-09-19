@@ -452,7 +452,7 @@ impl<'a> Checker<'a> {
             }
         }
         // reserve a few well-known errors so ids are stable
-        for e in ["OutOfMemory", "Panic", "InvalidRecord", "Truncated", "Overflow", "InvalidUtf8", "NotFound", "IoError", "InvalidInput", "BufferTooSmall"] {
+        for e in ["OutOfMemory", "Panic", "InvalidRecord", "Truncated", "Overflow", "InvalidUtf8", "NotFound", "IoError", "InvalidInput", "BufferTooSmall", "Timeout", "ConnectionRefused"] {
             self.error_id(e);
         }
     }
@@ -700,7 +700,8 @@ impl<'a> Checker<'a> {
                     None => {
                         // std modules are builtin namespaces
                         let last = im.path.last().unwrap().clone();
-                        if im.path[0] == "std" || matches!(last.as_str(), "math" | "io" | "os" | "time" | "random" | "fmt" | "utf8" | "ascii" | "mem" | "slice" | "process" | "test" | "alloc") {
+                        if im.path[0] == "std" || matches!(last.as_str(), "math" | "io" | "os" | "time" | "random" | "fmt" | "utf8" | "ascii" | "mem" | "slice" | "process" | "test" | "alloc" | "net")
+                        {
                             // nothing to do; namespaces resolve by name
                         } else {
                             self.error(im.span, format!("cannot find module `{}`; expected a file `{}.nx` next to this one", target, target.replace('.', "/")));

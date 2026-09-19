@@ -8,6 +8,17 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
 
 ## [Unreleased]
 
+### Added
+
+- Sockets in the runtime: `net.connect`, `listen`, `accept`, `send`, `recv`,
+  `close`, `peer`, `local`, `resolve`, `udp_bind`, `send_to`, `recv_from`,
+  `last_peer`; blocking, with per-call timeouts, on Winsock and BSD sockets.
+  New errors `Timeout` and `ConnectionRefused`.
+- `std.net`: `TcpStream` (connect with timeout, send, recv, recv_all, peer,
+  buffered `reader()`/`writer()`), `TcpListener` (bind, accept with
+  timeout, port), `UdpSocket` (bind, send_to, recv_from), `parse_addr`,
+  `port_of`, `resolve`. `std.stream` readers and writers work over sockets.
+
 ## [0.3.0] - 2026-09-19
 
 ### Added

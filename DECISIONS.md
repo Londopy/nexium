@@ -408,6 +408,18 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     explicit `close` (or `defer w.flush()`) is the honest rule, stated in
     the module's doc comment.
 
+## Talking to the world (phase 2)
+
+80. **Sockets are blocking, with a timeout on every wait.** The runtime
+    offers plain blocking TCP and UDP over Winsock and BSD sockets, and each
+    call that can wait takes a timeout in milliseconds (0 = forever) that
+    expires as `error.Timeout`. No event loop, no async: a tool or a small
+    service is simplest as straight-line code, and threads (phase 2, later)
+    cover concurrency when it is needed. A socket is an integer handle like
+    a file, so `std.stream` buffers both with one Reader. Windows takes two
+    seconds to refuse a loopback connection, which is why the tests give
+    refusals a generous timeout.
+
 ## Compiler selection
 
 60. **Native macOS builds use the system compiler.** zig 0.14.1 cannot read

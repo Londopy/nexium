@@ -23,6 +23,11 @@
 #include <time.h>
 
 #if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
 #include <io.h>
 #include <fcntl.h>
@@ -33,6 +38,12 @@
 #include <spawn.h>
 #include <sys/wait.h>
 #include <dirent.h>
+#include <sys/socket.h>
+#include <sys/select.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <arpa/inet.h>
+#include <netdb.h>
 extern char** environ;
 extern char** environ;
 #endif
@@ -1087,6 +1098,269 @@ NX_INLINE void nx_environ(nx_ctx* c, nx_rawlist* out) {
     for (char** e = environ; e && *e; e++) nx_fs_push_name(c, &l, *e);
 #endif
     *out = l;
+}
+
+/* ------------------------------------------------------------------ sockets */
+/* Handles are the OS socket numbers. Result codes: 0 ok, 1 not found (name
+   lookup), 2 connection refused, 3 timed out, 4 any other failure. */
+#if defined(_WIN32)
+typedef SOCKET nx_sock;
+#define NX_BAD_SOCK INVALID_SOCKET
+#define nx_closesock closesocket
+NX_INLINE void nx_net_init(void) {
+    static int done = 0;
+    if (!done) { WSADATA w; WSAStartup(MAKEWORD(2, 2), &w); done = 1; }
+}
+NX_INLINE int32_t nx_net_code(void) {
+    int e = WSAGetLastError();
+    if (e == WSAECONNREFUSED) return 2;
+    if (e == WSAETIMEDOUT || e == WSAEWOULDBLOCK) return 3;
+    return 4;
+}
+NX_INLINE void nx_net_blocking(nx_sock s, bool on) { u_long mode = on ? 0 : 1; ioctlsocket(s, FIONBIO, &mode); }
+#else
+typedef int nx_sock;
+#define NX_BAD_SOCK (-1)
+#define nx_closesock close
+NX_INLINE void nx_net_init(void) {}
+NX_INLINE int32_t nx_net_code(void) {
+    if (errno == ECONNREFUSED) return 2;
+    if (errno == ETIMEDOUT || errno == EAGAIN || errno == EWOULDBLOCK) return 3;
+    return 4;
+}
+NX_INLINE void nx_net_blocking(nx_sock s, bool on) {
+    int fl = fcntl(s, F_GETFL, 0);
+    if (fl >= 0) fcntl(s, F_SETFL, on ? (fl & ~O_NONBLOCK) : (fl | O_NONBLOCK));
+}
+#endif
+static char nx_net_peer_buf[128];
+
+NX_INLINE struct addrinfo* nx_net_lookup(nx_sl_u8 host, uint16_t port, int socktype, bool passive) {
+    char h[256], p[8];
+    if (host.len >= sizeof h) return NULL;
+    memcpy(h, host.ptr, host.len); h[host.len] = 0;
+    snprintf(p, sizeof p, "%u", (unsigned)port);
+    struct addrinfo hints;
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = socktype;
+    if (passive) hints.ai_flags = AI_PASSIVE;
+    struct addrinfo* res = NULL;
+    nx_net_init();
+    if (getaddrinfo(host.len ? h : NULL, p, &hints, &res) != 0) return NULL;
+    return res;
+}
+NX_INLINE void nx_net_set_timeout(nx_sock s, int64_t ms) {
+#if defined(_WIN32)
+    DWORD t = (DWORD)(ms < 0 ? 0 : ms);
+    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&t, sizeof t);
+#else
+    struct timeval tv;
+    tv.tv_sec = (time_t)(ms < 0 ? 0 : ms / 1000);
+    tv.tv_usec = (suseconds_t)(ms < 0 ? 0 : (ms % 1000) * 1000);
+    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv);
+#endif
+}
+/* wait until the socket is readable (or writable); false on timeout. For a
+   pending connect the exception set is watched too: Winsock reports a
+   refused connection there rather than as writable. */
+NX_INLINE bool nx_net_wait(nx_sock s, bool write, int64_t ms) {
+    fd_set fds, exc;
+    FD_ZERO(&fds);
+    FD_SET(s, &fds);
+    FD_ZERO(&exc);
+    FD_SET(s, &exc);
+    struct timeval tv;
+    tv.tv_sec = (long)(ms / 1000);
+    tv.tv_usec = (long)((ms % 1000) * 1000);
+    int r = select((int)(s + 1), write ? NULL : &fds, write ? &fds : NULL, write ? &exc : NULL, ms > 0 ? &tv : NULL);
+    return r > 0;
+}
+NX_INLINE int32_t nx_tcp_connect(nx_sl_u8 host, uint16_t port, int64_t timeout_ms, int64_t* out) {
+    struct addrinfo* res = nx_net_lookup(host, port, SOCK_STREAM, false);
+    if (!res) return 1;
+    int32_t code = 4;
+    for (struct addrinfo* ai = res; ai; ai = ai->ai_next) {
+        nx_sock s = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+        if (s == NX_BAD_SOCK) continue;
+        bool ok;
+        if (timeout_ms > 0) {
+            nx_net_blocking(s, false);
+            int r = connect(s, ai->ai_addr, (int)ai->ai_addrlen);
+            ok = r == 0;
+            if (!ok) {
+                if (nx_net_wait(s, true, timeout_ms)) {
+                    int err = 0; socklen_t len = sizeof err;
+                    getsockopt(s, SOL_SOCKET, SO_ERROR, (char*)&err, &len);
+#if defined(_WIN32)
+                    if (err == 0) { fd_set ex; FD_ZERO(&ex); FD_SET(s, &ex); struct timeval z = {0, 0}; if (select((int)(s + 1), NULL, NULL, &ex, &z) > 0) err = WSAECONNREFUSED; }
+#endif
+                    ok = err == 0;
+                    if (!ok) {
+#if defined(_WIN32)
+                        WSASetLastError(err);
+#else
+                        errno = err;
+#endif
+                        code = nx_net_code();
+                    }
+                } else {
+                    code = 3;
+                }
+            }
+            nx_net_blocking(s, true);
+        } else {
+            ok = connect(s, ai->ai_addr, (int)ai->ai_addrlen) == 0;
+            if (!ok) code = nx_net_code();
+        }
+        if (ok) {
+            int one = 1;
+            setsockopt(s, IPPROTO_TCP, TCP_NODELAY, (const char*)&one, sizeof one);
+            *out = (int64_t)s;
+            freeaddrinfo(res);
+            return 0;
+        }
+        nx_closesock(s);
+    }
+    freeaddrinfo(res);
+    return code;
+}
+NX_INLINE int32_t nx_tcp_listen(nx_sl_u8 host, uint16_t port, int64_t* out) {
+    struct addrinfo* res = nx_net_lookup(host, port, SOCK_STREAM, true);
+    if (!res) return 1;
+    int32_t code = 4;
+    for (struct addrinfo* ai = res; ai; ai = ai->ai_next) {
+        nx_sock s = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+        if (s == NX_BAD_SOCK) continue;
+        int one = 1;
+        setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (const char*)&one, sizeof one);
+        if (bind(s, ai->ai_addr, (int)ai->ai_addrlen) == 0 && listen(s, 64) == 0) {
+            *out = (int64_t)s;
+            freeaddrinfo(res);
+            return 0;
+        }
+        code = nx_net_code();
+        nx_closesock(s);
+    }
+    freeaddrinfo(res);
+    return code;
+}
+NX_INLINE int32_t nx_tcp_accept(int64_t l, int64_t timeout_ms, int64_t* out) {
+    nx_sock ls = (nx_sock)l;
+    if (timeout_ms > 0 && !nx_net_wait(ls, false, timeout_ms)) return 3;
+    nx_sock s = accept(ls, NULL, NULL);
+    if (s == NX_BAD_SOCK) return nx_net_code();
+    int one = 1;
+    setsockopt(s, IPPROTO_TCP, TCP_NODELAY, (const char*)&one, sizeof one);
+    *out = (int64_t)s;
+    return 0;
+}
+NX_INLINE int32_t nx_net_send(int64_t h, nx_sl_u8 data) {
+    nx_sock s = (nx_sock)h;
+    size_t sent = 0;
+    while (sent < data.len) {
+        int n = (int)send(s, (const char*)data.ptr + sent, (int)(data.len - sent), 0);
+        if (n <= 0) return nx_net_code();
+        sent += (size_t)n;
+    }
+    return 0;
+}
+NX_INLINE int32_t nx_net_recv(nx_ctx* c, int64_t h, size_t n, int64_t timeout_ms, nx_string* out) {
+    nx_sock s = (nx_sock)h;
+    if (timeout_ms > 0 && !nx_net_wait(s, false, timeout_ms)) return 3;
+    nx_string str; str.ptr = NULL; str.len = 0; str.cap = 0; str.ar = c->arena;
+    if (n == 0) { *out = str; return 0; }
+    nx_list_grow(c, (nx_rawlist*)&str, 1, 1, n);
+    int got = (int)recv(s, (char*)str.ptr, (int)n, 0);
+    if (got < 0) return nx_net_code();
+    str.len = (size_t)got;
+    *out = str;
+    return 0;
+}
+NX_INLINE int32_t nx_net_close(int64_t h) {
+    return nx_closesock((nx_sock)h) == 0 ? 0 : 4;
+}
+NX_INLINE void nx_net_format_addr(struct sockaddr* sa, socklen_t len, char* buf, size_t cap) {
+    char host[96], serv[16];
+    if (getnameinfo(sa, len, host, sizeof host, serv, sizeof serv, NI_NUMERICHOST | NI_NUMERICSERV) != 0) { buf[0] = 0; return; }
+    if (sa->sa_family == AF_INET6) snprintf(buf, cap, "[%s]:%s", host, serv);
+    else snprintf(buf, cap, "%s:%s", host, serv);
+}
+NX_INLINE int32_t nx_net_name(nx_ctx* c, int64_t h, bool local, nx_string* out) {
+    struct sockaddr_storage ss;
+    socklen_t len = sizeof ss;
+    int r = local ? getsockname((nx_sock)h, (struct sockaddr*)&ss, &len) : getpeername((nx_sock)h, (struct sockaddr*)&ss, &len);
+    if (r != 0) return 4;
+    char buf[128];
+    nx_net_format_addr((struct sockaddr*)&ss, len, buf, sizeof buf);
+    nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;
+    nx_str_append(c, &s, (const uint8_t*)buf, strlen(buf));
+    *out = s;
+    return 0;
+}
+NX_INLINE int32_t nx_net_resolve(nx_ctx* c, nx_sl_u8 host, nx_rawlist* out) {
+    struct addrinfo* res = nx_net_lookup(host, 0, SOCK_STREAM, false);
+    if (!res) return 1;
+    nx_rawlist l; l.ptr = NULL; l.len = 0; l.cap = 0; l.ar = c->arena;
+    for (struct addrinfo* ai = res; ai; ai = ai->ai_next) {
+        char hostbuf[96];
+        if (getnameinfo(ai->ai_addr, (socklen_t)ai->ai_addrlen, hostbuf, sizeof hostbuf, NULL, 0, NI_NUMERICHOST) == 0) {
+            bool dup = false;
+            for (size_t i = 0; i < l.len; i++) {
+                nx_string* e = &((nx_string*)l.ptr)[i];
+                if (e->len == strlen(hostbuf) && memcmp(e->ptr, hostbuf, e->len) == 0) dup = true;
+            }
+            if (!dup) nx_fs_push_name(c, &l, hostbuf);
+        }
+    }
+    freeaddrinfo(res);
+    *out = l;
+    return 0;
+}
+NX_INLINE int32_t nx_udp_bind(nx_sl_u8 host, uint16_t port, int64_t* out) {
+    struct addrinfo* res = nx_net_lookup(host, port, SOCK_DGRAM, true);
+    if (!res) return 1;
+    int32_t code = 4;
+    for (struct addrinfo* ai = res; ai; ai = ai->ai_next) {
+        nx_sock s = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+        if (s == NX_BAD_SOCK) continue;
+        if (bind(s, ai->ai_addr, (int)ai->ai_addrlen) == 0) {
+            *out = (int64_t)s;
+            freeaddrinfo(res);
+            return 0;
+        }
+        code = nx_net_code();
+        nx_closesock(s);
+    }
+    freeaddrinfo(res);
+    return code;
+}
+NX_INLINE int32_t nx_udp_send_to(int64_t h, nx_sl_u8 host, uint16_t port, nx_sl_u8 data) {
+    struct addrinfo* res = nx_net_lookup(host, port, SOCK_DGRAM, false);
+    if (!res) return 1;
+    int n = (int)sendto((nx_sock)h, (const char*)data.ptr, (int)data.len, 0, res->ai_addr, (int)res->ai_addrlen);
+    freeaddrinfo(res);
+    return n < 0 ? nx_net_code() : 0;
+}
+NX_INLINE int32_t nx_udp_recv_from(nx_ctx* c, int64_t h, size_t n, int64_t timeout_ms, nx_string* out) {
+    nx_sock s = (nx_sock)h;
+    if (timeout_ms > 0 && !nx_net_wait(s, false, timeout_ms)) return 3;
+    nx_string str; str.ptr = NULL; str.len = 0; str.cap = 0; str.ar = c->arena;
+    if (n == 0) n = 1;
+    nx_list_grow(c, (nx_rawlist*)&str, 1, 1, n);
+    struct sockaddr_storage ss;
+    socklen_t len = sizeof ss;
+    int got = (int)recvfrom(s, (char*)str.ptr, (int)n, 0, (struct sockaddr*)&ss, &len);
+    if (got < 0) return nx_net_code();
+    str.len = (size_t)got;
+    nx_net_format_addr((struct sockaddr*)&ss, len, nx_net_peer_buf, sizeof nx_net_peer_buf);
+    *out = str;
+    return 0;
+}
+NX_INLINE nx_string nx_net_last_peer(nx_ctx* c) {
+    nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;
+    nx_str_append(c, &s, (const uint8_t*)nx_net_peer_buf, strlen(nx_net_peer_buf));
+    return s;
 }
 
 NX_INLINE bool nx_read_line(nx_ctx* c, nx_string* out) {

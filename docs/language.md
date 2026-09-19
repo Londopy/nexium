@@ -230,6 +230,17 @@ the inferred set per function.
   `n` bytes; empty at end of input), `io.write(h, bytes) -> !void`,
   `io.flush(h) -> !void`, `io.close(h) -> !void`. Handles 1, 2 and 3 are
   stdin, stdout and stderr. Not available at the REPL.
+- Sockets (`std.net` and `std.http` build on these; every call `blocks`):
+  `net.connect(host, port, timeout_ms) -> !i64`, `net.listen(host, port) ->
+  !i64`, `net.accept(listener, timeout_ms) -> !i64`, `net.send(sock, bytes)
+  -> !void`, `net.recv(sock, n, timeout_ms) -> !String` (empty when the
+  peer closed), `net.close(sock)`, `net.peer(sock)` / `net.local(sock) ->
+  !String` (`ip:port`), `net.resolve(host) -> !List(String)`,
+  `net.udp_bind(host, port) -> !i64`, `net.send_to(sock, host, port,
+  bytes)`, `net.recv_from(sock, n, timeout_ms) -> !String` with
+  `net.last_peer()` naming the sender. A timeout of 0 waits forever.
+  Errors: `NotFound` (name lookup), `ConnectionRefused`, `Timeout`,
+  `IoError`. Not available at the REPL.
 - `os.args() -> [][]u8`, `os.env(name) -> ?[]u8`, `os.environ() ->
   List(String)` (every `NAME=value`), `os.exit(code)`,
   `process.run(argv: [][]u8) -> !i32` (spawns, waits, returns the exit code;
