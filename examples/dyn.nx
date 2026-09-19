@@ -1,0 +1,47 @@
+// Trait objects: dynamic dispatch through an explicit `dyn` type (archived 5.6).
+// A `dyn Shape` is a fat pointer; the effect bounds on the type are checked
+// against every implementation that is coerced into it.
+
+trait Shape {
+    fn area(self: *Self) -> f64
+    fn name(self: *Self) -> []u8
+    fn scale(self: *mut Self, k: f64)
+}
+
+struct Circle { r: f64 }
+struct Square { side: f64 }
+
+impl Shape for Circle {
+    fn area(self: *Self) -> f64 { return math.PI * self.r * self.r }
+    fn name(self: *Self) -> []u8 { return "circle" }
+    fn scale(self: *mut Self, k: f64) { self.r *= k }
+}
+
+impl Shape for Square {
+    fn area(self: *Self) -> f64 { return self.side * self.side }
+    fn name(self: *Self) -> []u8 { return "square" }
+    fn scale(self: *mut Self, k: f64) { self.side *= k }
+}
+
+fn total(shapes: []dyn Shape) -> f64 {
+    var sum: f64 = 0.0
+    for (shapes) |s| { sum += s.area() }
+    return sum
+}
+
+fn describe(s: dyn Shape !allocates !blocks) -> f64 {
+    return s.area()
+}
+
+fn main() {
+    var c = Circle{ .r = 1.0 }
+    var q = Square{ .side = 2.0 }
+    var shapes = List(dyn Shape).new()
+    shapes.append(&mut c)
+    shapes.append(&mut q)
+    for (shapes) |s| { println("{} {:.2}", .{s.name(), s.area()}) }
+    println("total {:.2}", .{total(shapes)})
+    var big: dyn Shape = &mut q
+    big.scale(2.0)
+    println("scaled {} {:.1} via describe {:.1}", .{q.side, q.area(), describe(&c)})
+}

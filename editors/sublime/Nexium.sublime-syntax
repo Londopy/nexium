@@ -1,0 +1,213 @@
+%YAML 1.2
+---
+# Nexium syntax for Sublime Text 3 and 4.
+# Install: copy this file into Packages/User (Preferences > Browse Packages).
+name: Nexium
+file_extensions:
+  - nx
+scope: source.nexium
+version: 2
+
+variables:
+  ident: '[A-Za-z_][A-Za-z0-9_]*'
+  effects: 'allocates|refcounts|blocks|shared_mutable|nondeterministic|panics|ffi|unbounded_stack'
+  primitives: 'i8|i16|i32|i64|i128|u8|u16|u32|u64|u128|isize|usize|f32|f64|bool|char|void|never|type|Self'
+
+contexts:
+  main:
+    - include: comments
+    - include: binary-pattern
+    - include: strings
+    - include: chars
+    - include: numbers
+    - include: effects
+    - include: intrinsics
+    - include: errors
+    - include: declarations
+    - include: keywords
+    - include: types
+    - include: namespaces
+    - include: labels
+    - include: calls
+    - include: operators
+
+  comments:
+    - match: '///(?!/).*$'
+      scope: comment.line.documentation.nexium
+    - match: '//.*$'
+      scope: comment.line.double-slash.nexium
+
+  strings:
+    - match: 'r"'
+      scope: punctuation.definition.string.begin.nexium
+      push:
+        - meta_scope: string.quoted.double.raw.nexium
+        - match: '"'
+          scope: punctuation.definition.string.end.nexium
+          pop: true
+    - match: 'b"'
+      scope: punctuation.definition.string.begin.nexium
+      push:
+        - meta_scope: string.quoted.double.bytes.nexium
+        - include: escapes
+        - match: '"'
+          scope: punctuation.definition.string.end.nexium
+          pop: true
+    - match: '"'
+      scope: punctuation.definition.string.begin.nexium
+      push:
+        - meta_scope: string.quoted.double.nexium
+        - include: escapes
+        - match: '\{[^{}]*\}|\{\{|\}\}'
+          scope: constant.other.placeholder.nexium
+        - match: '"'
+          scope: punctuation.definition.string.end.nexium
+          pop: true
+
+  escapes:
+    - match: '\\(n|r|t|0|\\|"|''|x[0-9A-Fa-f]{2}|u\{[0-9A-Fa-f]+\})'
+      scope: constant.character.escape.nexium
+
+  chars:
+    - match: '''(\\(n|r|t|0|\\|"|''|x[0-9A-Fa-f]{2}|u\{[0-9A-Fa-f]+\})|[^''\\])'''
+      scope: string.quoted.single.nexium
+
+  numbers:
+    - match: '\b0[xX][0-9A-Fa-f_]+(\.[0-9A-Fa-f_]+)?[pP][+-]?[0-9_]+\b'
+      scope: constant.numeric.hex.float.nexium
+    - match: '\b0[xX][0-9A-Fa-f_]+\b'
+      scope: constant.numeric.hex.nexium
+    - match: '\b0[oO][0-7_]+\b'
+      scope: constant.numeric.octal.nexium
+    - match: '\b0[bB][01_]+\b'
+      scope: constant.numeric.binary.nexium
+    - match: '\b[0-9][0-9_]*(\.[0-9][0-9_]*)?([eE][+-]?[0-9_]+)?\b'
+      scope: constant.numeric.nexium
+
+  effects:
+    - match: '!({{effects}})\b'
+      scope: entity.name.tag.effect.negative.nexium
+    - match: '\b({{effects}})\b(?=\s*(!|\{|$|\)|,))'
+      scope: entity.name.tag.effect.nexium
+
+  intrinsics:
+    - match: '@(typeName|sizeOf|truncate|errorName|embedFile|weak|refCount|cImport|cstr)\b'
+      scope: support.function.intrinsic.nexium
+
+  declarations:
+    - match: '\b(fn)\s+({{ident}})'
+      captures:
+        1: storage.type.function.nexium
+        2: entity.name.function.nexium
+    - match: '\b(struct|enum|record|trait|error)\s+({{ident}})'
+      captures:
+        1: storage.type.nexium
+        2: entity.name.type.nexium
+    - match: '\b(ref)\s+(class)\s+({{ident}})'
+      captures:
+        1: storage.type.nexium
+        2: storage.type.nexium
+        3: entity.name.type.nexium
+    - match: '\b(impl)(?:\([^)]*\))?\s+({{ident}})(?:\s+(for)\s+({{ident}}))?'
+      captures:
+        1: storage.type.nexium
+        2: entity.name.type.nexium
+        3: keyword.other.nexium
+        4: entity.name.type.nexium
+    - match: '\b(type)\s+({{ident}})'
+      captures:
+        1: storage.type.nexium
+        2: entity.name.type.nexium
+    - match: '\b(artifact)\s+([a-z_]+)'
+      captures:
+        1: keyword.other.artifact.nexium
+        2: entity.name.tag.artifact.nexium
+    - match: '\b(let|var|const)\s+({{ident}})'
+      captures:
+        1: storage.type.nexium
+        2: variable.other.declaration.nexium
+
+  keywords:
+    - match: '\b(if|else|for|while|match|break|continue|return|try|catch|defer|errdefer|orelse|unreachable|parallel|using)\b'
+      scope: keyword.control.nexium
+    - match: '\b(fn|let|var|const|struct|enum|record|ref|class|trait|impl|pub|import|comptime|unsafe|error|type|distinct|where|into|artifact|test|export|as|in|dyn|weak|extern|derive|layout)\b'
+      scope: keyword.other.nexium
+    - match: '\b(and|or)\b'
+      scope: keyword.operator.logical.nexium
+    - match: '\b(true|false|null|undefined)\b'
+      scope: constant.language.nexium
+
+  types:
+    - match: '\b({{primitives}})\b'
+      scope: support.type.primitive.nexium
+    - match: '\b(List|String|Map|Ordering)\b'
+      scope: support.type.collection.nexium
+    - match: '\b[A-Z][A-Za-z0-9_]*\b'
+      scope: entity.name.type.nexium
+
+  namespaces:
+    - match: '\b(math|io|os|process|time|random|mem|slice|utf8|ascii|fmt|context|alloc)\.({{ident}})'
+      captures:
+        1: support.class.namespace.nexium
+        2: support.function.builtin.nexium
+
+  errors:
+    - match: '\b(error)\.({{ident}})'
+      captures:
+        1: keyword.other.nexium
+        2: entity.name.tag.error.nexium
+
+  labels:
+    - match: '\b[a-z_][A-Za-z0-9_]*:(?=\s*(\{|for|while))'
+      scope: entity.name.label.nexium
+    - match: ':[a-z_][A-Za-z0-9_]*\b'
+      scope: entity.name.label.nexium
+
+  calls:
+    - match: '\b(println|print|eprintln|format|expect|expect_eq|panic)(?=\()'
+      scope: support.function.builtin.nexium
+    - match: '\b([a-z_][A-Za-z0-9_]*)(?=\()'
+      captures:
+        1: variable.function.nexium
+    - match: '\.([a-z_][A-Za-z0-9_]*)(?=\()'
+      captures:
+        1: variable.function.method.nexium
+    - match: '(?<![A-Za-z0-9_)\]])\.[A-Z][A-Za-z0-9_]*\b'
+      scope: variable.other.enummember.nexium
+
+  binary-pattern:
+    - match: '<<(?![=<])'
+      scope: punctuation.definition.binary.begin.nexium
+      push:
+        - meta_scope: meta.binary-pattern.nexium
+        - match: '>>'
+          scope: punctuation.definition.binary.end.nexium
+          pop: true
+        - include: strings
+        - include: chars
+        - include: numbers
+        - match: '/(big|little|native|signed|unsigned|float|utf8|bytes)\b'
+          scope: keyword.other.binary-modifier.nexium
+        - match: '\b(bytes)\b'
+          scope: keyword.other.binary-modifier.nexium
+        - match: '\b([a-z_][A-Za-z0-9_]*)\s*:'
+          captures:
+            1: variable.other.binding.nexium
+
+  operators:
+    - match: '\|>'
+      scope: keyword.operator.pipe.nexium
+    - match: '->|=>'
+      scope: keyword.operator.arrow.nexium
+    - match: '(\+%|-%|\*%|<<|>>|\+|-|\*|/|%|&|\||\^)?=(?!=)'
+      scope: keyword.operator.assignment.nexium
+    - match: '==|!=|<=|>=|<|>'
+      scope: keyword.operator.comparison.nexium
+    - match: '\+%|-%|\*%|\+\||-\||\*\||\+|-|\*|/|%'
+      scope: keyword.operator.arithmetic.nexium
+    - match: '&|\||\^|~'
+      scope: keyword.operator.bitwise.nexium
+    - match: '\.\.=?'
+      scope: keyword.operator.range.nexium
+    - match: '\.\?|\.\*|\?|!'
+      scope: keyword.operator.unwrap.nexium

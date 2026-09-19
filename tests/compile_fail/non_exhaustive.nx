@@ -1,0 +1,9 @@
+// EXPECT: `match` is not exhaustive; not covered: .Blue
+enum Color { Red, Green, Blue }
+fn name(c: Color) -> []u8 {
+    match c {
+        .Red => "red",
+        .Green => "green",
+    }
+}
+fn main() { println("{}", .{name(Color.Red)}) }

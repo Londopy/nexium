@@ -1,0 +1,27 @@
+p = (1.5, 2.0) q = (3.0, 0.0) eq = false
+area circle 3.14 rect 6.0
+meters 3.5
+parsed 1234
+caught NotANumber
+bad = -1
+empty!
+max 9 2.5
+len 11 last 100 sum 385
+popped 100
+hello, world! (13 bytes) starts? true
+part 0 = a
+part 1 = b
+part 2 = c
+two -> 22 three? false len 2
+first > 30 at 6
+counter 5
+add 1235
+dose 5.0
+invalid dose: InvalidRecord
+checked 1.0
+list total 3 rc 2
+body
+deferred 2
+deferred 1
+wrap 4 sat 255
+ff 101    42|

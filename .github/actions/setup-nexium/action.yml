@@ -1,0 +1,58 @@
+name: Setup Nexium
+description: Install the nx compiler (from a GitHub release) and Zig, and put both on PATH.
+author: Londopy
+
+inputs:
+  version:
+    description: "Nexium release tag to install (for example v0.1.0), or `latest`."
+    required: false
+    default: latest
+  zig-version:
+    description: "Zig version to install as the C compiler."
+    required: false
+    default: 0.14.1
+
+runs:
+  using: composite
+  steps:
+    - name: Install Zig
+      uses: mlugg/setup-zig@v2
+      with:
+        version: ${{ inputs.zig-version }}
+
+    - name: Resolve release
+      id: resolve
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        if [ "${{ inputs.version }}" = "latest" ]; then
+          tag=$(gh release view --repo Londopy/nexium --json tagName -q .tagName)
+        else
+          tag="${{ inputs.version }}"
+        fi
+        case "${{ runner.os }}" in
+          Linux)   asset="nx-${tag}-x86_64-unknown-linux-gnu.tar.gz" ;;
+          macOS)   asset="nx-${tag}-aarch64-apple-darwin.tar.gz" ;;
+          Windows) asset="nx-${tag}-x86_64-pc-windows-msvc.zip" ;;
+        esac
+        echo "tag=$tag" >> "$GITHUB_OUTPUT"
+        echo "asset=$asset" >> "$GITHUB_OUTPUT"
+
+    - name: Download nx
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        mkdir -p "$RUNNER_TEMP/nexium"
+        gh release download "${{ steps.resolve.outputs.tag }}" --repo Londopy/nexium --pattern "${{ steps.resolve.outputs.asset }}" --dir "$RUNNER_TEMP/nexium"
+        cd "$RUNNER_TEMP/nexium"
+        case "${{ steps.resolve.outputs.asset }}" in
+          *.zip) unzip -q "${{ steps.resolve.outputs.asset }}" ;;
+          *) tar -xzf "${{ steps.resolve.outputs.asset }}" ;;
+        esac
+        echo "$RUNNER_TEMP/nexium" >> "$GITHUB_PATH"
+
+    - name: Check
+      shell: bash
+      run: nx version

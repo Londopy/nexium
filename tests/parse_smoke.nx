@@ -1,0 +1,84 @@
+/// A point in 2D space.
+struct Point derive(Eq, Hash) { x: f32, y: f32 }
+
+record Dose {
+    drug: u32
+    mg_per_kg: f32 where 0.0 < value and value <= 100.0
+    pediatric_cap: ?f32
+}
+
+ref class Node {
+    value: i32
+    next: ?Node
+}
+
+enum Shape {
+    Circle(f32),
+    Rect { w: f32, h: f32 },
+    Empty,
+}
+
+type Meters = distinct f32
+error ParseError { Truncated, Malformed }
+
+trait Reader {
+    fn read(self: *mut Self, buf: []mut u8) -> !usize
+}
+
+impl Reader for Point {
+    fn read(self: *mut Self, buf: []mut u8) -> !usize { return 0 }
+}
+
+fn max(comptime T: type where T: Ord, a: T, b: T) -> T {
+    return if (a > b) a else b
+}
+
+pub fn sum(xs: []i32) -> i32 !allocates !refcounts {
+    var total = 0
+    for (xs) |x, i| {
+        total += x
+    }
+    total
+}
+
+fn read_header(buf: []u8) -> ParseError!u32 {
+    match buf {
+        <<version:4, ihl:4, total_len:16/big, rest:bytes>> => {
+            return total_len
+        }
+        <<0x1b, '[', 'A', rest:bytes>> => return 1,
+        _ => return error.Truncated
+    }
+}
+
+fn load(path: []u8) -> !u32 allocates blocks {
+    let h = try read_header(path)
+    defer println("done", .{})
+    errdefer println("failed", .{})
+    let v = read_header(path) catch |e|match e {
+        error.Truncated => return 7,
+        else => return e,
+    }
+    let out = path
+        |> read_header()
+        |> max(3)
+    let add = |[base] x: i32| -> i32 { base + x }
+    let p = Point{ .x = 1.0, .y = 2.0 }
+    send(.{ .port = 8080, .timeout = 30 })
+    let found = outer: {
+        for (0..10) |i| { if (i == 3) break :outer i }
+        0
+    }
+    return v +% 1
+}
+
+pub fn process(data: *u8, len: usize) -> i32 export(c) {
+    return 0
+}
+
+test "sum works" {
+    expect(sum([1, 2, 3]) == 6)
+}
+
+artifact cabi { name = "ropesim", exports = [sum, process] }
+artifact python { name = "ropesim", abi = stable, wheels = all }

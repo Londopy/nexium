@@ -1,0 +1,13 @@
+fn helper(xs: []i32) -> i32 {
+    var total: i32 = 0
+    for (xs) |x| { total += x }
+    return total
+}
+
+fn hot(xs: []i32) -> i32 !allocates !panics {
+    var list = List(i32).new()
+    list.append(1)
+    return helper(xs) + list.len as i32
+}
+
+fn main() { println("{}", .{hot([1, 2])}) }

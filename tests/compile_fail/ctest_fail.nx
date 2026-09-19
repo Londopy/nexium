@@ -1,0 +1,8 @@
+// EXPECT: comptime test "this fails at compile time" panicked: expectation failed: square(3) == 10
+fn square(x: i64) -> i64 { return x * x }
+
+comptime test "this fails at compile time" {
+    expect(square(3) == 10)
+}
+
+fn main() { }

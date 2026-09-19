@@ -1,0 +1,8 @@
+// EXPECT: cannot move a `List(i32)` out of a field or element
+// EXPECT: use `.clone()` for an owned copy
+struct Bag { items: List(i32) }
+fn main() {
+    let b = Bag{ .items = List(i32).new() }
+    let taken = b.items
+    _ = taken
+}

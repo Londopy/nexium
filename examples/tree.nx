@@ -1,0 +1,112 @@
+// A recursive structure without pointers: nodes live in a List and refer to
+// each other by index. This is how the self-hosted compiler stores its AST.
+
+enum Node {
+    Num(i64),
+    Add(u32, u32),
+    Mul(u32, u32),
+    Neg(u32),
+}
+
+struct Parser {
+    src: []u8
+    pos: usize
+}
+
+fn push(nodes: *mut List(Node), n: Node) -> u32 {
+    nodes.append(n)
+    return (nodes.len - 1) as u32
+}
+
+fn peek(p: *Parser) -> u8 {
+    return if (p.pos < p.src.len) p.src[p.pos] else 0
+}
+
+// expr := term (('+') term)*
+fn parse_expr(p: *mut Parser, nodes: *mut List(Node)) -> u32 {
+    var lhs = parse_term(p, nodes)
+    while (peek(p) == '+') {
+        p.pos += 1
+        let rhs = parse_term(p, nodes)
+        lhs = push(nodes, Node.Add(lhs, rhs))
+    }
+    return lhs
+}
+
+// term := atom (('*') atom)*
+fn parse_term(p: *mut Parser, nodes: *mut List(Node)) -> u32 {
+    var lhs = parse_atom(p, nodes)
+    while (peek(p) == '*') {
+        p.pos += 1
+        let rhs = parse_atom(p, nodes)
+        lhs = push(nodes, Node.Mul(lhs, rhs))
+    }
+    return lhs
+}
+
+// atom := number | '-' atom | '(' expr ')'
+fn parse_atom(p: *mut Parser, nodes: *mut List(Node)) -> u32 {
+    let c = peek(p)
+    if (c == '-') {
+        p.pos += 1
+        let inner = parse_atom(p, nodes)
+        return push(nodes, Node.Neg(inner))
+    }
+    if (c == '(') {
+        p.pos += 1
+        let inner = parse_expr(p, nodes)
+        if (peek(p) == ')') p.pos += 1
+        return inner
+    }
+    var value: i64 = 0
+    while (peek(p) >= '0' and peek(p) <= '9') {
+        value = value * 10 + (peek(p) - '0') as i64
+        p.pos += 1
+    }
+    return push(nodes, Node.Num(value))
+}
+
+fn eval(nodes: []Node, id: u32) -> i64 {
+    match nodes[id as usize] {
+        .Num(v) => v,
+        .Add(a, b) => eval(nodes, a) + eval(nodes, b),
+        .Mul(a, b) => eval(nodes, a) * eval(nodes, b),
+        .Neg(a) => -eval(nodes, a),
+    }
+}
+
+fn show(nodes: []Node, id: u32, out: *mut String) {
+    match nodes[id as usize] {
+        .Num(v) => out.append(v.to_string()),
+        .Add(a, b) => {
+            out.append("(")
+            show(nodes, a, out)
+            out.append(" + ")
+            show(nodes, b, out)
+            out.append(")")
+        },
+        .Mul(a, b) => {
+            out.append("(")
+            show(nodes, a, out)
+            out.append(" * ")
+            show(nodes, b, out)
+            out.append(")")
+        },
+        .Neg(a) => {
+            out.append("-")
+            show(nodes, a, out)
+        },
+    }
+}
+
+fn main() {
+    let inputs = ["1+2*3", "(1+2)*3", "-(4*5)+2*2*2", "42"]
+    for (inputs) |text| {
+        var nodes = List(Node).new()
+        var p = Parser{ .src = text, .pos = 0 }
+        let root = parse_expr(&mut p, &mut nodes)
+        var s = String.new()
+        show(nodes, root, &mut s)
+        println("{} => {} = {} ({} nodes)", .{text, s, eval(nodes, root), nodes.len})
+    }
+}

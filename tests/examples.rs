@@ -1,0 +1,157 @@
+//! End-to-end tests: every program in `examples/` must build and reproduce its
+//! recorded output; every file in `tests/compile_fail/` must be rejected with
+//! the diagnostic named on its `// EXPECT:` line.
+
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+fn nx() -> PathBuf {
+    PathBuf::from(env!("CARGO_BIN_EXE_nx"))
+}
+
+fn root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+fn have_cc() -> bool {
+    Command::new("zig").arg("version").output().map(|o| o.status.success()).unwrap_or(false)
+}
+
+fn normalize(s: &str) -> String {
+    s.replace("\r\n", "\n").replace('\\', "/")
+}
+
+fn run_example(name: &str, subcommand: &str) {
+    let src = PathBuf::from("examples").join(format!("{}.nx", name)); // relative: diagnostics print this path
+    let expected_path = root().join("examples").join(format!("{}.expected", name));
+    let out_dir = std::env::temp_dir().join(format!("nx-test-{}-{}", name, std::process::id()));
+    let out = Command::new(nx()).arg(subcommand).arg(&src).arg("--out-dir").arg(&out_dir).current_dir(root()).output().expect("run nx");
+    let got = normalize(&format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)));
+    let expected = normalize(&std::fs::read_to_string(&expected_path).unwrap_or_default());
+    let _ = std::fs::remove_dir_all(&out_dir);
+    assert_eq!(got.trim(), expected.trim(), "output of examples/{}.nx differs", name);
+}
+
+#[test]
+fn examples_reproduce_recorded_output() {
+    if !have_cc() {
+        eprintln!("skipping: zig not found");
+        return;
+    }
+    for name in ["hello", "tour", "binary", "ownership", "generics", "control", "ctest", "arena", "dyn", "parallel", "cimport", "process", "tree"] {
+        run_example(name, "run");
+    }
+    run_example("tests", "test");
+}
+
+#[test]
+fn compile_fail_cases_are_rejected() {
+    let dir = root().join("tests").join("compile_fail");
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(&dir).expect("compile_fail dir").filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().map(|x| x == "nx").unwrap_or(false)).collect();
+    entries.sort();
+    assert!(!entries.is_empty());
+    for path in entries {
+        let text = std::fs::read_to_string(&path).unwrap();
+        let expects: Vec<&str> = text.lines().filter_map(|l| l.strip_prefix("// EXPECT:")).map(|s| s.trim()).collect();
+        assert!(!expects.is_empty(), "{} has no // EXPECT: line", path.display());
+        let out = Command::new(nx()).arg("check").arg(&path).current_dir(root()).output().expect("run nx");
+        assert!(!out.status.success(), "{} was accepted but should fail", path.display());
+        let diag = normalize(&String::from_utf8_lossy(&out.stderr));
+        for e in expects {
+            assert!(diag.contains(e), "{}: expected diagnostic containing `{}`, got:\n{}", path.display(), e, diag);
+        }
+    }
+}
+
+#[test]
+fn ship_produces_library_and_header() {
+    if !have_cc() {
+        eprintln!("skipping: zig not found");
+        return;
+    }
+    let out_dir = std::env::temp_dir().join(format!("nx-ship-{}", std::process::id()));
+    let out = Command::new(nx()).arg("ship").arg(PathBuf::from("examples").join("ropesim.nx")).arg("--out-dir").arg(&out_dir).current_dir(root()).output().expect("run nx ship");
+    assert!(out.status.success(), "ship failed: {}", String::from_utf8_lossy(&out.stderr));
+    let lib = out_dir.join("ropesim");
+    assert!(lib.join("ropesim.h").exists());
+    assert!(lib.join("python").join("ropesim").join("__init__.py").exists());
+    let has_wheel = std::fs::read_dir(&lib).unwrap().any(|e| e.unwrap().path().extension().map(|x| x == "whl").unwrap_or(false));
+    assert!(has_wheel, "no wheel produced");
+    // the generated Rust crate must build
+    let crate_dir = lib.join("rust");
+    assert!(crate_dir.join("Cargo.toml").exists(), "no rust crate produced");
+    let build = Command::new("cargo").arg("build").arg("-q").current_dir(&crate_dir).output().expect("run cargo");
+    assert!(build.status.success(), "generated crate does not build: {}", String::from_utf8_lossy(&build.stderr));
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+#[allow(dead_code)]
+fn exists(p: &Path) -> bool {
+    p.exists()
+}
+
+/// The self-hosted lexer (self/lexer.nx) must produce exactly the token stream
+/// of the Rust lexer for every example, for its own source, and with the same
+/// exit code.
+#[test]
+fn self_hosted_lexer_matches_oracle() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let exe = root.join("nx-out").join(if cfg!(windows) { "self_lexer.exe" } else { "self_lexer" });
+    let build = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).args(["build", "self/lexer.nx", "-o"]).arg(&exe).current_dir(root).output().expect("run nx");
+    assert!(build.status.success(), "building self/lexer.nx failed:\n{}", String::from_utf8_lossy(&build.stderr));
+    let mut files: Vec<std::path::PathBuf> =
+        std::fs::read_dir(root.join("examples")).unwrap().filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().map(|x| x == "nx").unwrap_or(false)).collect();
+    files.push(root.join("self").join("lexer.nx"));
+    files.sort();
+    for f in files {
+        let oracle = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).arg("tokens").arg(&f).output().unwrap();
+        let mine = std::process::Command::new(&exe).arg(&f).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&oracle.stdout), String::from_utf8_lossy(&mine.stdout), "token stream differs for {}", f.display());
+        assert_eq!(oracle.status.code(), mine.status.code(), "exit code differs for {}", f.display());
+    }
+}
+
+/// The GUI library's headless tests (rasterizer and widget interaction) must pass;
+/// this also compiles gui/platform.c on every platform (the non-Windows stub included).
+#[test]
+fn gui_headless_tests_pass() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).args(["test", "gui/nexium_gui.nx"]).current_dir(root).output().expect("run nx");
+    assert!(
+        out.status.success(),
+        "gui tests failed:
+{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let shot = root.join("nx-out").join("demo-shot.ppm");
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).args(["run", "gui/demo.nx", "--", "--shot"]).arg(&shot).current_dir(root).output().expect("run nx");
+    assert!(
+        out.status.success(),
+        "offscreen demo failed:
+{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(std::fs::metadata(&shot).map(|m| m.len() > 640 * 440 * 3).unwrap_or(false), "screenshot not written");
+}
+
+#[test]
+fn examples_are_canonically_formatted() {
+    // `nx fmt --check` must pass on every example: formatting is idempotent and the sources are canonical
+    let dir = root().join("examples");
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().map(|x| x == "nx").unwrap_or(false)).collect();
+    files.sort();
+    let mut cmd = Command::new(nx());
+    cmd.arg("fmt");
+    for f in &files {
+        cmd.arg(f);
+    }
+    cmd.arg("--check");
+    let out = cmd.current_dir(root()).output().expect("run nx fmt");
+    assert!(
+        out.status.success(),
+        "unformatted examples:
+{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}

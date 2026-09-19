@@ -1,0 +1,24 @@
+acc 16
+pairs 10
+defer: start ok
+check(10) = 5
+errdefer ran for 7
+defer: start
+caught Odd
+r = 0
+zero small medium minus one big
+kw 1 2 0
+sum 7
+[Hello, World] len 12 find 7 upper? H
+parsed 42 3.5
+parse error InvalidInput
+bad -1
+0: line one
+1: line two
+upper ABC eq true
+checked true 5
+bumped 2
+file has 23 bytes, 2 lines
+args true
+dice ok true time ok true
+shift 1099511627776 trunc 44

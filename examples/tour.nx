@@ -1,0 +1,165 @@
+/// A point in 2D space.
+struct Point derive(Eq) { x: f64, y: f64 }
+
+enum Shape {
+    Circle(f64),
+    Rect { w: f64, h: f64 },
+    Empty,
+}
+
+fn area(s: Shape) -> f64 {
+    match s {
+        .Circle(r) => math.PI * r * r,
+        .Rect(w, h) => w * h,
+        .Empty => 0.0,
+    }
+}
+
+type Meters = distinct f64
+
+error ParseError { Empty, NotANumber }
+
+fn parse_num(text: []u8) -> ParseError!i64 {
+    if (text.len == 0) return error.Empty
+    var total: i64 = 0
+    for (text) |c| {
+        if (c < '0' or c > '9') return error.NotANumber
+        total = total * 10 + (c - '0') as i64
+    }
+    return total
+}
+
+fn max(comptime T: type where T: Ord, a: T, b: T) -> T {
+    return if (a > b) a else b
+}
+
+trait Describe {
+    fn describe(self: *Self) -> String
+}
+
+impl Describe for Point {
+    fn describe(self: *Self) -> String {
+        return format("({}, {})", .{self.x, self.y})
+    }
+}
+
+impl Point {
+    fn origin() -> Point { return Point{ .x = 0.0, .y = 0.0 } }
+    fn shift(self: *mut Self, dx: f64) { self.x += dx }
+}
+
+record Dose {
+    mg_per_kg: f64 where value > 0.0 and value <= 100.0
+    route: u8
+}
+
+ref class Node {
+    value: i32
+    next: ?Node
+}
+
+fn sum(xs: []i32) -> i32 !allocates !refcounts !blocks {
+    var total: i32 = 0
+    for (xs) |x| { total +%= x }
+    return total
+}
+
+fn main() -> !void {
+    // values and arithmetic
+    let p = Point{ .x = 1.5, .y = 2.0 }
+    var q = Point.origin()
+    q.shift(3.0)
+    println("p = {} q = {} eq = {}", .{p.describe(), q.describe(), p == q})
+    println("area circle {:.2} rect {}", .{area(Shape.Circle(1.0)), area(Shape.Rect{ .w = 2.0, .h = 3.0 })})
+
+    // distinct types
+    let d: Meters = 3.5 as Meters
+    let raw = d as f64
+    println("meters {}", .{raw})
+
+    // errors
+    let n = try parse_num("1234")
+    println("parsed {}", .{n})
+    let bad = parse_num("12x") catch |e| {
+        println("caught {}", .{e})
+        -1
+    }
+    println("bad = {}", .{bad})
+    match parse_num("") {
+        error.Empty => println("empty!", .{}),
+        error.NotANumber => println("nan", .{}),
+        v => println("ok {}", .{v}),
+    }
+
+    // generics
+    println("max {} {}", .{max(3, 9), max(2.5, 1.0)})
+
+    // collections
+    var xs = List(i32).new()
+    for (0..10) |i| { xs.append((i * i) as i32) }
+    xs.append(100)
+    println("len {} last {} sum {}", .{xs.len, xs.last() orelse 0, sum(xs)})
+    let popped = xs.pop()
+    if (popped) |v| { println("popped {}", .{v}) }
+    var s = String.from("hello")
+    s.append(", world")
+    s.append_char('!')
+    println("{} ({} bytes) starts? {}", .{s, s.len, s.starts_with("hello")})
+    let parts = "a,b,c".split(",")
+    for (parts) |part, i| { println("part {} = {}", .{i, part}) }
+
+    var m = Map([]u8, i32).new()
+    m.put("one", 1)
+    m.put("two", 2)
+    m.put("two", 22)
+    println("two -> {} three? {} len {}", .{m.get("two") orelse 0, m.contains("three"), m.len})
+
+    // optionals and labeled blocks
+    let found = outer: {
+        for (xs) |x, i| { if (x > 30) break :outer i as i64 }
+        -1
+    }
+    println("first > 30 at {}", .{found})
+
+    // closures
+    var counter: i32 = 0
+    let bump = |[&mut counter] by: i32| { counter += by }
+    bump(2)
+    bump(3)
+    println("counter {}", .{counter})
+    let add = |[n] x: i64| -> i64 { x + n }
+    println("add {}", .{add(1)})
+
+    // records
+    let dose = Dose{ .mg_per_kg = 5.0, .route = 1 }
+    println("dose {}", .{dose.mg_per_kg})
+    let checked = Dose.new(.{ .mg_per_kg = 500.0, .route = 1 }) catch |e| {
+        println("invalid dose: {}", .{e})
+        Dose{ .mg_per_kg = 1.0, .route = 0 }
+    }
+    println("checked {}", .{checked.mg_per_kg})
+
+    // ref classes
+    let tail = Node{ .value = 2, .next = null }
+    let head = Node{ .value = 1, .next = tail }
+    var total: i32 = 0
+    var cur: ?Node = head
+    while (cur != null) {
+        let node = cur.?
+        total += node.value
+        cur = node.next
+    }
+    println("list total {} rc {}", .{total, @refCount(tail)})
+
+    // defer
+    {
+        defer println("deferred 1", .{})
+        defer println("deferred 2", .{})
+        println("body", .{})
+    }
+
+    // wrapping and saturating
+    let big: u8 = 250
+    println("wrap {} sat {}", .{big +% 10, big +| 10})
+    println("{x} {b} {>5}|", .{255, 5, 42})
+}

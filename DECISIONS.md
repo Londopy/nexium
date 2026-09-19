@@ -1,0 +1,261 @@
+# Decisions made while building the first compiler
+
+This log records the calls made during the initial implementation that the
+specification left open, or where the implementation deliberately narrows the
+design for a first release. Each one is reviewable; none is load-bearing for
+the architecture. "Spec" means `nexium-spec.txt`; "archived" means
+`nexium-systems-spec.txt` sections 4 through 9.
+
+## Toolchain and backend
+
+1. **Compiler written in Rust, C emitted as the backend, compiled with `zig cc`.**
+   The archived design (section 19) picks C emission for portability; `zig cc`
+   gives a C compiler, a static archiver, and cross-compilation to any target
+   with no toolchain install (spec section 9). `--cc` overrides the compiler.
+2. **One translation unit per build.** The runtime header is embedded into the
+   generated C. No separate runtime library to link, satisfying S6.
+3. **Hidden context parameter.** Every internal Nexium function takes
+   `nx_ctx*` (allocator, RNG state, argv, stdio). This is the "implicit
+   context" of the archived section 15. Exported functions create a context
+   on the stack per call, so S1 (no initialization) holds. `for parallel`
+   would need an executor in this context and is not implemented yet.
+4. **Thread-local panic boundary.** The only static in the runtime is a
+   `_Thread_local` pointer to the current panic boundary. Two Nexium
+   libraries in one process each carry their own copy (S2).
+
+## Syntax choices where the two documents were silent
+
+5. **Struct literals are `Point{ .x = 1 }` and anonymous `.{ .x = 1 }`**,
+   following the archived 4.1 example. Enum variants are `.Variant(args)` with
+   the type inferred, or `Enum.Variant(args)`.
+6. **Conditions take parentheses** (`if (x)`, `while (x)`, `for (xs) |x|`),
+   matching every example in the archived document. This also makes `Name{`
+   unambiguous.
+7. **Optionals**: `null` is the empty value, `.?` unwraps (panics),
+   `x orelse d`, `if (x) |v| { }`. A bare binding in a `match` on an optional
+   binds the payload; `null` matches the empty case.
+8. **Numeric casts are `value as T`**, checked at runtime when narrowing
+   (contributes `panics` unless the range analysis proves it). `@truncate(T, x)`
+   wraps. Distinct types convert with `as` in both directions.
+9. **Logical operators are `and`, `or`, `!`.** Bitwise are `& | ^ ~ << >>`.
+10. **Compile-time builtins use `@`:** `@typeName`, `@sizeOf`, `@truncate`,
+    `@errorName`, `@embedFile`, `@weak`, `@refCount`.
+11. **`impl Type { }` and `impl Trait for Type { }`** declare methods; the
+    receiver is the first parameter named `self` with type `Self`, `*Self`,
+    or `*mut Self`. Generic impls are `impl(T) Pair(T) { }`.
+12. **Statement termination** is the newline. A line beginning with `|>`,
+    `.method(`, `catch`, `orelse`, `and`, or `or` continues the previous
+    expression; a line ending with a binary operator continues too.
+13. **Error sets** are declared `error Name { A, B }`; `error.Name` values
+    belong to the global set unless a set is named in the return type
+    (`ParseError!T`).
+
+## Semantics narrowed for the first release
+
+14. **Pointers `*T`/`*mut T` are safe references** created with `&x`/`&mut x`
+    and dereferenced with `.*`. The archived section 12 lists raw pointer
+    dereference as unsafe; here only pointer casts, integer/pointer casts,
+    `.ptr` of a slice, foreign calls, and mutable globals require `unsafe`.
+    Reason: `self: *mut Self` receivers would otherwise force `unsafe` into
+    every method.
+15. **Regions are checked conservatively.** Rule R1 is enforced for the case
+    that matters most: a function may not return a slice or pointer into one
+    of its own locals (arrays, Lists, Strings, structs); parameters are
+    exempt because their storage belongs to the caller. Views stored into
+    outer variables are not tracked (archived O1/O2 leave the notation open).
+    Exported functions may not return slices at all.
+16. **Ownership of collections** (`List`, `String`, `Map`, and structs that
+    contain them): `let y = x` moves; a later use of `x` is a compile error;
+    moving out of a field or element is an error (`.clone()` instead);
+    parameters are borrowed, so moving a parameter into a new owner is an
+    error. Owned values are released at scope exit; that release is the only
+    automatic action at scope exit (H7). Codegen zeroes moved-from locals so
+    the release is always safe.
+17. **`ref class` values copy by retaining**; `?Node` and `weak Node` too.
+    Passing to a function does not retain (borrow). Cycles leak, as the spec
+    says; `weak` breaks them.
+18. **Effects are inferred for every function** (not only within a module);
+    negative bounds are enforced with diagnostics naming the introducing
+    site. Calling through a function value acquires every effect its type
+    permits (all of them unless the type says `fn(...) !allocates`).
+19. **`panics` range analysis** follows E6's five sources: type ranges,
+    literals, dominating `if` guards on locals, `for` iteration facts
+    (`for (xs) |x, i|` proves `xs[i]`; `for (0..xs.len) |i|` proves `xs[i]`
+    on the same local), and constant loop bounds. Anything else contributes
+    `panics`.
+20. **Records**: a literal with compile-time-known field values is checked
+    at compile time (a violation is a compile error); a literal with runtime
+    values panics if violated; `Record.new(.{ ... })` returns
+    `error.InvalidRecord` instead.
+21. **`println` has the `blocks` effect** (archived section 15: reaching for
+    stdout blocks) and does not allocate. `format` allocates and returns a
+    `String`.
+22. **The export ABI depends on the effect signature.** An export that returns
+    a plain value and is proven `!panics` gets a direct C signature. Any
+    other export returns `int32_t` status and writes its value through an out
+    pointer; a panic becomes the `Panic` status (S3). The Python wrapper
+    raises `NexiumError` / `NexiumPanic`.
+23. **Python artifact uses ctypes** over the shared library rather than a
+    CPython extension module; this is the "stable ABI by default" of 4.2 taken
+    literally (one wheel per platform, any interpreter version). `abi = native`
+    is accepted and ignored for now.
+24. **Test blocks return `!void`** so `try` works inside them. `nx test`
+    compiles a runner; `comptime test` is parsed but runs at runtime for now.
+25. **Integer literals default to `i64`, floats to `f64`** when nothing
+    constrains them. `for (0..n)` takes the type of `n`.
+26. **`main` may return `void`, `!void`, or an integer exit code.** An error
+    returned from `main` prints `error: Name` and exits 1; a panic prints the
+    location and exits 101.
+27. **Not implemented in this release** (reported as errors or notes rather
+    than silently ignored): `soa` layout, `packed` layout, `node` and
+    `installer` artifacts, `nx publish`, a registry, and the `pool`/`stack`
+    allocation strategies. Everything else listed in the first draft of this
+    item now exists; see items 31 to 44.
+
+## Second pass: the gaps
+
+31. **`comptime test`** runs in the compile-time interpreter during `nx check`;
+    a failing expectation is a compile error at the `expect` line.
+32. **`nx refcounts`** walks the typed IR and lists every retain, release,
+    weak creation, and upgrade site with the function it is in.
+33. **`nx leaks`** runs the program in debug mode with a tracking allocator
+    whose counters live in the context (no globals); a nonzero live count at
+    exit is reported with total and peak bytes. Every example is leak-free.
+34. **`using arena { ... }`** installs a bump allocator for the block and
+    frees it all at once at the end. Every `List`, `String`, and `Map`
+    remembers the arena it was created in (one pointer per container), so a
+    container created outside the block keeps its storage on the heap even
+    when it grows inside the block, and the arena forwards frees and reallocs
+    of memory it does not own to the parent allocator. What is still not
+    checked: a value *created inside* the block that is stored outside it
+    (same status as regions).
+35. **`nx fmt`** is token based and line preserving: indentation, spacing,
+    trailing whitespace, and blank-line runs are canonical; lines are never
+    joined or split. `cargo test` checks that every example is canonical.
+36. **`nx doc`** emits one HTML page per program with signatures, fields, and
+    the inferred effect set of each public function.
+37. **`nx size`** compiles with one section per function and reads section
+    sizes back from the object file (ELF and COFF; Mach-O is reported as
+    unsupported), attributing bytes to declarations, glue, and runtime.
+38. **`dyn Trait`** is a fat pointer `{data, vtable}` created by coercing
+    `*T`/`*mut T`; vtables are generated per (trait, type) with thunks that
+    adapt the receiver. `dyn Trait !allocates` checks every implementation's
+    inferred effects at the coercion site. `Self` may only appear in receiver
+    position for a trait used as an object.
+39. **`for parallel (items) |x, i| { }`** extracts the body into a worker
+    function that reaches outer locals through an environment of pointers,
+    and the runtime splits the index range across hardware threads. The
+    checker rejects `shared_mutable` in the body (directly or through calls),
+    and rejects `return` and `break` inside it; a panic in a worker is
+    re-raised in the caller after all workers finish. Data races through
+    captured mutable locals are the programmer's responsibility, exactly as
+    the spec's "free of `shared_mutable`" rule implies.
+40. **`@cImport("header.h")`** runs the C compiler's preprocessor and reads
+    functions (including variadics), typedefs, structs of scalars/pointers/
+    arrays, enums, and integer/float/string macros. `const T*` maps to `*T`,
+    other pointers to `*mut T`, `void*` to `*mut u8`, C `long` to i32 on
+    Windows and i64 elsewhere. Unsupported declarations (unions, bit-fields,
+    function pointers, function-like macros such as `stdout`) are imported as
+    names that explain themselves when used. Imported structs keep their C
+    spelling in the generated code, so the header stays the single source of
+    truth for layout. `@cstr("...")` gives a NUL-terminated `*u8`.
+41. **Vendored C** is declared with `artifact link { c_sources = [...],
+    libs = [...], include = [...], lib_paths = [...] }` (spec 17.1), and the
+    same is available as `--c-source`, `--link`, `--link-path`, `-I`.
+42. **`rustlib` artifact**: a Cargo crate with a build script linking the
+    static archive, `extern "C"` declarations, `#[repr(C)]` structs, and safe
+    wrappers returning `Result<T, NexiumError>` (with a `Panic` variant). On
+    Windows the static archive is compiled for the MSVC ABI so it links into
+    Rust and MSVC programs.
+43. **`nx lsp`** is a stdio language server with diagnostics on open/change/
+    save and hover over functions (signature plus inferred effects). It has no
+    dependencies; JSON handling is in-tree. When a file has errors, hover
+    falls back to the parsed signature without effects.
+44. **Region rule R1** is enforced conservatively (item 15).
+
+## Toward self-hosting
+
+45. **`process.run(argv) -> !i32`** spawns without a shell (CreateProcess on
+    Windows with CommandLineToArgv-compatible quoting, `posix_spawnp`
+    elsewhere), waits, and returns the exit code. stdout/stderr are flushed
+    first so parent and child output interleave deterministically. A signal
+    death reports as 128 plus the signal number.
+46. **`nx tokens`** is the lexer oracle: `start end KIND [payload]` per token,
+    with integers in decimal, floats as their source text, strings and byte
+    strings as hex of the unescaped bytes, chars as code points. The format is
+    frozen because `self/lexer.nx` reproduces it.
+47. **The compiler runs on a 512 MB thread.** A long else-if chain in
+    `self/lexer.nx` overflowed the default main-thread stack in the checker;
+    tree-walking compilers recurse, so the work moves to a big-stack thread
+    instead of rewriting every walk iteratively.
+48. **Program output is binary on Windows** (`_setmode(_O_BINARY)` on stdout
+    and stderr) so the same program prints the same bytes on every platform.
+    The oracle diff depends on it.
+49. **The AST will be an id-arena.** Nodes live in a `List` and refer to each
+    other by index (`examples/tree.nx`), which needs no recursive types, no
+    pointers, and frees in one release. Language gaps found writing the lexer,
+    to close before the parser: parameters cannot be taken by value (moving a
+    `String` into a struct field costs a `.clone()`), there is no raw-byte
+    push on `String` (`append_char` encodes), and `return` is a statement, so
+    `orelse return` is not available.
+
+## nexium-gui
+
+50. **The GUI is immediate mode over a software framebuffer.** Widgets are
+    function calls that return what happened this frame, state lives in the
+    caller's variables (passed as `*mut`), and drawing is Nexium code writing
+    into a `List(u32)`. No retained widget tree, no callbacks, no closures: the
+    style that suits a language with explicit ownership, and the one egui
+    proved. The cost is CPU rendering, fine at 640x440 and 60 Hz.
+51. **The platform layer is the only C**, about 200 lines: open a window, pump
+    events into a queue, blit a framebuffer, sleep, time. Win32 today; other
+    platforms compile a stub whose `gp_open` returns 0, so the library, its
+    tests, and offscreen rendering work everywhere and only the window is
+    missing. X11 and Cocoa backends are the same eight functions.
+52. **Text is a bitmap font embedded with `@embedFile`**, generated once from
+    Pillow's own free bitmap font into `gui/font.bin` (8x13 cells, ASCII).
+    Non-ASCII is skipped. A vector font is a later problem.
+53. **Widget identity is call order.** Each widget takes the next id in the
+    frame; hot, active, and focus are ids. Conditional widgets shift the ids
+    of everything after them, which is the standard immediate-mode trade-off.
+54. **`libs_windows`/`libs_linux`/`libs_macos`** exist because zig's gnu
+    target links user32 but not gdi32 by default, `#pragma comment(lib)` is
+    ignored there, and a plain `libs` entry would break the Linux build.
+
+## Editors and releases
+
+55. **One TextMate grammar, two spellings.** VS Code takes JSON and Sublime
+    takes YAML with the same regexes and scope names, kept in step by hand;
+    a generator would be more machinery than the two files. Tree-sitter, which
+    Neovim, Helix, and Zed want, is a separate grammar and a later job.
+56. **The extension is thin.** Highlighting is the grammar; everything
+    semantic comes from `nx lsp`, so the editor never disagrees with the
+    compiler and the extension has one dependency (the LSP client library).
+57. **GitHub highlighting borrows Zig's grammar** through `.gitattributes`
+    until Linguist accepts Nexium, which requires usage in public
+    repositories first. Zig's syntax is the closest match.
+58. **Installers stay outside `nx`.** `.dmg`, `.msi`, and `.deb` are made by
+    the platform tools in CI from the binary `nx build` produced; the
+    release template carries those jobs, off by default. The spec's
+    `installer` artifact remains unimplemented on purpose.
+
+## Translations
+
+59. **Translations live in `docs/i18n/<lang>/` and mirror the English
+    files by name.** English is the source of truth; a translated page that
+    falls behind is still linked, and its header switcher always offers the
+    English original. Code, command names, error messages, and identifiers
+    are never translated, because they are what the reader will type and
+    what the compiler will print; only the comments inside code blocks are. The README is translated into six
+    languages; the two documents people read first, the language reference and
+    the architecture tour, into three. The rest follows as the English text
+    settles.
+
+## Repository
+
+28. License: MIT, copyright Londopy.
+29. Changelog follows Keep a Changelog and is validated in CI with
+    `patchnotes` (strict mode).
+30. CI runs on Windows, Linux, and macOS: `cargo test` builds the compiler,
+    runs every example against its recorded output, and checks the
+    compile-fail cases. Zig is installed in CI to provide the C compiler.

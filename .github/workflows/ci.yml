@@ -1,0 +1,127 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  ZIG_VERSION: "0.14.1"
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Install Zig (C compiler for nx)
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build
+        run: cargo build --locked
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Ship the example library
+        run: cargo run --locked -- ship examples/ropesim.nx
+
+      - name: Use the shipped Rust crate
+        shell: bash
+        run: |
+          mkdir -p nx-out/rusttest/src
+          printf '[package]\nname = "rusttest"\nversion = "0.1.0"\nedition = "2021"\n[dependencies]\nropesim = { path = "../ropesim/rust" }\n' > nx-out/rusttest/Cargo.toml
+          printf 'fn main() { assert_eq!(ropesim::checksum(b"hello"), 1335831723); assert!(ropesim::divide(1, 0).is_err()); println!("rust ok"); }\n' > nx-out/rusttest/src/main.rs
+          (cd nx-out/rusttest && cargo run -q)
+
+      - name: Call the shipped library from Python
+        shell: bash
+        run: |
+          python - <<'EOF'
+          import sys, array, os
+          sys.path.insert(0, os.path.join("nx-out", "ropesim", "python"))
+          import ropesim
+          assert ropesim.checksum(b"hello") == 1335831723
+          pos = array.array("d", [0.1, 0.2, 0.3])
+          ropesim.simulate(pos, 0.01, 10)
+          try:
+              ropesim.divide(1, 0)
+              raise SystemExit("expected a panic")
+          except ropesim.NexiumPanic as e:
+              print("panic converted:", e.message)
+          print("ok")
+          EOF
+
+  editors:
+    name: editor support
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Compile the VS Code extension
+        working-directory: editors/vscode
+        run: |
+          npm ci
+          npm run compile
+      - name: Grammars parse
+        run: |
+          python3 -c "import json; json.load(open('editors/vscode/syntaxes/nexium.tmLanguage.json')); json.load(open('editors/vscode/package.json')); json.load(open('editors/vscode/language-configuration.json'))"
+          pip install pyyaml
+          python3 -c "import yaml; yaml.safe_load(open('editors/sublime/Nexium.sublime-syntax')); yaml.safe_load(open('.github/actions/setup-nexium/action.yml')); yaml.safe_load(open('docs/templates/release-nexium-program.yml'))"
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings -A clippy::all
+
+  changelog:
+    name: changelog
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate CHANGELOG.md with patchnotes
+        run: |
+          pip install patchnotes
+          python - <<'EOF'
+          import patchnotes
+          cl = patchnotes.parse_file("CHANGELOG.md", strict=True)
+          print("latest:", cl.latest())
+          EOF

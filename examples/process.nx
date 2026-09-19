@@ -1,0 +1,20 @@
+// process.run spawns a program, waits, and returns its exit code. The example
+// re-runs itself as the child so the output is the same on every platform.
+
+fn main() -> !void {
+    let args = os.args()
+    if (args.len > 1 and args[1] == "child") {
+        println("child says hi", .{})
+        os.exit(7)
+    }
+    let cmd = [args[0], "child"]
+    let code = try process.run(cmd[..])
+    println("child exited with {}", .{code})
+
+    let missing = ["nexium-no-such-program-xyz"]
+    let r = process.run(missing[..]) catch |e| {
+        println("cannot start: {}", .{e})
+        -1
+    }
+    println("r = {}", .{r})
+}

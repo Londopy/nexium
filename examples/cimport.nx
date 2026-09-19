@@ -1,0 +1,28 @@
+// Direct C header import (spec section 9, archived 14): no binding generator,
+// no build step. System headers and a vendored library, compiled together.
+
+const libc = @cImport("string.h")
+const cstdio = @cImport("stdio.h")
+const cmath = @cImport("math.h")
+const cv = @cImport("cvendor.h")
+
+artifact link { c_sources = ["cvendor.c"] }
+
+// `stdout` is a function-like macro in most libcs and cannot be imported; fflush(NULL) flushes everything
+fn null_file() -> *mut cstdio.FILE{ unsafe { return (0 as usize) as *mut cstdio.FILE } }
+
+fn main() {
+    unsafe {
+        let n = libc.strlen(@cstr("hello, C"))
+        println("strlen {}", .{n})
+        _ = cstdio.printf(@cstr("printf says %d and %s\n"), 42, @cstr("hi"))
+        _ = cstdio.fflush(null_file())
+        println("sqrt {:.3} floor {}", .{cmath.sqrt(2.0), cmath.floor(2.7)})
+
+        let a = cv.cv_point { .x = 0.0, .y = 0.0 }
+        let b = cv.cv_point { .x = 3.0, .y = 4.0 }
+        println("distance {} version {} name {}", .{cv.cv_distance(a, b), cv.CVENDOR_VERSION, cv.CVENDOR_NAME})
+        let xs: [4]u32 = [1, 2, 3, 4]
+        println("sum {} fast {} slow {}", .{cv.cv_sum(xs[..].ptr, 4), cv.cv_mode_speed(cv.CV_FAST), cv.cv_mode_speed(cv.CV_SLOW)})
+    }
+}

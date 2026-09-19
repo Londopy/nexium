@@ -1,0 +1,76 @@
+// Collections are values that own a heap buffer (spec 5.3): copying is
+// explicit with .clone(), passing borrows, moving transfers ownership.
+
+struct Bag {
+    name: String
+    items: List(i32)
+}
+
+fn make_bag(name: []u8) -> Bag {
+    var items = List(i32).new()
+    items.append(1)
+    items.append(2)
+    return Bag{ .name = String.from(name), .items = items }
+}
+
+fn total(b: Bag) -> i32 {
+    var t: i32 = 0
+    for (b.items) |x| { t += x }
+    return t
+}
+
+fn describe(names: []String) -> String {
+    var out = String.new()
+    for (names) |n, i| {
+        if (i > 0) out.append(", ")
+        out.append(n)
+    }
+    return out
+}
+
+fn main() {
+    let a = make_bag("first")
+    var b = a.items.clone()
+    b.append(3)
+    println("{}: {} items, clone has {} (sum {})", .{a.name, a.items.len, b.len, total(a)})
+
+    // moving a bag into a list of bags
+    var bags = List(Bag).new()
+    bags.append(a)
+    bags.append(make_bag("second"))
+    var names = List(String).new()
+    for (bags) |bag| { names.append(bag.name.clone()) }
+    println("bags: {}", .{describe(names)})
+
+    // maps with owned string keys and list values
+    var index = Map(String, List(i32)).new()
+    for (bags) |bag| { index.put(bag.name.clone(), bag.items.clone()) }
+    if (index.get("second")) |items| { println("second has {} items", .{items.len}) }
+    let keys = index.keys()
+    println("{} keys", .{keys.len})
+
+    // nested ownership is released at scope exit; nothing leaks here
+    {
+        var scratch = List(String).new()
+        for (0..3) |i| { scratch.append(format("row {}", .{i})) }
+        println("scratch {}", .{scratch[2]})
+    }
+
+    // optional collections
+    var maybe: ?List(u8) = null
+    maybe = List(u8).from("abc")
+    if (maybe) |m| { println("maybe len {}", .{m.len}) }
+
+    // enum payloads that own data
+    var shapes = List(Msg).new()
+    shapes.append(Msg.Text(String.from("hi")))
+    shapes.append(Msg.Num(7))
+    for (shapes) |m| {
+        match m {
+            .Text(s) => println("text {}", .{s}),
+            .Num(n) => println("num {}", .{n}),
+        }
+    }
+}
+
+enum Msg { Text(String), Num(i64) }

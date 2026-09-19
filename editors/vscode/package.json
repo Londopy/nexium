@@ -1,0 +1,67 @@
+{
+  "name": "nexium",
+  "displayName": "Nexium",
+  "description": "Syntax highlighting, diagnostics, and hover for the Nexium programming language (via `nx lsp`).",
+  "version": "0.1.0",
+  "publisher": "Londopy",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/Londopy/nexium" },
+  "homepage": "https://github.com/Londopy/nexium/tree/main/editors/vscode",
+  "bugs": { "url": "https://github.com/Londopy/nexium/issues" },
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Programming Languages"],
+  "keywords": ["nexium", "nx", "effects", "systems"],
+  "main": "./out/extension.js",
+  "activationEvents": ["onLanguage:nexium"],
+  "contributes": {
+    "languages": [
+      {
+        "id": "nexium",
+        "aliases": ["Nexium", "nexium"],
+        "extensions": [".nx"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "nexium",
+        "scopeName": "source.nexium",
+        "path": "./syntaxes/nexium.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "Nexium",
+      "properties": {
+        "nexium.nxPath": {
+          "type": "string",
+          "default": "nx",
+          "description": "Path to the `nx` compiler. The language server is `nx lsp`."
+        },
+        "nexium.enableLanguageServer": {
+          "type": "boolean",
+          "default": true,
+          "description": "Start `nx lsp` for diagnostics and hover."
+        }
+      }
+    },
+    "commands": [
+      { "command": "nexium.restartServer", "title": "Nexium: Restart Language Server" },
+      { "command": "nexium.run", "title": "Nexium: Run Current File" }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package",
+    "vscode:prepublish": "npm run compile"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^2.24.0",
+    "typescript": "^5.4.0"
+  }
+}

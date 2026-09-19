@@ -1,0 +1,8 @@
+// EXPECT: use of `xs` after it was moved
+fn main() {
+    var xs = List(i32).new()
+    xs.append(1)
+    let ys = xs
+    println("{}", .{xs.len})
+    _ = ys
+}

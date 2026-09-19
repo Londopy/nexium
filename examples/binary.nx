@@ -1,0 +1,68 @@
+enum Key { Up, Down, Left, Right, Char(u8), Unknown }
+
+fn decode(seq: []u8) -> Key {
+    match seq {
+        <<0x1b, '[', 'A', rest:bytes>> => Key.Up,
+        <<0x1b, '[', 'B', rest:bytes>> => Key.Down,
+        <<0x1b, '[', 'C', rest:bytes>> => Key.Right,
+        <<0x1b, '[', 'D', rest:bytes>> => Key.Left,
+        <<c:8, rest:bytes>> => Key.Char(c),
+        _ => Key.Unknown,
+    }
+}
+
+struct Ipv4 {
+    version: u8
+    ihl: u8
+    total_len: u16
+    ttl: u8
+    proto: u8
+    src: u32
+    dst: u32
+}
+
+error Net { Truncated }
+
+fn parse_ipv4(packet: []u8) -> Net!Ipv4 {
+    match packet {
+        <<version:4, ihl:4, dscp:6, ecn:2, total_len:16/big,
+            id:16, flags:3, frag_off:13, ttl:8, proto:8,
+            checksum:16, src:32, dst:32, rest:bytes>> => {
+            return Ipv4{ .version = version, .ihl = ihl, .total_len = total_len, .ttl = ttl, .proto = proto, .src = src, .dst = dst }
+        }
+        _ => return error.Truncated,
+    }
+}
+
+fn parse_tlv(buf: []u8) -> ?[]u8 {
+    match buf {
+        <<len:16/little, payload:len*8, rest:bytes>> => payload,
+        _ => null,
+    }
+}
+
+fn main() -> !void {
+    let k = decode("\x1b[A")
+    match k {
+        .Up => println("up", .{}),
+        .Char(c) => println("char {}", .{c}),
+        _ => println("other", .{}),
+    }
+    match decode("q") {
+        .Char(c) => println("char {c}", .{c}),
+        _ => println("other", .{}),
+    }
+    let pkt = b"\x45\x00\x00\x3c\x1c\x46\x40\x00\x40\x06\xb1\xe6\xc0\xa8\x00\x68\xc0\xa8\x00\x01payload"
+    let h = try parse_ipv4(pkt)
+    println("v{} ihl {} len {} ttl {} proto {} src {x} dst {x}", .{h.version, h.ihl, h.total_len, h.ttl, h.proto, h.src, h.dst})
+    let short = parse_ipv4("\x45\x00") catch |e| {
+        println("short packet: {}", .{e})
+        return
+    }
+    _ = short
+    let tlv = parse_tlv("\x03\x00abcXYZ")
+    if (tlv) |p| { println("tlv payload {}", .{p}) }
+    var buf: [16]u8 = undefined
+    let written = try <<4:4, 5:4, 0:8, 1500:16/big, "ab">> into buf[..]
+    println("wrote {} bytes: {x} {x} {x} {x} {c}{c}", .{written.len, written[0], written[1], written[2], written[3], written[4], written[5]})
+}

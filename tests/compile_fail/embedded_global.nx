@@ -1,0 +1,11 @@
+// EXPECT: mutable global `hits` is reachable from `count`, but this project declares an embeddable artifact (S2: no process-global state)
+var hits: u32 = 0
+
+pub fn count() -> u32 export(c) {
+    unsafe {
+        hits += 1
+        return hits
+    }
+}
+
+artifact cabi { name = "counter" }

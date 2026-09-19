@@ -1,0 +1,1668 @@
+================================================================================
+NEXIUM
+A language specification
+================================================================================
+
+File extension: .nx
+Compiler binary: nx
+
+
+--------------------------------------------------------------------------------
+1. WHAT IT IS
+--------------------------------------------------------------------------------
+
+A systems language for code that must not allocate, must hit a deadline, and
+spends its life reading bytes off a wire or a sensor, with enough tooling to
+build the console and desktop programs that drive it.
+
+Erlang-style binary pattern matching, compiled through compile-time execution
+into zero-allocation native code with no runtime, with an effect system that
+mechanically proves a function cannot allocate or block.
+
+That combination does not exist today. Elixir has the notation but BEAM
+underneath it. Zig has the code generation but treats parsing as a library
+problem. Nim and Crystal have the ergonomics but ship a garbage collector.
+Ada and SPARK have the verification but not the ergonomics or the ecosystem.
+
+
+--------------------------------------------------------------------------------
+2. DOMAINS IT SERVES
+--------------------------------------------------------------------------------
+
+  A. Binary and wire format parsing
+     Packet dissection, file formats, protocol work, sensor streams.
+     Current state of the art: C with buffer bugs, or Rust with nom.
+
+  B. Hard real-time
+     Audio DSP, motor control, anything with an external deadline that does
+     not care about your excuses.
+     Current state of the art: C with hand-discipline, or no_std Rust.
+
+  C. Bare metal and MCU targets
+     Requires that nothing in the language ever mandates a runtime.
+
+  D. CLI and TUI programs
+     The frontends for A, B, and C. Terminal input is an escape sequence
+     stream, which makes TUI event handling an instance of domain A rather
+     than a departure from it.
+
+These four share one machinery set: no hidden allocation, exact layout
+control, regions for zero-copy slices, compile-time code generation, and
+bounds-check elision that can be proven rather than hoped for. That shared
+machinery is the reason these four and not some other four.
+
+
+--------------------------------------------------------------------------------
+3. HARD CONSTRAINTS
+--------------------------------------------------------------------------------
+
+Every feature in this document is subordinate to these. A feature that
+violates one of these is cut, however good it is.
+
+  H1. No garbage collector. Anywhere. Not optional, not pluggable, not a
+      compiler flag.
+
+  H2. No hidden allocation. No operator overload, no implicit conversion, and
+      no destructor may allocate without it being visible at the call site.
+
+  H3. No hidden control flow. No exceptions, no implicit unwinding, no
+      arbitrary code running at scope exit that the reader cannot see.
+
+  H4. No mandatory runtime. A program that uses no platform services compiles
+      to a freestanding binary with no support code linked in.
+
+  H5. Compile speed is a constraint, not an optimization. Any feature that
+      makes whole-program analysis necessary is rejected on those grounds
+      alone.
+
+  H6. Bounded time. Every language-level operation has a worst case that can
+      be reasoned about statically.
+
+  H7. No undefined behavior in safe code. Every operation either has defined
+      semantics, is checked, or is only reachable through an explicitly
+      marked unsafe construct.
+
+  H8. One obvious way. Where two features would overlap in purpose, the
+      smaller one is cut rather than both kept.
+
+
+--------------------------------------------------------------------------------
+4. SYNTAX AND LEXICAL STRUCTURE
+--------------------------------------------------------------------------------
+
+DECISION: braces, no statement-terminating semicolons, not significant
+whitespace.
+
+Rationale. The original ambition was Python-like ease, and significant
+whitespace is the most visible part of that. It is also the part that matters
+least. What makes Python easy to write is inference and the absence of
+ceremony, both of which this language keeps. Braces are chosen because
+compile-time code generation produces code that is not hand-indented, because
+bit pattern literals span lines at irregular widths, and because whitespace
+sensitivity makes generated-code debugging materially worse. The ease budget
+is better spent on inference than on indentation.
+
+Comments: `//` to end of line, `///` for documentation attached to the
+following declaration. No block comments; nested block comments are a lexer
+complication that buys nothing.
+
+Identifiers: letters, digits, underscore, not leading with a digit. Unicode
+identifiers are rejected. Homoglyph attacks in identifiers are a real supply
+chain vector and the cost of rejecting them is close to zero.
+
+Naming convention, enforced by the formatter rather than the compiler:
+
+  types                PascalCase
+  functions, variables snake_case
+  constants            SCREAMING_SNAKE_CASE
+  modules              snake_case
+
+Literals:
+
+  integers    42, 0xFF, 0o755, 0b1010_1100, underscores permitted anywhere
+  floats      3.14, 1e-9, 0x1.8p3
+  strings     "utf-8 text", raw strings r"no \escapes"
+  bytes       b"\x00\x01", byte string literal, not UTF-8 validated
+  chars       'a' is a u32 Unicode scalar value, not a byte
+  bits        <<0b1010:4>> bit literal for use in binary construction
+
+Keywords are kept under thirty. Every keyword added is a name taken away from
+every user of the language forever.
+
+4.1 CONVENIENCES THAT COST NOTHING
+
+Each of these is pure syntax, resolved during parsing or type checking, with
+no runtime representation and no effect on any hard constraint. They are
+listed together because they share that property, and because the ease budget
+of section 1 is best spent on things that are free.
+
+PIPE OPERATOR
+
+    let out = buf |> decode() |> validate() |> encode(dst)
+
+`x |> f(a)` is exactly `f(x, a)`. Nothing more. The domains in section 2 are
+transformation chains almost by definition, and the alternative reads
+inside-out or forces a temporary per stage.
+
+ANONYMOUS STRUCT LITERALS
+
+    send(.{ .port = 8080, .timeout = 30 })
+
+The type comes from context. This removes the most common source of
+repetition in a language with no implicit conversions, which is naming a type
+the compiler already knows.
+
+LABELED BREAK WITH VALUES
+
+    const found = outer: for (rows) |r| {
+        for (r) |c| { if (match(c)) break :outer c }
+    } else null
+
+Removes the sentinel-variable pattern and the flag-checking that follows it.
+
+DERIVED IMPLEMENTATIONS
+
+    struct Point derive(Eq, Hash, Format) { x: i32, y: i32 }
+
+Generated at compile time through the reflection of 7.2. Not a special
+compiler feature, just a comptime function over `@fields`, which means user
+code can define its own derivations with the same mechanism.
+
+UNUSED-VALUE DISCARD
+
+    _ = returns_something()
+
+Explicit, because silently ignoring a return value is how errors get lost.
+
+WHAT IS DELIBERATELY NOT HERE
+
+The following would improve ergonomics and are refused because each cashes out
+against a hard constraint rather than against taste:
+
+  Inference at function boundaries     H5
+  Implicit numeric conversion          H7
+  RAII destructors                     H3, defer covers the need
+  Lazy iterator combinators            H2, see 5.9
+  Method syntax on arbitrary types     H8, traits already answer this
+
+These five are the actual walls. Everything above them is free, and everything
+below them costs something the language is built to protect.
+
+
+--------------------------------------------------------------------------------
+5. TYPE SYSTEM
+--------------------------------------------------------------------------------
+
+5.1 PRIMITIVE TYPES
+
+  i8 i16 i32 i64 i128        signed, two's complement
+  u8 u16 u32 u64 u128        unsigned
+  isize usize                pointer-width
+  f32 f64                    IEEE 754
+  bool                       one byte, values 0 and 1 only
+  char                       u32 holding a Unicode scalar value
+  void                       zero-sized
+  never                      the type of expressions that do not return
+
+Arbitrary-width integers u1 through u64 and i1 through i64 exist for binary
+patterns and packed structs. They occupy their declared bit width inside a
+packed context and round up to the next machine width outside one.
+
+5.2 INTEGER OVERFLOW SEMANTICS
+
+Specified rather than left to the implementation, because it is one of the top
+sources of security bugs in C and a place where domain A and domain B have
+genuinely different needs.
+
+  Default operators   + - * trap on overflow in debug and safe-release,
+                      wrap in fast-release. Trapping is a defined panic,
+                      not undefined behavior.
+  Wrapping operators  +% -% *% always wrap, in every build mode
+  Saturating          +| -| *| always saturate, in every build mode
+  Checked             checked_add and friends return an optional
+
+Rationale. Silent wrapping is the wrong default because most arithmetic is not
+intended to wrap. But DSP code wraps deliberately and constantly, so the
+wrapping form must be one character away rather than a function call.
+
+Integer conversion is never implicit. Widening requires a cast, narrowing
+requires a cast, signed-to-unsigned requires a cast. This is verbose and it is
+correct.
+
+Division by zero traps. Shift by more than the bit width traps. Neither is
+undefined.
+
+5.3 COMPOSITE TYPES
+
+  struct              named fields, declared layout
+  enum                tagged union with payloads, exhaustively matched
+  union               untagged, unsafe to read, exists for C interop and
+                      hardware register overlays only
+  tuple               anonymous product type, positional
+  array [N]T          fixed size, size is part of the type
+  slice []T           pointer plus length, region-tracked
+  pointer *T, *mut T  non-null by default
+  optional ?T         null pointer optimization applies
+
+Optionals replace null. There is no null. A pointer that may be absent is
+`?*T` and occupies one machine word using the null representation, so there is
+no space cost to correctness here.
+
+5.4 STRUCT LAYOUT
+
+  struct Foo { ... }               default layout, compiler may reorder
+  struct Foo layout(c) { ... }     C ABI layout, no reordering
+  struct Foo layout(packed) { ... } bit-exact, no padding, arbitrary widths
+
+Packed structs are the static counterpart to binary patterns. A packed struct
+declaration and a binary pattern describing the same header produce identical
+memory interpretations, and the compiler verifies agreement when both exist.
+
+Structure-of-arrays is a declared property rather than a manual rewrite:
+
+    struct Particle soa { x: f32, y: f32, vx: f32, vy: f32 }
+
+Access is written `p.x` regardless of underlying layout; the compiler
+translates. This matters because SOA is the largest easy win in DSP and
+particle-heavy code, and hand-rewriting for it destroys readability.
+
+SOA is restricted to structs whose fields are scalars, fixed arrays of
+scalars, or other SOA structs. Nesting works by declaring the inner struct
+`soa` as well, which keeps the transform local to a declaration rather than
+recursive through arbitrary types.
+
+A slice of an SOA type is a struct of slices, not a slice of structs, and
+indexing it yields a field-wise view rather than a contiguous value. This is
+visible in the type and is the one place where the SOA abstraction does not
+fully hide itself. Taking a pointer to a single SOA element is therefore
+disallowed; the fields are not adjacent and no such pointer exists.
+
+Rationale for the restriction. A fully general transform over arbitrary nested
+types would need to reason about pointers into interior elements, which do not
+exist under SOA. Restricting the declaration keeps the rule statable in two
+sentences, and the unsupported cases are exactly the ones where SOA would not
+have helped.
+
+5.5 DISTINCT TYPES
+
+    type Meters = distinct f32
+    type Feet   = distinct f32
+
+Distinct types share representation but not identity. No implicit conversion
+between them, none to the underlying type. Conversions are explicit and free
+at runtime. This catches unit errors, handle mixups, and index-into-the-wrong-
+array bugs statically at zero cost.
+
+5.6 TRAITS
+
+Traits are the single extension mechanism, per H8. Uniform function call
+syntax and multiple dispatch are both rejected because they answer the same
+question and only one answer may exist.
+
+    trait Reader {
+        fn read(self: *mut Self, buf: []mut u8) -> !usize
+    }
+
+Static dispatch by default. Dynamic dispatch requires an explicit `dyn`
+annotation and produces a fat pointer. The distinction is visible because
+dynamic dispatch defeats inlining and therefore cycle counting, and domain B
+needs to know exactly where that happens.
+
+Trait implementations are coherent: an implementation must live in the module
+defining the trait or the module defining the type. This is what keeps H5
+satisfiable without whole-program analysis.
+
+No inheritance. No upcasting. No specialization.
+
+5.7 GENERICS
+
+Generics are compile-time parameters, not a separate system:
+
+    fn max(comptime T: type, a: T, b: T) -> T {
+        return if (a > b) a else b
+    }
+
+Type parameters are ordinary compile-time values. One mechanism therefore
+serves generics, conditional compilation, and metaprogramming, which is a
+large reduction in language surface for no loss of capability.
+
+Trait bounds constrain them:
+
+    fn sort(comptime T: type where T: Ord, items: []mut T) -> void
+
+Monomorphization is the default. It has a code size cost that matters on an
+MCU, so the `dyn` form exists for cases where size beats speed.
+
+5.8 TYPE INFERENCE
+
+Bodies infer. Boundaries do not.
+
+  Inferred:   local variable types, closure parameter types, generic arguments
+              at call sites, struct literal types in unambiguous positions,
+              integer literal widths from context
+  Required:   function parameter types, function return types, struct field
+              types, global declarations, all public API surface
+
+Rationale. Whole-program inference is what makes Crystal slow to compile and
+what makes its errors point at the wrong place. Local inference captures the
+large majority of the ergonomic benefit, keeps every function independently
+compilable, and keeps errors local. This is the mechanism by which H5 is
+actually satisfied rather than merely asserted.
+
+5.9 ITERATION
+
+Previously unspecified, which was a hole, because rule E6 in section 10 names
+iteration as the primary way bounds become provable and therefore the primary
+way `!panics` is achieved. Promising that without specifying the construct
+left the most valuable effect bound resting on nothing.
+
+    for (items) |item| { ... }
+    for (items) |item, i| { ... }
+    for (a, b) |x, y| { ... }          parallel, lengths must match
+    for (0..n) |i| { ... }
+    while (cond) { ... }
+
+Iteration over a slice or array is a language construct, not a trait. The
+compiler knows the length, emits no per-element bounds check, and the loop
+variable carries a range fact that rule E6 consumes. This is the path by which
+ordinary code becomes provably panic-free without any annotation.
+
+User types iterate through a trait:
+
+    trait Iterate {
+        type Item
+        fn next(self: *mut Self) -> ?Self.Item
+    }
+
+A trait-driven loop gets no free bounds facts, because the compiler cannot see
+inside `next`. This is a real difference in what the effect system can prove,
+and it is visible in the source: a `for` over a slice and a `for` over a user
+iterator look identical but verify differently. The `nx effects` tool reports
+which one a given loop got.
+
+Iterators are not lazy chains. There is no map, filter, or collect in core.
+A combinator chain either allocates intermediate storage, violating H2, or
+requires a closure representation and inlining guarantees that H6 cannot
+promise. Transformation over a slice is a loop, or a comptime-generated fused
+operation where that is worth the machinery. This is a genuine ergonomic cost
+and it is accepted, since the alternative is an allocation the caller cannot
+see.
+
+Slicing syntax: `buf[a..b]`, `buf[a..]`, `buf[..b]`, all producing a slice in
+the same region as the source per 8.2, and all range-checked at the point of
+slicing rather than per access.
+
+5.10 MUTABILITY
+
+Previously used throughout the document and defined nowhere.
+
+Mutability is a property of both bindings and reference types, and the two are
+independent.
+
+    let x = 5           immutable binding, cannot be reassigned
+    var x = 5           mutable binding
+    *T   []T            reference to immutable data
+    *mut T  []mut T     reference to mutable data
+
+Mutability is shallow. A `let` binding holding a `*mut T` cannot be
+reassigned to point elsewhere, but the pointee remains mutable through it.
+Deep immutability requires transitive tracking through every type, which is
+expensive to specify, expensive to check, and pushes toward the ownership
+system that 8.2 declines to build.
+
+Mutability is not exclusivity. Two `*mut T` may reference the same location.
+This is the honest consequence of choosing regions over ownership, and it is
+what 22 is a wager about. See 24.1 for the optimization consequence.
+
+`Share` in 11.3 is defined structurally in these terms: a type is shareable
+across threads if no `*mut` is reachable from it without an intervening
+atomic or lock.
+
+5.11 CLOSURES
+
+Previously mentioned three times and specified nowhere, while being load
+bearing for the `Iterate` trait, for callbacks, and for the effect-carrying
+function pointers of E4.
+
+Captures are explicit. There is no inference of what a closure closes over.
+
+    const add = |[base] x: i32| -> i32 { base + x }        capture by value
+    const push = |[&mut out] x: u8| { out.append(x) }      capture by reference
+
+Rationale for explicitness. Inferred capture is more pleasant to write and
+makes it impossible to see, at the closure site, whether a large struct was
+copied or a reference was taken that constrains a lifetime. In a language
+where the reader is expected to know what allocates and what a region
+outlives, that is the wrong tradeoff.
+
+REPRESENTATION. A closure is a fat value: a function pointer plus an inline
+environment struct holding the captures. It is not a heap allocation and does
+not require one. A closure with no captures degrades to a plain function
+pointer.
+
+REGION. A closure lives in the region of its shortest-lived capture. It
+cannot outlive that region, per R1. A closure capturing only by value and
+only from types with no references is region-free and may be stored anywhere,
+including in a static.
+
+ESCAPING. Storing a closure that outlives its captures requires moving the
+environment, which requires an allocator and is written explicitly:
+
+    const cb = try alloc.box(|[&state] x: u8| { ... })
+
+The `allocates` effect follows from the call, so an escaping closure is
+visible in the effect signature of whatever creates it. A callback registry
+on a freestanding target therefore cannot silently allocate.
+
+EFFECTS. A closure's type carries its effect bounds, per E4. A closure that
+allocates cannot be installed where `!allocates` is required, and this is
+checked at the coercion site rather than at the call.
+
+NO IMPLICIT CAPTURE OF `context`. A closure does not capture the implicit
+context of section 15. If it needs a capability, it captures it explicitly.
+Otherwise a closure stored across a context change would silently read a
+stale capability, which is exactly the class of bug implicit context is
+otherwise safe from.
+
+
+--------------------------------------------------------------------------------
+6. BINARY PATTERN MATCHING
+--------------------------------------------------------------------------------
+
+The identity feature. Everything else in this document is support.
+
+6.1 DESTRUCTURING
+
+    match packet {
+        <<version:4, ihl:4, dscp:6, ecn:2, total_len:16/big,
+          id:16, flags:3, frag_off:13, ttl:8, proto:8,
+          checksum:16, src:32, dst:32, rest:bytes>> => { ... }
+
+        _ => return error.Truncated
+    }
+
+Segment grammar:
+
+    name : size / modifiers        binding segment
+    literal                        literal segment, matched not bound
+    literal : size / modifiers     literal at an explicit width
+
+  size        bit count; a compile-time constant, or an expression over
+              variables bound earlier in the same pattern
+  bytes       consume the remainder as a slice
+  modifiers   big, little, native      endianness
+              signed, unsigned         interpretation
+              float                    IEEE interpretation at 32 or 64 bits
+              utf8                     validated text slice
+
+LITERAL SEGMENTS. A segment may be a literal value rather than a binding, in
+which case it must match for the arm to be taken and binds nothing:
+
+    <<0x1b, '[', 'A', rest:bytes>>      => Key.Up
+    <<0x89, "PNG\r\n\x1a\n", rest:bytes>> => parse_png(rest)
+
+Byte, char, and string literals default to 8 bits per byte. An explicit width
+may be given for sub-byte constants: `<<0b10:2, len:6, rest:bytes>>`.
+
+Without literal segments, magic numbers, fixed delimiters, and escape
+sequences all require a bind-then-compare step, which defeats the single
+bounds check of 6.2 and makes the most common protocol shape the least
+ergonomic one. Erlang permits them and so does this.
+
+SIZE ARITHMETIC. Size may depend on an earlier binding in the same pattern,
+which is what makes length-prefixed formats expressible without a manual
+second pass:
+
+    <<len:16, payload:len*8, rest:bytes>>
+
+Size expressions evaluate in usize regardless of the width of their operand
+bindings. `len` above is a u16, but `len*8` is computed at pointer width and
+cannot overflow at any u16 input. Overflow in a size expression traps in every
+build mode, including fast-release, and is not subject to the 5.2 build-mode
+distinction.
+
+Rationale. This is the one place in the language where an arithmetic result
+feeds directly into a memory access width. Inheriting the operand's width
+would make `len*8` overflow above 8191 and silently produce a short read,
+which is a buffer-overflow-shaped bug in the feature the language is named
+for. Size arithmetic is therefore exempt from the usual overflow policy and is
+always checked.
+
+6.2 GUARANTEES
+
+  - Tail and slice bindings are views into the source buffer. Never copies.
+  - Total pattern width is computed at compile time where possible, and one
+    bounds check is emitted for the whole pattern rather than one per field.
+  - A match against a buffer shorter than the pattern fails the arm. It does
+    not read out of bounds and it does not panic.
+  - No allocation occurs during matching under any circumstance. Enforced by
+    the effect system, not by convention.
+  - Patterns compile to straight-line shift-and-mask code. For byte-aligned
+    segments on a matching-endian target this reduces to a load.
+
+ARM ORDERING. Arms are ordered and the first matching arm wins. Arms are not
+required to be disjoint, and overlapping arms are not a warning.
+
+This is a deliberate departure from the exhaustive-and-disjoint discipline
+that enum matching uses. Binary formats are specified as a sequence of
+increasingly general cases, and escape sequence decoding is the clearest
+example: a catch-all `<<c:8, rest:bytes>>` overlaps every more specific arm
+above it and must remain reachable.
+
+The compiler reports an arm that is fully shadowed by an earlier one, since
+that is always a mistake. It does not report partial overlap, since that is
+the normal case.
+
+Exhaustiveness is not checked for binary patterns, because a byte string has
+no finite set of shapes to enumerate. A match on binary without a catch-all
+arm that fails to match is a compile error at the match site, requiring either
+a catch-all or an explicit `else => unreachable`.
+
+6.3 CONSTRUCTION
+
+The same notation builds binary:
+
+    let header = <<4:4, 5:4, 0:6, 0:2, total:16/big, ...>> into buffer
+
+Construction targets a caller-provided buffer. There is no allocating form.
+Insufficient buffer space is an error value, not a panic.
+
+Symmetry is a requirement rather than a convenience. A protocol implementation
+that reads with one notation and writes with a different one accumulates
+asymmetry bugs, which are the most common class of protocol defect.
+
+6.4 RELATION TO PACKED STRUCTS
+
+A packed struct and a binary pattern are two views of one layout. Patterns
+suit streaming and variable-length data; packed structs suit fixed headers and
+hardware registers. Where both are declared for one format, the compiler
+verifies they agree.
+
+
+--------------------------------------------------------------------------------
+7. COMPILE-TIME EXECUTION
+--------------------------------------------------------------------------------
+
+7.1 MODEL
+
+Ordinary Nexium code, evaluated during compilation, in the same language with
+the same semantics. No separate macro language, no separate type system, no
+quoting.
+
+    comptime { ... }              a block evaluated at compile time
+    const X = comptime f()        a value computed at compile time
+    fn g(comptime T: type, ...)   a compile-time parameter
+
+Permitted at compile time: pure computation, allocation from a compile-time
+arena, reading files declared as build inputs, type construction.
+
+Not permitted: system calls, network access, nondeterminism, unbounded
+recursion. Compile-time evaluation carries a configurable step budget;
+exceeding it is a compile error rather than a hang.
+
+Rationale for the restrictions. Compile-time file and network access makes
+builds non-reproducible and turns the compiler into a code execution vector
+inside any dependency. Declared build inputs keep the useful case without the
+hazard.
+
+7.2 REFLECTION
+
+Compile-time introspection over declarations:
+
+    @typeInfo(T)        fields, variants, layout, size, alignment
+    @typeName(T)
+    @fields(T)          iterable at compile time
+    @hasDecl(T, "name")
+
+This generates the CLI argument parser from a struct, the serializer from a
+type, and the test registry from annotated functions. Reflection is compile-
+time only. There is no runtime type information, because runtime type
+information is a runtime.
+
+7.3 CODE GENERATION
+
+Compile-time code may construct types and emit declarations. This is the
+mechanism behind specialized decoders, SIMD width selection, and state
+machines generated from a protocol description.
+
+Generated code is inspectable: `nx expand <file>` prints post-comptime source.
+A metaprogramming system whose output cannot be read is a metaprogramming
+system whose bugs cannot be found.
+
+7.4 COMPILE-TIME VARIADICS
+
+There are no runtime variadic functions except through C interop, since they
+are untyped and unbounded. Variadic-looking APIs are compile-time instead.
+
+    fn print(comptime fmt: []u8, args: anytype) -> !void
+
+`anytype` in a parameter position denotes a compile-time known anonymous
+tuple. The callee inspects it with the reflection of 7.2, and the call
+monomorphizes to a fixed argument list.
+
+This makes format strings checkable. A mismatch between placeholders and
+arguments, or a type without a formatting implementation, is a compile error
+at the call site rather than a runtime fault or silent garbage. It also means
+formatting allocates nothing, since the argument list has a known size and a
+known layout at the point of the call, which is what allows the `fmt` module
+of section 16 to live in core.
+
+
+--------------------------------------------------------------------------------
+8. MEMORY MODEL
+--------------------------------------------------------------------------------
+
+8.1 ALLOCATORS ARE PARAMETERS
+
+Any function that allocates takes an allocator. This is not a convention; it
+is enforced by the `allocates` effect, so a function without the effect cannot
+call one that has it.
+
+    fn parse_all(alloc: Allocator, input: []u8) -> !List(Record) allocates
+
+An implicit allocator context keeps this from becoming noise at every call
+site. A scope may install a default allocator, and functions in that scope use
+it unless one is passed explicitly. The effect annotation remains either way,
+so the implicitness hides the plumbing of allocation, never the fact of it.
+
+Standard allocators: arena, fixed buffer, pool, general purpose, page, and a
+debug allocator detecting leaks, double frees, and use-after-free. The debug
+allocator is the default in debug builds.
+
+8.2 REGIONS
+
+Regions replace ownership and borrow checking. The wager is that they reach
+most of the safety at a fraction of the learning cost.
+
+A region is a named lifetime scope. Slices and pointers carry the region they
+originate from. The rules:
+
+  R1. A reference may not outlive its region.
+  R2. A region may not close while a live reference into it exists.
+  R3. A function may declare that its return value lives in the region of one
+      of its parameters.
+  R4. Regions nest. An inner region may reference an outer one, never the
+      reverse.
+
+    fn header(r: region, buf: []u8 in r) -> []u8 in r
+
+What this buys: zero-copy parsing becomes statically safe. A slice into a
+packet buffer cannot outlive the buffer. That is the most common memory bug in
+protocol code and it is eliminated.
+
+What this does not buy: it does not prevent aliasing mutation, and it does not
+prevent use-after-free within a region's own lifetime. Those remain possible
+and are caught by the debug allocator at runtime rather than by the compiler.
+
+This is a named tradeoff, not an oversight. Full ownership catches strictly
+more at strictly higher cost. The claim requiring validation is that the
+residual bug class is small enough in practice to justify the ergonomic
+difference. See section 22.
+
+8.3 STACK, STATIC, AND FREESTANDING
+
+Stack allocation is explicit in size. Variable-length stack allocation exists
+but must be bounded and declared, since unbounded stack growth violates H6.
+
+Maximum stack depth per function is computable and reportable. `nx stack-report`
+emits per-function worst-case stack usage. On an MCU this is not a nicety.
+
+A freestanding target with no allocator available is fully supported. Code
+written against fixed buffers and arenas compiles unchanged.
+
+8.4 GLOBALS AND STATIC STORAGE
+
+Domain C cannot function without mutable global state. Interrupt flags, ring
+buffers shared with a DMA engine, MMIO handles, and static pools are the
+normal case on a microcontroller, and a language that only permits immutable
+globals is not usable there.
+
+    const TABLE: [256]u8 = comptime build_table()     immutable, in flash
+    var counter: Atomic(u32) = Atomic.init(0)         mutable, shareable
+    var buffer: [4096]u8 align(64) = undefined        mutable, unsafe access
+
+A mutable global may be accessed from safe code only if its type is `Share`
+per 11.3, which in practice means atomics or a lock. Any other mutable global
+requires an `unsafe` block to read or write, and the diagnostic names the
+reason.
+
+This is stricter than C and deliberately so. The dominant concurrency bug on
+an MCU is a global touched by both an interrupt handler and the main loop
+with no synchronization, and it is invisible in the source precisely because
+the access looks like an ordinary variable read. Requiring `unsafe` does not
+prevent the bug; it makes `nx audit` able to list every place it could occur.
+
+Critical sections are a platform capability, not a language construct, since
+disabling interrupts is target-specific:
+
+    context.critical(|[&mut buffer]| { ... })
+
+Globals are initialized at compile time or not at all. There is no
+initialization order problem because there is no runtime initialization, and
+a global whose initializer cannot be evaluated at compile time is a compile
+error rather than something that runs before main.
+
+
+--------------------------------------------------------------------------------
+9. ERROR HANDLING
+--------------------------------------------------------------------------------
+
+Errors are values. No exceptions, per H3.
+
+    fn read_header(buf: []u8) -> !Header
+
+The `!` prefix denotes a return of either the type or an error. Error sets are
+inferred from the body and may be declared explicitly to constrain the API:
+
+    fn read_header(buf: []u8) -> ParseError!Header
+
+Propagation is one character:
+
+    let h = try read_header(buf)
+
+Handling is explicit:
+
+    let h = read_header(buf) catch |e| match e {
+        error.Truncated => return default_header(),
+        else => return e,
+    }
+
+There is one matching construct, `match`, used for errors, enums, and binary
+patterns alike. An earlier draft of this document used `switch` in this
+section and `match` in section 6; that was an inconsistency, not two
+constructs. Per H8, one.
+
+An unhandled error value is a compile error. A discarded error must be
+discarded explicitly.
+
+Errors carry no payload and no allocation. An error is a value from a set,
+comparable and switchable, costing one integer. Context is attached by the
+caller rather than carried by the error, because carrying context means
+allocating.
+
+Panics exist and are distinct from errors. A panic indicates a bug, not a
+condition: failed bounds check, overflow trap, unreachable reached. The panic
+handler is platform-supplied and defaults to a trap instruction on
+freestanding targets. Panics do not unwind and do not run cleanup, because
+unwinding is hidden control flow.
+
+9.1 DEFER AND ERRDEFER
+
+    defer    stmt      runs stmt when the enclosing scope exits, by any path
+    errdefer stmt      runs stmt only when the scope exits via an error
+
+    fn load(alloc: Allocator, path: []u8) -> !Config allocates blocks {
+        const f = try open(path)
+        defer f.close()
+
+        const buf = try alloc.alloc(u8, f.size)
+        errdefer alloc.free(buf)
+
+        return try parse(buf)
+    }
+
+Deferred statements run in reverse order of registration. A defer registered
+inside a loop body runs at the end of each iteration, not at the end of the
+loop.
+
+This does not violate H3, and the distinction is worth stating precisely. H3
+forbids cleanup the reader cannot see. A defer statement is lexically present
+in the function, names the exact code that will run, and is registered at a
+visible point. An implicit destructor is invisible at every site where it
+fires. The two are opposites rather than variations, and defer is the feature
+that makes manual memory management tolerable without reintroducing hidden
+behavior.
+
+`errdefer` exists because `try` creates early returns, and an allocation made
+before a failing `try` would otherwise leak on exactly the path least likely
+to be tested.
+
+Defers do not run on panic. A panic is a bug, the program state is already
+untrustworthy, and running cleanup code against untrustworthy state turns one
+fault into an unpredictable sequence of them. This is consistent with panics
+not unwinding.
+
+Deferred statements carry effects like any other code. A defer that allocates
+gives the enclosing function the `allocates` effect, which is what keeps
+defer from becoming a hole in section 10.
+
+
+--------------------------------------------------------------------------------
+10. EFFECTS
+--------------------------------------------------------------------------------
+
+The feature most likely to have commercial value, and the one that turns the
+real-time claim from an aspiration into something a compiler enforces.
+
+10.1 THE EFFECTS
+
+  allocates          may request memory from an allocator
+  blocks             may block: I/O, lock acquisition, sleeping
+  nondeterministic   result may vary across runs on identical input: clocks,
+                     entropy, address values, uninitialized reads
+  panics             may abort the program
+  unbounded_stack    maximum stack depth is not statically computable
+
+The last of these replaces an earlier `recursive` effect. Recursion was the
+wrong thing to name. Bounded recursion is legitimate and common, and what the
+real-time domains actually require is a computable worst-case stack depth,
+which is a different and more useful property.
+
+A recursive function does not carry `unbounded_stack` if its depth is bounded
+by a compile-time constant, either through a comptime depth parameter or
+through a structural bound the compiler can establish. A non-recursive
+function carries it if it makes an unbounded dynamic stack allocation.
+
+This aligns the effect with `nx stack-report` in 8.3, which computes the same
+property. The effect is the declarable form of what that tool measures.
+
+10.2 RULES
+
+  E1. Effects propagate. A caller acquires every effect of its callees.
+  E2. Effects are inferred within a module, declared at module boundaries.
+  E3. A negative bound asserts absence and is a compile error if violated:
+      `fn process(...) -> T !allocates`
+  E4. Function pointers and dyn dispatch carry effect bounds in their type. A
+      callback that allocates cannot be installed where one that does not is
+      required.
+  E5. Effects are computed against safe-release semantics and are identical in
+      every build mode.
+
+      Without this rule, effects vary by build mode and the certification
+      argument of 10.3 collapses. Section 5.2 has `+` trapping in safe-release
+      and wrapping in fast-release, so a naive reading gives `x + y` the
+      `panics` effect in one build and not another. A guarantee that changes
+      with a compiler flag is not a guarantee. Effects are therefore always
+      computed as though checks are enabled, and fast-release is understood as
+      removing checks the effect signature already accounted for.
+
+  E6. `panics` is narrower than it first appears, and this is load-bearing.
+
+      Every indexing operation, every default-operator arithmetic expression,
+      and every explicit unreachable can panic. A naive propagation rule gives
+      almost every function the effect and makes `!panics` useless, which
+      would be a serious loss because `!panics` is the most valuable bound in
+      safety-critical work.
+
+      The effect is therefore discharged by proof, not by syntax. An operation
+      contributes `panics` only where the compiler cannot establish that it
+      succeeds. Specifically:
+
+        - Indexing does not contribute where the index is provably in range.
+          Iteration over a slice, indexing by a value bounded at its origin,
+          and comptime-known indices all qualify.
+        - Checked indexing via an optional-returning accessor never
+          contributes, because failure is a value rather than a panic.
+        - Arithmetic does not contribute where operand ranges are known to fit,
+          or where a wrapping or saturating operator is used, since neither
+          can fail.
+        - Explicit unreachable always contributes.
+
+      This makes `!panics` a real engineering constraint: it is achievable by
+      writing code whose bounds are provable, which is what the domains in
+      section 2 want anyway. It also makes the diagnostic important. When a
+      function cannot be proven `!panics`, the compiler must name the specific
+      operation and the range fact it could not establish, or the annotation
+      becomes an unwinnable argument with the compiler.
+
+      OPEN RESOLVED. The range analysis is specified deliberately modestly,
+      because an unspecified best-effort solver makes `!panics` a negotiation
+      with the compiler version rather than a property of the code.
+
+      The analysis is interval-based, single-function, and non-iterative. It
+      draws facts from exactly five sources:
+
+        1. Type ranges. A u8 index is 0 to 255.
+        2. Literal and comptime-known values.
+        3. Comparison guards that dominate the use site.
+        4. Slice length relationships introduced by iteration constructs.
+        5. Simple induction variables in counted loops, with a constant or
+           length-derived bound.
+
+      It does not do interprocedural propagation, symbolic reasoning, or
+      constraint solving. Analysis cost is therefore linear in function size,
+      which is what keeps H5 satisfiable.
+
+      This is weak enough that some provably-safe code will fail to verify.
+      That is accepted and the escape hatches are ordinary code rather than
+      annotations: iterate instead of index, use the optional-returning
+      accessor, or narrow through a guard. Each is something a reader can
+      check, which an `assume` annotation is not.
+
+      The rule is part of the language specification, not an implementation
+      detail. Strengthening it later is a compatible change; weakening it is
+      breaking, and it falls under the section 20 freeze at 1.0.
+
+  E7. Trait methods do not declare effects. Effects are inferred per
+      implementation, and generic code constrains them through ordinary trait
+      bounds.
+
+      This resolves what was the hardest open problem in the document. A
+      declared effect on a trait method is wrong in both directions: if
+      `Writer.write` declares `blocks`, an in-memory writer that cannot block
+      still infects every caller and destroys `!blocks` for anything generic
+      over Writer; if it declares nothing, a file writer cannot implement the
+      trait at all.
+
+      The resolution is that the effect belongs to the implementation, not to
+      the trait, and reaches generic code through the bound:
+
+          fn copy(comptime W: type where W: Writer, dst: *mut W, src: []u8)
+
+      This inherits whatever effects `W`'s implementation has. To require
+      their absence, constrain the parameter using the existing `where`
+      syntax:
+
+          fn audio_out(comptime W: type where W: Writer + !blocks + !allocates,
+                       dst: *mut W, frames: []f32) !blocks !allocates
+
+      No effect variables, no new syntax, no signature noise in the common
+      case. The negative bound appears only where it is actually required,
+      which is exactly where the reader wants to see it.
+
+      For dynamic dispatch there is no monomorphization site, so the bound
+      moves into the type, which E4 already requires: `dyn Writer !blocks` is
+      a distinct type from `dyn Writer`, and only implementations satisfying
+      the bound may be coerced into it.
+
+      A trait may optionally declare a maximum effect set that all
+      implementations must stay within. This is a constraint on implementors
+      rather than the mechanism, and it exists for traits where an unbounded
+      implementation would be a design error regardless.
+
+      Honest note on cost: this is structurally the same problem as async in
+      traits, which Rust spent most of a decade on. The reason it resolves
+      more cheaply here is that Nexium's effects are inferred positively and
+      declared only as negative bounds, so the default case needs no
+      annotation at all. If that asymmetry turns out to leak, this is the
+      first place it will show.
+
+10.3 WHAT THIS IS WORTH
+
+A function annotated `!allocates !blocks !panics !unbounded_stack` has a computable
+worst-case path, no dynamic memory, and bounded stack. That is the core of the
+argument required by DO-178C, IEC 61508, and MISRA-adjacent processes, and
+today that argument is assembled by hand at very large expense.
+
+The audio callback, the interrupt handler, and the control loop are the same
+shape: a function that must not allocate, must not block, and must return
+within a deadline. Nexium expresses that shape in the type system.
+
+10.4 LIMITS
+
+Effects bound behavior, not time. `!allocates !blocks !unbounded_stack` implies
+bounded stack and no dynamic memory. It does not by itself yield a WCET
+number. Timing analysis is a tool built on top of the guarantee, not the
+guarantee itself. Claiming otherwise would be dishonest and would be found out
+by the first person who needed it to be true.
+
+
+--------------------------------------------------------------------------------
+11. CONCURRENCY
+--------------------------------------------------------------------------------
+
+Previously the largest hole in this document. Specified here because the
+memory model and effect system constrain it, and deciding it late risks
+foreclosing options by accident.
+
+11.1 NO SCHEDULER IN THE LANGUAGE
+
+Green threads, an async runtime, and a work-stealing pool are all runtimes and
+all violate H4. Threads are a platform service: OS threads on a hosted
+platform, possibly nonexistent on freestanding. Code that does not use them
+compiles either way.
+
+11.2 WHAT THE LANGUAGE PROVIDES
+
+  - Atomics with explicit memory ordering, following the C11 and Rust model:
+    relaxed, acquire, release, acq_rel, seq_cst. No default ordering, because
+    any default is wrong in one direction or the other.
+  - Data races are undefined behavior in unsafe code and statically prevented
+    in safe code by the sharing rules below.
+  - Lock-free channels as first-class standard library types: SPSC, MPSC, and
+    broadcast rings over caller-provided storage. These allocate nothing and
+    are the correct primitive for audio and control work, where a mutex in the
+    callback is a bug.
+  - Structured concurrency scopes. A scope may not exit while a task spawned
+    within it is live, which makes task lifetimes lexical. This is the same
+    idea as regions, applied to time rather than memory.
+
+11.3 SHARING RULES
+
+A value is shareable across threads if it contains no interior mutability
+without synchronization. This is a trait, `Share`, inferred structurally, in
+the manner of Rust's Send and Sync but collapsed into one trait per H8.
+
+Mutable aliasing across threads requires an atomic type, a lock, or an
+explicitly unsafe assertion.
+
+11.4 ASYNC
+
+There is no async/await keyword pair and no colored functions. Nonblocking
+I/O is expressed with the `blocks` effect plus explicit event loop APIs from
+the platform. A function that does not block says so in its type and can be
+called from anywhere.
+
+Rationale. Function coloring is the most complained-about property of async in
+every language that has it, and the underlying need, which is knowing whether
+a call can block, is already answered by the effect system. Adding async would
+be a second mechanism for a settled question, violating H8.
+
+
+--------------------------------------------------------------------------------
+12. SAFETY AND UNDEFINED BEHAVIOR
+--------------------------------------------------------------------------------
+
+Per H7, safe code has no undefined behavior. The complete list of operations
+requiring `unsafe`:
+
+  - Dereferencing a raw pointer
+  - Reading from an untagged union
+  - Calling a foreign function
+  - Reading or writing a volatile address (MMIO)
+  - Asserting a lifetime the compiler cannot verify
+  - Transmuting between types
+  - Asserting the absence of a data race
+
+UNINITIALIZED MEMORY. `undefined` is permitted as an initializer and is not
+undefined behavior.
+
+    var buf: [1500]u8 = undefined
+
+A location initialized with `undefined` holds an unspecified but valid bit
+pattern for its type. Reading it produces an arbitrary value, not a
+miscompilation, and the optimizer may not assume the read never happens.
+
+This is a deliberate departure from C and Rust, both of which make the read
+undefined behavior and both of which have produced real miscompilations from
+it. Defining it costs some optimization on a pattern that is uncommon, and it
+is what keeps H7 true rather than nearly true.
+
+Definite-assignment analysis reports reads the compiler can prove come before
+any write. It is intraprocedural and modest, on the same basis as E6. Where it
+cannot prove either way, debug builds poison the memory with a recognizable
+pattern so that the bug is loud rather than subtle.
+
+`undefined` is intended for buffers about to be filled by a writer taking
+`[]mut u8`, which is the overwhelmingly common case in the domains of
+section 2, and zeroing them would be a real cost for no benefit.
+
+`unsafe` is a block rather than a function attribute, so its scope stays
+visible and minimal. `nx audit` reports every unsafe block in a project and
+its dependencies with line counts, because the realistic failure mode is
+accretion rather than any single use.
+
+Build modes:
+
+  debug            all checks on, debug allocator, no optimization
+  safe-release     all checks on, optimized. The recommended shipping mode.
+  fast-release     bounds and overflow checks off, optimized
+  small-release    optimized for size, checks on
+
+Rationale for safe-release existing and being the recommendation: the industry
+default of shipping with checks disabled trades a large amount of safety for a
+small amount of speed, and in these domains the checks usually vanish under
+optimization anyway, because the bounds are provable.
+
+
+--------------------------------------------------------------------------------
+13. MODULES AND PACKAGES
+--------------------------------------------------------------------------------
+
+A file is a module. Directory structure is module structure. No separate
+module declaration syntax, because a second source of truth about structure is
+a second thing to get out of sync.
+
+    import net.packet
+    import net.packet as pkt
+    import net.packet.{parse, Header}
+
+Visibility is private by default; `pub` exports. There is no intermediate
+level. Crate-visible and module-visible tiers are a complication that buys
+less than it costs.
+
+A package is a directory with a manifest declaring name, version,
+dependencies, and targets. Dependencies resolve to exact versions recorded in
+a lockfile. The resolver refuses multiple major versions of one package in a
+single build, because diamond dependency with incompatible types is a worse
+problem than a resolution failure.
+
+Dependency code cannot execute at compile time outside the declared build
+input model of 7.1. This is a deliberate departure from most package
+ecosystems, and it exists because a build script is arbitrary code execution
+on every developer machine that pulls the package.
+
+
+--------------------------------------------------------------------------------
+14. INTEROP
+--------------------------------------------------------------------------------
+
+C headers import directly:
+
+    const c = @cImport("stdio.h")
+
+No binding generator, no intermediate description language, no build step. The
+compiler contains a C parser sufficient for headers. This is expensive to
+build and it is worth it, because the alternative is an ecosystem of
+perpetually out-of-date generated bindings.
+
+PREPROCESSOR SUBSET. The importer handles a defined subset rather than the
+full preprocessor, because full macro support means shipping a second Turing
+complete language inside the compiler.
+
+  Supported:   includes, include guards, conditional compilation, object-like
+               macros expanding to constant expressions, function-like macros
+               whose bodies are constant expressions over their parameters
+  Unsupported: macros expanding to declarations or statements, token pasting,
+               stringification, variadic macros, recursive expansion
+
+An unsupported macro is not silently skipped. It is imported as an opaque
+declaration that is a compile error to use, and the diagnostic names the macro
+and the header line. Silence here would mean a constant quietly resolving to
+the wrong thing, which is the worst available outcome when talking to
+hardware headers.
+
+The escape hatch for an unsupported macro is to write the equivalent Nexium
+declaration by hand. This is rare in practice, and it is explicit when it
+happens.
+
+ALIGNMENT AND VOLATILE. Both are required for memory-mapped I/O and neither
+was previously given syntax, while section 12 listed volatile access as an
+unsafe operation and 7.2 reported alignment that nothing could set.
+
+    var buf: [4096]u8 align(64) = undefined       alignment on a declaration
+    struct Frame layout(c) { hdr: u32 align(16), ... }   on a field
+
+    const reg = @volatile(*mut u32, 0x4002_1000)
+    reg.* = 0x1                                   never elided, never reordered
+                                                  relative to other volatiles
+
+`*volatile T` is a distinct pointer type rather than an operation, so
+volatility propagates through a struct describing a peripheral register block
+and cannot be lost by assigning through an ordinary pointer. Access requires
+`unsafe` per section 12.
+
+Volatile is not atomic and does not imply any ordering with respect to
+non-volatile memory. Cross-thread and interrupt-to-main synchronization uses
+the atomics of 11.2, not volatile. Conflating the two is the most common
+embedded C error and the type system keeps them separate.
+
+Exporting to C:
+
+    pub fn process(data: *u8, len: usize) -> i32 export(c)
+
+C ABI structs via `layout(c)`. Calling conventions are declarable for
+interrupt handlers, naked functions, and platform requirements.
+
+Cross-compilation is a first-class operation rather than a configuration
+project. The compiler ships target definitions and produces a binary for any
+supported target from any host with no toolchain installation. This is the
+most underrated feature Zig has and it is worth copying without modification.
+
+
+--------------------------------------------------------------------------------
+15. PLATFORM SEPARATION
+--------------------------------------------------------------------------------
+
+Application code declares required capabilities. A platform supplies them.
+
+    platform requires {
+        alloc: Allocator,
+        stdout: Writer,
+        clock: Clock,
+    }
+
+One application compiles against a hosted platform, a freestanding platform,
+or a test platform with no source changes. The test platform supplies
+deterministic implementations of every capability, which is what makes
+deterministic simulation testing possible without it being a language feature.
+
+This is what makes domains C and D the same language rather than two dialects.
+
+CAPABILITY SCOPING. Capabilities reach code through an implicit context,
+the same mechanism allocators use in 8.1.
+
+    fn write_report(data: []Record) -> !void blocks {
+        try context.stdout.write(...)
+    }
+
+The context is a struct assembled by the platform and threaded invisibly. A
+scope may replace any field for its dynamic extent, which is what the test
+platform does to substitute deterministic implementations.
+
+Rationale. Threading capabilities explicitly through call frames is the honest
+option and it is how people come to resent a language; a logger passed through
+nine frames is nine signatures that exist for no local reason. Module-level
+globals hide the dependency entirely, which contradicts the rest of this
+document. The context struct is the middle option, and it is chosen mainly
+because 8.1 already uses it for allocators, and a second mechanism for the
+same shape of problem violates H8.
+
+Visibility is preserved by the effect system rather than by the calling
+convention. A function reaching for `context.stdout` acquires `blocks`, and a
+function allocating from the context allocator acquires `allocates`. The
+context hides the plumbing, never the fact.
+
+Freestanding platforms supply a context containing only what the target
+actually has. Reaching for an absent capability is a compile error naming the
+platform and the missing field.
+
+
+--------------------------------------------------------------------------------
+16. STANDARD LIBRARY SCOPE
+--------------------------------------------------------------------------------
+
+Split into core and platform.
+
+CORE. No allocation, no platform services. Available on every target,
+including freestanding.
+
+  mem          copy, compare, set, alignment
+  slice        search, split, chunk, iterate
+  math         integer and float operations, no libm dependency
+  simd         portable vector operations
+  atomic       ordering primitives
+  fmt          formatting into a caller-provided buffer
+  bits         manipulation, popcount, leading and trailing zeros
+  ascii        case, classification
+  utf8         validation, decode, encode, all non-allocating
+  hash         non-cryptographic hashing
+  sort         in-place, non-allocating
+  ring         SPSC, MPSC, broadcast channels over provided storage
+  fixed        fixed-point arithmetic for MCU targets without an FPU
+
+FIXED POINT. `fixed(I, F)` is generic over integer and fraction bit counts,
+built on the arbitrary-width integers of 5.1. `fixed(1, 15)` is the Q1.15
+format that most audio and control code uses.
+
+Arithmetic saturates by default rather than trapping or wrapping, inverting
+the policy of 5.2. In DSP a saturated sample is a momentarily distorted
+output; a trap is a dead device and a wrap is a full-scale discontinuity that
+sounds like a gunshot. Trapping and wrapping forms remain available through
+the explicit operators.
+
+Multiplication returns a wider type by default, since the alternative is
+silent precision loss at every product. Narrowing back is explicit and states
+its rounding mode.
+
+PLATFORM. Requires capabilities.
+
+  alloc        allocator implementations
+  io           readers, writers, files
+  net          sockets, addressing
+  os           process, environment, time
+  thread       spawn, join, synchronization
+  term         raw mode, escape sequences, cell grid
+  cli          compile-time generated argument parsing
+  test         harness, assertions, deterministic simulation
+
+Strings deserve a note. There is no owned string type in core. Text is `[]u8`
+with UTF-8 validation available as an explicit operation, and a `String`
+builder exists in the platform library for cases that genuinely need growth. A
+language whose default string type allocates cannot satisfy H2 inside its own
+standard library.
+
+
+--------------------------------------------------------------------------------
+17. FRONTENDS
+--------------------------------------------------------------------------------
+
+CLI
+  Argument parsing generated at compile time from a struct definition via the
+  reflection of 7.2. Help text, subcommands, short and long flags, validation,
+  and shell completion all derive from one declaration. No runtime reflection,
+  no allocation, no startup cost beyond process start.
+
+    struct Args {
+        /// Input file to process
+        input: []u8,
+        /// Verbosity level
+        verbose: u8 = 0,
+    }
+
+TUI
+  Terminal input is an escape sequence stream, so key and mouse decoding is an
+  application of section 6 rather than a separate subsystem. The standard
+  library provides raw mode, a double-buffered cell grid, damage-tracked
+  redraw, and resize handling. No allocation in the event loop. Widget
+  composition is a library concern, deliberately not blessed by the standard
+  library, because nobody yet knows the right widget abstraction.
+
+GUI
+  Through C interop into the platform toolkit, or through an immediate-mode
+  renderer. Never a language feature and never a retained-mode widget tree in
+  the standard library. Retained mode wants dynamic allocation and closures,
+  and shipping a renderer means shipping a runtime, violating H4 and killing
+  domain C. Nexium calls out to a toolkit rather than owning one.
+
+  This is a real limitation and should be stated plainly rather than
+  disguised: writing a widget library in Nexium will be less pleasant than
+  writing one in a garbage-collected language. That is the cost of H1 and it
+  is accepted.
+
+
+--------------------------------------------------------------------------------
+18. TOOLING
+--------------------------------------------------------------------------------
+
+One binary, `nx`, containing compiler, formatter, test runner, package
+manager, and language server. No configuration required to build a project.
+
+  nx build           compile
+  nx run             compile and execute
+  nx test            run tests, including compile-time tests
+  nx fmt             canonical formatting, no options
+  nx expand          print post-comptime source
+  nx audit           report unsafe blocks across the dependency tree
+  nx stack-report    worst-case stack depth per function
+  nx effects         report inferred effects for every public function
+  nx doc             generate documentation from /// comments
+  nx lsp             language server
+
+Testing is built in rather than a library:
+
+    test "ipv4 header parses" {
+        const buf = b"\x45\x00\x00\x3c..."
+        const h = try parse_header(buf)
+        expect(h.version == 4)
+    }
+
+Tests may run at compile time. A test annotated `comptime` executes during
+compilation and a failure is a compile error, which is the correct behavior
+for property tests over pure functions.
+
+Error messages are a designed artifact. Every diagnostic names the constraint
+violated, the location violating it, and where the constraint was declared. An
+effect violation points at the function that introduced the effect, not merely
+the one that failed to declare it, because the introduction site is where the
+fix goes.
+
+Language server from the beginning, not retrofitted. Retrofitting one means
+discovering that the compiler cannot answer incremental questions, which is an
+architectural problem rather than a feature gap.
+
+
+--------------------------------------------------------------------------------
+19. COMPILATION MODEL
+--------------------------------------------------------------------------------
+
+Pipeline: parse, resolve, infer per module, evaluate comptime, check effects,
+lower to IR, generate code.
+
+Per-module compilation with explicit signatures at boundaries means modules
+compile in parallel and independently. That is the mechanism behind H5.
+
+Incremental compilation at module granularity. A change to a function body
+recompiles one module; a change to a signature recompiles its dependents.
+
+BACKEND DECISION. A stable internal IR, with two backends behind it.
+
+  1. C emission, for portability. Reaches every target with a C compiler,
+     including the long tail of embedded toolchains that will never have LLVM
+     support. This is how Nim reached everywhere.
+  2. A native backend for development builds, prioritizing compile speed over
+     output quality, in the manner of QBE or Cranelift.
+
+LLVM is deliberately not the primary backend. It is the largest single source
+of compile latency in every language depending on it, and H5 is a hard
+constraint. An LLVM backend may be added later behind the same IR for release
+builds where output quality justifies the wait.
+
+
+--------------------------------------------------------------------------------
+20. STABILITY POLICY
+--------------------------------------------------------------------------------
+
+Stated now, because a language's stability posture determines whether anyone
+can professionally adopt it, and because retrofitting a policy after breakage
+has already happened does not restore the trust.
+
+  - Pre-1.0, breaking changes are permitted and are accompanied by an
+    automated migration tool. A breaking change without a migration path is
+    not shipped.
+  - At 1.0, the language and core library freeze for a defined support window.
+    Additions are permitted; removals and semantic changes are not.
+  - The platform library versions separately from core.
+  - Every release states its minimum supported target set and does not
+    silently drop one.
+
+
+--------------------------------------------------------------------------------
+21. EXPLICITLY EXCLUDED
+--------------------------------------------------------------------------------
+
+Refusals, not omissions and not deferrals. Each names the constraint it
+violates.
+
+  Garbage collection                    H1
+  Reference counting as a default       H2, H6
+  Exceptions                            H3, H6
+  Implicit destructors running code     H3
+  Whole-program type inference          H5
+  Undefined behavior in safe code       H7
+  Null                                  H7, replaced by optionals
+  Implicit numeric conversion           H3 in spirit, H7 in practice
+  Operator overloading that allocates   H2
+  Function coloring via async/await     H8, the effect system answers it
+  Green threads                         H4, H6
+  Runtime type information              H4
+  Inheritance                           H8, traits answer it
+  Multiple dispatch                     H6, H8
+  Uniform function call syntax          H8
+  Retained-mode GUI in stdlib           H2, H4
+  Owned string type in core             H2
+  Build scripts as arbitrary code       Supply chain, see section 13
+  Unicode identifiers                   Homoglyph supply chain risk
+  Hot reload of native code             Needs patchable call indirection and
+                                        movable live state; domain B needs
+                                        flat offsets and direct calls. These
+                                        are opposite instructions to the code
+                                        generator. Use process-level reload.
+  Record-replay as a language guarantee Needs a trace buffer and a recording
+                                        boundary around every nondeterministic
+                                        read; no room for either on a 32 KB
+                                        MCU. Achievable as a host-only tool
+                                        via the test platform of section 15.
+
+The refusals are the design. A language is defined more by what it will not do
+than by what it will, and this list is the part of the document most likely to
+come under pressure later. Each line above should be treated as costing
+something real to remove.
+
+
+--------------------------------------------------------------------------------
+22. THE LOAD-BEARING UNPROVEN CLAIM
+--------------------------------------------------------------------------------
+
+Isolated here because it deserves to be, and because a specification that
+hides its weakest point is not a specification.
+
+Claim: regions plus allocator context reach enough of the safety of full
+ownership, at enough of a reduction in learning cost, to justify the
+difference.
+
+If false, the options are to add full ownership and become a Rust with better
+binary syntax, which is a much weaker pitch, or to ship the residual unsafety
+and lose credibility in exactly the safety-critical domains where the effect
+system is most valuable.
+
+How to find out before building everything on top of it. Write the same
+non-trivial program, a real protocol implementation with zero-copy parsing,
+three times: once in Rust, once against a region model, once with plain manual
+memory management. Compare which bug classes appear, the annotation burden,
+and how each reads to someone who did not write it. That is roughly a weekend,
+and it de-risks the largest decision in this document.
+
+
+--------------------------------------------------------------------------------
+23. REMAINING OPEN QUESTIONS
+--------------------------------------------------------------------------------
+
+Seven of the earlier open questions have been resolved in place and are listed
+under 23.2 with pointers, so that a future reader can find the reasoning
+rather than reopening the argument. What remains is genuinely unsettled.
+
+23.1 STILL OPEN
+
+  O1. The regions wager. See section 22. This is the only item here that
+      cannot be settled by thinking, and the experiment described there
+      should run before anything is built on top of 8.2.
+
+  O2. Region annotation syntax. Downstream of O1. The semantics are
+      specified; the notation should follow experience with them rather than
+      precede it.
+
+  O3. The name. Nexium collides with a heartburn medication carrying a decade
+      of advertising spend, and Nexus collides with a developer tool in an
+      adjacent space. Neither is fatal. Both make search results worse.
+
+23.2 RESOLVED, WITH POINTERS
+
+  Platform capability scoping      section 15, implicit context struct
+  Effect polymorphism in traits    section 10.2, rule E7
+  Range analysis strength          section 10.2, rule E6
+  Build-mode effect invariance     section 10.2, rule E5
+  The `recursive` effect           section 10.1, replaced by unbounded_stack
+  SOA nesting and slicing          section 5.4
+  C preprocessor scope             section 14
+  Fixed-point ergonomics           section 16
+  Literal binary segments          section 6.1
+  Pattern size arithmetic          section 6.1
+  Match arm ordering               section 6.2
+  Closures                         section 5.11
+  Mutability model                 section 5.10
+  Mutable globals and statics      section 8.4
+  Uninitialized memory             section 12
+  match versus switch              section 9, unified on match
+  Compile-time variadics           section 7.4
+  Alignment and volatile           section 14
+  Iteration protocol               section 5.9
+  defer and errdefer               section 9.1
+
+23.3 A NOTE ON METHOD
+
+Every item in 23.2 except the last three was found by writing a small program
+against the specification and discovering it could not be written. Hello world
+alone produced the capability scoping question. A terminal escape decoder
+produced literal segments, arm ordering, and the effect polymorphism problem.
+A length-prefixed parser produced the size arithmetic hole.
+
+None of them were found by rereading the prose. The cheapest available
+verification tool for this document is to write more small programs in a
+language that does not exist yet, and the cost of that is an afternoon per
+round.
+
+The second round confirmed it. A four-line hello world and a nine-line packet
+sniffer between them used closures, mutability, `undefined`, `match`, format
+variadics, and alignment, none of which the document defined. Two of those
+gaps, closures and the mutability model, were load-bearing for features
+already specified in detail elsewhere, which is the characteristic shape of a
+specification written top-down: the mechanisms get described and the
+substrate they stand on does not.
+
+One correction also came out of it rather than an addition. Specifying
+mutability in 5.10 made clear that regions give lifetime information but not
+exclusivity, which means the aliasing performance claim in 24.1 was
+overstated. It has been narrowed, and the gap is now listed as evidence that
+would count against the section 22 wager.
+
+O1 is the same technique at a scale where it takes a weekend instead.
+
+--------------------------------------------------------------------------------
+24. PERFORMANCE MODEL
+--------------------------------------------------------------------------------
+
+Stated explicitly because "fast" is not a specification, and because a
+language claiming C-class performance should say where it does not have it.
+
+24.1 VERSUS C, BY WORKLOAD
+
+FASTER THAN IDIOMATIC C, STRUCTURALLY
+
+  Binary parsing. Section 6.2 emits one bounds check per pattern rather than
+  one per field, and zero-copy is a property of the language rather than a
+  discipline the programmer maintains. Hand-written C parsers usually check
+  per field or, more often, do not check at all and are wrong.
+
+  SOA-heavy numeric code. Section 5.4 makes the layout a declaration. Almost
+  nobody hand-writes SOA in C because it destroys readability, so the
+  comparison is against AOS code that vectorizes poorly.
+
+  Alias-heavy code. This claim is weaker than an earlier draft of this
+  document stated, and 5.10 is the reason. Regions carry lifetime
+  information, not exclusivity, and two `*mut T` may reference the same
+  location. `noalias` can therefore only be emitted where exclusivity is
+  provable locally, which is narrower than what Rust gets from ownership.
+
+  The advantage over C is real but smaller: lifetime facts still rule out
+  cases C cannot, and slices carry length where C carries a bare pointer.
+  Anyone expecting Rust-class aliasing optimization from a region system
+  should expect to be disappointed, and if that gap turns out to matter for
+  real workloads it is evidence against the section 22 wager.
+
+EQUAL
+
+  Most scalar code. Same instructions, same registers, same result.
+
+SLOWER, WITH KNOWN COSTS
+
+  Overflow checking in safe-release adds a well-predicted branch per default
+  arithmetic operation. Negligible in most code, measurable in tight numeric
+  loops. This is precisely why `+%` and `+|` are one character away in 5.2
+  rather than function calls.
+
+  Bounds checks that fail to elide. Zero for iteration and for provable
+  indices per 5.9 and E6; roughly low single-digit percent on pointer-chasing
+  code where the range analysis of E6 is too weak to help.
+
+  Neither cost applies in fast-release, and per E5 neither changes any effect
+  signature.
+
+24.2 CONSEQUENCES OF THE BACKEND CHOICE
+
+Section 19 selects C emission for release builds, which inherits the entire
+optimization history of gcc and clang for free. This is how Nim competes with
+C on equal terms without writing an optimizer.
+
+The honest costs of C as an IR, all of which Nim pays today:
+
+  - `noalias` cannot be expressed as precisely as the region information
+    justifies, so some of the 24.1 aliasing advantage is lost in translation.
+  - Guaranteed tail calls are not expressible, which constrains any future
+    interpreter or state machine written in Nexium.
+  - SIMD goes through intrinsics or vector extensions rather than a portable
+    native representation, making the `simd` core module harder to implement
+    well than it would be against LLVM.
+
+An LLVM backend behind the same IR recovers all three and is the reason
+section 19 specifies a stable IR rather than committing to C permanently.
+
+24.3 COMPILE SPEED
+
+Development builds through the native backend should be Go-class, which is
+what per-module parallel compilation and the inference rules of 5.8 exist to
+protect.
+
+Release builds are slower than Zig's, because a C compilation pass is added.
+This is the correct direction for the tradeoff: the fast path is the one
+developers wait on many times per hour.
+
+Heavy comptime is a real and unbounded compile-time cost, and it is the most
+likely source of a project with unacceptable build times. The step budget in
+7.1 turns the worst case into a diagnostic rather than a hang, but it does not
+make expensive metaprogramming cheap. `nx build --timings` should report
+comptime cost per declaration, since the alternative is a slow build with no
+visible cause.
+
+24.4 WHAT IS NOT CLAIMED
+
+No claim is made about worst-case execution time. Section 10.4 is explicit
+that effects bound behavior rather than time, and any WCET figure comes from
+a timing analysis tool built on top of those guarantees.
+
+No claim is made about matching hand-tuned assembly, or about beating C on
+code where a competent C programmer has already done the work that 24.1
+credits the language for doing automatically.
+
+
+================================================================================

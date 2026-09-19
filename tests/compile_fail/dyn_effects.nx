@@ -1,0 +1,11 @@
+// EXPECT: has the `blocks` effect, but the function type it is used as forbids it
+trait Sink { fn write(self: *Self, x: i32) }
+struct Console { n: i32 }
+impl Sink for Console {
+    fn write(self: *Self, x: i32) { println("{}", .{x}) }
+}
+fn main() {
+    var c = Console{ .n = 0 }
+    let quiet: dyn Sink !blocks = &c
+    quiet.write(1)
+}

@@ -1,0 +1,45 @@
+fn fib(n: u32) -> u64 {
+    if (n < 2) return n as u64
+    var a: u64 = 0
+    var b: u64 = 1
+    for (0..n) |_i| {
+        let t = a + b
+        a = b
+        b = t
+    }
+    return a
+}
+
+const TABLE: [8]u64 = comptime build_table()
+
+fn build_table() -> [8]u64 {
+    var t: [8]u64 = undefined
+    for (0..8) |i| { t[i] = fib(i as u32) }
+    return t
+}
+
+test "fib" {
+    expect(fib(10) == 55)
+    expect_eq(fib(0), 0)
+}
+
+test "table built at compile time" {
+    expect(TABLE[7] == 13)
+    expect(TABLE.len == 8)
+}
+
+test "this one fails" {
+    let xs = [1, 2, 3]
+    var i: usize = 5
+    i = i - 2
+    expect(xs[i] == 4)
+}
+
+test "errors propagate" {
+    let v = try parse("42")
+    expect(v == 42)
+}
+
+fn parse(s: []u8) -> !i32 {
+    return try s.parse_int(i32)
+}

@@ -1,0 +1,476 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Nexium",
+  "scopeName": "source.nexium",
+  "fileTypes": [
+    "nx"
+  ],
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#binary-pattern"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#chars"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#effects"
+    },
+    {
+      "include": "#intrinsics"
+    },
+    {
+      "include": "#errors"
+    },
+    {
+      "include": "#declarations"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#types"
+    },
+    {
+      "include": "#namespaces"
+    },
+    {
+      "include": "#labels"
+    },
+    {
+      "include": "#calls"
+    },
+    {
+      "include": "#operators"
+    },
+    {
+      "include": "#punctuation"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.documentation.nexium",
+          "match": "///(?!/).*$"
+        },
+        {
+          "name": "comment.line.double-slash.nexium",
+          "match": "//.*$"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.raw.nexium",
+          "begin": "r\"",
+          "end": "\"",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.nexium"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.nexium"
+            }
+          }
+        },
+        {
+          "name": "string.quoted.double.bytes.nexium",
+          "begin": "b\"",
+          "end": "\"",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.nexium"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.nexium"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#escapes"
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.double.nexium",
+          "begin": "\"",
+          "end": "\"",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.nexium"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.nexium"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#escapes"
+            },
+            {
+              "name": "constant.other.placeholder.nexium",
+              "match": "\\{[^{}]*\\}|\\{\\{|\\}\\}"
+            }
+          ]
+        }
+      ]
+    },
+    "escapes": {
+      "name": "constant.character.escape.nexium",
+      "match": "\\\\(n|r|t|0|\\\\|\"|'|x[0-9A-Fa-f]{2}|u\\{[0-9A-Fa-f]+\\})"
+    },
+    "chars": {
+      "name": "string.quoted.single.nexium",
+      "match": "'(\\\\(n|r|t|0|\\\\|\"|'|x[0-9A-Fa-f]{2}|u\\{[0-9A-Fa-f]+\\})|[^'\\\\])'"
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.hex.float.nexium",
+          "match": "\\b0[xX][0-9A-Fa-f_]+(\\.[0-9A-Fa-f_]+)?[pP][+-]?[0-9_]+\\b"
+        },
+        {
+          "name": "constant.numeric.hex.nexium",
+          "match": "\\b0[xX][0-9A-Fa-f_]+\\b"
+        },
+        {
+          "name": "constant.numeric.octal.nexium",
+          "match": "\\b0[oO][0-7_]+\\b"
+        },
+        {
+          "name": "constant.numeric.binary.nexium",
+          "match": "\\b0[bB][01_]+\\b"
+        },
+        {
+          "name": "constant.numeric.float.nexium",
+          "match": "\\b[0-9][0-9_]*(\\.[0-9][0-9_]*)?([eE][+-]?[0-9_]+)?\\b(?=.*)"
+        }
+      ]
+    },
+    "effects": {
+      "patterns": [
+        {
+          "name": "entity.name.tag.effect.negative.nexium",
+          "match": "!(allocates|refcounts|blocks|shared_mutable|nondeterministic|panics|ffi|unbounded_stack)\\b"
+        },
+        {
+          "name": "entity.name.tag.effect.nexium",
+          "match": "\\b(allocates|refcounts|blocks|shared_mutable|nondeterministic|panics|ffi|unbounded_stack)\\b(?=\\s*(!|\\{|$|\\)|,))"
+        }
+      ]
+    },
+    "intrinsics": {
+      "name": "support.function.intrinsic.nexium",
+      "match": "@(typeName|sizeOf|truncate|errorName|embedFile|weak|refCount|cImport|cstr)\\b"
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "match": "\\b(fn)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "storage.type.function.nexium"
+            },
+            "2": {
+              "name": "entity.name.function.nexium"
+            }
+          }
+        },
+        {
+          "match": "\\b(struct|enum|record|trait|error)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "storage.type.nexium"
+            },
+            "2": {
+              "name": "entity.name.type.nexium"
+            }
+          }
+        },
+        {
+          "match": "\\b(ref)\\s+(class)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "storage.type.nexium"
+            },
+            "2": {
+              "name": "storage.type.nexium"
+            },
+            "3": {
+              "name": "entity.name.type.nexium"
+            }
+          }
+        },
+        {
+          "match": "\\b(impl)(?:\\([^)]*\\))?\\s+([A-Za-z_][A-Za-z0-9_]*)(?:\\s+(for)\\s+([A-Za-z_][A-Za-z0-9_]*))?",
+          "captures": {
+            "1": {
+              "name": "storage.type.nexium"
+            },
+            "2": {
+              "name": "entity.name.type.nexium"
+            },
+            "3": {
+              "name": "keyword.other.nexium"
+            },
+            "4": {
+              "name": "entity.name.type.nexium"
+            }
+          }
+        },
+        {
+          "match": "\\b(type)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "storage.type.nexium"
+            },
+            "2": {
+              "name": "entity.name.type.nexium"
+            }
+          }
+        },
+        {
+          "match": "\\b(artifact)\\s+([a-z_]+)",
+          "captures": {
+            "1": {
+              "name": "keyword.other.artifact.nexium"
+            },
+            "2": {
+              "name": "entity.name.tag.artifact.nexium"
+            }
+          }
+        },
+        {
+          "match": "\\b(comptime\\s+)?(test)\\s+(?=\")",
+          "captures": {
+            "1": {
+              "name": "keyword.other.nexium"
+            },
+            "2": {
+              "name": "keyword.other.test.nexium"
+            }
+          }
+        },
+        {
+          "match": "\\b(let|var|const)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "storage.type.nexium"
+            },
+            "2": {
+              "name": "variable.other.declaration.nexium"
+            }
+          }
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.nexium",
+          "match": "\\b(if|else|for|while|match|break|continue|return|try|catch|defer|errdefer|orelse|unreachable|parallel|using)\\b"
+        },
+        {
+          "name": "keyword.other.nexium",
+          "match": "\\b(fn|let|var|const|struct|enum|record|ref|class|trait|impl|pub|import|comptime|unsafe|error|type|distinct|where|into|artifact|test|export|as|in|dyn|weak|extern|derive|layout)\\b"
+        },
+        {
+          "name": "keyword.operator.logical.nexium",
+          "match": "\\b(and|or)\\b"
+        },
+        {
+          "name": "constant.language.nexium",
+          "match": "\\b(true|false|null|undefined)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "support.type.primitive.nexium",
+          "match": "\\b(i8|i16|i32|i64|i128|u8|u16|u32|u64|u128|isize|usize|f32|f64|bool|char|void|never|type|Self)\\b"
+        },
+        {
+          "name": "support.type.collection.nexium",
+          "match": "\\b(List|String|Map|Ordering)\\b"
+        },
+        {
+          "name": "entity.name.type.nexium",
+          "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
+        }
+      ]
+    },
+    "namespaces": {
+      "match": "\\b(math|io|os|process|time|random|mem|slice|utf8|ascii|fmt|context|alloc)\\.([a-zA-Z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": {
+          "name": "support.class.namespace.nexium"
+        },
+        "2": {
+          "name": "support.function.builtin.nexium"
+        }
+      }
+    },
+    "errors": {
+      "match": "\\b(error)\\.([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": {
+          "name": "keyword.other.nexium"
+        },
+        "2": {
+          "name": "entity.name.tag.error.nexium"
+        }
+      }
+    },
+    "labels": {
+      "patterns": [
+        {
+          "name": "entity.name.label.nexium",
+          "match": "\\b[a-z_][A-Za-z0-9_]*:(?=\\s*(\\{|for|while))"
+        },
+        {
+          "name": "entity.name.label.nexium",
+          "match": ":[a-z_][A-Za-z0-9_]*\\b"
+        }
+      ]
+    },
+    "calls": {
+      "patterns": [
+        {
+          "name": "support.function.builtin.nexium",
+          "match": "\\b(println|print|eprintln|format|expect|expect_eq|panic)(?=\\()"
+        },
+        {
+          "match": "\\b([a-z_][A-Za-z0-9_]*)(?=\\()",
+          "captures": {
+            "1": {
+              "name": "entity.name.function.call.nexium"
+            }
+          }
+        },
+        {
+          "match": "\\.([a-z_][A-Za-z0-9_]*)(?=\\()",
+          "captures": {
+            "1": {
+              "name": "entity.name.function.method.nexium"
+            }
+          }
+        },
+        {
+          "name": "variable.other.enummember.nexium",
+          "match": "(?<![A-Za-z0-9_)\\]])\\.[A-Z][A-Za-z0-9_]*\\b"
+        },
+        {
+          "name": "variable.other.field.nexium",
+          "match": "(?<=[{,]\\s*)\\.[a-z_][A-Za-z0-9_]*(?=\\s*=)"
+        }
+      ]
+    },
+    "binary-pattern": {
+      "name": "meta.binary-pattern.nexium",
+      "begin": "<<(?![=<])",
+      "end": ">>",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.binary.begin.nexium"
+        }
+      },
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.binary.end.nexium"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#strings"
+        },
+        {
+          "include": "#chars"
+        },
+        {
+          "include": "#numbers"
+        },
+        {
+          "match": "/(big|little|native|signed|unsigned|float|utf8|bytes)\\b",
+          "name": "keyword.other.binary-modifier.nexium"
+        },
+        {
+          "name": "keyword.other.binary-modifier.nexium",
+          "match": "\\b(bytes)\\b"
+        },
+        {
+          "match": "\\b([a-z_][A-Za-z0-9_]*)\\s*:",
+          "captures": {
+            "1": {
+              "name": "variable.other.binding.nexium"
+            }
+          }
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.pipe.nexium",
+          "match": "\\|>"
+        },
+        {
+          "name": "keyword.operator.arrow.nexium",
+          "match": "->|=>"
+        },
+        {
+          "name": "keyword.operator.assignment.nexium",
+          "match": "(\\+%|-%|\\*%|<<|>>|\\+|-|\\*|/|%|&|\\||\\^)?=(?!=)"
+        },
+        {
+          "name": "keyword.operator.comparison.nexium",
+          "match": "==|!=|<=|>=|<|>"
+        },
+        {
+          "name": "keyword.operator.arithmetic.nexium",
+          "match": "\\+%|-%|\\*%|\\+\\||-\\||\\*\\||\\+|-|\\*|/|%"
+        },
+        {
+          "name": "keyword.operator.bitwise.nexium",
+          "match": "&|\\||\\^|~"
+        },
+        {
+          "name": "keyword.operator.range.nexium",
+          "match": "\\.\\.=?"
+        },
+        {
+          "name": "keyword.operator.unwrap.nexium",
+          "match": "\\.\\?|\\.\\*|\\?|!"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.separator.nexium",
+          "match": "[,;:]"
+        },
+        {
+          "name": "punctuation.section.brackets.nexium",
+          "match": "[()\\[\\]{}]"
+        }
+      ]
+    }
+  }
+}

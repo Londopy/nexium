@@ -1,0 +1,5 @@
+// EXPECT: unhandled error
+fn risky() -> !void { return error.Nope }
+fn main() {
+    risky()
+}

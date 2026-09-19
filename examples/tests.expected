@@ -1,0 +1,8 @@
+ok    fib
+ok    table built at compile time
+FAIL  this one fails
+      panic: index 3 out of bounds for length 3
+      at examples/tests.nx:35
+ok    errors propagate
+
+3 passed, 1 failed

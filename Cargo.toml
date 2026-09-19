@@ -1,0 +1,25 @@
+[package]
+name = "nexium"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "The Nexium compiler: effect-typed systems language that emits C and ships C, Python, and Rust artifacts from one file"
+license = "MIT"
+repository = "https://github.com/Londopy/nexium"
+homepage = "https://github.com/Londopy/nexium"
+documentation = "https://github.com/Londopy/nexium/blob/main/docs/language.md"
+readme = "README.md"
+keywords = ["compiler", "language", "effects", "ffi", "systems"]
+categories = ["compilers", "development-tools", "command-line-utilities"]
+authors = ["Londopy"]
+exclude = ["nx-out/", "nexium-systems-spec.txt", ".github/", "tests/", "target/"]
+
+[[bin]]
+name = "nx"
+path = "src/main.rs"
+
+[dependencies]
+
+[profile.release]
+opt-level = 2
+debug = false

@@ -1,0 +1,7 @@
+// EXPECT: this returns a slice into `buf`, a local that is released when the function returns (region rule R1)
+fn head() -> []u8 {
+    var buf: [8]u8 = undefined
+    buf[0] = 65
+    return buf[0..1]
+}
+fn main() { println("{}", .{head()}) }

@@ -1,0 +1,11 @@
+// EXPECT: function `callback` is declared `!blocks` but has the `blocks` effect
+// EXPECT: this call acquires `blocks`
+// EXPECT: introduced by `log` here: writing to stdout may block
+fn log(msg: []u8) { println("{}", .{msg}) }
+
+fn callback(x: i32) -> i32 !blocks {
+    log("called")
+    return x + 1
+}
+
+fn main() { println("{}", .{callback(1)}) }

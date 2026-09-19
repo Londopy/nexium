@@ -1,0 +1,40 @@
+// An arena installed for a scope: everything allocated inside is released
+// together when the block ends (spec 5.1: strategies are replaceable per scope).
+
+fn summarize(words: [][]u8) -> usize {
+    var total: usize = 0
+    using arena {
+        var pieces = List(String).new()
+        for (words) |w| {
+            var s = String.from(w)
+            s.append("!")
+            pieces.append(s)
+        }
+        for (pieces) |p| { total += p.len }
+        var m = Map([]u8, usize).new()
+        for (words) |w, i| { m.put(w, i) }
+        total += m.len
+    }
+    return total
+}
+
+fn main() {
+    let words = ["alpha", "beta", "gamma"]
+    println("total {}", .{summarize(words[..])})
+    // containers created outside keep their storage on the heap while they grow inside
+    var kept = List(i32).new()
+    var log = String.new()
+    var seen = Map([]u8, i32).new()
+    using arena {
+        var scratch = List(i32).new()
+        for (0..1000) |i| { scratch.append(i as i32) }
+        kept.append(scratch[999])
+        for (words) |w| {
+            var tmp = String.from(w)
+            tmp.append(";")
+            log.append(tmp.as_slice())
+            seen.put(w, tmp.len as i32)
+        }
+    }
+    println("kept {} log {} seen {}", .{kept[0], log, seen.len})
+}

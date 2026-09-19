@@ -1,0 +1,5 @@
+fn main() {
+    println("hello, nexium", .{})
+    let x = 6 * 7
+    println("x = {}", .{x})
+}

@@ -1,0 +1,19 @@
+# GitHub does not know Nexium yet (Linguist needs real-world usage first);
+# highlight .nx files with Zig's grammar, the closest match, until it does.
+*.nx linguist-language=Zig
+*.nx linguist-detectable=true
+
+# generated and vendored bits should not count toward language statistics
+gui/font.bin binary linguist-generated=true
+assets/*.svg linguist-vendored=true
+editors/** linguist-vendored=false
+
+# keep line endings stable across platforms
+*.nx text eol=lf
+*.rs text eol=lf
+*.h text eol=lf
+*.c text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+*.expected text eol=lf

@@ -1,0 +1,153 @@
+# Release workflow for a program written in Nexium.
+# Copy to .github/workflows/release.yml, set SOURCE and NAME, then push a tag:
+#   git tag v1.0.0 && git push origin v1.0.0
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  SOURCE: src/main.nx      # the file with `fn main`
+  NAME: myapp              # the executable's name
+  NEXIUM_VERSION: latest   # pin to a tag such as v0.1.0 for reproducible builds
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            suffix: x86_64-linux
+            archive: tar.gz
+          - os: macos-latest
+            suffix: aarch64-macos
+            archive: tar.gz
+          - os: windows-latest
+            suffix: x86_64-windows
+            archive: zip
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Londopy/nexium/.github/actions/setup-nexium@main
+        with:
+          version: ${{ env.NEXIUM_VERSION }}
+
+      - name: Test
+        run: nx test ${{ env.SOURCE }}
+
+      - name: Build
+        shell: bash
+        run: |
+          mkdir -p dist
+          nx build "${{ env.SOURCE }}" --mode fast -o "dist/${{ env.NAME }}${{ runner.os == 'Windows' && '.exe' || '' }}"
+          cp LICENSE README.md dist/ 2>/dev/null || true
+
+      - name: Package (unix)
+        if: matrix.archive == 'tar.gz'
+        run: tar -C dist -czf "${{ env.NAME }}-${{ github.ref_name }}-${{ matrix.suffix }}.tar.gz" .
+
+      - name: Package (windows)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: Compress-Archive -Path dist/* -DestinationPath "${{ env.NAME }}-${{ github.ref_name }}-${{ matrix.suffix }}.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.NAME }}-${{ matrix.suffix }}
+          path: ${{ env.NAME }}-${{ github.ref_name }}-*
+
+  # ---- optional installers: flip `if: false` to `if: true` on the ones you want
+
+  dmg:
+    name: macOS .dmg
+    if: false
+    needs: build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.NAME }}-aarch64-macos
+      - name: Build dmg
+        run: |
+          mkdir -p stage
+          tar -xzf ${{ env.NAME }}-${{ github.ref_name }}-aarch64-macos.tar.gz -C stage
+          hdiutil create -volname "${{ env.NAME }}" -srcfolder stage -ov -format UDZO "${{ env.NAME }}-${{ github.ref_name }}.dmg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.NAME }}-dmg
+          path: "*.dmg"
+
+  msi:
+    name: Windows .msi
+    if: false
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.NAME }}-x86_64-windows
+      - name: Build msi with WiX
+        shell: pwsh
+        run: |
+          Expand-Archive "${{ env.NAME }}-${{ github.ref_name }}-x86_64-windows.zip" -DestinationPath stage
+          dotnet tool install --global wix
+          $ver = "${{ github.ref_name }}".TrimStart("v")
+          @"
+          <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+            <Package Name="${{ env.NAME }}" Manufacturer="you" Version="$ver" UpgradeCode="PUT-A-FIXED-GUID-HERE">
+              <StandardDirectory Id="ProgramFiles64Folder">
+                <Directory Id="INSTALLFOLDER" Name="${{ env.NAME }}">
+                  <Component><File Source="stage\${{ env.NAME }}.exe" /></Component>
+                </Directory>
+              </StandardDirectory>
+              <Feature Id="Main"><ComponentRef Id="INSTALLFOLDER" /></Feature>
+            </Package>
+          </Wix>
+          "@ | Set-Content app.wxs
+          wix build app.wxs -o "${{ env.NAME }}-${{ github.ref_name }}.msi"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.NAME }}-msi
+          path: "*.msi"
+
+  deb:
+    name: Linux .deb
+    if: false
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.NAME }}-x86_64-linux
+      - name: Build deb
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          mkdir -p pkg/usr/bin pkg/DEBIAN
+          tar -xzf ${{ env.NAME }}-${{ github.ref_name }}-x86_64-linux.tar.gz -C pkg/usr/bin ${{ env.NAME }}
+          printf 'Package: %s\nVersion: %s\nArchitecture: amd64\nMaintainer: you <you@example.com>\nDescription: %s\n' "${{ env.NAME }}" "$ver" "${{ env.NAME }}" > pkg/DEBIAN/control
+          dpkg-deb --build pkg "${{ env.NAME }}-${{ github.ref_name }}-amd64.deb"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.NAME }}-deb
+          path: "*.deb"
+
+  release:
+    needs: [build]
+    if: always() && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: artifacts/*

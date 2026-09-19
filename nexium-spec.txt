@@ -1,0 +1,901 @@
+================================================================================
+NEXIUM
+A language specification
+================================================================================
+
+File extension: .nx
+Compiler binary: nx
+
+Supersedes the desktop-first draft. The systems-language design remains
+archived as nexium-systems-spec.txt and is a different language.
+
+
+--------------------------------------------------------------------------------
+1. WHAT IT IS
+--------------------------------------------------------------------------------
+
+A language complete enough to build everything in, that is also the best
+thing to adopt for one piece of something else.
+
+Those are two halves of one design, not a primary goal and a concession. The
+first half is what makes it worth writing whole projects in: a full standard
+library, real tooling, ergonomics that survive a long session. The second half
+is what makes it worth a stranger's afternoon: it embeds into a Rust or Python
+project without asking them to leave.
+
+The pain it removes is the same in both halves. A project needs a fast core, a
+friendly surface, and a shippable artifact, and today that means two languages
+with a foreign function interface between them, a workspace split per artifact
+shape, and a CI matrix to build the result. Nexium is one project that
+produces any of those shapes, whether it is the whole program or one component
+inside someone else's.
+
+The adoption asymmetry is worth stating plainly, because it shapes the
+sequencing rather than the design. Few people adopt a new first language;
+many more will add a second one for a specific problem. So the wedge is how
+the language reaches people, and being a complete first language is what it
+is for. Building only the wedge produces a code generator with a syntax.
+Building only the first language produces something nobody ever tries.
+
+1.1 THE TWO AUDIENCES
+
+This document serves two populations and does not pretend they are one.
+
+  THE WEDGE USER. A Rust or Python developer who is not leaving their
+  language. They add Nexium for one component, because their own language
+  cannot do that part or can only do it painfully. They judge Nexium almost
+  entirely on the seam: how well it embeds, how cleanly it links, how little
+  it costs to adopt for one module. If the seam is bad they do not adopt,
+  because a second language is already a cost that has to pay for itself
+  immediately.
+
+  THE DAILY DRIVER USER. Someone who writes whole projects in it, starting
+  with the author. They judge it on everything: ergonomics, standard library
+  breadth, tooling, how it feels at hour six. They need the language to be
+  self-sufficient, because a first language with gaps is not a first language.
+  They are fewer in number and they are what the language is actually for.
+
+Neither is subordinate. The wedge user is the distribution strategy; the daily
+driver user is the product. They conflict in exactly one place, at 3.1, and
+that conflict turns out to be resolvable rather than a standing tension.
+
+1.2 THE CLAIM
+
+  As a first language:    good at everything, painful at nothing, complete
+                          enough that no second language is required.
+  As a second language:   the best thing to adopt for one component.
+  Best at, specifically:  provable cost control, and being embedded.
+
+The first line is not a differentiator and is not meant to be. Every
+general-purpose language claims it and nobody chooses one for it. It is the
+reason someone stays, and it is the reason the language is worth building at
+all. The third line is the reason someone tries.
+
+1.3 COMPETITIVE POSITION, HONESTLY
+
+  Zig    excellent to embed, excellent FFI, no high tier, no ergonomics
+         claim. The closest competitor on the wedge axis and the one to study
+         hardest.
+  Nim    excellent ergonomics, compiles through C, awkward to embed because
+         of its runtime, no distribution story. Eighteen years of head start
+         and a real ecosystem.
+  Mojo   aimed at exactly the Python-extension half of this, heavily funded,
+         Python-only by design, not aimed at artifacts at all.
+  Rust   the host in most wedge scenarios rather than a competitor.
+  Go     single-binary shipping solved, no low tier, poor to embed.
+
+Nobody has made incremental adoption from any host the point. That is the
+opening. It is narrower than it sounds and it is real.
+
+
+--------------------------------------------------------------------------------
+2. DOMAINS
+--------------------------------------------------------------------------------
+
+Ordered by sequence of attack.
+
+  A. EMBEDDED COMPONENTS IN FOREIGN PROJECTS
+     A hot loop called from Python. A protocol parser linked into a Rust
+     binary. A native addon for Node. A plain C library.
+     This is the wedge. First because it is the smallest thing that is useful
+     to a stranger, and because it needs no ecosystem to work.
+
+  B. NATIVE OS TOOLING
+     Platform internals, process and window manipulation, tray applications,
+     injectable shared libraries, global hotkeys.
+     Currently C++, C#, or fighting Rust. Nearly uncontested.
+
+  C. COMPUTATIONAL LIBRARIES THAT SHIP
+     Numeric simulation, batch parameter sweeps, domain rule engines,
+     validated records with bundled reference data. Published to a registry
+     and installable by people who do not have a compiler.
+
+  D. COMMAND LINE TOOLS AND APPLICATIONS
+     Whole programs. The daily driver domain.
+
+  E. DESKTOP APPLICATIONS
+     Through bound toolkits rather than an owned one. See 10.3.
+
+2.1 NON-DOMAINS
+
+Hard real-time and audio DSP, bare metal and microcontrollers, kernel and
+driver work, long-running server workloads.
+
+Serving these would reimpose the constraints of the archived systems design,
+which are incompatible with a runtime and with ARC. That language exists in
+the other document.
+
+
+--------------------------------------------------------------------------------
+3. HARD CONSTRAINTS
+--------------------------------------------------------------------------------
+
+  H1. BEING EMBEDDED IS AS GOOD AS EMBEDDING. Producing a Python wheel, a
+      Rust-linkable static library, a Node addon, or a plain C library is a
+      first-class artifact shape, not an afterthought. The seam is the
+      product.
+
+  H2. ONE PROJECT, MANY ARTIFACTS. A single source tree produces a library, a
+      CLI, an application, a shared library, a language-specific extension,
+      and an installer, selected by declaration rather than by splitting the
+      project.
+
+  H3. NO TRACING GARBAGE COLLECTOR. Partly for control, and decisively
+      because a tracing collector makes a language hostile to embedding. A
+      component that pauses its host, or that must own the process, is not
+      something a Rust or Python developer will accept.
+
+  H4. COSTS ARE VISIBLE AND OVERRIDABLE. Every allocation strategy is
+      replaceable at any scope. Nothing about memory or dispatch is fixed by
+      the language where it could be chosen by the programmer.
+
+  H5. EASY BY DEFAULT. A twenty-line program is twenty lines. Reaching a
+      lower level is always possible and never required.
+
+  H6. ESCAPE HATCHES ARE INVISIBLE UNTIL REACHED FOR. A control mechanism
+      that appears in code which does not use it has failed. This is what
+      keeps H4 from turning the language into C++.
+
+  H7. NO HIDDEN CONTROL FLOW. No exceptions, no implicit unwinding, no
+      arbitrary code at scope exit the reader cannot see.
+
+  H8. COMPILE SPEED IS A CONSTRAINT. No feature requiring whole-program
+      analysis.
+
+  H9. DISTRIBUTION IS A LANGUAGE CONCERN. A signed, cross-compiled,
+      installable or publishable artifact is a compiler operation.
+
+  H10. ONE OBVIOUS WAY. Where two features overlap in purpose, the smaller is
+       cut rather than both kept.
+
+3.1 WHEN THE TWO AUDIENCES CONFLICT
+
+The wedge user wants a small runtime, a clean C ABI, no surprises at the
+boundary, and nothing that makes their host binary bigger or slower. The daily
+driver user wants a rich standard library, conveniences, and a language that
+is pleasant for six hours at a time.
+
+They appear to conflict in one place: anything that makes the default binary
+heavier or the boundary more complicated.
+
+That conflict is mostly false, and the resolution is pay-as-you-go linking.
+A large standard library costs an embedded component nothing if unused parts
+do not ship. Rust and Zig both demonstrate this, so it is engineering rather
+than speculation. Section 16 therefore specifies a broad standard library
+without apology, and `nx size` from S5 is what keeps the promise honest.
+
+The conflict becomes real only for features that cannot be paid for on use:
+anything requiring runtime initialization, anything requiring process-global
+state, anything that must run before main. Those violate S1 and S2 no matter
+how little code uses them.
+
+TIE-BREAK, narrowed accordingly. The wedge wins on initialization,
+process-global state, ABI shape, and artifact behavior. The daily driver wins
+on everything else, including standard library breadth, which is not a
+tie-break at all but a place the two agree once linking is done properly.
+
+The thing to watch is C4. The first genuinely convenient feature that wants a
+process-global will force a real decision, and no amount of linking
+cleverness will dissolve it.
+
+3.2 THE CENTRAL TENSION
+
+H4 and H5 pull against each other and every real decision here is a
+negotiation between them. Control wants knobs; ease wants defaults. C++ is
+what happens when control wins every argument.
+
+H6 is the arbiter. A control mechanism earns its place only if code that does
+not use it looks exactly as it would if the mechanism did not exist. The
+allocator context of 5.1 passes. A per-declaration memory policy annotation
+would not. When a feature cannot satisfy H6, cut it rather than accept
+ceremony everywhere.
+
+
+--------------------------------------------------------------------------------
+4. THE SEAM
+--------------------------------------------------------------------------------
+
+The most important section in this document, because H1 says so and because
+it is the part no competitor has taken seriously.
+
+4.1 REQUIREMENTS FOR BEING EMBEDDED
+
+  S1. NO INITIALIZATION REQUIREMENT. A Nexium function exported to C is
+      callable immediately, from any thread, with no prior runtime setup. Any
+      lazy initialization is per-feature and triggered by use.
+
+  S2. NO PROCESS-GLOBAL STATE BY DEFAULT. Two independently compiled Nexium
+      libraries loaded into one process do not interfere. This rules out a
+      process-wide allocator, a process-wide scheduler, and a process-wide
+      panic handler.
+
+      Enforced rather than intended. Mutable globals already require `unsafe`
+      per section 12, so they are countable. On top of that, an artifact
+      declared `cabi`, `python`, `rustlib`, or `node` compiles in embedded
+      mode, where any reachable mutable global is a compile error naming the
+      declaration and the path that reaches it. State that must persist lives
+      in a handle the host holds, or in the context, never in the image.
+      `nx audit --globals` reports the same for a project not yet declared
+      embeddable, so the constraint is checkable before it is committed to.
+
+  S3. ERRORS DO NOT CROSS THE BOUNDARY AS PANICS. An exported function
+      returns an error representation the host understands. A panic inside an
+      exported function is caught at the boundary and converted, because
+      aborting someone else's process is not acceptable behavior from a
+      dependency.
+
+  S4. THE ABI IS STABLE AND OBVIOUS. Exported types have a declared C
+      representation. No name mangling on exports. No hidden parameters.
+
+  S5. BINARY SIZE IS BOUNDED AND REPORTABLE. `nx size` attributes bytes to
+      declarations. A component added to someone's binary must justify its
+      weight and the author must be able to see what it costs.
+
+  S6. LINKING IS UNSURPRISING. Static by default. No required dynamic runtime
+      library. Symbol visibility declared rather than accidental.
+
+4.2 ARTIFACT SHAPES FOR HOSTS
+
+Declared, not scripted:
+
+    artifact cabi    { name = "ropesim", exports = [simulate, sweep] }
+    artifact python  { name = "ropesim", abi = stable, wheels = all }
+    artifact rustlib { name = "ropesim", crate = true }
+    artifact node    { name = "ropesim" }
+
+`nx ship` produces the wheel, the crate wrapper, the addon, and the static
+library, for every declared target, from one source tree.
+
+The Python artifact generates the extension module, the type stubs, the wheel
+per platform, and the metadata. The Rust artifact generates a crate with its
+build script and extern declarations. Both are produced by comptime
+reflection over the exported declarations, which is the same mechanism as CLI
+generation in 10.1 rather than a separate subsystem.
+
+PYTHON ABI DECISION. The stable ABI is the default: one wheel per platform
+rather than one per interpreter version, so a release does not need rebuilding
+when a new Python ships and a user on an unusual interpreter is not stranded.
+
+The cost is a slower boundary crossing, because the stable ABI forecloses some
+direct struct access. `abi = native` opts out for callers who measure the
+boundary and care. The default is chosen for adoption rather than for
+benchmarks, on the reasoning that a wedge user who cannot install the package
+never reaches the benchmark.
+
+4.3 WHY THIS IS THE PRODUCT
+
+A wedge user evaluates Nexium in an afternoon. What they experience is:
+install, write one function, call it from their existing project, ship it. If
+any step requires reading documentation about build systems, they stop.
+
+Everything else in this document is what makes the language worth keeping
+after that afternoon. Section 4 is what gets them to the afternoon.
+
+
+--------------------------------------------------------------------------------
+5. MEMORY
+--------------------------------------------------------------------------------
+
+5.1 STRATEGY
+
+Automatic reference counting by default, with three properties:
+
+  VISIBLE      `nx refcounts` reports where retain and release are emitted.
+  REPLACEABLE  any scope installs a different strategy and everything below
+               inherits: arena, pool, stack, manual. This is the allocator
+               context and it is the central mechanism of H4.
+  ESCAPABLE    any type may opt out of refcounting and become manually
+               managed, with the boundary type-checked.
+
+ARC over tracing GC because of H3, over ownership because of H5, over manual
+because of H5.
+
+5.2 VALUE SEMANTICS BY DEFAULT
+
+    struct Point { x: f32, y: f32 }     value, no refcount
+    ref class Window { ... }            reference, refcounted
+
+Refcount traffic is then proportional to the reference types actually in use,
+which keeps the `nx refcounts` report legible rather than overwhelming.
+
+5.3 COLLECTIONS ARE VALUES
+
+Resolves the largest open question about the memory model, because whether a
+growable list is a reference type changes the refcount profile of nearly every
+program.
+
+Collections are value types that own a heap buffer. `List(T)`, `Map(K,V)`, and
+`String` allocate, and they do not refcount.
+
+    var xs = List(i32).new()      allocates, does not retain or release
+    let ys = xs.clone()           explicit copy of the buffer
+    fn sum(xs: []i32) -> i32      parameters pass by reference implicitly
+
+Copying is explicit. Passing is by reference without ceremony, since a
+parameter cannot outlive the call unless it escapes, and escape is visible.
+
+The consequence is large and good. A numeric or parsing workload built on
+values, slices, and collections performs no reference counting at all. It
+qualifies for the low tier of section 6 without the author doing anything
+deliberate. Refcounting appears when a program uses reference types, which are
+declared with `ref class` and are the exception rather than the default.
+
+This is also what makes `!refcounts` a usable bound rather than an aspiration,
+and it resolves the second open question along with the first. The effect
+discharges by proof in the manner of the archived E6: an operation contributes
+`refcounts` only where a reference type is actually retained or released, and
+value-typed code contributes nothing. A function over records, slices, and
+collections is `!refcounts` automatically, and its signature says so without
+the author typing it.
+
+5.4 CYCLES
+
+ARC leaks cycles. `weak T` at back-reference edges, and region allocation for
+subtrees that die together. No cycle collector, because that is tracing by
+another name and violates H3. `nx leaks` reports cycles found in debug runs.
+
+Because 5.3 keeps reference types rare, the cycle surface is far smaller than
+in a language where every value is refcounted. Cycles are possible only among
+`ref class` values, which are declared, countable, and usually few.
+
+
+--------------------------------------------------------------------------------
+6. TIERS
+--------------------------------------------------------------------------------
+
+There are no tier keywords. A function is low-tier if it is provably free of
+the high-tier effects.
+
+    fn integrate(state: *mut State, dt: f32) !allocates !refcounts
+
+Checked rather than declared. Granular per function rather than per file.
+Automatic for ordinary code that happens to qualify.
+
+This is the most novel idea in the document and the one no incumbent can
+retrofit, because it is a type system decision that has to be present from the
+start. It is also what makes the ease credible: "reach low when needed" is a
+slogan in most languages and a machine-checked property here.
+
+There is no second standard library and no no_std split, because there is no
+tier to split along. Core is written to qualify wherever possible, and any
+function that does not qualify says so in its effect signature.
+
+
+--------------------------------------------------------------------------------
+7. THE LANGUAGE
+--------------------------------------------------------------------------------
+
+Braces, no statement terminators, local inference with explicit function
+boundaries. Traits as the single extension mechanism. Error unions with `try`
+and `catch`. `defer` and `errdefer`. Distinct types. Pattern matching,
+including binary patterns. Compile-time execution and reflection. Sections 4
+through 9 of the archived document are the detailed reference and are
+unchanged except as noted here.
+
+7.1 RECORDS
+
+The most common shape in the target workloads: validated data with bundled
+reference tables.
+
+    record Dose {
+        drug: DrugId
+        mg_per_kg: f32 where 0.0 < value <= 100.0
+        route: Route
+        pediatric_cap: ?f32
+    }
+
+Derived equality, hashing, formatting, serialization, and validated
+construction. Compile-time constraint checking where values are known.
+
+    const INTERACTIONS: [_]Interaction = comptime load("interactions.toml")
+
+Declared build input, embedded in the binary, validated against the record
+type during compilation, zero startup cost. A malformed row is a compile error
+naming the row.
+
+7.2 DATA PARALLELISM
+
+    for parallel (cases) |c| { results[i] = simulate(c) }
+
+Requires an executor from the context. The body must be free of the
+`shared_mutable` effect, which is what makes this safe without a borrow
+checker.
+
+7.3 CONCURRENCY
+
+Structured concurrency with platform-supplied executors. No green threads, no
+implicit scheduler, no async/await and no function coloring: whether a call
+blocks is already answered by the `blocks` effect, and a second mechanism for
+a settled question violates H10.
+
+Per S2, no scheduler is process-global. An embedded component uses the host's
+threads or an executor it is handed.
+
+
+--------------------------------------------------------------------------------
+8. EFFECTS
+--------------------------------------------------------------------------------
+
+  allocates          may request memory from an allocator
+  refcounts          may retain or release
+  blocks             may block
+  shared_mutable     may mutate state reachable from another task
+  nondeterministic   may vary across runs on identical input
+  panics             may abort
+  ffi                may call foreign code
+
+Inferred within a module, declared at boundaries, constrained by negative
+bounds. Trait methods do not declare effects; implementations carry them and
+generic code constrains them through ordinary trait bounds. Rules E1 through
+E7 of the archived document apply unchanged.
+
+`panics` interacts with S3: an exported function must handle or convert it,
+and the compiler enforces that at the export boundary rather than trusting the
+author to remember.
+
+
+--------------------------------------------------------------------------------
+9. INTEROP
+--------------------------------------------------------------------------------
+
+Interop is bidirectional and both directions are first-class. H1 covers being
+called; this section covers calling.
+
+C headers import directly with no binding generator and no build step. Win32
+types, calling conventions, and handle semantics understood natively. COM
+without a generated wrapper layer. Objective-C and platform frameworks on
+macOS on the same basis.
+
+Cross-compilation from any host to any supported target with no toolchain
+installation.
+
+Binding quality is load-bearing rather than supporting. If GUI, rendering, and
+platform frameworks are all foreign libraries, then the quality of calling
+foreign libraries is a substantial fraction of the language's value.
+
+
+--------------------------------------------------------------------------------
+10. FRONTENDS
+--------------------------------------------------------------------------------
+
+10.1 CLI
+
+Argument parsing generated at compile time from a record: subcommands, flags,
+help, validation, shell completion, from one declaration. Same comptime
+reflection as 4.2.
+
+10.2 TUI
+
+Raw mode, cell grid, damage-tracked redraw, escape sequence decoding through
+binary pattern matching.
+
+10.3 GUI
+
+Through bound toolkits. Nexium does not own a widget library.
+
+This reverses an earlier draft deliberately. Owning a UI library is years of
+work, it is the largest single cost available, it is not language design, and
+it does not serve the wedge user at all. The bet is that excellent bindings to
+Qt, to a webview, or to platform toolkits reach the same place for a fraction
+of the cost, which is the bet Rust made and Tauri validated.
+
+The consequence, stated plainly: Nexium has no GUI differentiator. Desktop
+applications are domain E and are reachable, not owned.
+
+
+--------------------------------------------------------------------------------
+11. DISTRIBUTION
+--------------------------------------------------------------------------------
+
+    artifact lib       { name = "ropesim" }
+    artifact cli       { name = "ropesim", entry = main }
+    artifact app       { name = "RopeSim", icon = "icon.png", entry = ui.main }
+    artifact shared    { name = "ropesim", exports = [c] }
+    artifact python    { name = "ropesim", wheels = all }
+    artifact installer { targets = [windows, macos, linux] }
+
+`nx ship` produces all of them.
+
+Subsumes: workspace splitting per artifact shape, PyInstaller-class bundling,
+installer generation, native extension build tooling, the per-platform CI
+matrix, and the per-registry publish step.
+
+Binary size is a stated design target per S5. Code signing, notarization, and
+update channels are compiler concerns.
+
+This is the highest-value item in the document for existing developers and the
+easiest for a competitor to copy. Both are true.
+
+
+--------------------------------------------------------------------------------
+12. SAFETY
+--------------------------------------------------------------------------------
+
+No undefined behavior in safe code. `unsafe` is a block, minimal in scope, and
+`nx audit` reports every one across a dependency tree.
+
+Requires unsafe: raw pointer dereference, untagged union read, foreign calls,
+transmutation, manual management of an opted-out type, asserting absence of a
+data race.
+
+Build modes: debug, safe-release as the recommended shipping mode,
+fast-release, small-release.
+
+
+--------------------------------------------------------------------------------
+13. TOOLING
+--------------------------------------------------------------------------------
+
+One binary.
+
+  nx build / run / test / fmt / doc / lsp
+  nx ship            produce declared artifacts
+  nx publish         to configured registries
+  nx size            attribute binary bytes to declarations
+  nx effects         inferred effects per public function
+  nx refcounts       retain and release sites
+  nx leaks           cycles found in debug runs
+  nx audit           unsafe blocks across dependencies
+  nx expand          post-comptime source
+
+Language server from the beginning rather than retrofitted.
+
+
+--------------------------------------------------------------------------------
+14. EXPLICITLY EXCLUDED
+--------------------------------------------------------------------------------
+
+  Tracing garbage collection            H3, and hostile to embedding
+  Cycle collection                      H3, tracing by another name
+  Process-global runtime state          S2
+  Required runtime initialization       S1
+  Panics crossing an export boundary    S3
+  Name mangling on exports              S4
+  Exceptions                            H7
+  Implicit destructors running code     H7, defer covers it
+  Whole-program type inference          H8
+  async/await function coloring         H10, effects answer it
+  Green threads                         H4, S2
+  Inheritance                           H10, traits answer it
+  Tier keywords                         section 6, the tier is inferred
+  A second standard library             section 6, nothing to split along
+  An owned GUI widget library           10.3, cost and focus
+  Hard real-time, bare metal            2.1
+
+
+--------------------------------------------------------------------------------
+15. LOAD-BEARING UNPROVEN CLAIMS
+--------------------------------------------------------------------------------
+
+  C1. That a population large enough to matter actually feels the wedge pain.
+      The evidence so far is one developer's repositories. Before building for
+      years, find five strangers with a fast core, a friendly shell, and a
+      shipping problem. If they do not exist, this is a personal tool and
+      should be scoped as one. This is the most important claim in the
+      document and the cheapest to test.
+
+  C2. That ARC with swappable strategies satisfies both the Rust developer's
+      control expectations and the Python developer's ease expectations.
+      Swift is evidence for the second half and weak evidence for the first.
+
+  C3. That effects are a workable tier boundary in a language with a runtime.
+      In the archived design every constraint was global, which made the
+      analysis simpler.
+
+  C4. That S1 and S2 are achievable alongside a rich standard library. No
+      initialization and no process-global state are strong constraints, and
+      the first convenient feature that wants a global will test them.
+
+  C5. That distribution is a durable advantage rather than one copied within
+      a year.
+
+  C6. That the moat against Zig on the embedding axis is real. Zig is already
+      good at this and has no high tier, so the claim reduces to: ergonomics
+      plus provable cost control is worth adopting for. Plausible, unproven.
+
+
+--------------------------------------------------------------------------------
+16. STANDARD LIBRARY SCOPE
+--------------------------------------------------------------------------------
+
+A first language is self-sufficient or it is not a first language. This
+section exists because "good at everything, painful at nothing" is a promise
+that the standard library keeps or breaks, and because leaving stdlib scope
+unstated is how a language ends up with an excellent compiler nobody can build
+anything with.
+
+16.1 THE TEST
+
+The standard library is adequate when a competent developer can build, without
+reaching for a third-party dependency:
+
+  - a command line tool that parses arguments, reads and writes files, and
+    formats output
+  - a program that speaks HTTP to a JSON API and stores results in SQLite
+  - a numeric simulation with parallel parameter sweeps
+  - a program that manipulates dates, times, and time zones correctly
+  - a program that reads and writes the archive and image formats people
+    actually have on disk
+
+Everything in 16.2 exists because one of those five is otherwise impossible.
+Anything not serving one of them is a candidate for removal.
+
+16.2 SCOPE
+
+CORE. No allocation, no platform services, qualifies for the low tier of
+section 6 wherever possible.
+
+  mem, slice, math, simd, atomic, bits, ascii, utf8, hash, sort, fmt,
+  fixed, ring
+
+PLATFORM. Requires capabilities, ships only when used.
+
+  alloc          allocator implementations
+  io             readers, writers, files, paths, directories
+  os             process, environment, signals
+  time           instants, durations, calendar dates, time zones
+  thread         spawn, join, synchronization, executors
+  net            sockets, addressing, DNS
+  http           client and minimal server
+  tls            through the platform provider rather than a bundled stack
+  json           parse and serialize, derived from record definitions
+  toml, csv      the two other formats every project needs
+  sqlite         embedded, because local state is universal in the target
+                 workloads
+  compress       deflate, gzip, zstd
+  archive        zip, tar
+  crypto         hashing, HMAC, random. Not a general crypto toolkit.
+  process        spawning and piping child processes
+  term           raw mode, cell grid, escape decoding
+  cli            argument parsing generated from records
+  test           harness, assertions, property testing, benchmarking
+  log            structured, with pluggable sinks
+
+NOT IN THE STANDARD LIBRARY. Each would be a permanent maintenance burden
+with a moving target underneath it:
+
+  GUI toolkits            10.3, bound rather than owned
+  Image codecs beyond
+    the most common       ecosystem
+  A general crypto suite  ecosystem, and the wrong thing to ship casually
+  Web frameworks          out of scope per 2.1
+  Numeric arrays and
+    linear algebra        ecosystem, though the language must make a good one
+                          possible, which is what 7.2 and section 6 are for
+
+16.3 CONSTRAINTS ON THE STANDARD LIBRARY ITSELF
+
+  L1. Every module is pay-as-you-go. An unused module contributes zero bytes,
+      per 3.1 and S5. This is what makes 16.2 compatible with the wedge.
+  L2. No module requires initialization before main, per S1.
+  L3. No module holds process-global state, per S2. Where state is
+      unavoidable it lives in the context of the archived section 15.
+  L4. Every module declares its effects. A user should be able to ask which
+      standard library functions are callable from a `!allocates` function
+      and get an answer from `nx effects` rather than from documentation.
+  L5. tls and crypto defer to the platform provider where one exists. Shipping
+      a bundled TLS stack means owning its CVEs forever.
+
+16.4 THE HONEST COST
+
+This is a large standard library and it is most of the work after the
+compiler. Go and Rust both took years to reach this scope with funded teams.
+A realistic sequencing puts core, io, os, time, cli, and test in the first
+usable release, and treats http, sqlite, and the format modules as what makes
+the language self-sufficient rather than what makes it exist.
+
+Listing it here is not a claim that it will be built quickly. It is a
+statement of what "first language" commits to, so that the commitment is
+visible rather than discovered at year three.
+
+
+--------------------------------------------------------------------------------
+17. LIBRARY ECOSYSTEM
+--------------------------------------------------------------------------------
+
+A language nobody can write libraries for is a language nobody writes anything
+substantial in. Traits, comptime, and effects already make third-party
+libraries technically possible. This section covers the parts that decide
+whether anyone actually does it, which are mostly policy rather than language.
+
+17.1 THE BOOTSTRAP PROBLEM, AND WHY IT IS SMALLER HERE
+
+Nobody writes libraries for a language with no users, and nobody uses a
+language with no libraries. The usual exits are to be so good at one thing
+that people tolerate the emptiness, or to inherit someone else's ecosystem the
+way Gleam inherited BEAM's.
+
+Nexium has a better third option, and it falls directly out of section 9. If
+FFI is genuinely excellent, then the day-one ecosystem is every C library that
+exists. A Nexium wrapper around SQLite, libcurl, or a platform toolkit is a
+thin binding rather than a rewrite, and it can be written in an evening.
+
+Two things make this real rather than rhetorical:
+
+  - Direct header import, so using a C library requires no binding package at
+    all. A binding package is an optional ergonomic layer over something that
+    already worked.
+  - VENDORED C COMPILATION. The compiler can build C sources declared by a
+    package, so a package may vendor a C library and produce a single
+    self-contained artifact with no system dependency and no user-visible
+    build step. This is what makes "just add the dependency" true for a C
+    library, and it is the single highest-leverage item in this section.
+
+The honest cost is that the compiler now contains or drives a C compiler,
+which is a substantial engineering commitment. Zig demonstrates both that it
+is achievable and that it is worth it.
+
+17.2 PACKAGES AND THE REGISTRY
+
+A package is a directory with a manifest. Dependencies resolve to exact
+versions recorded in a lockfile, with content hashes.
+
+REGISTRY DESIGN. Namespaced, content-addressed, thin index.
+
+  - Every package name is namespaced to a publisher: `londopy/ropesim`. Name
+    squatting is structurally impossible, and there is no land rush over
+    generic words, which is the failure mode of every flat registry.
+  - The index stores metadata and hashes, not artifacts. It is small enough to
+    be a git repository, cheap to host, cheap to mirror, and cheap to hand to
+    someone else if the project changes hands.
+  - Artifacts are fetched from the publisher's declared source and verified
+    against the index hash. A compromised host cannot serve altered code,
+    because the hash is in the index and in every consumer's lockfile.
+  - A package is immutable once published. Versions may be yanked from
+    resolution but never altered or removed, since a deletable dependency is
+    an outage waiting to happen.
+
+NO BUILD SCRIPTS. Carried from the archived section 13. A package cannot
+execute arbitrary code at build time. Compile-time evaluation is restricted to
+declared build inputs per the comptime rules, and vendored C is compiled by
+the compiler rather than by a script the package supplies. This forecloses the
+most common supply chain attack in every other ecosystem, and it costs
+packages some flexibility they should not have had.
+
+17.3 VERSIONING, ENFORCED
+
+Semantic versioning, checked by the compiler rather than promised by the
+author.
+
+`nx publish` diffs the new public API against the previous release and refuses
+a version number inconsistent with the change. Removing a public function or
+narrowing a parameter type requires a major bump; adding one permits a minor.
+Elm demonstrated this works and that authors stop resenting it quickly.
+
+EFFECTS ARE PART OF THE API SURFACE. This is a novel consequence of section 8
+and it must be stated, because it is easy to violate accidentally. Adding
+`allocates` to a previously `!allocates` function is a breaking change: it
+breaks every caller that declared the negative bound. The API diff therefore
+covers effect signatures, not just types, and a library author who introduces
+an allocation into a hot path is told at publish time rather than by a user.
+
+Each package declares a minimum supported compiler version. One major version
+of a package per build graph; a diamond with incompatible majors is a
+resolution error rather than a silent duplicate, since duplicated types across
+an FFI boundary produce worse failures than a refusal to build.
+
+17.4 DOCUMENTATION AND DISCOVERY
+
+`nx doc` produces static HTML from `///` comments and from the type system,
+including inferred effect signatures, which are frequently the thing a reader
+most needs and the thing hand-written documentation is most likely to get
+wrong. The registry renders and hosts what `nx doc` produces, so documentation
+exists for every published package by default rather than by author effort.
+
+17.5 SECURITY AND ADVISORIES
+
+An advisory database in the index, keyed by package and version range.
+`nx audit` already reports unsafe blocks across a dependency tree; it also
+reports known advisories. Reporting is coordinated through a published
+contact, and the compiler's own advisories live in the same database as
+package advisories, because a user checking for vulnerabilities should not
+have to check two places.
+
+17.6 GOVERNANCE AND STABILITY
+
+Pre-1.0, breaking changes are permitted and ship with an automated migration
+tool. A breaking change without a migration path is not shipped. This matters
+more for library authors than for application authors, because a library
+maintainer absorbs the cost on behalf of every consumer.
+
+At 1.0 the language and core library freeze for a defined support window.
+Additions permitted, removals and semantic changes not.
+
+Language changes proceed through a written proposal with a stated problem, the
+alternatives considered, and the migration cost. The bar is explicit: a
+proposal must name which hard constraint in section 3 it serves, or it is
+declined. Platform support is tiered, tier one targets are tested per release,
+and a target is never silently dropped.
+
+
+--------------------------------------------------------------------------------
+18. WHAT REMAINS GENUINELY OPEN
+--------------------------------------------------------------------------------
+
+Most of the earlier open questions have been resolved in place. What is listed
+here is what cannot be settled by thinking, and the difference matters: these
+need an experiment or a stranger, not another draft.
+
+18.1 RESOLVED, WITH POINTERS
+
+  Collections: value or reference        5.3, value types that own a buffer
+  Whether `!refcounts` is usable         5.3, discharged by proof, and made
+                                         easy by collections being values
+  How S2 is enforced                     S2, embedded mode rejects reachable
+                                         mutable globals at compile time
+  Python stable ABI or native            4.2, stable by default, opt out
+  Standard library scope                 section 16, with a five-item test
+  Stdlib versus seam compatibility       16.3, L1 through L5
+  Registry design                        17.2, namespaced, content-addressed
+  Library versioning                     17.3, API diff enforced at publish
+  Bootstrap of the ecosystem             17.1, FFI plus vendored C
+  Governance and stability               17.6
+
+18.2 STILL OPEN
+
+  R1. Whether a population large enough to matter feels the wedge pain. The
+      evidence is one developer's repositories. Find five strangers with a
+      fast core, a friendly shell, and a shipping problem. If they do not
+      exist, this is a personal tool and should be scoped as one. Cheapest
+      test in the document and the one that changes the most.
+
+  R2. Whether `weak` plus region-per-subtree is sufficient for cyclic graphs
+      in practice. 5.4 argues the surface is small because reference types
+      are rare. That argument is plausible and untested. Write a real widget
+      tree or scene graph before committing.
+
+  R3. Whether ARC with swappable strategies satisfies a Rust developer's
+      control expectations. Swift is evidence for the ease half and weak
+      evidence for the control half. The test is whether someone who chose
+      Rust for predictability accepts refcounting they can see and replace.
+
+  R4. Whether effects hold as a tier boundary in a language with a runtime.
+      In the archived design every constraint was global, which made the
+      analysis simpler. Here the low tier is a subset of a much richer
+      language.
+
+  R5. Whether the moat against Zig on the embedding axis is real. Zig is
+      already good at this and has no high tier, so the claim reduces to
+      ergonomics plus provable cost control being worth adopting for.
+
+  R6. Whether the first convenient standard library module that wants a
+      lazily initialized global forces a real choice against L2 and L3. The
+      likely answer is that some modules are simply unavailable in embedded
+      mode, which is acceptable and should be designed rather than
+      discovered.
+
+18.3 SEQUENCING
+
+Domain A needs only excellent artifact output, excellent FFI, and enough
+language to write a hot loop. That is a far smaller first version than any
+earlier draft implied, and it is reachable by one person.
+
+The first release does not need the GUI story, the full standard library of
+section 16, the registry of 17.2, or domains C through E. It needs `nx ship`
+producing a Python wheel and a C library from one source file, and it needs
+that to work on the first try.
+
+R1 should be answered before that release, not after.
+
+
+================================================================================

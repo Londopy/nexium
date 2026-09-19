@@ -1,0 +1,7 @@
+// EXPECT: is called inside a `for parallel` body but has the `shared_mutable` effect
+var hits: u32 = 0
+fn bump() { unsafe { hits += 1 } }
+fn main() {
+    let xs = [1, 2, 3]
+    for parallel (xs[..]) |_x, _i| { bump() }
+}

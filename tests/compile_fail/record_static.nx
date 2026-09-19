@@ -1,0 +1,8 @@
+// EXPECT: record `Dose` constraint violated: field `mg_per_kg` must satisfy `value > 0.0 and value <= 100.0`
+record Dose {
+    mg_per_kg: f64 where value > 0.0 and value <= 100.0
+}
+fn main() {
+    let d = Dose{ .mg_per_kg = 250.0 }
+    println("{}", .{d.mg_per_kg})
+}

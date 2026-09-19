@@ -1,0 +1,10 @@
+pair 2 1 first 2
+q xy
+areas 5.0 3.14
+shape with area 4.0 / circle r=1.0
+apply 10 twice 20
+closure arg 101
+largest 9 true
+sorted 1.0 2.0 3.0 eq true
+apple fig pear
+tuple 1 two 3.0

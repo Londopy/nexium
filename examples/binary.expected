@@ -1,0 +1,4 @@
+up
+char q
+v4 ihl 5 len 60 ttl 64 proto 6 src c0a80068 dst c0a80001
+short packet: Truncated

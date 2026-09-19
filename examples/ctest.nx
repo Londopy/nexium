@@ -1,0 +1,10 @@
+fn square(x: i64) -> i64 { return x * x }
+
+comptime test "squares" {
+    expect(square(12) == 144)
+    var xs = List(i64).new()
+    for (0..5) |i| { xs.append(square(i as i64)) }
+    expect(xs.len == 5 and xs[4] == 16)
+}
+
+fn main() { println("ran", .{}) }

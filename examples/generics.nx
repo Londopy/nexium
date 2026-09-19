@@ -1,0 +1,76 @@
+struct Pair(T) { a: T, b: T }
+
+impl(T) Pair(T) {
+    fn swap(self: *mut Self) {
+        let t = self.a
+        self.a = self.b
+        self.b = t
+    }
+    fn first(self: *Self) -> T { return self.a }
+}
+
+trait Shape {
+    fn area(self: *Self) -> f64
+    fn describe(self: *Self) -> String {
+        return format("shape with area {:.1}", .{self.area()})
+    }
+}
+
+struct Square derive(Eq, Ord) { side: f64 }
+struct Circle { r: f64 }
+
+impl Shape for Square {
+    fn area(self: *Self) -> f64 { return self.side * self.side }
+}
+
+impl Shape for Circle {
+    fn area(self: *Self) -> f64 { return math.PI * self.r * self.r }
+    fn describe(self: *Self) -> String { return format("circle r={}", .{self.r}) }
+}
+
+fn total_area(comptime T: type where T: Shape, items: []T) -> f64 {
+    var sum: f64 = 0.0
+    for (items) |it| { sum += it.area() }
+    return sum
+}
+
+fn apply(f: fn(i32) -> i32, x: i32) -> i32 { return f(x) }
+fn twice(f: fn(i32) -> i32 !allocates, x: i32) -> i32 { return f(f(x)) }
+
+fn double(x: i32) -> i32 { return x * 2 }
+
+fn largest(comptime T: type where T: Ord, xs: []T) -> ?T {
+    if (xs.len == 0) return null
+    var best = xs[0]
+    for (xs) |x| { if (x > best) best = x }
+    return best
+}
+
+fn main() {
+    var p = Pair(i32){ .a = 1, .b = 2 }
+    p.swap()
+    println("pair {} {} first {}", .{p.a, p.b, p.first()})
+    let q = Pair([]u8){ .a = "x", .b = "y" }
+    println("q {}{}", .{q.a, q.b})
+
+    let squares = [Square{ .side = 1.0 }, Square{ .side = 2.0 }]
+    let circles = [Circle{ .r = 1.0 }]
+    println("areas {} {:.2}", .{total_area(Square, squares), total_area(Circle, circles)})
+    println("{} / {}", .{squares[1].describe(), circles[0].describe()})
+
+    println("apply {} twice {}", .{apply(double, 5), twice(double, 5)})
+    let offset: i32 = 100
+    println("closure arg {}", .{apply(|[offset] x: i32| -> i32 { x + offset }, 1)})
+
+    let best = largest(i64, [3, 9, 4]) orelse -1
+    println("largest {} {}", .{best, largest(f64, []) == null})
+    var sq = [Square{ .side = 3.0 }, Square{ .side = 1.0 }, Square{ .side = 2.0 }]
+    sq[..].sort()
+    println("sorted {} {} {} eq {}", .{sq[0].side, sq[1].side, sq[2].side, sq[0] == Square{ .side = 1.0 }})
+    let words = ["pear", "apple", "fig"]
+    var ws = words[..].to_owned()
+    ws.items().sort()
+    println("{} {} {}", .{ws[0], ws[1], ws[2]})
+    let t = (1, "two", 3.0)
+    println("tuple {} {} {}", .{t.0, t.1, t.2})
+}

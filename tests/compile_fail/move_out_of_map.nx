@@ -1,0 +1,7 @@
+// EXPECT: cannot move a `List(i32)` out of a field or element
+fn main() {
+    var m = Map([]u8, List(i32)).new()
+    m.put("a", List(i32).new())
+    let taken = m.get("a") orelse List(i32).new()
+    _ = taken
+}

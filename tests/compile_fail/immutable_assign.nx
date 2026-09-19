@@ -1,0 +1,5 @@
+// EXPECT: `x` is immutable; declare it with `var`
+fn main() {
+    let x = 1
+    x = 2
+}

@@ -1,0 +1,8 @@
+// EXPECT: function `hot` is declared `!allocates` but has the `allocates` effect
+// EXPECT: the effect is introduced here: appending to a List may grow it
+fn hot(n: i32) -> i32 !allocates {
+    var list = List(i32).new()
+    list.append(n)
+    return list.len as i32
+}
+fn main() { println("{}", .{hot(1)}) }

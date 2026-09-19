@@ -1,0 +1,112 @@
+error AppError { TooBig, Odd }
+
+fn check(n: i32) -> AppError!i32 {
+    var log = String.new()
+    defer println("defer: {}", .{log})
+    errdefer println("errdefer ran for {}", .{n})
+    log.append("start")
+    if (n > 100) return error.TooBig
+    if (n % 2 == 1) return error.Odd
+    log.append(" ok")
+    return n / 2
+}
+
+fn classify(n: i64) -> []u8 {
+    match n {
+        0 => "zero",
+        1..=9 => "small",
+        10..100 => "medium",
+        -1 => "minus one",
+        _ => "big",
+    }
+}
+
+fn keyword(word: []u8) -> u8 {
+    match word {
+        "fn" => 1,
+        "let" | "var" => 2,
+        _ => 0,
+    }
+}
+
+var counter: u32 = 0
+
+fn bump() -> u32 {
+    unsafe {
+        counter += 1
+        return counter
+    }
+}
+
+fn main() -> !void {
+    // loops
+    var i: u32 = 0
+    var acc: u32 = 0
+    while (i < 10) {
+        i += 1
+        if (i % 2 == 0) continue
+        if (i > 7) break
+        acc += i
+    }
+    println("acc {}", .{acc})
+    var pairs: u32 = 0
+    outer: for (0..5) |a| {
+        for (0..5) |b| {
+            if (b > a) continue :outer
+            if (a == 4) break :outer
+            pairs += 1
+        }
+    }
+    println("pairs {}", .{pairs})
+
+    // errors with defer/errdefer
+    println("check(10) = {}", .{try check(10)})
+    let r = check(7) catch |e| {
+        println("caught {}", .{@errorName(e)})
+        0
+    }
+    println("r = {}", .{r})
+
+    // patterns
+    println("{} {} {} {} {}", .{classify(0), classify(5), classify(50), classify(-1), classify(500)})
+    println("kw {} {} {}", .{keyword("fn"), keyword("var"), keyword("x")})
+    let pair = (3, 4)
+    match pair {
+        (0, _) => println("x is zero", .{}),
+        (x, y) => println("sum {}", .{x + y}),
+    }
+
+    // strings and chars
+    let text = "  Hello, World  "
+    let trimmed = text.trim()
+    println("[{}] len {} find {} upper? {}", .{trimmed, trimmed.len, trimmed.find("World") orelse 99, ('h' as u8 as char).to_upper()})
+    let n = try "  42 ".parse_int(i32)
+    let f = try "3.5".parse_float()
+    println("parsed {} {}", .{n, f})
+    let bad = "x1".parse_int(i32) catch |e| {
+        println("parse error {}", .{e})
+        -1
+    }
+    println("bad {}", .{bad})
+    for ("line one\nline two\n".lines()) |line, k| { println("{}: {}", .{k, line}) }
+    var s = String.new()
+    for ("abc") |c| { s.append_char((c as char).to_upper()) }
+    println("upper {} eq {}", .{s, s == "ABC"})
+    println("checked {} {}", .{(200 as u8).checked_add(100) == null, (2 as u8).checked_add(3) orelse 0})
+
+    // globals need unsafe
+    _ = bump()
+    println("bumped {}", .{bump()})
+
+    // platform: files, args, time, random
+    try io.write_file("nx-out/control_test.txt", "hello file\nsecond line\n")
+    let content = try io.read_file("nx-out/control_test.txt")
+    println("file has {} bytes, {} lines", .{content.len, content.lines().len})
+    let args = os.args()
+    println("args {}", .{args.len >= 1})
+    let t0 = time.monotonic()
+    let rnd = random.int(1, 6)
+    println("dice ok {} time ok {}", .{rnd >= 1 and rnd <= 6, time.monotonic() >= t0})
+    let big: i64 = 1 << 40
+    println("shift {} trunc {}", .{big, @truncate(u8, 300)})
+}
