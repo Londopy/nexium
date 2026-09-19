@@ -9,7 +9,7 @@ The spec's one sentence is the compass: *a language complete enough to build
 everything in, that is also the best thing to adopt for one piece of
 something else.* The second half is ahead of the first, on purpose.
 
-## Now: 0.4.0
+## Now: 0.5.0
 
 What exists and is verified on Windows, Linux, and macOS:
 
@@ -114,6 +114,8 @@ Goal: sharing code beyond a sibling file.
 - Editor support: tree-sitter grammar for Neovim, Helix, and Zed, and the
   language server's completion, go-to-definition and rename: done.
 - Linguist PR, when the usage bar is met.
+- Status (0.5.0): everything above is done except `nx publish` and the
+  registry, which wait for packages to exist, and the Linguist PR.
 
 Exit: a second person's package is used by a third person's program.
 
