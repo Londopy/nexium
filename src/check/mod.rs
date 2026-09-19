@@ -1944,14 +1944,10 @@ impl<'a> Checker<'a> {
                 _ => false,
             }
         }
+        // every nested expression and block: a `break` hides in an `orelse`
+        // default, a call argument, a match arm as readily as in an `if`
         fn walk_expr(e: &TExpr, depth: u32) -> bool {
-            match &e.kind {
-                TExprKind::If { then, els, .. } => walk_block(then, depth) || els.as_ref().map(|b| walk_block(b, depth)).unwrap_or(false),
-                TExprKind::IfCapture { then, els, .. } => walk_block(then, depth) || els.as_ref().map(|b| walk_block(b, depth)).unwrap_or(false),
-                TExprKind::Block(b) => walk_block(b, depth),
-                TExprKind::Match { arms, .. } => arms.iter().any(|a| walk_expr(&a.body, depth)),
-                _ => false,
-            }
+            e.blocks().iter().any(|b| walk_block(b, depth)) || e.children().iter().any(|c| walk_expr(c, depth))
         }
         match s {
             TStmt::While { body, .. } => walk_block(body, 0),

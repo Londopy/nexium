@@ -657,3 +657,100 @@ impl Value {
         }
     }
 }
+
+impl TExpr {
+    /// The expressions nested directly in this one, blocks excluded (a block's
+    /// statements are walked through `TBlock`); every kind of node is covered so
+    /// a walk over the tree misses nothing.
+    pub fn children(&self) -> Vec<&TExpr> {
+        let mut out: Vec<&TExpr> = Vec::new();
+        match &self.kind {
+            TExprKind::Field { base, .. } | TExprKind::RefField { base, .. } | TExprKind::TupleField { base, .. } => out.push(base),
+            TExprKind::Index { base, index, .. } => {
+                out.push(base);
+                out.push(index);
+            }
+            TExprKind::SliceOp { base, start, end } => {
+                out.push(base);
+                out.extend(start.iter().map(|b| &**b));
+                out.extend(end.iter().map(|b| &**b));
+            }
+            TExprKind::Deref(x)
+            | TExprKind::AddrOf { expr: x, .. }
+            | TExprKind::Unary { expr: x, .. }
+            | TExprKind::Cast { expr: x, .. }
+            | TExprKind::Try(x)
+            | TExprKind::Unwrap { expr: x, .. }
+            | TExprKind::OptWrap(x)
+            | TExprKind::ErrWrap(x)
+            | TExprKind::ErrToUnion(x)
+            | TExprKind::ArrayToSlice(x)
+            | TExprKind::ListToSlice(x)
+            | TExprKind::StrToSlice(x)
+            | TExprKind::Retained(x)
+            | TExprKind::DynFrom { expr: x, .. }
+            | TExprKind::ArrayRepeat { value: x, .. } => out.push(x),
+            TExprKind::Call { args, .. } | TExprKind::EnumLit { payload: args, .. } | TExprKind::ArrayLit(args) | TExprKind::TupleLit(args) => out.extend(args.iter()),
+            TExprKind::CallPtr { callee, args } => {
+                out.push(callee);
+                out.extend(args.iter());
+            }
+            TExprKind::Builtin { args, .. } => out.extend(args.iter()),
+            TExprKind::Binary { lhs, rhs, .. } | TExprKind::Logical { lhs, rhs, .. } => {
+                out.push(lhs);
+                out.push(rhs);
+            }
+            TExprKind::If { cond, .. } | TExprKind::IfCapture { cond, .. } => out.push(cond),
+            TExprKind::Match { scrutinee, arms } => {
+                out.push(scrutinee);
+                for a in arms {
+                    out.extend(a.guard.iter());
+                    out.push(&a.body);
+                }
+            }
+            TExprKind::StructLit { fields } | TExprKind::RefNew { fields } => out.extend(fields.iter().map(|(_, e)| e)),
+            TExprKind::Catch { expr, handler, .. } => {
+                out.push(expr);
+                out.push(handler);
+            }
+            TExprKind::OrElse { expr, default } => {
+                out.push(expr);
+                out.push(default);
+            }
+            TExprKind::BinConstruct { segments, target } => {
+                for s in segments {
+                    if let TBinSegKind::Value(v) = &s.kind {
+                        out.push(v);
+                    }
+                    if let TBinSize::Expr(e) = &s.size {
+                        out.push(e);
+                    }
+                }
+                out.push(target);
+            }
+            TExprKind::RecordCheck { value, checks, .. } => {
+                out.push(value);
+                out.extend(checks.iter().map(|(_, e, _)| e));
+            }
+            TExprKind::DynCall { recv, args, .. } => {
+                out.push(recv);
+                out.extend(args.iter());
+            }
+            _ => {}
+        }
+        out
+    }
+
+    /// The blocks nested directly in this expression.
+    pub fn blocks(&self) -> Vec<&TBlock> {
+        match &self.kind {
+            TExprKind::If { then, els, .. } | TExprKind::IfCapture { then, els, .. } => {
+                let mut v = vec![then];
+                v.extend(els.iter());
+                v
+            }
+            TExprKind::Block(b) => vec![b],
+            _ => vec![],
+        }
+    }
+}
