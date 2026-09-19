@@ -2472,7 +2472,9 @@ impl Checker {
             var diverges = false
             for s in tb.kids { if self.stmt_diverges(s) { diverges = true } }
             if diverges {
+                // a labeled block that ends in `break :label v` still yields the value
                 ty = self.tys.never()
+                if label_ty != NONE and !self.tys.contains_infer(self.tys.resolve(label_ty, true)) { ty = label_ty }
             } else if label_ty != NONE {
                 ty = label_ty
             }
@@ -3927,6 +3929,20 @@ impl Checker {
             return self.unary_node("!", "plain", inner, bt, start, end)
         }
         if op == "-" {
+            // `-128` is one literal, not the negation of 128 (which would not fit an i8)
+            let ln = self.node(m, inner_node)
+            if ln.k == parser.NodeKind.Lit and ln.text == "int" and expected != NONE {
+                let et = self.tys.shallow(expected)
+                if self.tys.kind(et) == TK.Int and int_signed(self.tys.list[et].name[..]) {
+                    let mx = int_max(self.tys.list[et].name[..])
+                    let v = ln.name[..].parse_int(i128) catch { -1 }
+                    if v >= 0 and v <= mx +| 1 { return self.int_node(-v, et, start, end) }
+                    // the one literal past i128's maximum is its minimum, negated
+                    if v < 0 and ln.name == "170141183460469231731687303715884105728" and self.tys.list[et].name == "i128" {
+                        return self.int_node(int_min("i128"), et, start, end)
+                    }
+                }
+            }
             let inner = self.check_expr(inner_node, expected)
             let t = self.tys.shallow(self.tir.nodes[inner].ty)
             if self.tys.is_float(t) { return self.unary_node("-", "float", inner, t, start, end) }

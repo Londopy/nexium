@@ -1153,6 +1153,17 @@ impl<'a> Checker<'a> {
                 self.mk(TExprKind::Unary { op, expr: Box::new(inner), mode: ArithMode::Plain }, bt, span)
             }
             UnOp::Neg => {
+                // `-128` is one literal, not the negation of 128 (which would not fit an i8)
+                if let Expr::Lit { value: Lit::Int(v), .. } = expr {
+                    if let Some(et) = expected.map(|t| self.tys.shallow(t)) {
+                        if let Some(it) = self.tys.as_int(et) {
+                            if it.is_signed() && *v <= it.max() as u128 + 1 {
+                                let neg = (*v as i128).wrapping_neg();
+                                return self.mk(TExprKind::Int(neg), et, span);
+                            }
+                        }
+                    }
+                }
                 let inner = self.check_expr(expr, expected);
                 let t = self.tys.shallow(inner.ty);
                 if self.tys.is_float(t) {
