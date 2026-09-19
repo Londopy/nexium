@@ -89,27 +89,37 @@ fn run_pp(opts: *ImportOptions, source: []u8, extra: []u8) -> !String {
     for f in inc_flags { argv.append(f[..]) }
     argv.append(path[..])
     var code: i32 = 1
-    // Zig's shared cache occasionally refuses a concurrent run: try again
+    // a failure without a diagnostic is the compiler itself giving up (zig's
+    // shared cache refuses concurrent runs now and then): try again
     for attempt in 0..6 {
         code = os.exec(argv[..], "", "") catch { return error.IoError }
         if code == 0 { break }
         let err = os.last_stderr()
-        if err[..].find("CacheCheckFailed") == null and err[..].find("failed to check cache") == null { break }
+        if err[..].find("error:") != null { break }
         time.sleep(50 *((attempt as u64) + 1))
     }
+    unsafe { last_code = code }
     io.remove_file(path[..]) catch { }
     io.remove_dir(dir[..]) catch { }
     if code != 0 { return error.InvalidInput }
     return os.last_stdout()
 }
 
-/// The first line of the preprocessor's complaint, for the diagnostic.
+var last_code: i32 = 0
+
+/// What the failed preprocessor run said, for the diagnostic: its first
+/// `error` line, else its first line, else the exit code.
 pub fn pp_error_line() -> String {
     let err = os.last_stderr()
     for line in err[..].lines() {
         if line.find("error") != null { return String.from(line.trim()) }
     }
-    return String.new()
+    for line in err[..].lines() {
+        if line.trim().len > 0 { return String.from(line.trim()) }
+    }
+    let code = unsafe { last_code }
+    if code >= 128 { return String.from("killed by a signal") }
+    return format("exit code {}", .{code})
 }
 
 pub fn import_header(header: []u8, opts: *ImportOptions, tree: *mut parser.Tree) -> !CImport {
