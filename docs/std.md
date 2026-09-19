@@ -18,6 +18,7 @@ by `scripts/std_docs.py` from the doc comments.
 | [`std.json`](#stdjson) | a JSON parser and serializer, written in Nexium. |
 | [`std.lists`](#stdlists) | generic helpers over slices and Lists, written in Nexium. |
 | [`std.num`](#stdnum) | integer utilities, written in Nexium. |
+| [`std.regex`](#stdregex) | regular expressions without backtracking, written in Nexium. |
 | [`std.strings`](#stdstrings) | text utilities on `[]u8` and `String`, written in Nexium. |
 | [`std.time`](#stdtime) | dates, durations and timers, written in Nexium. |
 
@@ -171,6 +172,26 @@ std.num: integer utilities, written in Nexium. `import std.num` then `num.gcd(12
 | `is_power_of_two(n: u64) -> bool` | True for 1, 2, 4, 8, ... |
 | `next_power_of_two(n: u64) -> u64` | The smallest power of two >= n (n <= 2^63). |
 | `popcount(n: u64) -> u32` | Number of set bits. |
+
+## std.regex
+
+std.regex: regular expressions without backtracking, written in Nexium. `import std.regex` then: let re = try regex.compile("(\\w+)@(\\w+)\\.com") if (re.is_match(text)) { ... } if (re.find(text)) |m| { println("{} at {}", .{m.text(), m.start}) } for (re.find_all(text)) |m| { println("{}", .{m.group(1).?}) } let out = re.replace_all(text, "$2:$1") let parts = try regex.compile(",\\s*") for (parts.split("a, b,c")) |p| { ... } Syntax: literals, `.` (any byte but newline), classes `[a-z]` `[^...]`, `\d \w \s \D \W \S \b \B`, escapes `\. \\ \n \t \r`, anchors `^ $`, groups `(...)` and `(?:...)`, alternation `|`, repeats `* + ? {n} {n,} {n,m}` and their lazy forms `*? +? ??`. Matching is a Pike VM (Thompson's NFA simulation), so every search is linear in the text and the pattern; there are no back-references. Patterns and text are bytes.
+
+Types: `Regex`, `Match`
+
+| function | what it does |
+| --- | --- |
+| `compile(pattern: []u8) -> !Regex` | Compile a pattern; `error.InvalidInput` when it is malformed. |
+| `is_match(pattern: []u8, text: []u8) -> !bool` | Does `pattern` match anywhere in `text`? (Compiles every call.) |
+| `(method) text(self: *Self) -> []u8` | The matched bytes. |
+| `(method) group(self: *Self, i: usize) -> ?[]u8` | Group `i` (0 is the whole match); null when the group did not participate. |
+| `(method) group_count(self: *Self) -> usize` | The number of groups, counting group 0. |
+| `(method) find_at(self: *Self, text: []u8, from: usize) -> ?Match` | The first match at or after byte `from`. |
+| `(method) find(self: *Self, text: []u8) -> ?Match` | The first match in `text`. |
+| `(method) is_match(self: *Self, text: []u8) -> bool` | Does the pattern match anywhere in `text`? |
+| `(method) find_all(self: *Self, text: []u8) -> List(Match)` | Every non-overlapping match, left to right. |
+| `(method) replace_all(self: *Self, text: []u8, repl: []u8) -> String` | dollar sign. |
+| `(method) split(self: *Self, text: []u8) -> List([]u8)` | The pieces of `text` between matches. |
 
 ## std.strings
 

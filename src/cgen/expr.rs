@@ -696,6 +696,16 @@ impl Gen {
         self.expr(e)
     }
 
+    /// An owned value for a field of a literal, materialized now: a later field
+    /// that moves the same local must not zero it before this one reads it.
+    fn field_value(&mut self, x: &TExpr) -> String {
+        let v = self.expr_owned(x);
+        let t = self.tmp();
+        let cn = self.cty(x.ty);
+        self.line(format!("{} {} = {};", cn, t, v));
+        t
+    }
+
     pub fn expr(&mut self, e: &TExpr) -> String {
         match &e.kind {
             TExprKind::Int(v) => {
@@ -929,7 +939,7 @@ impl Gen {
                 let cn = self.cty(e.ty);
                 let mut parts = Vec::new();
                 for (i, f) in fields {
-                    let v = self.expr_owned(f);
+                    let v = self.field_value(f);
                     let fname = self.field_name(e.ty, *i);
                     parts.push(format!(".{} = {}", fname, v));
                 }
@@ -945,7 +955,7 @@ impl Gen {
                 self.line(format!("{} {} = ({})nx_alloc_bytes(c, sizeof({}_obj), _Alignof({}_obj));", cn, t, cn, cn, cn));
                 self.line(format!("{}->rc = 1; {}->weak = 0;", t, t));
                 for (i, f) in fields {
-                    let v = self.expr_owned(f);
+                    let v = self.field_value(f);
                     let fname = self.field_name(e.ty, *i);
                     self.line(format!("{}->{} = {};", t, fname, v));
                 }
@@ -958,7 +968,7 @@ impl Gen {
                 } else {
                     let mut parts = Vec::new();
                     for (i, p) in payload.iter().enumerate() {
-                        let v = self.expr_owned(p);
+                        let v = self.field_value(p);
                         parts.push(format!(".f{} = {}", i, v));
                     }
                     format!("(({}){{ .tag = {}, .u = {{ .v{} = {{ {} }} }} }})", cn, variant, variant, parts.join(", "))
@@ -987,7 +997,7 @@ impl Gen {
                 let cn = self.cty(e.ty);
                 let mut parts = Vec::new();
                 for (i, x) in elems.iter().enumerate() {
-                    let v = self.expr_owned(x);
+                    let v = self.field_value(x);
                     parts.push(format!(".f{} = {}", i, v));
                 }
                 format!("(({}){{ {} }})", cn, parts.join(", "))

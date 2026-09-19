@@ -174,6 +174,19 @@ impl<'a> Checker<'a> {
                 Some(TStmt::Let { local: id, init: init_e, span: *span })
             }
             Stmt::Assign { target, op, value, span } => {
+                // `x = v` after `x` was moved out re-initializes it: naming the
+                // target is not a read, so revive it before checking
+                if op.is_none() {
+                    if let Expr::Ident { name, .. } = target {
+                        if let Some(entry) = self.cur().lookup(name) {
+                            if self.cur().moved.contains(&entry.local) {
+                                self.cur().moved.remove(&entry.local);
+                                self.cur().moved_spans.remove(&entry.local);
+                                self.cur().ranges.remove(&entry.local);
+                            }
+                        }
+                    }
+                }
                 let t = self.check_expr(target, None);
                 if !self.is_place(&t) {
                     self.error(target.span(), "the left side of an assignment must be a variable, field, element, or dereference");

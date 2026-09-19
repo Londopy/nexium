@@ -24,6 +24,18 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
   (`seconds` ... `days`, `between`, `since`, `text` such as `1h 02m`),
   `Stopwatch` on the monotonic clock, `is_leap`, `days_in_month`. Under it,
   `time.utc_offset(ms)` in the runtime (0 at the REPL).
+- `std.regex`: a Pike VM (no backtracking, linear time) with classes,
+  `\d \w \s \b`, anchors, groups and `(?:...)`, alternation, greedy and
+  lazy repeats including `{n,m}`; `compile`, `find`, `find_at`, `find_all`,
+  `is_match`, `replace_all` with `$1` references, `split`, and `Match.group`.
+- A local that was moved out can be assigned again; the assignment
+  re-initializes it instead of being reported as a use after move.
+
+### Fixed
+
+- A struct, tuple or enum literal that read a local in one field and moved
+  it in a later field saw the already-zeroed value; field values are now
+  materialized in source order.
 
 ## [0.2.1] - 2026-09-19
 

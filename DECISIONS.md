@@ -380,6 +380,15 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     large dependency for a rare need and `@cImport` can bring one in. The
     interpreter reports offset 0, so local time at the REPL is UTC.
 
+77. **Regular expressions never backtrack.** `std.regex` compiles to a small
+    instruction set and runs a Pike VM: every search is linear in the
+    pattern times the text, so a user-supplied pattern cannot hang a
+    program. The price is no back-references and byte-level matching (`.`
+    is one byte); both can come later behind the same API. The engine is
+    written in Nexium on purpose: it exercises recursive enums, owning
+    payloads through pointers, and moves in loops, and it found two compiler
+    bugs on its first run (literal field order, reassignment after a move).
+
 ## Compiler selection
 
 60. **Native macOS builds use the system compiler.** zig 0.14.1 cannot read

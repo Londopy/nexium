@@ -1,0 +1,716 @@
+// std.regex: regular expressions without backtracking, written in Nexium.
+//
+// `import std.regex` then:
+//
+//     let re = try regex.compile("(\\w+)@(\\w+)\\.com")
+//     if (re.is_match(text)) { ... }
+//     if (re.find(text)) |m| { println("{} at {}", .{m.text(), m.start}) }
+//     for (re.find_all(text)) |m| { println("{}", .{m.group(1).?}) }
+//     let out = re.replace_all(text, "$2:$1")
+//     let parts = try regex.compile(",\\s*")
+//     for (parts.split("a, b,c")) |p| { ... }
+//
+// Syntax: literals, `.` (any byte but newline), classes `[a-z]` `[^...]`,
+// `\d \w \s \D \W \S \b \B`, escapes `\. \\ \n \t \r`, anchors `^ $`,
+// groups `(...)` and `(?:...)`, alternation `|`, repeats `* + ? {n} {n,}
+// {n,m}` and their lazy forms `*? +? ??`. Matching is a Pike VM (Thompson's
+// NFA simulation), so every search is linear in the text and the pattern;
+// there are no back-references. Patterns and text are bytes.
+
+const OP_CHAR: u8 = 1
+const OP_ANY: u8 = 2
+const OP_CLASS: u8 = 3
+const OP_SPLIT: u8 = 4
+const OP_JMP: u8 = 5
+const OP_SAVE: u8 = 6
+const OP_MATCH: u8 = 7
+const OP_START: u8 = 8
+const OP_END: u8 = 9
+const OP_WORDB: u8 = 10
+const OP_NOTWORDB: u8 = 11
+
+struct Inst {
+    op: u8
+    a: usize
+    b: usize
+}
+
+/// A byte class: inclusive ranges, flat `lo, hi, lo, hi, ...`.
+struct Class {
+    negate: bool
+    ranges: List(u8)
+}
+
+// ------------------------------------------------------------------ syntax tree
+
+enum Node {
+    Empty,
+    Lit(u8),
+    Any,
+    Cls(usize),
+    Start,
+    End,
+    WordB,
+    NotWordB,
+    Cat(List(Node)),
+    Alt(List(Node)),
+    // node, min, max (-1 = unbounded), greedy
+    Repeat(List(Node), usize, i64, bool),
+    // node, capture index (-1 = non-capturing)
+    Group(List(Node), i64),
+}
+
+struct Parser {
+    src: []u8
+    pos: usize
+    classes: *mut List(Class)
+    ngroups: usize
+}
+
+fn single(own n: Node) -> List(Node) {
+    var l = List(Node).new()
+    l.append(n)
+    return l
+}
+
+impl Parser {
+    fn peek(self: *Self) -> u8 {
+        return if (self.pos < self.src.len) self.src[self.pos] else 0
+    }
+
+    fn eof(self: *Self) -> bool {
+        return self.pos >= self.src.len
+    }
+
+    fn parse_alt(self: *mut Self) -> !Node {
+        var branches = List(Node).new()
+        branches.append(try self.parse_cat())
+        while (!self.eof() and self.peek() == '|') {
+            self.pos += 1
+            branches.append(try self.parse_cat())
+        }
+        if (branches.len == 1) return branches.pop().?
+        return Node.Alt(branches)
+    }
+
+    fn parse_cat(self: *mut Self) -> !Node {
+        var items = List(Node).new()
+        while (!self.eof() and self.peek() != '|' and self.peek() != ')') {
+            items.append(try self.parse_repeat())
+        }
+        if (items.len == 0) return Node.Empty
+        if (items.len == 1) return items.pop().?
+        return Node.Cat(items)
+    }
+
+    fn parse_repeat(self: *mut Self) -> !Node {
+        var atom = try self.parse_atom()
+        while (!self.eof()) {
+            let c = self.peek()
+            var min: usize = 0
+            var max: i64 = -1
+            if (c == '*') {
+                self.pos += 1
+            } else if (c == '+') {
+                min = 1
+                self.pos += 1
+            } else if (c == '?') {
+                max = 1
+                self.pos += 1
+            } else if (c == '{') {
+                let save = self.pos
+                self.pos += 1
+                let lo = self.parse_number()
+                if (lo == null) {
+                    // a literal brace
+                    self.pos = save
+                    break
+                }
+                min = lo.?
+                max = min as i64
+                if (self.peek() == ',') {
+                    self.pos += 1
+                    let hi = self.parse_number()
+                    max = if (hi == null) - 1 else hi.?as i64
+                }
+                if (self.peek() != '}') return error.InvalidInput
+                self.pos += 1
+                if (max >= 0 and (max as usize) < min) return error.InvalidInput
+            } else {
+                break
+            }
+            var greedy = true
+            if (!self.eof() and self.peek() == '?') {
+                greedy = false
+                self.pos += 1
+            }
+            atom = Node.Repeat(single(atom), min, max, greedy)
+        }
+        return atom
+    }
+
+    fn parse_number(self: *mut Self) -> ?usize {
+        var n: usize = 0
+        var any = false
+        while (!self.eof() and self.peek() >= '0' and self.peek() <= '9') {
+            n = n * 10 + ((self.peek() - '0') as usize)
+            self.pos += 1
+            any = true
+        }
+        return if (any) n else null
+    }
+
+    fn parse_atom(self: *mut Self) -> !Node {
+        let c = self.peek()
+        self.pos += 1
+        if (c == '(') {
+            var index: i64 = -1
+            if (self.peek() == '?') {
+                self.pos += 1
+                if (self.peek() != ':') return error.InvalidInput
+                self.pos += 1
+            } else {
+                self.ngroups += 1
+                index = self.ngroups as i64
+            }
+            let inner = try self.parse_alt()
+            if (self.peek() != ')') return error.InvalidInput
+            self.pos += 1
+            return Node.Group(single(inner), index)
+        }
+        if (c == ')' or c == '*' or c == '+' or c == '?') return error.InvalidInput
+        if (c == '[') return self.parse_class()
+        if (c == '.') return Node.Any
+        if (c == '^') return Node.Start
+        if (c == '$') return Node.End
+        if (c == '\\') {
+            if (self.eof()) return error.InvalidInput
+            let e = self.peek()
+            self.pos += 1
+            if (e == 'b') return Node.WordB
+            if (e == 'B') return Node.NotWordB
+            if (e == 'd' or e == 'w' or e == 's' or e == 'D' or e == 'W' or e == 'S') {
+                var cls = Class{ .negate = e == 'D' or e == 'W' or e == 'S', .ranges = List(u8).new() }
+                add_escape_ranges(&mut cls.ranges, e)
+                self.classes.append(cls)
+                return Node.Cls(self.classes.len - 1)
+            }
+            return Node.Lit(escape_byte(e))
+        }
+        return Node.Lit(c)
+    }
+
+    fn parse_class(self: *mut Self) -> !Node {
+        var cls = Class{ .negate = false, .ranges = List(u8).new() }
+        if (self.peek() == '^') {
+            cls.negate = true
+            self.pos += 1
+        }
+        var first = true
+        while (true) {
+            if (self.eof()) return error.InvalidInput
+            var c = self.peek()
+            if (c == ']' and !first) break
+            first = false
+            self.pos += 1
+            if (c == '\\') {
+                if (self.eof()) return error.InvalidInput
+                let e = self.peek()
+                self.pos += 1
+                if (e == 'd' or e == 'w' or e == 's') {
+                    add_escape_ranges(&mut cls.ranges, e)
+                    continue
+                }
+                c = escape_byte(e)
+            }
+            var hi = c
+            if (self.peek() == '-' and self.pos + 1 < self.src.len and self.src[self.pos + 1] != ']') {
+                self.pos += 1
+                hi = self.peek()
+                self.pos += 1
+                if (hi == '\\') {
+                    if (self.eof()) return error.InvalidInput
+                    hi = escape_byte(self.peek())
+                    self.pos += 1
+                }
+                if (hi < c) return error.InvalidInput
+            }
+            cls.ranges.append(c)
+            cls.ranges.append(hi)
+        }
+        self.pos += 1
+        self.classes.append(cls)
+        return Node.Cls(self.classes.len - 1)
+    }
+}
+
+fn escape_byte(e: u8) -> u8 {
+    if (e == 'n') return '\n'
+    if (e == 't') return '\t'
+    if (e == 'r') return '\r'
+    if (e == 'f') return 12
+    if (e == 'v') return 11
+    if (e == '0') return 0
+    return e
+}
+
+fn add_escape_ranges(r: *mut List(u8), e: u8) {
+    let k: u8 = if (e == 'D') 'd' else if (e == 'W') 'w' else if (e == 'S') 's' else e
+    if (k == 'd') {
+        r.append('0')
+        r.append('9')
+    } else if (k == 'w') {
+        r.append('0')
+        r.append('9')
+        r.append('A')
+        r.append('Z')
+        r.append('a')
+        r.append('z')
+        r.append('_')
+        r.append('_')
+    } else {
+        r.append(' ')
+        r.append(' ')
+        r.append(9)
+        r.append(13)
+    }
+}
+
+// ------------------------------------------------------------------ compiling
+
+fn emit(prog: *mut List(Inst), op: u8, a: usize, b: usize) -> usize {
+    prog.append(Inst{ .op = op, .a = a, .b = b })
+    return prog.len - 1
+}
+
+fn compile_node(n: *Node, prog: *mut List(Inst)) {
+    match n.*{
+        .Empty => { },
+        .Lit(c) => { _ = emit(prog, OP_CHAR, c as usize, 0) },
+        .Any => { _ = emit(prog, OP_ANY, 0, 0) },
+        .Cls(i) => { _ = emit(prog, OP_CLASS, i, 0) },
+        .Start => { _ = emit(prog, OP_START, 0, 0) },
+        .End => { _ = emit(prog, OP_END, 0, 0) },
+        .WordB => { _ = emit(prog, OP_WORDB, 0, 0) },
+        .NotWordB => { _ = emit(prog, OP_NOTWORDB, 0, 0) },
+        .Cat(items) => {
+            for (items) |it| { compile_node(&it, prog) }
+        },
+        .Alt(branches) => {
+            // split L1, L2; L1: a; jmp end; L2: split ... ; last branch; end:
+            var jumps = List(usize).new()
+            for (branches) |br, i| {
+                if (i + 1 < branches.len) {
+                    let split = emit(prog, OP_SPLIT, 0, 0)
+                    prog[split].a = prog.len
+                    compile_node(&br, prog)
+                    jumps.append(emit(prog, OP_JMP, 0, 0))
+                    prog[split].b = prog.len
+                } else {
+                    compile_node(&br, prog)
+                }
+            }
+            for (jumps) |j| { prog[j].a = prog.len }
+        },
+        .Repeat(inner, min, max, greedy) => {
+            let node = &inner[0]
+            for (0..min) |_| { compile_node(node, prog) }
+            if (max < 0) {
+                // L1: split L2, L3; L2: node; jmp L1; L3:
+                let split = emit(prog, OP_SPLIT, 0, 0)
+                let body = prog.len
+                compile_node(node, prog)
+                _ = emit(prog, OP_JMP, split, 0)
+                if (greedy) {
+                    prog[split].a = body
+                    prog[split].b = prog.len
+                } else {
+                    prog[split].a = prog.len
+                    prog[split].b = body
+                }
+            } else {
+                var splits = List(usize).new()
+                for (min..max as usize) |_| {
+                    let split = emit(prog, OP_SPLIT, 0, 0)
+                    splits.append(split)
+                    let body = prog.len
+                    compile_node(node, prog)
+                    if (greedy) prog[split].a = body
+                    else prog[split].b = body
+                }
+                for (splits) |s| {
+                    if (greedy) prog[s].b = prog.len
+                    else prog[s].a = prog.len
+                }
+            }
+        },
+        .Group(inner, index) => {
+            if (index >= 0) _ = emit(prog, OP_SAVE, (index as usize) * 2, 0)
+            compile_node(&inner[0], prog)
+            if (index >= 0) _ = emit(prog, OP_SAVE, (index as usize) * 2 + 1, 0)
+        },
+    }
+}
+
+/// A compiled pattern.
+pub struct Regex {
+    prog: List(Inst)
+    classes: List(Class)
+    ngroups: usize
+    anchored: bool
+}
+
+/// Compile a pattern; `error.InvalidInput` when it is malformed.
+pub fn compile(pattern: []u8) -> !Regex {
+    var classes = List(Class).new()
+    var p = Parser{ .src = pattern, .pos = 0, .classes = &mut classes, .ngroups = 0 }
+    let tree = try p.parse_alt()
+    if (!p.eof()) return error.InvalidInput
+    var prog = List(Inst).new()
+    _ = emit(&mut prog, OP_SAVE, 0, 0)
+    compile_node(&tree, &mut prog)
+    _ = emit(&mut prog, OP_SAVE, 1, 0)
+    _ = emit(&mut prog, OP_MATCH, 0, 0)
+    let anchored = pattern.len > 0 and pattern[0] == '^'
+    return Regex{ .prog = prog, .classes = classes, .ngroups = p.ngroups, .anchored = anchored }
+}
+
+/// Does `pattern` match anywhere in `text`? (Compiles every call.)
+pub fn is_match(pattern: []u8, text: []u8) -> !bool {
+    let re = try compile(pattern)
+    return re.is_match(text)
+}
+
+// ------------------------------------------------------------------ matching
+
+/// One match: the matched range and the capture groups.
+pub struct Match {
+    source: []u8
+    start: usize
+    end: usize
+    // 2 entries per group (0 = whole match); NONE when the group did not take part
+    caps: List(usize)
+}
+
+const NONE: usize = 0xFFFFFFFFFFFFFFFF
+
+impl Match {
+    /// The matched bytes.
+    pub fn text(self: *Self) -> []u8 {
+        return self.source[self.start..self.end]
+    }
+
+    /// Group `i` (0 is the whole match); null when the group did not participate.
+    pub fn group(self: *Self, i: usize) -> ?[]u8 {
+        if (i * 2 + 1 >= self.caps.len) return null
+        let s = self.caps[i * 2]
+        let e = self.caps[i * 2 + 1]
+        if (s == NONE or e == NONE) return null
+        return self.source[s..e]
+    }
+
+    /// The number of groups, counting group 0.
+    pub fn group_count(self: *Self) -> usize {
+        return self.caps.len / 2
+    }
+}
+
+struct Thread {
+    pc: usize
+    caps: List(usize)
+}
+
+struct Vm {
+    prog: *List(Inst)
+    classes: *List(Class)
+    text: []u8
+    // per-pc generation marks so a pc is added once per step
+    visited: List(usize)
+    gen: usize
+}
+
+fn is_word(c: u8) -> bool {
+    return (c >= '0' and c <= '9') or (c >= 'A' and c <= 'Z') or (c >= 'a' and c <= 'z') or c == '_'
+}
+
+fn class_matches(cls: *Class, c: u8) -> bool {
+    var hit = false
+    var i: usize = 0
+    while (i + 1 < cls.ranges.len) {
+        if (c >= cls.ranges[i] and c <= cls.ranges[i + 1]) {
+            hit = true
+            break
+        }
+        i += 2
+    }
+    return hit != cls.negate
+}
+
+impl Vm {
+    fn add_thread(self: *mut Self, list: *mut List(Thread), pc: usize, own caps: List(usize), pos: usize) {
+        if (self.visited[pc] == self.gen) return
+        self.visited[pc] = self.gen
+        let inst = self.prog[pc]
+        if (inst.op == OP_JMP) {
+            self.add_thread(list, inst.a, caps, pos)
+        } else if (inst.op == OP_SPLIT) {
+            self.add_thread(list, inst.a, caps.clone(), pos)
+            self.add_thread(list, inst.b, caps, pos)
+        } else if (inst.op == OP_SAVE) {
+            var c2 = caps
+            c2[inst.a] = pos
+            self.add_thread(list, pc + 1, c2, pos)
+        } else if (inst.op == OP_START) {
+            if (pos == 0) self.add_thread(list, pc + 1, caps, pos)
+        } else if (inst.op == OP_END) {
+            if (pos == self.text.len) self.add_thread(list, pc + 1, caps, pos)
+        } else if (inst.op == OP_WORDB or inst.op == OP_NOTWORDB) {
+            let before = pos > 0 and is_word(self.text[pos - 1])
+            let after = pos < self.text.len and is_word(self.text[pos])
+            let at_boundary = before != after
+            if (at_boundary == (inst.op == OP_WORDB)) self.add_thread(list, pc + 1, caps, pos)
+        } else {
+            list.append(Thread{ .pc = pc, .caps = caps })
+        }
+    }
+
+    /// Search from `from`; the leftmost match, with preference by pattern order.
+    fn search(self: *mut Self, from: usize, anchored: bool, ncaps: usize) -> ?List(usize){
+        var clist = List(Thread).new()
+        var nlist = List(Thread).new()
+        var matched: ?List(usize) = null
+        var pos = from
+        while (true) {
+            if (matched == null and (!anchored or pos == 0)) {
+                var fresh = List(usize).with_capacity(ncaps)
+                for (0..ncaps) |_| { fresh.append(NONE) }
+                self.gen += 1
+                // keep the marks of threads already in clist for this step
+                self.mark_list(&clist)
+                self.add_thread(&mut clist, 0, fresh, pos)
+            }
+            // no live thread: done once a match exists (or the search is anchored)
+            if (clist.len == 0 and (matched != null or anchored)) break
+            self.gen += 1
+            let c: u8 = if (pos < self.text.len) self.text[pos] else 0
+            var i: usize = 0
+            while (i < clist.len) {
+                let pc = clist[i].pc
+                let inst = self.prog[pc]
+                var advance = false
+                if (inst.op == OP_MATCH) {
+                    matched = clist[i].caps.clone()
+                    // lower-priority threads are cut
+                    break
+                } else if (pos < self.text.len) {
+                    if (inst.op == OP_CHAR) advance = c == (inst.a as u8)
+                    else if (inst.op == OP_ANY) advance = c != '\n'
+                    else if (inst.op == OP_CLASS) advance = class_matches(&self.classes[inst.a], c)
+                }
+                if (advance) {
+                    let caps = clist[i].caps.clone()
+                    self.add_thread(&mut nlist, pc + 1, caps, pos + 1)
+                }
+                i += 1
+            }
+            clist.clear()
+            let tmp = clist
+            clist = nlist
+            nlist = tmp
+            if (pos >= self.text.len) break
+            pos += 1
+        }
+        return matched
+    }
+
+    fn mark_list(self: *mut Self, list: *List(Thread)) {
+        for (list) |t| { self.visited[t.pc] = self.gen }
+    }
+}
+
+impl Regex {
+    fn vm(self: *Self, text: []u8) -> Vm {
+        var visited = List(usize).with_capacity(self.prog.len)
+        for (0..self.prog.len) |_| { visited.append(0) }
+        return Vm{ .prog = &self.prog, .classes = &self.classes, .text = text, .visited = visited, .gen = 0 }
+    }
+
+    /// The first match at or after byte `from`.
+    pub fn find_at(self: *Self, text: []u8, from: usize) -> ?Match {
+        if (from > text.len) return null
+        var vm = self.vm(text)
+        let ncaps = (self.ngroups + 1) * 2
+        let caps = vm.search(from, self.anchored, ncaps) orelse return null
+        return Match{ .source = text, .start = caps[0], .end = caps[1], .caps = caps }
+    }
+
+    /// The first match in `text`.
+    pub fn find(self: *Self, text: []u8) -> ?Match {
+        return self.find_at(text, 0)
+    }
+
+    /// Does the pattern match anywhere in `text`?
+    pub fn is_match(self: *Self, text: []u8) -> bool {
+        return self.find_at(text, 0) != null
+    }
+
+    /// Every non-overlapping match, left to right.
+    pub fn find_all(self: *Self, text: []u8) -> List(Match) {
+        var out = List(Match).new()
+        var pos: usize = 0
+        while (pos <= text.len) {
+            let m = self.find_at(text, pos) orelse break
+            let next = if (m.end > m.start) m.end else m.end + 1
+            out.append(m)
+            pos = next
+            if (self.anchored) break
+        }
+        return out
+    }
+
+    /// Replace every match. In `repl`, `$0`..`$9` insert groups and `$$` is a
+    /// dollar sign.
+    pub fn replace_all(self: *Self, text: []u8, repl: []u8) -> String {
+        var out = String.new()
+        var last: usize = 0
+        for (self.find_all(text)) |m| {
+            out.append(text[last..m.start])
+            expand(&mut out, &m, repl)
+            last = m.end
+        }
+        out.append(text[last..text.len])
+        return out
+    }
+
+    /// The pieces of `text` between matches.
+    pub fn split(self: *Self, text: []u8) -> List([]u8) {
+        var out = List([]u8).new()
+        var last: usize = 0
+        for (self.find_all(text)) |m| {
+            if (m.end == m.start) continue
+            out.append(text[last..m.start])
+            last = m.end
+        }
+        out.append(text[last..text.len])
+        return out
+    }
+}
+
+fn expand(out: *mut String, m: *Match, repl: []u8) {
+    var i: usize = 0
+    while (i < repl.len) {
+        let c = repl[i]
+        if (c == '$' and i + 1 < repl.len) {
+            let d = repl[i + 1]
+            if (d == '$') {
+                out.push_byte('$')
+                i += 2
+                continue
+            }
+            if (d >= '0' and d <= '9') {
+                if (m.group((d - '0') as usize)) |g| { out.append(g) }
+                i += 2
+                continue
+            }
+        }
+        out.push_byte(c)
+        i += 1
+    }
+}
+
+// ------------------------------------------------------------------ tests
+
+fn found(pattern: []u8, text: []u8) -> ?[]u8 {
+    let re = compile(pattern) catch return null
+    let m = re.find(text) orelse return null
+    return m.text()
+}
+
+test "literals, classes and anchors" {
+    expect_eq(found("abc", "xxabcxx").?, "abc")
+    expect(found("abd", "xxabcxx") == null)
+    expect_eq(found("a.c", "a\nc abc").?, "abc")
+    expect_eq(found("[0-9]+", "ab 4521 x").?, "4521")
+    expect_eq(found("[^a-z ]+", "abc DEF ghi").?, "DEF")
+    expect_eq(found("\\d+\\.\\d+", "v 3.14!").?, "3.14")
+    expect_eq(found("^\\w+", "hello world").?, "hello")
+    expect_eq(found("\\w+$", "hello world").?, "world")
+    expect(found("^world", "hello world") == null)
+    expect_eq(found("\\bis\\b", "this is it").?, "is")
+    expect_eq(found("\\Bis\\b", "this is it").?, "is")
+    expect_eq(found("[a\\-z]+", "x-a-z").?, "-a-z")
+    expect_eq(found("a\\.b", "a.b axb").?, "a.b")
+    expect_eq(found("\\s+", "a \t b").?, " \t ")
+}
+
+test "repeats and alternation" {
+    expect_eq(found("ab*c", "ac abbbc").?, "ac")
+    expect_eq(found("ab+c", "ac abbbc").?, "abbbc")
+    expect_eq(found("colou?r", "the color").?, "color")
+    expect_eq(found("a{3}", "aa aaaa").?, "aaa")
+    expect_eq(found("a{2,}", "a aaaa").?, "aaaa")
+    expect_eq(found("a{1,2}", "aaaa").?, "aa")
+    expect_eq(found("cat|dog", "hotdog").?, "dog")
+    expect_eq(found("(foo|foobar)baz", "foobarbaz").?, "foobarbaz")
+    expect_eq(found("<.*>", "<a><b>").?, "<a><b>")
+    expect_eq(found("<.*?>", "<a><b>").?, "<a>")
+    expect_eq(found("x{2}y", "x{2}y xxy").?, "xxy")
+    expect_eq(found("a{", "a{").?, "a{")
+    expect_eq(found("(ab)*c", "ababc").?, "ababc")
+    expect_eq(found("(a|b)+", "cabbad").?, "abba")
+}
+
+test "groups and captures" {
+    let re = try compile("(\\w+)@(\\w+)\\.com")
+    let m = re.find("mail bob@example.com now").?
+    expect_eq(m.text(), "bob@example.com")
+    expect_eq(m.start, 5)
+    expect_eq(m.group(1).?, "bob")
+    expect_eq(m.group(2).?, "example")
+    expect(m.group(3) == null)
+    expect_eq(m.group_count(), 3)
+    let opt = try compile("(a)|(b)")
+    let mb = opt.find("b").?
+    expect(mb.group(1) == null)
+    expect_eq(mb.group(2).?, "b")
+    let nc = try compile("(?:ab)+(c)")
+    let mn = nc.find("ababc").?
+    expect_eq(mn.group_count(), 2)
+    expect_eq(mn.group(1).?, "c")
+}
+
+test "find_all, replace and split" {
+    let re = try compile("\\d+")
+    let all = re.find_all("a1 b22 c333")
+    expect_eq(all.len, 3)
+    expect_eq(all[2].text(), "333")
+    expect_eq(re.replace_all("a1 b22", "<$0>"), "a<1> b<22>")
+    let sw = try compile("(\\w+) (\\w+)")
+    expect_eq(sw.replace_all("hello world", "$2 $1"), "world hello")
+    expect_eq(sw.replace_all("x y", "$$"), "$")
+    let sep = try compile(",\\s*")
+    let parts = sep.split("a, b,c,, d")
+    expect_eq(parts.len, 5)
+    expect_eq(parts[1], "b")
+    expect_eq(parts[3], "")
+    let empty = try compile("x*")
+    expect_eq(empty.find_all("ab").len, 3)
+    expect_eq(empty.replace_all("ab", "-"), "-a-b-")
+}
+
+fn rejects(pattern: []u8) -> bool {
+    _ = compile(pattern) catch |e| { return e == error.InvalidInput }
+    return false
+}
+
+test "errors and convenience" {
+    expect(rejects("("))
+    expect(rejects("a)"))
+    expect(rejects("[a"))
+    expect(rejects("a{3,1}"))
+    expect(rejects("*a"))
+    expect(rejects("[z-a]"))
+    expect(!rejects("a{"))
+    expect(try is_match("^\\d{4}-\\d{2}-\\d{2}$", "2026-09-19"))
+    expect(! (try is_match("^\\d{4}-\\d{2}-\\d{2}$", "2026-9-19")))
+}
