@@ -41,6 +41,14 @@ fn parse_tlv(buf: []u8) -> ?[]u8 {
     }
 }
 
+fn show_short() {
+    _ = parse_ipv4("\x45\x00") catch |e| {
+        println("short packet: {}", .{e})
+        return
+    }
+    println("parsed a short packet?", .{})
+}
+
 fn main() -> !void {
     let k = decode("\x1b[A")
     match k {
@@ -55,11 +63,7 @@ fn main() -> !void {
     let pkt = b"\x45\x00\x00\x3c\x1c\x46\x40\x00\x40\x06\xb1\xe6\xc0\xa8\x00\x68\xc0\xa8\x00\x01payload"
     let h = try parse_ipv4(pkt)
     println("v{} ihl {} len {} ttl {} proto {} src {x} dst {x}", .{h.version, h.ihl, h.total_len, h.ttl, h.proto, h.src, h.dst})
-    let short = parse_ipv4("\x45\x00") catch |e| {
-        println("short packet: {}", .{e})
-        return
-    }
-    _ = short
+    show_short()
     let tlv = parse_tlv("\x03\x00abcXYZ")
     if let p = tlv { println("tlv payload {}", .{p}) }
     var buf: [16]u8 = undefined

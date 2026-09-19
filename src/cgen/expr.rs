@@ -1753,7 +1753,7 @@ impl Gen {
                 TBinSize::Expr(e) => {
                     // size expressions may use earlier bindings: bind them progressively
                     let v = self.expr(e);
-                    format!("((size_t)({}) * 8)", v)
+                    format!("((size_t)({}))", v)
                 }
                 TBinSize::Rest => format!("({} - {})", total, bit),
             };
@@ -1833,7 +1833,7 @@ impl Gen {
                 TBinSize::Bits(b) => b.to_string(),
                 TBinSize::Expr(e) => {
                     let v = self.expr(e);
-                    format!("((size_t)({}) * 8)", v)
+                    format!("((size_t)({}))", v)
                 }
                 TBinSize::Rest => format!("({} - {})", total, bit),
             };
@@ -1878,7 +1878,7 @@ impl Gen {
                 TBinSize::Bits(b) => b.to_string(),
                 TBinSize::Expr(x) => {
                     let s = self.expr(x);
-                    format!("((size_t)({}) * 8)", s)
+                    format!("((size_t)({}))", s)
                 }
                 TBinSize::Rest => format!("({}.len * 8)", v),
             };
