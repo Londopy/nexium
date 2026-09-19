@@ -190,7 +190,7 @@ fn self_hosted_parser_matches_oracle() {
         String::from_utf8_lossy(&build.stderr)
     );
     let mut files: Vec<std::path::PathBuf> = Vec::new();
-    for dir in ["examples", "std", "gui", "self", "tests"] {
+    for dir in ["examples", "std", "gui", "self", "tests", "tests/spec"] {
         files.extend(std::fs::read_dir(root.join(dir)).unwrap().filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().map(|x| x == "nx").unwrap_or(false)));
     }
     files.sort();
@@ -220,7 +220,7 @@ fn self_hosted_checker_matches_signatures() {
         String::from_utf8_lossy(&build.stderr)
     );
     let mut files: Vec<std::path::PathBuf> = Vec::new();
-    for dir in ["examples", "std", "gui", "self", "tests"] {
+    for dir in ["examples", "std", "gui", "self", "tests", "tests/spec"] {
         files.extend(std::fs::read_dir(root.join(dir)).unwrap().filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().map(|x| x == "nx").unwrap_or(false)));
     }
     files.sort();
@@ -265,7 +265,7 @@ fn self_hosted_emitter_matches_oracle() {
         String::from_utf8_lossy(&build.stderr)
     );
     let mut files: Vec<std::path::PathBuf> = Vec::new();
-    for dir in ["examples", "std", "gui", "self"] {
+    for dir in ["examples", "std", "gui", "self", "tests/spec"] {
         files.extend(std::fs::read_dir(root.join(dir)).unwrap().filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().map(|x| x == "nx").unwrap_or(false)));
     }
     files.sort();
@@ -487,8 +487,18 @@ fn self_hosted_checker_matches_bodies() {
         "std/thread.nx",
         "std/time.nx",
     ];
-    for f in files {
-        let path = root.join(f);
+    // the specification's cases too
+    let mut all: Vec<String> = files.iter().map(|f| f.to_string()).collect();
+    let mut spec: Vec<String> = std::fs::read_dir(root.join("tests").join("spec"))
+        .unwrap()
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().map(|x| x == "nx").unwrap_or(false))
+        .map(|p| format!("tests/spec/{}", p.file_name().unwrap().to_string_lossy()))
+        .collect();
+    spec.sort();
+    all.extend(spec);
+    for f in all {
+        let path = root.join(&f);
         let oracle = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).arg("tir").arg(&path).env("NX_ZIG", "zig").current_dir(root).output().unwrap();
         assert!(
             oracle.status.success(),

@@ -3549,6 +3549,7 @@ impl Checker {
             return self.check_binary_parts(op[..], l, r, expected, start, end)
         }
         if k == parser.NodeKind.Call { return self.check_call(e, expected) }
+        if k == parser.NodeKind.Pipe { return self.check_pipe(e, expected) }
         if k == parser.NodeKind.If { return self.check_if(e, expected) }
         if k == parser.NodeKind.Block {
             let tb = self.check_block_labeled(e, expected)
@@ -4183,6 +4184,38 @@ impl Checker {
     }
 
     // ----- calls -----------------------------------------------------------------------------
+
+    /// `x |> f(a)` is `f(x, a)`: a call node with the left side prepended to
+    /// the arguments, spanning the whole pipe.
+    fn check_pipe(self: *mut Self, e: usize, expected: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        let lhs = n.x
+        let rhs = n.y
+        let start = n.start
+        let end = n.end
+        let rn = self.node(m, rhs)
+        let rk = rn.k
+        if rk == parser.NodeKind.Call or rk == parser.NodeKind.MethodCall {
+            var call = self.blank_node(rk, start, end)
+            call.name = rn.name.clone()
+            call.x = rn.x
+            call.kids.append(lhs)
+            for a in rn.kids.clone() { call.kids.append(a) }
+            let id = self.mods[m].parsed.tree.add(call)
+            if rk == parser.NodeKind.Call { return self.check_call(id, expected) }
+            return self.check_method_call(id, expected)
+        }
+        if rk == parser.NodeKind.Ident or rk == parser.NodeKind.FieldE {
+            var call = self.blank_node(parser.NodeKind.Call, start, end)
+            call.x = rhs
+            call.kids.append(lhs)
+            let id = self.mods[m].parsed.tree.add(call)
+            return self.check_call(id, expected)
+        }
+        self.fail_here(rn.start, "the right side of `|>` must be a call, e.g. `x |> f(a)`")
+        return self.error_expr(start, end)
+    }
 
     fn check_call(self: *mut Self, e: usize, expected: usize) -> usize {
         let m = self.cur_module()
