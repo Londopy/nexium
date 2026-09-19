@@ -1,0 +1,1193 @@
+// self/check.nx: the checker written in Nexium, stage 1 of the port
+// (roadmap phase 4). This stage loads the modules the way the Rust driver
+// does, collects every declaration, interns types, resolves the signatures
+// of non-generic functions and the types of constants and globals, and
+// prints them in the shape of `nx tir --sigs`, which `cargo test` diffs.
+//
+//     nx run self/check.nx examples/tour.nx [--std std]
+//
+// Later stages add statements and expressions (the full `nx tir` shape),
+// effects, ownership, and monomorphization.
+
+import lexer
+import parser
+
+const NONE: usize = 0xFFFFFFFFFFFFFFFF
+
+const BUILTIN_NAMESPACES = ["math", "io", "os", "time", "random", "fmt", "utf8", "ascii", "mem", "slice", "process", "test", "alloc", "net", "thread", "sync"]
+const EFFECT_NAMES = ["allocates", "refcounts", "blocks", "shared_mutable", "nondeterministic", "panics", "ffi", "unbounded_stack"]
+const INT_NAMES = ["i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize"]
+
+// ---------------------------------------------------------------- types
+
+pub enum TK {
+    Int, Float, Bool, Char, Void, Never,
+    Struct, Enum, Array, Slice, Ptr, Opt, ErrUnion, Fn, Tuple, Distinct, Weak, List, Str, Map, Type, ErrorSet, Dyn, Infer,
+}
+
+/// One interned type. `name` is the primitive's spelling (`i32`, `f64`),
+/// `def` a definition index, `n` an array length or an effect mask,
+/// `flag` mutability (slices, pointers) or "has an error set", and
+/// `args` the element, parameter, or argument types.
+pub struct Ty {
+    k: TK
+    name: String
+    def: usize
+    n: u64
+    flag: bool
+    args: List(usize)
+}
+
+fn tk_tag(k: TK) -> u8 {
+    match k {
+        .Int => 0, .Float => 1, .Bool => 2, .Char => 3, .Void => 4, .Never => 5,
+        .Struct => 6, .Enum => 7, .Array => 8, .Slice => 9, .Ptr => 10, .Opt => 11, .ErrUnion => 12,
+        .Fn => 13, .Tuple => 14, .Distinct => 15, .Weak => 16, .List => 17, .Str => 18, .Map => 19,
+        .Type => 20, .ErrorSet => 21, .Dyn => 22, .Infer => 23,
+    }
+}
+
+pub struct Types {
+    list: List(Ty)
+    index: Map(String, usize)
+}
+
+impl Types {
+    fn key(t: *Ty) -> String {
+        var k = format("{}:{}:{}:{}:{}:", .{tk_tag(t.k), t.name, t.def, t.n, t.flag})
+        for a in t.args { k.append(format("{},", .{a})) }
+        return k
+    }
+
+    fn intern(self: *mut Self, own t: Ty) -> usize {
+        let k = Types.key(&t)
+        if let id = self.index.get(k[..]) { return id }
+        self.list.append(t)
+        let id = self.list.len - 1
+        self.index.put(k, id)
+        return id
+    }
+
+    fn simple(self: *mut Self, k: TK) -> usize {
+        return self.intern(Ty{ .k = k, .name = String.new(), .def = 0, .n = 0, .flag = false, .args = List(usize).new() })
+    }
+    fn named(self: *mut Self, k: TK, name: []u8) -> usize {
+        return self.intern(Ty{ .k = k, .name = String.from(name), .def = 0, .n = 0, .flag = false, .args = List(usize).new() })
+    }
+    fn of_def(self: *mut Self, k: TK, def: usize, own args: List(usize)) -> usize {
+        return self.intern(Ty{ .k = k, .name = String.new(), .def = def, .n = 0, .flag = false, .args = args })
+    }
+    fn wrap(self: *mut Self, k: TK, elem: usize, flag: bool) -> usize {
+        var args = List(usize).new()
+        args.append(elem)
+        return self.intern(Ty{ .k = k, .name = String.new(), .def = 0, .n = 0, .flag = flag, .args = args })
+    }
+    fn array(self: *mut Self, n: u64, elem: usize) -> usize {
+        var args = List(usize).new()
+        args.append(elem)
+        return self.intern(Ty{ .k = TK.Array, .name = String.new(), .def = 0, .n = n, .flag = false, .args = args })
+    }
+    fn err_union(self: *mut Self, set: usize, has_set: bool, elem: usize) -> usize {
+        var args = List(usize).new()
+        args.append(elem)
+        return self.intern(Ty{ .k = TK.ErrUnion, .name = String.new(), .def = set, .n = 0, .flag = has_set, .args = args })
+    }
+    fn map(self: *mut Self, key: usize, value: usize) -> usize {
+        var args = List(usize).new()
+        args.append(key)
+        args.append(value)
+        return self.intern(Ty{ .k = TK.Map, .name = String.new(), .def = 0, .n = 0, .flag = false, .args = args })
+    }
+    /// `fn(params) -> ret` with the permitted effect mask in `n`; the return
+    /// type is the last argument.
+    fn func(self: *mut Self, own params: List(usize), ret: usize, effects: u64) -> usize {
+        var args = params
+        args.append(ret)
+        return self.intern(Ty{ .k = TK.Fn, .name = String.new(), .def = 0, .n = effects, .flag = false, .args = args })
+    }
+    fn dyn_of(self: *mut Self, trait_id: usize, effects: u64) -> usize {
+        return self.intern(Ty{ .k = TK.Dyn, .name = String.new(), .def = trait_id, .n = effects, .flag = false, .args = List(usize).new() })
+    }
+}
+
+fn effect_bit(name: []u8) -> u64 {
+    for e, i in EFFECT_NAMES { if e == name { return (1 as u64) << (i as u64) } }
+    return 0
+}
+
+/// `!allocates !panics`: the effects a mask does not permit.
+fn render_negative(mask: u64) -> String {
+    var out = String.new()
+    for e, i in EFFECT_NAMES {
+        if (mask & ((1 as u64) << (i as u64))) == 0 {
+            if out.len > 0 { out.append(" ") }
+            out.append("!")
+            out.append(e)
+        }
+    }
+    return out
+}
+
+/// The effects present in a mask, `allocates panics`.
+fn render_effects(mask: u64) -> String {
+    var out = String.new()
+    for e, i in EFFECT_NAMES {
+        if (mask & ((1 as u64) << (i as u64))) != 0 {
+            if out.len > 0 { out.append(" ") }
+            out.append(e)
+        }
+    }
+    return out
+}
+
+// ---------------------------------------------------------------- definitions
+
+/// What a name in a module refers to.
+pub enum ItemKind { Fn, Struct, Enum, Trait, Const, Global, Alias, ErrorSet, Module }
+
+pub struct ItemRef {
+    kind: ItemKind
+    id: usize
+}
+
+pub struct StructDef {
+    name: String
+    kind: String
+    layout: String
+    tparams: List(String)
+    derives: List(String)
+    fields: List(usize)
+    module: usize
+    start: usize
+    end: usize
+    is_pub: bool
+}
+
+pub struct EnumDef {
+    name: String
+    tparams: List(String)
+    derives: List(String)
+    variants: List(usize)
+    module: usize
+    start: usize
+    end: usize
+}
+
+pub struct TraitDef {
+    name: String
+    methods: List(usize)
+    assoc: List(String)
+    module: usize
+    start: usize
+    end: usize
+}
+
+pub struct ImplDef {
+    trait_name: String
+    has_trait: bool
+    target: usize
+    tparams: List(String)
+    methods: List(usize)
+    module: usize
+}
+
+/// A function declaration: the node (in its module's tree), its module,
+/// the impl it belongs to (or NONE), and whether it is generic.
+pub struct FnDef {
+    node: usize
+    module: usize
+    impl_id: usize
+    is_generic: bool
+    is_test: bool
+    test_name: String
+    test_comptime: bool
+}
+
+pub struct ConstDef {
+    name: String
+    node: usize
+    module: usize
+    start: usize
+    end: usize
+    is_pub: bool
+    ty: usize
+    in_progress: bool
+}
+
+pub struct GlobalDef {
+    name: String
+    node: usize
+    module: usize
+    start: usize
+    end: usize
+    ty: usize
+}
+
+pub struct AliasDef {
+    name: String
+    node: usize
+    is_distinct: bool
+    module: usize
+    start: usize
+    end: usize
+}
+
+pub struct ErrorSetDef {
+    name: String
+    module: usize
+}
+
+pub struct ImportRef {
+    module: usize
+    name: String
+    has_name: bool
+}
+
+/// A loaded module: its name as the driver spells it, and its parse.
+pub struct Mod {
+    name: String
+    parsed: parser.Parsed
+}
+
+// ---------------------------------------------------------------- loading
+
+/// Read the root file and everything it imports, in the driver's order:
+/// files depth-first from a stack (so the last import of a file loads
+/// first), then the std modules in the order they were first named.
+fn load(root: []u8, std_dir: []u8) -> !List(Mod) {
+    var mods = List(Mod).new()
+    let root_dir = dir_of(root)
+    let root_name = stem_of(root)
+    var queue = List(String).new()
+    var queue_paths = List(String).new()
+    queue.append(String.from(root_name))
+    queue_paths.append(String.from(root))
+    var seen = Map(String, bool).new()
+    var std_pending = List(String).new()
+    while queue.len > 0 {
+        let name = queue.pop() orelse break
+        let path = queue_paths.pop() orelse break
+        if seen.contains(name[..]) { continue }
+        seen.put(name.clone(), true)
+        let text = io.read_file(path[..]) catch {
+            eprintln("error: cannot read {}", .{path})
+            return error.NotFound
+        }
+        let parsed = parser.parse_source(text[..])
+        if parsed.errors.len > 0 {
+            for e in parsed.errors { eprintln("{}: {}", .{path, e}) }
+            return error.InvalidInput
+        }
+        for it in parsed.items {
+            let n = &parsed.tree.nodes[it]
+            if n.k != parser.NodeKind.Import { continue }
+            var words = List(String).new()
+            for w in n.words {
+                if w == "+" { break }
+                words.append(w.clone())
+            }
+            if words[0] == "std" {
+                if words.len == 2 and io.file_kind(format("{}/{}.nx", .{std_dir, words[1]})[..]) == 1 {
+                    let mname = format("std.{}", .{words[1]})
+                    if !list_has(&std_pending, mname[..]) { std_pending.append(mname) }
+                }
+                continue
+            }
+            var rel = String.from(root_dir)
+            for w, i in words {
+                if i > 0 or rel.len > 0 { rel.append("/") }
+                rel.append(w)
+            }
+            rel.append(".nx")
+            if io.file_kind(rel[..]) == 1 {
+                queue.append(join_words(&words, "."))
+                queue_paths.append(rel)
+            }
+        }
+        mods.append(Mod{ .name = name, .parsed = parsed })
+    }
+    var si: usize = 0
+    while si < std_pending.len {
+        let mname = std_pending[si].clone()
+        si += 1
+        let short = mname[4..]
+        let path = format("{}/{}.nx", .{std_dir, short})
+        let text = io.read_file(path[..]) catch {
+            eprintln("error: cannot read {}", .{path})
+            return error.NotFound
+        }
+        let parsed = parser.parse_source(text[..])
+        if parsed.errors.len > 0 {
+            for e in parsed.errors { eprintln("{}: {}", .{path, e}) }
+            return error.InvalidInput
+        }
+        for it in parsed.items {
+            let n = &parsed.tree.nodes[it]
+            if n.k != parser.NodeKind.Import { continue }
+            if n.words.len >= 2 and n.words[0] == "std" and n.words[1] != "+" {
+                let dep = format("std.{}", .{n.words[1]})
+                if io.file_kind(format("{}/{}.nx", .{std_dir, n.words[1]})[..]) == 1 and !list_has(&std_pending, dep[..]) {
+                    std_pending.append(dep)
+                }
+            }
+        }
+        mods.append(Mod{ .name = mname, .parsed = parsed })
+    }
+    return mods
+}
+
+fn list_has(xs: *List(String), s: []u8) -> bool {
+    for x in xs { if x == s { return true } }
+    return false
+}
+
+fn join_words(ws: *List(String), sep: []u8) -> String {
+    var out = String.new()
+    for w, i in ws {
+        if i > 0 { out.append(sep) }
+        out.append(w)
+    }
+    return out
+}
+
+fn dir_of(path: []u8) -> []u8 {
+    var i = path.len
+    while i > 0 {
+        if path[i - 1] == '/' or path[i - 1] == '\\' { return path[0..i - 1] }
+        i -= 1
+    }
+    return path[0..0]
+}
+
+fn stem_of(path: []u8) -> []u8 {
+    var start: usize = 0
+    var i = path.len
+    while i > 0 {
+        if path[i - 1] == '/' or path[i - 1] == '\\' { start = i; break }
+        i -= 1
+    }
+    var end = path.len
+    var j = path.len
+    while j > start {
+        if path[j - 1] == '.' { end = j - 1; break }
+        j -= 1
+    }
+    return path[start..end]
+}
+
+// ---------------------------------------------------------------- the checker
+
+pub struct Checker {
+    mods: List(Mod)
+    tys: Types
+    items: Map(String, ItemRef)
+    imports: Map(String, ImportRef)
+    structs: List(StructDef)
+    enums: List(EnumDef)
+    traits: List(TraitDef)
+    impls: List(ImplDef)
+    fns: List(FnDef)
+    consts: List(ConstDef)
+    globals: List(GlobalDef)
+    aliases: List(AliasDef)
+    error_sets: List(ErrorSetDef)
+    errors: List(String)
+    // the empty generic environment, until stage 3 instantiates
+    no_generics: Map(String, usize)
+}
+
+fn item_key(module: usize, name: []u8) -> String {
+    return format("{}:{}", .{module, name})
+}
+
+impl Checker {
+    fn fail(self: *mut Self, module: usize, at: usize, msg: []u8) {
+        self.errors.append(format("{}:{}: {}", .{self.mods[module].name, at, msg}))
+    }
+
+    fn node(self: *Self, module: usize, id: usize) -> *parser.Node {
+        return &self.mods[module].parsed.tree.nodes[id]
+    }
+
+    fn define(self: *mut Self, module: usize, name: []u8, kind: ItemKind, id: usize, at: usize) {
+        let key = item_key(module, name)
+        if self.items.contains(key[..]) {
+            self.fail(module, at, format("`{}` is defined more than once in this module", .{name})[..])
+            return
+        }
+        self.items.put(key, ItemRef{ .kind = kind, .id = id })
+    }
+
+    fn lookup(self: *Self, module: usize, name: []u8) -> ?ItemRef {
+        let key = item_key(module, name)
+        if let r = self.items.get(key[..]) { return r }
+        if let im = self.imports.get(key[..]) {
+            if im.has_name {
+                return self.items.get(item_key(im.module, im.name[..])[..])
+            }
+            return ItemRef{ .kind = ItemKind.Module, .id = im.module }
+        }
+        return null
+    }
+
+    // ----- collection -----------------------------------------------------
+
+    fn collect(self: *mut Self) {
+        let n_mods = self.mods.len
+        for m in 0..n_mods {
+            let items = self.mods[m].parsed.items.clone()
+            for it in items { self.collect_item(m, it) }
+        }
+    }
+
+    fn fn_is_generic(self: *Self, module: usize, id: usize) -> bool {
+        let n = self.node(module, id)
+        for p in n.kids {
+            if self.node(module, p).flag { return true }
+        }
+        return false
+    }
+
+    fn collect_item(self: *mut Self, m: usize, it: usize) {
+        let k = self.node(m, it).k
+        if k == parser.NodeKind.Fn {
+            let name = self.node(m, it).name.clone()
+            let name_at = self.node(m, it).start
+            let generic = self.fn_is_generic(m, it)
+            self.fns.append(FnDef{ .node = it, .module = m, .impl_id = NONE, .is_generic = generic, .is_test = false, .test_name = String.new(), .test_comptime = false })
+            self.define(m, name[..], ItemKind.Fn, self.fns.len - 1, name_at)
+        } else if k == parser.NodeKind.Struct {
+            let n = self.node(m, it)
+            var d = StructDef{
+                .name = n.name.clone(), .kind = n.text.clone(), .layout = self.node(m, n.x).name.clone(),
+                .tparams = List(String).new(), .derives = List(String).new(), .fields = n.kids.clone(),
+                .module = m, .start = n.start, .end = n.end, .is_pub = n.flag,
+            }
+            var second = false
+            for w in n.words {
+                if w == "+" { second = true; continue }
+                if second { d.derives.append(w.clone()) } else { d.tparams.append(w.clone()) }
+            }
+            let name = d.name.clone()
+            let at = d.start
+            self.structs.append(d)
+            self.define(m, name[..], ItemKind.Struct, self.structs.len - 1, at)
+        } else if k == parser.NodeKind.Enum {
+            let n = self.node(m, it)
+            var d = EnumDef{ .name = n.name.clone(), .tparams = List(String).new(), .derives = List(String).new(), .variants = n.kids.clone(), .module = m, .start = n.start, .end = n.end }
+            var second = false
+            for w in n.words {
+                if w == "+" { second = true; continue }
+                if second { d.derives.append(w.clone()) } else { d.tparams.append(w.clone()) }
+            }
+            let name = d.name.clone()
+            let at = d.start
+            self.enums.append(d)
+            self.define(m, name[..], ItemKind.Enum, self.enums.len - 1, at)
+        } else if k == parser.NodeKind.Trait {
+            let n = self.node(m, it)
+            let d = TraitDef{ .name = n.name.clone(), .methods = n.kids.clone(), .assoc = n.words.clone(), .module = m, .start = n.start, .end = n.end }
+            let name = d.name.clone()
+            let at = d.start
+            self.traits.append(d)
+            self.define(m, name[..], ItemKind.Trait, self.traits.len - 1, at)
+        } else if k == parser.NodeKind.Impl {
+            let n = self.node(m, it)
+            let impl_id = self.impls.len
+            var methods = List(usize).new()
+            let tparams = n.words.clone()
+            for meth in n.kids {
+                let generic = self.fn_is_generic(m, meth) or tparams.len > 0
+                self.fns.append(FnDef{ .node = meth, .module = m, .impl_id = impl_id, .is_generic = generic, .is_test = false, .test_name = String.new(), .test_comptime = false })
+                methods.append(self.fns.len - 1)
+            }
+            self.impls.append(ImplDef{ .trait_name = n.name.clone(), .has_trait = n.name != "-", .target = n.x, .tparams = tparams, .methods = methods, .module = m })
+        } else if k == parser.NodeKind.Const {
+            let n = self.node(m, it)
+            let d = ConstDef{ .name = n.name.clone(), .node = it, .module = m, .start = n.start, .end = n.end, .is_pub = n.flag, .ty = NONE, .in_progress = false }
+            let name = d.name.clone()
+            let at = d.start
+            self.consts.append(d)
+            self.define(m, name[..], ItemKind.Const, self.consts.len - 1, at)
+        } else if k == parser.NodeKind.Global {
+            let n = self.node(m, it)
+            let d = GlobalDef{ .name = n.name.clone(), .node = it, .module = m, .start = n.start, .end = n.end, .ty = NONE }
+            let name = d.name.clone()
+            let at = d.start
+            self.globals.append(d)
+            self.define(m, name[..], ItemKind.Global, self.globals.len - 1, at)
+        } else if k == parser.NodeKind.TypeAlias {
+            let n = self.node(m, it)
+            let d = AliasDef{ .name = n.name.clone(), .node = it, .is_distinct = n.flag2, .module = m, .start = n.start, .end = n.end }
+            let name = d.name.clone()
+            let at = d.start
+            self.aliases.append(d)
+            self.define(m, name[..], ItemKind.Alias, self.aliases.len - 1, at)
+        } else if k == parser.NodeKind.ErrorSet {
+            let n = self.node(m, it)
+            let name = n.name.clone()
+            let at = n.start
+            self.error_sets.append(ErrorSetDef{ .name = name.clone(), .module = m })
+            self.define(m, name[..], ItemKind.ErrorSet, self.error_sets.len - 1, at)
+        } else if k == parser.NodeKind.Import {
+            self.collect_import(m, it)
+        } else if k == parser.NodeKind.Test {
+            let n = self.node(m, it)
+            self.fns.append(FnDef{ .node = it, .module = m, .impl_id = NONE, .is_generic = false, .is_test = true, .test_name = n.name.clone(), .test_comptime = n.flag })
+        }
+    }
+
+    fn collect_import(self: *mut Self, m: usize, it: usize) {
+        let n = self.node(m, it)
+        var path = List(String).new()
+        var names = List(String).new()
+        var in_names = false
+        for w in n.words {
+            if w == "+" { in_names = true; continue }
+            if in_names { names.append(w.clone()) } else { path.append(w.clone()) }
+        }
+        let target = join_words(&path, ".")
+        var target_mod = NONE
+        for mm, i in self.mods {
+            if mm.name == target { target_mod = i; break }
+        }
+        if target_mod == NONE {
+            if path[0] == "std" or is_builtin_namespace(path[path.len - 1][..]) { return }
+            self.fail(m, n.start, format("cannot find module `{}`", .{target})[..])
+            return
+        }
+        if n.flag {
+            for nm in names {
+                self.imports.put(item_key(m, nm[..]), ImportRef{ .module = target_mod, .name = nm.clone(), .has_name = true })
+            }
+        } else {
+            let alias = if n.name == "-" { path[path.len - 1].clone() } else { n.name.clone() }
+            self.imports.put(item_key(m, alias[..]), ImportRef{ .module = target_mod, .name = String.new(), .has_name = false })
+        }
+    }
+
+    // ----- type resolution ------------------------------------------------
+
+    fn resolve_type(self: *mut Self, m: usize, id: usize, self_ty: usize) -> usize {
+        let k = self.node(m, id).k
+        if k == parser.NodeKind.TName { return self.resolve_named(m, id, self_ty) }
+        if k == parser.NodeKind.TInfer { return self.tys.simple(TK.Infer) }
+        if k == parser.NodeKind.TArray {
+            let n = self.node(m, id)
+            let len_node = n.x
+            let elem_node = n.y
+            let e = self.resolve_type(m, elem_node, self_ty)
+            if let len = self.const_eval_int(m, len_node) {
+                if len < 0 {
+                    self.fail(m, id, "array length must not be negative")
+                    return self.tys.array(0, e)
+                }
+                return self.tys.array(len as u64, e)
+            }
+            self.fail(m, id, "array length must be a compile-time constant integer")
+            return self.tys.array(0, e)
+        }
+        if k == parser.NodeKind.TSlice {
+            let n = self.node(m, id)
+            let elem_node = n.x
+            let is_mut = n.flag
+            let e = self.resolve_type(m, elem_node, self_ty)
+            return self.tys.wrap(TK.Slice, e, is_mut)
+        }
+        if k == parser.NodeKind.TPtr {
+            let n = self.node(m, id)
+            let elem_node = n.x
+            let is_mut = n.flag
+            let e = self.resolve_type(m, elem_node, self_ty)
+            return self.tys.wrap(TK.Ptr, e, is_mut)
+        }
+        if k == parser.NodeKind.TOpt {
+            let elem_node = self.node(m, id).x
+            let e = self.resolve_type(m, elem_node, self_ty)
+            return self.tys.wrap(TK.Opt, e, false)
+        }
+        if k == parser.NodeKind.TWeak {
+            let elem_node = self.node(m, id).x
+            let e = self.resolve_type(m, elem_node, self_ty)
+            return self.tys.wrap(TK.Weak, e, false)
+        }
+        if k == parser.NodeKind.TErr {
+            let n = self.node(m, id)
+            let set_node = n.x
+            let elem_node = n.y
+            let e = self.resolve_type(m, elem_node, self_ty)
+            if set_node == NONE { return self.tys.err_union(0, false, e) }
+            let sn = self.node(m, set_node)
+            if sn.k == parser.NodeKind.TName and sn.words.len == 1 {
+                if let r = self.lookup(m, sn.words[0][..]) {
+                    if r.kind == ItemKind.ErrorSet { return self.tys.err_union(r.id, true, e) }
+                }
+                self.fail(m, id, format("`{}` is not an error set", .{sn.words[0]})[..])
+                return self.tys.err_union(0, false, e)
+            }
+            self.fail(m, id, "expected an error set name before `!`")
+            return self.tys.err_union(0, false, e)
+        }
+        if k == parser.NodeKind.TFn {
+            let n = self.node(m, id)
+            let params = n.kids.clone()
+            let ret_node = n.x
+            let eff_words = n.words.clone()
+            var ps = List(usize).new()
+            for p in params { ps.append(self.resolve_type(m, p, self_ty)) }
+            let r = self.resolve_type(m, ret_node, self_ty)
+            return self.tys.func(ps, r, effect_mask(&eff_words))
+        }
+        if k == parser.NodeKind.TTuple {
+            let elems = self.node(m, id).kids.clone()
+            var ts = List(usize).new()
+            for e in elems { ts.append(self.resolve_type(m, e, self_ty)) }
+            if ts.len == 0 { return self.tys.simple(TK.Void) }
+            return self.tys.intern(Ty{ .k = TK.Tuple, .name = String.new(), .def = 0, .n = 0, .flag = false, .args = ts })
+        }
+        if k == parser.NodeKind.TDyn {
+            let n = self.node(m, id)
+            let trait_name = n.name.clone()
+            let eff_words = n.words.clone()
+            if let r = self.lookup(m, trait_name[..]) {
+                if r.kind == ItemKind.Trait { return self.tys.dyn_of(r.id, effect_mask(&eff_words)) }
+            }
+            self.fail(m, id, format("cannot find trait `{}`", .{trait_name})[..])
+            return self.tys.simple(TK.Void)
+        }
+        self.fail(m, id, "unsupported type form")
+        return self.tys.simple(TK.Void)
+    }
+
+    fn primitive(self: *mut Self, name: []u8) -> ?usize {
+        for i in INT_NAMES { if i == name { return self.tys.named(TK.Int, name) } }
+        if name == "f32" or name == "f64" { return self.tys.named(TK.Float, name) }
+        if name == "bool" { return self.tys.simple(TK.Bool) }
+        if name == "char" { return self.tys.simple(TK.Char) }
+        if name == "void" { return self.tys.simple(TK.Void) }
+        if name == "never" { return self.tys.simple(TK.Never) }
+        if name == "error" { return self.tys.err_set(0, false) }
+        if name == "type" { return self.tys.simple(TK.Type) }
+        if name == "anytype" { return self.tys.simple(TK.Infer) }
+        return null
+    }
+
+    fn resolve_named(self: *mut Self, m: usize, id: usize, self_ty: usize) -> usize {
+        let n = self.node(m, id)
+        let path = n.words.clone()
+        let args = n.kids.clone()
+        let name = path[0].clone()
+        if path.len == 1 {
+            if name == "Self" {
+                if self_ty != NONE { return self_ty }
+                self.fail(m, id, "`Self` is only valid inside an impl or trait")
+                return self.tys.simple(TK.Void)
+            }
+            if let t = self.primitive(name[..]) {
+                if args.len > 0 { self.fail(m, id, format("`{}` takes no type arguments", .{name})[..]) }
+                return t
+            }
+            if name == "List" {
+                if args.len != 1 {
+                    self.fail(m, id, "`List` takes one type argument: List(T)")
+                    return self.tys.simple(TK.Void)
+                }
+                let e = self.resolve_type(m, args[0], self_ty)
+                return self.tys.wrap(TK.List, e, false)
+            }
+            if name == "Map" {
+                if args.len != 2 {
+                    self.fail(m, id, "`Map` takes two type arguments: Map(K, V)")
+                    return self.tys.simple(TK.Void)
+                }
+                let kt = self.resolve_type(m, args[0], self_ty)
+                let vt = self.resolve_type(m, args[1], self_ty)
+                return self.tys.map(kt, vt)
+            }
+            if name == "String" { return self.tys.simple(TK.Str) }
+        }
+        var module = m
+        var tname = name.clone()
+        if path.len == 2 {
+            let r = self.lookup(m, path[0][..]) orelse {
+                self.fail(m, id, format("cannot find module `{}`", .{path[0]})[..])
+                return self.tys.simple(TK.Void)
+            }
+            if r.kind != ItemKind.Module {
+                self.fail(m, id, format("`{}` is not a type", .{join_words(&path, ".")})[..])
+                return self.tys.simple(TK.Void)
+            }
+            module = r.id
+            tname = path[1].clone()
+        } else if path.len > 2 {
+            self.fail(m, id, "type paths may have at most one module qualifier")
+            return self.tys.simple(TK.Void)
+        }
+        let r = self.lookup(module, tname[..]) orelse {
+            self.fail(m, id, format("cannot find type `{}`", .{tname})[..])
+            return self.tys.simple(TK.Void)
+        }
+        if r.kind == ItemKind.Struct or r.kind == ItemKind.Enum {
+            let n_params = if r.kind == ItemKind.Struct { self.structs[r.id].tparams.len } else { self.enums[r.id].tparams.len }
+            if args.len != n_params {
+                self.fail(m, id, format("`{}` expects {} type argument(s) but {} were given", .{tname, n_params, args.len})[..])
+                return self.tys.simple(TK.Void)
+            }
+            var targs = List(usize).new()
+            for a in args { targs.append(self.resolve_type(m, a, self_ty)) }
+            return self.tys.of_def(if r.kind == ItemKind.Struct { TK.Struct } else { TK.Enum }, r.id, targs)
+        }
+        if r.kind == ItemKind.Alias { return self.resolve_alias(r.id) }
+        if r.kind == ItemKind.ErrorSet { return self.tys.err_set(r.id, true) }
+        if r.kind == ItemKind.Trait {
+            self.fail(m, id, format("`{}` is a trait, not a type", .{tname})[..])
+            return self.tys.simple(TK.Void)
+        }
+        self.fail(m, id, format("`{}` is not a type", .{tname})[..])
+        return self.tys.simple(TK.Void)
+    }
+
+    fn resolve_alias(self: *mut Self, id: usize) -> usize {
+        let a_node = self.aliases[id].node
+        let a_mod = self.aliases[id].module
+        let target_node = self.node(a_mod, a_node).x
+        let t = self.resolve_type(a_mod, target_node, NONE)
+        if self.aliases[id].is_distinct { return self.tys.of_def(TK.Distinct, id, List(usize).new()) }
+        return t
+    }
+
+    /// A constant integer expression: array lengths and the like.
+    fn const_eval_int(self: *mut Self, m: usize, id: usize) -> ?i128 {
+        let n = self.node(m, id)
+        let k = n.k
+        if k == parser.NodeKind.Lit {
+            if n.text != "int" { return null }
+            let v = n.name[..].parse_int(i128) catch { return null }
+            return v
+        }
+        if k == parser.NodeKind.Unary {
+            let op = n.name.clone()
+            let inner = n.x
+            if op != "-" { return null }
+            let v = self.const_eval_int(m, inner) orelse return null
+            return -v
+        }
+        if k == parser.NodeKind.Binary {
+            let op = n.name.clone()
+            let l_node = n.x
+            let r_node = n.y
+            let a = self.const_eval_int(m, l_node) orelse return null
+            let b = self.const_eval_int(m, r_node) orelse return null
+            if op == "+" { return a + b }
+            if op == "-" { return a - b }
+            if op == "*" { return a * b }
+            if op == "/" { if b == 0 { return null }; return a / b }
+            if op == "%" { if b == 0 { return null }; return a % b }
+            if op == "<<" { return a << (b as u32) }
+            if op == ">>" { return a >> (b as u32) }
+            return null
+        }
+        if k == parser.NodeKind.Ident {
+            let name = n.name.clone()
+            if let r = self.lookup(m, name[..]) {
+                if r.kind == ItemKind.Const {
+                    let c_mod = self.consts[r.id].module
+                    let value_node = self.node(c_mod, self.consts[r.id].node).y
+                    return self.const_eval_int(c_mod, value_node)
+                }
+            }
+            return null
+        }
+        return null
+    }
+
+    // ----- constants and globals -------------------------------------------
+
+    fn resolve_const(self: *mut Self, id: usize) -> usize {
+        if self.consts[id].ty != NONE { return self.consts[id].ty }
+        if self.consts[id].in_progress {
+            let at = self.consts[id].start
+            let m = self.consts[id].module
+            self.fail(m, at, "constant depends on itself")
+            return self.tys.simple(TK.Void)
+        }
+        self.consts[id].in_progress = true
+        let m = self.consts[id].module
+        let node = self.consts[id].node
+        let ty_node = self.node(m, node).x
+        let value_node = self.node(m, node).y
+        var t: usize = NONE
+        if ty_node != NONE {
+            t = self.resolve_type(m, ty_node, NONE)
+        } else {
+            t = self.infer_const_type(m, value_node, NONE)
+        }
+        self.consts[id].in_progress = false
+        self.consts[id].ty = t
+        return t
+    }
+
+    /// The type of a constant initializer without an annotation: the
+    /// literal defaults (`i32`, `f64`, `[]u8`), arrays of those, casts,
+    /// arithmetic, and references to other constants. `expected` (or NONE)
+    /// types an untyped integer literal.
+    fn infer_const_type(self: *mut Self, m: usize, id: usize, expected: usize) -> usize {
+        let n = self.node(m, id)
+        let k = n.k
+        if k == parser.NodeKind.Lit {
+            let kind = n.text.clone()
+            if kind == "int" {
+                if expected != NONE and self.tys.list[expected].k == TK.Int { return expected }
+                if expected != NONE and self.tys.list[expected].k == TK.Float { return expected }
+                return self.tys.named(TK.Int, "i32")
+            }
+            if kind == "float" {
+                if expected != NONE and self.tys.list[expected].k == TK.Float { return expected }
+                return self.tys.named(TK.Float, "f64")
+            }
+            if kind == "str" or kind == "bytes" {
+                let u8t = self.tys.named(TK.Int, "u8")
+                return self.tys.wrap(TK.Slice, u8t, false)
+            }
+            if kind == "bool" { return self.tys.simple(TK.Bool) }
+            if kind == "char" { return self.tys.simple(TK.Char) }
+            return self.tys.simple(TK.Void)
+        }
+        if k == parser.NodeKind.Unary {
+            let inner = n.x
+            let op = n.name.clone()
+            let t = self.infer_const_type(m, inner, expected)
+            if op == "!" { return self.tys.simple(TK.Bool) }
+            return t
+        }
+        if k == parser.NodeKind.Binary {
+            let op = n.name.clone()
+            let l_node = n.x
+            let r_node = n.y
+            if op == "==" or op == "!=" or op == "<" or op == "<=" or op == ">" or op == ">=" or op == "and" or op == "or" {
+                return self.tys.simple(TK.Bool)
+            }
+            // a typed side decides; a literal takes the other side's type
+            let l_lit = self.node(m, l_node).k == parser.NodeKind.Lit
+            let r_lit = self.node(m, r_node).k == parser.NodeKind.Lit
+            if l_lit and !r_lit {
+                let rt = self.infer_const_type(m, r_node, expected)
+                return self.infer_const_type(m, l_node, rt)
+            }
+            let lt = self.infer_const_type(m, l_node, expected)
+            if op == "<<" or op == ">>" { return lt }
+            _ = self.infer_const_type(m, r_node, lt)
+            return lt
+        }
+        if k == parser.NodeKind.Cast {
+            let ty_node = n.y
+            return self.resolve_type(m, ty_node, NONE)
+        }
+        if k == parser.NodeKind.ArrayLit {
+            let elems = n.kids.clone()
+            var elem_expected = NONE
+            if expected != NONE and self.tys.list[expected].k == TK.Array { elem_expected = self.tys.list[expected].args[0] }
+            var et = elem_expected
+            for e, i in elems {
+                let t = self.infer_const_type(m, e, if i == 0 { elem_expected } else { et })
+                if i == 0 { et = t }
+            }
+            if elems.len == 0 and et == NONE { et = self.tys.simple(TK.Void) }
+            return self.tys.array(elems.len as u64, et)
+        }
+        if k == parser.NodeKind.Ident {
+            let name = n.name.clone()
+            if let r = self.lookup(m, name[..]) {
+                if r.kind == ItemKind.Const { return self.resolve_const(r.id) }
+            }
+            self.fail(m, id, format("cannot find `{}`", .{name})[..])
+            return self.tys.simple(TK.Void)
+        }
+        if k == parser.NodeKind.StructLit {
+            let ty_node = n.x
+            if ty_node != NONE { return self.resolve_type(m, ty_node, NONE) }
+        }
+        self.fail(m, id, "unsupported constant initializer (stage 1)")
+        return self.tys.simple(TK.Void)
+    }
+
+    fn resolve_globals(self: *mut Self) {
+        let n = self.globals.len
+        for i in 0..n {
+            let m = self.globals[i].module
+            let node = self.globals[i].node
+            let ty_node = self.node(m, node).x
+            self.globals[i].ty = self.resolve_type(m, ty_node, NONE)
+        }
+    }
+
+    // ----- output -------------------------------------------------------------
+
+    fn ty_name(self: *Self, t: usize) -> String {
+        let ty = &self.tys.list[t]
+        let k = ty.k
+        if k == TK.Int or k == TK.Float { return ty.name.clone() }
+        if k == TK.Bool { return String.from("bool") }
+        if k == TK.Char { return String.from("char") }
+        if k == TK.Void { return String.from("void") }
+        if k == TK.Never { return String.from("never") }
+        if k == TK.Str { return String.from("String") }
+        if k == TK.Type { return String.from("type") }
+        if k == TK.ErrorSet { return String.from("error") }
+        if k == TK.Infer { return String.from("_") }
+        if k == TK.Struct or k == TK.Enum {
+            let name = if k == TK.Struct { self.structs[ty.def].name.clone() } else { self.enums[ty.def].name.clone() }
+            if ty.args.len == 0 { return name }
+            return format("{}({})", .{name, self.ty_list(ty.args[..])})
+        }
+        if k == TK.Array { return format("[{}]{}", .{ty.n, self.ty_name(ty.args[0])}) }
+        if k == TK.Slice { return format("[]{}{}", .{if ty.flag { "mut " } else { "" }, self.ty_name(ty.args[0])}) }
+        if k == TK.Ptr { return format("*{}{}", .{if ty.flag { "mut " } else { "" }, self.ty_name(ty.args[0])}) }
+        if k == TK.Opt { return format("?{}", .{self.ty_name(ty.args[0])}) }
+        if k == TK.ErrUnion { return format("!{}", .{self.ty_name(ty.args[0])}) }
+        if k == TK.Weak { return format("weak {}", .{self.ty_name(ty.args[0])}) }
+        if k == TK.List { return format("List({})", .{self.ty_name(ty.args[0])}) }
+        if k == TK.Map { return format("Map({}, {})", .{self.ty_name(ty.args[0]), self.ty_name(ty.args[1])}) }
+        if k == TK.Tuple { return format("({})", .{self.ty_list(ty.args[..])}) }
+        if k == TK.Distinct { return self.aliases[ty.def].name.clone() }
+        if k == TK.Fn {
+            let neg = render_negative(ty.n)
+            let ret = self.ty_name(ty.args[ty.args.len - 1])
+            let params = self.ty_list(ty.args[0..ty.args.len - 1])
+            if neg.len == 0 { return format("fn({}) -> {}", .{params, ret}) }
+            return format("fn({}) -> {} {}", .{params, ret, neg})
+        }
+        if k == TK.Dyn {
+            let neg = render_negative(ty.n)
+            if neg.len == 0 { return format("dyn {}", .{self.traits[ty.def].name}) }
+            return format("dyn {} {}", .{self.traits[ty.def].name, neg})
+        }
+        return String.from("?")
+    }
+
+    fn ty_list(self: *Self, ts: []usize) -> String {
+        var out = String.new()
+        for t, i in ts {
+            if i > 0 { out.append(", ") }
+            out.append(self.ty_name(t)[..])
+        }
+        return out
+    }
+
+    fn print_sigs(self: *mut Self, out: *mut String) {
+        out.append("(program\n  (modules\n")
+        for m, i in self.mods { out.append(format("    (module {} {})\n", .{i, m.name})[..]) }
+        out.append("  )\n  (structs\n")
+        for s, i in self.structs {
+            out.append(format("    (struct {} {} @{}:{} kind={} layout={} module={} pub={} tparams=({}) derives=({})\n",
+                .{i, s.name, s.start, s.end, s.kind, s.layout, s.module, s.is_pub, join_words(&s.tparams, " "), join_words(&s.derives, " ")})[..])
+            for f in s.fields {
+                let fnode = self.node(s.module, f)
+                out.append(format("      (field {} @{}:{} default={} constraint={})\n", .{fnode.name, fnode.start, fnode.end, yes_no(fnode.y), yes_no(fnode.z)})[..])
+            }
+            out.append("    )\n")
+        }
+        out.append("  )\n  (enums\n")
+        for e, i in self.enums {
+            out.append(format("    (enum {} {} @{}:{} module={} tparams=({}) derives=({})\n",
+                .{i, e.name, e.start, e.end, e.module, join_words(&e.tparams, " "), join_words(&e.derives, " ")})[..])
+            for v in e.variants {
+                let vn = self.node(e.module, v)
+                var payload = String.new()
+                if vn.text == "unit" {
+                    payload.append("unit")
+                } else if vn.text == "tuple" {
+                    payload = format("tuple {}", .{vn.kids.len})
+                } else {
+                    payload.append("struct (")
+                    for f, fi in vn.kids {
+                        if fi > 0 { payload.append(" ") }
+                        payload.append(self.node(e.module, f).name[..])
+                    }
+                    payload.append(")")
+                }
+                out.append(format("      (variant {} @{}:{} {})\n", .{vn.name, vn.start, vn.end, payload})[..])
+            }
+            out.append("    )\n")
+        }
+        out.append("  )\n  (aliases\n")
+        for a, i in self.aliases {
+            out.append(format("    (alias {} {} @{}:{} distinct={} module={})\n", .{i, a.name, a.start, a.end, a.is_distinct, a.module})[..])
+        }
+        out.append("  )\n  (traits\n")
+        for t, i in self.traits {
+            out.append(format("    (trait {} {} @{}:{} module={} assoc=({})\n", .{i, t.name, t.start, t.end, t.module, join_words(&t.assoc, " ")})[..])
+            for meth in t.methods {
+                let mn = self.node(t.module, meth)
+                out.append(format("      (method {} @{}:{} params={} body={})\n", .{mn.name, mn.start, mn.end, mn.kids.len, yes_no(mn.y)})[..])
+            }
+            out.append("    )\n")
+        }
+        out.append("  )\n  (consts\n")
+        for i in 0..self.consts.len {
+            let t = self.resolve_const(i)
+            let c = &self.consts[i]
+            out.append(format("    (const {} {} @{}:{} module={} pub={} mangled=nxc_{}_{} ty={})\n", .{i, c.name, c.start, c.end, c.module, c.is_pub, c.name, i, self.ty_name(t)})[..])
+        }
+        out.append("  )\n  (globals\n")
+        for g, i in self.globals {
+            let init = yes_no(self.node(g.module, g.node).y)
+            out.append(format("    (global {} {} @{}:{} module={} mangled=nxg_{}_{} ty={} init={})\n", .{i, g.name, g.start, g.end, g.module, g.name, i, self.ty_name(g.ty), init})[..])
+        }
+        out.append("  )\n  (fns\n")
+        let n_fns = self.fns.len
+        for i in 0..n_fns { self.print_fn_sig(i, out) }
+        out.append("  )\n)\n")
+    }
+
+    fn print_fn_sig(self: *mut Self, fid: usize, out: *mut String) {
+        let is_generic = self.fns[fid].is_generic
+        if is_generic { return }
+        let m = self.fns[fid].module
+        let node = self.fns[fid].node
+        let impl_id = self.fns[fid].impl_id
+        let is_test = self.fns[fid].is_test
+        var self_ty = NONE
+        if impl_id != NONE {
+            let target = self.impls[impl_id].target
+            self_ty = self.resolve_type(m, target, NONE)
+        }
+        let n = self.node(m, node)
+        let start = n.start
+        let end = n.end
+        var name = n.name.clone()
+        var export_name = n.text.clone()
+        var is_extern = n.flag2
+        var is_pub = n.flag
+        var has_body = n.y != NONE
+        var ctest = false
+        var ret: usize = NONE
+        var params = String.new()
+        if is_test {
+            let tn = self.fns[fid].test_name.clone()
+            ctest = self.fns[fid].test_comptime
+            name = format("{}:{}", .{if ctest { "ctest" } else { "test" }, tn})
+            export_name = String.from("-")
+            is_extern = false
+            is_pub = false
+            has_body = true
+            let v = self.tys.simple(TK.Void)
+            ret = self.tys.err_union(0, false, v)
+        } else {
+            let param_nodes = n.kids.clone()
+            let ret_node = n.x
+            for p in param_nodes {
+                let pn = self.node(m, p)
+                let pname = pn.name.clone()
+                let pty_node = pn.x
+                let owned = pn.flag2
+                let t = self.resolve_type(m, pty_node, self_ty)
+                params.append(format("({} {} own={}) ", .{pname, self.ty_name(t), owned})[..])
+            }
+            if params.len > 0 { params = String.from(params[0..params.len - 1]) }
+            ret = if ret_node == NONE { self.tys.simple(TK.Void) } else { self.resolve_type(m, ret_node, self_ty) }
+        }
+        // the mangled name: extern functions keep theirs, free functions are
+        // `nx_name` in the root module or when exported and `nx_m<module>_name`
+        // elsewhere; methods and tests are numbered by the body-checking stage
+        var mangled = String.from("-")
+        if is_extern {
+            mangled = name.clone()
+        } else if impl_id == NONE and (!is_test or ctest) {
+            // a comptime test's name is not `test:`-prefixed, so it mangles as a free function
+            if m == 0 or export_name != "-" {
+                mangled = format("nx_{}", .{sanitize(name[..])})
+            } else {
+                mangled = format("nx_m{}_{}", .{m, sanitize(name[..])})
+            }
+        }
+        var neg: u64 = 0
+        var pos: u64 = 0
+        if !is_test {
+            for w in n.words {
+                if w[0] == '!' { neg = neg | effect_bit(w[1..]) } else { pos = pos | effect_bit(w[..]) }
+            }
+        }
+        out.append(format("    (fn - {} @{}:{} mangled={} module={} ret={} targs=() export={} extern={} variadic=false pub={} test={} ctest={} closure=false body={}\n",
+            .{name, start, end, mangled, m, self.ty_name(ret), export_name, is_extern, is_pub, is_test, ctest, if has_body { "yes" } else { "no" }})[..])
+        out.append(format("      (params {})\n", .{params})[..])
+        out.append(format("      (declared neg=({}) pos=({}))\n", .{render_effects(neg), render_effects(pos)})[..])
+        out.append("    )\n")
+    }
+}
+
+impl Types {
+    fn err_set(self: *mut Self, set: usize, has_set: bool) -> usize {
+        return self.intern(Ty{ .k = TK.ErrorSet, .name = String.new(), .def = set, .n = 0, .flag = has_set, .args = List(usize).new() })
+    }
+}
+
+fn effect_mask(words: *List(String)) -> u64 {
+    // a function type permits every effect except the negated ones
+    var mask: u64 = 0xff
+    for w in words {
+        if w.len > 0 and w[0] == '!' { mask = mask & ~effect_bit(w[1..]) }
+    }
+    return mask
+}
+
+fn is_builtin_namespace(name: []u8) -> bool {
+    for n in BUILTIN_NAMESPACES { if n == name { return true } }
+    return false
+}
+
+fn yes_no(id: usize) -> []u8 {
+    return if id == NONE { "no" } else { "yes" }
+}
+
+fn sanitize(s: []u8) -> String {
+    var out = String.new()
+    for c in s {
+        let alnum = (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '_'
+        if alnum {
+            out.push_byte(c)
+        } else if c == '(' or c == ',' or c == ')' or c == ' ' or c == '[' or c == ']' or c == '*' or c == '?' or c == '!' or c == '.' {
+            if out.len == 0 or out[out.len - 1] != '_' { out.push_byte('_') }
+        }
+    }
+    while out.len > 0 and out[out.len - 1] == '_' { _ = out.pop() }
+    return out
+}
+
+pub fn new_checker(own mods: List(Mod)) -> Checker {
+    return Checker{
+        .mods = mods, .tys = Types{ .list = List(Ty).new(), .index = Map(String, usize).new() },
+        .items = Map(String, ItemRef).new(), .imports = Map(String, ImportRef).new(),
+        .structs = List(StructDef).new(), .enums = List(EnumDef).new(), .traits = List(TraitDef).new(),
+        .impls = List(ImplDef).new(), .fns = List(FnDef).new(), .consts = List(ConstDef).new(),
+        .globals = List(GlobalDef).new(), .aliases = List(AliasDef).new(), .error_sets = List(ErrorSetDef).new(),
+        .errors = List(String).new(), .no_generics = Map(String, usize).new(),
+    }
+}
+
+fn main() -> !void {
+    let args = os.args()
+    if args.len < 2 {
+        eprintln("usage: check <file.nx> [--std <dir>]", .{})
+        os.exit(2)
+    }
+    var std_dir: []u8 = "std"
+    var i: usize = 2
+    while i < args.len {
+        if args[i] == "--std" and i + 1 < args.len {
+            std_dir = args[i + 1]
+            i += 2
+        } else {
+            i += 1
+        }
+    }
+    let mods = try load(args[1], std_dir)
+    var c = new_checker(mods)
+    c.collect()
+    c.resolve_globals()
+    var out = String.new()
+    c.print_sigs(&mut out)
+    print("{}", .{out})
+    for e in c.errors { eprintln("error: {}", .{e}) }
+    if c.errors.len > 0 { os.exit(1) }
+}

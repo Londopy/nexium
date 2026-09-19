@@ -241,15 +241,23 @@ pub fn program(p: &Program, sigs_only: bool) -> String {
         o.close();
     }
     o.close();
-    o.open("(errors");
-    for (i, e) in p.error_names.iter().enumerate() {
-        o.line(&format!("(error {} {})", i + 1, e));
+    if !sigs_only {
+        // error ids are handed out as `error.Name` literals are met in bodies
+        o.open("(errors");
+        for (i, e) in p.error_names.iter().enumerate() {
+            o.line(&format!("(error {} {})", i + 1, e));
+        }
+        o.close();
     }
-    o.close();
     o.open("(aliases");
     for (i, a) in p.aliases.iter().enumerate() {
-        let t = a.resolved.map(|t| o.ty(t)).unwrap_or_else(|| "-".into());
-        o.line(&format!("(alias {} {} {} distinct={} module={} ty={})", i, a.name, sp(a.span), a.distinct, a.module, t));
+        if sigs_only {
+            // an alias resolves when first used, so its type is a body-stage fact
+            o.line(&format!("(alias {} {} {} distinct={} module={})", i, a.name, sp(a.span), a.distinct, a.module));
+        } else {
+            let t = a.resolved.map(|t| o.ty(t)).unwrap_or_else(|| "-".into());
+            o.line(&format!("(alias {} {} {} distinct={} module={} ty={})", i, a.name, sp(a.span), a.distinct, a.module, t));
+        }
     }
     o.close();
     o.open("(traits");
@@ -284,6 +292,11 @@ pub fn program(p: &Program, sigs_only: bool) -> String {
         let f = &p.funcs[i];
         if sigs_only && (f.is_closure || !f.targs.is_empty()) {
             // closures and generic instances only exist once bodies are checked
+            continue;
+        }
+        // so does a trait's default method, materialized for an impl when a
+        // call first needs it: its declaration lies inside the trait
+        if sigs_only && p.traits.iter().any(|t| t.module == f.module && t.span.start <= f.span.start && f.span.end <= t.span.end) {
             continue;
         }
         let ret = o.ty(f.ret);

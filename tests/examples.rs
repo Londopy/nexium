@@ -156,6 +156,51 @@ fn self_hosted_parser_matches_oracle() {
     }
 }
 
+/// The checker written in Nexium, stage 1: declarations and signatures match
+/// `nx tir --sigs` for every source the Rust checker accepts, except those
+/// that import C headers (`@cImport` is a later stage).
+#[test]
+fn self_hosted_checker_matches_signatures() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let exe = root.join("nx-out").join(if cfg!(windows) { "self_check.exe" } else { "self_check" });
+    let build = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).args(["build", "self/check.nx", "-o"]).arg(&exe).current_dir(root).output().expect("run nx");
+    assert!(
+        build.status.success(),
+        "building self/check.nx failed:
+{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
+    for dir in ["examples", "std", "gui", "self", "tests"] {
+        files.extend(std::fs::read_dir(root.join(dir)).unwrap().filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().map(|x| x == "nx").unwrap_or(false)));
+    }
+    files.sort();
+    let mut compared = 0;
+    for f in files {
+        let oracle = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).arg("tir").arg(&f).arg("--sigs").current_dir(root).output().unwrap();
+        if !oracle.status.success() {
+            // a deliberately failing example: nothing to compare
+            continue;
+        }
+        let expected = String::from_utf8_lossy(&oracle.stdout).to_string();
+        if expected.contains("(module ") && expected.contains(" cimport:") {
+            // a C header somewhere in the import graph
+            continue;
+        }
+        let mine = std::process::Command::new(&exe).arg(&f).current_dir(root).output().unwrap();
+        assert!(
+            mine.status.success(),
+            "self/check.nx rejected {}:
+{}",
+            f.display(),
+            String::from_utf8_lossy(&mine.stderr)
+        );
+        assert_eq!(expected, String::from_utf8_lossy(&mine.stdout), "signatures differ for {}", f.display());
+        compared += 1;
+    }
+    assert!(compared > 35, "expected the whole tree, compared {} files", compared);
+}
+
 /// The GUI library's headless tests (rasterizer and widget interaction) must pass;
 /// this also compiles gui/platform.c on every platform (the non-Windows stub included).
 #[test]
