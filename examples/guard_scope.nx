@@ -1,0 +1,12 @@
+// A range fact from an `if` guard holds inside its block only: `i == 1`
+// must not make `xs[i]` after the block skip its bounds check.
+fn pick(xs: [4]u8, i: usize) -> u8 {
+    if i == 1 { return xs[i] }
+    return xs[i]
+}
+
+fn main() {
+    let xs: [4]u8 = [1, 2, 3, 4]
+    println("{}", .{pick(xs, 1)})
+    println("{}", .{pick(xs, 9)})
+}

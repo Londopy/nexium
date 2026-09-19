@@ -1,0 +1,3 @@
+2
+panic: index 9 out of bounds for length 4
+  at examples/guard_scope.nx:5

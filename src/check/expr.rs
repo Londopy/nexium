@@ -1557,7 +1557,11 @@ impl<'a> Checker<'a> {
         let c = self.check_expr(cond, Some(bt));
         let c = self.coerce_or_error(c, bt, "if condition");
         // guard-based range narrowing: `if (x < N)` / `if (x <= N)` / `if (x >= N)`
+        // the facts hold inside the then block only; what was known before
+        // comes back after it (a fact that outlived its block once elided a
+        // bounds check on a later index)
         let narrowing = self.guard_narrowing(&c);
+        let ranges_before = self.cur().ranges.clone();
         self.push_scope();
         for (l, r) in &narrowing {
             self.cur().ranges.insert(*l, *r);
@@ -1566,6 +1570,7 @@ impl<'a> Checker<'a> {
         let then_expected = if els.is_some() { expected } else { Some(self.tys.void()) };
         let tb = self.check_block(then, then_expected, None);
         self.pop_scope();
+        self.cur().ranges = ranges_before;
         let moved_then = self.moved_snapshot();
         let then_diverges = matches!(self.tys.kind(self.tys.shallow(tb.ty)), TyKind::Never);
         if then_diverges && els.is_none() {
