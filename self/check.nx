@@ -414,6 +414,40 @@ pub struct Mod {
 /// Read the root file and everything it imports, in the driver's order:
 /// files depth-first from a stack (so the last import of a file loads
 /// first), then the std modules in the order they were first named.
+/// The standard library, embedded: a module's source by name, so a built
+/// compiler needs no `std/` directory beside it.
+pub fn std_source(name: []u8) -> ?[]u8 {
+    if name == "args" { return @embedFile("../std/args.nx") }
+    if name == "bytes" { return @embedFile("../std/bytes.nx") }
+    if name == "fs" { return @embedFile("../std/fs.nx") }
+    if name == "http" { return @embedFile("../std/http.nx") }
+    if name == "json" { return @embedFile("../std/json.nx") }
+    if name == "lists" { return @embedFile("../std/lists.nx") }
+    if name == "net" { return @embedFile("../std/net.nx") }
+    if name == "num" { return @embedFile("../std/num.nx") }
+    if name == "process" { return @embedFile("../std/process.nx") }
+    if name == "regex" { return @embedFile("../std/regex.nx") }
+    if name == "stream" { return @embedFile("../std/stream.nx") }
+    if name == "strings" { return @embedFile("../std/strings.nx") }
+    if name == "testing" { return @embedFile("../std/testing.nx") }
+    if name == "text" { return @embedFile("../std/text.nx") }
+    if name == "thread" { return @embedFile("../std/thread.nx") }
+    if name == "time" { return @embedFile("../std/time.nx") }
+    return null
+}
+
+/// A std module's text: the file in `std_dir` when there is one, else the
+/// embedded copy.
+fn std_text(std_dir: []u8, short: []u8) -> ?String {
+    let path = format("{}/{}.nx", .{std_dir, short})
+    if io.file_kind(path[..]) == 1 {
+        let t = io.read_file(path[..]) catch { return null }
+        return t
+    }
+    let e = std_source(short) orelse return null
+    return String.from(e)
+}
+
 pub fn load(root: []u8, std_dir: []u8) -> !List(Mod) {
     var mods = List(Mod).new()
     let root_dir = dir_of(root)
@@ -447,7 +481,7 @@ pub fn load(root: []u8, std_dir: []u8) -> !List(Mod) {
                 words.append(w.clone())
             }
             if words[0] == "std" {
-                if words.len == 2 and io.file_kind(format("{}/{}.nx", .{std_dir, words[1]})[..]) == 1 {
+                if words.len == 2 and std_text(std_dir, words[1][..]) != null {
                     let mname = format("std.{}", .{words[1]})
                     if !list_has(&std_pending, mname[..]) { std_pending.append(mname) }
                 }
@@ -472,7 +506,7 @@ pub fn load(root: []u8, std_dir: []u8) -> !List(Mod) {
         si += 1
         let short = mname[4..]
         let path = format("{}/{}.nx", .{std_dir, short})
-        let text = io.read_file(path[..]) catch {
+        let text = std_text(std_dir, short) orelse {
             eprintln("error: cannot read {}", .{path})
             return error.NotFound
         }
@@ -486,7 +520,7 @@ pub fn load(root: []u8, std_dir: []u8) -> !List(Mod) {
             if n.k != parser.NodeKind.Import { continue }
             if n.words.len >= 2 and n.words[0] == "std" and n.words[1] != "+" {
                 let dep = format("std.{}", .{n.words[1]})
-                if io.file_kind(format("{}/{}.nx", .{std_dir, n.words[1]})[..]) == 1 and !list_has(&std_pending, dep[..]) {
+                if std_text(std_dir, n.words[1][..]) != null and !list_has(&std_pending, dep[..]) {
                     std_pending.append(dep)
                 }
             }
