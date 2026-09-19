@@ -376,6 +376,8 @@ pub struct ImportRef {
 pub struct Mod {
     name: String
     source: String
+    // the directory its relative paths (`@embedFile`) resolve against
+    dir: String
     parsed: parser.Parsed
 }
 
@@ -434,7 +436,7 @@ fn load(root: []u8, std_dir: []u8) -> !List(Mod) {
                 queue_paths.append(rel)
             }
         }
-        mods.append(Mod{ .name = name, .source = text, .parsed = parsed })
+        mods.append(Mod{ .name = name, .source = text, .dir = String.from(dir_of(path[..])), .parsed = parsed })
     }
     var si: usize = 0
     while si < std_pending.len {
@@ -461,7 +463,7 @@ fn load(root: []u8, std_dir: []u8) -> !List(Mod) {
                 }
             }
         }
-        mods.append(Mod{ .name = mname, .source = text, .parsed = parsed })
+        mods.append(Mod{ .name = mname, .source = text, .dir = String.from(std_dir), .parsed = parsed })
     }
     return mods
 }
@@ -626,6 +628,8 @@ pub struct FnCtx {
     is_comptime: bool
     in_parallel: usize
     self_ty: usize
+    // matching through a pointer: NONE, 0 (immutable) or 1 (mutable)
+    pat_by_ref: usize
 }
 
 fn new_ctx(ret: usize, module: usize, name: []u8) -> FnCtx {
@@ -634,7 +638,7 @@ fn new_ctx(ret: usize, module: usize, name: []u8) -> FnCtx {
         .scope_names = List(String).new(), .scope_locals = List(usize).new(), .scope_deref = List(bool).new(), .scope_marks = List(usize).new(),
         .labels = List(LabelInfo).new(), .next_label = 0, .own_effects = 0, .witnesses = List(Witness).new(),
         .callees = List(usize).new(), .callee_spans = List(usize).new(), .moved = Map(usize, usize).new(), .ranges = Map(usize, Range).new(),
-        .index_of = Map(usize, usize).new(), .in_defer = false, .loop_depth = 0, .unsafe_depth = 0, .is_comptime = false, .in_parallel = 0, .self_ty = NONE,
+        .index_of = Map(usize, usize).new(), .in_defer = false, .loop_depth = 0, .unsafe_depth = 0, .is_comptime = false, .in_parallel = 0, .self_ty = NONE, .pat_by_ref = NONE,
     }
 }
 
@@ -2752,7 +2756,7 @@ impl Checker {
             if let r = self.ctx().ranges.get(l) { return r }
             return self.type_range(self.ctx().locals[l].ty)
         }
-        if k == TKind.Cast and self.tir.nodes[e].name == "int_to_int" {
+        if k == TKind.Cast and self.tir.nodes[e].name.len >= 10 and self.tir.nodes[e].name[0..10] == "int_to_int" {
             let inner = self.expr_range(self.tir.nodes[e].kids[0]) orelse return null
             let tr = self.type_range(self.tir.nodes[e].ty) orelse return null
             return Range{ .lo = max128(inner.lo, tr.lo), .hi = min128(inner.hi, tr.hi) }
@@ -2872,6 +2876,8 @@ impl Checker {
         if k == parser.NodeKind.OrElse { return self.check_orelse(e, expected) }
         if k == parser.NodeKind.IfCapture { return self.check_if_capture(e, expected) }
         if k == parser.NodeKind.MethodCall { return self.check_method_call(e, expected) }
+        if k == parser.NodeKind.Match { return self.check_match(e, expected) }
+        if k == parser.NodeKind.Builtin { return self.check_at_builtin(e, expected) }
         if k == parser.NodeKind.Null {
             var t = NONE
             if expected != NONE {
@@ -4533,7 +4539,7 @@ impl Checker {
         if k == TKind.PBool { p.line(format("(pat bool {})", .{self.tir.nodes[q].flag})[..]); return }
         if k == TKind.PStr { p.line(format("(pat str {})", .{tquote(self.tir.nodes[q].text[..])})[..]); return }
         if k == TKind.PChar { p.line(format("(pat char {})", .{self.tir.nodes[q].ival})[..]); return }
-        if k == TKind.PRange { p.line(format("(pat range {} {} inclusive={})", .{self.tir.nodes[q].ival, self.tir.nodes[q].b as i128 - 0, self.tir.nodes[q].flag})[..]); return }
+        if k == TKind.PRange { p.line(format("(pat range {} {} inclusive={})", .{self.tir.nodes[q].ival, self.tir.nodes[q].text, self.tir.nodes[q].flag})[..]); return }
         if k == TKind.PError { p.line(format("(pat error {})", .{a})[..]); return }
         if k == TKind.PNull { p.line("(pat null)"); return }
         if k == TKind.PVariant {
@@ -6664,6 +6670,648 @@ impl Checker {
         if nm == "char" { return format("(char {})", .{self.tir.nodes[e].ival}) }
         return format("(str {})", .{tquote(self.tir.nodes[e].text[..])})
     }
+}
+
+// ---------------------------------------------------------------- match and patterns
+
+impl Checker {
+    fn check_match(self: *mut Self, e: usize, expected: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        let scrut_node = n.x
+        let arms = n.kids.clone()
+        let start = n.start
+        let end = n.end
+        let s = self.check_expr(scrut_node, NONE)
+        let st = self.tys.resolve(self.tir.nodes[s].ty, false)
+        self.tir.nodes[s].ty = st
+        // matching through a pointer binds owning payloads by reference
+        var by_ref = NONE
+        if self.tir.nodes[s].k == TKind.Deref {
+            let inner = self.tir.nodes[s].kids[0]
+            let it = self.tys.shallow(self.tir.nodes[inner].ty)
+            if self.tys.kind(it) == TK.Ptr { by_ref = if self.tys.list[it].flag { 1 } else { 0 } }
+        }
+        let saved_by_ref = self.ctx().pat_by_ref
+        self.ctx().pat_by_ref = by_ref
+        if arms.len == 0 {
+            self.fail_here(start, "`match` needs at least one arm")
+            return self.error_expr(start, end)
+        }
+        let r = self.mk(TKind.Match, NONE, start, end)
+        self.tir.nodes[r].kids.append(s)
+        var hint = expected
+        let moved_before = self.moved_snapshot()
+        var moved_arms = List(List(usize)).new()
+        var bodies = List(usize).new()
+        for a in arms {
+            let an = self.node(m, a)
+            let pat_node = an.x
+            let guard_node = an.y
+            let body_node = an.z
+            let astart = an.start
+            let aend = an.end
+            self.moved_restore(&moved_before)
+            self.push_scope()
+            let pat = self.check_pattern(pat_node, st)
+            var guard = NONE
+            if guard_node != NONE {
+                let bt = self.tys.bool_ty()
+                guard = self.check_expr(guard_node, bt)
+                guard = self.coerce_or_error(guard, bt, "match guard")
+            }
+            var body = self.check_expr(body_node, hint)
+            let bty = self.tys.shallow(self.tir.nodes[body].ty)
+            if hint == NONE and self.tys.kind(bty) != TK.Never { hint = bty }
+            body = self.take_ownership(body)
+            self.pop_scope()
+            let arm = self.mk(TKind.Arm, NONE, astart, aend)
+            self.tir.nodes[arm].flag = guard != NONE
+            self.tir.nodes[arm].kids.append(pat)
+            if guard != NONE { self.tir.nodes[arm].kids.append(guard) }
+            self.tir.nodes[arm].kids.append(body)
+            self.tir.nodes[r].kids.append(arm)
+            bodies.append(body)
+            if self.tys.kind(bty) != TK.Never { moved_arms.append(self.moved_snapshot()) }
+        }
+        self.moved_restore(&moved_before)
+        for ma in moved_arms { self.moved_merge(&ma) }
+        let ty = self.join_exprs(&mut bodies, expected, start)
+        // the coerced bodies replace the arms' last child
+        let arm_nodes = self.tir.nodes[r].kids.clone()
+        for a, i in arm_nodes {
+            if i == 0 { continue }
+            let last = self.tir.nodes[a].kids.len - 1
+            self.tir.nodes[a].kids[last] = bodies[i - 1]
+        }
+        self.ctx().pat_by_ref = saved_by_ref
+        self.tir.nodes[r].ty = ty
+        return r
+    }
+
+    /// A common type for a set of branch expressions; each is coerced to it in place.
+    fn join_exprs(self: *mut Self, exprs: *mut List(usize), expected: usize, at: usize) -> usize {
+        let nev = self.tys.never()
+        let v = self.tys.void()
+        var candidates = List(usize).new()
+        if expected != NONE { candidates.append(expected) }
+        for e in exprs {
+            let t = self.tys.shallow(self.tir.nodes[e].ty)
+            if self.tys.kind(t) != TK.Never { candidates.append(t) }
+        }
+        if candidates.len == 0 { return nev }
+        var target = NONE
+        for cand in candidates {
+            // a probe: no errors, but unification bindings stay (as in the oracle)
+            let saved = self.errors.len
+            var ok = true
+            for e in exprs {
+                let saved_ty = self.tir.nodes[e].ty
+                let c = self.coerce(e, cand)
+                self.tir.nodes[e].ty = saved_ty
+                if c == NONE { ok = false }
+            }
+            while self.errors.len > saved { _ = self.errors.pop() }
+            if ok {
+                target = cand
+                break
+            }
+        }
+        if target == NONE {
+            var all_void = true
+            for e in exprs {
+                let k = self.tys.kind(self.tys.shallow(self.tir.nodes[e].ty))
+                if ! (k == TK.Void or k == TK.Never) { all_void = false }
+            }
+            if all_void {
+                target = v
+            } else {
+                self.fail_here(at, "match arms have incompatible types")
+                target = candidates[0]
+            }
+        }
+        for e, i in exprs { exprs[i] = self.coerce_or_error(e, target, "match arm") }
+        return target
+    }
+
+    /// The type a pattern binding gets: the payload, or a pointer to it when
+    /// matching through a pointer and the payload owns resources.
+    fn pat_bind_ty(self: *mut Self, t: usize) -> usize {
+        let by_ref = self.ctx().pat_by_ref
+        if by_ref != NONE and self.needs_drop(t) { return self.tys.wrap(TK.Ptr, t, by_ref == 1) }
+        return t
+    }
+
+    fn pat_node(self: *mut Self, k: TKind, start: usize, end: usize) -> usize {
+        let v = self.tys.void()
+        return self.tir.add(tblank(k, v, start, end))
+    }
+
+    fn pat_wrap(self: *mut Self, k: TKind, inner: usize, start: usize, end: usize) -> usize {
+        let p = self.pat_node(k, start, end)
+        self.tir.nodes[p].kids.append(inner)
+        return p
+    }
+
+    fn check_pattern(self: *mut Self, pat: usize, ty0: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, pat)
+        let k = n.k
+        let start = n.start
+        let end = n.end
+        let ty = self.tys.shallow(ty0)
+        let tk = self.tys.kind(ty)
+        if k == parser.NodeKind.PWild { return self.pat_node(TKind.PWild, start, end) }
+        if k == parser.NodeKind.PBind {
+            let name = n.name.clone()
+            // a bare name on an optional binds its payload; on an error union, the success value
+            if tk == TK.Opt or tk == TK.ErrUnion {
+                let inner = self.tys.list[ty].args[0]
+                let bt = self.pat_bind_ty(inner)
+                let l = self.declare_local(name[..], bt, false, start, end)
+                let b = self.pat_node(TKind.PBind, start, end)
+                self.tir.nodes[b].a = l
+                return self.pat_wrap(if tk == TK.Opt { TKind.PSome } else { TKind.POk }, b, start, end)
+            }
+            let bt = self.pat_bind_ty(ty)
+            let l = self.declare_local(name[..], bt, false, start, end)
+            let b = self.pat_node(TKind.PBind, start, end)
+            self.tir.nodes[b].a = l
+            return b
+        }
+        if k == parser.NodeKind.PLit {
+            if tk == TK.Opt or tk == TK.ErrUnion {
+                let inner = self.tys.list[ty].args[0]
+                let p = self.check_pattern(pat, inner)
+                return self.pat_wrap(if tk == TK.Opt { TKind.PSome } else { TKind.POk }, p, start, end)
+            }
+            return self.check_lit_pattern(pat, ty)
+        }
+        if k == parser.NodeKind.PNull {
+            if tk == TK.Opt { return self.pat_node(TKind.PNull, start, end) }
+            self.fail_here(start, format("`null` pattern on a non-optional value of type `{}`", .{self.ty_name(ty)})[..])
+            return self.pat_node(TKind.PWild, start, end)
+        }
+        if k == parser.NodeKind.PError {
+            let name = n.name.clone()
+            let id = self.error_id(name[..])
+            if tk == TK.ErrUnion or tk == TK.ErrorSet {
+                if self.tys.list[ty].flag {
+                    let s = self.tys.list[ty].def
+                    if !self.error_set_has(s, name[..]) {
+                        self.fail_here(start, format("`error.{}` is not a member of error set `{}`", .{name, self.error_sets[s].name})[..])
+                    }
+                }
+                let p = self.pat_node(TKind.PError, start, end)
+                self.tir.nodes[p].a = id
+                return p
+            }
+            self.fail_here(start, format("error pattern on a value of type `{}`, which is not an error union", .{self.ty_name(ty)})[..])
+            return self.pat_node(TKind.PWild, start, end)
+        }
+        if k == parser.NodeKind.PRange {
+            if tk == TK.Opt {
+                let inner = self.tys.list[ty].args[0]
+                let p = self.check_pattern(pat, inner)
+                return self.pat_wrap(TKind.PSome, p, start, end)
+            }
+            if !self.tys.is_integer(ty) and tk != TK.Char {
+                self.fail_here(start, "range patterns apply to integers and chars")
+                return self.pat_node(TKind.PWild, start, end)
+            }
+            let lo_node = n.x
+            let hi_node = n.y
+            let inclusive = n.flag
+            let lo = self.pattern_const_int(m, lo_node) orelse {
+                self.fail_here(start, "range pattern bounds must be compile-time constants")
+                return self.pat_node(TKind.PWild, start, end)
+            }
+            let hi = self.pattern_const_int(m, hi_node) orelse {
+                self.fail_here(start, "range pattern bounds must be compile-time constants")
+                return self.pat_node(TKind.PWild, start, end)
+            }
+            let p = self.pat_node(TKind.PRange, start, end)
+            self.tir.nodes[p].ival = lo
+            self.tir.nodes[p].text = format("{}", .{hi})
+            self.tir.nodes[p].flag = inclusive
+            return p
+        }
+        if k == parser.NodeKind.POr {
+            let alts = n.kids.clone()
+            let p = self.pat_node(TKind.POr, start, end)
+            for a in alts {
+                if self.node(m, a).k == parser.NodeKind.PBind { self.fail_here(self.node(m, a).start, "bindings are not allowed inside `|` patterns") }
+                let q = self.check_pattern(a, ty)
+                self.tir.nodes[p].kids.append(q)
+            }
+            return p
+        }
+        if k == parser.NodeKind.PTuple {
+            let elems = n.kids.clone()
+            if tk != TK.Tuple {
+                self.fail_here(start, format("tuple pattern on a value of type `{}`", .{self.ty_name(ty)})[..])
+                return self.pat_node(TKind.PWild, start, end)
+            }
+            let ts = self.tys.list[ty].args.clone()
+            if ts.len != elems.len {
+                self.fail_here(start, format("tuple pattern has {} elements but the value has {}", .{elems.len, ts.len})[..])
+                return self.pat_node(TKind.PWild, start, end)
+            }
+            let p = self.pat_node(TKind.PTuple, start, end)
+            for x, i in elems {
+                let q = self.check_pattern(x, ts[i])
+                self.tir.nodes[p].kids.append(q)
+            }
+            return p
+        }
+        if k == parser.NodeKind.PBinary {
+            var is_bytes = false
+            if tk == TK.Slice or tk == TK.Array {
+                let es = self.tys.shallow(self.tys.list[ty].args[0])
+                is_bytes = self.tys.kind(es) == TK.Int and self.tys.list[es].name == "u8"
+            }
+            if tk == TK.Str { is_bytes = true }
+            if !is_bytes {
+                self.fail_here(start, format("binary patterns match `[]u8` values, but this value has type `{}`", .{self.ty_name(ty)})[..])
+                return self.pat_node(TKind.PWild, start, end)
+            }
+            return self.check_bin_pattern(pat)
+        }
+        if k == parser.NodeKind.PVariant {
+            if tk == TK.Opt or tk == TK.ErrUnion {
+                let inner = self.tys.list[ty].args[0]
+                let p = self.check_pattern(pat, inner)
+                return self.pat_wrap(if tk == TK.Opt { TKind.PSome } else { TKind.POk }, p, start, end)
+            }
+            let path = n.words.clone()
+            let args = n.kids.clone()
+            if tk == TK.Bool and path.len == 1 and (path[0] == "true" or path[0] == "false") {
+                let p = self.pat_node(TKind.PBool, start, end)
+                self.tir.nodes[p].flag = path[0] == "true"
+                return p
+            }
+            if tk != TK.Enum {
+                if path.len == 1 and args.len == 0 {
+                    self.fail_here(start, format("`.{}` is an enum variant pattern but the value has type `{}`", .{path[0], self.ty_name(ty)})[..])
+                } else {
+                    self.fail_here(start, format("variant pattern `{}` on a value of type `{}`", .{join_words(&path, "."), self.ty_name(ty)})[..])
+                }
+                return self.pat_node(TKind.PWild, start, end)
+            }
+            let d = self.tys.list[ty].def
+            let name = path[path.len - 1].clone()
+            if path.len == 2 {
+                var ok = false
+                if let r = self.lookup(m, path[0][..]) { ok = r.kind == ItemKind.Enum and r.id == d }
+                if !ok { self.fail_here(start, format("`{}` is not the enum `{}`", .{path[0], self.enums[d].name})[..]) }
+            } else if path.len > 2 {
+                self.fail_here(start, "variant patterns are `.Variant` or `Enum.Variant`")
+            }
+            let idx = self.enum_variant_index(d, name[..])
+            if idx == NONE {
+                self.fail_here(start, format("enum `{}` has no variant `{}`", .{self.enums[d].name, name})[..])
+                return self.pat_node(TKind.PWild, start, end)
+            }
+            let vtys = self.enum_variant_types(ty)
+            let want = vtys[idx].clone()
+            let p = self.pat_node(TKind.PVariant, start, end)
+            self.tir.nodes[p].a = idx
+            if args.len == 0 and want.len > 0 {
+                // `.Variant` matches any payload
+                for w in want {
+                    _ = w
+                    let q = self.pat_node(TKind.PWild, start, end)
+                    self.tir.nodes[p].kids.append(q)
+                }
+                return p
+            }
+            if args.len != want.len {
+                self.fail_here(start, format("variant `{}.{}` has {} value(s) but the pattern binds {}", .{self.enums[d].name, name, want.len, args.len})[..])
+                return self.pat_node(TKind.PWild, start, end)
+            }
+            for a, i in args {
+                let q = self.check_pattern(a, want[i])
+                self.tir.nodes[p].kids.append(q)
+            }
+            return p
+        }
+        self.fail_here(start, "unsupported pattern")
+        return self.pat_node(TKind.PWild, start, end)
+    }
+
+    fn pattern_const_int(self: *mut Self, m: usize, e: usize) -> ?i128 {
+        let n = self.node(m, e)
+        if n.k == parser.NodeKind.Lit and n.text == "char" {
+            let v = n.name[..].parse_int(i128) catch { return null }
+            return v
+        }
+        if n.k == parser.NodeKind.Unary and n.name == "-" {
+            let inner = n.x
+            let v = self.pattern_const_int(m, inner) orelse return null
+            return -v
+        }
+        return self.const_eval_int(m, e)
+    }
+
+    fn check_lit_pattern(self: *mut Self, pat: usize, ty: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, pat)
+        let kind = n.text.clone()
+        let text = n.name.clone()
+        let negative = n.flag
+        let start = n.start
+        let end = n.end
+        var under = ty
+        if self.tys.kind(ty) == TK.Distinct { under = self.tys.shallow(self.distinct_underlying(self.tys.list[ty].def)) }
+        let uk = self.tys.kind(under)
+        if kind == "int" {
+            var v = text[..].parse_int(i128) catch { 0 }
+            if negative { v = -v }
+            if uk == TK.Int {
+                let name = self.tys.list[under].name.clone()
+                if v < int_min(name[..]) or v > int_max(name[..]) { self.fail_here(start, format("literal `{}` does not fit in `{}`", .{v, name})[..]) }
+                let p = self.pat_node(TKind.PInt, start, end)
+                self.tir.nodes[p].ival = v
+                return p
+            }
+            if uk == TK.Infer and self.tys.is_integer(ty) {
+                let p = self.pat_node(TKind.PInt, start, end)
+                self.tir.nodes[p].ival = v
+                return p
+            }
+            if uk == TK.Float {
+                let p = self.pat_node(TKind.PFloat, start, end)
+                self.tir.nodes[p].fval = v as f64
+                return p
+            }
+            if uk == TK.Char {
+                let p = self.pat_node(TKind.PChar, start, end)
+                self.tir.nodes[p].ival = v
+                return p
+            }
+            self.fail_here(start, format("integer pattern on a value of type `{}`", .{self.ty_name(ty)})[..])
+            return self.pat_node(TKind.PWild, start, end)
+        }
+        if kind == "float" {
+            if uk == TK.Float {
+                var f = text[..].parse_float() catch { 0.0 }
+                if negative { f = -f }
+                let p = self.pat_node(TKind.PFloat, start, end)
+                self.tir.nodes[p].fval = f
+                return p
+            }
+            self.fail_here(start, format("float pattern on a value of type `{}`", .{self.ty_name(ty)})[..])
+            return self.pat_node(TKind.PWild, start, end)
+        }
+        if kind == "str" or kind == "bytes" {
+            var ok = uk == TK.Str
+            if uk == TK.Slice {
+                let es = self.tys.shallow(self.tys.list[under].args[0])
+                ok = self.tys.kind(es) == TK.Int and self.tys.list[es].name == "u8"
+            }
+            if ok {
+                let p = self.pat_node(TKind.PStr, start, end)
+                self.tir.nodes[p].text = text.clone()
+                return p
+            }
+            self.fail_here(start, format("string pattern on a value of type `{}`", .{self.ty_name(ty)})[..])
+            return self.pat_node(TKind.PWild, start, end)
+        }
+        if kind == "char" {
+            let c = text[..].parse_int(i128) catch { 0 }
+            if uk == TK.Char {
+                let p = self.pat_node(TKind.PChar, start, end)
+                self.tir.nodes[p].ival = c
+                return p
+            }
+            if uk == TK.Int {
+                let name = self.tys.list[under].name.clone()
+                if c > int_max(name[..]) { self.fail_here(start, format("character does not fit in `{}`", .{name})[..]) }
+                let p = self.pat_node(TKind.PInt, start, end)
+                self.tir.nodes[p].ival = c
+                return p
+            }
+            self.fail_here(start, format("character pattern on a value of type `{}`", .{self.ty_name(ty)})[..])
+            return self.pat_node(TKind.PWild, start, end)
+        }
+        if kind == "bool" {
+            if uk == TK.Bool {
+                let p = self.pat_node(TKind.PBool, start, end)
+                self.tir.nodes[p].flag = text == "true"
+                return p
+            }
+            self.fail_here(start, format("boolean pattern on a value of type `{}`", .{self.ty_name(ty)})[..])
+            return self.pat_node(TKind.PWild, start, end)
+        }
+        self.fail_here(start, "unknown literal pattern")
+        return self.pat_node(TKind.PWild, start, end)
+    }
+
+    fn check_bin_pattern(self: *mut Self, pat: usize) -> usize {
+        let m = self.cur_module()
+        let start = self.node(m, pat).start
+        self.fail_here(start, "binary patterns are not supported yet (stage 2)")
+        return self.pat_node(TKind.PWild, start, self.node(m, pat).end)
+    }
+
+    // ----- @builtins ------------------------------------------------------------------------
+
+    fn check_at_builtin(self: *mut Self, e: usize, expected: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        let name = n.name.clone()
+        let args = n.kids.clone()
+        let start = n.start
+        let end = n.end
+        _ = expected
+        let bytes = self.tys.str_slice()
+        if name == "typeName" or name == "sizeOf" {
+            if !self.args_n(args[..], 1, if name == "typeName" { "@typeName" } else { "@sizeOf" }, start) { return self.error_expr(start, end) }
+            let te = self.check_expr(args[0], NONE)
+            var t = self.tir.nodes[te].ty
+            if self.tir.nodes[te].k == TKind.TypeVal { t = self.tir.nodes[te].a }
+            t = self.tys.resolve(t, true)
+            if name == "typeName" {
+                let r = self.mk(TKind.Str, bytes, start, end)
+                self.tir.nodes[r].text = self.ty_name(t)
+                return r
+            }
+            let u = self.tys.usize_ty()
+            return self.int_node(self.size_of(t) as i128, u, start, end)
+        }
+        if name == "truncate" {
+            if !self.args_n(args[..], 2, "@truncate", start) { return self.error_expr(start, end) }
+            let te = self.check_expr(args[0], NONE)
+            if self.tir.nodes[te].k != TKind.TypeVal {
+                self.fail_here(start, "the first argument of @truncate is the target type")
+                return self.error_expr(start, end)
+            }
+            let t = self.tir.nodes[te].a
+            let v = self.check_expr(args[1], NONE)
+            if !self.tys.is_integer(t) or !self.tys.is_integer(self.tir.nodes[v].ty) { self.fail_here(start, "@truncate converts between integer types") }
+            let vt = self.tys.resolve(self.tir.nodes[v].ty, true)
+            self.tir.nodes[v].ty = vt
+            let b = self.builtin_node("Truncate", t, start, end)
+            self.tir.nodes[b].kids.append(v)
+            self.tir.nodes[b].kids2.append(t)
+            return b
+        }
+        if name == "errorName" {
+            if !self.args_n(args[..], 1, "@errorName", start) { return self.error_expr(start, end) }
+            let x = self.check_expr(args[0], NONE)
+            let t = self.tys.shallow(self.tir.nodes[x].ty)
+            if self.tys.kind(t) != TK.ErrorSet { self.fail_here(start, format("@errorName takes an error value but found `{}`", .{self.ty_name(t)})[..]) }
+            let b = self.builtin_node("ErrorName", bytes, start, end)
+            self.tir.nodes[b].kids.append(x)
+            return b
+        }
+        if name == "embedFile" {
+            if !self.args_n(args[..], 1, "@embedFile", start) { return self.error_expr(start, end) }
+            let an = self.node(m, args[0])
+            if ! (an.k == parser.NodeKind.Lit and an.text == "str") {
+                self.fail_here(an.start, "@embedFile takes a string literal path (a declared build input)")
+                return self.error_expr(start, end)
+            }
+            let path = an.name.clone()
+            let dir = self.mods[m].dir.clone()
+            let full = if dir.len == 0 { path.clone() } else { format("{}/{}", .{dir, path}) }
+            let data = io.read_file(full[..]) catch {
+                self.fail_here(start, format("@embedFile: cannot read `{}`", .{full})[..])
+                return self.error_expr(start, end)
+            }
+            let r = self.mk(TKind.Str, bytes, start, end)
+            self.tir.nodes[r].text = data
+            return r
+        }
+        if name == "cstr" {
+            if !self.args_n(args[..], 1, "@cstr", start) { return self.error_expr(start, end) }
+            let an = self.node(m, args[0])
+            if ! (an.k == parser.NodeKind.Lit and an.text == "str") {
+                self.fail_here(an.start, "@cstr takes a string literal and yields a NUL-terminated `*u8` for C")
+                return self.error_expr(start, end)
+            }
+            let u8t = self.tys.u8_ty()
+            let pt = self.tys.wrap(TK.Ptr, u8t, false)
+            let lit = self.mk(TKind.Str, bytes, start, end)
+            self.tir.nodes[lit].text = an.name.clone()
+            let b = self.builtin_node("PtrAdd", pt, start, end)
+            self.tir.nodes[b].kids.append(lit)
+            return b
+        }
+        if name == "weak" or name == "refCount" {
+            if !self.args_n(args[..], 1, if name == "weak" { "@weak" } else { "@refCount" }, start) { return self.error_expr(start, end) }
+            let x = self.check_expr(args[0], NONE)
+            let t = self.tys.resolve(self.tir.nodes[x].ty, true)
+            if !self.is_ref_class(t) {
+                self.fail_here(start, format("@{} takes a `ref class` value", .{name})[..])
+                return self.error_expr(start, end)
+            }
+            if name == "weak" {
+                let wt = self.tys.wrap(TK.Weak, t, false)
+                self.add_effect(EFF_REFCOUNTS, start, "creating a weak reference touches the count")
+                let b = self.builtin_node("Weak", wt, start, end)
+                self.tir.nodes[b].kids.append(x)
+                self.tir.nodes[b].kids2.append(t)
+                return b
+            }
+            let u = self.tys.usize_ty()
+            let b = self.builtin_node("RefCount", u, start, end)
+            self.tir.nodes[b].kids.append(x)
+            return b
+        }
+        self.fail_here(start, format("unknown builtin `@{}`", .{name})[..])
+        for a in args { _ = self.check_expr(a, NONE) }
+        return self.error_expr(start, end)
+    }
+
+    /// Sizes and alignments of types, as the C backend lays them out.
+    fn size_of(self: *mut Self, t0: usize) -> u64 {
+        let t = self.tys.shallow(t0)
+        let k = self.tys.kind(t)
+        if k == TK.Int { return (int_bits(self.tys.list[t].name[..]) / 8) as u64 }
+        if k == TK.Float { return if self.tys.list[t].name == "f32" { 4 } else { 8 } }
+        if k == TK.Bool { return 1 }
+        if k == TK.Char { return 4 }
+        if k == TK.Void or k == TK.Never { return 0 }
+        if k == TK.Array { return self.tys.list[t].n * self.size_of(self.tys.list[t].args[0]) }
+        if k == TK.Slice or k == TK.Fn { return 16 }
+        if k == TK.Ptr or k == TK.Weak { return 8 }
+        if k == TK.Opt {
+            let e = self.tys.list[t].args[0]
+            return round_up(self.size_of(e) + 1, self.align_of(e))
+        }
+        if k == TK.ErrUnion {
+            let e = self.tys.list[t].args[0]
+            let a = max64(self.align_of(e), 4)
+            return round_up(round_up(4, self.align_of(e)) + self.size_of(e), a)
+        }
+        if k == TK.Distinct { return self.size_of(self.distinct_underlying(self.tys.list[t].def)) }
+        if k == TK.List or k == TK.Str { return 24 }
+        if k == TK.Map { return 40 }
+        if k == TK.Struct or k == TK.Tuple {
+            if k == TK.Struct and self.is_ref_class(t) { return 8 }
+            let fts = if k == TK.Struct { self.struct_field_types(t) } else { self.tys.list[t].args.clone() }
+            var off: u64 = 0
+            var maxa: u64 = 1
+            for f in fts {
+                let a = self.align_of(f)
+                maxa = max64(maxa, a)
+                off = round_up(off, a) + self.size_of(f)
+            }
+            return round_up(off, maxa)
+        }
+        if k == TK.Enum {
+            let vtys = self.enum_variant_types(t)
+            var maxs: u64 = 0
+            var maxa: u64 = 4
+            for v in vtys {
+                var off: u64 = 0
+                for f in v {
+                    let a = self.align_of(f)
+                    maxa = max64(maxa, a)
+                    off = round_up(off, a) + self.size_of(f)
+                }
+                maxs = max64(maxs, off)
+            }
+            return round_up(round_up(4, maxa) + maxs, maxa)
+        }
+        return 8
+    }
+
+    fn align_of(self: *mut Self, t0: usize) -> u64 {
+        let t = self.tys.shallow(t0)
+        let k = self.tys.kind(t)
+        if k == TK.Int { return min64((int_bits(self.tys.list[t].name[..]) / 8) as u64, 16) }
+        if k == TK.Float { return if self.tys.list[t].name == "f32" { 4 } else { 8 } }
+        if k == TK.Bool { return 1 }
+        if k == TK.Char { return 4 }
+        if k == TK.Void or k == TK.Never { return 1 }
+        if k == TK.Array or k == TK.Opt { return self.align_of(self.tys.list[t].args[0]) }
+        if k == TK.ErrUnion { return max64(self.align_of(self.tys.list[t].args[0]), 4) }
+        if k == TK.Distinct { return self.align_of(self.distinct_underlying(self.tys.list[t].def)) }
+        if k == TK.Struct or k == TK.Tuple {
+            if k == TK.Struct and self.is_ref_class(t) { return 8 }
+            let fts = if k == TK.Struct { self.struct_field_types(t) } else { self.tys.list[t].args.clone() }
+            var maxa: u64 = 1
+            for f in fts { maxa = max64(maxa, self.align_of(f)) }
+            return maxa
+        }
+        if k == TK.Enum {
+            let vtys = self.enum_variant_types(t)
+            var maxa: u64 = 1
+            for v in vtys { for f in v { maxa = max64(maxa, self.align_of(f)) } }
+            return max64(maxa, 4)
+        }
+        return 8
+    }
+}
+
+fn max64(a: u64, b: u64) -> u64 { return if a > b { a } else { b } }
+fn min64(a: u64, b: u64) -> u64 { return if a < b { a } else { b } }
+
+fn round_up(v: u64, a: u64) -> u64 {
+    if a == 0 { return v }
+    return ((v + a - 1) / a) * a
 }
 
 pub fn new_checker(own mods: List(Mod)) -> Checker {
