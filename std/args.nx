@@ -156,6 +156,23 @@ pub fn usage(program: []u8, summary: []u8, rows: [][]u8) -> String {
     return out
 }
 
+/// The environment as a map, from `os.environ()`.
+pub fn env_map() -> Map(String, String) {
+    var m = Map(String, String).new()
+    for (os.environ()) |entry| {
+        var i: usize = 0
+        while (i < entry.len and entry[i] != '=') { i += 1 }
+        if (i == 0 or i >= entry.len) continue
+        m.put(String.from(entry[0..i]), String.from(entry[i + 1..entry.len]))
+    }
+    return m
+}
+
+test "env map" {
+    let m = env_map()
+    expect(m.len > 0)
+}
+
 test "flags and options" {
     let argv = ["prog", "-v", "--level", "debug", "--name=nx", "in.txt", "-v", "--", "-x"]
     var p = Parser.new(argv[..])

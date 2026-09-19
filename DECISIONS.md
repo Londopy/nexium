@@ -399,6 +399,15 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     file modules' tests, never the embedded std modules' tests, which the
     compiler's suite covers.
 
+79. **Streams are integer handles plus a Nexium buffer.** The runtime keeps a
+    small table of open `FILE*`s and hands out integers (1, 2, 3 are the
+    standard streams), because a handle is trivially copyable, printable
+    and needs no destructor; `std.stream` puts the 64 KB buffers, line
+    splitting and flushing on top in Nexium. Nothing closes or flushes a
+    Writer automatically: with no destructors in the language yet, an
+    explicit `close` (or `defer w.flush()`) is the honest rule, stated in
+    the module's doc comment.
+
 ## Compiler selection
 
 60. **Native macOS builds use the system compiler.** zig 0.14.1 cannot read

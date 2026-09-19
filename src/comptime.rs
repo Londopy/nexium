@@ -1700,6 +1700,7 @@ impl<'c, 'a> Interp<'c, 'a> {
                     Err(e) => Value::Err(self.c.error_id(if e.kind() == std::io::ErrorKind::NotFound { "NotFound" } else { "IoError" })),
                 })
             }
+            Builtin::Environ if self.c.repl_mode => Some(Value::List(std::env::vars().map(|(k, v)| Value::OwnedStr(format!("{}={}", k, v).into_bytes())).collect())),
             Builtin::FsCwd if self.c.repl_mode => Some(match std::env::current_dir() {
                 Ok(d) => Value::Ok(Box::new(Value::OwnedStr(d.to_string_lossy().into_owned().into_bytes()))),
                 Err(_) => Value::Err(self.c.error_id("IoError")),

@@ -19,6 +19,7 @@ by `scripts/std_docs.py` from the doc comments.
 | [`std.lists`](#stdlists) | generic helpers over slices and Lists, written in Nexium. |
 | [`std.num`](#stdnum) | integer utilities, written in Nexium. |
 | [`std.regex`](#stdregex) | regular expressions without backtracking, written in Nexium. |
+| [`std.stream`](#stdstream) | buffered readers and writers over files and the standard |
 | [`std.strings`](#stdstrings) | text utilities on `[]u8` and `String`, written in Nexium. |
 | [`std.testing`](#stdtesting) | conveniences for `test` blocks, written in Nexium. |
 | [`std.text`](#stdtext) | UTF-8 text by code point, written in Nexium. |
@@ -41,6 +42,7 @@ Types: `Parser`
 | `(method) rest(self: *Self) -> List([]u8)` | Arguments not consumed by any query, plus everything after `--`. |
 | `(method) unknown_options(self: *Self) -> List([]u8)` | Unconsumed arguments that look like options: the ones the program did not ask for. |
 | `usage(program: []u8, summary: []u8, rows: [][]u8) -> String` | Render a usage line and option table from (flags, description) rows. |
+| `env_map() -> Map(String, String)` | The environment as a map, from `os.environ()`. |
 
 ## std.bytes
 
@@ -194,6 +196,32 @@ Types: `Regex`, `Match`
 | `(method) find_all(self: *Self, text: []u8) -> List(Match)` | Every non-overlapping match, left to right. |
 | `(method) replace_all(self: *Self, text: []u8, repl: []u8) -> String` | dollar sign. |
 | `(method) split(self: *Self, text: []u8) -> List([]u8)` | The pieces of `text` between matches. |
+
+## std.stream
+
+std.stream: buffered readers and writers over files and the standard streams, written in Nexium. `import std.stream` then: var r = try stream.Reader.open("big.log") while (try r.read_line()) |line| { ... }        // no whole-file allocation r.close() var w = try stream.Writer.open("out.txt") try w.write_line("hello") try w.close()                                    // flushes, then closes var input = stream.Reader.stdin() var out = stream.Writer.stdout() try stream.copy(&mut input, &mut out) try out.flush() Readers buffer 64 KB at a time; writers gather output and flush when the buffer fills, on `flush`, and on `close`. A Writer must be flushed or closed before the program ends, or buffered output is lost.
+
+Types: `Reader`, `Writer`
+
+| function | what it does |
+| --- | --- |
+| `(method) open(path: []u8) -> !Reader` | Open a file for reading. |
+| `(method) stdin() -> Reader` | Standard input. |
+| `(method) from_handle(handle: i64) -> Reader` | Wrap a handle from `io.open`; `close` will not close it. |
+| `(method) read_line(self: *mut Self) -> !?String` | The next line without its `\n` (or `\r\n`); null at end of input. |
+| `(method) read(self: *mut Self, n: usize) -> !String` | Up to `n` bytes; empty at end of input. |
+| `(method) read_all(self: *mut Self) -> !String` | Everything that is left. |
+| `(method) close(self: *mut Self)` | Release the file (the standard streams stay open). |
+| `(method) open(path: []u8) -> !Writer` | Create or replace a file. |
+| `(method) append(path: []u8) -> !Writer` | Open a file for appending. |
+| `(method) stdout() -> Writer` |  |
+| `(method) stderr() -> Writer` |  |
+| `(method) from_handle(handle: i64) -> Writer` | Wrap a handle from `io.open`; `close` will not close it. |
+| `(method) write(self: *mut Self, data: []u8) -> !void` |  |
+| `(method) write_line(self: *mut Self, data: []u8) -> !void` |  |
+| `(method) flush(self: *mut Self) -> !void` | Hand buffered output to the handle. |
+| `(method) close(self: *mut Self) -> !void` | Flush, then release the file (the standard streams stay open). |
+| `copy(r: *mut Reader, w: *mut Writer) -> !usize` | Copy everything from a reader to a writer; the number of bytes moved. |
 
 ## std.strings
 

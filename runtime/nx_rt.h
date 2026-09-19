@@ -34,6 +34,7 @@
 #include <sys/wait.h>
 #include <dirent.h>
 extern char** environ;
+extern char** environ;
 #endif
 
 #if defined(_MSC_VER) && !defined(__clang__)
@@ -1015,6 +1016,77 @@ NX_INLINE nx_string nx_fs_temp_dir(nx_ctx* c) {
     nx_str_append(c, &s, (const uint8_t*)t, n);
 #endif
     return s;
+}
+
+/* ------------------------------------------------------------ file handles */
+/* 1 = stdin, 2 = stdout, 3 = stderr; opened files get 4 and up. */
+#define NX_MAX_FILES 64
+static FILE* nx_files[NX_MAX_FILES];
+NX_INLINE FILE* nx_fh(int64_t h) {
+    if (h == 1) return stdin;
+    if (h == 2) return stdout;
+    if (h == 3) return stderr;
+    if (h < 4 || h >= NX_MAX_FILES + 4) return NULL;
+    return nx_files[h - 4];
+}
+/* a handle, or -1 when the path does not exist, -2 on any other failure */
+NX_INLINE int64_t nx_file_open(nx_sl_u8 path, nx_sl_u8 mode) {
+    char p[4096], m[8];
+    if (!nx_cpath(path, p, sizeof p) || mode.len == 0 || mode.len > 3) return -2;
+    memcpy(m, mode.ptr, mode.len); m[mode.len] = 'b'; m[mode.len + 1] = 0;
+    FILE* f = fopen(p, m);
+    if (!f) return errno == ENOENT ? -1 : -2;
+    for (int i = 0; i < NX_MAX_FILES; i++) {
+        if (!nx_files[i]) { nx_files[i] = f; return i + 4; }
+    }
+    fclose(f);
+    return -2;
+}
+/* up to n bytes; an empty result means end of input */
+NX_INLINE bool nx_file_read(nx_ctx* c, int64_t h, size_t n, nx_string* out) {
+    FILE* f = nx_fh(h);
+    if (!f) return false;
+    nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;
+    if (n > 0) {
+        nx_list_grow(c, (nx_rawlist*)&s, 1, 1, n);
+        s.len = fread(s.ptr, 1, n, f);
+        if (s.len == 0 && ferror(f)) return false;
+    }
+    *out = s;
+    return true;
+}
+NX_INLINE bool nx_file_write(int64_t h, nx_sl_u8 data) {
+    FILE* f = nx_fh(h);
+    if (!f) return false;
+    return data.len == 0 || fwrite(data.ptr, 1, data.len, f) == data.len;
+}
+NX_INLINE bool nx_file_flush(int64_t h) {
+    FILE* f = nx_fh(h);
+    return f && fflush(f) == 0;
+}
+NX_INLINE bool nx_file_close(int64_t h) {
+    if (h >= 1 && h <= 3) return true;
+    FILE* f = nx_fh(h);
+    if (!f) return false;
+    nx_files[h - 4] = NULL;
+    return fclose(f) == 0;
+}
+/* every environment variable as "NAME=value" */
+NX_INLINE void nx_environ(nx_ctx* c, nx_rawlist* out) {
+    nx_rawlist l; l.ptr = NULL; l.len = 0; l.cap = 0; l.ar = c->arena;
+#if defined(_WIN32)
+    char* env = GetEnvironmentStringsA();
+    if (env) {
+        for (char* p = env; *p; p += strlen(p) + 1) {
+            if (*p == '=') continue; /* per-drive working directories */
+            nx_fs_push_name(c, &l, p);
+        }
+        FreeEnvironmentStringsA(env);
+    }
+#else
+    for (char** e = environ; e && *e; e++) nx_fs_push_name(c, &l, *e);
+#endif
+    *out = l;
 }
 
 NX_INLINE bool nx_read_line(nx_ctx* c, nx_string* out) {

@@ -610,8 +610,54 @@ impl<'a> Checker<'a> {
                     self.add_effect(Effects::ALLOCATES, span, "the directory name is copied into a String");
                     self.builtin(Builtin::FsTempDir, vec![], vec![], string, span)
                 }
+                "open" => {
+                    if !self.check_args_n(args, 2, "io.open", span) {
+                        return self.error_expr(span);
+                    }
+                    let p = self.arg(&args[0], bytes, "path");
+                    let md = self.arg(&args[1], bytes, "mode");
+                    self.add_effect(Effects::BLOCKS, span, "file I/O blocks");
+                    let i64t = self.tys.int(IntTy::I64);
+                    let r = self.tys.err_union(None, i64t);
+                    self.builtin(Builtin::FileOpen, vec![p, md], vec![], r, span)
+                }
+                "read" => {
+                    if !self.check_args_n(args, 2, "io.read", span) {
+                        return self.error_expr(span);
+                    }
+                    let i64t = self.tys.int(IntTy::I64);
+                    let usizet = self.tys.usize();
+                    let h = self.arg(&args[0], i64t, "handle");
+                    let n = self.arg(&args[1], usizet, "byte count");
+                    self.add_effect(Effects::BLOCKS, span, "file I/O blocks");
+                    self.add_effect(Effects::ALLOCATES, span, "reading allocates the chunk");
+                    let r = self.tys.err_union(None, string);
+                    self.builtin(Builtin::FileRead, vec![h, n], vec![], r, span)
+                }
+                "write" => {
+                    if !self.check_args_n(args, 2, "io.write", span) {
+                        return self.error_expr(span);
+                    }
+                    let i64t = self.tys.int(IntTy::I64);
+                    let h = self.arg(&args[0], i64t, "handle");
+                    let d = self.arg(&args[1], bytes, "data");
+                    self.add_effect(Effects::BLOCKS, span, "file I/O blocks");
+                    let r = self.tys.err_union(None, void);
+                    self.builtin(Builtin::FileWrite, vec![h, d], vec![], r, span)
+                }
+                "flush" | "close" => {
+                    if !self.check_args_n(args, 1, &format!("io.{}", name), span) {
+                        return self.error_expr(span);
+                    }
+                    let i64t = self.tys.int(IntTy::I64);
+                    let h = self.arg(&args[0], i64t, "handle");
+                    self.add_effect(Effects::BLOCKS, span, "file I/O blocks");
+                    let r = self.tys.err_union(None, void);
+                    let op = if name == "flush" { Builtin::FileFlush } else { Builtin::FileClose };
+                    self.builtin(op, vec![h], vec![], r, span)
+                }
                 _ => {
-                    self.error(span, format!("`io` has no function `{}`; available: read_file, write_file, append_file, read_line, file_kind, file_size, file_modified, make_dir, remove_file, remove_dir, rename, list_dir, cwd, temp_dir", name));
+                    self.error(span, format!("`io` has no function `{}`; available: read_file, write_file, append_file, read_line, file_kind, file_size, file_modified, make_dir, remove_file, remove_dir, rename, list_dir, cwd, temp_dir, open, read, write, flush, close", name));
                     self.error_expr(span)
                 }
             },
@@ -622,6 +668,15 @@ impl<'a> Checker<'a> {
                     }
                     let t = self.tys.slice(false, bytes);
                     self.builtin(Builtin::Args, vec![], vec![], t, span)
+                }
+                "environ" => {
+                    if !self.check_args_n(args, 0, "os.environ", span) {
+                        return self.error_expr(span);
+                    }
+                    self.add_effect(Effects::NONDETERMINISTIC, span, "the environment varies across runs");
+                    self.add_effect(Effects::ALLOCATES, span, "the environment is copied into Strings");
+                    let l = self.tys.list(string);
+                    self.builtin(Builtin::Environ, vec![], vec![], l, span)
                 }
                 "env" => {
                     if !self.check_args_n(args, 1, "os.env", span) {

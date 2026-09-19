@@ -49,6 +49,15 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
 - Embedded std modules can import each other; `error` is a type name (the
   anonymous error set), and `own` is accepted on generic parameters.
 - `nx test` no longer runs the tests of imported std modules.
+- `std.stream`: buffered `Reader` (`open`, `stdin`, `read_line`, `read`,
+  `read_all`) and `Writer` (`open`, `append`, `stdout`, `stderr`, `write`,
+  `write_line`, `flush`, `close`) plus `copy`, over new runtime file handles
+  (`io.open`, `io.read`, `io.write`, `io.flush`, `io.close`; handles 1 to 3
+  are the standard streams).
+- `os.environ()` lists the environment; `args.env_map()` turns it into a
+  `Map(String, String)`.
+- `nx test --verbose` prints timings and the tests a filter skipped;
+  `nx doc std.fs` and `nx test std.regex` accept an embedded module by name.
 - `examples/tool.nx`: a log scanner (walk a tree, parse timestamps, filter
   by a date window and a regex, tally by level) in 142 lines, the phase 1
   exit example of the roadmap; runs on `examples/data/logs` by default.

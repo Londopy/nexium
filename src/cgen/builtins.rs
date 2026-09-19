@@ -946,6 +946,44 @@ impl Gen {
                 t
             }
             Builtin::FsTempDir => "nx_fs_temp_dir(c)".into(),
+            Builtin::FileOpen => {
+                let p = self.simple(&args[0]);
+                let md = self.simple(&args[1]);
+                let cn = self.cty(e.ty);
+                let t = self.tmp();
+                let (nf, io) = (self.err_id("NotFound"), self.err_id("IoError"));
+                self.line(format!("{} {}; {{ int64_t _h = nx_file_open({}, {}); if (_h >= 0) {{ {}.err = 0; {}.val = _h; }} else {}.err = _h == -1 ? {}u : {}u; }}", cn, t, p, md, t, t, t, nf, io));
+                t
+            }
+            Builtin::FileRead => {
+                let h = self.simple(&args[0]);
+                let n = self.simple(&args[1]);
+                let cn = self.cty(e.ty);
+                let t = self.tmp();
+                let io = self.err_id("IoError");
+                self.line(format!("{} {}; {{ nx_string _s; if (nx_file_read(c, {}, {}, &_s)) {{ {}.err = 0; {}.val = _s; }} else {}.err = {}u; }}", cn, t, h, n, t, t, t, io));
+                t
+            }
+            Builtin::FileWrite => {
+                let h = self.simple(&args[0]);
+                let d = self.simple(&args[1]);
+                let cn = self.cty(e.ty);
+                let io = self.err_id("IoError");
+                format!("(({}){{ .err = nx_file_write({}, {}) ? 0 : {}u }})", cn, h, d, io)
+            }
+            Builtin::FileFlush | Builtin::FileClose => {
+                let h = self.simple(&args[0]);
+                let cn = self.cty(e.ty);
+                let io = self.err_id("IoError");
+                let f = if op == Builtin::FileFlush { "nx_file_flush" } else { "nx_file_close" };
+                format!("(({}){{ .err = {}({}) ? 0 : {}u }})", cn, f, h, io)
+            }
+            Builtin::Environ => {
+                let cn = self.cty(e.ty);
+                let t = self.tmp();
+                self.line(format!("{} {}; {{ nx_rawlist _l; nx_environ(c, &_l); memcpy(&{}, &_l, sizeof _l); }}", cn, t, t));
+                t
+            }
             Builtin::ReadLine => {
                 let cn = self.cty(e.ty);
                 let t = self.tmp();

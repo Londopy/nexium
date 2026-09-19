@@ -1,0 +1,249 @@
+// std.stream: buffered readers and writers over files and the standard
+// streams, written in Nexium.
+//
+// `import std.stream` then:
+//
+//     var r = try stream.Reader.open("big.log")
+//     while (try r.read_line()) |line| { ... }        // no whole-file allocation
+//     r.close()
+//
+//     var w = try stream.Writer.open("out.txt")
+//     try w.write_line("hello")
+//     try w.close()                                    // flushes, then closes
+//
+//     var input = stream.Reader.stdin()
+//     var out = stream.Writer.stdout()
+//     try stream.copy(&mut input, &mut out)
+//     try out.flush()
+//
+// Readers buffer 64 KB at a time; writers gather output and flush when the
+// buffer fills, on `flush`, and on `close`. A Writer must be flushed or
+// closed before the program ends, or buffered output is lost.
+
+pub const STDIN: i64 = 1
+pub const STDOUT: i64 = 2
+pub const STDERR: i64 = 3
+
+const CHUNK: usize = 65536
+
+/// Reads a handle through a buffer.
+pub struct Reader {
+    handle: i64
+    buf: String
+    pos: usize
+    eof: bool
+    owns: bool
+}
+
+impl Reader {
+    /// Open a file for reading.
+    pub fn open(path: []u8) -> !Reader {
+        let h = try io.open(path, "r")
+        return Reader{ .handle = h, .buf = String.new(), .pos = 0, .eof = false, .owns = true }
+    }
+
+    /// Standard input.
+    pub fn stdin() -> Reader {
+        return Reader{ .handle = STDIN, .buf = String.new(), .pos = 0, .eof = false, .owns = false }
+    }
+
+    /// Wrap a handle from `io.open`; `close` will not close it.
+    pub fn from_handle(handle: i64) -> Reader {
+        return Reader{ .handle = handle, .buf = String.new(), .pos = 0, .eof = false, .owns = false }
+    }
+
+    // Drop consumed bytes and pull in the next chunk; false at end of input.
+    fn fill(self: *mut Self) -> !bool {
+        if (self.eof) return false
+        if (self.pos > 0) {
+            let rest = String.from(self.buf[self.pos..self.buf.len])
+            self.buf = rest
+            self.pos = 0
+        }
+        let chunk = try io.read(self.handle, CHUNK)
+        if (chunk.len == 0) {
+            self.eof = true
+            return false
+        }
+        self.buf.append(chunk)
+        return true
+    }
+
+    /// The next line without its `\n` (or `\r\n`); null at end of input.
+    pub fn read_line(self: *mut Self) -> !?String {
+        while (true) {
+            var i = self.pos
+            while (i < self.buf.len and self.buf[i] != '\n') { i += 1 }
+            if (i < self.buf.len) {
+                var end = i
+                if (end > self.pos and self.buf[end - 1] == '\r') end -= 1
+                let line = String.from(self.buf[self.pos..end])
+                self.pos = i + 1
+                return line
+            }
+            if (! (try self.fill())) {
+                if (self.pos < self.buf.len) {
+                    var end = self.buf.len
+                    if (self.buf[end - 1] == '\r') end -= 1
+                    let line = String.from(self.buf[self.pos..end])
+                    self.pos = self.buf.len
+                    return line
+                }
+                return null
+            }
+        }
+    }
+
+    /// Up to `n` bytes; empty at end of input.
+    pub fn read(self: *mut Self, n: usize) -> !String {
+        if (self.pos >= self.buf.len) {
+            if (! (try self.fill())) return String.new()
+        }
+        var end = self.pos + n
+        if (end > self.buf.len) end = self.buf.len
+        let out = String.from(self.buf[self.pos..end])
+        self.pos = end
+        return out
+    }
+
+    /// Everything that is left.
+    pub fn read_all(self: *mut Self) -> !String {
+        var out = String.from(self.buf[self.pos..self.buf.len])
+        self.pos = self.buf.len
+        while (true) {
+            let chunk = try io.read(self.handle, CHUNK)
+            if (chunk.len == 0) break
+            out.append(chunk)
+        }
+        self.eof = true
+        return out
+    }
+
+    /// Release the file (the standard streams stay open).
+    pub fn close(self: *mut Self) {
+        if (self.owns) {
+            io.close(self.handle) catch { }
+            self.owns = false
+        }
+        self.eof = true
+    }
+}
+
+/// Buffers output to a handle.
+pub struct Writer {
+    handle: i64
+    buf: String
+    owns: bool
+}
+
+impl Writer {
+    /// Create or replace a file.
+    pub fn open(path: []u8) -> !Writer {
+        let h = try io.open(path, "w")
+        return Writer{ .handle = h, .buf = String.new(), .owns = true }
+    }
+
+    /// Open a file for appending.
+    pub fn append(path: []u8) -> !Writer {
+        let h = try io.open(path, "a")
+        return Writer{ .handle = h, .buf = String.new(), .owns = true }
+    }
+
+    pub fn stdout() -> Writer {
+        return Writer{ .handle = STDOUT, .buf = String.new(), .owns = false }
+    }
+
+    pub fn stderr() -> Writer {
+        return Writer{ .handle = STDERR, .buf = String.new(), .owns = false }
+    }
+
+    /// Wrap a handle from `io.open`; `close` will not close it.
+    pub fn from_handle(handle: i64) -> Writer {
+        return Writer{ .handle = handle, .buf = String.new(), .owns = false }
+    }
+
+    pub fn write(self: *mut Self, data: []u8) -> !void {
+        self.buf.append(data)
+        if (self.buf.len >= CHUNK) try self.flush()
+    }
+
+    pub fn write_line(self: *mut Self, data: []u8) -> !void {
+        try self.write(data)
+        return self.write("\n")
+    }
+
+    /// Hand buffered output to the handle.
+    pub fn flush(self: *mut Self) -> !void {
+        if (self.buf.len > 0) {
+            try io.write(self.handle, self.buf)
+            self.buf.clear()
+        }
+        return io.flush(self.handle)
+    }
+
+    /// Flush, then release the file (the standard streams stay open).
+    pub fn close(self: *mut Self) -> !void {
+        try self.flush()
+        if (self.owns) {
+            self.owns = false
+            return io.close(self.handle)
+        }
+    }
+}
+
+/// Copy everything from a reader to a writer; the number of bytes moved.
+pub fn copy(r: *mut Reader, w: *mut Writer) -> !usize {
+    var total: usize = 0
+    while (true) {
+        let chunk = try r.read(CHUNK)
+        if (chunk.len == 0) break
+        try w.write(chunk)
+        total += chunk.len
+    }
+    return total
+}
+
+// ------------------------------------------------------------------ tests
+
+test "lines and chunks" {
+    let dir = io.temp_dir()
+    var path = String.from(dir)
+    path.append("/nxstream-test.txt")
+    var w = try Writer.open(path)
+    try w.write_line("first")
+    try w.write("second\r\n")
+    try w.write("third")
+    try w.close()
+
+    var r = try Reader.open(path)
+    expect_eq((try r.read_line()).?, "first")
+    expect_eq((try r.read_line()).?, "second")
+    expect_eq((try r.read_line()).?, "third")
+    expect(try r.read_line() == null)
+    r.close()
+
+    var r2 = try Reader.open(path)
+    expect_eq(try r2.read(3), "fir")
+    expect_eq(try r2.read_all(), "st\nsecond\r\nthird")
+    r2.close()
+
+    var copy_path = String.from(dir)
+    copy_path.append("/nxstream-copy.txt")
+    var src = try Reader.open(path)
+    var dst = try Writer.open(copy_path)
+    expect_eq(try copy(&mut src, &mut dst), 19)
+    try dst.close()
+    src.close()
+    expect_eq(try io.read_file(copy_path), "first\nsecond\r\nthird")
+    try io.remove_file(path)
+    try io.remove_file(copy_path)
+}
+
+test "missing file" {
+    var missing = false
+    _ = Reader.open("definitely/not/here.txt") catch |e| {
+        missing = e == error.NotFound
+        Reader.stdin()
+    }
+    expect(missing)
+}

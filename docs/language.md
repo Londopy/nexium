@@ -225,7 +225,13 @@ the inferred set per function.
   `io.list_dir(path) -> !List(String)`, `io.cwd() -> !String`,
   `io.temp_dir() -> String`. Failures are `error.NotFound` or
   `error.IoError`.
-- `os.args() -> [][]u8`, `os.env(name) -> ?[]u8`, `os.exit(code)`,
+- File handles (`std.stream` wraps them with buffering): `io.open(path,
+  mode) -> !i64` (mode `r`, `w`, `a`), `io.read(h, n) -> !String` (up to
+  `n` bytes; empty at end of input), `io.write(h, bytes) -> !void`,
+  `io.flush(h) -> !void`, `io.close(h) -> !void`. Handles 1, 2 and 3 are
+  stdin, stdout and stderr. Not available at the REPL.
+- `os.args() -> [][]u8`, `os.env(name) -> ?[]u8`, `os.environ() ->
+  List(String)` (every `NAME=value`), `os.exit(code)`,
   `process.run(argv: [][]u8) -> !i32` (spawns, waits, returns the exit code;
   `error.IoError` when the program cannot be started).
 - `time.now() -> i64` (ms since the epoch), `time.monotonic() -> u64` (ns),

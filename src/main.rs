@@ -36,7 +36,7 @@ fn usage() -> ! {
 usage:
   nx build <file.nx> [options]     compile to an executable (or library when no main)
   nx run <file.nx> [-- args]       compile and run
-  nx test <file.nx> [filter]       run `test \"...\"` blocks
+  nx test <file.nx> [--filter NAME] [--verbose]  run `test \"...\"` blocks (also `nx test std.fs`)
   nx check <file.nx>               type-check and report effects violations only
   nx effects <file.nx>             report the inferred effects of every function
   nx audit <file.nx> [--globals]   list unsafe blocks and mutable globals
@@ -170,6 +170,7 @@ fn parse_opts(args: &[String]) -> Opts {
                     o.rest.push(f.clone());
                 }
             }
+            "--verbose" => o.rest.push("--verbose".into()),
             "--" => {
                 o.rest.extend(args[i + 1..].iter().cloned());
                 break;
@@ -239,12 +240,16 @@ fn load(root: &Path) -> Result<Loaded, ()> {
             continue;
         }
         seen.insert(name.clone(), ());
-        let text = match std::fs::read_to_string(&path) {
-            Ok(t) => t,
-            Err(e) => {
-                eprintln!("error: cannot read {}: {}", path.display(), e);
-                return Err(());
-            }
+        let embedded = if path.exists() { None } else { path.to_string_lossy().strip_prefix("std.").and_then(stdlib::source) };
+        let text = match embedded {
+            Some(src) => src.to_string(),
+            None => match std::fs::read_to_string(&path) {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("error: cannot read {}: {}", path.display(), e);
+                    return Err(());
+                }
+            },
         };
         let display = path.to_string_lossy().to_string();
         let file = sm.add(display, text.clone());
@@ -703,8 +708,18 @@ fn write_c(opts: &Opts, stem: &str, c: &str) -> Result<PathBuf, ()> {
     std::fs::create_dir_all(&opts.out_dir).map_err(|e| eprintln!("error: cannot create {}: {}", opts.out_dir.display(), e))?;
     let path = opts.out_dir.join(format!("{}.c", stem));
     std::fs::write(&path, c).map_err(|e| eprintln!("error: cannot write {}: {}", path.display(), e))?;
+    // the runtime header is shared by every build in the directory: leave it
+    // alone when current, and replace it atomically so a parallel build never
+    // reads a half-written copy
     let rt = opts.out_dir.join("nx_rt.h");
-    let _ = std::fs::write(&rt, cgen::RUNTIME_H);
+    let current = std::fs::read(&rt).map(|b| b == cgen::RUNTIME_H.as_bytes()).unwrap_or(false);
+    if !current {
+        let tmp = opts.out_dir.join(format!("nx_rt.h.{}.tmp", std::process::id()));
+        if std::fs::write(&tmp, cgen::RUNTIME_H).is_ok() && std::fs::rename(&tmp, &rt).is_err() {
+            let _ = std::fs::write(&rt, cgen::RUNTIME_H);
+            let _ = std::fs::remove_file(&tmp);
+        }
+    }
     Ok(path)
 }
 
@@ -717,6 +732,11 @@ fn exe_name(stem: &str, target: &Option<String>) -> String {
 }
 
 fn stem_of(p: &Path) -> String {
+    // an embedded module named on the command line (`nx doc std.fs`) keeps its full name
+    let text = p.to_string_lossy();
+    if !p.exists() && text.starts_with("std.") && stdlib::source(&text[4..]).is_some() {
+        return text.to_string();
+    }
     p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "out".into())
 }
 
