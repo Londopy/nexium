@@ -68,6 +68,8 @@ extern char** environ;
 
 typedef __int128 nx_i128;
 typedef unsigned __int128 nx_u128;
+#define NX_I128_MAX ((nx_i128)((((nx_u128)1) << 127) - 1))
+#define NX_I128_MIN ((nx_i128)(-NX_I128_MAX - 1))
 
 /* ------------------------------------------------------------------ slices */
 typedef struct nx_sl_u8 { uint8_t* ptr; size_t len; } nx_sl_u8;
@@ -504,8 +506,9 @@ NX_INLINE int nx_parse_int(nx_sl_u8 s, nx_i128 lo, nx_i128 hi, nx_i128* out) {
         else if (base == 16 && ch >= 'a' && ch <= 'f') d = ch - 'a' + 10;
         else if (base == 16 && ch >= 'A' && ch <= 'F') d = ch - 'A' + 10;
         else return 1;
+        /* overflow of the accumulator itself: the range check below cannot see it */
+        if (v > (NX_I128_MAX - d) / base) return 2;
         v = v * base + d;
-        if (v > (nx_i128)UINT64_MAX * 2) return 2;
     }
     if (neg) v = -v;
     if (v < lo || v > hi) return 2;
@@ -1611,8 +1614,6 @@ NX_INT_OPS(u32, uint32_t, uint32_t, 0, UINT32_MAX)
 NX_INT_OPS(u64, uint64_t, uint64_t, 0, UINT64_MAX)
 NX_INT_OPS(isize, intptr_t, uintptr_t, INTPTR_MIN, INTPTR_MAX)
 NX_INT_OPS(usize, size_t, size_t, 0, SIZE_MAX)
-#define NX_I128_MIN ((nx_i128)(-(((nx_u128)1) << 127)))
-#define NX_I128_MAX ((nx_i128)((((nx_u128)1) << 127) - 1))
 NX_INT_OPS(i128, nx_i128, nx_u128, NX_I128_MIN, NX_I128_MAX)
 NX_INT_OPS(u128, nx_u128, nx_u128, 0, (~(nx_u128)0))
 

@@ -1223,9 +1223,12 @@ pub fn int_literal(v: i128, it: IntTy) -> String {
             } else if v > i64::MIN as i128 && v <= i64::MAX as i128 {
                 format!("((nx_i128){}LL)", v)
             } else {
-                let hi = (v >> 64) as i64;
-                let lo = v as u64;
-                format!("(((nx_i128){}LL << 64) | (nx_u128){}ULL)", hi, lo)
+                // assembled unsigned so the minimum's high word never shifts a
+                // negative value (undefined in C); the cast keeps the bit pattern
+                let bits = v as u128;
+                let hi = (bits >> 64) as u64;
+                let lo = bits as u64;
+                format!("((nx_i128)(((nx_u128){}ULL << 64) | (nx_u128){}ULL))", hi, lo)
             }
         }
         IntTy::U128 => {
