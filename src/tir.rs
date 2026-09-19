@@ -20,6 +20,8 @@ pub struct Local {
     pub is_param: bool,
     /// an `own` parameter: moved in by the caller, dropped here at scope exit
     pub owned: bool,
+    /// a `for` item binding: a view of the container's element, never moved out
+    pub loop_item: bool,
 }
 
 #[derive(Clone, Debug)]

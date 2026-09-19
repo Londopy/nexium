@@ -1499,7 +1499,7 @@ impl<'a> Checker<'a> {
                 let tn = self.type_name(ty);
                 self.error(p.span, format!("`own` applies to owning types (`List`, `String`, `Map`, or structs holding them); `{}` is copied anyway", tn));
             }
-            locals.push(Local { name: p.name.clone(), ty, mutable: p.owned, span: p.span, is_param: true, owned: p.owned });
+            locals.push(Local { name: p.name.clone(), ty, mutable: p.owned, span: p.span, is_param: true, owned: p.owned, loop_item: false });
             params.push(lid);
         }
         let ret = match &def.decl.ret {
@@ -1639,7 +1639,9 @@ impl<'a> Checker<'a> {
                 continue;
             }
             let id = self.instantiate(fid as FnDefId, vec![], def.decl.span);
-            if def.decl.name == "main" {
+            // the entry point is the root module's `main`; an imported module may
+            // carry its own for when it is run as a program
+            if def.decl.name == "main" && def.module == 0 {
                 self.main = Some(id);
             }
         }

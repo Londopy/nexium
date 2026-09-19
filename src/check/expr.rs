@@ -125,6 +125,15 @@ impl<'a> Checker<'a> {
                     let n = local.name.clone();
                     let tn = self.type_name(t);
                     self.error_note(e.span, format!("cannot move `{}` out of a parameter; parameters are borrowed", n), None, format!("use `{}.clone()` to take an owned copy of the `{}`", n, tn));
+                } else if local.loop_item {
+                    let n = local.name.clone();
+                    let tn = self.type_name(t);
+                    self.error_note(
+                        e.span,
+                        format!("cannot move `{}` out of a loop; a loop variable is a view of the element", n),
+                        None,
+                        format!("use `{}.clone()` to take an owned copy of the `{}`", n, tn),
+                    );
                 } else {
                     let cur = self.cur.as_mut().unwrap();
                     cur.moved.insert(l);
@@ -144,6 +153,10 @@ impl<'a> Checker<'a> {
                     let n = local.name.clone();
                     let tn = self.type_name(t);
                     self.error_note(e.span, format!("cannot move the `{}` out of the parameter `{}`; parameters are borrowed", tn, n), None, "use `.clone()` to take an owned copy");
+                } else if local.loop_item {
+                    let n = local.name.clone();
+                    let tn = self.type_name(t);
+                    self.error_note(e.span, format!("cannot move the `{}` out of the loop variable `{}`; it is a view of the element", tn, n), None, "use `.clone()` to take an owned copy");
                 } else {
                     let cur = self.cur.as_mut().unwrap();
                     cur.moved.insert(l);
@@ -2488,7 +2501,7 @@ impl<'a> Checker<'a> {
         let mut params = Vec::new();
         for (i, p) in c.params.iter().enumerate() {
             let lid = locals.len() as LocalId;
-            locals.push(Local { name: p.name.clone(), ty: ptys[i], mutable: false, span: p.span, is_param: true, owned: false });
+            locals.push(Local { name: p.name.clone(), ty: ptys[i], mutable: false, span: p.span, is_param: true, owned: false, loop_item: false });
             params.push(lid);
         }
         let env_tys: Vec<(TyId, bool)> = captures.iter().map(|(_, r, t)| (*t, *r)).collect();
@@ -2555,7 +2568,7 @@ impl<'a> Checker<'a> {
             let lid = ctx.locals.len() as LocalId;
             let mutable = c.captures[i].mutable;
             let lty = if *by_ref { self.tys.ptr(mutable, *ty) } else { *ty };
-            ctx.locals.push(Local { name: format!("cap_{}", name), ty: lty, mutable: mutable || !*by_ref, span: c.captures[i].span, is_param: true, owned: false });
+            ctx.locals.push(Local { name: format!("cap_{}", name), ty: lty, mutable: mutable || !*by_ref, span: c.captures[i].span, is_param: true, owned: false, loop_item: false });
             ctx.scopes[0].push((name, ScopeEntry { local: lid, auto_deref: *by_ref }));
         }
         let saved = self.cur.take();

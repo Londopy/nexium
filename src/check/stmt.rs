@@ -16,7 +16,7 @@ impl<'a> Checker<'a> {
     pub fn declare_local(&mut self, name: &str, ty: TyId, mutable: bool, span: Span) -> LocalId {
         let cur = self.cur();
         let id = cur.locals.len() as LocalId;
-        cur.locals.push(Local { name: name.to_string(), ty, mutable, span, is_param: false, owned: false });
+        cur.locals.push(Local { name: name.to_string(), ty, mutable, span, is_param: false, owned: false, loop_item: false });
         cur.scopes.last_mut().unwrap().push((name.to_string(), ScopeEntry { local: id, auto_deref: false }));
         id
     }
@@ -613,6 +613,7 @@ impl<'a> Checker<'a> {
                 let mut item_locals = Vec::new();
                 for (i, (te, elem)) in checked.into_iter().enumerate() {
                     let l = self.declare_local(&bindings[i], elem, false, span);
+                    self.cur().locals[l as usize].loop_item = true;
                     item_locals.push((l, te));
                 }
                 let index = if bindings.len() == n_items + 1 {
