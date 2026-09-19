@@ -11,6 +11,7 @@
 
 import lexer
 import parser
+import cimport
 
 const NONE: usize = 0xFFFFFFFFFFFFFFFF
 const NONE_NAME: []u8 = ""
@@ -281,6 +282,8 @@ pub struct StructDef {
     name: String
     kind: String
     layout: String
+    // the C spelling of an imported struct (`struct tag` or a typedef name), else empty
+    c_name: String
     tparams: List(String)
     derives: List(String)
     fields: List(usize)
@@ -378,6 +381,8 @@ pub struct AliasDef {
     module: usize
     start: usize
     end: usize
+    // the type, once first used (NONE before)
+    resolved: usize
 }
 
 pub struct ErrorSetDef {
@@ -749,6 +754,14 @@ pub struct Checker {
     artifact_kinds: List(String)
     // a shared wildcard pattern for the exhaustiveness matrix
     wild_pat_node: usize
+    // `@cImport`: the C compiler to preprocess with, the target, and the
+    // headers imported (name, is_system); declarations that could not be
+    // translated, keyed "module:name"
+    cc: List(String)
+    target: String
+    cimport_headers: List(String)
+    cimport_system: List(bool)
+    cimport_unsupported: Map(String, String)
     // aggregate `(value ...)` payloads, by index
     values: List(CV)
     // the compile-time interpreter's state (see `it_enter`)
@@ -811,11 +824,138 @@ impl Checker {
     // ----- collection -----------------------------------------------------
 
     fn collect(self: *mut Self) {
+        // `const c = @cImport("header.h")` becomes a synthetic module
         let n_mods = self.mods.len
         for m in 0..n_mods {
             let items = self.mods[m].parsed.items.clone()
-            for it in items { self.collect_item(m, it) }
+            for it in items { if self.is_cimport_const(m, it) { self.collect_cimport(m, it) } }
         }
+        // the synthetic modules were collected as they were made
+        for m in 0..n_mods {
+            let items = self.mods[m].parsed.items.clone()
+            for it in items {
+                if self.is_cimport_const(m, it) { continue }
+                self.collect_item(m, it)
+            }
+        }
+    }
+
+    fn is_cimport_const(self: *Self, m: usize, it: usize) -> bool {
+        let n = self.node(m, it)
+        if n.k != parser.NodeKind.Const { return false }
+        let v = self.node(m, n.y)
+        return v.k == parser.NodeKind.Builtin and v.name == "cImport"
+    }
+
+    /// The directories `#include "..."` resolves against: every module's
+    /// directory and the `include` entries of `artifact link` declarations.
+    fn include_dirs(self: *Self) -> List(String) {
+        var out = List(String).new()
+        let n_mods = self.mods.len
+        for m in 0..n_mods {
+            if self.mods[m].dir.len > 0 { out.append(self.mods[m].dir.clone()) }
+            let items = self.mods[m].parsed.items.clone()
+            for it in items {
+                let n = self.node(m, it)
+                if n.k != parser.NodeKind.Artifact or n.name != "link" { continue }
+                for f in n.kids.clone() {
+                    let fnode = self.node(m, f)
+                    if fnode.name != "include" { continue }
+                    let v = self.node(m, fnode.x)
+                    var vals = List(usize).new()
+                    if v.k == parser.NodeKind.ArrayLit { vals = v.kids.clone() } else { vals.append(fnode.x) }
+                    for e in vals {
+                        let en = self.node(m, e)
+                        if en.k == parser.NodeKind.Lit and en.text == "str" { out.append(format("{}/{}", .{self.mods[m].dir, en.name})) }
+                    }
+                }
+            }
+        }
+        return out
+    }
+
+    fn collect_cimport(self: *mut Self, m: usize, it: usize) {
+        let n = self.node(m, it)
+        let const_name = n.name.clone()
+        let bnode = self.node(m, n.y)
+        let args = bnode.kids.clone()
+        let at = bnode.start
+        var header = String.new()
+        var ok = args.len == 1
+        if ok {
+            let a = self.node(m, args[0])
+            ok = a.k == parser.NodeKind.Lit and a.text == "str"
+            if ok { header = a.name.clone() }
+        }
+        if !ok {
+            self.fail(m, at, "@cImport takes one string literal: the header to import, e.g. `@cImport(\"stdio.h\")`")
+            return
+        }
+        if self.cc.len == 0 {
+            self.fail(m, at, "@cImport is not available in this context")
+            return
+        }
+        let windows = os.env("COMSPEC") != null and os.env("WINDIR") != null
+        let opts = cimport.ImportOptions{ .cc = self.cc.clone(), .target = self.target.clone(), .include_dirs = self.include_dirs(), .windows = windows }
+        let mid = self.mods.len
+        self.mods.append(Mod{
+                .name = format("cimport:{}", .{header}), .source = String.new(), .dir = String.new(),
+                .parsed = parser.Parsed{ .tree = parser.Tree{ .nodes = List(parser.Node).new() }, .items = List(usize).new(), .errors = List(String).new() },
+        })
+        let bend = bnode.end
+        let ci = cimport.import_header(header[..], &opts, &mut self.mods[mid].parsed.tree) catch |e| {
+            _ = self.mods.pop()
+            if e == error.IoError {
+                self.fail(m, at, format("@cImport(\"{}\"): cannot run the C compiler", .{header})[..])
+            } else {
+                self.fail(m, at, format("@cImport(\"{}\"): the C preprocessor failed: {}", .{header, cimport.pp_error_line()})[..])
+            }
+            return
+        }
+        self.cimport_headers.append(header.clone())
+        self.cimport_system.append(ci.is_system)
+        // every imported declaration is reported at the `@cImport`
+        let n_nodes = self.mods[mid].parsed.tree.nodes.len
+        for k in 0..n_nodes {
+            self.mods[mid].parsed.tree.nodes[k].start = at
+            self.mods[mid].parsed.tree.nodes[k].end = bend
+        }
+        // structs, then aliases, functions and constants; a later declaration
+        // does not shadow an earlier one of the same name
+        var names = Map(String, bool).new()
+        for st, i in ci.structs {
+            let sname = self.node(mid, st).name.clone()
+            names.put(sname, true)
+            self.mods[mid].parsed.items.append(st)
+            self.collect_item(mid, st)
+            let sid = self.structs.len - 1
+            self.structs[sid].c_name = ci.struct_cnames[i].clone()
+        }
+        for a in ci.aliases {
+            let aname = self.node(mid, a).name.clone()
+            if names.contains(aname[..]) { continue }
+            names.put(aname, true)
+            self.mods[mid].parsed.items.append(a)
+            self.collect_item(mid, a)
+        }
+        for f in ci.functions {
+            let fname = self.node(mid, f).name.clone()
+            if names.contains(fname[..]) { continue }
+            names.put(fname, true)
+            self.mods[mid].parsed.items.append(f)
+            self.collect_item(mid, f)
+        }
+        for c in ci.consts {
+            let cname = self.node(mid, c).name.clone()
+            if names.contains(cname[..]) { continue }
+            names.put(cname, true)
+            self.mods[mid].parsed.items.append(c)
+            self.collect_item(mid, c)
+        }
+        for u, i in ci.unsupported_names {
+            self.cimport_unsupported.put(format("{}:{}", .{mid, u}), ci.unsupported_whys[i].clone())
+        }
+        self.items.put(item_key(m, const_name[..]), ItemRef{ .kind = ItemKind.Module, .id = mid })
     }
 
     /// Whether any parameter of the function is `own`.
@@ -845,7 +985,7 @@ impl Checker {
         } else if k == parser.NodeKind.Struct {
             let n = self.node(m, it)
             var d = StructDef{
-                .name = n.name.clone(), .kind = n.text.clone(), .layout = self.node(m, n.x).name.clone(),
+                .name = n.name.clone(), .kind = n.text.clone(), .layout = self.node(m, n.x).name.clone(), .c_name = String.new(),
                 .tparams = List(String).new(), .derives = List(String).new(), .fields = n.kids.clone(),
                 .module = m, .start = n.start, .end = n.end, .is_pub = n.flag,
             }
@@ -904,7 +1044,7 @@ impl Checker {
             self.define(m, name[..], ItemKind.Global, self.globals.len - 1, at)
         } else if k == parser.NodeKind.TypeAlias {
             let n = self.node(m, it)
-            let d = AliasDef{ .name = n.name.clone(), .node = it, .is_distinct = n.flag2, .module = m, .start = n.start, .end = n.end }
+            let d = AliasDef{ .name = n.name.clone(), .node = it, .is_distinct = n.flag2, .module = m, .start = n.start, .end = n.end, .resolved = NONE }
             let name = d.name.clone()
             let at = d.start
             self.aliases.append(d)
@@ -1143,11 +1283,13 @@ impl Checker {
     }
 
     fn resolve_alias(self: *mut Self, id: usize) -> usize {
+        if self.aliases[id].resolved != NONE { return self.aliases[id].resolved }
         let a_node = self.aliases[id].node
         let a_mod = self.aliases[id].module
         let target_node = self.node(a_mod, a_node).x
-        let t = self.resolve_type(a_mod, target_node, NONE)
-        if self.aliases[id].is_distinct { return self.tys.of_def(TK.Distinct, id, List(usize).new()) }
+        var t = self.resolve_type(a_mod, target_node, NONE)
+        if self.aliases[id].is_distinct { t = self.tys.of_def(TK.Distinct, id, List(usize).new()) }
+        self.aliases[id].resolved = t
         return t
     }
 
@@ -1514,9 +1656,34 @@ impl Checker {
             out.append(format("    (global {} {} @{}:{} module={} mangled=nxg_{}_{} ty={} init={})\n", .{i, g.name, g.start, g.end, g.module, g.name, i, self.ty_name(g.ty), init})[..])
         }
         out.append("  )\n  (fns\n")
+        // signatures come in (module, span) order, as in the oracle
         let n_fns = self.fns.len
-        for i in 0..n_fns { self.print_fn_sig(i, out) }
+        var order = List(usize).new()
+        for i in 0..n_fns { order.append(i) }
+        var i: usize = 1
+        while i < n_fns {
+            var j = i
+            while j > 0 and self.fn_sig_before(order[j], order[j - 1]) {
+                let t = order[j - 1]
+                order[j - 1] = order[j]
+                order[j] = t
+                j -= 1
+            }
+            i += 1
+        }
+        for fid in order { self.print_fn_sig(fid, out) }
         out.append("  )\n)\n")
+    }
+
+    /// Strictly earlier in (module, start, end) order.
+    fn fn_sig_before(self: *mut Self, a: usize, b: usize) -> bool {
+        let ma = self.fns[a].module
+        let mb = self.fns[b].module
+        if ma != mb { return ma < mb }
+        let na = self.node(self.fns[a].node_module, self.fns[a].node)
+        let nb = self.node(self.fns[b].node_module, self.fns[b].node)
+        if na.start != nb.start { return na.start < nb.start }
+        return na.end < nb.end
     }
 
     fn print_fn_sig(self: *mut Self, fid: usize, out: *mut String) {
@@ -1588,8 +1755,8 @@ impl Checker {
                 if w[0] == '!' { neg = neg | effect_bit(w[1..]) } else { pos = pos | effect_bit(w[..]) }
             }
         }
-        out.append(format("    (fn - {} @{}:{} mangled={} module={} ret={} targs=() export={} extern={} variadic=false pub={} test={} ctest={} closure=false body={}\n",
-            .{name, start, end, mangled, m, self.ty_name(ret), export_name, is_extern, is_pub, is_test, ctest, if has_body { "yes" } else { "no" }})[..])
+        out.append(format("    (fn - {} @{}:{} mangled={} module={} ret={} targs=() export={} extern={} variadic={} pub={} test={} ctest={} closure=false body={}\n",
+            .{name, start, end, mangled, m, self.ty_name(ret), export_name, is_extern, n.b == 1, is_pub, is_test, ctest, if has_body { "yes" } else { "no" }})[..])
         out.append(format("      (params {})\n", .{params})[..])
         out.append(format("      (declared neg=({}) pos=({}))\n", .{render_effects(neg), render_effects(pos)})[..])
         out.append("    )\n")
@@ -1795,6 +1962,7 @@ impl Checker {
         var start: usize = 0
         var end: usize = 0
         var any_owned = false
+        var is_variadic = false
         if is_test {
             test_comptime = self.fns[fid].test_comptime
             name = format("{}:{}", .{if test_comptime { "ctest" } else { "test" }, self.fns[fid].test_name})
@@ -1807,6 +1975,7 @@ impl Checker {
             name = n.name.clone()
             export_name = n.text.clone()
             is_extern = n.flag2
+            is_variadic = n.b == 1
             is_pub = n.flag
             start = n.start
             end = n.end
@@ -1862,7 +2031,7 @@ impl Checker {
         self.insts.append(Inst{
                 .name = name, .mangled = mangled, .def = fid, .targs = targs, .gen_names = gen_names, .gen_tys = gen_tys, .params = params, .ret = ret, .locals = locals, .body = NONE,
                 .own_effects = 0, .effects = 0, .declared_neg = neg, .declared_pos = pos, .export_name = export_name,
-                .is_extern = is_extern, .is_variadic = false, .is_pub = is_pub, .is_test = is_test, .test_comptime = test_comptime,
+                .is_extern = is_extern, .is_variadic = is_variadic, .is_pub = is_pub, .is_test = is_test, .test_comptime = test_comptime,
                 .is_closure = false, .start = start, .end = end, .module = m, .self_ty = self_ty,
                 .witnesses = List(Witness).new(), .callees = List(usize).new(),
         })
@@ -4143,7 +4312,8 @@ impl Checker {
         self.env_set(&names, &tys)
         let n_rest = args.len - rest_start
         let is_extern = self.node(nm, node).flag2
-        if n_rest + n_self != value_params.len {
+        let variadic = self.node(nm, node).b == 1
+        if (variadic and n_rest + n_self < value_params.len) or (!variadic and n_rest + n_self != value_params.len) {
             var msg = format("`{}` takes {} argument(s) but {} were given", .{fname, value_params.len - n_self, n_rest})
             if type_params.len > 0 and !explicit { msg.append(" (type parameters are inferred from the arguments)") }
             self.fail_here(start, msg[..])
@@ -4171,6 +4341,22 @@ impl Checker {
         }
         var ai = rest_start
         while ai < args.len {
+            if pi >= value_params.len {
+                // extra arguments of a C variadic: untyped literals take C's default promotions
+                var te = self.check_expr(args[ai], NONE)
+                let t = self.tys.shallow(self.tir.nodes[te].ty)
+                let tk = self.tys.kind(t)
+                if tk == TK.Infer and self.tys.is_integer(t) {
+                    te = self.coerce_or_error(te, self.tys.named(TK.Int, "i32"), "variadic argument")
+                } else if tk == TK.Infer and self.tys.is_float(t) {
+                    te = self.coerce_or_error(te, self.tys.named(TK.Float, "f64"), "variadic argument")
+                } else if ! (tk == TK.Int or tk == TK.Float or tk == TK.Bool or tk == TK.Char or tk == TK.Ptr) {
+                    self.fail_here(self.tir.nodes[te].start, format("a value of type `{}` cannot be passed to a C variadic parameter; use scalars or pointers", .{self.ty_name(t)})[..])
+                }
+                targs.append(te)
+                ai += 1
+                continue
+            }
             let pn = self.node(nm, value_params[pi])
             let pname = pn.name.clone()
             let pt_node = pn.x
@@ -4850,8 +5036,10 @@ impl Checker {
         p.close()
         p.open("(aliases")
         for a, i in self.aliases {
-            let t = self.resolve_alias(i)
-            p.line(format("(alias {} {} @{}:{} distinct={} module={} ty={})", .{i, a.name, a.start, a.end, a.is_distinct, a.module, self.ty_name(t)})[..])
+            // an alias resolves when first used; an unused one has no type yet
+            let t = self.aliases[i].resolved
+            let tn = if t == NONE { String.from("-") } else { self.ty_name(t) }
+            p.line(format("(alias {} {} @{}:{} distinct={} module={} ty={})", .{i, a.name, a.start, a.end, a.is_distinct, a.module, tn})[..])
         }
         p.close()
         p.depth = 0
@@ -6373,7 +6561,11 @@ impl Checker {
                 self.ctx().module = saved
                 return te
             }
-            self.fail_here(start, format("module `{}` has no item `{}`", .{self.mods[m].name, name})[..])
+            if let why = self.cimport_unsupported.get(format("{}:{}", .{m, name})[..]) {
+                self.fail_here(start, format("`{}` was imported from `{}` but cannot be used: {}", .{name, self.mods[m].name[8..], why})[..])
+            } else {
+                self.fail_here(start, format("module `{}` has no item `{}`", .{self.mods[m].name, name})[..])
+            }
             return self.error_expr(start, end)
         }
         self.fail_here(start, format("`{}` has no member `{}`", .{ns, name})[..])
@@ -6390,7 +6582,11 @@ impl Checker {
                     return self.call_fn_def(item.id, NONE, args, expected, start, end)
                 }
             }
-            self.fail_here(start, format("module `{}` has no function `{}`", .{self.mods[m].name, name})[..])
+            if let why = self.cimport_unsupported.get(format("{}:{}", .{m, name})[..]) {
+                self.fail_here(start, format("`{}` was imported from `{}` but cannot be called: {}", .{name, self.mods[m].name[8..], why})[..])
+            } else {
+                self.fail_here(start, format("module `{}` has no function `{}`", .{self.mods[m].name, name})[..])
+            }
             for a in args { _ = self.check_expr(a, NONE) }
             return self.error_expr(start, end)
         }
@@ -11298,6 +11494,7 @@ pub fn new_checker(own mods: List(Mod)) -> Checker {
         .env_names = List(String).new(), .env_tys = List(usize).new(),
         .record_new_mode = false, .vtables = List(VTable).new(), .obligations = List(Obligation).new(),
         .parallel_calls = List(Obligation).new(), .global_uses = List(Obligation).new(), .global_use_fns = List(String).new(), .artifact_kinds = List(String).new(), .wild_pat_node = NONE,
+        .cc = List(String).new(), .target = String.new(), .cimport_headers = List(String).new(), .cimport_system = List(bool).new(), .cimport_unsupported = Map(String, String).new(),
         .values = List(CV).new(),
         .it_steps = 0, .it_panic = String.new(), .it_panic_at = NONE, .it_has_panic = false, .it_budget = false,
         .it_pending = 0, .it_pending_label = NONE, .it_pending_val = cv_none(), .it_failed_at = NONE,
@@ -11323,9 +11520,30 @@ fn main() -> !void {
         }
     }
     var sigs = false
-    for a in args { if a == "--sigs" { sigs = true } }
+    var cc_text = String.new()
+    var target = String.new()
+    i = 2
+    while i < args.len {
+        if args[i] == "--sigs" { sigs = true }
+        if args[i] == "--cc" and i + 1 < args.len { cc_text = String.from(args[i + 1]); i += 1 }
+        if args[i] == "--target" and i + 1 < args.len { target = String.from(args[i + 1]); i += 1 }
+        i += 1
+    }
+    if cc_text.len == 0 { if let v = os.env("NX_CC") { cc_text = String.from(v) } }
+    var cc = List(String).new()
+    if cc_text.len > 0 {
+        for w in cc_text[..].split(" ") { if w.len > 0 { cc.append(String.from(w)) } }
+    } else if let z = os.env("NX_ZIG") {
+        cc.append(String.from(z))
+        cc.append(String.from("cc"))
+    } else {
+        cc.append(String.from("zig"))
+        cc.append(String.from("cc"))
+    }
     let mods = try load(args[1], std_dir)
     var c = new_checker(mods)
+    c.cc = cc
+    c.target = target
     c.collect()
     c.reserve_errors()
     var out = String.new()
