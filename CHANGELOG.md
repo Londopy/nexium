@@ -45,6 +45,10 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
   compiler) emits the C of itself, `zig cc` builds `nx2` from it with no
   Rust involved, and `nx2` emits byte-identical C for itself and other
   programs. `cargo test` performs the three stages.
+- `tests/spec`: the specification's conformance cases, one program per
+  claim SPEC.md makes with its recorded output and exit code, run by
+  `cargo test` and diffed through every self-hosting stage; sections 2 to
+  4 so far.
 - `self/nx.nx`, the `nx` driver in Nexium: build, run, test, check, emit-c
   and tir over the self-hosted pipeline, invoking the C compiler as the
   Rust driver does; the standard library is embedded in it. It builds
@@ -53,6 +57,8 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
 
 ### Fixed
 
+- `Color.Green as u8` (a unit enum cast to an integer) emitted a C cast of
+  the whole struct, which the C compiler rejected; it is the tag now.
 - A `break` inside an `orelse` default, a call argument or any other nested
   expression now ends a `while true`; a non-void function that ended in such
   a loop was accepted without a return value.
