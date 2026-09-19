@@ -358,6 +358,19 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     expression that failed, because "cannot be evaluated" without a location
     was the most common dead end in the REPL.
 
+## The standard library, phase 1
+
+75. **File-system access is a thin set of `io` primitives plus a Nexium
+    module.** The runtime knows only what needs the platform: kind, stat,
+    make/remove a single directory, remove a file, rename, list one directory,
+    cwd, temp dir, append. Everything else in `std.fs` (recursive create and
+    remove, the walker, sorted listings, every path function) is Nexium, so
+    it is portable by construction and readable by users. Primitives report
+    `error.NotFound` or `error.IoError`, nothing finer, until a real program
+    needs more. Paths are byte strings; both `/` and `\` separate components
+    on every platform and results keep the separator the input used, because
+    a tool written on Windows should produce paths its own users recognize.
+
 ## Compiler selection
 
 60. **Native macOS builds use the system compiler.** zig 0.14.1 cannot read

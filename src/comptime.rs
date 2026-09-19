@@ -1621,6 +1621,70 @@ impl<'c, 'a> Interp<'c, 'a> {
                     Err(_) => Value::Err(self.c.error_id("IoError")),
                 })
             }
+            Builtin::AppendFile if self.c.repl_mode => {
+                let path = String::from_utf8_lossy(bytes_of(&vs[0])?).to_string();
+                let data = bytes_of(&vs[1])?.to_vec();
+                let r = std::fs::OpenOptions::new().append(true).create(true).open(&path).and_then(|mut f| std::io::Write::write_all(&mut f, &data));
+                Some(match r {
+                    Ok(()) => Value::Ok(Box::new(Value::Void)),
+                    Err(_) => Value::Err(self.c.error_id("IoError")),
+                })
+            }
+            Builtin::FsKind if self.c.repl_mode => {
+                let path = String::from_utf8_lossy(bytes_of(&vs[0])?).to_string();
+                Some(Value::Int(match std::fs::metadata(&path) {
+                    Ok(m) if m.is_dir() => 2,
+                    Ok(_) => 1,
+                    Err(_) => 0,
+                }))
+            }
+            Builtin::FsSize | Builtin::FsModified if self.c.repl_mode => {
+                let path = String::from_utf8_lossy(bytes_of(&vs[0])?).to_string();
+                Some(match std::fs::metadata(&path) {
+                    Ok(m) if op == Builtin::FsSize => Value::Ok(Box::new(Value::Int(m.len() as i128))),
+                    Ok(m) => {
+                        let ms = m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as i128).unwrap_or(0);
+                        Value::Ok(Box::new(Value::Int(ms)))
+                    }
+                    Err(e) => Value::Err(self.c.error_id(if e.kind() == std::io::ErrorKind::NotFound { "NotFound" } else { "IoError" })),
+                })
+            }
+            Builtin::FsMkdir | Builtin::FsRemoveFile | Builtin::FsRemoveDir if self.c.repl_mode => {
+                let path = String::from_utf8_lossy(bytes_of(&vs[0])?).to_string();
+                let r = match op {
+                    Builtin::FsMkdir => std::fs::create_dir(&path).or_else(|e| if e.kind() == std::io::ErrorKind::AlreadyExists { Ok(()) } else { Err(e) }),
+                    Builtin::FsRemoveFile => std::fs::remove_file(&path),
+                    _ => std::fs::remove_dir(&path),
+                };
+                Some(match r {
+                    Ok(()) => Value::Ok(Box::new(Value::Void)),
+                    Err(e) => Value::Err(self.c.error_id(if e.kind() == std::io::ErrorKind::NotFound { "NotFound" } else { "IoError" })),
+                })
+            }
+            Builtin::FsRename if self.c.repl_mode => {
+                let a = String::from_utf8_lossy(bytes_of(&vs[0])?).to_string();
+                let b = String::from_utf8_lossy(bytes_of(&vs[1])?).to_string();
+                Some(match std::fs::rename(&a, &b) {
+                    Ok(()) => Value::Ok(Box::new(Value::Void)),
+                    Err(e) => Value::Err(self.c.error_id(if e.kind() == std::io::ErrorKind::NotFound { "NotFound" } else { "IoError" })),
+                })
+            }
+            Builtin::FsListDir if self.c.repl_mode => {
+                let path = String::from_utf8_lossy(bytes_of(&vs[0])?).to_string();
+                Some(match std::fs::read_dir(&path) {
+                    Ok(rd) => Value::Ok(Box::new(Value::List(rd.filter_map(|e| e.ok()).map(|e| Value::OwnedStr(e.file_name().to_string_lossy().into_owned().into_bytes())).collect()))),
+                    Err(e) => Value::Err(self.c.error_id(if e.kind() == std::io::ErrorKind::NotFound { "NotFound" } else { "IoError" })),
+                })
+            }
+            Builtin::FsCwd if self.c.repl_mode => Some(match std::env::current_dir() {
+                Ok(d) => Value::Ok(Box::new(Value::OwnedStr(d.to_string_lossy().into_owned().into_bytes()))),
+                Err(_) => Value::Err(self.c.error_id("IoError")),
+            }),
+            Builtin::FsTempDir if self.c.repl_mode => {
+                let d = std::env::temp_dir();
+                let s = d.to_string_lossy().trim_end_matches(['/', '\\']).to_string();
+                Some(Value::OwnedStr(s.into_bytes()))
+            }
             Builtin::ReadLine if self.c.repl_mode => {
                 let mut line = String::new();
                 Some(match std::io::stdin().read_line(&mut line) {

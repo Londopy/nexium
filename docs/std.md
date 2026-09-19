@@ -14,6 +14,7 @@ by `scripts/std_docs.py` from the doc comments.
 | --- | --- |
 | [`std.args`](#stdargs) | command-line argument parsing, written in Nexium. |
 | [`std.bytes`](#stdbytes) | encodings and byte-level utilities, written in Nexium. |
+| [`std.fs`](#stdfs) | files, directories and paths, written in Nexium. |
 | [`std.json`](#stdjson) | a JSON parser and serializer, written in Nexium. |
 | [`std.lists`](#stdlists) | generic helpers over slices and Lists, written in Nexium. |
 | [`std.num`](#stdnum) | integer utilities, written in Nexium. |
@@ -54,6 +55,41 @@ std.bytes: encodings and byte-level utilities, written in Nexium. `import std.by
 | `write_u32_be(out: *mut String, v: u32)` | Append a big-endian 32-bit value. |
 | `write_u32_le(out: *mut String, v: u32)` | Append a little-endian 32-bit value. |
 | `first_difference(a: []u8, b: []u8) -> ?usize` | Bytes that differ, for a compact diff of two buffers. |
+
+## std.fs
+
+std.fs: files, directories and paths, written in Nexium. `import std.fs` then: if (fs.exists("notes.txt")) { ... } try fs.make_dirs("out/logs") for (try fs.list("out")) |name| { ... } for (try fs.walk("src")) |path| { ... }        // every file, recursively let cfg = fs.join(fs.parent(argv0), "app.toml") The platform calls are the `io.*` builtins (documented in the language reference); this module adds paths, sorted listings, recursive create and remove, and a walker. Paths are byte strings; `/` and `\` both separate components on every platform, and results use `/` unless the input used `\`.
+
+| function | what it does |
+| --- | --- |
+| `exists(path: []u8) -> bool` | Is there a file or directory at `path`? |
+| `is_file(path: []u8) -> bool` | Is `path` an existing regular file (anything that is not a directory)? |
+| `is_dir(path: []u8) -> bool` | Is `path` an existing directory? |
+| `size(path: []u8) -> !u64` | The size of a file in bytes. |
+| `modified(path: []u8) -> !i64` | The modification time in milliseconds since the epoch. |
+| `read(path: []u8) -> !String` | The whole file as a String. |
+| `read_lines(path: []u8) -> !List(String)` | The lines of a file, without their line endings. |
+| `write(path: []u8, data: []u8) -> !void` | Write (replace) a file. |
+| `append(path: []u8, data: []u8) -> !void` | Append to a file, creating it when missing. |
+| `copy(from: []u8, to: []u8) -> !void` | Copy a file's contents to a new path (the destination is replaced). |
+| `list(path: []u8) -> !List(String)` | The names in a directory, sorted, without `.` and `..`. |
+| `make_dir(path: []u8) -> !void` | Create one directory; fine when it already exists. |
+| `make_dirs(path: []u8) -> !void` | Create a directory and every missing parent. |
+| `remove(path: []u8) -> !void` | Remove a file or an empty directory. |
+| `remove_all(path: []u8) -> !void` | Remove a file, or a directory with everything in it. |
+| `rename(from: []u8, to: []u8) -> !void` | Rename or move a file or directory (an existing destination file is replaced). |
+| `walk(root: []u8) -> !List(String)` | directory by directory. Directories themselves are not listed. |
+| `cwd() -> !String` | The current working directory. |
+| `temp_dir() -> String` | The directory for temporary files. |
+| `temp_path(prefix: []u8) -> String` | does not exist yet. The caller creates it. |
+| `is_absolute(path: []u8) -> bool` | Does the path start at a root (`/x`, `C:\x`, `C:/x`, `\\server`)? |
+| `join(dir: []u8, name: []u8) -> String` | replaces `dir`. |
+| `parent(path: []u8) -> []u8` | `/c.txt` -> `/`. |
+| `base_name(path: []u8) -> []u8` | The last component: `a/b/c.txt` -> `c.txt`. |
+| `extension(path: []u8) -> []u8` | The extension without the dot: `a/b.tar.gz` -> `gz`, `Makefile` -> ``. |
+| `stem(path: []u8) -> []u8` | The base name without its extension: `a/b.tar.gz` -> `b.tar`. |
+| `with_extension(path: []u8, ext: []u8) -> String` | The path with its extension replaced (or added): `a/b.txt`, `md` -> `a/b.md`. |
+| `normalize(path: []u8) -> String` | `a/./b/../c//d` -> `a/c/d`. A leading `..` is kept. |
 
 ## std.json
 

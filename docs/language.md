@@ -213,7 +213,15 @@ the inferred set per function.
 - `math`: `PI E TAU INF NAN`, `sqrt abs floor ceil round sin cos tan exp log
   log2 min max pow atan2 clamp`.
 - `io.read_file(path) -> !String`, `io.write_file(path, bytes) -> !void`,
-  `io.read_line() -> ?String`.
+  `io.append_file(path, bytes) -> !void`, `io.read_line() -> ?String`.
+- File system primitives (`std.fs` wraps them with paths and walking):
+  `io.file_kind(path) -> i32` (0 missing, 1 file, 2 directory),
+  `io.file_size(path) -> !u64`, `io.file_modified(path) -> !i64` (ms),
+  `io.make_dir(path) -> !void`, `io.remove_file(path) -> !void`,
+  `io.remove_dir(path) -> !void` (empty), `io.rename(from, to) -> !void`,
+  `io.list_dir(path) -> !List(String)`, `io.cwd() -> !String`,
+  `io.temp_dir() -> String`. Failures are `error.NotFound` or
+  `error.IoError`.
 - `os.args() -> [][]u8`, `os.env(name) -> ?[]u8`, `os.exit(code)`,
   `process.run(argv: [][]u8) -> !i32` (spawns, waits, returns the exit code;
   `error.IoError` when the program cannot be started).

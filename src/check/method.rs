@@ -531,8 +531,87 @@ impl<'a> Checker<'a> {
                     let o = self.tys.opt(string);
                     self.builtin(Builtin::ReadLine, vec![], vec![], o, span)
                 }
+                "append_file" => {
+                    if !self.check_args_n(args, 2, "io.append_file", span) {
+                        return self.error_expr(span);
+                    }
+                    let p = self.arg(&args[0], bytes, "path");
+                    let d = self.arg(&args[1], bytes, "data");
+                    self.add_effect(Effects::BLOCKS, span, "file I/O blocks");
+                    let r = self.tys.err_union(None, void);
+                    self.builtin(Builtin::AppendFile, vec![p, d], vec![], r, span)
+                }
+                "file_kind" => {
+                    if !self.check_args_n(args, 1, "io.file_kind", span) {
+                        return self.error_expr(span);
+                    }
+                    let p = self.arg(&args[0], bytes, "path");
+                    self.add_effect(Effects::BLOCKS, span, "file I/O blocks");
+                    let t = self.tys.int(IntTy::I32);
+                    self.builtin(Builtin::FsKind, vec![p], vec![], t, span)
+                }
+                "file_size" | "file_modified" => {
+                    if !self.check_args_n(args, 1, &format!("io.{}", name), span) {
+                        return self.error_expr(span);
+                    }
+                    let p = self.arg(&args[0], bytes, "path");
+                    self.add_effect(Effects::BLOCKS, span, "file I/O blocks");
+                    let (op, t) = if name == "file_size" { (Builtin::FsSize, self.tys.int(IntTy::U64)) } else { (Builtin::FsModified, self.tys.int(IntTy::I64)) };
+                    let r = self.tys.err_union(None, t);
+                    self.builtin(op, vec![p], vec![], r, span)
+                }
+                "make_dir" | "remove_file" | "remove_dir" => {
+                    if !self.check_args_n(args, 1, &format!("io.{}", name), span) {
+                        return self.error_expr(span);
+                    }
+                    let p = self.arg(&args[0], bytes, "path");
+                    self.add_effect(Effects::BLOCKS, span, "file I/O blocks");
+                    let op = match name {
+                        "make_dir" => Builtin::FsMkdir,
+                        "remove_file" => Builtin::FsRemoveFile,
+                        _ => Builtin::FsRemoveDir,
+                    };
+                    let r = self.tys.err_union(None, void);
+                    self.builtin(op, vec![p], vec![], r, span)
+                }
+                "rename" => {
+                    if !self.check_args_n(args, 2, "io.rename", span) {
+                        return self.error_expr(span);
+                    }
+                    let a = self.arg(&args[0], bytes, "path");
+                    let b = self.arg(&args[1], bytes, "new path");
+                    self.add_effect(Effects::BLOCKS, span, "file I/O blocks");
+                    let r = self.tys.err_union(None, void);
+                    self.builtin(Builtin::FsRename, vec![a, b], vec![], r, span)
+                }
+                "list_dir" => {
+                    if !self.check_args_n(args, 1, "io.list_dir", span) {
+                        return self.error_expr(span);
+                    }
+                    let p = self.arg(&args[0], bytes, "path");
+                    self.add_effect(Effects::BLOCKS, span, "file I/O blocks");
+                    self.add_effect(Effects::ALLOCATES, span, "listing a directory allocates the names");
+                    let l = self.tys.list(string);
+                    let r = self.tys.err_union(None, l);
+                    self.builtin(Builtin::FsListDir, vec![p], vec![], r, span)
+                }
+                "cwd" => {
+                    if !self.check_args_n(args, 0, "io.cwd", span) {
+                        return self.error_expr(span);
+                    }
+                    self.add_effect(Effects::ALLOCATES, span, "the working directory is copied into a String");
+                    let r = self.tys.err_union(None, string);
+                    self.builtin(Builtin::FsCwd, vec![], vec![], r, span)
+                }
+                "temp_dir" => {
+                    if !self.check_args_n(args, 0, "io.temp_dir", span) {
+                        return self.error_expr(span);
+                    }
+                    self.add_effect(Effects::ALLOCATES, span, "the directory name is copied into a String");
+                    self.builtin(Builtin::FsTempDir, vec![], vec![], string, span)
+                }
                 _ => {
-                    self.error(span, format!("`io` has no function `{}`; available: read_file, write_file, read_line", name));
+                    self.error(span, format!("`io` has no function `{}`; available: read_file, write_file, append_file, read_line, file_kind, file_size, file_modified, make_dir, remove_file, remove_dir, rename, list_dir, cwd, temp_dir", name));
                     self.error_expr(span)
                 }
             },

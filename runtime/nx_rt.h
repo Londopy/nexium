@@ -17,6 +17,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <setjmp.h>
+#include <errno.h>
+#include <sys/stat.h>
 #include <math.h>
 #include <time.h>
 
@@ -24,11 +26,13 @@
 #include <windows.h>
 #include <io.h>
 #include <fcntl.h>
+#include <direct.h>
 #else
 #include <sys/time.h>
 #include <unistd.h>
 #include <spawn.h>
 #include <sys/wait.h>
+#include <dirent.h>
 extern char** environ;
 #endif
 
@@ -849,6 +853,155 @@ NX_INLINE bool nx_write_file(nx_sl_u8 path, nx_sl_u8 data) {
     fclose(f);
     return w == data.len;
 }
+NX_INLINE bool nx_append_file(nx_sl_u8 path, nx_sl_u8 data) {
+    char p[4096];
+    if (path.len >= sizeof p) return false;
+    memcpy(p, path.ptr, path.len); p[path.len] = 0;
+    FILE* f = fopen(p, "ab");
+    if (!f) return false;
+    size_t w = data.len ? fwrite(data.ptr, 1, data.len, f) : 0;
+    fclose(f);
+    return w == data.len;
+}
+
+/* ------------------------------------------------------------- file system */
+/* Results: 0 ok, 1 not found, 2 any other failure. */
+NX_INLINE bool nx_cpath(nx_sl_u8 path, char* buf, size_t cap) {
+    if (path.len >= cap) return false;
+    memcpy(buf, path.ptr, path.len); buf[path.len] = 0;
+    return true;
+}
+NX_INLINE int32_t nx_fs_errcode(void) { return errno == ENOENT ? 1 : 2; }
+/* 0 = nothing there, 1 = file (or anything not a directory), 2 = directory */
+NX_INLINE int32_t nx_fs_kind(nx_sl_u8 path) {
+    char p[4096];
+    if (!nx_cpath(path, p, sizeof p)) return 0;
+#if defined(_WIN32)
+    DWORD a = GetFileAttributesA(p);
+    if (a == INVALID_FILE_ATTRIBUTES) return 0;
+    return (a & FILE_ATTRIBUTE_DIRECTORY) ? 2 : 1;
+#else
+    struct stat st;
+    if (stat(p, &st) != 0) return 0;
+    return S_ISDIR(st.st_mode) ? 2 : 1;
+#endif
+}
+NX_INLINE int32_t nx_fs_stat(nx_sl_u8 path, int64_t* size, int64_t* mtime_ms) {
+    char p[4096];
+    if (!nx_cpath(path, p, sizeof p)) return 2;
+#if defined(_WIN32)
+    struct _stat64 st;
+    if (_stat64(p, &st) != 0) return nx_fs_errcode();
+#else
+    struct stat st;
+    if (stat(p, &st) != 0) return nx_fs_errcode();
+#endif
+    *size = (int64_t)st.st_size;
+    *mtime_ms = (int64_t)st.st_mtime * 1000;
+    return 0;
+}
+NX_INLINE int32_t nx_fs_mkdir(nx_sl_u8 path) {
+    char p[4096];
+    if (!nx_cpath(path, p, sizeof p)) return 2;
+#if defined(_WIN32)
+    if (_mkdir(p) == 0 || errno == EEXIST) return 0;
+#else
+    if (mkdir(p, 0777) == 0 || errno == EEXIST) return 0;
+#endif
+    return nx_fs_errcode();
+}
+NX_INLINE int32_t nx_fs_remove_file(nx_sl_u8 path) {
+    char p[4096];
+    if (!nx_cpath(path, p, sizeof p)) return 2;
+    return remove(p) == 0 ? 0 : nx_fs_errcode();
+}
+NX_INLINE int32_t nx_fs_remove_dir(nx_sl_u8 path) {
+    char p[4096];
+    if (!nx_cpath(path, p, sizeof p)) return 2;
+#if defined(_WIN32)
+    return _rmdir(p) == 0 ? 0 : nx_fs_errcode();
+#else
+    return rmdir(p) == 0 ? 0 : nx_fs_errcode();
+#endif
+}
+NX_INLINE int32_t nx_fs_rename(nx_sl_u8 from, nx_sl_u8 to) {
+    char p[4096], q[4096];
+    if (!nx_cpath(from, p, sizeof p) || !nx_cpath(to, q, sizeof q)) return 2;
+#if defined(_WIN32)
+    if (MoveFileExA(p, q, MOVEFILE_REPLACE_EXISTING)) return 0;
+    return GetLastError() == ERROR_FILE_NOT_FOUND || GetLastError() == ERROR_PATH_NOT_FOUND ? 1 : 2;
+#else
+    return rename(p, q) == 0 ? 0 : nx_fs_errcode();
+#endif
+}
+NX_INLINE void nx_fs_push_name(nx_ctx* c, nx_rawlist* l, const char* name) {
+    if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) return;
+    nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;
+    nx_str_append(c, &s, (const uint8_t*)name, strlen(name));
+    if (l->len == l->cap) nx_list_grow(c, l, sizeof(nx_string), _Alignof(nx_string), l->len + 1);
+    ((nx_string*)l->ptr)[l->len++] = s;
+}
+/* the entries of a directory, unsorted, without `.` and `..` */
+NX_INLINE int32_t nx_fs_list_dir(nx_ctx* c, nx_sl_u8 path, nx_rawlist* out) {
+    char p[4096];
+    if (!nx_cpath(path, p, sizeof p)) return 2;
+    nx_rawlist l; l.ptr = NULL; l.len = 0; l.cap = 0; l.ar = c->arena;
+#if defined(_WIN32)
+    char pat[4200];
+    snprintf(pat, sizeof pat, "%s\\*", p);
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA(pat, &fd);
+    if (h == INVALID_HANDLE_VALUE) {
+        DWORD e = GetLastError();
+        return e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND ? 1 : 2;
+    }
+    do { nx_fs_push_name(c, &l, fd.cFileName); } while (FindNextFileA(h, &fd));
+    FindClose(h);
+#else
+    DIR* d = opendir(p);
+    if (!d) return nx_fs_errcode();
+    struct dirent* e;
+    while ((e = readdir(d)) != NULL) nx_fs_push_name(c, &l, e->d_name);
+    closedir(d);
+#endif
+    *out = l;
+    return 0;
+}
+NX_INLINE bool nx_fs_cwd(nx_ctx* c, nx_string* out) {
+    char buf[4096];
+    size_t n;
+#if defined(_WIN32)
+    DWORD r = GetCurrentDirectoryA(sizeof buf, buf);
+    if (r == 0 || r >= sizeof buf) return false;
+    n = (size_t)r;
+#else
+    if (!getcwd(buf, sizeof buf)) return false;
+    n = strlen(buf);
+#endif
+    nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;
+    nx_str_append(c, &s, (const uint8_t*)buf, n);
+    *out = s;
+    return true;
+}
+NX_INLINE nx_string nx_fs_temp_dir(nx_ctx* c) {
+    nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;
+#if defined(_WIN32)
+    char buf[MAX_PATH + 2];
+    DWORD n = GetTempPathA(sizeof buf, buf);
+    if (n > 0 && n < sizeof buf) {
+        if (buf[n - 1] == '\\' || buf[n - 1] == '/') n--;
+        nx_str_append(c, &s, (const uint8_t*)buf, n);
+    }
+#else
+    const char* t = getenv("TMPDIR");
+    if (!t || !*t) t = "/tmp";
+    size_t n = strlen(t);
+    if (n > 1 && t[n - 1] == '/') n--;
+    nx_str_append(c, &s, (const uint8_t*)t, n);
+#endif
+    return s;
+}
+
 NX_INLINE bool nx_read_line(nx_ctx* c, nx_string* out) {
     nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;
     int ch; bool any = false;

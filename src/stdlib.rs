@@ -12,6 +12,7 @@ pub const MODULES: &[(&str, &str)] = &[
     ("num", include_str!("../std/num.nx")),
     ("json", include_str!("../std/json.nx")),
     ("args", include_str!("../std/args.nx")),
+    ("fs", include_str!("../std/fs.nx")),
 ];
 
 pub fn source(name: &str) -> Option<&'static str> {

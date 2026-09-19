@@ -8,6 +8,17 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
 
 ## [Unreleased]
 
+### Added
+
+- `std.fs`: `exists`, `is_file`, `is_dir`, `size`, `modified`, `read`,
+  `read_lines`, `write`, `append`, `copy`, `list` (sorted), `make_dir`,
+  `make_dirs`, `remove`, `remove_all`, `rename`, `walk`, `cwd`, `temp_dir`,
+  `temp_path`, and the path helpers `join`, `parent`, `base_name`, `stem`,
+  `extension`, `with_extension`, `normalize`, `is_absolute`. Under it, new
+  `io` primitives in the runtime: `append_file`, `file_kind`, `file_size`,
+  `file_modified`, `make_dir`, `remove_file`, `remove_dir`, `rename`,
+  `list_dir`, `cwd`, `temp_dir`; they also work at the REPL.
+
 ## [0.2.1] - 2026-09-19
 
 ### Added

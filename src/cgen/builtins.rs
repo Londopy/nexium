@@ -881,13 +881,71 @@ impl Gen {
                 self.line(format!("{} {}; {{ nx_string _s; if (nx_read_file(c, {}, &_s)) {{ {}.err = 0; {}.val = _s; }} else {}.err = {}u; }}", cn, t, p, t, t, t, io));
                 t
             }
-            Builtin::WriteFile => {
+            Builtin::WriteFile | Builtin::AppendFile => {
                 let p = self.simple(&args[0]);
                 let d = self.simple(&args[1]);
                 let cn = self.cty(e.ty);
                 let io = self.err_id("IoError");
-                format!("(({}){{ .err = nx_write_file({}, {}) ? 0 : {}u }})", cn, p, d, io)
+                let f = if op == Builtin::WriteFile { "nx_write_file" } else { "nx_append_file" };
+                format!("(({}){{ .err = {}({}, {}) ? 0 : {}u }})", cn, f, p, d, io)
             }
+            Builtin::FsKind => {
+                let p = self.simple(&args[0]);
+                format!("nx_fs_kind({})", p)
+            }
+            Builtin::FsSize | Builtin::FsModified => {
+                let p = self.simple(&args[0]);
+                let cn = self.cty(e.ty);
+                let t = self.tmp();
+                let (nf, io) = (self.err_id("NotFound"), self.err_id("IoError"));
+                let pick = if op == Builtin::FsSize { "(uint64_t)_sz" } else { "_mt" };
+                self.line(format!(
+                    "{} {}; {{ int64_t _sz = 0, _mt = 0; int32_t _r = nx_fs_stat({}, &_sz, &_mt); if (_r == 0) {{ {}.err = 0; {}.val = {}; }} else {}.err = _r == 1 ? {}u : {}u; }}",
+                    cn, t, p, t, t, pick, t, nf, io
+                ));
+                t
+            }
+            Builtin::FsMkdir | Builtin::FsRemoveFile | Builtin::FsRemoveDir => {
+                let p = self.simple(&args[0]);
+                let cn = self.cty(e.ty);
+                let t = self.tmp();
+                let (nf, io) = (self.err_id("NotFound"), self.err_id("IoError"));
+                let f = match op {
+                    Builtin::FsMkdir => "nx_fs_mkdir",
+                    Builtin::FsRemoveFile => "nx_fs_remove_file",
+                    _ => "nx_fs_remove_dir",
+                };
+                self.line(format!("{} {}; {{ int32_t _r = {}({}); {}.err = _r == 0 ? 0 : _r == 1 ? {}u : {}u; }}", cn, t, f, p, t, nf, io));
+                t
+            }
+            Builtin::FsRename => {
+                let a = self.simple(&args[0]);
+                let b = self.simple(&args[1]);
+                let cn = self.cty(e.ty);
+                let t = self.tmp();
+                let (nf, io) = (self.err_id("NotFound"), self.err_id("IoError"));
+                self.line(format!("{} {}; {{ int32_t _r = nx_fs_rename({}, {}); {}.err = _r == 0 ? 0 : _r == 1 ? {}u : {}u; }}", cn, t, a, b, t, nf, io));
+                t
+            }
+            Builtin::FsListDir => {
+                let p = self.simple(&args[0]);
+                let cn = self.cty(e.ty);
+                let t = self.tmp();
+                let (nf, io) = (self.err_id("NotFound"), self.err_id("IoError"));
+                self.line(format!(
+                    "{} {}; {{ nx_rawlist _l; int32_t _r = nx_fs_list_dir(c, {}, &_l); if (_r == 0) {{ {}.err = 0; memcpy(&{}.val, &_l, sizeof _l); }} else {}.err = _r == 1 ? {}u : {}u; }}",
+                    cn, t, p, t, t, t, nf, io
+                ));
+                t
+            }
+            Builtin::FsCwd => {
+                let cn = self.cty(e.ty);
+                let t = self.tmp();
+                let io = self.err_id("IoError");
+                self.line(format!("{} {}; {{ nx_string _s; if (nx_fs_cwd(c, &_s)) {{ {}.err = 0; {}.val = _s; }} else {}.err = {}u; }}", cn, t, t, t, t, io));
+                t
+            }
+            Builtin::FsTempDir => "nx_fs_temp_dir(c)".into(),
             Builtin::ReadLine => {
                 let cn = self.cty(e.ty);
                 let t = self.tmp();
