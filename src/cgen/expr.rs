@@ -1492,7 +1492,7 @@ impl Gen {
         if self.opts.mode != BuildMode::FastRelease {
             self.line(format!("nx_slice_check({}, {}, {}, {});", s, en, len, loc));
         }
-        format!("(({}){{ {} + {}, {} - {} }})", cn, ptr, s, en, s)
+        format!("(({}){{ nx_padd({}, {}), {} - {} }})", cn, ptr, s, en, s)
     }
 
     // ----- match -----------------------------------------------------------------
@@ -1774,7 +1774,7 @@ impl Gen {
                     let name = self.local_name(*l);
                     if is_bytes {
                         self.line(format!("if (({} & 7) || ({} & 7)) break;", bit, sz));
-                        self.line(format!("nx_sl_u8 {} = {{ {}.ptr + {} / 8, {} / 8 }};", name, buf, bit, sz));
+                        self.line(format!("nx_sl_u8 {} = {{ nx_padd({}.ptr, {} / 8), {} / 8 }};", name, buf, bit, sz));
                         if sg.utf8 {
                             self.line(format!("if (!nx_utf8_valid({})) break;", name));
                         }
@@ -1788,7 +1788,7 @@ impl Gen {
                     if is_bytes {
                         let vc = self.simple(v);
                         self.line(format!("if (({} & 7) || {} != {}.len * 8) break;", bit, sz, vc));
-                        self.line(format!("if (memcmp({}.ptr + {} / 8, {}.ptr, {}.len) != 0) break;", buf, bit, vc, vc));
+                        self.line(format!("if (memcmp(nx_padd({}.ptr, {} / 8), {}.ptr, {}.len) != 0) break;", buf, bit, vc, vc));
                     } else {
                         let cn = self.cty(sg.ty);
                         let read = self.bits_read_expr(&buf, &bit, &sz, sg);
@@ -1849,7 +1849,7 @@ impl Gen {
             if let TBinSegKind::Bind(l) | TBinSegKind::Rest(l) = &sg.kind {
                 let name = self.local_name(*l);
                 if is_bytes {
-                    self.line(format!("nx_sl_u8 {} = {{ {}.ptr + {} / 8, {} / 8 }};", name, buf, bit, sz));
+                    self.line(format!("nx_sl_u8 {} = {{ nx_padd({}.ptr, {} / 8), {} / 8 }};", name, buf, bit, sz));
                 } else {
                     let cn = self.cty(sg.ty);
                     let read = self.bits_read_expr(&buf, &bit, &sz, sg);
@@ -1893,7 +1893,7 @@ impl Gen {
             self.line(format!("if ({} + {} > {}) {{ {}.err = {}u; break; }}", bit, sz, total, out, fail));
             if is_bytes {
                 self.line(format!("if (({} & 7) || {} > {}.len * 8) {{ {}.err = {}u; break; }}", bit, sz, v, out, fail));
-                self.line(format!("memcpy({}.ptr + {} / 8, {}.ptr, {} / 8);", buf, bit, v, sz));
+                self.line(format!("memcpy(nx_padd({}.ptr, {} / 8), {}.ptr, {} / 8);", buf, bit, v, sz));
             } else {
                 let raw = if sg.float {
                     if let TBinSize::Bits(32) = sg.size {

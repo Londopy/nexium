@@ -694,7 +694,7 @@ impl Gen {
                 let t = self.tmp();
                 self.line(format!("{} {} = {{0}}; {}.ar = c->arena;", cn, t, t));
                 let sep = if op == Builtin::SliceSplit { self.simple(&args[1]) } else { "nx_lit(\"\\n\", 1)".to_string() };
-                self.line(format!("{{ size_t _s = 0; for (;;) {{ nx_sl_u8 _rest = {{ {}.ptr + _s, {}.len - _s }}; size_t _i; bool _f = {}.len && nx_sl_find(_rest, {}, &_i); nx_sl_u8 _piece = {{ _rest.ptr, _f ? _i : _rest.len }};", a, a, sep, sep));
+                self.line(format!("{{ size_t _s = 0; for (;;) {{ nx_sl_u8 _rest = {{ nx_padd({}.ptr, _s), {}.len - _s }}; size_t _i; bool _f = {}.len && nx_sl_find(_rest, {}, &_i); nx_sl_u8 _piece = {{ _rest.ptr, _f ? _i : _rest.len }};", a, a, sep, sep));
                 if op == Builtin::SliceLines {
                     self.line("  if (_piece.len && _piece.ptr[_piece.len - 1] == '\\r') _piece.len--;");
                     self.line(format!("  if (!_f && _piece.len == 0 && {}.len) break;", a));

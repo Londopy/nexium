@@ -140,6 +140,10 @@ NX_NORETURN NX_INLINE void nx_panic_bounds(size_t i, size_t len, const char* loc
     nx_panic(buf, loc);
 }
 
+/* pointer + offset that is defined for a null pointer: an empty slice has no
+ * storage, and `NULL + 0` is undefined in C (UBSan traps it) */
+#define nx_padd(p, n) ((n) ? (p) + (n) : (p))
+
 NX_INLINE size_t nx_idx(size_t i, size_t len, const char* loc) {
     if (i >= len) nx_panic_bounds(i, len, loc);
     return i;
@@ -465,7 +469,7 @@ NX_INLINE int nx_sl_cmp(nx_sl_u8 a, nx_sl_u8 b) {
     return a.len < b.len ? -1 : (a.len > b.len ? 1 : 0);
 }
 NX_INLINE bool nx_sl_starts_with(nx_sl_u8 a, nx_sl_u8 p) { return a.len >= p.len && memcmp(a.ptr, p.ptr, p.len) == 0; }
-NX_INLINE bool nx_sl_ends_with(nx_sl_u8 a, nx_sl_u8 p) { return a.len >= p.len && memcmp(a.ptr + a.len - p.len, p.ptr, p.len) == 0; }
+NX_INLINE bool nx_sl_ends_with(nx_sl_u8 a, nx_sl_u8 p) { return a.len >= p.len && (p.len == 0 || memcmp(a.ptr + a.len - p.len, p.ptr, p.len) == 0); }
 NX_INLINE bool nx_sl_find(nx_sl_u8 a, nx_sl_u8 n, size_t* out) {
     if (n.len == 0) { *out = 0; return true; }
     if (a.len < n.len) return false;
@@ -478,7 +482,7 @@ NX_INLINE nx_sl_u8 nx_sl_trim(nx_sl_u8 a) {
     size_t s = 0, e = a.len;
     while (s < e && (a.ptr[s] == ' ' || a.ptr[s] == '\t' || a.ptr[s] == '\n' || a.ptr[s] == '\r')) s++;
     while (e > s && (a.ptr[e - 1] == ' ' || a.ptr[e - 1] == '\t' || a.ptr[e - 1] == '\n' || a.ptr[e - 1] == '\r')) e--;
-    nx_sl_u8 r; r.ptr = a.ptr + s; r.len = e - s; return r;
+    nx_sl_u8 r; r.ptr = nx_padd(a.ptr, s); r.len = e - s; return r;
 }
 NX_INLINE bool nx_sl_eq_ignore_case(nx_sl_u8 a, nx_sl_u8 b) {
     if (a.len != b.len) return false;
@@ -1619,5 +1623,24 @@ NX_INT_OPS(isize, intptr_t, uintptr_t, INTPTR_MIN, INTPTR_MAX)
 NX_INT_OPS(usize, size_t, size_t, 0, SIZE_MAX)
 NX_INT_OPS(i128, nx_i128, nx_u128, NX_I128_MIN, NX_I128_MAX)
 NX_INT_OPS(u128, nx_u128, nx_u128, 0, (~(nx_u128)0))
+
+/* Generated locals are named `<name>_<n>`. macOS's <mach/.../thread_status.h>
+ * (reached through the system headers above) defines object-like macros of
+ * that shape (`#define ts_32 uts.ts_32`), which would rewrite a local such as
+ * `ts_32`; the generated code never needs them. */
+#undef ts_32
+#undef ts_64
+#undef es_32
+#undef es_64
+#undef fs_32
+#undef fs_64
+#undef ds_32
+#undef ds_64
+#undef ns_32
+#undef ns_64
+#undef ss_32
+#undef ss_64
+#undef cs_32
+#undef cs_64
 
 #endif /* NX_RT_H */

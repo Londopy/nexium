@@ -2512,7 +2512,7 @@ impl Gen {
         if has_end { en = self.simple(kids[next]) }
         let loc = self.node_loc(e)
         if self.mode != MODE_FAST { self.line(format("nx_slice_check({}, {}, {}, {});", .{s, en, len, loc})[..]) }
-        return format("(({}){{ {} + {}, {} - {} }})", .{cn, ptr, s, en, s})
+        return format("(({}){{ nx_padd({}, {}), {} - {} }})", .{cn, ptr, s, en, s})
     }
 
     // ----- match -----------------------------------------------------------------
@@ -3247,7 +3247,7 @@ impl Gen {
             let t = self.tmp()
             self.line(format("{} {} = {{0}}; {}.ar = c->arena;", .{cn, t, t})[..])
             let sep = if name == "SliceSplit" { self.simple(args[1]) } else { String.from("nx_lit(\"\\n\", 1)") }
-            self.line(format("{{ size_t _s = 0; for (;;) {{ nx_sl_u8 _rest = {{ {}.ptr + _s, {}.len - _s }}; size_t _i; bool _f = {}.len && nx_sl_find(_rest, {}, &_i); nx_sl_u8 _piece = {{ _rest.ptr, _f ? _i : _rest.len }};", .{av, av, sep, sep})[..])
+            self.line(format("{{ size_t _s = 0; for (;;) {{ nx_sl_u8 _rest = {{ nx_padd({}.ptr, _s), {}.len - _s }}; size_t _i; bool _f = {}.len && nx_sl_find(_rest, {}, &_i); nx_sl_u8 _piece = {{ _rest.ptr, _f ? _i : _rest.len }};", .{av, av, sep, sep})[..])
             if name == "SliceLines" {
                 self.line("  if (_piece.len && _piece.ptr[_piece.len - 1] == '\\r') _piece.len--;")
                 self.line(format("  if (!_f && _piece.len == 0 && {}.len) break;", .{av})[..])
@@ -4301,7 +4301,7 @@ impl Gen {
                 let name = self.local_name(local)
                 if is_bytes {
                     self.line(format("if (({} & 7) || ({} & 7)) break;", .{bit, sz})[..])
-                    self.line(format("nx_sl_u8 {} = {{ {}.ptr + {} / 8, {} / 8 }};", .{name, buf, bit, sz})[..])
+                    self.line(format("nx_sl_u8 {} = {{ nx_padd({}.ptr, {} / 8), {} / 8 }};", .{name, buf, bit, sz})[..])
                     if utf8 { self.line(format("if (!nx_utf8_valid({})) break;", .{name})[..]) }
                 } else {
                     let cn = self.cty(sty)
@@ -4313,7 +4313,7 @@ impl Gen {
                 if is_bytes {
                     let vc = self.simple(v)
                     self.line(format("if (({} & 7) || {} != {}.len * 8) break;", .{bit, sz, vc})[..])
-                    self.line(format("if (memcmp({}.ptr + {} / 8, {}.ptr, {}.len) != 0) break;", .{buf, bit, vc, vc})[..])
+                    self.line(format("if (memcmp(nx_padd({}.ptr, {} / 8), {}.ptr, {}.len) != 0) break;", .{buf, bit, vc, vc})[..])
                 } else {
                     let cn = self.cty(sty)
                     let read = self.bits_read_expr(buf[..], bit[..], sz[..], endian[..], float, signed, size == "bits" and bits == 32)
@@ -4359,7 +4359,7 @@ impl Gen {
             if kind == "bind" or kind == "rest" {
                 let name = self.local_name(local)
                 if is_bytes {
-                    self.line(format("nx_sl_u8 {} = {{ {}.ptr + {} / 8, {} / 8 }};", .{name, buf, bit, sz})[..])
+                    self.line(format("nx_sl_u8 {} = {{ nx_padd({}.ptr, {} / 8), {} / 8 }};", .{name, buf, bit, sz})[..])
                 } else {
                     let cn = self.cty(sty)
                     let read = self.bits_read_expr(buf[..], bit[..], sz[..], endian[..], float, signed, size == "bits" and bits == 32)
@@ -4413,7 +4413,7 @@ impl Gen {
             self.line(format("if ({} + {} > {}) {{ {}.err = {}u; break; }}", .{bit, sz, total, out, fail})[..])
             if is_bytes {
                 self.line(format("if (({} & 7) || {} > {}.len * 8) {{ {}.err = {}u; break; }}", .{bit, sz, v, out, fail})[..])
-                self.line(format("memcpy({}.ptr + {} / 8, {}.ptr, {} / 8);", .{buf, bit, v, sz})[..])
+                self.line(format("memcpy(nx_padd({}.ptr, {} / 8), {}.ptr, {} / 8);", .{buf, bit, v, sz})[..])
             } else {
                 var raw = String.new()
                 if float {
