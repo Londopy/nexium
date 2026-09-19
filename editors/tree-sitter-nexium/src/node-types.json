@@ -831,6 +831,10 @@
           "named": true
         },
         {
+          "type": "segment_modifier",
+          "named": true
+        },
+        {
           "type": "segment_size",
           "named": true
         },
@@ -893,6 +897,25 @@
     }
   },
   {
+    "type": "break_expression",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "expression",
+          "named": true
+        },
+        {
+          "type": "label_ref",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "break_statement",
     "named": true,
     "fields": {},
@@ -921,6 +944,10 @@
       "types": [
         {
           "type": "expression",
+          "named": true
+        },
+        {
+          "type": "segment_modifier",
           "named": true
         },
         {
@@ -1040,11 +1067,23 @@
       "required": true,
       "types": [
         {
+          "type": "break_expression",
+          "named": true
+        },
+        {
           "type": "capture",
           "named": true
         },
         {
+          "type": "continue_expression",
+          "named": true
+        },
+        {
           "type": "expression",
+          "named": true
+        },
+        {
+          "type": "return_expression",
           "named": true
         }
       ]
@@ -1140,6 +1179,21 @@
       "types": [
         {
           "type": "visibility",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "continue_expression",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "label_ref",
           "named": true
         }
       ]
@@ -2233,7 +2287,19 @@
       "required": true,
       "types": [
         {
+          "type": "break_expression",
+          "named": true
+        },
+        {
+          "type": "continue_expression",
+          "named": true
+        },
+        {
           "type": "expression",
+          "named": true
+        },
+        {
+          "type": "return_expression",
           "named": true
         }
       ]
@@ -2383,6 +2449,21 @@
         },
         {
           "type": "integer_literal",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "return_expression",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "expression",
           "named": true
         }
       ]
@@ -3388,6 +3469,10 @@
   {
     "type": "return",
     "named": false
+  },
+  {
+    "type": "segment_modifier",
+    "named": true
   },
   {
     "type": "step",

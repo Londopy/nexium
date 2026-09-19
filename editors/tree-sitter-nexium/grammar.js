@@ -305,8 +305,18 @@ module.exports = grammar({
 
     try_expression: ($) => prec.right(PREC.unary, seq('try', $.expression)),
 
-    catch_expression: ($) => prec.left(PREC.orelse, seq($.expression, 'catch', optional($.capture), $.expression)),
-    orelse_expression: ($) => prec.left(PREC.orelse, seq($.expression, 'orelse', $.expression)),
+    // the right side of `catch` and `orelse` may leave the function or loop:
+    // `x orelse return null`, `ch.recv() orelse break`. A value follows the
+    // keyword only on the same line (the keyword token swallows the blanks
+    // after it), so a bare `return` at a line end does not take the next
+    // statement as its value.
+    catch_expression: ($) => prec.left(PREC.orelse, seq($.expression, 'catch', optional($.capture), choice($.expression, $._jump_expression))),
+    orelse_expression: ($) => prec.left(PREC.orelse, seq($.expression, 'orelse', choice($.expression, $._jump_expression))),
+    _jump_expression: ($) => choice($.return_expression, $.break_expression, $.continue_expression),
+    return_expression: ($) => prec.right(choice(seq(alias(token(seq('return', /[ 	]+/)), 'return'), $.expression), 'return')),
+    break_expression: ($) =>
+      prec.right(choice(seq(alias(token(seq('break', /[ 	]+/)), 'break'), optional($.label_ref), optional($.expression)), 'break')),
+    continue_expression: ($) => prec.right(choice(seq(alias(token(seq('continue', /[ 	]+/)), 'continue'), optional($.label_ref)), 'continue')),
     pipe_expression: ($) => prec.left(PREC.pipe, seq($.expression, '|>', $.expression)),
 
     binary_expression: ($) => {
@@ -365,7 +375,7 @@ module.exports = grammar({
 
     // `<<4:4, 1500:16/big, "ab">> into buf[..]` builds bytes into a buffer
     binary_build: ($) => prec.dynamic(3, prec.right(seq('<<', sep($.build_segment), '>>', 'into', $.expression))),
-    build_segment: ($) => prec.right(PREC.shift + 1, seq($.expression, optional(seq(':', $.segment_size, repeat(seq('/', $.identifier)))))),
+    build_segment: ($) => prec.right(PREC.shift + 1, seq($.expression, optional(seq(':', $.segment_size, repeat(seq('/', $.segment_modifier)))))),
 
     error_value: ($) => seq('error', '.', $.identifier),
 
@@ -408,7 +418,9 @@ module.exports = grammar({
     tuple_pattern: ($) => seq('(', sep($.pattern), ')'),
     or_pattern: ($) => prec.left(seq($.pattern, '|', $.pattern)),
     binary_pattern: ($) => seq('<<', sep($.binary_segment), '>>'),
-    binary_segment: ($) => seq(choice($.identifier, $.integer_literal, $.char_literal, $.string_literal, '_'), optional(seq(':', $.segment_size)), repeat(seq('/', $.identifier))),
+    binary_segment: ($) => seq(choice($.identifier, $.integer_literal, $.char_literal, $.string_literal, '_'), optional(seq(':', $.segment_size)), repeat(seq('/', $.segment_modifier))),
+    // `/little-signed`: modifiers joined with `-`
+    segment_modifier: ($) => /[A-Za-z_][A-Za-z0-9_]*(-[A-Za-z_][A-Za-z0-9_]*)*/,
     segment_size: ($) => seq(choice($.identifier, $.integer_literal), optional(seq('*', choice($.identifier, $.integer_literal)))),
 
     // ------------------------------------------------------------ types
