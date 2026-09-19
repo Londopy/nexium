@@ -1,0 +1,44 @@
+// Records: structs whose fields carry `where` constraints. A literal with
+// constant fields is checked at compile time; `Record.new(.{ ... })` checks
+// at run time and returns an error; a plain literal with a run-time value
+// checks at run time and panics.
+record Dose {
+    mg_per_kg: f64 where value > 0.0 and value <= 100.0
+    route: u8 where value < 4
+}
+
+record Port {
+    number: u16 where value >= 1024
+    name: []u8
+}
+
+fn describe(d: Dose) {
+    println("{} mg/kg by route {}", .{d.mg_per_kg, d.route})
+}
+
+fn main() -> !void {
+    // every field constant: checked at compile time, nothing left to do at run time
+    let small = Dose{ .mg_per_kg = 2.5, .route = 1 }
+    describe(small)
+
+    // `.new` validates at run time and reports `error.InvalidRecord`
+    var i: u8 = 0
+    while i < 6 {
+        let d = Dose.new(.{ .mg_per_kg = 10.0, .route = i }) catch |e| {
+            println("route {}: {}", .{i, e})
+            i += 1
+            continue
+        }
+        describe(d)
+        i += 1
+    }
+
+    // one constant field, one run-time field: only the run-time one is checked
+    let p = Port{ .number = 8080, .name = "http-alt" }
+    println("{} {}", .{p.name, p.number})
+    let q = Port.new(.{ .number = 22, .name = "ssh" }) catch |e| {
+        println("port 22: {}", .{e})
+        Port{ .number = 2222, .name = "ssh-alt" }
+    }
+    println("{} {}", .{q.name, q.number})
+}

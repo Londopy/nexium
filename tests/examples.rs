@@ -38,7 +38,7 @@ fn examples_reproduce_recorded_output() {
         eprintln!("skipping: zig not found");
         return;
     }
-    for name in ["hello", "tour", "binary", "ownership", "generics", "control", "ctest", "arena", "dyn", "parallel", "cimport", "process", "tree", "own", "stdlib", "json", "guard_scope"] {
+    for name in ["hello", "tour", "binary", "ownership", "generics", "control", "ctest", "arena", "dyn", "parallel", "cimport", "process", "tree", "own", "stdlib", "json", "guard_scope", "records"] {
         run_example(name, "run");
     }
     run_example("tests", "test");
@@ -204,7 +204,7 @@ fn self_hosted_checker_matches_signatures() {
 }
 
 /// The checker written in Nexium, stage 2: the full typed IR matches `nx tir`
-/// on every source it already covers (records, dyn, binary patterns,
+/// on every source it already covers (dyn, binary patterns,
 /// comptime calls and C imports are the remaining stages). The list only
 /// grows.
 #[test]
@@ -236,11 +236,13 @@ fn self_hosted_checker_matches_bodies() {
         "examples/ownership.nx",
         "examples/parallel.nx",
         "examples/process.nx",
+        "examples/records.nx",
         "examples/ropesim.nx",
         "examples/service.nx",
         "examples/stdlib.nx",
         "examples/tests.nx",
         "examples/tool.nx",
+        "examples/tour.nx",
         "examples/tree.nx",
         "self/check.nx",
         "self/lexer.nx",
