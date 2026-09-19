@@ -29,6 +29,12 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
   sources: every example and std module but `@cImport` users).
 - A constant slice whose elements were computed at compile time is stored
   as a static array; only string literals could back a constant slice.
+- `self/check.nx` reports the diagnostics-only passes: declared effect
+  bounds against inferred effects, `for parallel` bodies mutating shared
+  state, mutable globals in embeddable libraries, `own` on copied types and
+  on exported or fn-value functions, moves out of map lookups, `match`
+  exhaustiveness, returned views into locals. `cargo test` runs it over
+  every compile-fail case and expects every message the Rust checker gives.
 
 ### Fixed
 
