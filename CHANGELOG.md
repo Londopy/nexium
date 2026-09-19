@@ -13,9 +13,11 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
 - `self/check.nx` checks closures: parameter and return types from the
   expected function type, by-value and by-reference captures, inferred
   return types; and records: constraint checks, compile-time decisions on
-  constant fields, `Record.new`. `examples/generics.nx`, `examples/tests.nx`,
-  `examples/tour.nx`, `examples/records.nx` and `std/thread.nx` join the
-  body comparison (43 sources).
+  constant fields, `Record.new`; and trait objects: vtables, `dyn`
+  coercions, dynamic calls, effect bounds on function values.
+  `examples/generics.nx`, `examples/tests.nx`, `examples/tour.nx`,
+  `examples/records.nx`, `examples/dyn.nx` and `std/thread.nx` join the
+  body comparison (44 sources).
 - `examples/records.nx`: compile-time, `.new` and run-time constraint checks.
 
 ### Fixed
