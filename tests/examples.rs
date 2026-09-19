@@ -223,6 +223,61 @@ fn self_hosted_checker_matches_signatures() {
 /// The checker written in Nexium, stage 2: the full typed IR matches `nx tir`
 /// on every source: every example, std module, GUI and self-hosting file.
 /// The list only grows.
+/// The C emitter written in Nexium: byte-identical C for every source the
+/// Rust emitter accepts (examples, std, GUI, the self-hosting files).
+#[test]
+fn self_hosted_emitter_matches_oracle() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let out_dir = root.join("nx-out").join("self_cgen");
+    let exe = out_dir.join(if cfg!(windows) { "self_cgen.exe" } else { "self_cgen" });
+    let build = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).args(["build", "self/cgen.nx", "-o"]).arg(&exe).arg("--out-dir").arg(&out_dir).current_dir(root).output().expect("run nx");
+    assert!(
+        build.status.success(),
+        "building self/cgen.nx failed:
+{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
+    for dir in ["examples", "std", "gui", "self"] {
+        files.extend(std::fs::read_dir(root.join(dir)).unwrap().filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().map(|x| x == "nx").unwrap_or(false)));
+    }
+    files.sort();
+    let mut compared = 0;
+    for f in files {
+        // both sides preprocess C headers with the zig on the PATH
+        let oracle = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).arg("emit-c").arg(&f).env("NX_ZIG", "zig").current_dir(root).output().unwrap();
+        if !oracle.status.success() {
+            // a deliberately failing example: nothing to compare
+            continue;
+        }
+        let expected = String::from_utf8_lossy(&oracle.stdout).to_string();
+        let mine = std::process::Command::new(&exe).arg(&f).env("NX_ZIG", "zig").current_dir(root).output().unwrap();
+        assert!(
+            mine.status.success(),
+            "self/cgen.nx rejected {}:
+{}",
+            f.display(),
+            String::from_utf8_lossy(&mine.stderr)
+        );
+        let got = String::from_utf8_lossy(&mine.stdout).to_string();
+        if expected != got {
+            let (el, gl): (Vec<&str>, Vec<&str>) = (expected.lines().collect(), got.lines().collect());
+            let first = el.iter().zip(gl.iter()).position(|(a, b)| a != b).unwrap_or(el.len().min(gl.len()));
+            panic!(
+                "C differs for {} at line {}:
+  oracle: {}
+  mine:   {}",
+                f.display(),
+                first + 1,
+                el.get(first).unwrap_or(&"<end>"),
+                gl.get(first).unwrap_or(&"<end>")
+            );
+        }
+        compared += 1;
+    }
+    assert!(compared > 50, "expected the whole tree, compared {} files", compared);
+}
+
 /// The checker written in Nexium, stage 3: every compile-fail case is
 /// rejected with every message the Rust checker produces (the notes too).
 #[test]
