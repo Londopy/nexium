@@ -28,11 +28,6 @@ Fixed bugs are not listed here; `CHANGELOG.md` and `git log` have them.
   and trait default methods materialized by calls) rather than being
   order-independent by construction. The full mode is complete; `--sigs`
   exists only as the first milestone of `self/check.nx`.
-- **`self/check.nx` stages not yet ported:** generics and monomorphization,
-  closures, trait objects (`dyn`), binary patterns and construction,
-  compile-time function calls (`comptime f()`), `@cImport`, and
-  exhaustiveness diagnostics for `match`. The sources these appear in are
-  not in the `self_hosted_checker_matches_bodies` list yet.
 
 ## Tools and editors
 
@@ -50,7 +45,11 @@ Fixed bugs are not listed here; `CHANGELOG.md` and `git log` have them.
 
 ## Tests and CI
 
-- **Tests that build files must pass `--out-dir`.** Two tests compiling
+- **Suites that build files must pass `--out-dir`.** Two cases compiling
   the same source into `nx-out/` at once fail on Windows (the second write
-  hits a mapped file). The convention is followed by hand; nothing checks
-  it.
+  hits a mapped file). The harness (`tests/run.nx`) gives every case its
+  own directory under `nx-out/cases/`; a new suite has to do the same by
+  hand, nothing checks it.
+- **`process` drains a child's output after its stdin is fully written.**
+  A child that produces more than the pipe holds before reading its input
+  can stall; feed such programs through files (`std.process` says so).
