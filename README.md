@@ -326,21 +326,28 @@ and the mountains still to climb.
 
 ## Self-hosting
 
-The compiler is Rust today. The Nexium version of it grows under
-[`self/`](self), one stage at a time, each checked against the Rust compiler
-on the same inputs:
+The compiler is written in Nexium, under [`self/`](self), and builds itself.
+A machine with no `nx` builds one from [`bootstrap/nx.c`](bootstrap/nx.c),
+the C the compiler emits for itself, with any C compiler and no Rust:
 
-| stage | file | oracle | status |
-| --- | --- | --- | --- |
-| lexer | [`self/lexer.nx`](self/lexer.nx) | `nx tokens` | ✅ identical on every source |
-| parser | [`self/parser.nx`](self/parser.nx) | `nx sexp` | ✅ identical on all 46 sources |
-| checker | [`self/check.nx`](self/check.nx) | `nx tir` | ✅ the full typed IR is identical on every source (54: examples, std, GUI, the self-hosting files), and every compile-fail case is rejected with the same messages |
-| C emitter | [`self/cgen.nx`](self/cgen.nx) | `nx emit-c` | ✅ byte-identical C on every source, its own included |
-| driver | [`self/nx.nx`](self/nx.nx) | `nx build/run/test` | ✅ builds itself; the result builds and runs programs |
+```sh
+sh bootstrap/build.sh     # nx.c -> nx0; nx0 builds self/nx.nx -> nx1; nx1 rebuilds itself to the same C
+```
 
-`cargo test` builds each stage with the Rust compiler and diffs its output
-against the oracle over every example, std module, GUI and self-hosting
-source.
+| stage | file | lines |
+| --- | --- | --- |
+| lexer | [`self/lexer.nx`](self/lexer.nx) | tokens |
+| parser | [`self/parser.nx`](self/parser.nx) | an id-arena syntax tree |
+| checker | [`self/check.nx`](self/check.nx), [`self/cimport.nx`](self/cimport.nx) | types, effects, ownership, generics, the compile-time interpreter, C header import, every diagnostic |
+| C emitter | [`self/cgen.nx`](self/cgen.nx) | one C file per program |
+| driver | [`self/nx.nx`](self/nx.nx) | build, run, test, check, emit-c, tir; the standard library embedded |
+
+Every example, every spec case and every compile-fail case runs through the
+bootstrapped compiler in `cargo test` and in CI, on three platforms, with a
+job that has no Rust toolchain at all. The first compiler, in Rust, is
+frozen in [`bootstrap/rust/`](bootstrap/rust) and still holds the tools that
+are not yet ported (`fmt`, `doc`, `lsp`, `ship`, packages, the REPL); it
+leaves at 1.0 (decision 90).
 
 ## Languages in the repository
 
@@ -354,13 +361,13 @@ files (`gui/font.bin`, lock files):
 | C | 1,844 | 3.7% | the runtime `nx_rt.h` and the GUI window layer |
 | JavaScript, TypeScript | 159 | 0.3% | the VS Code extension |
 
-The Nexium share grows with every self-hosting stage; the Rust share is the
-bootstrap compiler and will one day be zero.
+The Rust share is the frozen bootstrap compiler and the tools not yet
+ported; it goes to zero at 1.0.
 
 ## Layout
 
 ```
-src/            the compiler (lexer, parser, checker, comptime, C backend, driver)
+bootstrap/      the C seed the compiler is built from, the build scripts, and rust/: the frozen first compiler
 runtime/        nx_rt.h, embedded into every generated C file
 std/            the standard library in Nexium, embedded in the compiler
 self/           the compiler in Nexium, stage by stage

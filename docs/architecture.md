@@ -6,10 +6,19 @@ Nexium from other languages is [`embedding.md`](embedding.md); every judgment
 call made where the specification was open is in
 [`DECISIONS.md`](../DECISIONS.md).
 
+## Two compilers, one pipeline
+
+Since 0.8 the compiler is written in Nexium: `self/lexer.nx`, `parser.nx`,
+`check.nx` (with `cimport.nx`), `cgen.nx` and the driver `nx.nx`, one file
+per stage below, and it builds itself from the C seed in `bootstrap/`
+(decision 90). The first compiler, in Rust, lives frozen in
+`bootstrap/rust/` until the tools it still holds are ported; this tour
+names the Rust files because they are the shorter read, and every stage
+has the same shape and the same name in `self/`.
+
 ## The one-paragraph version
 
-`nx` is a Rust program with no dependencies. It reads `.nx` source, checks it,
-and writes one C file. That C file includes `runtime/nx_rt.h` (900 lines of
+`nx` reads `.nx` source, checks it, and writes one C file. That C file includes `runtime/nx_rt.h` (900 lines of
 plain C embedded in the compiler binary) and is handed to `zig cc`, which is
 Clang with a cross-compiling libc bundled in. There is no garbage collector,
 no virtual machine, and no runtime library to install: the output is a native

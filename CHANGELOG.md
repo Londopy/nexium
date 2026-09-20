@@ -10,6 +10,27 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ## [Unreleased]
 
+### Changed
+
+- The compiler written in Nexium is the compiler (decision 90). The first
+  compiler, in Rust, is frozen at 0.7 semantics and moved to
+  `bootstrap/rust/`; it still builds and still holds the tools not yet
+  ported (`fmt`, `doc`, `lsp`, `ship`, packages, the REPL), and leaves at
+  1.0. A machine with no `nx` builds one from `bootstrap/nx.c`, the C the
+  compiler emits for itself, with any C compiler and no Rust
+  (`bootstrap/build.sh`, `build.ps1`); CI does so on three platforms with
+  no Rust toolchain. `cargo test` builds the compiler from the seed and
+  runs every example, spec case and compile-fail case through it; the
+  oracle diffs that drove the port (`nx tokens`, `sexp`, `tir` and
+  `emit-c` compared between the two compilers) retire.
+
+### Fixed
+
+- The compiler in Nexium searched no directory for `@cImport` headers and
+  vendored C when the file was named without a path (`nx build demo.nx`
+  from inside `gui/`); the file's directory is `.` in that case, as in
+  the Rust compiler.
+
 ### Removed
 
 - `layout(packed)` and `soa` on structs, and the `pool` and `stack`

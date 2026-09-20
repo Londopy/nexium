@@ -13,7 +13,7 @@ use crate::types::*;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
-pub const RUNTIME_H: &str = include_str!("../../runtime/nx_rt.h");
+pub const RUNTIME_H: &str = include_str!("../../../../runtime/nx_rt.h");
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BuildMode {

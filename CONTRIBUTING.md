@@ -8,9 +8,10 @@ Start with `docs/architecture.md` for a map of the compiler.
 ## Building
 
 ```bash
-cargo build            # the compiler, target/debug/nx
-cargo test             # unit tests, every example against its recorded output,
-                       # compile-fail cases, and a `nx ship` round trip
+sh bootstrap/build.sh  # the compiler in Nexium from the C seed, no Rust: nx-out/bootstrap/nx1
+cargo build            # the frozen Rust compiler and the tools still in it, target/debug/nx
+cargo test             # builds nx1 from the seed and runs every example, spec case and
+                       # compile-fail case through it; the fixed point; the tool tests
 ```
 
 `nx` needs a C compiler. It looks for `zig` on your `PATH` and uses `zig cc`;
@@ -22,12 +23,11 @@ still passes on a machine without it, but you will want it installed.
 
 | path | what lives there |
 | --- | --- |
-| `src/lexer.rs`, `src/parser.rs`, `src/ast.rs` | syntax |
-| `src/check/` | name resolution, type checking, monomorphization, effects |
-| `src/comptime.rs` | the compile-time interpreter over the typed IR |
-| `src/cgen/` | the C backend and the export boundary |
-| `src/ship.rs` | headers, Python packages, wheels |
-| `src/main.rs` | the `nx` driver |
+| `self/lexer.nx`, `self/parser.nx` | syntax |
+| `self/check.nx`, `self/cimport.nx` | name resolution, type checking, monomorphization, effects, the compile-time interpreter, C header import |
+| `self/cgen.nx` | the C backend |
+| `self/nx.nx` | the `nx` driver: build, run, test, check, emit-c, tir |
+| `bootstrap/` | the C seed `nx.c`, the build scripts, and `rust/`: the frozen first compiler with the tools not yet ported (`fmt`, `doc`, `lsp`, `ship`, packages, the REPL) |
 | `runtime/nx_rt.h` | the C runtime, embedded into generated code |
 | `examples/` | programs with `.expected` output, run by the tests |
 | `tests/compile_fail/` | programs that must be rejected, with `// EXPECT:` lines |

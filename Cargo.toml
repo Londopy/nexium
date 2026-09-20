@@ -16,7 +16,7 @@ exclude = ["nx-out/", "nexium-systems-spec.txt", ".github/", "tests/", "target/"
 
 [[bin]]
 name = "nx"
-path = "src/main.rs"
+path = "bootstrap/rust/src/main.rs"
 
 [dependencies]
 
