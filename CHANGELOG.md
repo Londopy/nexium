@@ -10,6 +10,10 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-09-20
+
+*Annapurna: Rébuffat* — the guide who roped the snow-blind party together on the descent: a patch that ties the loose ends after the summit. The fixes the tutorial found, the documentation site and the Topo, and support for eleven editors; the language is the same.
+
 ### Added
 
 - Editor support beyond VS Code and Sublime Text, under `editors/`: Vim
@@ -731,7 +735,8 @@ First public release.
   Korean, French, and German; the language reference and architecture tour in
   Spanish, Chinese, and Japanese.
 
-[Unreleased]: https://github.com/Londopy/nexium/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/Londopy/nexium/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/Londopy/nexium/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/Londopy/nexium/compare/v0.9.0...v1.0.0
 [0.9.0]: https://github.com/Londopy/nexium/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/Londopy/nexium/compare/v0.7.0...v0.8.0
