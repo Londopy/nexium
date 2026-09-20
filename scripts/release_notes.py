@@ -16,6 +16,9 @@ import patchnotes
 
 tag, art_dir, out_path = sys.argv[1], sys.argv[2], sys.argv[3]
 version = tag.lstrip("v")
+# asset links must be absolute: a relative link in a release body resolves
+# under /releases/tag/ and is a 404
+download = f"https://github.com/Londopy/nexium/releases/download/{tag}"
 
 # --- changelog section
 cl = patchnotes.parse_file("CHANGELOG.md")
@@ -73,7 +76,7 @@ for kind in ("Added", "Changed", "Fixed", "Removed", "Deprecated", "Security"):
 
 out += ["## Install", ""]
 if win_setup:
-    out += [f"**Windows**: run [`{win_setup}`]({win_setup}). It installs `nx`, a bundled Zig toolchain (the C compiler `nx` uses), the standard library, examples, docs, and the VS Code extension, and can add `nx` to your PATH. No other install is needed. A portable zip without the installer is `{win_zip}`.", ""]
+    out += [f"**Windows**: run [`{win_setup}`]({download}/{win_setup}). It installs `nx`, a bundled Zig toolchain (the C compiler `nx` uses), the standard library, examples, docs, and the VS Code extension, and can add `nx` to your PATH. No other install is needed. A portable zip without the installer is `{win_zip}`.", ""]
 out += ["**macOS and Linux**:", "", "```sh", "curl -fsSL https://raw.githubusercontent.com/Londopy/nexium/main/installers/install.sh | sh", "```", "",
         f"This downloads `{mac}` or `{linux}`, verifies it against `SHA256SUMS.txt`, installs to `~/.nexium/bin`, downloads Zig on Linux when no C compiler is present (macOS uses the Xcode command line tools), and adds the directory to your PATH. Set `NEXIUM_VERSION={tag}` to pin this release.", "",
         "**From source**: `sh bootstrap/build.sh` with a C compiler (Zig, or `cc` on macOS) builds the compiler from its C seed; no Rust is needed.", "",
@@ -82,7 +85,7 @@ out += ["Then, in a new console:", "", "```", "nx doctor", "nx run examples/hell
 
 out += ["## Files", "", "| file | size | SHA-256 |", "| --- | --- | --- |"]
 for f, digest, size in sums:
-    out.append(f"| [`{f}`]({f}) | {human(size)} | `{digest}` |")
+    out.append(f"| [`{f}`]({download}/{f}) | {human(size)} | `{digest}` |")
 out += ["", "`SHA256SUMS.txt` holds the same values. Verify a download with:", "",
         "```sh", "sha256sum -c SHA256SUMS.txt --ignore-missing      # Linux", "shasum -a 256 -c SHA256SUMS.txt --ignore-missing   # macOS", "```", "",
         "```powershell", "Get-FileHash .\\" + (win_setup or "nx.zip") + " -Algorithm SHA256   # Windows, compare with the table", "```", ""]

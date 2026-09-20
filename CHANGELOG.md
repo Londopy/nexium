@@ -32,6 +32,13 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   tools (size treemap, leak explorer, effect graph, ownership timeline),
   nexium-gui grown up, and the Hut, a native IDE in nexium-gui.
 
+### Fixed
+
+- The links under "Files" in the release notes were relative, so GitHub
+  resolved them under the tag page and every one was a 404. The notes
+  script writes the download URL now, and the notes of every release
+  since 0.2.0 were corrected in place.
+
 ## [1.0.1] - 2026-09-20
 
 *Annapurna: Rébuffat* — the guide who roped the snow-blind party together on the descent: a patch that ties the loose ends after the summit. The fixes the tutorial found, the documentation site and the Topo, and support for eleven editors; the language is the same.
