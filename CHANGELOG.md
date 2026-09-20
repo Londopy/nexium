@@ -19,6 +19,11 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   debugger and workbench, hot reload, one-liners, REPL sessions as files,
   watch mode, snapshot tests, a Jupyter kernel and the playground, each
   pencilled into a minor.
+- The roadmap's clickable line: the REPL with an inspector window,
+  `:plot` and `:watch`, the installer's editor page and `nx upgrade`,
+  `nx topo` as an interactive tutorial runner, `std.tui`, the visual
+  tools (size treemap, leak explorer, effect graph, ownership timeline),
+  nexium-gui grown up, and the Hut, a native IDE in nexium-gui.
 
 ## [1.0.1] - 2026-09-20
 

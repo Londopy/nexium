@@ -612,6 +612,81 @@ changes the language.
 - The playground (1.5): the compiler compiled to WebAssembly puts a "run"
   button on every code block of the documentation site and the Topo.
 
+### The clickable line: windows, wizards and the REPL
+
+The installer wizard, the REPL and the GUI library are the parts of the
+project people touch rather than read. This line grows them together:
+each item is something to click, type into or look at, and each stands
+on what exists (the REPL recompiles a session; nexium-gui draws in a
+window or headless; the installer is a wizard already). Pencilled into
+minors the same way as the tools above.
+
+**The REPL you can look into** (1.1, 1.3).
+
+- Colour as you type, completion and signatures from the language server,
+  history search, multi-line editing, `:doc List.append` inline.
+- `:show value` opens an inspector window: a struct as a tree, a `List`
+  as rows, a `Map` as a table, live while the session continues, so a
+  value is looked at rather than printed. `:plot xs` opens a chart window
+  for a list of numbers; `:watch expr` re-evaluates and redraws on every
+  line entered. The REPL and the GUI library, fused.
+
+**The first five minutes** (1.3, 1.5).
+
+- The installer's editor page: checkboxes for VS Code, Vim and Neovim,
+  Notepad++, JetBrains and the rest, each putting the files from
+  `editors/` where that editor looks; an "Open REPL here" entry in the
+  folder context menu and a Windows Terminal profile; a finish page that
+  opens the first chapter of the Topo.
+- `nx upgrade`: fetches the new release, verifies the checksum, swaps
+  itself; `nx doctor` says when one is available.
+- A macOS `.pkg` and a Linux `.deb`/`.rpm` with the same pages (1.5), and
+  manifests for `winget`, Homebrew and Scoop, so the install is one line
+  where people already type them.
+
+**`nx topo`: the tutorial you can run** (1.4).
+
+- An interactive tutorial runner: opens a chapter, shows its program, lets
+  you edit and run it, checks the output against the recorded one, gives
+  exercises with hints and keeps your progress. In the terminal first,
+  and on the site once the playground (1.5) runs code in the page. The
+  book becomes a course.
+
+**`std.tui`** (1.4).
+
+- Raw mode, key and mouse events, cells, colours and layout: the base for
+  the binary workbench, `nx topo`, and `nx dash`, a project dashboard
+  (tests, effects, size, leaks, live, keyboard-driven).
+
+**Visual tools** (1.6).
+
+- `nx size --gui`: the binary as a treemap by function, click to zoom.
+- `nx leaks --gui`: the unreleased objects with their allocation stacks.
+- `nx effects --gui`: the call graph with effect-coloured nodes; click one
+  for the provenance `nx explain` prints.
+- The ownership timeline: a run's moves, clones and drops on a scrubber,
+  the source highlighted as it plays; chapter 8 of the Topo as an app.
+- All built on nexium-gui: the library's own stress test.
+
+**nexium-gui grows up** (1.8, Gangapurna).
+
+- Anti-aliased TrueType text from a rasterizer in Nexium, Unicode,
+  clipping and scrolling containers, tree, table, tabs and menus, multiple
+  windows, the platform's text input (IME), high-DPI; the X11, Wayland
+  and Cocoa backends of 1.5 underneath.
+- `nx gui gallery`: every widget with its source beside it, clickable
+  documentation.
+
+**Apps** (1.8).
+
+- The Hut, a small native IDE in nexium-gui: an editor with the language
+  server, run and test buttons, an output pane, the effects panel, the
+  inspector. The GUI library proves itself the way the compiler did, by
+  building the thing that builds with it.
+- The notebook: the GUI REPL with cells, results and charts, saved as an
+  `.nx` script with the outputs as comments, so a notebook is a program.
+- The playground with share links (1.5): a snippet is a URL.
+
 ### 2.0 candidates: questions the spec review should settle
 
 Additions large enough to deserve a spec version of their own. Each is a
