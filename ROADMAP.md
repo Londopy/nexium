@@ -661,6 +661,49 @@ minors the same way as the tools above.
   manifests for `winget`, Homebrew and Scoop, so the install is one line
   where people already type them.
 
+**The installer grown up** (1.3). The wizard is the first thing a Windows
+user sees of the language, so it should behave like software people pay
+for, in every situation it can find itself in:
+
+- One at a time: a second setup started while one is running gets a
+  message naming the one already open (a setup mutex) rather than two
+  wizards racing for the same directory; the uninstaller the same.
+- Knows what is there: detects an installed version and offers *Upgrade*
+  (keeps the choices made last time: directory, PATH, components,
+  editors), *Repair* and *Remove*; refuses to downgrade without saying
+  so; notices a per-user install when installing for all users, and the
+  reverse, and offers to remove the other first; reads the settings of a
+  previous install for its defaults.
+- Nothing in use: finds a running `nx`, REPL or language server and
+  asks to close it (or lets the user do it) before files are replaced,
+  with a restart-manager retry instead of a failed copy; warns when a
+  terminal has `%LocalAppData%\Programs\Nexium` on its PATH and will not
+  see the new `nx` until reopened.
+- Checks before it starts: disk space including the bundled Zig, a
+  pending reboot, a PATH already near the length limit, an antivirus
+  quarantine of `zig.exe` after the copy (verifies the files it wrote and
+  says which one is missing), and whether `code`, `git` and the editors
+  of the editor page are present, so a box is unchecked with a reason
+  rather than failing later.
+- Choice of toolchain: bundle Zig (default), use a Zig already on the
+  PATH, or download it at the end with a progress bar and a checksum;
+  the compact type without Zig for people who have a C compiler.
+- Speaks the reader's language: the wizard in the six languages of
+  `docs/i18n`, chosen from the system locale.
+- Signed: an Authenticode signature on the setup and on `nx.exe`, so
+  SmartScreen shows the publisher rather than a warning; the release
+  workflow signs from a certificate in the repository's secrets.
+- Leaves a trail: a log under `%Temp%` named from the wizard's last
+  page, an *Installation failed* page with the log and a link to file an
+  issue, and rollback of a half-finished install.
+- For administrators: `/VERYSILENT` with every page's choice as a
+  parameter (`/COMPONENTS`, `/TASKS`, `/EDITORS`, `/DIR`, `/ALLUSERS`),
+  an MSI wrapper for group policy, and an ARM64 setup beside the x64 one.
+- After the install: *Check for updates* in the Start menu entry and a
+  notice from `nx doctor`; uninstall that offers to keep `~/.nexium`
+  (packages, REPL history) or remove everything; a repair that reinstalls
+  only the files whose checksum differs.
+
 **`nx topo`: the tutorial you can run** (1.4).
 
 - An interactive tutorial runner: opens a chapter, shows its program, lets

@@ -26,6 +26,13 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   ecosystem items; the *Always* section commits to the corpus growing
   with the language, the sanitizers and the fuzzer on every release, and
   a patch within a week of a fix.
+- The roadmap's "installer grown up": a setup mutex against two
+  wizards at once, upgrade/repair/remove of an installed version, closing
+  a running `nx` before files are replaced, checks for disk space, a
+  pending reboot and antivirus quarantine, the toolchain choice, the
+  wizard in six languages, Authenticode signing, logs and rollback,
+  silent-install parameters and an MSI, an ARM64 setup, and a *Check for
+  updates* entry.
 - The roadmap's clickable line: the REPL with an inspector window,
   `:plot` and `:watch`, the installer's editor page and `nx upgrade`,
   `nx topo` as an interactive tutorial runner, `std.tui`, the visual
