@@ -1,0 +1,26 @@
+# Nexium for Helix. Append to ~/.config/helix/languages.toml (see README.md).
+
+[[language]]
+name = "nexium"
+scope = "source.nexium"
+injection-regex = "^nexium$"
+file-types = ["nx"]
+roots = ["nexium.toml"]
+comment-tokens = ["//", "///", "//!"]
+indent = { tab-width = 4, unit = "    " }
+language-servers = ["nexium"]
+
+[language.auto-pairs]
+'(' = ')'
+'[' = ']'
+'{' = '}'
+'"' = '"'
+
+[language-server.nexium]
+command = "nx"
+args = ["lsp"]
+
+[[grammar]]
+name = "nexium"
+# the commit of the 1.0.0 release; any later commit of main works too
+source = { git = "https://github.com/Londopy/nexium", rev = "383de2949b2d491190b0d58a9ef94bd61ba2ac92", subpath = "editors/tree-sitter-nexium" }

@@ -178,6 +178,33 @@ jobs:
           npx --yes tree-sitter-cli@0.27 parse ../../examples/*.nx ../../std/*.nx ../../gui/*.nx ../../self/*.nx --quiet --stat | tee parse.txt
           grep -q "failed parses: 0;" parse.txt
           npx --yes tree-sitter-cli@0.27 query queries/highlights.scm ../../examples/tour.nx > /dev/null
+      - name: The per-editor queries match the grammar
+        working-directory: editors/tree-sitter-nexium
+        run: |
+          cmp queries/highlights.scm ../neovim/queries/nexium/highlights.scm || (echo "editors/neovim/queries/nexium/highlights.scm is a copy of the grammar's; copy it again"; exit 1)
+          for q in ../neovim/queries/nexium/*.scm ../helix/queries/nexium/*.scm ../zed/languages/nexium/*.scm; do
+            npx --yes tree-sitter-cli@0.27 query "$q" ../../examples/tour.nx > /dev/null || (echo "bad query $q"; exit 1)
+          done
+      - name: The Vim, Emacs, Kate, nano and Notepad++ files load
+        run: |
+          sudo apt-get install -y -qq --no-install-recommends vim emacs-nox > /dev/null
+          vim -Nu NONE -es --cmd 'set rtp^=editors/vim' --cmd 'filetype plugin indent on' --cmd 'syntax on' -c 'e topo/code/nn.nx' -c 'if &filetype != "nexium" || b:current_syntax != "nexium" | cquit | endif' -c 'normal gg=G' -c 'qa!'
+          emacs -Q --batch --eval '(setq byte-compile-error-on-warn t)' -f batch-byte-compile editors/emacs/nexium-mode.el
+          emacs -Q --batch -l editors/emacs/nexium-mode.el --eval '(with-temp-buffer (insert-file-contents "topo/code/nn.nx") (nexium-mode) (font-lock-ensure) (let ((before (buffer-string))) (indent-region (point-min) (point-max)) (unless (string= before (buffer-string)) (kill-emacs 1))))'
+          python3 -c "import xml.dom.minidom as x; x.parse('editors/kate/nexium.xml'); x.parse('editors/notepad-plus-plus/nexium.udl.xml')"
+          python3 - <<'PY'
+          import subprocess
+          for line in open("editors/nano/nexium.nanorc"):
+              if line.startswith(("color", "syntax")):
+                  rx = line.rstrip().split(" ", 2)[-1][1:-1]
+                  if subprocess.run(["grep", "-E", "-e", rx, "/dev/null"]).returncode == 2:
+                      raise SystemExit("bad regex in nexium.nanorc: " + rx)
+          PY
+      - name: The Zed extension builds
+        working-directory: editors/zed
+        run: |
+          rustup target add wasm32-wasip1
+          cargo build --release --target wasm32-wasip1
 
   lint:
     name: lint

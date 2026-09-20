@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE language>
+<!--
+  Nexium for the KDE syntax highlighting framework: Kate, KWrite, KDevelop,
+  Konsole's editor, Qt Creator (generic highlighter) and everything else that
+  reads KSyntaxHighlighting definitions. Install: see README.md.
+-->
+<language name="Nexium" section="Sources" version="1" kateversion="5.79"
+          extensions="*.nx" mimetype="text/x-nexium" author="Londopy" license="MIT"
+          indenter="cstyle">
+  <highlighting>
+    <list name="keywords">
+      <item>fn</item> <item>let</item> <item>var</item> <item>const</item>
+      <item>struct</item> <item>enum</item> <item>record</item> <item>ref</item> <item>class</item>
+      <item>trait</item> <item>impl</item> <item>pub</item> <item>import</item> <item>comptime</item>
+      <item>unsafe</item> <item>type</item> <item>distinct</item> <item>where</item> <item>into</item>
+      <item>artifact</item> <item>test</item> <item>export</item> <item>as</item> <item>in</item>
+      <item>dyn</item> <item>weak</item> <item>extern</item> <item>derive</item> <item>layout</item>
+      <item>own</item> <item>using</item> <item>and</item> <item>or</item>
+    </list>
+    <list name="control">
+      <item>if</item> <item>else</item> <item>match</item> <item>for</item> <item>while</item>
+      <item>step</item> <item>parallel</item> <item>break</item> <item>continue</item>
+      <item>return</item> <item>defer</item> <item>errdefer</item> <item>unreachable</item>
+      <item>try</item> <item>catch</item> <item>orelse</item>
+    </list>
+    <list name="constants">
+      <item>true</item> <item>false</item> <item>null</item> <item>undefined</item>
+    </list>
+    <list name="types">
+      <item>i8</item> <item>i16</item> <item>i32</item> <item>i64</item> <item>i128</item>
+      <item>u8</item> <item>u16</item> <item>u32</item> <item>u64</item> <item>u128</item>
+      <item>isize</item> <item>usize</item> <item>f32</item> <item>f64</item> <item>bool</item>
+      <item>char</item> <item>void</item> <item>never</item> <item>Self</item>
+      <item>List</item> <item>String</item> <item>Map</item>
+    </list>
+
+    <contexts>
+      <context name="Normal" attribute="Normal Text" lineEndContext="#stay">
+        <RegExpr attribute="Documentation" context="DocComment" String="//(/(?!/)|!)"/>
+        <Detect2Chars attribute="Comment" context="Comment" char="/" char1="/"/>
+        <RegExpr attribute="Effect" String="!(allocates|refcounts|blocks|shared_mutable|nondeterministic|panics|ffi|unbounded_stack)\b"/>
+        <RegExpr attribute="Intrinsic" String="@(typeName|sizeOf|truncate|errorName|embedFile|weak|refCount|cImport|cstr)\b"/>
+        <RegExpr attribute="Error Name" String="\berror\.[A-Za-z_][A-Za-z0-9_]*\b"/>
+        <RegExpr attribute="Binary" context="Binary" String="&lt;&lt;(?![=&lt;])"/>
+        <RegExpr attribute="String" context="RawString" String="r&quot;"/>
+        <RegExpr attribute="String" context="String" String="b&quot;"/>
+        <DetectChar attribute="String" context="String" char="&quot;"/>
+        <RegExpr attribute="Char" String="'(\\(n|r|t|0|\\|&quot;|'|x[0-9A-Fa-f]{2}|u\{[0-9A-Fa-f]+\})|[^'\\])'"/>
+        <RegExpr attribute="Number" String="\b0[xX][0-9A-Fa-f_]+\b"/>
+        <RegExpr attribute="Number" String="\b0[oO][0-7_]+\b"/>
+        <RegExpr attribute="Number" String="\b0[bB][01_]+\b"/>
+        <RegExpr attribute="Float" String="\b[0-9][0-9_]*\.[0-9][0-9_]*([eE][+-]?[0-9_]+)?\b"/>
+        <RegExpr attribute="Number" String="\b[0-9][0-9_]*([eE][+-]?[0-9_]+)?\b"/>
+        <keyword attribute="Keyword" String="keywords"/>
+        <keyword attribute="Control" String="control"/>
+        <keyword attribute="Constant" String="constants"/>
+        <keyword attribute="Data Type" String="types"/>
+        <RegExpr attribute="Namespace" String="\b(math|io|os|process|time|random|mem|slice|utf8|ascii|fmt|context|alloc)(?=\.[A-Za-z_])"/>
+        <RegExpr attribute="Label" String="\b[a-z_][A-Za-z0-9_]*:(?=\s*(\{|for|while))"/>
+        <RegExpr attribute="Label" String=":[a-z_][A-Za-z0-9_]*\b"/>
+        <RegExpr attribute="Variant" String="(?&lt;![A-Za-z0-9_)\]])\.[A-Z][A-Za-z0-9_]*\b"/>
+        <RegExpr attribute="Data Type" String="\b[A-Z][A-Za-z0-9_]*\b"/>
+        <RegExpr attribute="Builtin" String="\b(println|print|eprintln|format|expect|expect_eq|panic)(?=\()"/>
+        <RegExpr attribute="Function" String="\b[a-z_][A-Za-z0-9_]*(?=\()"/>
+        <RegExpr attribute="Operator" String="\|&gt;|-&gt;|=&gt;|\.\.=?|[+*-][%|]|[-+*/%&amp;|^~&lt;&gt;=!?]"/>
+        <DetectChar attribute="Symbol" char="{" beginRegion="Brace"/>
+        <DetectChar attribute="Symbol" char="}" endRegion="Brace"/>
+        <AnyChar attribute="Symbol" String="()[],:;."/>
+      </context>
+
+      <context name="Comment" attribute="Comment" lineEndContext="#pop">
+        <IncludeRules context="##Comments"/>
+      </context>
+      <context name="DocComment" attribute="Documentation" lineEndContext="#pop">
+        <IncludeRules context="##Comments"/>
+      </context>
+
+      <context name="String" attribute="String" lineEndContext="#stay">
+        <RegExpr attribute="Escape" String="\\(n|r|t|0|\\|&quot;|'|x[0-9A-Fa-f]{2}|u\{[0-9A-Fa-f]+\})"/>
+        <RegExpr attribute="Placeholder" String="\{\{|\}\}|\{[^{}]*\}"/>
+        <DetectChar attribute="String" context="#pop" char="&quot;"/>
+      </context>
+      <context name="RawString" attribute="String" lineEndContext="#stay">
+        <DetectChar attribute="String" context="#pop" char="&quot;"/>
+      </context>
+
+      <context name="Binary" attribute="Binary" lineEndContext="#stay">
+        <Detect2Chars attribute="Binary" context="#pop" char="&gt;" char1="&gt;"/>
+        <RegExpr attribute="Modifier" String="/(big|little|native|signed|unsigned|float|utf8|bytes)(-(big|little|native|signed|unsigned|float|utf8|bytes))*\b"/>
+        <WordDetect attribute="Modifier" String="bytes"/>
+        <DetectChar attribute="String" context="String" char="&quot;"/>
+        <RegExpr attribute="Number" String="\b[0-9][0-9_]*\b"/>
+        <RegExpr attribute="Normal Text" String="\b[a-z_][A-Za-z0-9_]*\b"/>
+        <AnyChar attribute="Symbol" String=":,"/>
+      </context>
+    </contexts>
+
+    <itemDatas>
+      <itemData name="Normal Text" defStyleNum="dsNormal" spellChecking="false"/>
+      <itemData name="Keyword" defStyleNum="dsKeyword" spellChecking="false"/>
+      <itemData name="Control" defStyleNum="dsControlFlow" spellChecking="false"/>
+      <itemData name="Constant" defStyleNum="dsConstant" spellChecking="false"/>
+      <itemData name="Data Type" defStyleNum="dsDataType" spellChecking="false"/>
+      <itemData name="Builtin" defStyleNum="dsBuiltIn" spellChecking="false"/>
+      <itemData name="Function" defStyleNum="dsFunction" spellChecking="false"/>
+      <itemData name="Namespace" defStyleNum="dsImport" spellChecking="false"/>
+      <itemData name="Effect" defStyleNum="dsPreprocessor" spellChecking="false"/>
+      <itemData name="Intrinsic" defStyleNum="dsPreprocessor" spellChecking="false"/>
+      <itemData name="Error Name" defStyleNum="dsConstant" spellChecking="false"/>
+      <itemData name="Variant" defStyleNum="dsConstant" spellChecking="false"/>
+      <itemData name="Label" defStyleNum="dsAttribute" spellChecking="false"/>
+      <itemData name="String" defStyleNum="dsString"/>
+      <itemData name="Char" defStyleNum="dsChar" spellChecking="false"/>
+      <itemData name="Escape" defStyleNum="dsSpecialChar" spellChecking="false"/>
+      <itemData name="Placeholder" defStyleNum="dsSpecialString" spellChecking="false"/>
+      <itemData name="Number" defStyleNum="dsDecVal" spellChecking="false"/>
+      <itemData name="Float" defStyleNum="dsFloat" spellChecking="false"/>
+      <itemData name="Binary" defStyleNum="dsSpecialString" spellChecking="false"/>
+      <itemData name="Modifier" defStyleNum="dsKeyword" spellChecking="false"/>
+      <itemData name="Operator" defStyleNum="dsOperator" spellChecking="false"/>
+      <itemData name="Symbol" defStyleNum="dsNormal" spellChecking="false"/>
+      <itemData name="Comment" defStyleNum="dsComment"/>
+      <itemData name="Documentation" defStyleNum="dsDocumentation"/>
+    </itemDatas>
+  </highlighting>
+
+  <general>
+    <comments>
+      <comment name="singleLine" start="//" position="afterwhitespace"/>
+    </comments>
+    <keywords casesensitive="1" additionalDeliminator="'&quot;"/>
+    <folding indentationsensitive="0"/>
+  </general>
+</language>

@@ -81,6 +81,30 @@ In order, the first that applies wins:
 `nx doctor` prints which one is in effect and whether it runs. Cross-compiling
 (`--target`) always uses Zig, since that is what makes it possible.
 
+## An editor
+
+Every editor gets the same language server: `nx lsp` speaks LSP over
+stdio and gives diagnostics as you type, hover with inferred effects, go
+to definition, completion and rename. The
+[`editors/`](https://github.com/Londopy/nexium/tree/main/editors)
+directory of the repository has the pieces for each one:
+
+| editor | install |
+| --- | --- |
+| VS Code | the "Nexium" extension on the Marketplace, or the `.vsix` on every release (the Windows installer installs it when `code` is on the PATH) |
+| Vim | `Plug 'Londopy/nexium', { 'rtp': 'editors/vim' }` |
+| Neovim | the `editors/neovim` plugin: tree-sitter, LSP and the Vim files as fallback |
+| Helix | append `editors/helix/languages.toml`, copy its queries, `hx --grammar fetch && hx --grammar build` |
+| Zed | *Install Dev Extension* on `editors/zed` |
+| Emacs | `editors/emacs/nexium-mode.el`; registers itself with Eglot and lsp-mode |
+| Kate, KWrite, KDevelop, Qt Creator | copy `editors/kate/nexium.xml` into the KSyntaxHighlighting directory |
+| JetBrains IDEs | `editors/vscode` as a TextMate bundle, `nx lsp` through LSP4IJ |
+| Sublime Text | copy `editors/sublime/Nexium.sublime-syntax` into `Packages/User` |
+| Notepad++ | copy `editors/notepad-plus-plus/nexium.udl.xml` into `%AppData%\Notepad++\userDefineLangs` |
+| nano | include `editors/nano/nexium.nanorc` from `~/.nanorc` |
+
+Each directory has a README with the details.
+
 ## Verifying downloads
 
 Every release ships `SHA256SUMS.txt` and lists the same values on the release

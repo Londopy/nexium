@@ -105,9 +105,11 @@ The VS Code extension gives syntax colouring, diagnostics as you type, hover
 with inferred effects, go to definition, completion and rename; the Windows
 installer installs it, and on other platforms it is the `.vsix` attached to
 every release (*Extensions: Install from VSIX...*). It talks to `nx lsp`,
-the language server that is part of the compiler. A Sublime Text syntax and a
-tree-sitter grammar (for Neovim, Helix, Zed) live in the repository's
-`editors/` directory.
+the language server that is part of the compiler, and so can every other
+editor: the repository's `editors/` directory has Vim, Neovim, Helix, Zed,
+Emacs, Kate, JetBrains, Sublime Text, Notepad++ and nano support, each with
+a README, and [the install guide](../docs/install.md#an-editor) has the
+one-line version of each.
 
 None of this is required. A text editor and a terminal are enough for every
 chapter.

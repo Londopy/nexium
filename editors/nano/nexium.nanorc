@@ -1,0 +1,48 @@
+## Nexium for nano. Install: see README.md in this directory.
+
+syntax nexium "\.nx$"
+comment "//"
+tabgives "    "
+
+## types and identifiers that start upper case
+color green "\<[A-Z][A-Za-z0-9_]*\>"
+color green "\<(i8|i16|i32|i64|i128|u8|u16|u32|u64|u128|isize|usize|f32|f64|bool|char|void|never|Self|List|String|Map)\>"
+
+## calls
+color brightblue "\<[a-z_][A-Za-z0-9_]*\("
+color brightblue "\<(println|print|eprintln|format|expect|expect_eq|panic)\("
+
+## keywords
+color brightmagenta "\<(fn|let|var|const|struct|enum|record|ref|class|trait|impl|pub|import|comptime|unsafe|type|distinct|where|into|artifact|test|export|as|in|dyn|weak|extern|derive|layout|own|using|and|or)\>"
+color brightmagenta "\<(if|else|match|for|while|step|parallel|break|continue|return|defer|errdefer|unreachable|try|catch|orelse)\>"
+
+## constants, effects, intrinsics, error names, variants, labels
+color brightred "\<(true|false|null|undefined)\>"
+color brightyellow "!(allocates|refcounts|blocks|shared_mutable|nondeterministic|panics|ffi|unbounded_stack)\>"
+color brightyellow "@(typeName|sizeOf|truncate|errorName|embedFile|weak|refCount|cImport|cstr)\>"
+color brightred "\<error\.[A-Za-z_][A-Za-z0-9_]*\>"
+color brightred "(^|[^A-Za-z0-9_)])\.[A-Z][A-Za-z0-9_]*\>"
+color cyan "\<[a-z_][A-Za-z0-9_]*:[[:space:]]*(\{|for|while)"
+color cyan ":[a-z_][A-Za-z0-9_]*\>"
+
+## numbers
+color brightred "\<0[xX][0-9A-Fa-f_]+\>"
+color brightred "\<0[oO][0-7_]+\>"
+color brightred "\<0[bB][01_]+\>"
+color brightred "\<[0-9][0-9_]*(\.[0-9][0-9_]*)?([eE][+-]?[0-9_]+)?\>"
+
+## strings, chars, binary patterns
+color yellow ""(\\.|[^"\\])*""
+color yellow "r"[^"]*""
+color yellow "b"(\\.|[^"\\])*""
+color yellow "'(\\.|[^'\\])'"
+color yellow "'\\(x[0-9A-Fa-f]{2}|u\{[0-9A-Fa-f]+\})'"
+color brightcyan "/(big|little|native|signed|unsigned|float|utf8|bytes)(-(big|little|native|signed|unsigned|float|utf8|bytes))*\>"
+
+## comments last so they cover everything
+color brightblack "//.*$"
+color brightwhite "//(/|!).*$"
+color brightwhite,yellow "\<(TODO|FIXME|XXX|NOTE)\>"
+
+## trailing whitespace
+color ,green "[[:space:]]+$"

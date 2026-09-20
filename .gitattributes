@@ -29,3 +29,8 @@ tests/spec/helpers/*.txt text eol=lf
 topo/code/data/* text eol=lf
 *.toml text eol=lf
 *.csv text eol=lf
+# editor files that Unix editors read as-is: no CRLF on checkout
+*.vim text eol=lf
+*.lua text eol=lf
+*.el text eol=lf
+*.nanorc text eol=lf

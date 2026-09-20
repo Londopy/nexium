@@ -12,6 +12,15 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Added
 
+- Editor support beyond VS Code and Sublime Text, under `editors/`: Vim
+  (syntax, indent, `:NxRun` and friends, `:make`), Neovim (a plugin that
+  registers the tree-sitter parser, its queries and `nx lsp` with the
+  built-in client), Helix (language config and queries in Helix's scopes,
+  with indents and text objects), Zed (an extension with grammar, outline
+  and the language server), Emacs (`nexium-mode` with Eglot and lsp-mode
+  registration), Kate and the other KSyntaxHighlighting editors, Notepad++
+  (a User Defined Language), nano, and a guide for JetBrains IDEs
+  (TextMate bundle plus LSP4IJ). CI loads or compiles every one of them.
 - The documentation site, [londopy.github.io/nexium](https://londopy.github.io/nexium/),
   built by `site/build.nx`, a Nexium program that renders the Markdown in
   the repository (the docs, the project files, the tutorial) with the

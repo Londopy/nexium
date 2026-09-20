@@ -15,66 +15,20 @@ npx tree-sitter-cli generate
 Queries: `queries/highlights.scm`. Scopes follow the nvim-treesitter and
 Helix conventions (`@function`, `@type`, `@keyword.control`, ...).
 
-## Neovim (nvim-treesitter)
+## In editors
 
-Add the parser to your config and install it:
+The per-editor directories next to this one carry the configuration and a
+copy of the queries in that editor's scope names:
 
-```lua
-local parsers = require("nvim-treesitter.parsers").get_parser_configs()
-parsers.nexium = {
-  install_info = {
-    url = "https://github.com/Londopy/nexium",
-    location = "editors/tree-sitter-nexium",
-    files = { "src/parser.c" },
-    branch = "main",
-  },
-  filetype = "nexium",
-}
-vim.filetype.add({ extension = { nx = "nexium" } })
-```
+- [`../neovim`](../neovim): a plugin that registers the parser with
+  nvim-treesitter and the language server with Neovim's LSP client;
+- [`../helix`](../helix): `languages.toml` with the grammar source, and
+  queries with Helix's scopes (plus indents and text objects);
+- [`../zed`](../zed): an extension that declares the grammar and runs
+  `nx lsp`.
 
-Then `:TSInstall nexium` and copy `queries/highlights.scm` to
-`~/.config/nvim/queries/nexium/highlights.scm` (or point `runtimepath` at a
-copy of the `queries` directory under a `queries/nexium` folder).
-
-## Helix
-
-In `languages.toml`:
-
-```toml
-[[language]]
-name = "nexium"
-scope = "source.nexium"
-file-types = ["nx"]
-comment-token = "//"
-indent = { tab-width = 4, unit = "    " }
-language-servers = ["nexium-lsp"]
-
-[language-server.nexium-lsp]
-command = "nx"
-args = ["lsp"]
-
-[[grammar]]
-name = "nexium"
-source = { git = "https://github.com/Londopy/nexium", rev = "main", subpath = "editors/tree-sitter-nexium" }
-```
-
-Then `hx --grammar fetch && hx --grammar build`, and copy
-`queries/highlights.scm` to `~/.config/helix/runtime/queries/nexium/`.
-
-## Zed
-
-Zed extensions declare grammars in `extension.toml`:
-
-```toml
-[grammars.nexium]
-repository = "https://github.com/Londopy/nexium"
-path = "editors/tree-sitter-nexium"
-rev = "main"
-```
-
-with a `languages/nexium/config.toml` naming the language and the `nx`
-extension, and the queries copied to `languages/nexium/highlights.scm`.
+The tree-sitter grammar is fetched from this repository with
+`subpath`/`path` = `editors/tree-sitter-nexium`.
 
 ## Checking the grammar
 

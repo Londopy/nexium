@@ -263,7 +263,7 @@ using arena {
 - [Standard library](docs/std.md): the modules written in Nexium (`std.strings`, `std.lists`, `std.bytes`, `std.num`, `std.json`, `std.args`, `std.fs`, `std.time`, `std.regex`, `std.text`, `std.testing`, `std.stream`, `std.net`, `std.http`, `std.thread`, `std.process`).
 - [nexium-gui](docs/gui.md): the immediate-mode GUI library and how to write a widget.
 - [Releasing your program](docs/releasing-your-program.md): binaries for three platforms from a tag, installers optional.
-- [Editor support](editors): VS Code extension, Sublime syntax, LSP.
+- [Editor support](editors): VS Code, Vim, Neovim, Helix, Zed, Emacs, Kate, JetBrains, Sublime Text, Notepad++, nano, and `nx lsp` for the rest.
 - [Linguist](linguist): the ready-to-apply pull request that will make GitHub recognize `.nx` once the usage bar is met.
 - [Translations](docs/i18n): this README in six languages; the language reference and the architecture tour in Spanish, Chinese, and Japanese.
 - [Release names](docs/release-names.md): every release is a place on a mountain; the scheme, the ledger, and the names still to use.
@@ -353,15 +353,17 @@ files (`bootstrap/nx.c`, the tree-sitter parser, `gui/font.bin`, lock files):
 
 | language | lines | share | what it is |
 | --- | --- | --- | --- |
-| Nexium | 33,917 | 92.9% | the compiler and its tools (25,335 lines under `self/`), the standard library, the test harness and the fuzzer, examples, nexium-gui, the spec suite |
-| C | 2,021 | 5.5% | the runtime `nx_rt.h`, the GUI window layer, vendored test C |
-| JavaScript, TypeScript | 550 | 1.5% | the VS Code extension and the tree-sitter grammar |
+| Nexium | 36,193 | 91.0% | the compiler and its tools (25,400 lines under `self/`), the standard library, the test harness and the fuzzer, examples, the tutorial's programs, nexium-gui, the site generator, the spec suite |
+| C | 2,021 | 5.1% | the runtime `nx_rt.h`, the GUI window layer, vendored test C |
+| editor files | 1,014 | 2.5% | tree-sitter queries, Emacs Lisp, Vim script, Lua for Neovim, and the 25 lines of Rust that Zed requires of an extension |
+| JavaScript, TypeScript | 550 | 1.4% | the VS Code extension and the tree-sitter grammar |
 
-There is no Rust left: the first compiler drove the port and was deleted at
-1.0 (decision 90). Zig is not in the table because there is no Zig source
-in the tree: `zig cc` is the C compiler `nx` runs (bundled by the Windows
-installer, downloaded by the install script), the same way a C compiler is
-used and not written.
+There is no Rust in the compiler: the first compiler drove the port and
+was deleted at 1.0 (decision 90); the Rust that remains is the glue of the
+Zed extension, which Zed compiles to WebAssembly. Zig is not in the table
+because there is no Zig source in the tree: `zig cc` is the C compiler `nx`
+runs (bundled by the Windows installer, downloaded by the install script),
+the same way a C compiler is used and not written.
 
 ## Layout
 
@@ -371,7 +373,7 @@ runtime/        nx_rt.h, embedded into every generated C file
 std/            the standard library in Nexium, embedded in the compiler
 self/           the compiler in Nexium, stage by stage
 gui/            nexium-gui: immediate-mode GUI in Nexium, demo, and the C platform layer
-editors/        VS Code extension and Sublime Text syntax
+editors/        VS Code extension, tree-sitter grammar, and the files for ten more editors
 examples/       programs with recorded output, run by the tests
 topo/           the tutorial: chapters, and the programs they show (run by the tests)
 site/           the documentation site generator, a Nexium program

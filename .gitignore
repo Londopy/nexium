@@ -1,4 +1,5 @@
 /target
+editors/zed/target/
 /nx-out
 *.o
 *.obj
