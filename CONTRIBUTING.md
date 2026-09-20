@@ -79,6 +79,30 @@ line under `Unreleased` in the right category (`Added`, `Changed`,
 Keep them focused. Describe what changed and why, link the issue, and make
 sure `cargo test` passes on your machine. CI runs on Windows, Linux, and macOS.
 
+Every pull request has to pass, before it can merge:
+
+- the tests on the three platforms, the editor-support build, `cargo fmt`
+  and `clippy` (`ci.yml`);
+- the changelog validation, and a check that the pull request adds a line
+  to `CHANGELOG.md` under `Unreleased` (label it `no changelog` when there is
+  nothing to say: a typo, a CI tweak);
+- `nx fmt --check` on every `.nx` file it touches;
+- the CLA check (below).
+
+The maintainer reviews every change (`.github/CODEOWNERS`); `main` only
+takes what these checks have passed.
+
+## Contributor License Agreement
+
+Your first pull request gets a comment from the CLA check asking you to
+accept [`CLA.md`](CLA.md) by replying with one sentence. You keep the
+copyright in your work; the agreement gives the project a license to
+distribute it under the MIT License (or another OSI-approved license, never
+a proprietary one) and a patent license for what your contribution
+necessarily uses, and it records that the work is yours to give. Companies
+contributing on behalf of employees can open an issue naming the covered
+accounts instead.
+
 ## Releasing
 
 1. Move the `Unreleased` entries in `CHANGELOG.md` under a new
