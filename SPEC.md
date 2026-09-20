@@ -195,8 +195,16 @@ between integers and pointers, and taking `.ptr` of a slice.
 
 Rule R1 is enforced: a function may not return a slice or a pointer into
 one of its own locals. Views into parameters are allowed, because the
-caller owns that storage. A view stored into an outer variable is not
-tracked (**planned**: R2 to R4).
+caller owns that storage. R1 is the region rule of the language
+(**decided**, 88); the archived rules R2 to R4 are not adopted. The cases
+R1 does not cover are the programmer's responsibility, as data races are
+(section 13): a view stored into a variable or a field that outlives the
+storage it points into (`out = s[..]` where `s` is a local of an inner
+block), a view kept across a growth of the `List`, `String` or `Map` it
+points into, a view into a value that is then moved away and dropped,
+and a `*mut` obtained inside `unsafe`. A debug build fills freed storage with a fixed byte
+(`0xDD`), so such a use reads garbage or panics on a length instead of
+yielding the old contents by luck.
 
 ### 5.7 Allocation scopes
 
@@ -205,8 +213,9 @@ created inside are allocated from the arena, their releases are no-ops, and
 the arena is freed as a whole at the end of the block. Containers created
 outside the block keep using the heap when they grow inside it, so
 collecting results into an outer `List`, `String`, or `Map` is safe. Values
-created inside must not escape the block (not checked). `pool` and `stack`
-strategies are **planned**.
+created inside must not escape the block (not checked). `arena` is the
+only allocation strategy; `pool` and `stack` are not adopted (**decided**,
+88).
 
 ## 6. Expressions and statements
 
@@ -516,8 +525,8 @@ emit-c` are the oracles `cargo test` diffs the stages against.
 | `@cImport`, vendored C, opaque structs | implemented, tested |
 | artifacts: cabi, python, rustlib, cli | implemented, tested |
 | std: strings, lists, bytes, num, json, args, fs, time, regex, text, testing, stream, net, http, process, thread | implemented, tested |
-| regions | R1 only (decision pending: R2 to R4 or R1 kept) |
-| layouts `packed`, `soa`; strategies `pool`, `stack` | planned (decision pending) |
+| regions | R1, decided (88); the uncovered cases are listed in 5.6 |
+| layouts `packed`, `soa`; strategies `pool`, `stack` | not part of the language (88); `layout(c)` and `arena` are |
 | threads, channels (`std.thread`); no async | done (0.4) |
 | packages (path dependencies), `node`, `installer` artifacts | done (0.5); registry planned |
 | self-hosting: lexer, parser, checker, C emitter, driver in Nexium | done (0.6); byte-identical to the Rust compiler on every source, and the driver builds itself |

@@ -108,10 +108,10 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     returned from `main` prints `error: Name` and exits 1; a panic prints the
     location and exits 101.
 27. **Not implemented in this release** (reported as errors or notes rather
-    than silently ignored): `soa` layout, `packed` layout, `node` and
-    `installer` artifacts, `nx publish`, a registry, and the `pool`/`stack`
-    allocation strategies. Everything else listed in the first draft of this
-    item now exists; see items 31 to 44.
+    than silently ignored): `nx publish` and a registry. `node` and
+    `installer` artifacts exist since 0.5; `soa`, `packed`, `pool` and
+    `stack` were removed from the language in item 88. Everything else
+    listed in the first draft of this item now exists; see items 31 to 44.
 
 ## Second pass: the gaps
 
@@ -524,6 +524,25 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
       and is idempotent on new sources. The compiler does not accept the
       old forms; a mixed codebase would have meant two grammars forever.
     This is the last planned change to the surface syntax before 1.0.
+88. **The specification promises only what is implemented and tested.**
+    Toward 1.0 (ROADMAP phase 5), the four features the spec still carried
+    as "planned" are settled, all the same way:
+    - Regions: rule R1 stays the only region rule. R2 to R4 of the archived
+      design would need a notation for the lifetime of every stored view,
+      and nothing in the tree (the compiler in Nexium included) has needed
+      it; the uncovered cases are listed in the spec (5.6), and a debug
+      build fills freed storage with a fixed byte so they do not pass by
+      luck.
+    - `packed` and `soa` layouts are removed. `layout(c)` is the one layout
+      because the C ABI needs it; a packed struct is a binary pattern away
+      (section 7.1), and a structure of arrays is separate lists. Both
+      spellings were accepted and silently ignored, which item 27 had ruled
+      out; they are errors now that name this decision.
+    - `pool` and `stack` allocation strategies are removed. `using arena`
+      covers the use the archived design had for them (a block's worth of
+      allocations freed at once); `using pool` was always an error.
+    A feature wanted later comes back through the stability policy, as an
+    addition in a minor version, not as a promise in the spec.
 
 ## Compiler selection
 

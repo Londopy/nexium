@@ -8,6 +8,17 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
 
 ## [Unreleased]
 
+### Removed
+
+- `layout(packed)` and `soa` on structs, and the `pool` and `stack`
+  allocation strategies, are gone from the specification (decision 88):
+  `layout(c)` and `using arena` are what the language has. The two struct
+  spellings used to be accepted and silently ignored; they are errors now.
+  Region rule R1 is the region rule; the cases it does not cover are
+  listed in SPEC 5.6, and a debug build now fills freed storage with
+  `0xDD` so a view that outlived its storage does not read the old
+  contents by luck.
+
 ## [0.7.0] - 2026-09-19
 
 ### Added

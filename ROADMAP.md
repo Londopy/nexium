@@ -173,8 +173,11 @@ A 1.0 means the language stops changing under people's feet.
   toolchain sections (15, 16) are covered by the ship tests.
 - Regions: the full rule set (R1 to R4 in the archived design) or an
   explicit decision to keep R1 only, with the escape cases documented.
-- Layouts: `packed` and `soa` implemented or removed from the spec.
-- Allocation strategies: `pool` and `stack` implemented or removed.
+  Done: R1 only (decision 88), the uncovered cases listed in SPEC 5.6.
+- Layouts: `packed` and `soa` implemented or removed from the spec. Done:
+  removed (decision 88); the spellings are errors.
+- Allocation strategies: `pool` and `stack` implemented or removed. Done:
+  removed (decision 88).
 - Stability policy: what a minor version may change, deprecation cycle,
   `nx fix` for mechanical migrations.
 - Platforms: Linux aarch64 and Windows arm64 in releases; a tier list.

@@ -359,6 +359,6 @@ stored into an outer variable is not tracked.
 
 ## Not implemented yet
 
-`soa` and `packed` layouts, `node` and `installer` artifacts, `nx publish`
-and the registry, `pool`/`stack` allocation strategies, and region checking
-beyond rule R1.
+`nx publish` and the registry. `soa` and `packed` layouts, `pool` and
+`stack` allocation strategies, and region rules beyond R1 are not part of
+the language (decision 88); the compiler rejects the spellings.
