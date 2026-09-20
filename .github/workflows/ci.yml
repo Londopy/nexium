@@ -127,12 +127,14 @@ jobs:
         run: gcc -std=gnu11 -O1 -g -w -fno-strict-aliasing -fsanitize=address,undefined -fno-sanitize-recover=all -o nx-out-san-nx0 bootstrap/nx.c -lm -lc -lpthread
       - name: The compiler checks every source under the sanitizers
         run: |
+          set +e
           export ASAN_OPTIONS=detect_leaks=0
           export NX_ZIG=zig
           bad=0
           for f in examples/*.nx tests/spec/*.nx topo/code/*.nx std/*.nx gui/*.nx self/nx.nx tests/run.nx tests/fuzz.nx site/build.nx; do
-            out=$(./nx-out-san-nx0 check "$f" 2>&1)
-            if echo "$out" | grep -q "Sanitizer\|runtime error"; then echo "== $f"; echo "$out" | head -20; bad=1; fi
+            out=$(./nx-out-san-nx0 check "$f" 2>&1); code=$?
+            if echo "$out" | grep -q "Sanitizer\|runtime error"; then echo "== $f"; echo "$out" | head -20; bad=1
+            elif [ "$code" != 0 ]; then echo "== $f did not check (exit $code)"; echo "$out" | tail -3; bad=1; fi
           done
           exit $bad
       - name: Every program built with the sanitizers runs clean
