@@ -3,7 +3,23 @@ name: CI
 on:
   push:
     branches: [main]
+    # prose and pictures: CI (prose) answers for the required checks and
+    # validates the changelog, Pages builds the site; the matrix stays idle
+    paths-ignore:
+      - "**.md"
+      - "docs/i18n/**"
+      - "topo/img/**"
+      - "assets/**"
+      - "linguist/**"
+      - ".gitattributes"
   pull_request:
+    paths-ignore:
+      - "**.md"
+      - "docs/i18n/**"
+      - "topo/img/**"
+      - "assets/**"
+      - "linguist/**"
+      - ".gitattributes"
 
 permissions:
   contents: read

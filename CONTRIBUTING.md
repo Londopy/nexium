@@ -141,6 +141,19 @@ necessarily uses, and it records that the work is yours to give, AI-assisted
 or not. Companies contributing on behalf of employees can open an issue
 naming the covered accounts instead.
 
+## What runs on a push
+
+The `CI` workflow (the bootstrap and every harness suite on three
+platforms, the fuzzer, the sanitizers, the editor files, the lint) skips
+a push or pull request that changes only prose and pictures (`*.md`,
+`docs/i18n/`, `topo/img/`, `assets/`, `linguist/`). `CI (prose)` runs
+instead: it validates `CHANGELOG.md` and reports the other required
+checks as nothing to build, so a documentation pull request can merge;
+`Pages` builds and deploys the site from the Markdown. A change to a
+`.nx`, `.c`, `.h` or workflow file runs everything. `[skip ci]` in a
+commit message skips every workflow, the site's deploy included, so it is
+for the rare push that should not be published at all.
+
 ## Releasing
 
 1. Move the `Unreleased` entries in `CHANGELOG.md` under a new

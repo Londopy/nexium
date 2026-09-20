@@ -1,0 +1,69 @@
+name: CI (prose)
+
+# The CI workflow skips a push or pull request that changes only prose and
+# pictures. Main requires its checks, so this workflow answers for them on
+# those changes with the same job names: the compiler's checks report
+# "nothing to build", and the changelog is validated for real. GitHub's
+# documented shape for a required check that a path filter would otherwise
+# leave pending. The path list mirrors ci.yml's paths-ignore.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**.md"
+      - "docs/i18n/**"
+      - "topo/img/**"
+      - "assets/**"
+      - "linguist/**"
+      - ".gitattributes"
+  pull_request:
+    paths:
+      - "**.md"
+      - "docs/i18n/**"
+      - "topo/img/**"
+      - "assets/**"
+      - "linguist/**"
+      - ".gitattributes"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - run: echo "prose only; nothing to build"
+
+  editors:
+    name: editor support
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "prose only; nothing to build"
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "prose only; nothing to format"
+
+  changelog:
+    name: changelog
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Validate CHANGELOG.md with patchnotes
+        run: |
+          pip install patchnotes
+          python - <<'EOF'
+          import patchnotes
+          cl = patchnotes.parse_file("CHANGELOG.md", strict=True)
+          print("latest:", cl.latest())
+          EOF
