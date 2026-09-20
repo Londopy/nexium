@@ -1,10 +1,18 @@
-//! End-to-end tests: every program in `examples/` must build and reproduce its
-//! recorded output; every file in `tests/compile_fail/` must be rejected with
-//! the diagnostic named on its `// EXPECT:` line.
+//! End-to-end tests. The compiler under test is `nx` written in Nexium
+//! (`self/nx.nx`), built with no Rust involved: a C compiler builds `nx0`
+//! from the seed `bootstrap/nx.c`, and `nx0` builds the current sources
+//! (decision 90). Every program in `examples/` and `tests/spec/` must
+//! reproduce its recorded output through it, every file in
+//! `tests/compile_fail/` must be rejected with the diagnostic on its
+//! `// EXPECT:` line, and the compiler must rebuild itself to a fixed point.
+//! The Rust binary (`bootstrap/rust/`, frozen) drives only the tools that
+//! are still written in Rust: `ship`, `fmt`, the REPL, packages, installers.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 
+/// The frozen Rust binary: the tools that are still in Rust.
 fn nx() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_nx"))
 }
@@ -20,7 +28,7 @@ fn have_cc() -> bool {
 /// The C compiler that links programs on this host: zig, except on macOS,
 /// where zig 0.14 cannot link against the current Xcode SDK and the drivers
 /// use the system compiler. Preprocessing (`@cImport`) always goes through
-/// zig, on every host, so that both checkers see the same headers.
+/// zig, on every host, so that every run sees the same headers.
 fn host_cc() -> Command {
     if cfg!(target_os = "macos") {
         Command::new("cc")
@@ -38,6 +46,49 @@ fn driver_cc(cmd: &mut Command) -> &mut Command {
     } else {
         cmd.env("NX_ZIG", "zig")
     }
+}
+
+fn exe(name: &str) -> String {
+    if cfg!(windows) {
+        format!("{}.exe", name)
+    } else {
+        name.to_string()
+    }
+}
+
+/// The compiler under test, built once per test process with no Rust:
+/// `bootstrap/nx.c` -> `nx0` (a C compiler), `nx0` builds `self/nx.nx` ->
+/// `nx1`. Every language suite runs through `nx1`.
+fn nx_self() -> PathBuf {
+    static NX1: OnceLock<PathBuf> = OnceLock::new();
+    NX1.get_or_init(|| {
+        let out_dir = root().join("nx-out").join("bootstrap");
+        let _ = std::fs::create_dir_all(&out_dir);
+        let nx0 = out_dir.join(exe("nx0"));
+        let mut cc = host_cc();
+        cc.args(["-std=gnu11", "-O2", "-w", "-fno-strict-aliasing", "-o"]).arg(&nx0).arg(root().join("bootstrap").join("nx.c"));
+        if cfg!(windows) {
+            cc.arg("-lws2_32");
+        } else if !cfg!(target_os = "macos") {
+            cc.args(["-lm", "-lc"]);
+        }
+        let out = cc.current_dir(root()).output().expect("run the C compiler");
+        assert!(out.status.success(), "the seed bootstrap/nx.c did not build:\n{}", String::from_utf8_lossy(&out.stderr));
+        let nx1 = out_dir.join(exe("nx1"));
+        let out = driver_cc(&mut Command::new(&nx0)).args(["build", "self/nx.nx", "--mode", "safe", "-o"]).arg(&nx1).arg("--out-dir").arg(&out_dir).current_dir(root()).output().expect("run nx0");
+        assert!(out.status.success(), "the seed compiler could not build self/nx.nx:\n{}", String::from_utf8_lossy(&out.stderr));
+        nx1
+    })
+    .clone()
+}
+
+/// A command for the compiler under test, run from the repository root with
+/// the host's C compiler.
+fn nxs() -> Command {
+    let mut c = Command::new(nx_self());
+    driver_cc(&mut c);
+    c.current_dir(root());
+    c
 }
 
 fn normalize(s: &str) -> String {
@@ -69,11 +120,11 @@ fn run_example(name: &str, subcommand: &str) {
     let src = PathBuf::from("examples").join(format!("{}.nx", name)); // relative: diagnostics print this path
     let expected_path = root().join("examples").join(format!("{}.expected", name));
     let out_dir = std::env::temp_dir().join(format!("nx-test-{}-{}", name, std::process::id()));
-    let out = Command::new(nx()).arg(subcommand).arg(&src).arg("--out-dir").arg(&out_dir).current_dir(root()).output().expect("run nx");
+    let out = nxs().arg(subcommand).arg(&src).arg("--out-dir").arg(&out_dir).output().expect("run nx");
     let got = normalize(&format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)));
     let expected = normalize(&std::fs::read_to_string(&expected_path).unwrap_or_default());
     let _ = std::fs::remove_dir_all(&out_dir);
-    assert_eq!(got.trim(), expected.trim(), "output of examples/{}.nx differs", name);
+    assert_same_text(expected.trim(), got.trim(), &format!("output of examples/{}.nx differs", name));
 }
 
 #[test]
@@ -126,10 +177,10 @@ fn spec_cases_reproduce_recorded_output() {
         let text = std::fs::read_to_string(&path).unwrap();
         let want_code: i32 = text.lines().find_map(|l| l.strip_prefix("// EXIT:")).map(|s| s.trim().parse().unwrap()).unwrap_or(0);
         let rel = PathBuf::from("tests").join("spec").join(path.file_name().unwrap());
-        let out = Command::new(nx()).arg("run").arg(&rel).arg("--out-dir").arg(&out_dir).current_dir(root()).output().expect("run nx");
+        let out = nxs().arg("run").arg(&rel).arg("--out-dir").arg(&out_dir).output().expect("run nx");
         let got = normalize(&format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)));
         let expected = normalize(&std::fs::read_to_string(path.with_extension("expected")).unwrap_or_default());
-        assert_eq!(got.trim(), expected.trim(), "output of {} differs", rel.display());
+        assert_same_text(expected.trim(), got.trim(), &format!("output of {} differs", rel.display()));
         assert_eq!(out.status.code().unwrap_or(-1), want_code, "exit code of {} differs", rel.display());
     }
     let _ = std::fs::remove_dir_all(&out_dir);
@@ -137,6 +188,10 @@ fn spec_cases_reproduce_recorded_output() {
 
 #[test]
 fn compile_fail_cases_are_rejected() {
+    if !have_cc() {
+        eprintln!("skipping: zig not found");
+        return;
+    }
     let dir = root().join("tests").join("compile_fail");
     let mut entries: Vec<PathBuf> = std::fs::read_dir(&dir).expect("compile_fail dir").filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().map(|x| x == "nx").unwrap_or(false)).collect();
     entries.sort();
@@ -145,7 +200,8 @@ fn compile_fail_cases_are_rejected() {
         let text = std::fs::read_to_string(&path).unwrap();
         let expects: Vec<&str> = text.lines().filter_map(|l| l.strip_prefix("// EXPECT:")).map(|s| s.trim()).collect();
         assert!(!expects.is_empty(), "{} has no // EXPECT: line", path.display());
-        let out = Command::new(nx()).arg("check").arg(&path).current_dir(root()).output().expect("run nx");
+        let rel = PathBuf::from("tests").join("compile_fail").join(path.file_name().unwrap());
+        let out = nxs().arg("check").arg(&rel).output().expect("run nx");
         assert!(!out.status.success(), "{} was accepted but should fail", path.display());
         let diag = normalize(&String::from_utf8_lossy(&out.stderr));
         for e in expects {
@@ -199,367 +255,43 @@ fn exists(p: &Path) -> bool {
     p.exists()
 }
 
-/// The self-hosted lexer (self/lexer.nx) must produce exactly the token stream
-/// of the Rust lexer for every example, for its own source, and with the same
-/// exit code.
-#[test]
-fn self_hosted_lexer_matches_oracle() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let exe = root.join("nx-out").join(if cfg!(windows) { "self_lexer.exe" } else { "self_lexer" });
-    let build = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).args(["build", "self/lexer.nx", "-o"]).arg(&exe).current_dir(root).output().expect("run nx");
-    assert!(build.status.success(), "building self/lexer.nx failed:\n{}", String::from_utf8_lossy(&build.stderr));
-    let mut files: Vec<std::path::PathBuf> =
-        std::fs::read_dir(root.join("examples")).unwrap().filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().map(|x| x == "nx").unwrap_or(false)).collect();
-    files.push(root.join("self").join("lexer.nx"));
-    files.sort();
-    for f in files {
-        let oracle = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).arg("tokens").arg(&f).output().unwrap();
-        let mine = std::process::Command::new(&exe).arg(&f).output().unwrap();
-        assert_same_text(&String::from_utf8_lossy(&oracle.stdout), &String::from_utf8_lossy(&mine.stdout), &format!("token stream differs for {}", f.display()));
-        assert_eq!(oracle.status.code(), mine.status.code(), "exit code differs for {}", f.display());
-    }
-}
-
-/// The parser written in Nexium prints the same tree as `nx sexp` for every
-/// example, std module, GUI and self-hosting source (phase 4 of the roadmap).
-#[test]
-fn self_hosted_parser_matches_oracle() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let exe = root.join("nx-out").join(if cfg!(windows) { "self_parser.exe" } else { "self_parser" });
-    let build = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).args(["build", "self/parser.nx", "-o"]).arg(&exe).current_dir(root).output().expect("run nx");
-    assert!(
-        build.status.success(),
-        "building self/parser.nx failed:
-{}",
-        String::from_utf8_lossy(&build.stderr)
-    );
-    let mut files: Vec<std::path::PathBuf> = Vec::new();
-    for dir in ["examples", "std", "gui", "self", "tests", "tests/spec"] {
-        files.extend(std::fs::read_dir(root.join(dir)).unwrap().filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().map(|x| x == "nx").unwrap_or(false)));
-    }
-    files.sort();
-    assert!(files.len() > 40, "expected the whole tree, found {} files", files.len());
-    for f in files {
-        let oracle = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).arg("sexp").arg(&f).output().unwrap();
-        let mine = std::process::Command::new(&exe).arg(&f).output().unwrap();
-        assert_same_text(&String::from_utf8_lossy(&oracle.stdout), &String::from_utf8_lossy(&mine.stdout), &format!("parse tree differs for {}", f.display()));
-        assert_eq!(oracle.status.code(), mine.status.code(), "exit code differs for {}", f.display());
-    }
-}
-
-/// The checker written in Nexium, stage 1: declarations and signatures match
-/// `nx tir --sigs` for every source the Rust checker accepts, except those
-/// that import C headers (`@cImport` is a later stage).
-#[test]
-fn self_hosted_checker_matches_signatures() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    // its own output directory: the bodies test compiles the same file at the same time
-    let out_dir = root.join("nx-out").join("self_check_sigs");
-    let exe = out_dir.join(if cfg!(windows) { "self_check.exe" } else { "self_check" });
-    let build = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).args(["build", "self/check.nx", "-o"]).arg(&exe).arg("--out-dir").arg(&out_dir).current_dir(root).output().expect("run nx");
-    assert!(
-        build.status.success(),
-        "building self/check.nx failed:
-{}",
-        String::from_utf8_lossy(&build.stderr)
-    );
-    let mut files: Vec<std::path::PathBuf> = Vec::new();
-    for dir in ["examples", "std", "gui", "self", "tests", "tests/spec"] {
-        files.extend(std::fs::read_dir(root.join(dir)).unwrap().filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().map(|x| x == "nx").unwrap_or(false)));
-    }
-    files.sort();
-    let mut compared = 0;
-    for f in files {
-        let oracle = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).arg("tir").arg(&f).arg("--sigs").env("NX_ZIG", "zig").current_dir(root).output().unwrap();
-        if !oracle.status.success() {
-            // a deliberately failing example: nothing to compare
-            continue;
-        }
-        let expected = String::from_utf8_lossy(&oracle.stdout).to_string();
-        // both sides preprocess C headers with the zig on the PATH
-        let mine = std::process::Command::new(&exe).arg(&f).arg("--sigs").env("NX_ZIG", "zig").current_dir(root).output().unwrap();
-        assert!(
-            mine.status.success(),
-            "self/check.nx rejected {}:
-{}",
-            f.display(),
-            String::from_utf8_lossy(&mine.stderr)
-        );
-        assert_same_text(&expected, &String::from_utf8_lossy(&mine.stdout), &format!("signatures differ for {}", f.display()));
-        compared += 1;
-    }
-    assert!(compared > 50, "expected the whole tree, compared {} files", compared);
-}
-
-/// The checker written in Nexium, stage 2: the full typed IR matches `nx tir`
-/// on every source: every example, std module, GUI and self-hosting file.
-/// The list only grows.
-/// The C emitter written in Nexium: byte-identical C for every source the
-/// Rust emitter accepts (examples, std, GUI, the self-hosting files).
-#[test]
-fn self_hosted_emitter_matches_oracle() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = root.join("nx-out").join("self_cgen");
-    let exe = out_dir.join(if cfg!(windows) { "self_cgen.exe" } else { "self_cgen" });
-    let build = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).args(["build", "self/cgen.nx", "-o"]).arg(&exe).arg("--out-dir").arg(&out_dir).current_dir(root).output().expect("run nx");
-    assert!(
-        build.status.success(),
-        "building self/cgen.nx failed:
-{}",
-        String::from_utf8_lossy(&build.stderr)
-    );
-    let mut files: Vec<std::path::PathBuf> = Vec::new();
-    for dir in ["examples", "std", "gui", "self", "tests/spec"] {
-        files.extend(std::fs::read_dir(root.join(dir)).unwrap().filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().map(|x| x == "nx").unwrap_or(false)));
-    }
-    files.sort();
-    let mut compared = 0;
-    for f in files {
-        // both sides preprocess C headers with the zig on the PATH
-        let oracle = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).arg("emit-c").arg(&f).env("NX_ZIG", "zig").current_dir(root).output().unwrap();
-        if !oracle.status.success() {
-            // a deliberately failing example: nothing to compare
-            continue;
-        }
-        let expected = String::from_utf8_lossy(&oracle.stdout).to_string();
-        let mine = std::process::Command::new(&exe).arg(&f).env("NX_ZIG", "zig").current_dir(root).output().unwrap();
-        assert!(
-            mine.status.success(),
-            "self/cgen.nx rejected {}:
-{}",
-            f.display(),
-            String::from_utf8_lossy(&mine.stderr)
-        );
-        let got = String::from_utf8_lossy(&mine.stdout).to_string();
-        if expected != got {
-            let (el, gl): (Vec<&str>, Vec<&str>) = (expected.lines().collect(), got.lines().collect());
-            let first = el.iter().zip(gl.iter()).position(|(a, b)| a != b).unwrap_or(el.len().min(gl.len()));
-            panic!(
-                "C differs for {} at line {}:
-  oracle: {}
-  mine:   {}",
-                f.display(),
-                first + 1,
-                el.get(first).unwrap_or(&"<end>"),
-                gl.get(first).unwrap_or(&"<end>")
-            );
-        }
-        compared += 1;
-    }
-    assert!(compared > 50, "expected the whole tree, compared {} files", compared);
-}
-
-/// The bootstrap: `nx1` (the emitter in Nexium, built by the Rust compiler)
-/// emits the C of itself; `zig cc` turns that into `nx2` with no Rust
-/// involved; `nx2` emits byte-identical C for itself and for other programs.
+/// The compiler rebuilds itself to a fixed point with no Rust involved:
+/// `nx1` (built by the seed) emits the C of `self/nx.nx`, a C compiler
+/// builds `nx2` from it, and `nx2` emits the same C. The seed itself is
+/// that C as of the last release; a note says when it is due for
+/// regeneration (`nx emit-c self/nx.nx --mode safe > bootstrap/nx.c`).
 #[test]
 fn bootstrap_reaches_a_fixed_point() {
     if !have_cc() {
         eprintln!("skipping: zig not found");
         return;
     }
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = root.join("nx-out").join("bootstrap");
-    let _ = std::fs::create_dir_all(&out_dir);
-    let nx1 = out_dir.join(if cfg!(windows) { "nx1.exe" } else { "nx1" });
-    let build = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).args(["build", "self/cgen.nx", "-o"]).arg(&nx1).arg("--out-dir").arg(&out_dir).current_dir(root).output().expect("run nx");
-    assert!(
-        build.status.success(),
-        "building nx1 failed:
-{}",
-        String::from_utf8_lossy(&build.stderr)
-    );
-    // stage 2: nx1 emits itself, zig cc builds it
-    let emit = std::process::Command::new(&nx1).arg("self/cgen.nx").env("NX_ZIG", "zig").current_dir(root).output().unwrap();
-    assert!(
-        emit.status.success(),
-        "nx1 could not emit cgen.nx:
-{}",
-        String::from_utf8_lossy(&emit.stderr)
-    );
-    let c2 = out_dir.join("nx2.c");
-    std::fs::write(&c2, &emit.stdout).unwrap();
-    let nx2 = out_dir.join(if cfg!(windows) { "nx2.exe" } else { "nx2" });
-    let cc = host_cc().args(["-std=gnu11", "-O0", "-w", "-fno-strict-aliasing", "-o"]).arg(&nx2).arg(&c2).current_dir(root).output().expect("run the C compiler");
-    assert!(
-        cc.status.success(),
-        "the C compiler could not build nx2:
-{}",
-        String::from_utf8_lossy(&cc.stderr)
-    );
-    // stage 3: nx2 reproduces nx1's output
-    for f in ["self/cgen.nx", "examples/hello.nx", "examples/json.nx", "std/strings.nx"] {
-        let a = std::process::Command::new(&nx1).arg(f).env("NX_ZIG", "zig").current_dir(root).output().unwrap();
-        let b = std::process::Command::new(&nx2).arg(f).env("NX_ZIG", "zig").current_dir(root).output().unwrap();
-        assert!(
-            b.status.success(),
-            "nx2 could not emit {}:
-{}",
-            f,
-            String::from_utf8_lossy(&b.stderr)
-        );
-        assert_same_text(&String::from_utf8_lossy(&a.stdout), &String::from_utf8_lossy(&b.stdout), &format!("nx1 and nx2 emit different C for {}", f));
+    let out_dir = root().join("nx-out").join("bootstrap");
+    let emit = nxs().args(["emit-c", "self/nx.nx", "--mode", "safe"]).output().unwrap();
+    assert!(emit.status.success(), "nx1 could not emit self/nx.nx:\n{}", String::from_utf8_lossy(&emit.stderr));
+    let c1 = out_dir.join("nx1.c");
+    std::fs::write(&c1, &emit.stdout).unwrap();
+    let nx2 = out_dir.join(exe("nx2"));
+    let mut cc = host_cc();
+    cc.args(["-std=gnu11", "-O2", "-w", "-fno-strict-aliasing", "-o"]).arg(&nx2).arg(&c1);
+    if cfg!(windows) {
+        cc.arg("-lws2_32");
+    } else if !cfg!(target_os = "macos") {
+        cc.args(["-lm", "-lc"]);
     }
-}
-
-/// The driver written in Nexium builds itself, and the result builds and
-/// runs a program: `cargo` is not needed past the first compiler.
-#[test]
-fn self_hosted_driver_builds_itself() {
-    if !have_cc() {
-        eprintln!("skipping: zig not found");
-        return;
-    }
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = root.join("nx-out").join("self_driver");
-    let _ = std::fs::create_dir_all(&out_dir);
-    let nx_a = out_dir.join(if cfg!(windows) { "nx_a.exe" } else { "nx_a" });
-    let build = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).args(["build", "self/nx.nx", "-o"]).arg(&nx_a).arg("--out-dir").arg(&out_dir).current_dir(root).output().expect("run nx");
-    assert!(build.status.success(), "building the driver failed:\n{}", String::from_utf8_lossy(&build.stderr));
-    let nx_b = out_dir.join(if cfg!(windows) { "nx_b.exe" } else { "nx_b" });
-    let again = driver_cc(&mut std::process::Command::new(&nx_a)).args(["build", "self/nx.nx", "-o"]).arg(&nx_b).arg("--out-dir").arg(&out_dir).current_dir(root).output().unwrap();
-    assert!(again.status.success(), "the driver could not build itself:\n{}", String::from_utf8_lossy(&again.stderr));
-    let run = driver_cc(&mut std::process::Command::new(&nx_b)).args(["run", "examples/hello.nx", "--out-dir"]).arg(&out_dir).current_dir(root).output().unwrap();
-    assert!(run.status.success(), "the rebuilt driver could not run hello:\n{}", String::from_utf8_lossy(&run.stderr));
-    let expected = std::fs::read_to_string(root.join("examples").join("hello.expected")).unwrap();
-    assert_eq!(normalize(&expected), normalize(&String::from_utf8_lossy(&run.stdout)));
-    let test = driver_cc(&mut std::process::Command::new(&nx_b)).args(["test", "examples/tests.nx", "--out-dir"]).arg(&out_dir).current_dir(root).output().unwrap();
-    let expected = std::fs::read_to_string(root.join("examples").join("tests.expected")).unwrap();
-    assert_eq!(normalize(&expected), normalize(&String::from_utf8_lossy(&test.stdout)));
-}
-
-/// The checker written in Nexium, stage 3: every compile-fail case is
-/// rejected with every message the Rust checker produces (the notes too).
-#[test]
-fn self_hosted_checker_rejects_compile_fail_cases() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = root.join("nx-out").join("self_check_fail");
-    let exe = out_dir.join(if cfg!(windows) { "self_check.exe" } else { "self_check" });
-    let build = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).args(["build", "self/check.nx", "-o"]).arg(&exe).arg("--out-dir").arg(&out_dir).current_dir(root).output().expect("run nx");
-    assert!(
-        build.status.success(),
-        "building self/check.nx failed:
-{}",
-        String::from_utf8_lossy(&build.stderr)
-    );
-    let dir = root.join("tests").join("compile_fail");
-    let mut entries: Vec<PathBuf> = std::fs::read_dir(&dir).expect("compile_fail dir").filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().map(|x| x == "nx").unwrap_or(false)).collect();
-    entries.sort();
-    for path in entries {
-        let text = std::fs::read_to_string(&path).unwrap();
-        let expects: Vec<&str> = text.lines().filter_map(|l| l.strip_prefix("// EXPECT:")).map(|s| s.trim()).collect();
-        let out = std::process::Command::new(&exe).arg(&path).current_dir(root).output().expect("run self check");
-        assert!(!out.status.success(), "self/check.nx accepted {}", path.display());
-        let diag = String::from_utf8_lossy(&out.stderr);
-        for e in expects {
-            assert!(
-                diag.contains(e),
-                "self/check.nx on {} did not report `{}`; it said:
-{}",
-                path.display(),
-                e,
-                diag
-            );
-        }
-    }
-}
-
-#[test]
-fn self_hosted_checker_matches_bodies() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = root.join("nx-out").join("self_check_bodies");
-    let exe = out_dir.join(if cfg!(windows) { "self_check.exe" } else { "self_check" });
-    let build = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).args(["build", "self/check.nx", "-o"]).arg(&exe).arg("--out-dir").arg(&out_dir).current_dir(root).output().expect("run nx");
-    assert!(
-        build.status.success(),
-        "building self/check.nx failed:
-{}",
-        String::from_utf8_lossy(&build.stderr)
-    );
-    let files = [
-        "examples/arena.nx",
-        "examples/binary.nx",
-        "examples/binary_sizes.nx",
-        "examples/cimport.nx",
-        "examples/comptime.nx",
-        "examples/comptime_binary.nx",
-        "examples/control.nx",
-        "examples/ctest.nx",
-        "examples/dyn.nx",
-        "examples/errors_more.nx",
-        "examples/float_rem.nx",
-        "examples/generics.nx",
-        "examples/guard_scope.nx",
-        "examples/hello.nx",
-        "examples/json.nx",
-        "examples/loops_more.nx",
-        "examples/moves_again.nx",
-        "examples/optional_move.nx",
-        "examples/orelse_return.nx",
-        "examples/own.nx",
-        "examples/ownership.nx",
-        "examples/parallel.nx",
-        "examples/process.nx",
-        "examples/records.nx",
-        "examples/ropesim.nx",
-        "examples/service.nx",
-        "examples/stdlib.nx",
-        "examples/tests.nx",
-        "examples/tool.nx",
-        "examples/tour.nx",
-        "examples/tree.nx",
-        "gui/demo.nx",
-        "gui/nexium_gui.nx",
-        "self/check.nx",
-        "self/cimport.nx",
-        "self/lexer.nx",
-        "self/parser.nx",
-        "std/args.nx",
-        "std/bytes.nx",
-        "std/fs.nx",
-        "std/http.nx",
-        "std/json.nx",
-        "std/lists.nx",
-        "std/net.nx",
-        "std/num.nx",
-        "std/process.nx",
-        "std/regex.nx",
-        "std/stream.nx",
-        "std/strings.nx",
-        "std/testing.nx",
-        "std/text.nx",
-        "std/thread.nx",
-        "std/time.nx",
-    ];
-    // the specification's cases too
-    let mut all: Vec<String> = files.iter().map(|f| f.to_string()).collect();
-    let mut spec: Vec<String> = std::fs::read_dir(root.join("tests").join("spec"))
-        .unwrap()
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.extension().map(|x| x == "nx").unwrap_or(false))
-        .map(|p| format!("tests/spec/{}", p.file_name().unwrap().to_string_lossy()))
-        .collect();
-    spec.sort();
-    all.extend(spec);
-    for f in all {
-        let path = root.join(&f);
-        let oracle = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).arg("tir").arg(&path).env("NX_ZIG", "zig").current_dir(root).output().unwrap();
-        assert!(
-            oracle.status.success(),
-            "nx tir rejected {}:
-{}",
-            f,
-            String::from_utf8_lossy(&oracle.stderr)
-        );
-        let mine = std::process::Command::new(&exe).arg(&path).env("NX_ZIG", "zig").current_dir(root).output().unwrap();
-        assert!(
-            mine.status.success(),
-            "self/check.nx rejected {}:
-{}",
-            f,
-            String::from_utf8_lossy(&mine.stderr)
-        );
-        assert_same_text(&String::from_utf8_lossy(&oracle.stdout), &String::from_utf8_lossy(&mine.stdout), &format!("typed IR differs for {}", f));
+    let out = cc.current_dir(root()).output().expect("run the C compiler");
+    assert!(out.status.success(), "the C compiler could not build nx2:\n{}", String::from_utf8_lossy(&out.stderr));
+    let again = driver_cc(&mut Command::new(&nx2)).args(["emit-c", "self/nx.nx", "--mode", "safe"]).current_dir(root()).output().unwrap();
+    assert!(again.status.success(), "nx2 could not emit self/nx.nx:\n{}", String::from_utf8_lossy(&again.stderr));
+    assert_same_text(&String::from_utf8_lossy(&emit.stdout), &String::from_utf8_lossy(&again.stdout), "nx1 and nx2 emit different C for self/nx.nx");
+    // nx2 is a working compiler, not just a matching emitter
+    let hello = driver_cc(&mut Command::new(&nx2)).args(["run", "examples/hello.nx", "--out-dir"]).arg(&out_dir).current_dir(root()).output().unwrap();
+    assert!(hello.status.success(), "nx2 could not run hello:\n{}", String::from_utf8_lossy(&hello.stderr));
+    let expected = std::fs::read_to_string(root().join("examples").join("hello.expected")).unwrap();
+    assert_same_text(normalize(&expected).trim(), normalize(&String::from_utf8_lossy(&hello.stdout)).trim(), "hello through nx2");
+    let seed = std::fs::read(root().join("bootstrap").join("nx.c")).unwrap();
+    if seed != emit.stdout {
+        eprintln!("note: bootstrap/nx.c is behind self/: regenerate it at the release (nx emit-c self/nx.nx --mode safe > bootstrap/nx.c)");
     }
 }
 
@@ -568,7 +300,7 @@ fn self_hosted_checker_matches_bodies() {
 #[test]
 fn gui_headless_tests_pass() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).args(["test", "gui/nexium_gui.nx"]).current_dir(root).output().expect("run nx");
+    let out = nxs().args(["test", "gui/nexium_gui.nx"]).output().expect("run nx");
     assert!(
         out.status.success(),
         "gui tests failed:
@@ -577,7 +309,7 @@ fn gui_headless_tests_pass() {
         String::from_utf8_lossy(&out.stderr)
     );
     let shot = root.join("nx-out").join("demo-shot.ppm");
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).args(["run", "gui/demo.nx", "--", "--shot"]).arg(&shot).current_dir(root).output().expect("run nx");
+    let out = nxs().args(["run", "gui/demo.nx", "--", "--shot"]).arg(&shot).output().expect("run nx");
     assert!(
         out.status.success(),
         "offscreen demo failed:
@@ -587,8 +319,7 @@ fn gui_headless_tests_pass() {
     assert!(std::fs::metadata(&shot).map(|m| m.len() > 640 * 440 * 3).unwrap_or(false), "screenshot not written");
     // the same build from inside the directory, with a bare file name: the
     // declared C source must still be compiled in
-    let out =
-        std::process::Command::new(env!("CARGO_BIN_EXE_nx")).args(["build", "demo.nx", "--out-dir"]).arg(root.join("nx-out").join("demo-bare")).current_dir(root.join("gui")).output().expect("run nx");
+    let out = driver_cc(&mut Command::new(nx_self())).args(["build", "demo.nx", "--out-dir"]).arg(root.join("nx-out").join("demo-bare")).current_dir(root.join("gui")).output().expect("run nx");
     assert!(
         out.status.success(),
         "build with a bare file name failed:
@@ -607,7 +338,7 @@ fn std_modules_pass_their_tests() {
     files.sort();
     assert!(!files.is_empty());
     for f in files {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).arg("test").arg(&f).current_dir(root).output().unwrap();
+        let out = nxs().arg("test").arg(&f).output().unwrap();
         assert!(out.status.success(), "std tests failed for {}:\n{}{}", f.display(), String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
         let fmt = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).arg("fmt").arg(&f).arg("--check").current_dir(root).output().unwrap();
         assert!(fmt.status.success(), "{} is not canonically formatted", f.display());
