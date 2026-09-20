@@ -64,6 +64,36 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   crashed on the unresolved type (found by the fuzzer on its second run in
   CI). A global's type now resolves on first use; the program gets the
   diagnostic for the compile-time global access instead.
+- A bare `break`, `continue` or `return` ends a `match` arm before the
+  comma (`_ => break,` parsed the comma as an expression). A one-element
+  array literal can be indexed and sliced (`[x][..]`, `[x][0]`): only a
+  `[` that opens `[]T` or `[N]T` with a type after it starts an array
+  type in expression position.
+- `Set!T` widens into `!T` where `!T` is expected (an initializer, an
+  argument, a return); `!T` never narrows into a named set. Type names
+  now spell a named set (`Parse!i32`), so the diagnostic no longer reads
+  "expected `!i32` but found `!i32`".
+- The `!effect` diagnostic's first note points at the call that brings
+  the effect in, not at the function's header.
+- Two dangling views, found by running the tutorial's programs on Linux
+  and the compiler under AddressSanitizer: `std.http.parse_url` kept the
+  host as a view of a value that was released when the `if let` ended,
+  so every URL with a port could fail with `NotFound` where the freed
+  memory was reused; and the checker read a syntax node through a
+  pointer after adding nodes to the tree (a binary pattern with a
+  computed size). Both are the case the roadmap's 1.2 makes an error; a
+  CI job now builds the compiler with the sanitizers, checks every source
+  with it, and runs every spec case and tutorial program built with them.
+- `for k in m` over a `Map` emitted C that did not compile: the keys are
+  collected into an owned `List` the loop walks and releases, the same
+  as `for k in m.keys()`. `m[key]` crashed the emitter; it is the lookup
+  `m.get(key)` is. Both have a spec case now.
+- `@weak(x)` did not parse (`weak` is a keyword); a builtin may be spelled
+  with one. A weak reference created in a struct literal was retained a
+  second time on its way into the field and its storage never freed; and
+  an object whose fields held a weak reference back to it could be freed
+  while its own fields were still being released. A `ref class` now holds
+  its storage until its fields are gone; both cases are spec cases.
 
 ## [1.0.0] - 2026-09-20
 
@@ -86,39 +116,9 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Fixed
 
-- A bare `break`, `continue` or `return` ends a `match` arm before the
-  comma (`_ => break,` parsed the comma as an expression). A one-element
-  array literal can be indexed and sliced (`[x][..]`, `[x][0]`): only a
-  `[` that opens `[]T` or `[N]T` with a type after it starts an array
-  type in expression position.
-- `Set!T` widens into `!T` where `!T` is expected (an initializer, an
-  argument, a return); `!T` never narrows into a named set. Type names
-  now spell a named set (`Parse!i32`), so the diagnostic no longer reads
-  "expected `!i32` but found `!i32`".
-- The `!effect` diagnostic's first note points at the call that brings
-  the effect in, not at the function's header.
-- Two dangling views, found by running the tutorial's programs on Linux
-  and the compiler under AddressSanitizer: `std.http.parse_url` kept the
-  host as a view of a value that was released when the `if let` ended,
-  so every URL with a port could fail with `NotFound` where the freed
-  memory was reused; and the checker read a syntax node through a
-  pointer after adding nodes to the tree (a binary pattern with a
-  computed size). Both are the case the roadmap's 1.2 makes an error; a
-  CI job now builds the compiler with the sanitizers, checks every source
-  with it, and runs every spec case and tutorial program built with them.
 - The fuzzer wrote its cases under `nx-out/fuzz`, the path of its own
   executable on Linux and macOS, so CI's fuzz job could not start; it
   works under `nx-out/fuzzing`.
-- `for k in m` over a `Map` emitted C that did not compile: the keys are
-  collected into an owned `List` the loop walks and releases, the same
-  as `for k in m.keys()`. `m[key]` crashed the emitter; it is the lookup
-  `m.get(key)` is. Both have a spec case now.
-- `@weak(x)` did not parse (`weak` is a keyword); a builtin may be spelled
-  with one. A weak reference created in a struct literal was retained a
-  second time on its way into the field and its storage never freed; and
-  an object whose fields held a weak reference back to it could be freed
-  while its own fields were still being released. A `ref class` now holds
-  its storage until its fields are gone; both cases are spec cases.
 
 ## [0.9.0] - 2026-09-20
 
