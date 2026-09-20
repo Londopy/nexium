@@ -25,6 +25,11 @@
   <b>A language complete enough to build everything in, that is also the best thing to adopt for one piece of something else.</b>
 </p>
 
+<p align="center">
+  <a href="https://londopy.github.io/nexium/"><b>Documentation &amp; the Topo tutorial &rarr; londopy.github.io/nexium</b></a><br>
+  <sub><a href="https://londopy.github.io/nexium/topo/01-base-camp.html">Start with the Topo</a> &middot; <a href="https://londopy.github.io/nexium/docs/language.html">Language reference</a> &middot; <a href="https://londopy.github.io/nexium/docs/install.html">Install</a> &middot; <a href="https://londopy.github.io/nexium/docs/std.html">Standard library</a> &middot; <a href="https://londopy.github.io/nexium/docs/embedding.html">Embedding</a></sub>
+</p>
+
 Nexium compiles to native code through C, has automatic reference counting
 without a tracing collector, a machine-checked effect system that says whether
 a function allocates, blocks, or can panic, and a compiler that turns one
