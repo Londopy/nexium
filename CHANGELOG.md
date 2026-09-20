@@ -24,6 +24,19 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   oracle diffs that drove the port (`nx tokens`, `sexp`, `tir` and
   `emit-c` compared between the two compilers) retire.
 
+### Added
+
+- `unbounded_stack` is an effect, no longer reserved: a function on a
+  cycle of the call graph (it calls itself, or calls something that calls
+  it back) carries it, because its stack use depends on its input; calls
+  through function values and trait objects acquire it as they acquire
+  every permitted effect. `!unbounded_stack` is discharged by rewriting
+  the recursion as a loop over an explicit stack (SPEC 9). The first
+  language change made in the compiler in Nexium alone.
+- The compiler in Nexium renders diagnostics as the tools always have:
+  the message, `--> path:line:col`, the source line, a caret, notes under
+  their error, and the count at the end; it printed byte offsets.
+
 ### Fixed
 
 - The compiler in Nexium searched no directory for `@cImport` headers and

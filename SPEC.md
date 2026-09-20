@@ -212,10 +212,12 @@ yielding the old contents by luck.
 created inside are allocated from the arena, their releases are no-ops, and
 the arena is freed as a whole at the end of the block. Containers created
 outside the block keep using the heap when they grow inside it, so
-collecting results into an outer `List`, `String`, or `Map` is safe. Values
-created inside must not escape the block (not checked). `arena` is the
-only allocation strategy; `pool` and `stack` are not adopted (**decided**,
-88).
+collecting results into an outer `List`, `String`, or `Map` is safe. A
+value created inside the block must not be kept past it: this is not
+checked, for the same reason as the view cases of 5.6, and it is the
+programmer's responsibility in the same way; a debug build fills the
+arena's storage with `0xDD` when the block ends. `arena` is the only
+allocation strategy; `pool` and `stack` are not adopted (**decided**, 88).
 
 ## 6. Expressions and statements
 
@@ -362,14 +364,20 @@ The lattice is:
 | `nondeterministic` | `random`, `time.now`, `os.env`, spawning a process |
 | `panics` | any operation that can panic and is not proven safe (section 9.1) |
 | `ffi` | calling a foreign function |
-| `unbounded_stack` | reserved |
+| `unbounded_stack` | recursion, direct or mutual: the function is on a cycle of the call graph, so its stack use depends on its input |
 
 Extern functions are assumed to have every effect. A negative bound on a
 signature (`!allocates`) or on a function type is checked after inference;
 the diagnostic names the site that introduced the effect through the call
 chain, with the sentence recorded when the effect was added. Calling
 through a function value acquires the effects its type permits (all of
-them, minus the type's bounds).
+them, minus the type's bounds), `unbounded_stack` among them.
+
+`unbounded_stack` is discharged by rewriting the recursion as a loop over
+an explicit stack; there is no proof for it, because a depth bounded by an
+integer parameter is still a depth the caller cannot see. It matters at
+the export boundary (section 15): a host calling an exported function that
+carries it must give it a stack sized for the input.
 
 ### 9.1 Discharging `panics`
 
@@ -417,8 +425,9 @@ modules may import each other. The builtin namespaces `math`, `io`, `os`,
 scope and need no import. `error` names the anonymous error set as a type.
 Packages: `import dep` and `import dep.module` load a dependency named in
 the program's `nexium.toml` (`src/lib.nx` and `src/module.nx` of the
-package); inside a package, imports resolve to the package's own `src/`.
-See `docs/packages.md`. **planned**: a registry (ROADMAP phase 3).
+package, from a path or a git repository); inside a package, imports
+resolve to the package's own `src/`. See `docs/packages.md`. A registry is
+not part of the language; `ROADMAP.md` has it under the ecosystem.
 
 The builtin methods of `List`, `String`, `Map`, slices, integers, floats,
 and chars are listed in `docs/language.md`. They are implemented in the
@@ -528,6 +537,6 @@ emit-c` are the oracles `cargo test` diffs the stages against.
 | regions | R1, decided (88); the uncovered cases are listed in 5.6 |
 | layouts `packed`, `soa`; strategies `pool`, `stack` | not part of the language (88); `layout(c)` and `arena` are |
 | threads, channels (`std.thread`); no async | done (0.4) |
-| packages (path dependencies), `node`, `installer` artifacts | done (0.5); registry planned |
+| packages (path and git dependencies), `node`, `installer` artifacts | done (0.5) |
 | self-hosting: lexer, parser, checker, C emitter, driver in Nexium | done (0.6); byte-identical to the Rust compiler on every source, and the driver builds itself |
 | conformance: `tests/spec`, one recorded program per claim | sections 2 to 14 covered; 15 and 16 by the ship tests |
