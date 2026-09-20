@@ -1,0 +1,182 @@
+// `nx size`: attribute binary bytes to declarations (specification 16).
+//
+// The program is compiled to an object with `-ffunction-sections
+// -fdata-sections`, so every function and static lands in its own section.
+// Section sizes are then read from the object file (ELF or COFF) and mapped
+// back to Nexium declarations by their C symbol names.
+
+/// A section: its name and its size in bytes.
+pub struct Section {
+    name: String
+    size: u64
+}
+
+/// Bytes attributed to one declaration.
+pub struct SizeEntry {
+    symbol: String
+    bytes: u64
+    kind: []u8
+}
+
+/// A declaration's C symbol and its Nexium name.
+pub struct Symbol {
+    c: String
+    nx: String
+}
+
+/// Section sizes from an ELF64 or COFF object.
+pub fn section_sizes(bytes: []u8) -> !List(Section) {
+    if bytes.len >= 4 and bytes[0] == 0x7f and bytes[1] == 'E' and bytes[2] == 'L' and bytes[3] == 'F' { return elf64(bytes) }
+    if bytes.len >= 2 and bytes[0] == 0x64 and (bytes[1] == 0x86 or bytes[1] == 0xaa) { return coff(bytes) }
+    if bytes.len >= 4 and bytes[0] == 0xcf and bytes[1] == 0xfa and bytes[2] == 0xed and bytes[3] == 0xfe { return error.MachO }
+    return error.Unrecognized
+}
+
+/// What a `section_sizes` error means.
+pub fn explain(e: error) -> []u8 {
+    if e == error.MachO { return "Mach-O objects are not supported by `nx size` yet; run it on a Linux or Windows target (`--target x86_64-linux-gnu`)" }
+    if e == error.Elf32 { return "only ELF64 objects are supported" }
+    if e == error.Truncated { return "truncated ELF section table" }
+    if e == error.TruncatedCoff { return "truncated COFF header" }
+    return "unrecognized object file format"
+}
+
+fn u16le(b: []u8, o: usize) -> u64 { return (b[o] as u64) | ((b[o + 1] as u64) << 8) }
+fn u32le(b: []u8, o: usize) -> u64 { return u16le(b, o) | (u16le(b, o + 2) << 16) }
+fn u64le(b: []u8, o: usize) -> u64 { return u32le(b, o) | (u32le(b, o + 4) << 32) }
+
+fn cstr(b: []u8, o: usize) -> String {
+    var e = o
+    while e < b.len and b[e] != 0 { e += 1 }
+    return String.from(b[o..e])
+}
+
+fn elf64(b: []u8) -> !List(Section) {
+    if b.len < 64 or b[4] != 2 { return error.Elf32 }
+    let shoff = u64le(b, 0x28) as usize
+    let shentsize = u16le(b, 0x3a) as usize
+    let shnum = u16le(b, 0x3c) as usize
+    let shstrndx = u16le(b, 0x3e) as usize
+    if shoff + shnum * shentsize > b.len { return error.Truncated }
+    let strtab_off = u64le(b, shoff + shstrndx * shentsize + 0x18) as usize
+    var out = List(Section).new()
+    for i in 0..shnum {
+        let sh = shoff + i * shentsize
+        let name_off = u32le(b, sh) as usize
+        let flags = u64le(b, sh + 0x08)
+        let size = u64le(b, sh + 0x20)
+        let name = cstr(b, strtab_off + name_off)
+        // SHF_ALLOC only
+        if (flags & 0x2) != 0 and size > 0 { out.append(Section{ .name = name, .size = size }) }
+    }
+    return out
+}
+
+fn trim_nul(raw: []u8) -> []u8 {
+    var e = raw.len
+    while e > 0 and raw[e - 1] == 0 { e -= 1 }
+    return raw[0..e]
+}
+
+fn coff(b: []u8) -> !List(Section) {
+    if b.len < 20 { return error.TruncatedCoff }
+    let nsec = u16le(b, 2) as usize
+    let symoff = u32le(b, 8) as usize
+    let nsym = u32le(b, 12) as usize
+    let strtab = symoff + nsym * 18
+    var out = List(Section).new()
+    for i in 0..nsec {
+        let o = 20 + i * 40
+        if o + 40 > b.len { break }
+        let raw = b[o..o + 8]
+        var name = String.new()
+        if raw[0] == '/' {
+            let idx = trim_nul(raw[1..]).trim().parse_int(usize) catch { 0 }
+            if strtab + idx < b.len { name = cstr(b, strtab + idx) } else { name = String.from(trim_nul(raw)) }
+        } else {
+            name = String.from(trim_nul(raw))
+        }
+        let size = u32le(b, o + 16) // SizeOfRawData (VirtualSize is zero in objects)
+        let chars = u32le(b, o + 36)
+        // skip debug/info sections (IMAGE_SCN_MEM_DISCARDABLE) and empty ones
+        let n = name[..]
+        if (chars & 0x02000000) == 0 and size > 0 and !n.starts_with(".debug") and !n.starts_with(".pdata") and !n.starts_with(".xdata") and !n.starts_with(".rdata$zzz") and !n.starts_with(".drectve") and !n.starts_with(".llvm") {
+            out.append(Section{ .name = name, .size = size })
+        }
+    }
+    return out
+}
+
+/// `nxc_name_12` -> `name`: the symbol without its prefix and numeric suffix.
+fn strip_index(sym: []u8, prefix: []u8) -> []u8 {
+    let rest = sym[prefix.len..]
+    var i = rest.len
+    while i > 0 { if rest[i - 1] == '_' { return rest[0..i - 1] }; i -= 1 }
+    return sym
+}
+
+/// The report: bytes per declaration (largest first, then by name), the
+/// runtime and libc glue, and the total.
+pub struct Attribution {
+    entries: List(SizeEntry)
+    runtime: u64
+    total: u64
+}
+
+/// Group section sizes by the declaration they belong to.
+pub fn attribute(sections: *List(Section), symbols: *List(Symbol)) -> Attribution {
+    var keys = List(String).new()
+    var bytes = List(u64).new()
+    var kinds = List([]u8).new()
+    var runtime: u64 = 0
+    var total: u64 = 0
+    for sec in sections {
+        total += sec.size
+        let name = sec.name[..]
+        var kind: []u8 = "data"
+        var sym = String.new()
+        if name.starts_with(".text.") { kind = "code"; sym = String.from(name[6..]) }
+        else if name.starts_with(".rodata.") {
+            var s = name[8..]
+            if s.starts_with("str1.") { s = s[5..] }
+            sym = String.from(s)
+        } else if name.starts_with(".text$") { kind = "code"; sym = String.from(name[6..]) }
+        else if name.starts_with(".rdata$") { sym = String.from(name[7..]) }
+        else if name.starts_with(".data.") { sym = String.from(name[6..]) }
+        else if name.starts_with(".bss.") { kind = "bss"; sym = String.from(name[5..]) }
+        else if name.starts_with(".text") { kind = "code"; sym = String.from("(other code)") }
+        else { sym = format("(section {})", .{name}) }
+        var key = String.new()
+        var known = false
+        for s in symbols { if s.c == sym { key = s.nx.clone(); known = true } }
+        let sv = sym[..]
+        if !known {
+            if sv.starts_with("nxc_") { key = format("const {}", .{strip_index(sv, "nxc_")}) }
+            else if sv.starts_with("nxg_") { key = format("global {}", .{strip_index(sv, "nxg_")}) }
+            else if sv.starts_with("nx_drop_") or sv.starts_with("nx_clone_") or sv.starts_with("nx_eq_") or sv.starts_with("nx_cmp_") or sv.starts_with("nx_qcmp_") { key = String.from("(generated glue: drop, clone, compare)") }
+            else if sv.starts_with("nx_thunk_") or sv.starts_with("nx_closure_") or sv.starts_with("nx_env_") { key = String.from("(closures and function values)") }
+            else if sv.starts_with("nx_str_") or sv.starts_with("nx_enum_names_") { key = String.from("(string literals)") }
+            else if sv.starts_with("(") { key = sym.clone() }
+            else { runtime += sec.size; continue }
+        }
+        var found = false
+        for k, i in keys { if k == key { bytes[i] += sec.size; found = true } }
+        if !found { keys.append(key); bytes.append(sec.size); kinds.append(kind) }
+    }
+    var entries = List(SizeEntry).new()
+    for k, i in keys { entries.append(SizeEntry{ .symbol = k.clone(), .bytes = bytes[i], .kind = kinds[i] }) }
+    // largest first, then by name
+    let n = entries.len
+    var i: usize = 1
+    while i < n {
+        var j = i
+        while j > 0 and (entries[j].bytes > entries[j - 1].bytes or (entries[j].bytes == entries[j - 1].bytes and entries[j].symbol < entries[j - 1].symbol)) {
+            let tmp = SizeEntry{ .symbol = entries[j].symbol.clone(), .bytes = entries[j].bytes, .kind = entries[j].kind }
+            entries[j] = SizeEntry{ .symbol = entries[j - 1].symbol.clone(), .bytes = entries[j - 1].bytes, .kind = entries[j - 1].kind }
+            entries[j - 1] = tmp
+            j -= 1
+        }
+        i += 1
+    }
+    return Attribution{ .entries = entries, .runtime = runtime, .total = total }
+}

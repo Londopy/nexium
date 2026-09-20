@@ -16,6 +16,11 @@ import parser
 import check
 import cgen
 import fmt
+import tools
+import size
+
+const VERSION = "0.8.0"
+const RELEASE_NAME = "Annapurna: the Sickle"
 
 const NONE: usize = 0xFFFFFFFFFFFFFFFF
 
@@ -33,11 +38,14 @@ pub struct Opts {
     include_dirs: List(String)
     rest: List(String)
     sigs: bool
+    /// how the C compiler was chosen: 1 --cc, 2 NX_CC, 3 NX_ZIG, 4 the system compiler on macOS, 0 zig on PATH
+    cc_source: u8
 }
 
 fn usage() {
-    eprintln("usage: nx <build|run|test|check|emit-c|tir> <file.nx> [options] [-- args]", .{})
+    eprintln("usage: nx <build|run|test|check|effects|audit|refcounts|leaks|size|emit-c|tir> <file.nx> [options] [-- args]", .{})
     eprintln("       nx fmt <file.nx>... [--check]", .{})
+    eprintln("       nx version | nx doctor", .{})
     eprintln("  -o <path>          output file", .{})
     eprintln("  --out-dir <dir>    where C and binaries go (default nx-out)", .{})
     eprintln("  --mode <m>         debug (default), safe, fast, small", .{})
@@ -48,11 +56,19 @@ fn usage() {
 }
 
 fn parse_opts(args: [][]u8) -> ?Opts {
-    if args.len < 3 { return null }
+    if args.len < 3 {
+        if args.len == 2 and (args[1] == "version" or args[1] == "--version" or args[1] == "-V" or args[1] == "doctor") {
+            var padded = List([]u8).new()
+            for a in args { padded.append(a) }
+            padded.append("")
+            return parse_opts(padded[..])
+        }
+        return null
+    }
     var o = Opts{
         .command = String.from(args[1]), .file = String.from(args[2]), .out = String.new(), .out_dir = String.from("nx-out"), .mode = cgen.MODE_DEBUG,
         .std_dir = String.from("std"), .cc = List(String).new(), .target = String.new(), .keep_c = false,
-        .defines = List(String).new(), .include_dirs = List(String).new(), .rest = List(String).new(), .sigs = false,
+        .defines = List(String).new(), .include_dirs = List(String).new(), .rest = List(String).new(), .sigs = false, .cc_source = 0,
     }
     var cc_text = String.new()
     var i: usize = 3
@@ -84,16 +100,19 @@ fn parse_opts(args: [][]u8) -> ?Opts {
         o.rest.append(String.from(a))
         i += 1
     }
-    if cc_text.len == 0 { if let v = os.env("NX_CC") { cc_text = String.from(v) } }
+    if cc_text.len > 0 { o.cc_source = 1 }
+    if cc_text.len == 0 { if let v = os.env("NX_CC") { cc_text = String.from(v); o.cc_source = 2 } }
     if cc_text.len > 0 {
         for w in cc_text[..].split(" ") { if w.len > 0 { o.cc.append(String.from(w)) } }
     } else if let z = os.env("NX_ZIG") {
         o.cc.append(String.from(z))
         o.cc.append(String.from("cc"))
+        o.cc_source = 3
     } else if is_macos_target(o.target[..]) and o.target.len == 0 {
         // zig 0.14 cannot link against the current Xcode SDK; the system
         // compiler can (the Rust driver makes the same choice)
         o.cc.append(String.from("cc"))
+        o.cc_source = 4
     } else {
         o.cc.append(String.from("zig"))
         o.cc.append(String.from("cc"))
@@ -225,9 +244,11 @@ fn compile_c(c: *check.Checker, o: *Opts, c_path: []u8, out: []u8, kind: []u8) -
     var argv = List(String).new()
     for x in o.cc { argv.append(x.clone()) }
     argv.append(String.from("-std=gnu11"))
-    if o.mode == cgen.MODE_DEBUG { argv.append(String.from("-O0")); argv.append(String.from("-g")) }
+    if o.mode == cgen.MODE_DEBUG { argv.append(String.from("-O0")); if kind != "sections" { argv.append(String.from("-g")) } }
     else if o.mode == cgen.MODE_SMALL { argv.append(String.from("-Os")) }
     else { argv.append(String.from("-O2")) }
+    // one section per function and datum, for `nx size`
+    if kind == "sections" { argv.append(String.from("-ffunction-sections")); argv.append(String.from("-fdata-sections")) }
     argv.append(String.from("-w"))
     argv.append(String.from("-fno-strict-aliasing"))
     for d in o.defines { argv.append(format("-D{}", .{d})) }
@@ -246,7 +267,7 @@ fn compile_c(c: *check.Checker, o: *Opts, c_path: []u8, out: []u8, kind: []u8) -
         argv.append(String.from("-target"))
         argv.append(o.target.clone())
     }
-    if kind == "object" { argv.append(String.from("-c")) }
+    if kind == "object" or kind == "sections" { argv.append(String.from("-c")) }
     argv.append(String.from(c_path))
     argv.append(String.from("-o"))
     argv.append(String.from(out))
@@ -402,6 +423,151 @@ fn cmd_fmt(o: *Opts) -> i32 {
     return 0
 }
 
+fn cmd_effects(o: *Opts) -> i32 {
+    var c = check_program(o) orelse return 1
+    tools.effects(&mut c)
+    return 0
+}
+
+fn cmd_refcounts(o: *Opts) -> i32 {
+    var c = check_program(o) orelse return 1
+    tools.refcounts(&mut c)
+    return 0
+}
+
+/// `nx audit`: the unsafe blocks and mutable globals, then a full check.
+fn cmd_audit(o: *Opts) -> i32 {
+    let mods = check.load(o.file[..], o.std_dir[..]) catch { return 1 }
+    var c = check.new_checker(mods)
+    c.cc = o.cc.clone()
+    c.target = o.target.clone()
+    var globals_flag = false
+    for a in o.rest { if a == "--globals" { globals_flag = true } }
+    tools.audit(&mut c, globals_flag)
+    let checked = check_program(o) orelse return 1
+    _ = checked
+    return 0
+}
+
+/// A deep copy of the options, for a command that runs a variant build.
+fn clone_opts(o: *Opts) -> Opts {
+    return Opts{
+        .command = o.command.clone(), .file = o.file.clone(), .out = o.out.clone(), .out_dir = o.out_dir.clone(), .mode = o.mode,
+        .std_dir = o.std_dir.clone(), .cc = o.cc.clone(), .target = o.target.clone(), .keep_c = o.keep_c,
+        .defines = o.defines.clone(), .include_dirs = o.include_dirs.clone(), .rest = o.rest.clone(), .sigs = o.sigs, .cc_source = o.cc_source,
+    }
+}
+
+/// `nx size`: the program compiled to an object with one section per
+/// function, the sections attributed to declarations by C symbol.
+fn cmd_size(o: *Opts) -> i32 {
+    var c = check_program(o) orelse return 1
+    let stem = stem_of(o.file[..])
+    let has_main = c.main_inst != NONE
+    var symbols = List(size.Symbol).new()
+    let n = c.insts.len
+    for i in 0..n {
+        if c.insts[i].body == NONE { continue }
+        let nm = c.insts[i].name.clone()
+        symbols.append(size.Symbol{ .c = c.insts[i].mangled.clone(), .nx = if c.insts[i].targs.len == 0 { nm } else { format("{} (instance)", .{nm}) } })
+    }
+    for i in 0..n {
+        if c.insts[i].export_name.len == 0 { continue }
+        symbols.append(size.Symbol{ .c = c.insts[i].name.clone(), .nx = format("{} (export wrapper)", .{c.insts[i].name}) })
+    }
+    symbols.append(size.Symbol{ .c = String.from("main"), .nx = String.from("main (entry point)") })
+    let text = emit(&mut c, o, if has_main { cgen.ENTRY_MAIN } else { cgen.ENTRY_LIBRARY })
+    if text.len == 0 { return 1 }
+    let sstem = format("{}_size", .{stem})
+    let c_path = write_c(o, sstem[..], text[..]) orelse return 1
+    let obj = format("{}/{}_size.o", .{o.out_dir, stem})
+    var so = clone_opts(o)
+    so.defines.append(String.from("NX_SIZE_SECTIONS"))
+    if !compile_c(&c, &so, c_path[..], obj[..], "sections") { return 1 }
+    io.remove_file(c_path[..]) catch { }
+    let bytes = io.read_file(obj[..]) catch {
+        eprintln("error: cannot read {}", .{obj})
+        return 1
+    }
+    io.remove_file(obj[..]) catch { }
+    let sections = size.section_sizes(bytes[..]) catch |e| {
+        eprintln("error: {}", .{size.explain(e)})
+        return 1
+    }
+    let a = size.attribute(&sections, &symbols)
+    println("{>9}  {<5} declaration", .{"bytes", "kind"})
+    for e in a.entries { println("{>9}  {<5} {}", .{e.bytes, e.kind, e.symbol}) }
+    println("{>9}  {<5} runtime and libc glue", .{a.runtime, ""})
+    let mode = if o.mode == cgen.MODE_DEBUG { "debug" } else if o.mode == cgen.MODE_SAFE { "safe" } else if o.mode == cgen.MODE_FAST { "fast" } else { "small" }
+    println("{>9}        total ({} mode; the linker drops unreferenced sections)", .{a.total, mode})
+    return 0
+}
+
+fn cmd_version() -> i32 {
+    println("nx {} ({})", .{VERSION, RELEASE_NAME})
+    return 0
+}
+
+/// `nx doctor`: the installation as this binary sees it.
+fn cmd_doctor(o: *Opts) -> i32 {
+    println("nx {} ({})", .{VERSION, RELEASE_NAME})
+    let args = os.args()
+    let exe = absolute(args[0])
+    println("executable:  {}", .{exe})
+    var shown = String.new()
+    for a, i in o.cc { if i > 0 { shown.append(" ") }; shown.append(a[..]) }
+    println("C compiler:  {}  ({})", .{shown, cc_why(o)})
+    var probe = List([]u8).new()
+    probe.append(o.cc[0][..])
+    let is_zig = o.cc[0][..].ends_with("zig") or o.cc[0][..].ends_with("zig.exe")
+    probe.append(if is_zig { "version" } else { "--version" })
+    var ok = false
+    let code = os.exec(probe[..], "", "") catch { -1 }
+    if code == 0 {
+        let out = os.last_stdout()
+        var first = String.new()
+        for line in out[..].lines() { if first.len == 0 { first = String.from(line.trim()) } }
+        println("             {}", .{first})
+        ok = true
+    } else if code < 0 {
+        println("             not found", .{})
+    } else {
+        let err = os.last_stderr()
+        var first = String.new()
+        for line in err[..].lines() { if first.len == 0 { first = String.from(line.trim()) } }
+        println("             does not run: {}", .{first})
+    }
+    println("std modules: {}", .{check.STD_MODULE_NAMES})
+    let dir = dir_of(exe[..])
+    var on_path = false
+    if let path = os.env("PATH") {
+        let sep = if is_windows_target("") { ";" } else { ":" }
+        for d in path.split(sep) { if d == dir { on_path = true } }
+    }
+    println("on PATH:     {}", .{if on_path { "yes" } else { "no (add the executable's directory to PATH to run `nx` from anywhere)" }})
+    if !ok {
+        println("", .{})
+        println("no working C compiler. Options:", .{})
+        println("  - Windows: run the installer from https://github.com/Londopy/nexium/releases (it bundles Zig)", .{})
+        println("  - macOS:   xcode-select --install", .{})
+        println("  - Linux:   the install script (installers/install.sh) downloads Zig, or install zig / gcc", .{})
+        println("  - any:     put zig on the PATH, or set NX_ZIG=/path/to/zig or NX_CC=gcc", .{})
+        return 1
+    }
+    println("", .{})
+    println("everything works. Try: nx run examples/hello.nx", .{})
+    return 0
+}
+
+/// Why the driver runs the C compiler it runs, for `nx doctor`.
+fn cc_why(o: *Opts) -> []u8 {
+    if o.cc_source == 1 { return "--cc" }
+    if o.cc_source == 2 { return "NX_CC" }
+    if o.cc_source == 3 { return "NX_ZIG" }
+    if o.cc_source == 4 { return "system compiler (macOS)" }
+    return "zig on PATH"
+}
+
 fn cmd_tir(o: *Opts) -> i32 {
     let mods = check.load(o.file[..], o.std_dir[..]) catch { return 1 }
     var c = check.new_checker(mods)
@@ -446,6 +612,27 @@ fn main() -> u8 {
         code = cmd_tir(&o)
     } else if o.command == "fmt" {
         code = cmd_fmt(&o)
+    } else if o.command == "effects" {
+        code = cmd_effects(&o)
+    } else if o.command == "audit" {
+        code = cmd_audit(&o)
+    } else if o.command == "refcounts" {
+        code = cmd_refcounts(&o)
+    } else if o.command == "size" {
+        var so = o
+        var mode_given = false
+        for a in args { if a == "--mode" { mode_given = true } }
+        if !mode_given { so.mode = cgen.MODE_SMALL }
+        code = cmd_size(&so)
+    } else if o.command == "leaks" {
+        var lo = o
+        lo.mode = cgen.MODE_DEBUG
+        lo.defines.append(String.from("NX_LEAK_CHECK"))
+        code = cmd_run(&lo)
+    } else if o.command == "version" or o.command == "--version" or o.command == "-V" {
+        code = cmd_version()
+    } else if o.command == "doctor" {
+        code = cmd_doctor(&o)
     } else {
         usage()
         return 2

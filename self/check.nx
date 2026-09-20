@@ -416,6 +416,9 @@ pub struct Mod {
 /// first), then the std modules in the order they were first named.
 /// The standard library, embedded: a module's source by name, so a built
 /// compiler needs no `std/` directory beside it.
+/// The embedded standard library modules, in the order the first compiler listed them.
+pub const STD_MODULE_NAMES = "strings, lists, bytes, num, json, args, fs, time, regex, text, testing, stream, net, http, thread, process"
+
 pub fn std_source(name: []u8) -> ?[]u8 {
     if name == "args" { return @embedFile("../std/args.nx") }
     if name == "bytes" { return @embedFile("../std/bytes.nx") }
@@ -865,6 +868,44 @@ impl Checker {
     /// A note attached to the error just reported.
     fn note(self: *mut Self, module: usize, at: usize, msg: []u8) {
         self.errors.append(format("  note: {}\n{}", .{msg, self.render_at(module, at)}))
+    }
+
+    /// `path:line:col` of a byte offset in a module.
+    pub fn location(self: *Self, module: usize, at: usize) -> String {
+        let src = self.mods[module].source[..]
+        let path = if self.mods[module].path.len > 0 { self.mods[module].path[..] } else { self.mods[module].name[..] }
+        var line: usize = 1
+        var line_start: usize = 0
+        var i: usize = 0
+        let stop = if at < src.len { at } else { src.len }
+        while i < stop {
+            if src[i] == '\n' { line += 1; line_start = i + 1 }
+            i += 1
+        }
+        return format("{}:{}:{}", .{path, line, at - line_start + 1})
+    }
+
+    /// Does a value of this type hold `ref class` references anywhere inside
+    /// it, so that copying or dropping it touches a reference count?
+    pub fn holds_refs(self: *mut Self, t0: usize) -> bool {
+        if self.is_ref_like(t0) { return true }
+        let t = self.tys.shallow(t0)
+        let k = self.tys.kind(t)
+        if k == TK.List or k == TK.Array or k == TK.ErrUnion { return self.holds_refs(self.tys.list[t].args[0]) }
+        if k == TK.Map { return self.holds_refs(self.tys.list[t].args[0]) or self.holds_refs(self.tys.list[t].args[1]) }
+        if k == TK.Tuple {
+            for e in self.tys.list[t].args.clone() { if self.holds_refs(e) { return true } }
+            return false
+        }
+        if k == TK.Struct {
+            for e in self.struct_field_types(t) { if self.holds_refs(e) { return true } }
+            return false
+        }
+        if k == TK.Enum {
+            for v in self.enum_variant_types(t) { for e in v { if self.holds_refs(e) { return true } } }
+            return false
+        }
+        return false
     }
 
     /// The location block of a diagnostic: `  --> path:line:col`, the source
@@ -1642,7 +1683,7 @@ impl Checker {
 
     // ----- output -------------------------------------------------------------
 
-    fn ty_name(self: *mut Self, t0: usize) -> String {
+    pub fn ty_name(self: *mut Self, t0: usize) -> String {
         // printing resolves: an open literal defaults to i64 or f64 here, as in the oracle
         let t = self.tys.resolve(t0, true)
         let ty = &self.tys.list[t]
@@ -3108,7 +3149,7 @@ fn st_set_name(tir: *mut Tir, id: usize, name: []u8) {
 // ---------------------------------------------------------------- type predicates
 
 impl Checker {
-    fn is_ref_class(self: *mut Self, t0: usize) -> bool {
+    pub fn is_ref_class(self: *mut Self, t0: usize) -> bool {
         let t = self.tys.shallow(t0)
         if self.tys.kind(t) != TK.Struct { return false }
         return self.structs[self.tys.list[t].def].kind == "ref"

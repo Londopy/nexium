@@ -1,0 +1,124 @@
+// The reporting commands of `nx`: `effects`, `audit`, `refcounts`. Each
+// reads the checked program and prints what the first compiler's commands
+// printed, so the two can be compared while the Rust one exists.
+
+import parser
+import check
+
+/// `nx effects`: every function with a body, its signature and its inferred
+/// effects, in declaration order.
+pub fn effects(c: *mut check.Checker) {
+    var rows = List(String).new()
+    var locs = List(String).new()
+    let n = c.insts.len
+    for i in 0..n {
+        if c.insts[i].body == parser.NONE or c.insts[i].is_closure or c.insts[i].is_test { continue }
+        var params = String.new()
+        let ps = c.insts[i].params.clone()
+        for p, pi in ps {
+            if pi > 0 { params.append(", ") }
+            let l = &c.insts[i].locals[p]
+            params.append(format("{}: {}", .{l.name, c.ty_name(l.ty)})[..])
+        }
+        let ret = c.ty_name(c.insts[i].ret)
+        let eff = c.insts[i].effects
+        let sig = format("{}fn {}({}) -> {}", .{if c.insts[i].is_pub { "pub " } else { "" }, c.insts[i].name, params, ret})
+        let effs = if eff == 0 { String.from("(pure)") } else { check.render_effects(eff) }
+        rows.append(format("{}  {}", .{sig, effs}))
+        locs.append(c.location(c.insts[i].module, c.insts[i].start))
+    }
+    println("inferred effects ({} functions)\n", .{rows.len})
+    for r, i in rows { println("{}\n    at {}", .{r, locs[i]}) }
+}
+
+/// `nx audit`: every `unsafe` block with its statement count, and every
+/// mutable global, from the parse trees; then the program is checked.
+pub fn audit(c: *mut check.Checker, globals_flag: bool) {
+    var sites = List(String).new()
+    var globals = List(String).new()
+    let n_mods = c.mods.len
+    for m in 0..n_mods {
+        if c.mods[m].name[..].starts_with("std.") or c.mods[m].name[..].starts_with("cimport:") { continue }
+        let items = c.mods[m].parsed.items.clone()
+        for it in items {
+            let k = c.mods[m].parsed.tree.nodes[it].k
+            if k == parser.NodeKind.Global {
+                let nm = c.mods[m].parsed.tree.nodes[it].name.clone()
+                globals.append(format("  {}  at {}", .{nm, c.location(m, c.mods[m].parsed.tree.nodes[it].start)}))
+            }
+            audit_walk(c, m, it, &mut sites)
+        }
+    }
+    println("unsafe blocks: {}", .{sites.len})
+    for s in sites { println("{}", .{s}) }
+    println("mutable globals: {}", .{globals.len})
+    for g in globals { println("{}", .{g}) }
+    if globals_flag and globals.len > 0 {
+        println("note: a project declaring a `cabi`, `python`, `node`, `rustlib`, or `shared` artifact rejects any function that reaches these (S2)", .{})
+    }
+}
+
+/// Pre-order over a parse tree in source order: statements before a
+/// block's tail, single children before child lists otherwise.
+fn audit_walk(c: *mut check.Checker, m: usize, id: usize, sites: *mut List(String)) {
+    if id == parser.NONE { return }
+    let k = c.mods[m].parsed.tree.nodes[id].k
+    if k == parser.NodeKind.Unsafe or k == parser.NodeKind.UnsafeE {
+        let body = c.mods[m].parsed.tree.nodes[id].x
+        var count = c.mods[m].parsed.tree.nodes[body].kids.len
+        if c.mods[m].parsed.tree.nodes[body].x != parser.NONE { count += 1 }
+        sites.append(format("  {}  ({} line(s))", .{c.location(m, c.mods[m].parsed.tree.nodes[id].start), count}))
+    }
+    if k == parser.NodeKind.Block {
+        for kid in c.mods[m].parsed.tree.nodes[id].kids.clone() { audit_walk(c, m, kid, sites) }
+        audit_walk(c, m, c.mods[m].parsed.tree.nodes[id].x, sites)
+        return
+    }
+    audit_walk(c, m, c.mods[m].parsed.tree.nodes[id].x, sites)
+    audit_walk(c, m, c.mods[m].parsed.tree.nodes[id].y, sites)
+    audit_walk(c, m, c.mods[m].parsed.tree.nodes[id].z, sites)
+    for kid in c.mods[m].parsed.tree.nodes[id].kids.clone() { audit_walk(c, m, kid, sites) }
+    for kid in c.mods[m].parsed.tree.nodes[id].kids2.clone() { audit_walk(c, m, kid, sites) }
+}
+
+/// `nx refcounts`: every place the generated code retains or releases a
+/// `ref class` reference, in the order the first compiler walked them.
+pub fn refcounts(c: *mut check.Checker) {
+    var lines = List(String).new()
+    let n = c.insts.len
+    for i in 0..n {
+        if c.insts[i].body == parser.NONE { continue }
+        refcount_walk(c, i, c.insts[i].body, &mut lines)
+    }
+    println("reference count traffic: {} site(s)\n", .{lines.len})
+    for l in lines { println("{}", .{l}) }
+    if lines.len == 0 {
+        println("this program performs no reference counting: every function qualifies for `!refcounts` (spec 5.3)", .{})
+    }
+}
+
+fn site(c: *mut check.Checker, inst: usize, at: usize, what: []u8, out: *mut List(String)) {
+    out.append(format("{}  {}\n    in {}", .{c.location(c.insts[inst].module, at), what, c.insts[inst].name}))
+}
+
+fn refcount_walk(c: *mut check.Checker, inst: usize, e: usize, out: *mut List(String)) {
+    if e == parser.NONE { return }
+    let k = c.tir.nodes[e].k
+    let start = c.tir.nodes[e].start
+    if k == check.TKind.SLet {
+        let l = c.tir.nodes[e].a
+        if c.holds_refs(c.insts[inst].locals[l].ty) { site(c, inst, start, "release at scope exit", out) }
+    } else if k == check.TKind.SAssign {
+        let target = c.tir.nodes[e].kids[0]
+        if c.holds_refs(c.tir.nodes[target].ty) { site(c, inst, start, "release of the previous value", out) }
+    } else if k == check.TKind.Retained {
+        site(c, inst, start, "retain (copy of a reference)", out)
+    } else if k == check.TKind.RefNew {
+        site(c, inst, start, "allocation with count 1", out)
+    } else if k == check.TKind.Builtin and c.tir.nodes[e].name == "Weak" {
+        site(c, inst, start, "weak reference created", out)
+    } else if k == check.TKind.Builtin and c.tir.nodes[e].name == "Upgrade" {
+        site(c, inst, start, "retain on upgrade", out)
+    }
+    for kid in c.tir.nodes[e].kids.clone() { refcount_walk(c, inst, kid, out) }
+}
