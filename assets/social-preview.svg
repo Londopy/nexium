@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-label="Nexium: effects you can prove. one file, every target.">
+  <!-- the repository's social preview (GitHub: Settings, Social preview); rendered to social-preview.png -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1b1f3b"/>
+      <stop offset="1" stop-color="#0e2a3f"/>
+    </linearGradient>
+    <linearGradient id="stroke" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#4fd1c5"/>
+      <stop offset="1" stop-color="#8b7cf6"/>
+    </linearGradient>
+    <linearGradient id="text" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#e8ecff"/>
+      <stop offset="1" stop-color="#b8c2ff"/>
+    </linearGradient>
+    <radialGradient id="halo" cx="0.27" cy="0.5" r="0.45">
+      <stop offset="0" stop-color="#4fd1c5" stop-opacity="0.16"/>
+      <stop offset="0.6" stop-color="#8b7cf6" stop-opacity="0.06"/>
+      <stop offset="1" stop-color="#0b1020" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect x="0" y="0" width="1280" height="640" fill="#0b1020"/>
+  <rect x="0" y="0" width="1280" height="640" fill="url(#halo)"/>
+  <!-- faint grid -->
+  <g stroke="#ffffff" stroke-opacity="0.04" stroke-width="1">
+    <path d="M0 80 H1280 M0 160 H1280 M0 240 H1280 M0 320 H1280 M0 400 H1280 M0 480 H1280 M0 560 H1280"/>
+    <path d="M80 0 V640 M160 0 V640 M240 0 V640 M320 0 V640 M400 0 V640 M480 0 V640 M560 0 V640 M640 0 V640 M720 0 V640 M800 0 V640 M880 0 V640 M960 0 V640 M1040 0 V640 M1120 0 V640 M1200 0 V640"/>
+  </g>
+  <!-- mark -->
+  <g transform="translate(96 128) scale(1.5)">
+    <path d="M128 14 L226 71 Q234 76 234 85 L234 171 Q234 180 226 185 L128 242 L30 185 Q22 180 22 171 L22 85 Q22 76 30 71 Z" fill="url(#bg)"/>
+    <path d="M128 30 L212 79 L212 177 L128 226 L44 177 L44 79 Z" fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="2"/>
+    <g fill="none" stroke="url(#stroke)" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)">
+      <path d="M78 176 L78 82 L178 176 L178 82"/>
+    </g>
+    <g fill="#0b1020" stroke="url(#stroke)" stroke-width="8">
+      <circle cx="78" cy="82" r="13"/>
+      <circle cx="78" cy="176" r="13"/>
+      <circle cx="178" cy="82" r="13"/>
+      <circle cx="178" cy="176" r="13"/>
+    </g>
+    <g fill="#4fd1c5"><circle cx="78" cy="82" r="4"/><circle cx="178" cy="176" r="4"/></g>
+    <g fill="#8b7cf6"><circle cx="78" cy="176" r="4"/><circle cx="178" cy="82" r="4"/></g>
+  </g>
+  <!-- wordmark -->
+  <text x="536" y="300" font-family="Inter, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="150" font-weight="700" letter-spacing="-4" fill="url(#text)">Nexium</text>
+  <text x="542" y="362" font-family="Inter, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="34" fill="#8fa0c8">effects you can prove. one file, every target.</text>
+  <!-- effect chips -->
+  <g font-family="Cascadia Code, JetBrains Mono, Consolas, monospace" font-size="22" font-weight="600">
+    <rect x="542" y="398" width="150" height="44" rx="22" fill="#13203a" stroke="#4fd1c5" stroke-opacity="0.6" stroke-width="1.5"/>
+    <text x="617" y="428" text-anchor="middle" fill="#4fd1c5">!allocates</text>
+    <rect x="706" y="398" width="118" height="44" rx="22" fill="#13203a" stroke="#8b7cf6" stroke-opacity="0.6" stroke-width="1.5"/>
+    <text x="765" y="428" text-anchor="middle" fill="#8b7cf6">!panics</text>
+    <rect x="838" y="398" width="118" height="44" rx="22" fill="#13203a" stroke="#4fd1c5" stroke-opacity="0.6" stroke-width="1.5"/>
+    <text x="897" y="428" text-anchor="middle" fill="#4fd1c5">!blocks</text>
+    <rect x="970" y="398" width="232" height="44" rx="22" fill="#13203a" stroke="#8b7cf6" stroke-opacity="0.6" stroke-width="1.5"/>
+    <text x="1086" y="428" text-anchor="middle" fill="#8b7cf6">C · Python · Rust</text>
+  </g>
+  <!-- the summit line -->
+  <g font-family="Inter, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="22" fill="#5f6f95">
+    <text x="542" y="500">a compiler written in itself, bootstrapped from one C file</text>
+    <text x="542" y="536">ownership without a borrow checker · effects inferred and proven</text>
+  </g>
+  <g font-family="Inter, Segoe UI, Helvetica Neue, Arial, sans-serif" font-size="22" font-weight="600">
+    <text x="542" y="592" fill="#4fd1c5">londopy.github.io/nexium</text>
+    <text x="1240" y="592" text-anchor="end" fill="#5f6f95">Windows · Linux · macOS · MIT</text>
+  </g>
+</svg>

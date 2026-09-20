@@ -18,6 +18,7 @@ import std.strings
 
 const REPO = "https://github.com/Londopy/nexium"
 const SITE_TITLE = "Nexium"
+const SITE_URL = "https://londopy.github.io/nexium/"
 
 /// One page of the site: where it comes from, where it goes, what it is called.
 struct Page {
@@ -681,6 +682,9 @@ fn page_head(out: *mut String, title: []u8, root: []u8, description: []u8) {
     out.append("<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
     out.append(format("<title>{}</title>\n", .{esc(title)})[..])
     if description.len > 0 { out.append(format("<meta name=\"description\" content=\"{}\">\n", .{esc(description)})[..]) }
+    // the card a link to the page gets on social sites and in chats
+    out.append(format("<meta property=\"og:title\" content=\"{}\">\n<meta property=\"og:type\" content=\"website\">\n<meta property=\"og:image\" content=\"{}assets/social-preview.png\">\n<meta name=\"twitter:card\" content=\"summary_large_image\">\n", .{esc(title), SITE_URL})[..])
+    if description.len > 0 { out.append(format("<meta property=\"og:description\" content=\"{}\">\n", .{esc(description)})[..]) }
     out.append(format("<link rel=\"icon\" href=\"{}assets/logo.svg\">\n<link rel=\"stylesheet\" href=\"{}style.css\">\n</head>\n<body>\n<input type=\"checkbox\" id=\"menu\" class=\"menu-toggle\">\n<div class=\"layout\">\n", .{root, root})[..])
 }
 
@@ -779,7 +783,7 @@ fn main() -> u8 {
     fs.make_dirs(fs.join(out_dir[..], "topo")[..]) catch { }
     fs.make_dirs(fs.join(out_dir[..], "assets")[..]) catch { }
     fs.write(fs.join(out_dir[..], "style.css")[..], CSS) catch { eprintln("error: cannot write the stylesheet", .{}); return 1 }
-    for a in ["logo.svg", "banner.svg", "icon-256.png"] {
+    for a in ["logo.svg", "banner.svg", "icon-256.png", "social-preview.png"] {
         fs.copy(fs.join("assets", a)[..], fs.join(fs.join(out_dir[..], "assets")[..], a)[..]) catch { eprintln("warning: cannot copy assets/{}", .{a}) }
     }
     fs.write(fs.join(out_dir[..], ".nojekyll")[..], "") catch { }

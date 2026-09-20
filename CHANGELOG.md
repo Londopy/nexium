@@ -31,6 +31,10 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   C, Python and Node. Every program in it (`topo/code/`) is run by the
   harness against its recorded output, and the diagnostics it shows are
   recorded too. Writing it found the bugs below.
+- `assets/social-preview.svg` and its 1280x640 PNG, the card GitHub and
+  the chat apps show for a link to the repository (uploaded under the
+  repository's settings); every page of the documentation site carries
+  Open Graph tags pointing at it.
 - The roadmap's 1.7, the seam both ways: Python (strings, NumPy without
   copies, dataclasses and exception classes from the Nexium types, `ref
   class` handles, callbacks, a CPython extension wheel, Python from
