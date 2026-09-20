@@ -157,9 +157,11 @@ checked against the Rust compiler on identical inputs.
   moves to `bootstrap/`, kept for building the first Nexium compiler on a
   fresh machine.
 
-- Status (0.6.1+): syntax settled; lexer, parser, checker, C emitter and
-  driver done and bootstrapped: `nx` written in Nexium builds itself. Left:
-  the remaining tools, and moving the Rust compiler to `bootstrap/`.
+- Status (0.7.0): syntax settled; lexer, parser, checker, C emitter and
+  driver done and bootstrapped: `nx` written in Nexium builds itself. Left
+  for the exit: moving the Rust compiler to `bootstrap/` and building the
+  release tarball's `nx` from the shipped C. Porting the other tools (fmt,
+  doc, lsp, ship, packages) is not required for 1.0; see past 1.0.
 
 Exit: `cargo` is no longer needed to build `nx` from a release tarball.
 
@@ -183,6 +185,10 @@ A 1.0 means the language stops changing under people's feet.
 - Platforms: Linux aarch64 and Windows arm64 in releases; a tier list.
 - Security: a disclosure process is in `SECURITY.md` already; add fuzzing
   of the parser and the binary pattern engine to CI.
+- C toolchain support: which Zig versions `nx` is tested with, in CI and
+  in the docs. CI pins 0.14.1; 0.16 differs in what its debug build traps
+  and in which Apple SDKs it links against, and 0.7.0 found bugs that only
+  one of them showed.
 
 ## Always
 
