@@ -70,6 +70,15 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   "expected `!i32` but found `!i32`".
 - The `!effect` diagnostic's first note points at the call that brings
   the effect in, not at the function's header.
+- Two dangling views, found by running the tutorial's programs on Linux
+  and the compiler under AddressSanitizer: `std.http.parse_url` kept the
+  host as a view of a value that was released when the `if let` ended,
+  so every URL with a port could fail with `NotFound` where the freed
+  memory was reused; and the checker read a syntax node through a
+  pointer after adding nodes to the tree (a binary pattern with a
+  computed size). Both are the case the roadmap's 1.2 makes an error; a
+  CI job now builds the compiler with the sanitizers, checks every source
+  with it, and runs every spec case and tutorial program built with them.
 - The fuzzer wrote its cases under `nx-out/fuzz`, the path of its own
   executable on Linux and macOS, so CI's fuzz job could not start; it
   works under `nx-out/fuzzing`.

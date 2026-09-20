@@ -73,17 +73,18 @@ pub fn parse_url(s: []u8) -> ?Url {
     while end < rest.len and rest[end] != '/' and rest[end] != '?' { end += 1 }
     let hostport = rest[0..end]
     var path = rest[end..rest.len]
-    var host = hostport
+    // the host is copied out: `a` owns its text only until the `if let` ends
+    var host = String.from(hostport)
     var port: u16 = if scheme == "https" { 443 } else { 80 }
     if let a = net.parse_addr(hostport) {
-        host = a.host
+        host = a.host.clone()
         port = a.port
     }
     if host.len == 0 { return null }
     var p = String.new()
     if path.len == 0 or path[0] == '?' { p.append("/") }
     p.append(path)
-    return Url{ .scheme = String.from(scheme), .host = String.from(host), .port = port, .path = p }
+    return Url{ .scheme = String.from(scheme), .host = host, .port = port, .path = p }
 }
 
 // ------------------------------------------------------------------ responses

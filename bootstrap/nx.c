@@ -2853,7 +2853,7 @@ static const char nx_str_615[6122] = "// std.bytes: encodings and byte-level uti
 static const char nx_str_616[3] = "fs";
 static const char nx_str_617[11537] = "// std.fs: files, directories and paths, written in Nexium.\n//\n// `import std.fs` then:\n//\n//     if fs.exists(\"notes.txt\") { ... }\n//     try fs.make_dirs(\"out/logs\")\n//     for name in try fs.list(\"out\") { ... }\n//     for path in try fs.walk(\"src\") { ... }        // every file, recursively\n//     let cfg = fs.join(fs.parent(argv0), \"app.toml\")\n//\n// The platform calls are the `io.*` builtins (documented in the language\n// reference); this module adds paths, sorted listings, recursive create and\n// remove, and a walker. Paths are byte strings; `/` and `\\` both separate\n// components on every platform, and results use `/` unless the input used `\\`.\n\n// ------------------------------------------------------------------ queries\n\n/// Is there a file or directory at `path`?\npub fn exists(path: []u8) -> bool {\n    return io.file_kind(path) != 0\n}\n\n/// Is `path` an existing regular file (anything that is not a directory)?\npub fn is_file(path: []u8) -> bool {\n    return io.file_kind(path) == 1\n}\n\n/// Is `path` an existing directory?\npub fn is_dir(path: []u8) -> bool {\n    return io.file_kind(path) == 2\n}\n\n/// The size of a file in bytes.\npub fn size(path: []u8) -> !u64 {\n    return io.file_size(path)\n}\n\n/// The modification time in milliseconds since the epoch.\npub fn modified(path: []u8) -> !i64 {\n    return io.file_modified(path)\n}\n\n// ------------------------------------------------------------------ contents\n\n/// The whole file as a String.\npub fn read(path: []u8) -> !String {\n    return io.read_file(path)\n}\n\n/// The lines of a file, without their line endings.\npub fn read_lines(path: []u8) -> !List(String) {\n    let text = try io.read_file(path)\n    var out = List(String).new()\n    for l in text.lines() { out.append(String.from(l)) }\n    return out\n}\n\n/// Write (replace) a file.\npub fn write(path: []u8, data: []u8) -> !void {\n    return io.write_file(path, data)\n}\n\n/// Append to a file, creating it when missing.\npub fn append(path: []u8, data: []u8) -> !void {\n    return io.append_file(path, data)\n}\n\n/// Copy a file's contents to a new path (the destination is replaced).\npub fn copy(from: []u8, to: []u8) -> !void {\n    let data = try io.read_file(from)\n    return io.write_file(to, data)\n}\n\n// ------------------------------------------------------------------ directories\n\n/// The names in a directory, sorted, without `.` and `..`.\npub fn list(path: []u8) -> !List(String) {\n    var names = try io.list_dir(path)\n    sort_names(&mut names)\n    return names\n}\n\n/// Create one directory; fine when it already exists.\npub fn make_dir(path: []u8) -> !void {\n    return io.make_dir(path)\n}\n\n/// Create a directory and every missing parent.\npub fn make_dirs(path: []u8) -> !void {\n    if path.len == 0 or is_dir(path) { return }\n    let p = parent(path)\n    if p.len > 0 and p.len < path.len and !is_dir(p) { try make_dirs(p) }\n    return io.make_dir(path)\n}\n\n/// Remove a file or an empty directory.\npub fn remove(path: []u8) -> !void {\n    if is_dir(path) { return io.remove_dir(path) }\n    return io.remove_file(path)\n}\n\n/// Remove a file, or a directory with everything in it.\npub fn remove_all(path: []u8) -> !void {\n    if is_dir(path) {\n        let names = try io.list_dir(path)\n        for n in names {\n            let child = join(path, n)\n            try remove_all(child)\n        }\n        return io.remove_dir(path)\n    }\n    if exists(path) { return io.remove_file(path) }\n}\n\n/// Rename or move a file or directory (an existing destination file is replaced).\npub fn rename(from: []u8, to: []u8) -> !void {\n    return io.rename(from, to)\n}\n\n/// Every file under `root`, recursively, as paths joined onto `root`, sorted\n/// directory by directory. Directories themselves are not listed.\npub fn walk(root: []u8) -> !List(String) {\n    var out = List(String).new()\n    try walk_into(root, &mut out)\n    return out\n}\n\nfn walk_into(dir: []u8, out: *mut List(String)) -> !void {\n    let names = try list(dir)\n    for n in names {\n        let child = join(dir, n)\n        if is_dir(child) {\n            try walk_into(child, out)\n        } else {\n            out.append(child)\n        }\n    }\n}\n\n/// The current working directory.\npub fn cwd() -> !String {\n    return io.cwd()\n}\n\n/// The directory for temporary files.\npub fn temp_dir() -> String {\n    return io.temp_dir()\n}\n\n/// A fresh path in the temporary directory, `<temp>/<prefix><number>`, that\n/// does not exist yet. The caller creates it.\npub fn temp_path(prefix: []u8) -> String {\n    let base = io.temp_dir()\n    var n = time.now()\n    while true {\n        var candidate = join(base, prefix)\n        candidate.append(format(\"{}\", .{n}))\n        if !exists(candidate) { return candidate }\n        n += 1\n    }\n}\n\n// ------------------------------------------------------------------ paths\n\nfn is_sep(c: u8) -> bool {\n    return c == '/' or c == '\\\\'\n}\n\n/// The separator a path uses: `\\` when it contains one, else `/`.\nfn sep_of(path: []u8) -> u8 {\n    for c in path { if c == '\\\\' { return '\\\\' } }\n    return '/'\n}\n\n/// Does the path start at a root (`/x`, `C:\\x`, `C:/x`, `\\\\server`)?\npub fn is_absolute(path: []u8) -> bool {\n    if path.len == 0 { return false }\n    if is_sep(path[0]) { return true }\n    return path.len >= 3 and path[1] == ':' and is_sep(path[2])\n}\n\n/// `dir/name`; a separator is added only when needed, and an absolute `name`\n/// replaces `dir`.\npub fn join(dir: []u8, name: []u8) -> String {\n    if dir.len == 0 or is_absolute(name) { return String.from(name) }\n    var out = String.from(dir)\n    if name.len == 0 { return out }\n    if !is_sep(dir[dir.len - 1]) { out.push_byte(sep_of(dir)) }\n    out.append(name)\n    return out\n}\n\n/// Everything before the last separator: `a/b/c.txt` -> `a/b`, `c.txt` -> ``,\n/// `/c.txt` -> `/`.\npub fn parent(path: []u8) -> []u8 {\n    var end = path.len\n    while end > 0 and is_sep(path[end - 1]) { end -= 1 }\n    var i = end\n    while i > 0 and !is_sep(path[i - 1]) { i -= 1 }\n    if i == 0 { return path[0..0] }\n    var j = i\n    while j > 1 and is_sep(path[j - 1]) { j -= 1 }\n    if j == 1 and is_sep(path[0]) { return path[0..1] }\n    if j >= 2 and path[j - 1] == ':' { return path[0..j + 1] }\n    return path[0..j]\n}\n\n/// The last component: `a/b/c.txt` -> `c.txt`.\npub fn base_name(path: []u8) -> []u8 {\n    var end = path.len\n    while end > 0 and is_sep(path[end - 1]) { end -= 1 }\n    var i = end\n    while i > 0 and !is_sep(path[i - 1]) { i -= 1 }\n    return path[i..end]\n}\n\n/// The extension without the dot: `a/b.tar.gz` -> `gz`, `Makefile` -> ``.\npub fn extension(path: []u8) -> []u8 {\n    let name = base_name(path)\n    var i = name.len\n    while i > 0 {\n        i -= 1\n        if name[i] == '.' {\n            if i == 0 { return name[0..0] }\n            return name[i + 1..name.len]\n        }\n    }\n    return name[0..0]\n}\n\n/// The base name without its extension: `a/b.tar.gz` -> `b.tar`.\npub fn stem(path: []u8) -> []u8 {\n    let name = base_name(path)\n    var i = name.len\n    while i > 0 {\n        i -= 1\n        if name[i] == '.' {\n            if i == 0 { return name }\n            return name[0..i]\n        }\n    }\n    return name\n}\n\n/// The path with its extension replaced (or added): `a/b.txt`, `md` -> `a/b.md`.\npub fn with_extension(path: []u8, ext: []u8) -> String {\n    let e = extension(path)\n    var out = String.from(if e.len > 0 { path[0..path.len - e.len - 1] } else { path })\n    if ext.len > 0 {\n        out.push_byte('.')\n        out.append(ext)\n    }\n    return out\n}\n\n/// Collapse `.` and `..` components and repeated separators:\n/// `a/./b/../c//d` -> `a/c/d`. A leading `..` is kept.\npub fn normalize(path: []u8) -> String {\n    let sep = sep_of(path)\n    var parts = List([]u8).new()\n    var start: usize = 0\n    var i: usize = 0\n    while i <= path.len {\n        if i == path.len or is_sep(path[i]) {\n            let part = path[start..i]\n            if part.len == 0 or part == \".\" {\n                // skip\n            } else if part == \"..\" {\n                if parts.len > 0 and parts[parts.len - 1] != \"..\" { _ = parts.pop() }\n                else if ! (path.len > 0 and is_sep(path[0])) { parts.append(part) }\n            } else {\n                parts.append(part)\n            }\n            start = i + 1\n        }\n        i += 1\n    }\n    var out = String.new()\n    if path.len > 0 and is_sep(path[0]) { out.push_byte(sep) }\n    for p, k in parts {\n        if k > 0 { out.push_byte(sep) }\n        out.append(p)\n    }\n    if out.len == 0 { out.push_byte('.') }\n    return out\n}\n\n// ------------------------------------------------------------------ helpers\n\nfn less(a: []u8, b: []u8) -> bool {\n    var i: usize = 0\n    while i < a.len and i < b.len {\n        if a[i] != b[i] { return a[i] < b[i] }\n        i += 1\n    }\n    return a.len < b.len\n}\n\nfn sort_names(names: *mut List(String)) {\n    var i: usize = 1\n    while i < names.len {\n        var j = i\n        while j > 0 and less(names[j], names[j - 1]) {\n            let s = names.remove(j)\n            names.insert(j - 1, s)\n            j -= 1\n        }\n        i += 1\n    }\n}\n\n// ------------------------------------------------------------------ tests\n\ntest \"path parts\" {\n    expect_eq(parent(\"a/b/c.txt\"), \"a/b\")\n    expect_eq(parent(\"c.txt\"), \"\")\n    expect_eq(parent(\"/c.txt\"), \"/\")\n    expect_eq(parent(\"a/b/\"), \"a\")\n    expect_eq(parent(\"C:\\\\x\\\\y.txt\"), \"C:\\\\x\")\n    expect_eq(parent(\"C:\\\\y.txt\"), \"C:\\\\\")\n    expect_eq(base_name(\"a/b/c.txt\"), \"c.txt\")\n    expect_eq(base_name(\"a/b/\"), \"b\")\n    expect_eq(extension(\"a/b.tar.gz\"), \"gz\")\n    expect_eq(extension(\"Makefile\"), \"\")\n    expect_eq(extension(\".bashrc\"), \"\")\n    expect_eq(stem(\"a/b.tar.gz\"), \"b.tar\")\n    expect_eq(stem(\".bashrc\"), \".bashrc\")\n    expect_eq(with_extension(\"a/b.txt\", \"md\"), \"a/b.md\")\n    expect_eq(with_extension(\"a/b\", \"md\"), \"a/b.md\")\n    expect_eq(with_extension(\"a/b.txt\", \"\"), \"a/b\")\n}\n\ntest \"join and absolute\" {\n    expect_eq(join(\"a\", \"b\"), \"a/b\")\n    expect_eq(join(\"a/\", \"b\"), \"a/b\")\n    expect_eq(join(\"\", \"b\"), \"b\")\n    expect_eq(join(\"a\", \"/b\"), \"/b\")\n    expect_eq(join(\"C:\\\\x\", \"y\"), \"C:\\\\x\\\\y\")\n    expect(is_absolute(\"/x\"))\n    expect(is_absolute(\"C:\\\\x\"))\n    expect(is_absolute(\"C:/x\"))\n    expect(!is_absolute(\"x/y\"))\n    expect(!is_absolute(\"\"))\n}\n\ntest \"normalize\" {\n    expect_eq(normalize(\"a/./b/../c//d\"), \"a/c/d\")\n    expect_eq(normalize(\"/a/../..\"), \"/\")\n    expect_eq(normalize(\"../a\"), \"../a\")\n    expect_eq(normalize(\"a/..\"), \".\")\n    expect_eq(normalize(\"C:\\\\a\\\\..\\\\b\"), \"C:\\\\b\")\n}\n\ntest \"files and directories\" {\n    let root = temp_path(\"nxfs-\")\n    try make_dirs(join(root, \"deep/er\"))\n    expect(is_dir(root))\n    expect(is_dir(join(root, \"deep/er\")))\n    let f = join(root, \"deep/er/note.txt\")\n    try write(f, \"one\\ntwo\\n\")\n    try append(f, \"three\\n\")\n    expect(is_file(f))\n    expect(!is_dir(f))\n    expect_eq(try size(f), 14)\n    let lines = try read_lines(f)\n    expect_eq(lines.len, 3)\n    expect_eq(lines[2], \"three\")\n    try copy(f, join(root, \"copy.txt\"))\n    let names = try list(root)\n    expect_eq(names.len, 2)\n    expect_eq(names[0], \"copy.txt\")\n    expect_eq(names[1], \"deep\")\n    let files = try walk(root)\n    expect_eq(files.len, 2)\n    expect_eq(base_name(files[1]), \"note.txt\")\n    try rename(join(root, \"copy.txt\"), join(root, \"moved.txt\"))\n    expect(!exists(join(root, \"copy.txt\")))\n    expect(exists(join(root, \"moved.txt\")))\n    var missing = false\n    _ = size(\"definitely/missing\") catch |e| {\n        missing = e == error.NotFound\n        0\n    }\n    expect(missing)\n    try remove_all(root)\n    expect(!exists(root))\n}\n";
 static const char nx_str_618[5] = "http";
-static const char nx_str_619[21233] = "// std.http: an HTTP/1.1 client and a small server, written in Nexium over\n// std.net and std.stream.\n//\n// `import std.http` then:\n//\n//     let r = try http.get(\"http://example.com/\")\n//     println(\"{} {}\", .{r.status, r.body.len})\n//     if let ct = r.header(\"content-type\") { ... }\n//\n//     fn hello(req: *http.Request) -> http.Response {\n//         return http.text(200, \"hello from Nexium\")\n//     }\n//     var router = http.Router.new()\n//     router.get(\"/\", hello)\n//     var server = try http.Server.bind(\"127.0.0.1\", 8080)\n//     try server.serve(&router)                  // forever, one request at a time\n//\n// The client speaks HTTP/1.1 with `Connection: close`, reads bodies by\n// Content-Length, chunked encoding, or until close, and follows up to five\n// redirects. Plain `http://` only; TLS needs a C library through `@cImport`.\n// The server handles one connection at a time, which is what a tool, a\n// local dashboard or a test needs; threads come later in the roadmap.\n\nimport std.net\nimport std.stream\nimport std.fs\n\nconst MAX_REDIRECTS: usize = 5\nconst MAX_HEADER_LINES: usize = 200\n\npub struct Header {\n    name: String\n    value: String\n}\n\nfn header_value(headers: *List(Header), name: []u8) -> ?[]u8 {\n    for i in 0..headers.len {\n        if headers[i].name.eq_ignore_case(name) { return headers[i].value }\n    }\n    return null\n}\n\nfn find_header(headers: *List(Header), name: []u8) -> ?usize {\n    for h, i in headers {\n        if h.name.eq_ignore_case(name) { return i }\n    }\n    return null\n}\n\n// ------------------------------------------------------------------ URLs\n\npub struct Url {\n    scheme: String\n    host: String\n    port: u16\n    /// path with the query, e.g. `/a/b?x=1`; never empty\n    path: String\n}\n\n/// Parse `http://host[:port][/path]`; null for anything else.\npub fn parse_url(s: []u8) -> ?Url {\n    var rest = s\n    var scheme = \"http\"\n    if rest.starts_with(\"http://\") {\n        rest = rest[7..rest.len]\n    } else if rest.starts_with(\"https://\") {\n        scheme = \"https\"\n        rest = rest[8..rest.len]\n    } else {\n        return null\n    }\n    var end: usize = 0\n    while end < rest.len and rest[end] != '/' and rest[end] != '?' { end += 1 }\n    let hostport = rest[0..end]\n    var path = rest[end..rest.len]\n    var host = hostport\n    var port: u16 = if scheme == \"https\" { 443 } else { 80 }\n    if let a = net.parse_addr(hostport) {\n        host = a.host\n        port = a.port\n    }\n    if host.len == 0 { return null }\n    var p = String.new()\n    if path.len == 0 or path[0] == '?' { p.append(\"/\") }\n    p.append(path)\n    return Url{ .scheme = String.from(scheme), .host = String.from(host), .port = port, .path = p }\n}\n\n// ------------------------------------------------------------------ responses\n\npub struct Response {\n    status: u16\n    reason: String\n    headers: List(Header)\n    body: String\n}\n\nimpl Response {\n    /// A header value, case-insensitive; null when absent.\n    pub fn header(self: *Self, name: []u8) -> ?[]u8 {\n        return header_value(&self.headers, name)\n    }\n\n    /// Add or replace a header (builder style).\n    pub fn with_header(self: *mut Self, name: []u8, value: []u8) {\n        if let i = find_header(&self.headers, name) {\n            self.headers[i].value = String.from(value)\n            return\n        }\n        self.headers.append(Header{ .name = String.from(name), .value = String.from(value) })\n    }\n\n    pub fn ok(self: *Self) -> bool {\n        return self.status >= 200 and self.status < 300\n    }\n}\n\n/// The standard reason phrase for a status.\npub fn reason_for(status: u16) -> []u8 {\n    if status == 200 { return \"OK\" }\n    if status == 201 { return \"Created\" }\n    if status == 204 { return \"No Content\" }\n    if status == 301 { return \"Moved Permanently\" }\n    if status == 302 { return \"Found\" }\n    if status == 304 { return \"Not Modified\" }\n    if status == 400 { return \"Bad Request\" }\n    if status == 401 { return \"Unauthorized\" }\n    if status == 403 { return \"Forbidden\" }\n    if status == 404 { return \"Not Found\" }\n    if status == 405 { return \"Method Not Allowed\" }\n    if status == 500 { return \"Internal Server Error\" }\n    return \"Unknown\"\n}\n\n/// A response with a body and a content type.\npub fn respond(status: u16, content_type: []u8, body: []u8) -> Response {\n    var headers = List(Header).new()\n    headers.append(Header{ .name = String.from(\"Content-Type\"), .value = String.from(content_type) })\n    return Response{ .status = status, .reason = String.from(reason_for(status)), .headers = headers, .body = String.from(body) }\n}\n\npub fn text(status: u16, body: []u8) -> Response {\n    return respond(status, \"text/plain; charset=utf-8\", body)\n}\n\npub fn html(status: u16, body: []u8) -> Response {\n    return respond(status, \"text/html; charset=utf-8\", body)\n}\n\npub fn json(status: u16, body: []u8) -> Response {\n    return respond(status, \"application/json\", body)\n}\n\npub fn not_found() -> Response {\n    return text(404, \"not found\\n\")\n}\n\n/// A redirect to `location`.\npub fn redirect(location: []u8) -> Response {\n    var r = text(302, \"\")\n    r.with_header(\"Location\", location)\n    return r\n}\n\n/// The content type for a file name, by extension.\npub fn content_type_for(path: []u8) -> []u8 {\n    let ext = fs.extension(path)\n    if ext == \"html\" or ext == \"htm\" { return \"text/html; charset=utf-8\" }\n    if ext == \"css\" { return \"text/css\" }\n    if ext == \"js\" { return \"text/javascript\" }\n    if ext == \"json\" { return \"application/json\" }\n    if ext == \"txt\" or ext == \"md\" or ext == \"nx\" { return \"text/plain; charset=utf-8\" }\n    if ext == \"png\" { return \"image/png\" }\n    if ext == \"jpg\" or ext == \"jpeg\" { return \"image/jpeg\" }\n    if ext == \"gif\" { return \"image/gif\" }\n    if ext == \"svg\" { return \"image/svg+xml\" }\n    if ext == \"ico\" { return \"image/x-icon\" }\n    if ext == \"pdf\" { return \"application/pdf\" }\n    return \"application/octet-stream\"\n}\n\n// ------------------------------------------------------------------ wire format\n\nfn parse_status(line: []u8) -> ?(u16, []u8) {\n    // HTTP/1.1 200 OK\n    if !line.starts_with(\"HTTP/\") { return null }\n    var i: usize = 0\n    while i < line.len and line[i] != ' ' { i += 1 }\n    if i + 4 > line.len { return null }\n    let status = line[i + 1..i + 4].parse_int(u16) catch return null\n    var reason = line[0..0]\n    if i + 5 <= line.len { reason = line[i + 5..line.len] }\n    return (status, reason)\n}\n\nfn read_headers(r: *mut stream.Reader) -> !List(Header) {\n    var headers = List(Header).new()\n    var n: usize = 0\n    while true {\n        let line = (try r.read_line()) orelse break\n        if line.len == 0 { break }\n        n += 1\n        if n > MAX_HEADER_LINES { return error.InvalidInput }\n        var c: usize = 0\n        while c < line.len and line[c] != ':' { c += 1 }\n        if c == line.len { return error.InvalidInput }\n        headers.append(Header{ .name = String.from(line[0..c]), .value = String.from(line[c + 1..line.len].trim()) })\n    }\n    return headers\n}\n\nfn hex_value(s: []u8) -> ?usize {\n    var v: usize = 0\n    var any = false\n    for c in s {\n        var d: usize = 0\n        if c >= '0' and c <= '9' { d = (c - '0') as usize }\n        else if c >= 'a' and c <= 'f' { d = (c - 'a' + 10) as usize }\n        else if c >= 'A' and c <= 'F' { d = (c - 'A' + 10) as usize }\n        else if c == ';' or c == ' ' { break }\n        else { return null }\n        v = v * 16 + d\n        any = true\n    }\n    return if any { v } else { null }\n}\n\nfn read_exact(r: *mut stream.Reader, n: usize) -> !String {\n    var out = String.with_capacity(n)\n    while out.len < n {\n        let chunk = try r.read(n - out.len)\n        if chunk.len == 0 { return error.Truncated }\n        out.append(chunk)\n    }\n    return out\n}\n\nfn read_body(r: *mut stream.Reader, headers: *List(Header), allow_until_close: bool) -> !String {\n    if let te = header_value(headers, \"transfer-encoding\") {\n        if te.eq_ignore_case(\"chunked\") {\n            var body = String.new()\n            while true {\n                let size_line = (try r.read_line()) orelse return error.Truncated\n                let size = hex_value(size_line) orelse return error.InvalidInput\n                if size == 0 {\n                    // trailers, then the blank line\n                    while true {\n                        let t = (try r.read_line()) orelse break\n                        if t.len == 0 { break }\n                    }\n                    break\n                }\n                body.append(try read_exact(r, size))\n                _ = try r.read_line()\n            }\n            return body\n        }\n    }\n    if let cl = header_value(headers, \"content-length\") {\n        let n = cl.parse_int(usize) catch return error.InvalidInput\n        return read_exact(r, n)\n    }\n    if allow_until_close { return r.read_all() }\n    return String.new()\n}\n\n/// Read a full response from a reader over the connection.\npub fn read_response(r: *mut stream.Reader) -> !Response {\n    let line = (try r.read_line()) orelse return error.Truncated\n    let st = parse_status(line) orelse return error.InvalidInput\n    let headers = try read_headers(r)\n    let body = if st.0 == 204 or st.0 == 304 { String.new() } else { try read_body(r, &headers, true) }\n    return Response{ .status = st.0, .reason = String.from(st.1), .headers = headers, .body = body }\n}\n\n/// Write a request; `headers` may add or override the defaults.\npub fn send_request(w: *mut stream.Writer, method: []u8, url: *Url, headers: *List(Header), body: []u8) -> !void {\n    try w.write(method)\n    try w.write(\" \")\n    try w.write(url.path)\n    try w.write(\" HTTP/1.1\\r\\nHost: \")\n    try w.write(url.host)\n    if url.port != 80 { try w.write(format(\":{}\", .{url.port})) }\n    try w.write(\"\\r\\n\")\n    if header_value(headers, \"user-agent\") == null { try w.write(\"User-Agent: nexium-http/0.3\\r\\n\") }\n    if header_value(headers, \"accept\") == null { try w.write(\"Accept: */*\\r\\n\") }\n    try w.write(\"Connection: close\\r\\n\")\n    if body.len > 0 or method == \"POST\" or method == \"PUT\" { try w.write(format(\"Content-Length: {}\\r\\n\", .{body.len})) }\n    for h in headers {\n        try w.write(h.name)\n        try w.write(\": \")\n        try w.write(h.value)\n        try w.write(\"\\r\\n\")\n    }\n    try w.write(\"\\r\\n\")\n    try w.write(body)\n    return w.flush()\n}\n\n// ------------------------------------------------------------------ client\n\nfn one_request(method: []u8, url: *Url, headers: *List(Header), body: []u8, timeout_ms: i64) -> !Response {\n    var conn = try net.TcpStream.connect_timeout(url.host, url.port, timeout_ms)\n    conn.set_timeout(timeout_ms)\n    var w = conn.writer()\n    send_request(&mut w, method, url, headers, body) catch |e| {\n        conn.close()\n        return e\n    }\n    var r = conn.reader()\n    let resp = read_response(&mut r)\n    conn.close()\n    return resp\n}\n\n/// Perform a request, following redirects. `error.InvalidInput` for a URL\n/// this client cannot speak (including `https://`).\npub fn request(method: []u8, url_text: []u8, headers: *List(Header), body: []u8) -> !Response {\n    var url = parse_url(url_text) orelse return error.InvalidInput\n    if url.scheme != \"http\" { return error.InvalidInput }\n    var hops: usize = 0\n    while true {\n        let resp = try one_request(method, &url, headers, body, 15000)\n        let is_redirect = resp.status == 301 or resp.status == 302 or resp.status == 303 or resp.status == 307 or resp.status == 308\n        if !is_redirect or hops >= MAX_REDIRECTS { return resp }\n        let loc = resp.header(\"location\") orelse return resp\n        hops += 1\n        if loc.starts_with(\"http://\") or loc.starts_with(\"https://\") {\n            url = parse_url(loc) orelse return error.InvalidInput\n            if url.scheme != \"http\" { return error.InvalidInput }\n        } else {\n            url.path = String.from(loc)\n        }\n    }\n}\n\npub fn get(url: []u8) -> !Response {\n    let none = List(Header).new()\n    return request(\"GET\", url, &none, \"\")\n}\n\npub fn post(url: []u8, content_type: []u8, body: []u8) -> !Response {\n    var headers = List(Header).new()\n    headers.append(Header{ .name = String.from(\"Content-Type\"), .value = String.from(content_type) })\n    return request(\"POST\", url, &headers, body)\n}\n\n// ------------------------------------------------------------------ server\n\npub struct Request {\n    method: String\n    /// the path without the query\n    path: String\n    /// the query string after `?`, without it\n    query: String\n    headers: List(Header)\n    body: String\n    peer: String\n}\n\nimpl Request {\n    pub fn header(self: *Self, name: []u8) -> ?[]u8 {\n        return header_value(&self.headers, name)\n    }\n\n    /// The value of a query parameter (`?a=1&b=2`), not decoded.\n    pub fn param(self: *Self, name: []u8) -> ?[]u8 {\n        for pair in self.query.split(\"&\") {\n            var eq: usize = 0\n            while eq < pair.len and pair[eq] != '=' { eq += 1 }\n            if pair[0..eq] == name { return if eq < pair.len { pair[eq + 1..pair.len] } else { pair[0..0] } }\n        }\n        return null\n    }\n}\n\n/// Read a request from a reader over the connection; null when the\n/// connection was closed before a request line.\npub fn read_request(r: *mut stream.Reader, peer: []u8) -> !?Request {\n    let line = (try r.read_line()) orelse return null\n    // GET /path?query HTTP/1.1\n    var a: usize = 0\n    while a < line.len and line[a] != ' ' { a += 1 }\n    if a == line.len { return error.InvalidInput }\n    var b = a + 1\n    while b < line.len and line[b] != ' ' { b += 1 }\n    let target = line[a + 1..b]\n    var q: usize = 0\n    while q < target.len and target[q] != '?' { q += 1 }\n    let headers = try read_headers(r)\n    let body = try read_body(r, &headers, false)\n    return Request{\n        .method = String.from(line[0..a]),\n        .path = String.from(target[0..q]),\n        .query = String.from(if q < target.len { target[q + 1..target.len] } else { target[0..0] }),\n        .headers = headers,\n        .body = body,\n        .peer = String.from(peer),\n    }\n}\n\n/// Write a response with `Content-Length` and `Connection: close`.\npub fn write_response(w: *mut stream.Writer, resp: *Response) -> !void {\n    try w.write(format(\"HTTP/1.1 {} \", .{resp.status}))\n    try w.write(resp.reason)\n    try w.write(\"\\r\\n\")\n    for h in resp.headers {\n        try w.write(h.name)\n        try w.write(\": \")\n        try w.write(h.value)\n        try w.write(\"\\r\\n\")\n    }\n    try w.write(format(\"Content-Length: {}\\r\\nConnection: close\\r\\n\\r\\n\", .{resp.body.len}))\n    try w.write(resp.body)\n    return w.flush()\n}\n\npub struct Route {\n    method: String\n    path: String\n    handler: fn(*Request) -> Response\n}\n\n/// Matches requests by method and exact path; a path ending in `/*`\n/// matches any request under that prefix.\npub struct Router {\n    routes: List(Route)\n    static_root: ?String\n}\n\nimpl Router {\n    pub fn new() -> Router {\n        return Router{ .routes = List(Route).new(), .static_root = null }\n    }\n\n    pub fn route(self: *mut Self, method: []u8, path: []u8, handler: fn(*Request) -> Response) {\n        self.routes.append(Route{ .method = String.from(method), .path = String.from(path), .handler = handler })\n    }\n\n    pub fn get(self: *mut Self, path: []u8, handler: fn(*Request) -> Response) {\n        self.route(\"GET\", path, handler)\n    }\n\n    pub fn post(self: *mut Self, path: []u8, handler: fn(*Request) -> Response) {\n        self.route(\"POST\", path, handler)\n    }\n\n    /// Serve files under `root` for paths no route claims.\n    pub fn serve_static(self: *mut Self, root: []u8) {\n        self.static_root = String.from(root)\n    }\n\n    /// The response for a request.\n    pub fn handle(self: *Self, req: *Request) -> Response {\n        for r in self.routes {\n            if r.method != req.method { continue }\n            let hit = if r.path.ends_with(\"/*\") { req.path.starts_with(r.path[0..r.path.len - 1]) } else { r.path == req.path }\n            if hit {\n                let h = r.handler\n                return h(req)\n            }\n        }\n        if let root = self.static_root {\n            if req.method == \"GET\" { return static_file(root, req.path) }\n        }\n        return not_found()\n    }\n}\n\n/// A file under `root` for a request path, refusing `..`; `index.html` for\n/// directories.\npub fn static_file(root: []u8, path: []u8) -> Response {\n    if path.find(\"..\") != null { return text(403, \"forbidden\\n\") }\n    var file = fs.join(root, if path.len > 0 and path[0] == '/' { path[1..path.len] } else { path })\n    if fs.is_dir(file) { file = fs.join(file, \"index.html\") }\n    if !fs.is_file(file) { return not_found() }\n    let data = fs.read(file) catch return text(500, \"cannot read file\\n\")\n    return respond(200, content_type_for(file), data)\n}\n\npub struct Server {\n    listener: net.TcpListener\n}\n\nimpl Server {\n    pub fn bind(host: []u8, port: u16) -> !Server {\n        return Server{ .listener = try net.TcpListener.bind(host, port) }\n    }\n\n    pub fn port(self: *Self) -> !u16 {\n        return self.listener.port()\n    }\n\n    /// Accept one connection, answer one request, close. `error.Timeout`\n    /// when nobody connects within `timeout_ms` (0 waits forever).\n    pub fn serve_one(self: *Self, router: *Router, timeout_ms: i64) -> !void {\n        var conn = try self.listener.accept_timeout(timeout_ms)\n        conn.set_timeout(10000)\n        let peer = conn.peer() catch String.from(\"?\")\n        var r = conn.reader()\n        var bad = false\n        let maybe = read_request(&mut r, peer) catch |_| {\n            bad = true\n            null\n        }\n        var resp = text(400, \"bad request\\n\")\n        if !bad {\n            if let req = maybe {\n                resp = router.handle(&req)\n            } else {\n                conn.close()\n                return\n            }\n        }\n        var w = conn.writer()\n        write_response(&mut w, &resp) catch { }\n        conn.close()\n    }\n\n    /// Serve forever, one request at a time.\n    pub fn serve(self: *Self, router: *Router) -> !void {\n        while true {\n            self.serve_one(router, 0) catch |e| {\n                if e != error.Timeout { return e }\n            }\n        }\n    }\n\n    pub fn close(self: *mut Self) {\n        self.listener.close()\n    }\n}\n\n// ------------------------------------------------------------------ tests\n\nfn hello(req: *Request) -> Response {\n    var body = String.from(\"hello \")\n    body.append(req.param(\"name\") orelse \"world\")\n    return text(200, body)\n}\n\nfn echo(req: *Request) -> Response {\n    return respond(201, \"application/octet-stream\", req.body)\n}\n\ntest \"urls\" {\n    let u = parse_url(\"http://example.com/a/b?x=1\").?\n    expect_eq(u.host, \"example.com\")\n    expect_eq(u.port, 80)\n    expect_eq(u.path, \"/a/b?x=1\")\n    let p = parse_url(\"http://localhost:8080\").?\n    expect_eq(p.port, 8080)\n    expect_eq(p.path, \"/\")\n    expect(parse_url(\"ftp://x\") == null)\n    expect_eq(parse_url(\"https://h/\").?.port, 443)\n    expect_eq(content_type_for(\"a/b.css\"), \"text/css\")\n    expect_eq(hex_value(\"1A;ext\").?, 26)\n}\n\ntest \"request and response over loopback\" {\n    var router = Router.new()\n    router.get(\"/hello\", hello)\n    router.post(\"/echo\", echo)\n    var server = try Server.bind(\"127.0.0.1\", 0)\n    let port = try server.port()\n    var url = parse_url(format(\"http://127.0.0.1:{}/hello?name=nx\", .{port})).?\n\n    // the client sends first; the request fits the socket buffer, so the\n    // single-threaded server can then accept and answer it\n    var c = try net.TcpStream.connect_timeout(\"127.0.0.1\", port, 5000)\n    c.set_timeout(5000)\n    var w = c.writer()\n    let none = List(Header).new()\n    try send_request(&mut w, \"GET\", &url, &none, \"\")\n    try server.serve_one(&router, 5000)\n    var r = c.reader()\n    let resp = try read_response(&mut r)\n    expect_eq(resp.status, 200)\n    expect_eq(resp.body, \"hello nx\")\n    expect_eq(resp.header(\"content-type\").?, \"text/plain; charset=utf-8\")\n    c.close()\n\n    var c2 = try net.TcpStream.connect_timeout(\"127.0.0.1\", port, 5000)\n    c2.set_timeout(5000)\n    var w2 = c2.writer()\n    url.path = String.from(\"/echo\")\n    try send_request(&mut w2, \"POST\", &url, &none, \"payload bytes\")\n    try server.serve_one(&router, 5000)\n    var r2 = c2.reader()\n    let resp2 = try read_response(&mut r2)\n    expect_eq(resp2.status, 201)\n    expect_eq(resp2.body, \"payload bytes\")\n    c2.close()\n\n    var c3 = try net.TcpStream.connect_timeout(\"127.0.0.1\", port, 5000)\n    c3.set_timeout(5000)\n    try c3.send(\"GET /missing HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n\")\n    try server.serve_one(&router, 5000)\n    var r3 = c3.reader()\n    expect_eq((try read_response(&mut r3)).status, 404)\n    c3.close()\n    server.close()\n}\n\ntest \"chunked bodies\" {\n    // a canned response fed through a file-backed reader\n    let path = fs.temp_path(\"nxhttp-\")\n    try fs.write(path, \"HTTP/1.1 200 OK\\r\\nTransfer-Encoding: chunked\\r\\nX-Test: yes\\r\\n\\r\\n5\\r\\nhello\\r\\n6;ext=1\\r\\n world\\r\\n0\\r\\n\\r\\n\")\n    var r = try stream.Reader.open(path)\n    let resp = try read_response(&mut r)\n    r.close()\n    try fs.remove(path)\n    expect_eq(resp.status, 200)\n    expect_eq(resp.reason, \"OK\")\n    expect_eq(resp.body, \"hello world\")\n    expect_eq(resp.header(\"x-test\").?, \"yes\")\n    expect(resp.ok())\n}\n";
+static const char nx_str_619[21319] = "// std.http: an HTTP/1.1 client and a small server, written in Nexium over\n// std.net and std.stream.\n//\n// `import std.http` then:\n//\n//     let r = try http.get(\"http://example.com/\")\n//     println(\"{} {}\", .{r.status, r.body.len})\n//     if let ct = r.header(\"content-type\") { ... }\n//\n//     fn hello(req: *http.Request) -> http.Response {\n//         return http.text(200, \"hello from Nexium\")\n//     }\n//     var router = http.Router.new()\n//     router.get(\"/\", hello)\n//     var server = try http.Server.bind(\"127.0.0.1\", 8080)\n//     try server.serve(&router)                  // forever, one request at a time\n//\n// The client speaks HTTP/1.1 with `Connection: close`, reads bodies by\n// Content-Length, chunked encoding, or until close, and follows up to five\n// redirects. Plain `http://` only; TLS needs a C library through `@cImport`.\n// The server handles one connection at a time, which is what a tool, a\n// local dashboard or a test needs; threads come later in the roadmap.\n\nimport std.net\nimport std.stream\nimport std.fs\n\nconst MAX_REDIRECTS: usize = 5\nconst MAX_HEADER_LINES: usize = 200\n\npub struct Header {\n    name: String\n    value: String\n}\n\nfn header_value(headers: *List(Header), name: []u8) -> ?[]u8 {\n    for i in 0..headers.len {\n        if headers[i].name.eq_ignore_case(name) { return headers[i].value }\n    }\n    return null\n}\n\nfn find_header(headers: *List(Header), name: []u8) -> ?usize {\n    for h, i in headers {\n        if h.name.eq_ignore_case(name) { return i }\n    }\n    return null\n}\n\n// ------------------------------------------------------------------ URLs\n\npub struct Url {\n    scheme: String\n    host: String\n    port: u16\n    /// path with the query, e.g. `/a/b?x=1`; never empty\n    path: String\n}\n\n/// Parse `http://host[:port][/path]`; null for anything else.\npub fn parse_url(s: []u8) -> ?Url {\n    var rest = s\n    var scheme = \"http\"\n    if rest.starts_with(\"http://\") {\n        rest = rest[7..rest.len]\n    } else if rest.starts_with(\"https://\") {\n        scheme = \"https\"\n        rest = rest[8..rest.len]\n    } else {\n        return null\n    }\n    var end: usize = 0\n    while end < rest.len and rest[end] != '/' and rest[end] != '?' { end += 1 }\n    let hostport = rest[0..end]\n    var path = rest[end..rest.len]\n    // the host is copied out: `a` owns its text only until the `if let` ends\n    var host = String.from(hostport)\n    var port: u16 = if scheme == \"https\" { 443 } else { 80 }\n    if let a = net.parse_addr(hostport) {\n        host = a.host.clone()\n        port = a.port\n    }\n    if host.len == 0 { return null }\n    var p = String.new()\n    if path.len == 0 or path[0] == '?' { p.append(\"/\") }\n    p.append(path)\n    return Url{ .scheme = String.from(scheme), .host = host, .port = port, .path = p }\n}\n\n// ------------------------------------------------------------------ responses\n\npub struct Response {\n    status: u16\n    reason: String\n    headers: List(Header)\n    body: String\n}\n\nimpl Response {\n    /// A header value, case-insensitive; null when absent.\n    pub fn header(self: *Self, name: []u8) -> ?[]u8 {\n        return header_value(&self.headers, name)\n    }\n\n    /// Add or replace a header (builder style).\n    pub fn with_header(self: *mut Self, name: []u8, value: []u8) {\n        if let i = find_header(&self.headers, name) {\n            self.headers[i].value = String.from(value)\n            return\n        }\n        self.headers.append(Header{ .name = String.from(name), .value = String.from(value) })\n    }\n\n    pub fn ok(self: *Self) -> bool {\n        return self.status >= 200 and self.status < 300\n    }\n}\n\n/// The standard reason phrase for a status.\npub fn reason_for(status: u16) -> []u8 {\n    if status == 200 { return \"OK\" }\n    if status == 201 { return \"Created\" }\n    if status == 204 { return \"No Content\" }\n    if status == 301 { return \"Moved Permanently\" }\n    if status == 302 { return \"Found\" }\n    if status == 304 { return \"Not Modified\" }\n    if status == 400 { return \"Bad Request\" }\n    if status == 401 { return \"Unauthorized\" }\n    if status == 403 { return \"Forbidden\" }\n    if status == 404 { return \"Not Found\" }\n    if status == 405 { return \"Method Not Allowed\" }\n    if status == 500 { return \"Internal Server Error\" }\n    return \"Unknown\"\n}\n\n/// A response with a body and a content type.\npub fn respond(status: u16, content_type: []u8, body: []u8) -> Response {\n    var headers = List(Header).new()\n    headers.append(Header{ .name = String.from(\"Content-Type\"), .value = String.from(content_type) })\n    return Response{ .status = status, .reason = String.from(reason_for(status)), .headers = headers, .body = String.from(body) }\n}\n\npub fn text(status: u16, body: []u8) -> Response {\n    return respond(status, \"text/plain; charset=utf-8\", body)\n}\n\npub fn html(status: u16, body: []u8) -> Response {\n    return respond(status, \"text/html; charset=utf-8\", body)\n}\n\npub fn json(status: u16, body: []u8) -> Response {\n    return respond(status, \"application/json\", body)\n}\n\npub fn not_found() -> Response {\n    return text(404, \"not found\\n\")\n}\n\n/// A redirect to `location`.\npub fn redirect(location: []u8) -> Response {\n    var r = text(302, \"\")\n    r.with_header(\"Location\", location)\n    return r\n}\n\n/// The content type for a file name, by extension.\npub fn content_type_for(path: []u8) -> []u8 {\n    let ext = fs.extension(path)\n    if ext == \"html\" or ext == \"htm\" { return \"text/html; charset=utf-8\" }\n    if ext == \"css\" { return \"text/css\" }\n    if ext == \"js\" { return \"text/javascript\" }\n    if ext == \"json\" { return \"application/json\" }\n    if ext == \"txt\" or ext == \"md\" or ext == \"nx\" { return \"text/plain; charset=utf-8\" }\n    if ext == \"png\" { return \"image/png\" }\n    if ext == \"jpg\" or ext == \"jpeg\" { return \"image/jpeg\" }\n    if ext == \"gif\" { return \"image/gif\" }\n    if ext == \"svg\" { return \"image/svg+xml\" }\n    if ext == \"ico\" { return \"image/x-icon\" }\n    if ext == \"pdf\" { return \"application/pdf\" }\n    return \"application/octet-stream\"\n}\n\n// ------------------------------------------------------------------ wire format\n\nfn parse_status(line: []u8) -> ?(u16, []u8) {\n    // HTTP/1.1 200 OK\n    if !line.starts_with(\"HTTP/\") { return null }\n    var i: usize = 0\n    while i < line.len and line[i] != ' ' { i += 1 }\n    if i + 4 > line.len { return null }\n    let status = line[i + 1..i + 4].parse_int(u16) catch return null\n    var reason = line[0..0]\n    if i + 5 <= line.len { reason = line[i + 5..line.len] }\n    return (status, reason)\n}\n\nfn read_headers(r: *mut stream.Reader) -> !List(Header) {\n    var headers = List(Header).new()\n    var n: usize = 0\n    while true {\n        let line = (try r.read_line()) orelse break\n        if line.len == 0 { break }\n        n += 1\n        if n > MAX_HEADER_LINES { return error.InvalidInput }\n        var c: usize = 0\n        while c < line.len and line[c] != ':' { c += 1 }\n        if c == line.len { return error.InvalidInput }\n        headers.append(Header{ .name = String.from(line[0..c]), .value = String.from(line[c + 1..line.len].trim()) })\n    }\n    return headers\n}\n\nfn hex_value(s: []u8) -> ?usize {\n    var v: usize = 0\n    var any = false\n    for c in s {\n        var d: usize = 0\n        if c >= '0' and c <= '9' { d = (c - '0') as usize }\n        else if c >= 'a' and c <= 'f' { d = (c - 'a' + 10) as usize }\n        else if c >= 'A' and c <= 'F' { d = (c - 'A' + 10) as usize }\n        else if c == ';' or c == ' ' { break }\n        else { return null }\n        v = v * 16 + d\n        any = true\n    }\n    return if any { v } else { null }\n}\n\nfn read_exact(r: *mut stream.Reader, n: usize) -> !String {\n    var out = String.with_capacity(n)\n    while out.len < n {\n        let chunk = try r.read(n - out.len)\n        if chunk.len == 0 { return error.Truncated }\n        out.append(chunk)\n    }\n    return out\n}\n\nfn read_body(r: *mut stream.Reader, headers: *List(Header), allow_until_close: bool) -> !String {\n    if let te = header_value(headers, \"transfer-encoding\") {\n        if te.eq_ignore_case(\"chunked\") {\n            var body = String.new()\n            while true {\n                let size_line = (try r.read_line()) orelse return error.Truncated\n                let size = hex_value(size_line) orelse return error.InvalidInput\n                if size == 0 {\n                    // trailers, then the blank line\n                    while true {\n                        let t = (try r.read_line()) orelse break\n                        if t.len == 0 { break }\n                    }\n                    break\n                }\n                body.append(try read_exact(r, size))\n                _ = try r.read_line()\n            }\n            return body\n        }\n    }\n    if let cl = header_value(headers, \"content-length\") {\n        let n = cl.parse_int(usize) catch return error.InvalidInput\n        return read_exact(r, n)\n    }\n    if allow_until_close { return r.read_all() }\n    return String.new()\n}\n\n/// Read a full response from a reader over the connection.\npub fn read_response(r: *mut stream.Reader) -> !Response {\n    let line = (try r.read_line()) orelse return error.Truncated\n    let st = parse_status(line) orelse return error.InvalidInput\n    let headers = try read_headers(r)\n    let body = if st.0 == 204 or st.0 == 304 { String.new() } else { try read_body(r, &headers, true) }\n    return Response{ .status = st.0, .reason = String.from(st.1), .headers = headers, .body = body }\n}\n\n/// Write a request; `headers` may add or override the defaults.\npub fn send_request(w: *mut stream.Writer, method: []u8, url: *Url, headers: *List(Header), body: []u8) -> !void {\n    try w.write(method)\n    try w.write(\" \")\n    try w.write(url.path)\n    try w.write(\" HTTP/1.1\\r\\nHost: \")\n    try w.write(url.host)\n    if url.port != 80 { try w.write(format(\":{}\", .{url.port})) }\n    try w.write(\"\\r\\n\")\n    if header_value(headers, \"user-agent\") == null { try w.write(\"User-Agent: nexium-http/0.3\\r\\n\") }\n    if header_value(headers, \"accept\") == null { try w.write(\"Accept: */*\\r\\n\") }\n    try w.write(\"Connection: close\\r\\n\")\n    if body.len > 0 or method == \"POST\" or method == \"PUT\" { try w.write(format(\"Content-Length: {}\\r\\n\", .{body.len})) }\n    for h in headers {\n        try w.write(h.name)\n        try w.write(\": \")\n        try w.write(h.value)\n        try w.write(\"\\r\\n\")\n    }\n    try w.write(\"\\r\\n\")\n    try w.write(body)\n    return w.flush()\n}\n\n// ------------------------------------------------------------------ client\n\nfn one_request(method: []u8, url: *Url, headers: *List(Header), body: []u8, timeout_ms: i64) -> !Response {\n    var conn = try net.TcpStream.connect_timeout(url.host, url.port, timeout_ms)\n    conn.set_timeout(timeout_ms)\n    var w = conn.writer()\n    send_request(&mut w, method, url, headers, body) catch |e| {\n        conn.close()\n        return e\n    }\n    var r = conn.reader()\n    let resp = read_response(&mut r)\n    conn.close()\n    return resp\n}\n\n/// Perform a request, following redirects. `error.InvalidInput` for a URL\n/// this client cannot speak (including `https://`).\npub fn request(method: []u8, url_text: []u8, headers: *List(Header), body: []u8) -> !Response {\n    var url = parse_url(url_text) orelse return error.InvalidInput\n    if url.scheme != \"http\" { return error.InvalidInput }\n    var hops: usize = 0\n    while true {\n        let resp = try one_request(method, &url, headers, body, 15000)\n        let is_redirect = resp.status == 301 or resp.status == 302 or resp.status == 303 or resp.status == 307 or resp.status == 308\n        if !is_redirect or hops >= MAX_REDIRECTS { return resp }\n        let loc = resp.header(\"location\") orelse return resp\n        hops += 1\n        if loc.starts_with(\"http://\") or loc.starts_with(\"https://\") {\n            url = parse_url(loc) orelse return error.InvalidInput\n            if url.scheme != \"http\" { return error.InvalidInput }\n        } else {\n            url.path = String.from(loc)\n        }\n    }\n}\n\npub fn get(url: []u8) -> !Response {\n    let none = List(Header).new()\n    return request(\"GET\", url, &none, \"\")\n}\n\npub fn post(url: []u8, content_type: []u8, body: []u8) -> !Response {\n    var headers = List(Header).new()\n    headers.append(Header{ .name = String.from(\"Content-Type\"), .value = String.from(content_type) })\n    return request(\"POST\", url, &headers, body)\n}\n\n// ------------------------------------------------------------------ server\n\npub struct Request {\n    method: String\n    /// the path without the query\n    path: String\n    /// the query string after `?`, without it\n    query: String\n    headers: List(Header)\n    body: String\n    peer: String\n}\n\nimpl Request {\n    pub fn header(self: *Self, name: []u8) -> ?[]u8 {\n        return header_value(&self.headers, name)\n    }\n\n    /// The value of a query parameter (`?a=1&b=2`), not decoded.\n    pub fn param(self: *Self, name: []u8) -> ?[]u8 {\n        for pair in self.query.split(\"&\") {\n            var eq: usize = 0\n            while eq < pair.len and pair[eq] != '=' { eq += 1 }\n            if pair[0..eq] == name { return if eq < pair.len { pair[eq + 1..pair.len] } else { pair[0..0] } }\n        }\n        return null\n    }\n}\n\n/// Read a request from a reader over the connection; null when the\n/// connection was closed before a request line.\npub fn read_request(r: *mut stream.Reader, peer: []u8) -> !?Request {\n    let line = (try r.read_line()) orelse return null\n    // GET /path?query HTTP/1.1\n    var a: usize = 0\n    while a < line.len and line[a] != ' ' { a += 1 }\n    if a == line.len { return error.InvalidInput }\n    var b = a + 1\n    while b < line.len and line[b] != ' ' { b += 1 }\n    let target = line[a + 1..b]\n    var q: usize = 0\n    while q < target.len and target[q] != '?' { q += 1 }\n    let headers = try read_headers(r)\n    let body = try read_body(r, &headers, false)\n    return Request{\n        .method = String.from(line[0..a]),\n        .path = String.from(target[0..q]),\n        .query = String.from(if q < target.len { target[q + 1..target.len] } else { target[0..0] }),\n        .headers = headers,\n        .body = body,\n        .peer = String.from(peer),\n    }\n}\n\n/// Write a response with `Content-Length` and `Connection: close`.\npub fn write_response(w: *mut stream.Writer, resp: *Response) -> !void {\n    try w.write(format(\"HTTP/1.1 {} \", .{resp.status}))\n    try w.write(resp.reason)\n    try w.write(\"\\r\\n\")\n    for h in resp.headers {\n        try w.write(h.name)\n        try w.write(\": \")\n        try w.write(h.value)\n        try w.write(\"\\r\\n\")\n    }\n    try w.write(format(\"Content-Length: {}\\r\\nConnection: close\\r\\n\\r\\n\", .{resp.body.len}))\n    try w.write(resp.body)\n    return w.flush()\n}\n\npub struct Route {\n    method: String\n    path: String\n    handler: fn(*Request) -> Response\n}\n\n/// Matches requests by method and exact path; a path ending in `/*`\n/// matches any request under that prefix.\npub struct Router {\n    routes: List(Route)\n    static_root: ?String\n}\n\nimpl Router {\n    pub fn new() -> Router {\n        return Router{ .routes = List(Route).new(), .static_root = null }\n    }\n\n    pub fn route(self: *mut Self, method: []u8, path: []u8, handler: fn(*Request) -> Response) {\n        self.routes.append(Route{ .method = String.from(method), .path = String.from(path), .handler = handler })\n    }\n\n    pub fn get(self: *mut Self, path: []u8, handler: fn(*Request) -> Response) {\n        self.route(\"GET\", path, handler)\n    }\n\n    pub fn post(self: *mut Self, path: []u8, handler: fn(*Request) -> Response) {\n        self.route(\"POST\", path, handler)\n    }\n\n    /// Serve files under `root` for paths no route claims.\n    pub fn serve_static(self: *mut Self, root: []u8) {\n        self.static_root = String.from(root)\n    }\n\n    /// The response for a request.\n    pub fn handle(self: *Self, req: *Request) -> Response {\n        for r in self.routes {\n            if r.method != req.method { continue }\n            let hit = if r.path.ends_with(\"/*\") { req.path.starts_with(r.path[0..r.path.len - 1]) } else { r.path == req.path }\n            if hit {\n                let h = r.handler\n                return h(req)\n            }\n        }\n        if let root = self.static_root {\n            if req.method == \"GET\" { return static_file(root, req.path) }\n        }\n        return not_found()\n    }\n}\n\n/// A file under `root` for a request path, refusing `..`; `index.html` for\n/// directories.\npub fn static_file(root: []u8, path: []u8) -> Response {\n    if path.find(\"..\") != null { return text(403, \"forbidden\\n\") }\n    var file = fs.join(root, if path.len > 0 and path[0] == '/' { path[1..path.len] } else { path })\n    if fs.is_dir(file) { file = fs.join(file, \"index.html\") }\n    if !fs.is_file(file) { return not_found() }\n    let data = fs.read(file) catch return text(500, \"cannot read file\\n\")\n    return respond(200, content_type_for(file), data)\n}\n\npub struct Server {\n    listener: net.TcpListener\n}\n\nimpl Server {\n    pub fn bind(host: []u8, port: u16) -> !Server {\n        return Server{ .listener = try net.TcpListener.bind(host, port) }\n    }\n\n    pub fn port(self: *Self) -> !u16 {\n        return self.listener.port()\n    }\n\n    /// Accept one connection, answer one request, close. `error.Timeout`\n    /// when nobody connects within `timeout_ms` (0 waits forever).\n    pub fn serve_one(self: *Self, router: *Router, timeout_ms: i64) -> !void {\n        var conn = try self.listener.accept_timeout(timeout_ms)\n        conn.set_timeout(10000)\n        let peer = conn.peer() catch String.from(\"?\")\n        var r = conn.reader()\n        var bad = false\n        let maybe = read_request(&mut r, peer) catch |_| {\n            bad = true\n            null\n        }\n        var resp = text(400, \"bad request\\n\")\n        if !bad {\n            if let req = maybe {\n                resp = router.handle(&req)\n            } else {\n                conn.close()\n                return\n            }\n        }\n        var w = conn.writer()\n        write_response(&mut w, &resp) catch { }\n        conn.close()\n    }\n\n    /// Serve forever, one request at a time.\n    pub fn serve(self: *Self, router: *Router) -> !void {\n        while true {\n            self.serve_one(router, 0) catch |e| {\n                if e != error.Timeout { return e }\n            }\n        }\n    }\n\n    pub fn close(self: *mut Self) {\n        self.listener.close()\n    }\n}\n\n// ------------------------------------------------------------------ tests\n\nfn hello(req: *Request) -> Response {\n    var body = String.from(\"hello \")\n    body.append(req.param(\"name\") orelse \"world\")\n    return text(200, body)\n}\n\nfn echo(req: *Request) -> Response {\n    return respond(201, \"application/octet-stream\", req.body)\n}\n\ntest \"urls\" {\n    let u = parse_url(\"http://example.com/a/b?x=1\").?\n    expect_eq(u.host, \"example.com\")\n    expect_eq(u.port, 80)\n    expect_eq(u.path, \"/a/b?x=1\")\n    let p = parse_url(\"http://localhost:8080\").?\n    expect_eq(p.port, 8080)\n    expect_eq(p.path, \"/\")\n    expect(parse_url(\"ftp://x\") == null)\n    expect_eq(parse_url(\"https://h/\").?.port, 443)\n    expect_eq(content_type_for(\"a/b.css\"), \"text/css\")\n    expect_eq(hex_value(\"1A;ext\").?, 26)\n}\n\ntest \"request and response over loopback\" {\n    var router = Router.new()\n    router.get(\"/hello\", hello)\n    router.post(\"/echo\", echo)\n    var server = try Server.bind(\"127.0.0.1\", 0)\n    let port = try server.port()\n    var url = parse_url(format(\"http://127.0.0.1:{}/hello?name=nx\", .{port})).?\n\n    // the client sends first; the request fits the socket buffer, so the\n    // single-threaded server can then accept and answer it\n    var c = try net.TcpStream.connect_timeout(\"127.0.0.1\", port, 5000)\n    c.set_timeout(5000)\n    var w = c.writer()\n    let none = List(Header).new()\n    try send_request(&mut w, \"GET\", &url, &none, \"\")\n    try server.serve_one(&router, 5000)\n    var r = c.reader()\n    let resp = try read_response(&mut r)\n    expect_eq(resp.status, 200)\n    expect_eq(resp.body, \"hello nx\")\n    expect_eq(resp.header(\"content-type\").?, \"text/plain; charset=utf-8\")\n    c.close()\n\n    var c2 = try net.TcpStream.connect_timeout(\"127.0.0.1\", port, 5000)\n    c2.set_timeout(5000)\n    var w2 = c2.writer()\n    url.path = String.from(\"/echo\")\n    try send_request(&mut w2, \"POST\", &url, &none, \"payload bytes\")\n    try server.serve_one(&router, 5000)\n    var r2 = c2.reader()\n    let resp2 = try read_response(&mut r2)\n    expect_eq(resp2.status, 201)\n    expect_eq(resp2.body, \"payload bytes\")\n    c2.close()\n\n    var c3 = try net.TcpStream.connect_timeout(\"127.0.0.1\", port, 5000)\n    c3.set_timeout(5000)\n    try c3.send(\"GET /missing HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n\")\n    try server.serve_one(&router, 5000)\n    var r3 = c3.reader()\n    expect_eq((try read_response(&mut r3)).status, 404)\n    c3.close()\n    server.close()\n}\n\ntest \"chunked bodies\" {\n    // a canned response fed through a file-backed reader\n    let path = fs.temp_path(\"nxhttp-\")\n    try fs.write(path, \"HTTP/1.1 200 OK\\r\\nTransfer-Encoding: chunked\\r\\nX-Test: yes\\r\\n\\r\\n5\\r\\nhello\\r\\n6;ext=1\\r\\n world\\r\\n0\\r\\n\\r\\n\")\n    var r = try stream.Reader.open(path)\n    let resp = try read_response(&mut r)\n    r.close()\n    try fs.remove(path)\n    expect_eq(resp.status, 200)\n    expect_eq(resp.reason, \"OK\")\n    expect_eq(resp.body, \"hello world\")\n    expect_eq(resp.header(\"x-test\").?, \"yes\")\n    expect(resp.ok())\n}\n";
 static const char nx_str_620[5] = "json";
 static const char nx_str_621[16605] = "// std.json: a JSON parser and serializer, written in Nexium.\n//\n// `import std.json` then `json.parse(text)`, `json.stringify(&value)`.\n// Values are the `Json` enum below; arrays and objects own their children.\n// Numbers are f64 (JSON has one number type); integers up to 2^53 round trip.\n\npub struct Member {\n    key: String\n    value: Json\n}\n\npub enum Json {\n    Null,\n    Bool(bool),\n    Num(f64),\n    Str(String),\n    Arr(List(Json)),\n    Obj(List(Member)),\n}\n\n// ---------------------------------------------------------------- building\n\npub fn null_value() -> Json { return Json.Null }\npub fn boolean(b: bool) -> Json { return Json.Bool(b) }\npub fn number(n: f64) -> Json { return Json.Num(n) }\npub fn string(s: []u8) -> Json { return Json.Str(String.from(s)) }\npub fn array() -> Json { return Json.Arr(List(Json).new()) }\npub fn object() -> Json { return Json.Obj(List(Member).new()) }\n\n/// Append to an array; does nothing when `v` is not an array.\npub fn push(v: *mut Json, own item: Json) {\n    match v.*{\n        .Arr(items) => items.append(item),\n        _ => { },\n    }\n}\n\n/// Set a key on an object (replacing an existing one); does nothing otherwise.\npub fn set(v: *mut Json, key: []u8, own value: Json) {\n    match v.*{\n        .Obj(members) => {\n            for m, i in members {\n                if m.key == key {\n                    members[i] = Member{ .key = String.from(key), .value = value }\n                    return\n                }\n            }\n            members.append(Member{ .key = String.from(key), .value = value })\n        },\n        _ => { },\n    }\n}\n\n// ---------------------------------------------------------------- reading\n\n/// The member `key` of an object, or null.\npub fn get(v: *Json, key: []u8) -> ?*Json {\n    match v.*{\n        .Obj(members) => {\n            for m, i in members {\n                if m.key == key { return &members[i].value }\n            }\n            return null\n        },\n        _ => return null,\n    }\n}\n\n/// The member `key` of an object, mutable, or null.\npub fn get_mut(v: *mut Json, key: []u8) -> ?*mut Json{\n    match v.*{\n        .Obj(members) => {\n            for m, i in members {\n                if m.key == key { return &mut members[i].value }\n            }\n            return null\n        },\n        _ => return null,\n    }\n}\n\n/// Element `i` of an array, mutable, or null.\npub fn at_mut(v: *mut Json, i: usize) -> ?*mut Json{\n    match v.*{\n        .Arr(items) => {\n            if i < items.len { return &mut items[i] }\n            return null\n        },\n        _ => return null,\n    }\n}\n\n/// Element `i` of an array, or null.\npub fn at(v: *Json, i: usize) -> ?*Json {\n    match v.*{\n        .Arr(items) => {\n            if i < items.len { return &items[i] }\n            return null\n        },\n        _ => return null,\n    }\n}\n\n/// Number of elements or members; 0 for scalars.\npub fn len(v: *Json) -> usize {\n    match v.*{\n        .Arr(items) => items.len,\n        .Obj(members) => members.len,\n        _ => 0,\n    }\n}\n\npub fn is_null(v: *Json) -> bool {\n    match v.*{\n        .Null => true,\n        _ => false,\n    }\n}\n\npub fn as_bool(v: *Json) -> ?bool {\n    match v.*{\n        .Bool(b) => b,\n        _ => null,\n    }\n}\n\npub fn as_num(v: *Json) -> ?f64 {\n    match v.*{\n        .Num(n) => n,\n        _ => null,\n    }\n}\n\npub fn as_str(v: *Json) -> ?[]u8 {\n    match v.*{\n        .Str(s) => s.as_slice(),\n        _ => null,\n    }\n}\n\n/// Keys of an object in order; empty for anything else.\npub fn keys(v: *Json) -> List([]u8) {\n    var out = List([]u8).new()\n    match v.*{\n        .Obj(members) => { for m in members { out.append(m.key.as_slice()) } },\n        _ => { },\n    }\n    return out\n}\n\n// ---------------------------------------------------------------- parsing\n\nstruct Parser {\n    src: []u8\n    pos: usize\n}\n\nfn is_ws(c: u8) -> bool { return c == ' ' or c == '\\t' or c == '\\n' or c == '\\r' }\n\nimpl Parser {\n    fn peek(self: *Self) -> u8 {\n        return if self.pos < self.src.len { self.src[self.pos] } else { 0 }\n    }\n\n    fn skip_ws(self: *mut Self) {\n        while self.pos < self.src.len and is_ws(self.src[self.pos]) { self.pos += 1 }\n    }\n\n    fn expect_word(self: *mut Self, word: []u8) -> !void {\n        if self.pos + word.len > self.src.len { return error.InvalidInput }\n        if self.src[self.pos..self.pos + word.len] != word { return error.InvalidInput }\n        self.pos += word.len\n    }\n\n    fn hex4(self: *mut Self) -> !u32 {\n        if self.pos + 4 > self.src.len { return error.InvalidInput }\n        var v: u32 = 0\n        for _ in 0..4 {\n            let c = self.src[self.pos]\n            var d: u32 = 0\n            if c >= '0' and c <= '9' { d = (c - '0') as u32 }\n            else if c >= 'a' and c <= 'f' { d = (c - 'a') as u32 + 10 }\n            else if c >= 'A' and c <= 'F' { d = (c - 'A') as u32 + 10 }\n            else { return error.InvalidInput }\n            v = v * 16 + d\n            self.pos += 1\n        }\n        return v\n    }\n\n    fn push_utf8(out: *mut String, cp: u32) {\n        if cp < 0x80 {\n            out.push_byte(cp as u8)\n        } else if cp < 0x800 {\n            out.push_byte((0xC0 | (cp >> 6)) as u8)\n            out.push_byte((0x80 | (cp & 0x3F)) as u8)\n        } else if cp < 0x10000 {\n            out.push_byte((0xE0 | (cp >> 12)) as u8)\n            out.push_byte((0x80 | ((cp >> 6) & 0x3F)) as u8)\n            out.push_byte((0x80 | (cp & 0x3F)) as u8)\n        } else {\n            out.push_byte((0xF0 | (cp >> 18)) as u8)\n            out.push_byte((0x80 | ((cp >> 12) & 0x3F)) as u8)\n            out.push_byte((0x80 | ((cp >> 6) & 0x3F)) as u8)\n            out.push_byte((0x80 | (cp & 0x3F)) as u8)\n        }\n    }\n\n    fn parse_string(self: *mut Self) -> !String {\n        // at the opening quote\n        self.pos += 1\n        var out = String.new()\n        while true {\n            if self.pos >= self.src.len { return error.InvalidInput }\n            let c = self.src[self.pos]\n            self.pos += 1\n            if c == '\"' { break }\n            if c == '\\\\' {\n                if self.pos >= self.src.len { return error.InvalidInput }\n                let e = self.src[self.pos]\n                self.pos += 1\n                if e == '\"' { out.push_byte('\"') }\n                else if e == '\\\\' { out.push_byte('\\\\') }\n                else if e == '/' { out.push_byte('/') }\n                else if e == 'b' { out.push_byte(8) }\n                else if e == 'f' { out.push_byte(12) }\n                else if e == 'n' { out.push_byte('\\n') }\n                else if e == 'r' { out.push_byte('\\r') }\n                else if e == 't' { out.push_byte('\\t') }\n                else if e == 'u' {\n                    var cp = try self.hex4()\n                    if cp >= 0xD800 and cp <= 0xDBFF {\n                        // surrogate pair: \\uD83D\\uDE00\n                        try self.expect_word(\"\\\\u\")\n                        let lo = try self.hex4()\n                        if lo < 0xDC00 or lo > 0xDFFF { return error.InvalidInput }\n                        cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00)\n                    }\n                    Parser.push_utf8(&mut out, cp)\n                } else {\n                    return error.InvalidInput\n                }\n            } else if c < 0x20 {\n                return error.InvalidInput\n            } else {\n                out.push_byte(c)\n            }\n        }\n        return out\n    }\n\n    fn parse_number(self: *mut Self) -> !f64 {\n        let start = self.pos\n        if self.peek() == '-' { self.pos += 1 }\n        if ! (self.peek() >= '0' and self.peek() <= '9') { return error.InvalidInput }\n        while self.peek() >= '0' and self.peek() <= '9' { self.pos += 1 }\n        if self.peek() == '.' {\n            self.pos += 1\n            if ! (self.peek() >= '0' and self.peek() <= '9') { return error.InvalidInput }\n            while self.peek() >= '0' and self.peek() <= '9' { self.pos += 1 }\n        }\n        if self.peek() == 'e' or self.peek() == 'E' {\n            self.pos += 1\n            if self.peek() == '+' or self.peek() == '-' { self.pos += 1 }\n            if ! (self.peek() >= '0' and self.peek() <= '9') { return error.InvalidInput }\n            while self.peek() >= '0' and self.peek() <= '9' { self.pos += 1 }\n        }\n        let n = self.src[start..self.pos].parse_float() catch |e| return error.InvalidInput\n        return n\n    }\n\n    fn parse_value(self: *mut Self, depth: u32) -> !Json {\n        if depth > 256 { return error.InvalidInput }\n        self.skip_ws()\n        let c = self.peek()\n        if c == '{' {\n            self.pos += 1\n            var members = List(Member).new()\n            self.skip_ws()\n            if self.peek() == '}' {\n                self.pos += 1\n                return Json.Obj(members)\n            }\n            while true {\n                self.skip_ws()\n                if self.peek() != '\"' { return error.InvalidInput }\n                let key = try self.parse_string()\n                self.skip_ws()\n                if self.peek() != ':' { return error.InvalidInput }\n                self.pos += 1\n                let value = try self.parse_value(depth + 1)\n                members.append(Member{ .key = key, .value = value })\n                self.skip_ws()\n                let d = self.peek()\n                self.pos += 1\n                if d == '}' { break }\n                if d != ',' { return error.InvalidInput }\n            }\n            return Json.Obj(members)\n        }\n        if c == '[' {\n            self.pos += 1\n            var items = List(Json).new()\n            self.skip_ws()\n            if self.peek() == ']' {\n                self.pos += 1\n                return Json.Arr(items)\n            }\n            while true {\n                let v = try self.parse_value(depth + 1)\n                items.append(v)\n                self.skip_ws()\n                let d = self.peek()\n                self.pos += 1\n                if d == ']' { break }\n                if d != ',' { return error.InvalidInput }\n            }\n            return Json.Arr(items)\n        }\n        if c == '\"' {\n            let s = try self.parse_string()\n            return Json.Str(s)\n        }\n        if c == 't' {\n            try self.expect_word(\"true\")\n            return Json.Bool(true)\n        }\n        if c == 'f' {\n            try self.expect_word(\"false\")\n            return Json.Bool(false)\n        }\n        if c == 'n' {\n            try self.expect_word(\"null\")\n            return Json.Null\n        }\n        if c == '-' or (c >= '0' and c <= '9') {\n            let n = try self.parse_number()\n            return Json.Num(n)\n        }\n        return error.InvalidInput\n    }\n}\n\n/// Parse a JSON document. Trailing whitespace is allowed, anything else is an error.\npub fn parse(text: []u8) -> !Json {\n    var p = Parser{ .src = text, .pos = 0 }\n    let v = try p.parse_value(0)\n    p.skip_ws()\n    if p.pos != text.len { return error.InvalidInput }\n    return v\n}\n\n// ---------------------------------------------------------------- writing\n\nfn write_string(out: *mut String, s: []u8) {\n    out.push_byte('\"')\n    for c in s {\n        if c == '\"' { out.append(\"\\\\\\\"\") }\n        else if c == '\\\\' { out.append(\"\\\\\\\\\") }\n        else if c == '\\n' { out.append(\"\\\\n\") }\n        else if c == '\\r' { out.append(\"\\\\r\") }\n        else if c == '\\t' { out.append(\"\\\\t\") }\n        else if c == 8 { out.append(\"\\\\b\") }\n        else if c == 12 { out.append(\"\\\\f\") }\n        else if c < 0x20 {\n            out.append(\"\\\\u00\")\n            let hex = \"0123456789abcdef\"\n            out.push_byte(hex[(c >> 4) as usize])\n            out.push_byte(hex[(c & 15) as usize])\n        } else {\n            out.push_byte(c)\n        }\n    }\n    out.push_byte('\"')\n}\n\nfn write_number(out: *mut String, n: f64) {\n    // integers print without a fraction; everything else with enough digits to round trip\n    if n == math.floor(n) and math.abs(n) < 9007199254740992.0 {\n        out.append(format(\"{}\", .{n as i64}))\n    } else {\n        out.append(format(\"{}\", .{n}))\n    }\n}\n\nfn write_value(out: *mut String, v: *Json, indent: usize, level: usize) {\n    match v.*{\n        .Null => out.append(\"null\"),\n        .Bool(b) => out.append(if b { \"true\" } else { \"false\" }),\n        .Num(n) => write_number(out, n),\n        .Str(s) => write_string(out, s),\n        .Arr(items) => {\n            if items.len == 0 {\n                out.append(\"[]\")\n                return\n            }\n            out.push_byte('[')\n            for it, i in items {\n                if i > 0 { out.push_byte(',') }\n                newline(out, indent, level + 1)\n                write_value(out, &it, indent, level + 1)\n            }\n            newline(out, indent, level)\n            out.push_byte(']')\n        },\n        .Obj(members) => {\n            if members.len == 0 {\n                out.append(\"{}\")\n                return\n            }\n            out.push_byte('{')\n            for m, i in members {\n                if i > 0 { out.push_byte(',') }\n                newline(out, indent, level + 1)\n                write_string(out, m.key)\n                out.push_byte(':')\n                if indent > 0 { out.push_byte(' ') }\n                write_value(out, &m.value, indent, level + 1)\n            }\n            newline(out, indent, level)\n            out.push_byte('}')\n        },\n    }\n}\n\nfn newline(out: *mut String, indent: usize, level: usize) {\n    if indent == 0 { return }\n    out.push_byte('\\n')\n    for _ in 0..indent * level { out.push_byte(' ') }\n}\n\n/// Compact text: no whitespace.\npub fn stringify(v: *Json) -> String {\n    var out = String.new()\n    write_value(&mut out, v, 0, 0)\n    return out\n}\n\n/// Indented text, `indent` spaces per level.\npub fn pretty(v: *Json, indent: usize) -> String {\n    var out = String.new()\n    write_value(&mut out, v, indent, 0)\n    return out\n}\n\n// ---------------------------------------------------------------- tests\n\ntest \"scalars\" {\n    let t = try parse(\" true \")\n    expect_eq(as_bool(&t) orelse false, true)\n    let n = try parse(\"-12.5e1\")\n    expect_eq(as_num(&n) orelse 0.0, -125.0)\n    let s = try parse(\"\\\"a\\\\\\\"b\\\\n\\\\u0041\\\\u00e9\\\\ud83d\\\\ude00\\\"\")\n    expect_eq(as_str(&s) orelse \"\", \"a\\\"b\\nA\303\251\360\237\230\200\")\n    let z = try parse(\"null\")\n    expect(is_null(&z))\n    expect_eq(stringify(&t), \"true\")\n    expect_eq(stringify(&n), \"-125\")\n    expect_eq(stringify(&s), \"\\\"a\\\\\\\"b\\\\nA\303\251\360\237\230\200\\\"\")\n}\n\ntest \"arrays and objects\" {\n    let doc = try parse(\"{\\\"name\\\": \\\"nexium\\\", \\\"tags\\\": [\\\"lang\\\", 2, false, null], \\\"nested\\\": {\\\"k\\\": [ ]}}\")\n    expect_eq(len(&doc), 3)\n    expect_eq(as_str(get(&doc, \"name\") orelse &doc) orelse \"\", \"nexium\")\n    let tags = get(&doc, \"tags\") orelse &doc\n    expect_eq(len(tags), 4)\n    expect_eq(as_num(at(tags, 1) orelse tags) orelse 0.0, 2.0)\n    expect(get(&doc, \"missing\") == null)\n    expect(at(tags, 9) == null)\n    let ks = keys(&doc)\n    expect_eq(ks.len, 3)\n    expect_eq(ks[2], \"nested\")\n    expect_eq(stringify(&doc), \"{\\\"name\\\":\\\"nexium\\\",\\\"tags\\\":[\\\"lang\\\",2,false,null],\\\"nested\\\":{\\\"k\\\":[]}}\")\n}\n\ntest \"pretty printing\" {\n    let doc = try parse(\"{\\\"a\\\":[1,{\\\"b\\\":true}],\\\"c\\\":{}}\")\n    expect_eq(pretty(&doc, 2), \"{\\n  \\\"a\\\": [\\n    1,\\n    {\\n      \\\"b\\\": true\\n    }\\n  ],\\n  \\\"c\\\": {}\\n}\")\n}\n\ntest \"mutable access\" {\n    var doc = try parse(\"{\\\"a\\\": [1], \\\"b\\\": {}}\")\n    push(get_mut(&mut doc, \"a\") orelse &mut doc, number(2))\n    set(get_mut(&mut doc, \"b\") orelse &mut doc, \"c\", boolean(true))\n    if let first = at_mut(get_mut(&mut doc, \"a\") orelse &mut doc, 0) {\n        first.*= string(\"one\")\n    }\n    expect_eq(stringify(&doc), \"{\\\"a\\\":[\\\"one\\\",2],\\\"b\\\":{\\\"c\\\":true}}\")\n}\n\ntest \"building\" {\n    var root = object()\n    set(&mut root, \"n\", number(3.25))\n    set(&mut root, \"s\", string(\"x\"))\n    var arr = array()\n    push(&mut arr, boolean(true))\n    push(&mut arr, null_value())\n    set(&mut root, \"arr\", arr)\n    set(&mut root, \"n\", number(4))\n    expect_eq(stringify(&root), \"{\\\"n\\\":4,\\\"s\\\":\\\"x\\\",\\\"arr\\\":[true,null]}\")\n}\n\nfn fails(text: []u8) -> bool {\n    let r = parse(text) catch |e| return true\n    _ = r\n    return false\n}\n\ntest \"errors\" {\n    expect(fails(\"\"))\n    expect(fails(\"{\"))\n    expect(fails(\"[1,]\"))\n    expect(fails(\"{\\\"a\\\" 1}\"))\n    expect(fails(\"tru\"))\n    expect(fails(\"01x\"))\n    expect(fails(\"\\\"unterminated\"))\n    expect(fails(\"\\\"bad \\\\q escape\\\"\"))\n    expect(fails(\"1 2\"))\n    expect(!fails(\" [ ] \"))\n}\n\ntest \"round trip\" {\n    let text = \"[0,1.5,-2,1e21,\\\"\\\\u0001\\\",{\\\"k\\\":[[],{}]}]\"\n    let v = try parse(text)\n    let again = try parse(stringify(&v))\n    expect_eq(stringify(&again), stringify(&v))\n}\n";
 static const char nx_str_622[6] = "lists";
@@ -15706,7 +15706,7 @@ static nx_opt_sl_u8 nx_m2_std_source(nx_ctx* c, nx_sl_u8 name_0) {
   }
   if (nx_sl_eq(name_0, nx_lit(nx_str_618, 4)))
   {
-    nx_opt_sl_u8 _t4 = ((nx_opt_sl_u8){ .has = true, .val = nx_lit(nx_str_619, 21232) });
+    nx_opt_sl_u8 _t4 = ((nx_opt_sl_u8){ .has = true, .val = nx_lit(nx_str_619, 21318) });
     return _t4;
   }
   if (nx_sl_eq(name_0, nx_lit(nx_str_620, 4)))
@@ -18922,7 +18922,7 @@ static uint64_t nx_m2_round_up(nx_ctx* c, uint64_t v_0, uint64_t a_1) {
     uint64_t _t1 = v_0;
     return _t1;
   }
-  uint64_t _t2 = nx_mul_u64(nx_div_u64(nx_sub_u64(nx_add_u64(v_0, a_1, "self/check.nx:12066"), ((uint64_t)1ULL), "self/check.nx:12066"), a_1, "self/check.nx:12066"), a_1, "self/check.nx:12066");
+  uint64_t _t2 = nx_mul_u64(nx_div_u64(nx_sub_u64(nx_add_u64(v_0, a_1, "self/check.nx:12069"), ((uint64_t)1ULL), "self/check.nx:12069"), a_1, "self/check.nx:12069"), a_1, "self/check.nx:12069");
   return _t2;
 }
 
@@ -19018,21 +19018,21 @@ static nx_eu_void nx_m2_main(nx_ctx* c) {
   size_t i_2 = ((size_t)2ULL);
   for (;;) {
     if (!(((i_2) < (((args_0).len))))) break;
-    nx_sl_u8 _t3 = args_0.ptr[nx_idx(i_2, args_0.len, "self/check.nx:12321")];
+    nx_sl_u8 _t3 = args_0.ptr[nx_idx(i_2, args_0.len, "self/check.nx:12324")];
     bool _t4 = nx_sl_eq(_t3, nx_lit(nx_str_333, 5));
     if (_t4) {
-      _t4 = ((nx_add_usize(i_2, ((size_t)1ULL), "self/check.nx:12321")) < (((args_0).len)));
+      _t4 = ((nx_add_usize(i_2, ((size_t)1ULL), "self/check.nx:12324")) < (((args_0).len)));
     }
     if (_t4)
     {
-      std_dir_1 = args_0.ptr[nx_idx(nx_add_usize(i_2, ((size_t)1ULL), "self/check.nx:12322"), args_0.len, "self/check.nx:12322")];
+      std_dir_1 = args_0.ptr[nx_idx(nx_add_usize(i_2, ((size_t)1ULL), "self/check.nx:12325"), args_0.len, "self/check.nx:12325")];
       size_t* _t5 = &(i_2);
-      *_t5 = nx_add_usize((*_t5), ((size_t)2ULL), "self/check.nx:12323");
+      *_t5 = nx_add_usize((*_t5), ((size_t)2ULL), "self/check.nx:12326");
     }
     else
     {
       size_t* _t6 = &(i_2);
-      *_t6 = nx_add_usize((*_t6), ((size_t)1ULL), "self/check.nx:12325");
+      *_t6 = nx_add_usize((*_t6), ((size_t)1ULL), "self/check.nx:12328");
     }
     nx_cont_0: ;
   }
@@ -19045,43 +19045,43 @@ static nx_eu_void nx_m2_main(nx_ctx* c) {
   i_2 = ((size_t)2ULL);
   for (;;) {
     if (!(((i_2) < (((args_0).len))))) break;
-    nx_sl_u8 _t9 = args_0.ptr[nx_idx(i_2, args_0.len, "self/check.nx:12333")];
+    nx_sl_u8 _t9 = args_0.ptr[nx_idx(i_2, args_0.len, "self/check.nx:12336")];
     if (nx_sl_eq(_t9, nx_lit(nx_str_344, 6)))
     {
       sigs_3 = true;
     }
-    nx_sl_u8 _t10 = args_0.ptr[nx_idx(i_2, args_0.len, "self/check.nx:12334")];
+    nx_sl_u8 _t10 = args_0.ptr[nx_idx(i_2, args_0.len, "self/check.nx:12337")];
     bool _t11 = nx_sl_eq(_t10, nx_lit(nx_str_334, 4));
     if (_t11) {
-      _t11 = ((nx_add_usize(i_2, ((size_t)1ULL), "self/check.nx:12334")) < (((args_0).len)));
+      _t11 = ((nx_add_usize(i_2, ((size_t)1ULL), "self/check.nx:12337")) < (((args_0).len)));
     }
     if (_t11)
     {
-      nx_sl_u8 _t12 = args_0.ptr[nx_idx(nx_add_usize(i_2, ((size_t)1ULL), "self/check.nx:12334"), args_0.len, "self/check.nx:12334")];
+      nx_sl_u8 _t12 = args_0.ptr[nx_idx(nx_add_usize(i_2, ((size_t)1ULL), "self/check.nx:12337"), args_0.len, "self/check.nx:12337")];
       nx_string _t13 = nx_str_from(c, _t12);
       nx_string _t14 = _t13;
       nx_drop_string(c, &(cc_text_4));
       cc_text_4 = _t14;
       size_t* _t15 = &(i_2);
-      *_t15 = nx_add_usize((*_t15), ((size_t)1ULL), "self/check.nx:12334");
+      *_t15 = nx_add_usize((*_t15), ((size_t)1ULL), "self/check.nx:12337");
     }
-    nx_sl_u8 _t16 = args_0.ptr[nx_idx(i_2, args_0.len, "self/check.nx:12335")];
+    nx_sl_u8 _t16 = args_0.ptr[nx_idx(i_2, args_0.len, "self/check.nx:12338")];
     bool _t17 = nx_sl_eq(_t16, nx_lit(nx_str_335, 8));
     if (_t17) {
-      _t17 = ((nx_add_usize(i_2, ((size_t)1ULL), "self/check.nx:12335")) < (((args_0).len)));
+      _t17 = ((nx_add_usize(i_2, ((size_t)1ULL), "self/check.nx:12338")) < (((args_0).len)));
     }
     if (_t17)
     {
-      nx_sl_u8 _t18 = args_0.ptr[nx_idx(nx_add_usize(i_2, ((size_t)1ULL), "self/check.nx:12335"), args_0.len, "self/check.nx:12335")];
+      nx_sl_u8 _t18 = args_0.ptr[nx_idx(nx_add_usize(i_2, ((size_t)1ULL), "self/check.nx:12338"), args_0.len, "self/check.nx:12338")];
       nx_string _t19 = nx_str_from(c, _t18);
       nx_string _t20 = _t19;
       nx_drop_string(c, &(target_5));
       target_5 = _t20;
       size_t* _t21 = &(i_2);
-      *_t21 = nx_add_usize((*_t21), ((size_t)1ULL), "self/check.nx:12335");
+      *_t21 = nx_add_usize((*_t21), ((size_t)1ULL), "self/check.nx:12338");
     }
     size_t* _t22 = &(i_2);
-    *_t22 = nx_add_usize((*_t22), ((size_t)1ULL), "self/check.nx:12336");
+    *_t22 = nx_add_usize((*_t22), ((size_t)1ULL), "self/check.nx:12339");
     nx_cont_1: ;
   }
   nx_brk_1: ;
@@ -19102,7 +19102,7 @@ static nx_eu_void nx_m2_main(nx_ctx* c) {
   nx_list_string cc_7 = ((nx_list_string){NULL, 0, 0, c->arena});
   if (((((cc_text_4).len)) > (((size_t)0ULL))))
   {
-    nx_slice_check(0, cc_text_4.len, cc_text_4.len, "self/check.nx:12341");
+    nx_slice_check(0, cc_text_4.len, cc_text_4.len, "self/check.nx:12344");
     nx_sl_u8 _t27 = ((nx_sl_u8){ nx_padd(cc_text_4.ptr, 0), cc_text_4.len - 0 });
     nx_list_sl_u8 _t28 = {0}; _t28.ar = c->arena;
     { size_t _s = 0; for (;;) { nx_sl_u8 _rest = { nx_padd(_t27.ptr, _s), _t27.len - _s }; size_t _i; bool _f = nx_lit(nx_str_348, 1).len && nx_sl_find(_rest, nx_lit(nx_str_348, 1), &_i); nx_sl_u8 _piece = { _rest.ptr, _f ? _i : _rest.len };
@@ -19158,7 +19158,7 @@ static nx_eu_void nx_m2_main(nx_ctx* c) {
       _t48->ptr[_t48->len++] = _t47;
     }
   }
-  nx_sl_u8 _t49 = args_0.ptr[nx_idx(((size_t)1ULL), args_0.len, "self/check.nx:12349")];
+  nx_sl_u8 _t49 = args_0.ptr[nx_idx(((size_t)1ULL), args_0.len, "self/check.nx:12352")];
   nx_eu_list_m2_Mod _t50 = nx_m2_load(c, _t49, std_dir_1);
   nx_eu_list_m2_Mod _t51 = _t50;
   if (_t51.err) {
@@ -85553,81 +85553,83 @@ static size_t nx_Checker_widen_size_expr_742(nx_ctx* c, nx_m2_Checker* self_0, s
   nx_m4_NodeKind k_4 = ((*n_3)).k_0;
   size_t start_5 = ((*n_3)).start_1;
   size_t end_6 = ((*n_3)).end_2;
+  size_t nx_7 = ((*n_3)).x_11;
+  size_t ny_8 = ((*n_3)).y_12;
   if (nx_eq_m4_NodeKind(&(k_4), &(((nx_m4_NodeKind){ .tag = 45 }))))
   {
     nx_m4_NodeKind _t2 = ((nx_m4_NodeKind){ .tag = 19 });
     nx_m4_Node _t3 = nx_Checker_blank_node_743(c, self_0, _t2, start_5, end_6);
-    nx_m4_Node tn_7 = _t3;
+    nx_m4_Node tn_9 = _t3;
     nx_string _t4 = nx_str_from(c, nx_lit(nx_str_52, 5));
     nx_string _t5 = _t4;
-    nx_list_string* _t6 = &(tn_7.words_14);
+    nx_list_string* _t6 = &(tn_9.words_14);
     if (_t6->len == _t6->cap) nx_list_grow(c, (nx_rawlist*)_t6, sizeof(nx_string), _Alignof(nx_string), _t6->len + 1);
     _t6->ptr[_t6->len++] = _t5;
-    nx_m4_Tree* _t7 = &((*self_0).mods_0.ptr[nx_idx(m_1, (*self_0).mods_0.len, "self/check.nx:11627")].parsed_4.tree_0);
-    nx_m4_Node _t8 = tn_7; memset(&tn_7, 0, sizeof tn_7);
+    nx_m4_Tree* _t7 = &((*self_0).mods_0.ptr[nx_idx(m_1, (*self_0).mods_0.len, "self/check.nx:11630")].parsed_4.tree_0);
+    nx_m4_Node _t8 = tn_9; memset(&tn_9, 0, sizeof tn_9);
     size_t _t9 = nx_Tree_add_767(c, _t7, _t8);
-    size_t tid_8 = _t9;
+    size_t tid_10 = _t9;
     nx_m4_NodeKind _t10 = ((nx_m4_NodeKind){ .tag = 71 });
     nx_m4_Node _t11 = nx_Checker_blank_node_743(c, self_0, _t10, start_5, end_6);
-    nx_m4_Node c_9 = _t11;
-    c_9.x_11 = e_2;
-    c_9.y_12 = tid_8;
-    nx_m4_Tree* _t12 = &((*self_0).mods_0.ptr[nx_idx(m_1, (*self_0).mods_0.len, "self/check.nx:11631")].parsed_4.tree_0);
-    nx_m4_Node _t13 = c_9; memset(&c_9, 0, sizeof c_9);
+    nx_m4_Node c_11 = _t11;
+    c_11.x_11 = e_2;
+    c_11.y_12 = tid_10;
+    nx_m4_Tree* _t12 = &((*self_0).mods_0.ptr[nx_idx(m_1, (*self_0).mods_0.len, "self/check.nx:11634")].parsed_4.tree_0);
+    nx_m4_Node _t13 = c_11; memset(&c_11, 0, sizeof c_11);
     size_t _t14 = nx_Tree_add_767(c, _t12, _t13);
     size_t _t15 = _t14;
-    nx_drop_m4_Node(c, &c_9);
-    nx_drop_m4_Node(c, &tn_7);
+    nx_drop_m4_Node(c, &c_11);
+    nx_drop_m4_Node(c, &tn_9);
     return _t15;
-    nx_drop_m4_Node(c, &c_9);
-    nx_drop_m4_Node(c, &tn_7);
+    nx_drop_m4_Node(c, &c_11);
+    nx_drop_m4_Node(c, &tn_9);
   }
   if (nx_eq_m4_NodeKind(&(k_4), &(((nx_m4_NodeKind){ .tag = 53 }))))
   {
-    size_t _t16 = nx_Checker_widen_size_expr_742(c, self_0, m_1, ((*n_3)).x_11);
-    size_t lhs_10 = _t16;
-    size_t _t17 = nx_Checker_widen_size_expr_742(c, self_0, m_1, ((*n_3)).y_12);
-    size_t rhs_11 = _t17;
+    size_t _t16 = nx_Checker_widen_size_expr_742(c, self_0, m_1, nx_7);
+    size_t lhs_12 = _t16;
+    size_t _t17 = nx_Checker_widen_size_expr_742(c, self_0, m_1, ny_8);
+    size_t rhs_13 = _t17;
     nx_m4_NodeKind _t18 = ((nx_m4_NodeKind){ .tag = 53 });
     nx_m4_Node _t19 = nx_Checker_blank_node_743(c, self_0, _t18, start_5, end_6);
-    nx_m4_Node b_12 = _t19;
+    nx_m4_Node b_14 = _t19;
     nx_m4_Node* _t20 = nx_Checker_node_486(c, self_0, m_1, e_2);
     nx_m4_Node* _t21 = _t20;
     nx_string _t22 = ((*_t21)).name_3;
     nx_string _t23 = nx_clone_string(c, &_t22);
-    nx_drop_string(c, &(b_12.name_3));
-    b_12.name_3 = _t23;
-    b_12.x_11 = lhs_10;
-    b_12.y_12 = rhs_11;
-    nx_m4_Tree* _t24 = &((*self_0).mods_0.ptr[nx_idx(m_1, (*self_0).mods_0.len, "self/check.nx:11640")].parsed_4.tree_0);
-    nx_m4_Node _t25 = b_12; memset(&b_12, 0, sizeof b_12);
+    nx_drop_string(c, &(b_14.name_3));
+    b_14.name_3 = _t23;
+    b_14.x_11 = lhs_12;
+    b_14.y_12 = rhs_13;
+    nx_m4_Tree* _t24 = &((*self_0).mods_0.ptr[nx_idx(m_1, (*self_0).mods_0.len, "self/check.nx:11643")].parsed_4.tree_0);
+    nx_m4_Node _t25 = b_14; memset(&b_14, 0, sizeof b_14);
     size_t _t26 = nx_Tree_add_767(c, _t24, _t25);
     size_t _t27 = _t26;
-    nx_drop_m4_Node(c, &b_12);
+    nx_drop_m4_Node(c, &b_14);
     return _t27;
-    nx_drop_m4_Node(c, &b_12);
+    nx_drop_m4_Node(c, &b_14);
   }
   if (nx_eq_m4_NodeKind(&(k_4), &(((nx_m4_NodeKind){ .tag = 52 }))))
   {
-    size_t _t28 = nx_Checker_widen_size_expr_742(c, self_0, m_1, ((*n_3)).x_11);
-    size_t inner_13 = _t28;
+    size_t _t28 = nx_Checker_widen_size_expr_742(c, self_0, m_1, nx_7);
+    size_t inner_15 = _t28;
     nx_m4_NodeKind _t29 = ((nx_m4_NodeKind){ .tag = 52 });
     nx_m4_Node _t30 = nx_Checker_blank_node_743(c, self_0, _t29, start_5, end_6);
-    nx_m4_Node u_14 = _t30;
+    nx_m4_Node u_16 = _t30;
     nx_m4_Node* _t31 = nx_Checker_node_486(c, self_0, m_1, e_2);
     nx_m4_Node* _t32 = _t31;
     nx_string _t33 = ((*_t32)).name_3;
     nx_string _t34 = nx_clone_string(c, &_t33);
-    nx_drop_string(c, &(u_14.name_3));
-    u_14.name_3 = _t34;
-    u_14.x_11 = inner_13;
-    nx_m4_Tree* _t35 = &((*self_0).mods_0.ptr[nx_idx(m_1, (*self_0).mods_0.len, "self/check.nx:11647")].parsed_4.tree_0);
-    nx_m4_Node _t36 = u_14; memset(&u_14, 0, sizeof u_14);
+    nx_drop_string(c, &(u_16.name_3));
+    u_16.name_3 = _t34;
+    u_16.x_11 = inner_15;
+    nx_m4_Tree* _t35 = &((*self_0).mods_0.ptr[nx_idx(m_1, (*self_0).mods_0.len, "self/check.nx:11650")].parsed_4.tree_0);
+    nx_m4_Node _t36 = u_16; memset(&u_16, 0, sizeof u_16);
     size_t _t37 = nx_Tree_add_767(c, _t35, _t36);
     size_t _t38 = _t37;
-    nx_drop_m4_Node(c, &u_14);
+    nx_drop_m4_Node(c, &u_16);
     return _t38;
-    nx_drop_m4_Node(c, &u_14);
+    nx_drop_m4_Node(c, &u_16);
   }
   size_t _t39 = e_2;
   return _t39;
@@ -85688,7 +85690,7 @@ static nx_string nx_Checker_seg_size_744(nx_ctx* c, nx_m2_Checker* self_0, size_
         nx_string _t12 = _t11;
         return _t12;
       }
-      (*bits_4) = ((uint64_t)nx_cast_check((nx_i128)(v_7), ((nx_i128)0LL), ((nx_i128)(((nx_u128)0ULL << 64) | (nx_u128)18446744073709551615ULL)), "self/check.nx:11675"));
+      (*bits_4) = ((uint64_t)nx_cast_check((nx_i128)(v_7), ((nx_i128)0LL), ((nx_i128)(((nx_u128)0ULL << 64) | (nx_u128)18446744073709551615ULL)), "self/check.nx:11678"));
       nx_string _t13 = {0}; _t13.ar = c->arena;
       nx_sink _t14 = nx_sink_str(c, &_t13);
       nx_w(&_t14, (const uint8_t*)nx_str_2456, 5);
@@ -85793,19 +85795,19 @@ static size_t nx_Checker_seg_node_746(nx_ctx* c, nx_m2_Checker* self_0, size_t t
   nx_w(&_t4, (const uint8_t*)nx_str_2465, 6);
   nx_w_bool(&_t4, utf8_9);
   nx_string _t5 = _t3;
-  nx_drop_string(c, &((*self_0).tir_20.nodes_0.ptr[nx_idx(r_12, (*self_0).tir_20.nodes_0.len, "self/check.nx:11697")].name_11));
-  (*self_0).tir_20.nodes_0.ptr[nx_idx(r_12, (*self_0).tir_20.nodes_0.len, "self/check.nx:11697")].name_11 = _t5;
+  nx_drop_string(c, &((*self_0).tir_20.nodes_0.ptr[nx_idx(r_12, (*self_0).tir_20.nodes_0.len, "self/check.nx:11700")].name_11));
+  (*self_0).tir_20.nodes_0.ptr[nx_idx(r_12, (*self_0).tir_20.nodes_0.len, "self/check.nx:11700")].name_11 = _t5;
   if (((value_10) != (((size_t)18446744073709551615ULL))))
   {
     size_t _t6 = value_10;
-    nx_list_usize* _t7 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(r_12, (*self_0).tir_20.nodes_0.len, "self/check.nx:11698")].kids_9);
+    nx_list_usize* _t7 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(r_12, (*self_0).tir_20.nodes_0.len, "self/check.nx:11701")].kids_9);
     if (_t7->len == _t7->cap) nx_list_grow(c, (nx_rawlist*)_t7, sizeof(size_t), _Alignof(size_t), _t7->len + 1);
     _t7->ptr[_t7->len++] = _t6;
   }
   if (((size_expr_11) != (((size_t)18446744073709551615ULL))))
   {
     size_t _t8 = size_expr_11;
-    nx_list_usize* _t9 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(r_12, (*self_0).tir_20.nodes_0.len, "self/check.nx:11699")].kids_9);
+    nx_list_usize* _t9 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(r_12, (*self_0).tir_20.nodes_0.len, "self/check.nx:11702")].kids_9);
     if (_t9->len == _t9->cap) nx_list_grow(c, (nx_rawlist*)_t9, sizeof(size_t), _Alignof(size_t), _t9->len + 1);
     _t9->ptr[_t9->len++] = _t8;
   }
@@ -85850,11 +85852,11 @@ static size_t nx_Checker_check_bin_pattern_747(nx_ctx* c, nx_m2_Checker* self_0,
     nx_sl_u8 _t13 = nx_str_slice(text_16);
     if (nx_sl_eq(_t13, nx_lit(nx_str_2383, 4)))
     {
-      if (((i_10) != (nx_sub_usize(((segs_4).len), ((size_t)1ULL), "self/check.nx:11724"))))
+      if (((i_10) != (nx_sub_usize(((segs_4).len), ((size_t)1ULL), "self/check.nx:11727"))))
       {
         nx_Checker_fail_here_527(c, self_0, sstart_19, nx_lit(nx_str_2466, 57));
       }
-      nx_slice_check(0, name_17.len, name_17.len, "self/check.nx:11725");
+      nx_slice_check(0, name_17.len, name_17.len, "self/check.nx:11728");
       nx_sl_u8 _t14 = ((nx_sl_u8){ nx_padd(name_17.ptr, 0), name_17.len - 0 });
       size_t _t15 = nx_Checker_declare_local_522(c, self_0, _t14, bytes_t_7, false, sstart_19, send_20);
       size_t l_22 = _t15;
@@ -85863,16 +85865,16 @@ static size_t nx_Checker_check_bin_pattern_747(nx_ctx* c, nx_m2_Checker* self_0,
       nx_w(&_t17, (const uint8_t*)nx_str_2467, 5);
       nx_w_int(&_t17, (nx_i128)(l_22), 10, 0, false);
       nx_string _t18 = _t16;
-      nx_slice_check(0, _t18.len, _t18.len, "self/check.nx:11726");
+      nx_slice_check(0, _t18.len, _t18.len, "self/check.nx:11729");
       nx_sl_u8 _t19 = ((nx_sl_u8){ nx_padd(_t18.ptr, 0), _t18.len - 0 });
-      nx_slice_check(0, endian_14.len, endian_14.len, "self/check.nx:11726");
+      nx_slice_check(0, endian_14.len, endian_14.len, "self/check.nx:11729");
       nx_sl_u8 _t20 = ((nx_sl_u8){ nx_padd(endian_14.ptr, 0), endian_14.len - 0 });
       size_t _t21 = ((size_t)18446744073709551615ULL);
       size_t _t22 = ((size_t)18446744073709551615ULL);
       size_t _t23 = nx_Checker_seg_node_746(c, self_0, bytes_t_7, sstart_19, send_20, _t19, nx_lit(nx_str_2383, 4), _t20, signed_11, float_12, utf8_13, _t21, _t22);
       size_t r_23 = _t23;
       size_t _t24 = r_23;
-      nx_list_usize* _t25 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(p_8, (*self_0).tir_20.nodes_0.len, "self/check.nx:11727")].kids_9);
+      nx_list_usize* _t25 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(p_8, (*self_0).tir_20.nodes_0.len, "self/check.nx:11730")].kids_9);
       if (_t25->len == _t25->cap) nx_list_grow(c, (nx_rawlist*)_t25, sizeof(size_t), _Alignof(size_t), _t25->len + 1);
       _t25->ptr[_t25->len++] = _t24;
       nx_drop_string(c, &_t18);
@@ -85937,7 +85939,7 @@ static size_t nx_Checker_check_bin_pattern_747(nx_ctx* c, nx_m2_Checker* self_0,
           }
           if (_t40)
           {
-            if (((nx_rem_u64(bits_25, ((uint64_t)8ULL), "self/check.nx:11745")) != (((uint64_t)0ULL))))
+            if (((nx_rem_u64(bits_25, ((uint64_t)8ULL), "self/check.nx:11748")) != (((uint64_t)0ULL))))
             {
               nx_Checker_fail_here_527(c, self_0, sstart_19, nx_lit(nx_str_2469, 60));
             }
@@ -85950,7 +85952,7 @@ static size_t nx_Checker_check_bin_pattern_747(nx_ctx* c, nx_m2_Checker* self_0,
           }
         }
       }
-      nx_slice_check(0, name_17.len, name_17.len, "self/check.nx:11751");
+      nx_slice_check(0, name_17.len, name_17.len, "self/check.nx:11754");
       nx_sl_u8 _t42 = ((nx_sl_u8){ nx_padd(name_17.ptr, 0), name_17.len - 0 });
       size_t _t43 = nx_Checker_declare_local_522(c, self_0, _t42, ty_28, false, sstart_19, send_20);
       size_t l_29 = _t43;
@@ -85959,17 +85961,17 @@ static size_t nx_Checker_check_bin_pattern_747(nx_ctx* c, nx_m2_Checker* self_0,
       nx_w(&_t45, (const uint8_t*)nx_str_2470, 5);
       nx_w_int(&_t45, (nx_i128)(l_29), 10, 0, false);
       nx_string _t46 = _t44;
-      nx_slice_check(0, _t46.len, _t46.len, "self/check.nx:11752");
+      nx_slice_check(0, _t46.len, _t46.len, "self/check.nx:11755");
       nx_sl_u8 _t47 = ((nx_sl_u8){ nx_padd(_t46.ptr, 0), _t46.len - 0 });
-      nx_slice_check(0, size_27.len, size_27.len, "self/check.nx:11752");
+      nx_slice_check(0, size_27.len, size_27.len, "self/check.nx:11755");
       nx_sl_u8 _t48 = ((nx_sl_u8){ nx_padd(size_27.ptr, 0), size_27.len - 0 });
-      nx_slice_check(0, endian_14.len, endian_14.len, "self/check.nx:11752");
+      nx_slice_check(0, endian_14.len, endian_14.len, "self/check.nx:11755");
       nx_sl_u8 _t49 = ((nx_sl_u8){ nx_padd(endian_14.ptr, 0), endian_14.len - 0 });
       size_t _t50 = ((size_t)18446744073709551615ULL);
       size_t _t51 = nx_Checker_seg_node_746(c, self_0, ty_28, sstart_19, send_20, _t47, _t48, _t49, signed_11, float_12, utf8_13, _t50, size_expr_26);
       size_t r_30 = _t51;
       size_t _t52 = r_30;
-      nx_list_usize* _t53 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(p_8, (*self_0).tir_20.nodes_0.len, "self/check.nx:11753")].kids_9);
+      nx_list_usize* _t53 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(p_8, (*self_0).tir_20.nodes_0.len, "self/check.nx:11756")].kids_9);
       if (_t53->len == _t53->cap) nx_list_grow(c, (nx_rawlist*)_t53, sizeof(size_t), _Alignof(size_t), _t53->len + 1);
       _t53->ptr[_t53->len++] = _t52;
       nx_drop_string(c, &_t46);
@@ -86003,18 +86005,18 @@ static size_t nx_Checker_check_bin_pattern_747(nx_ctx* c, nx_m2_Checker* self_0,
       nx_string _t61 = {0}; _t61.ar = c->arena;
       nx_sink _t62 = nx_sink_str(c, &_t61);
       nx_w(&_t62, (const uint8_t*)nx_str_2456, 5);
-      size_t _t63 = nx_mul_usize(blen_32, ((size_t)8ULL), "self/check.nx:11762");
+      size_t _t63 = nx_mul_usize(blen_32, ((size_t)8ULL), "self/check.nx:11765");
       nx_w_int(&_t62, (nx_i128)(_t63), 10, 0, false);
       nx_string _t64 = _t61;
-      nx_slice_check(0, _t64.len, _t64.len, "self/check.nx:11762");
+      nx_slice_check(0, _t64.len, _t64.len, "self/check.nx:11765");
       nx_sl_u8 _t65 = ((nx_sl_u8){ nx_padd(_t64.ptr, 0), _t64.len - 0 });
-      nx_slice_check(0, endian_14.len, endian_14.len, "self/check.nx:11762");
+      nx_slice_check(0, endian_14.len, endian_14.len, "self/check.nx:11765");
       nx_sl_u8 _t66 = ((nx_sl_u8){ nx_padd(endian_14.ptr, 0), endian_14.len - 0 });
       size_t _t67 = ((size_t)18446744073709551615ULL);
       size_t _t68 = nx_Checker_seg_node_746(c, self_0, bytes_t_7, sstart_19, send_20, nx_lit(nx_str_1013, 5), _t65, _t66, signed_11, float_12, utf8_13, te_33, _t67);
       size_t r_34 = _t68;
       size_t _t69 = r_34;
-      nx_list_usize* _t70 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(p_8, (*self_0).tir_20.nodes_0.len, "self/check.nx:11763")].kids_9);
+      nx_list_usize* _t70 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(p_8, (*self_0).tir_20.nodes_0.len, "self/check.nx:11766")].kids_9);
       if (_t70->len == _t70->cap) nx_list_grow(c, (nx_rawlist*)_t70, sizeof(size_t), _Alignof(size_t), _t70->len + 1);
       _t70->ptr[_t70->len++] = _t69;
       nx_drop_string(c, &_t64);
@@ -86075,7 +86077,7 @@ static size_t nx_Checker_check_bin_pattern_747(nx_ctx* c, nx_m2_Checker* self_0,
     size_t te_39 = _t87;
     size_t _t88 = nx_Checker_coerce_or_error_585(c, self_0, te_39, ty_38, nx_lit(nx_str_2473, 22));
     te_39 = _t88;
-    bool _t89 = nx_eq_m2_TKind(&(((*self_0).tir_20.nodes_0.ptr[nx_idx(te_39, (*self_0).tir_20.nodes_0.len, "self/check.nx:11780")]).k_0), &(((nx_m2_TKind){ .tag = 15 })));
+    bool _t89 = nx_eq_m2_TKind(&(((*self_0).tir_20.nodes_0.ptr[nx_idx(te_39, (*self_0).tir_20.nodes_0.len, "self/check.nx:11783")]).k_0), &(((nx_m2_TKind){ .tag = 15 })));
     if (_t89) {
       _t89 = ((size_expr_36) == (((size_t)18446744073709551615ULL)));
     }
@@ -86089,7 +86091,7 @@ static size_t nx_Checker_check_bin_pattern_747(nx_ctx* c, nx_m2_Checker* self_0,
     }
     if (_t91)
     {
-      __int128 v_40 = ((*self_0).tir_20.nodes_0.ptr[nx_idx(te_39, (*self_0).tir_20.nodes_0.len, "self/check.nx:11781")]).ival_13;
+      __int128 v_40 = ((*self_0).tir_20.nodes_0.ptr[nx_idx(te_39, (*self_0).tir_20.nodes_0.len, "self/check.nx:11784")]).ival_13;
       bool _t92 = ((v_40) < (((nx_i128)0LL)));
       if (!_t92) {
         _t92 = ((v_40) >= (((((nx_i128)1LL)) << (((uint32_t)(bits_35))))));
@@ -86104,20 +86106,20 @@ static size_t nx_Checker_check_bin_pattern_747(nx_ctx* c, nx_m2_Checker* self_0,
         nx_w_int(&_t94, (nx_i128)(bits_35), 10, 0, false);
         nx_w(&_t94, (const uint8_t*)nx_str_2475, 5);
         nx_string _t95 = _t93;
-        nx_slice_check(0, _t95.len, _t95.len, "self/check.nx:11783");
+        nx_slice_check(0, _t95.len, _t95.len, "self/check.nx:11786");
         nx_sl_u8 _t96 = ((nx_sl_u8){ nx_padd(_t95.ptr, 0), _t95.len - 0 });
         nx_Checker_fail_here_527(c, self_0, sstart_19, _t96);
         nx_drop_string(c, &_t95);
       }
     }
-    nx_slice_check(0, size_37.len, size_37.len, "self/check.nx:11786");
+    nx_slice_check(0, size_37.len, size_37.len, "self/check.nx:11789");
     nx_sl_u8 _t97 = ((nx_sl_u8){ nx_padd(size_37.ptr, 0), size_37.len - 0 });
-    nx_slice_check(0, endian_14.len, endian_14.len, "self/check.nx:11786");
+    nx_slice_check(0, endian_14.len, endian_14.len, "self/check.nx:11789");
     nx_sl_u8 _t98 = ((nx_sl_u8){ nx_padd(endian_14.ptr, 0), endian_14.len - 0 });
     size_t _t99 = nx_Checker_seg_node_746(c, self_0, ty_38, sstart_19, send_20, nx_lit(nx_str_1013, 5), _t97, _t98, signed_11, float_12, utf8_13, te_39, size_expr_36);
     size_t r_41 = _t99;
     size_t _t100 = r_41;
-    nx_list_usize* _t101 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(p_8, (*self_0).tir_20.nodes_0.len, "self/check.nx:11787")].kids_9);
+    nx_list_usize* _t101 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(p_8, (*self_0).tir_20.nodes_0.len, "self/check.nx:11790")].kids_9);
     if (_t101->len == _t101->cap) nx_list_grow(c, (nx_rawlist*)_t101, sizeof(size_t), _Alignof(size_t), _t101->len + 1);
     _t101->ptr[_t101->len++] = _t100;
     nx_drop_string(c, &size_37);
@@ -86184,7 +86186,7 @@ static size_t nx_Checker_check_bin_construct_748(nx_ctx* c, nx_m2_Checker* self_
       nx_string _t22 = nx_clone_string(c, &((*sn_18)).name_3);
       nx_drop_string(c, &(id_23.name_3));
       id_23.name_3 = _t22;
-      nx_m4_Tree* _t23 = &((*self_0).mods_0.ptr[nx_idx(m_2, (*self_0).mods_0.len, "self/check.nx:11819")].parsed_4.tree_0);
+      nx_m4_Tree* _t23 = &((*self_0).mods_0.ptr[nx_idx(m_2, (*self_0).mods_0.len, "self/check.nx:11822")].parsed_4.tree_0);
       nx_m4_Node _t24 = id_23; memset(&id_23, 0, sizeof id_23);
       size_t _t25 = nx_Tree_add_767(c, _t23, _t24);
       value_node_22 = _t25;
@@ -86213,7 +86215,7 @@ static size_t nx_Checker_check_bin_construct_748(nx_ctx* c, nx_m2_Checker* self_
       size_t te_26 = _t34;
       size_t _t35 = nx_Checker_coerce_or_error_585(c, self_0, te_26, bytes_t_8, nx_lit(nx_str_2477, 12));
       te_26 = _t35;
-      nx_slice_check(0, endian_17.len, endian_17.len, "self/check.nx:11826");
+      nx_slice_check(0, endian_17.len, endian_17.len, "self/check.nx:11829");
       nx_sl_u8 _t36 = ((nx_sl_u8){ nx_padd(endian_17.ptr, 0), endian_17.len - 0 });
       size_t _t37 = ((size_t)18446744073709551615ULL);
       size_t _t38 = nx_Checker_seg_node_746(c, self_0, bytes_t_8, sstart_20, send_21, nx_lit(nx_str_1013, 5), nx_lit(nx_str_2383, 4), _t36, signed_14, float_15, utf8_16, te_26, _t37);
@@ -86244,12 +86246,12 @@ static size_t nx_Checker_check_bin_construct_748(nx_ctx* c, nx_m2_Checker* self_
       nx_string _t48 = {0}; _t48.ar = c->arena;
       nx_sink _t49 = nx_sink_str(c, &_t48);
       nx_w(&_t49, (const uint8_t*)nx_str_2456, 5);
-      size_t _t50 = nx_mul_usize(blen_28, ((size_t)8ULL), "self/check.nx:11833");
+      size_t _t50 = nx_mul_usize(blen_28, ((size_t)8ULL), "self/check.nx:11836");
       nx_w_int(&_t49, (nx_i128)(_t50), 10, 0, false);
       nx_string _t51 = _t48;
-      nx_slice_check(0, _t51.len, _t51.len, "self/check.nx:11833");
+      nx_slice_check(0, _t51.len, _t51.len, "self/check.nx:11836");
       nx_sl_u8 _t52 = ((nx_sl_u8){ nx_padd(_t51.ptr, 0), _t51.len - 0 });
-      nx_slice_check(0, endian_17.len, endian_17.len, "self/check.nx:11833");
+      nx_slice_check(0, endian_17.len, endian_17.len, "self/check.nx:11836");
       nx_sl_u8 _t53 = ((nx_sl_u8){ nx_padd(endian_17.ptr, 0), endian_17.len - 0 });
       size_t _t54 = ((size_t)18446744073709551615ULL);
       size_t _t55 = nx_Checker_seg_node_746(c, self_0, bytes_t_8, sstart_20, send_21, nx_lit(nx_str_1013, 5), _t52, _t53, signed_14, float_15, utf8_16, te_29, _t54);
@@ -86281,7 +86283,7 @@ static size_t nx_Checker_check_bin_construct_748(nx_ctx* c, nx_m2_Checker* self_
     size_t _t63 = nx_Checker_check_expr_592(c, self_0, value_node_22, _t62);
     size_t te_34 = _t63;
     nx_m2_Types* _t64 = &((*self_0).tys_1);
-    size_t _t65 = ((*self_0).tir_20.nodes_0.ptr[nx_idx(te_34, (*self_0).tir_20.nodes_0.len, "self/check.nx:11841")]).ty_1;
+    size_t _t65 = ((*self_0).tir_20.nodes_0.ptr[nx_idx(te_34, (*self_0).tir_20.nodes_0.len, "self/check.nx:11844")]).ty_1;
     size_t _t66 = nx_Types_resolve_478(c, _t64, _t65, true);
     size_t vt_35 = _t66;
     nx_m2_Types* _t67 = &((*self_0).tys_1);
@@ -86302,7 +86304,7 @@ static size_t nx_Checker_check_bin_construct_748(nx_ctx* c, nx_m2_Checker* self_
     {
       bool _t71 = nx_eq_m2_TK(&(vk_36), &(((nx_m2_TK){ .tag = 1 })));
       if (_t71) {
-        nx_string _t72 = ((*self_0).tys_1.list_0.ptr[nx_idx(vt_35, (*self_0).tys_1.list_0.len, "self/check.nx:11844")]).name_1;
+        nx_string _t72 = ((*self_0).tys_1.list_0.ptr[nx_idx(vt_35, (*self_0).tys_1.list_0.len, "self/check.nx:11847")]).name_1;
         nx_sl_u8 _t73 = nx_str_slice(_t72);
         _t71 = nx_sl_eq(_t73, nx_lit(nx_str_232, 3));
       }
@@ -86336,7 +86338,7 @@ static size_t nx_Checker_check_bin_construct_748(nx_ctx* c, nx_m2_Checker* self_
           if (_t76) {
             nx_m2_Types* _t77 = &((*self_0).tys_1);
             nx_m2_Types* _t78 = &((*self_0).tys_1);
-            size_t _t79 = (*self_0).tys_1.list_0.ptr[nx_idx(vt_35, (*self_0).tys_1.list_0.len, "self/check.nx:11848")].args_5.ptr[nx_idx(((size_t)0ULL), (*self_0).tys_1.list_0.ptr[nx_idx(vt_35, (*self_0).tys_1.list_0.len, "self/check.nx:11848")].args_5.len, "self/check.nx:11848")];
+            size_t _t79 = (*self_0).tys_1.list_0.ptr[nx_idx(vt_35, (*self_0).tys_1.list_0.len, "self/check.nx:11851")].args_5.ptr[nx_idx(((size_t)0ULL), (*self_0).tys_1.list_0.ptr[nx_idx(vt_35, (*self_0).tys_1.list_0.len, "self/check.nx:11851")].args_5.len, "self/check.nx:11851")];
             size_t _t80 = nx_Types_shallow_473(c, _t78, _t79);
             size_t _t81 = _t80;
             nx_m2_TK _t82 = nx_Types_kind_471(c, _t77, _t81);
@@ -86345,17 +86347,17 @@ static size_t nx_Checker_check_bin_construct_748(nx_ctx* c, nx_m2_Checker* self_
           bool _t83 = _t76;
           if (_t83) {
             nx_m2_Types* _t84 = &((*self_0).tys_1);
-            size_t _t85 = (*self_0).tys_1.list_0.ptr[nx_idx(vt_35, (*self_0).tys_1.list_0.len, "self/check.nx:11848")].args_5.ptr[nx_idx(((size_t)0ULL), (*self_0).tys_1.list_0.ptr[nx_idx(vt_35, (*self_0).tys_1.list_0.len, "self/check.nx:11848")].args_5.len, "self/check.nx:11848")];
+            size_t _t85 = (*self_0).tys_1.list_0.ptr[nx_idx(vt_35, (*self_0).tys_1.list_0.len, "self/check.nx:11851")].args_5.ptr[nx_idx(((size_t)0ULL), (*self_0).tys_1.list_0.ptr[nx_idx(vt_35, (*self_0).tys_1.list_0.len, "self/check.nx:11851")].args_5.len, "self/check.nx:11851")];
             size_t _t86 = nx_Types_shallow_473(c, _t84, _t85);
-            nx_string _t87 = ((*self_0).tys_1.list_0.ptr[nx_idx(_t86, (*self_0).tys_1.list_0.len, "self/check.nx:11848")]).name_1;
+            nx_string _t87 = ((*self_0).tys_1.list_0.ptr[nx_idx(_t86, (*self_0).tys_1.list_0.len, "self/check.nx:11851")]).name_1;
             nx_sl_u8 _t88 = nx_str_slice(_t87);
             _t83 = nx_sl_eq(_t88, nx_lit(nx_str_47, 2));
           }
           if (_t83)
           {
-            nx_slice_check(0, size_33.len, size_33.len, "self/check.nx:11849");
+            nx_slice_check(0, size_33.len, size_33.len, "self/check.nx:11852");
             nx_sl_u8 _t89 = ((nx_sl_u8){ nx_padd(size_33.ptr, 0), size_33.len - 0 });
-            nx_slice_check(0, endian_17.len, endian_17.len, "self/check.nx:11849");
+            nx_slice_check(0, endian_17.len, endian_17.len, "self/check.nx:11852");
             nx_sl_u8 _t90 = ((nx_sl_u8){ nx_padd(endian_17.ptr, 0), endian_17.len - 0 });
             size_t _t91 = nx_Checker_seg_node_746(c, self_0, bytes_t_8, sstart_20, send_21, nx_lit(nx_str_1013, 5), _t89, _t90, signed_14, float_15, utf8_16, te_34, size_expr_32);
             size_t _t92 = _t91;
@@ -86379,9 +86381,9 @@ static size_t nx_Checker_check_bin_construct_748(nx_ctx* c, nx_m2_Checker* self_
               nx_m2_T _t99 = w_37; memset(&w_37, 0, sizeof w_37);
               size_t _t100 = nx_Tir_add_480(c, _t98, _t99);
               size_t te2_38 = _t100;
-              nx_slice_check(0, size_33.len, size_33.len, "self/check.nx:11855");
+              nx_slice_check(0, size_33.len, size_33.len, "self/check.nx:11858");
               nx_sl_u8 _t101 = ((nx_sl_u8){ nx_padd(size_33.ptr, 0), size_33.len - 0 });
-              nx_slice_check(0, endian_17.len, endian_17.len, "self/check.nx:11855");
+              nx_slice_check(0, endian_17.len, endian_17.len, "self/check.nx:11858");
               nx_sl_u8 _t102 = ((nx_sl_u8){ nx_padd(endian_17.ptr, 0), endian_17.len - 0 });
               size_t _t103 = nx_Checker_seg_node_746(c, self_0, bytes_t_8, sstart_20, send_21, nx_lit(nx_str_1013, 5), _t101, _t102, signed_14, float_15, utf8_16, te2_38, size_expr_32);
               size_t _t104 = _t103;
@@ -86403,7 +86405,7 @@ static size_t nx_Checker_check_bin_construct_748(nx_ctx* c, nx_m2_Checker* self_
               nx_w_sl(&_t107, _t110);
               nx_w(&_t107, (const uint8_t*)nx_str_2481, 48);
               nx_string _t111 = _t106;
-              nx_slice_check(0, _t111.len, _t111.len, "self/check.nx:11858");
+              nx_slice_check(0, _t111.len, _t111.len, "self/check.nx:11861");
               nx_sl_u8 _t112 = ((nx_sl_u8){ nx_padd(_t111.ptr, 0), _t111.len - 0 });
               nx_Checker_fail_here_527(c, self_0, sstart_20, _t112);
               nx_drop_string(c, &_t111);
@@ -86413,9 +86415,9 @@ static size_t nx_Checker_check_bin_construct_748(nx_ctx* c, nx_m2_Checker* self_
         }
       }
     }
-    nx_slice_check(0, size_33.len, size_33.len, "self/check.nx:11860");
+    nx_slice_check(0, size_33.len, size_33.len, "self/check.nx:11863");
     nx_sl_u8 _t113 = ((nx_sl_u8){ nx_padd(size_33.ptr, 0), size_33.len - 0 });
-    nx_slice_check(0, endian_17.len, endian_17.len, "self/check.nx:11860");
+    nx_slice_check(0, endian_17.len, endian_17.len, "self/check.nx:11863");
     nx_sl_u8 _t114 = ((nx_sl_u8){ nx_padd(endian_17.ptr, 0), endian_17.len - 0 });
     size_t _t115 = nx_Checker_seg_node_746(c, self_0, vt_35, sstart_20, send_21, nx_lit(nx_str_1013, 5), _t113, _t114, signed_14, float_15, utf8_16, te_34, size_expr_32);
     size_t _t116 = _t115;
@@ -86439,14 +86441,14 @@ static size_t nx_Checker_check_bin_construct_748(nx_ctx* c, nx_m2_Checker* self_
   for (size_t _t123 = 0; _t123 < _t122.len; _t123++) {
     size_t o_41 = _t122.ptr[_t123];
     size_t _t124 = o_41;
-    nx_list_usize* _t125 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(r_40, (*self_0).tir_20.nodes_0.len, "self/check.nx:11864")].kids_9);
+    nx_list_usize* _t125 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(r_40, (*self_0).tir_20.nodes_0.len, "self/check.nx:11867")].kids_9);
     if (_t125->len == _t125->cap) nx_list_grow(c, (nx_rawlist*)_t125, sizeof(size_t), _Alignof(size_t), _t125->len + 1);
     _t125->ptr[_t125->len++] = _t124;
     nx_cont_2: ;
   }
   nx_brk_2: ;
   size_t _t126 = t_11;
-  nx_list_usize* _t127 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(r_40, (*self_0).tir_20.nodes_0.len, "self/check.nx:11865")].kids_9);
+  nx_list_usize* _t127 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(r_40, (*self_0).tir_20.nodes_0.len, "self/check.nx:11868")].kids_9);
   if (_t127->len == _t127->cap) nx_list_grow(c, (nx_rawlist*)_t127, sizeof(size_t), _Alignof(size_t), _t127->len + 1);
   _t127->ptr[_t127->len++] = _t126;
   size_t _t128 = r_40;
@@ -86479,7 +86481,7 @@ static size_t nx_Checker_check_at_builtin_749(nx_ctx* c, nx_m2_Checker* self_0, 
   }
   if (_t6)
   {
-    nx_slice_check(0, args_6.len, args_6.len, "self/check.nx:11881");
+    nx_slice_check(0, args_6.len, args_6.len, "self/check.nx:11884");
     nx_sl_usize _t8 = ((nx_sl_usize){ nx_padd(args_6.ptr, 0), args_6.len - 0 });
     nx_sl_u8 _t9 = nx_str_slice(name_5);
     nx_sl_u8 _t10;
@@ -86501,14 +86503,14 @@ static size_t nx_Checker_check_at_builtin_749(nx_ctx* c, nx_m2_Checker* self_0, 
       nx_drop_string(c, &name_5);
       return _t14;
     }
-    size_t _t15 = args_6.ptr[nx_idx(((size_t)0ULL), args_6.len, "self/check.nx:11882")];
+    size_t _t15 = args_6.ptr[nx_idx(((size_t)0ULL), args_6.len, "self/check.nx:11885")];
     size_t _t16 = ((size_t)18446744073709551615ULL);
     size_t _t17 = nx_Checker_check_expr_592(c, self_0, _t15, _t16);
     size_t te_10 = _t17;
-    size_t t_11 = ((*self_0).tir_20.nodes_0.ptr[nx_idx(te_10, (*self_0).tir_20.nodes_0.len, "self/check.nx:11883")]).ty_1;
-    if (nx_eq_m2_TKind(&(((*self_0).tir_20.nodes_0.ptr[nx_idx(te_10, (*self_0).tir_20.nodes_0.len, "self/check.nx:11884")]).k_0), &(((nx_m2_TKind){ .tag = 67 }))))
+    size_t t_11 = ((*self_0).tir_20.nodes_0.ptr[nx_idx(te_10, (*self_0).tir_20.nodes_0.len, "self/check.nx:11886")]).ty_1;
+    if (nx_eq_m2_TKind(&(((*self_0).tir_20.nodes_0.ptr[nx_idx(te_10, (*self_0).tir_20.nodes_0.len, "self/check.nx:11887")]).k_0), &(((nx_m2_TKind){ .tag = 67 }))))
     {
-      t_11 = ((*self_0).tir_20.nodes_0.ptr[nx_idx(te_10, (*self_0).tir_20.nodes_0.len, "self/check.nx:11884")]).a_4;
+      t_11 = ((*self_0).tir_20.nodes_0.ptr[nx_idx(te_10, (*self_0).tir_20.nodes_0.len, "self/check.nx:11887")]).a_4;
     }
     nx_m2_Types* _t18 = &((*self_0).tys_1);
     size_t _t19 = nx_Types_resolve_478(c, _t18, t_11, true);
@@ -86521,8 +86523,8 @@ static size_t nx_Checker_check_at_builtin_749(nx_ctx* c, nx_m2_Checker* self_0, 
       size_t r_12 = _t22;
       nx_string _t23 = nx_Checker_ty_name_508(c, self_0, t_11);
       nx_string _t24 = _t23;
-      nx_drop_string(c, &((*self_0).tir_20.nodes_0.ptr[nx_idx(r_12, (*self_0).tir_20.nodes_0.len, "self/check.nx:11888")].text_12));
-      (*self_0).tir_20.nodes_0.ptr[nx_idx(r_12, (*self_0).tir_20.nodes_0.len, "self/check.nx:11888")].text_12 = _t24;
+      nx_drop_string(c, &((*self_0).tir_20.nodes_0.ptr[nx_idx(r_12, (*self_0).tir_20.nodes_0.len, "self/check.nx:11891")].text_12));
+      (*self_0).tir_20.nodes_0.ptr[nx_idx(r_12, (*self_0).tir_20.nodes_0.len, "self/check.nx:11891")].text_12 = _t24;
       size_t _t25 = r_12;
       nx_drop_list_usize(c, &args_6);
       nx_drop_string(c, &name_5);
@@ -86542,7 +86544,7 @@ static size_t nx_Checker_check_at_builtin_749(nx_ctx* c, nx_m2_Checker* self_0, 
   nx_sl_u8 _t32 = nx_str_slice(name_5);
   if (nx_sl_eq(_t32, nx_lit(nx_str_2486, 8)))
   {
-    nx_slice_check(0, args_6.len, args_6.len, "self/check.nx:11895");
+    nx_slice_check(0, args_6.len, args_6.len, "self/check.nx:11898");
     nx_sl_usize _t33 = ((nx_sl_usize){ nx_padd(args_6.ptr, 0), args_6.len - 0 });
     bool _t34 = nx_Checker_args_n_677(c, self_0, _t33, ((size_t)2ULL), nx_lit(nx_str_2487, 9), start_7);
     if ((!(_t34)))
@@ -86553,11 +86555,11 @@ static size_t nx_Checker_check_at_builtin_749(nx_ctx* c, nx_m2_Checker* self_0, 
       nx_drop_string(c, &name_5);
       return _t36;
     }
-    size_t _t37 = args_6.ptr[nx_idx(((size_t)0ULL), args_6.len, "self/check.nx:11896")];
+    size_t _t37 = args_6.ptr[nx_idx(((size_t)0ULL), args_6.len, "self/check.nx:11899")];
     size_t _t38 = ((size_t)18446744073709551615ULL);
     size_t _t39 = nx_Checker_check_expr_592(c, self_0, _t37, _t38);
     size_t te_14 = _t39;
-    if ((!nx_eq_m2_TKind(&(((*self_0).tir_20.nodes_0.ptr[nx_idx(te_14, (*self_0).tir_20.nodes_0.len, "self/check.nx:11897")]).k_0), &(((nx_m2_TKind){ .tag = 67 })))))
+    if ((!nx_eq_m2_TKind(&(((*self_0).tir_20.nodes_0.ptr[nx_idx(te_14, (*self_0).tir_20.nodes_0.len, "self/check.nx:11900")]).k_0), &(((nx_m2_TKind){ .tag = 67 })))))
     {
       nx_Checker_fail_here_527(c, self_0, start_7, nx_lit(nx_str_2488, 50));
       size_t _t40 = nx_Checker_error_expr_588(c, self_0, start_7, end_8);
@@ -86566,8 +86568,8 @@ static size_t nx_Checker_check_at_builtin_749(nx_ctx* c, nx_m2_Checker* self_0, 
       nx_drop_string(c, &name_5);
       return _t41;
     }
-    size_t t_15 = ((*self_0).tir_20.nodes_0.ptr[nx_idx(te_14, (*self_0).tir_20.nodes_0.len, "self/check.nx:11901")]).a_4;
-    size_t _t42 = args_6.ptr[nx_idx(((size_t)1ULL), args_6.len, "self/check.nx:11902")];
+    size_t t_15 = ((*self_0).tir_20.nodes_0.ptr[nx_idx(te_14, (*self_0).tir_20.nodes_0.len, "self/check.nx:11904")]).a_4;
+    size_t _t42 = args_6.ptr[nx_idx(((size_t)1ULL), args_6.len, "self/check.nx:11905")];
     size_t _t43 = ((size_t)18446744073709551615ULL);
     size_t _t44 = nx_Checker_check_expr_592(c, self_0, _t42, _t43);
     size_t v_16 = _t44;
@@ -86576,7 +86578,7 @@ static size_t nx_Checker_check_at_builtin_749(nx_ctx* c, nx_m2_Checker* self_0, 
     bool _t47 = (!(_t46));
     if (!_t47) {
       nx_m2_Types* _t48 = &((*self_0).tys_1);
-      size_t _t49 = ((*self_0).tir_20.nodes_0.ptr[nx_idx(v_16, (*self_0).tir_20.nodes_0.len, "self/check.nx:11903")]).ty_1;
+      size_t _t49 = ((*self_0).tir_20.nodes_0.ptr[nx_idx(v_16, (*self_0).tir_20.nodes_0.len, "self/check.nx:11906")]).ty_1;
       bool _t50 = nx_Types_is_integer_475(c, _t48, _t49);
       _t47 = (!(_t50));
     }
@@ -86585,18 +86587,18 @@ static size_t nx_Checker_check_at_builtin_749(nx_ctx* c, nx_m2_Checker* self_0, 
       nx_Checker_fail_here_527(c, self_0, start_7, nx_lit(nx_str_2489, 40));
     }
     nx_m2_Types* _t51 = &((*self_0).tys_1);
-    size_t _t52 = ((*self_0).tir_20.nodes_0.ptr[nx_idx(v_16, (*self_0).tir_20.nodes_0.len, "self/check.nx:11904")]).ty_1;
+    size_t _t52 = ((*self_0).tir_20.nodes_0.ptr[nx_idx(v_16, (*self_0).tir_20.nodes_0.len, "self/check.nx:11907")]).ty_1;
     size_t _t53 = nx_Types_resolve_478(c, _t51, _t52, true);
     size_t vt_17 = _t53;
-    (*self_0).tir_20.nodes_0.ptr[nx_idx(v_16, (*self_0).tir_20.nodes_0.len, "self/check.nx:11905")].ty_1 = vt_17;
+    (*self_0).tir_20.nodes_0.ptr[nx_idx(v_16, (*self_0).tir_20.nodes_0.len, "self/check.nx:11908")].ty_1 = vt_17;
     size_t _t54 = nx_Checker_builtin_node_605(c, self_0, nx_lit(nx_str_2413, 8), t_15, start_7, end_8);
     size_t b_18 = _t54;
     size_t _t55 = v_16;
-    nx_list_usize* _t56 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(b_18, (*self_0).tir_20.nodes_0.len, "self/check.nx:11907")].kids_9);
+    nx_list_usize* _t56 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(b_18, (*self_0).tir_20.nodes_0.len, "self/check.nx:11910")].kids_9);
     if (_t56->len == _t56->cap) nx_list_grow(c, (nx_rawlist*)_t56, sizeof(size_t), _Alignof(size_t), _t56->len + 1);
     _t56->ptr[_t56->len++] = _t55;
     size_t _t57 = t_15;
-    nx_list_usize* _t58 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(b_18, (*self_0).tir_20.nodes_0.len, "self/check.nx:11908")].kids2_10);
+    nx_list_usize* _t58 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(b_18, (*self_0).tir_20.nodes_0.len, "self/check.nx:11911")].kids2_10);
     if (_t58->len == _t58->cap) nx_list_grow(c, (nx_rawlist*)_t58, sizeof(size_t), _Alignof(size_t), _t58->len + 1);
     _t58->ptr[_t58->len++] = _t57;
     size_t _t59 = b_18;
@@ -86607,7 +86609,7 @@ static size_t nx_Checker_check_at_builtin_749(nx_ctx* c, nx_m2_Checker* self_0, 
   nx_sl_u8 _t60 = nx_str_slice(name_5);
   if (nx_sl_eq(_t60, nx_lit(nx_str_2490, 9)))
   {
-    nx_slice_check(0, args_6.len, args_6.len, "self/check.nx:11912");
+    nx_slice_check(0, args_6.len, args_6.len, "self/check.nx:11915");
     nx_sl_usize _t61 = ((nx_sl_usize){ nx_padd(args_6.ptr, 0), args_6.len - 0 });
     bool _t62 = nx_Checker_args_n_677(c, self_0, _t61, ((size_t)1ULL), nx_lit(nx_str_2491, 10), start_7);
     if ((!(_t62)))
@@ -86618,12 +86620,12 @@ static size_t nx_Checker_check_at_builtin_749(nx_ctx* c, nx_m2_Checker* self_0, 
       nx_drop_string(c, &name_5);
       return _t64;
     }
-    size_t _t65 = args_6.ptr[nx_idx(((size_t)0ULL), args_6.len, "self/check.nx:11913")];
+    size_t _t65 = args_6.ptr[nx_idx(((size_t)0ULL), args_6.len, "self/check.nx:11916")];
     size_t _t66 = ((size_t)18446744073709551615ULL);
     size_t _t67 = nx_Checker_check_expr_592(c, self_0, _t65, _t66);
     size_t x_19 = _t67;
     nx_m2_Types* _t68 = &((*self_0).tys_1);
-    size_t _t69 = ((*self_0).tir_20.nodes_0.ptr[nx_idx(x_19, (*self_0).tir_20.nodes_0.len, "self/check.nx:11914")]).ty_1;
+    size_t _t69 = ((*self_0).tir_20.nodes_0.ptr[nx_idx(x_19, (*self_0).tir_20.nodes_0.len, "self/check.nx:11917")]).ty_1;
     size_t _t70 = nx_Types_shallow_473(c, _t68, _t69);
     size_t t_20 = _t70;
     nx_m2_Types* _t71 = &((*self_0).tys_1);
@@ -86639,7 +86641,7 @@ static size_t nx_Checker_check_at_builtin_749(nx_ctx* c, nx_m2_Checker* self_0, 
       nx_w_sl(&_t74, _t77);
       nx_w(&_t74, (const uint8_t*)nx_str_342, 1);
       nx_string _t78 = _t73;
-      nx_slice_check(0, _t78.len, _t78.len, "self/check.nx:11915");
+      nx_slice_check(0, _t78.len, _t78.len, "self/check.nx:11918");
       nx_sl_u8 _t79 = ((nx_sl_u8){ nx_padd(_t78.ptr, 0), _t78.len - 0 });
       nx_Checker_fail_here_527(c, self_0, start_7, _t79);
       nx_drop_string(c, &_t78);
@@ -86648,7 +86650,7 @@ static size_t nx_Checker_check_at_builtin_749(nx_ctx* c, nx_m2_Checker* self_0, 
     size_t _t80 = nx_Checker_builtin_node_605(c, self_0, nx_lit(nx_str_2414, 9), bytes_9, start_7, end_8);
     size_t b_21 = _t80;
     size_t _t81 = x_19;
-    nx_list_usize* _t82 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(b_21, (*self_0).tir_20.nodes_0.len, "self/check.nx:11917")].kids_9);
+    nx_list_usize* _t82 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(b_21, (*self_0).tir_20.nodes_0.len, "self/check.nx:11920")].kids_9);
     if (_t82->len == _t82->cap) nx_list_grow(c, (nx_rawlist*)_t82, sizeof(size_t), _Alignof(size_t), _t82->len + 1);
     _t82->ptr[_t82->len++] = _t81;
     size_t _t83 = b_21;
@@ -86659,7 +86661,7 @@ static size_t nx_Checker_check_at_builtin_749(nx_ctx* c, nx_m2_Checker* self_0, 
   nx_sl_u8 _t84 = nx_str_slice(name_5);
   if (nx_sl_eq(_t84, nx_lit(nx_str_2493, 9)))
   {
-    nx_slice_check(0, args_6.len, args_6.len, "self/check.nx:11921");
+    nx_slice_check(0, args_6.len, args_6.len, "self/check.nx:11924");
     nx_sl_usize _t85 = ((nx_sl_usize){ nx_padd(args_6.ptr, 0), args_6.len - 0 });
     bool _t86 = nx_Checker_args_n_677(c, self_0, _t85, ((size_t)1ULL), nx_lit(nx_str_2494, 10), start_7);
     if ((!(_t86)))
@@ -86670,7 +86672,7 @@ static size_t nx_Checker_check_at_builtin_749(nx_ctx* c, nx_m2_Checker* self_0, 
       nx_drop_string(c, &name_5);
       return _t88;
     }
-    size_t _t89 = args_6.ptr[nx_idx(((size_t)0ULL), args_6.len, "self/check.nx:11922")];
+    size_t _t89 = args_6.ptr[nx_idx(((size_t)0ULL), args_6.len, "self/check.nx:11925")];
     nx_m4_Node* _t90 = nx_Checker_node_486(c, self_0, m_3, _t89);
     nx_m4_Node* an_22 = _t90;
     bool _t91 = nx_eq_m4_NodeKind(&(((*an_22)).k_0), &(((nx_m4_NodeKind){ .tag = 44 })));
@@ -86688,7 +86690,7 @@ static size_t nx_Checker_check_at_builtin_749(nx_ctx* c, nx_m2_Checker* self_0, 
       return _t94;
     }
     nx_string path_23 = nx_clone_string(c, &((*an_22)).name_3);
-    nx_string _t95 = ((*self_0).mods_0.ptr[nx_idx(m_3, (*self_0).mods_0.len, "self/check.nx:11928")]).dir_2;
+    nx_string _t95 = ((*self_0).mods_0.ptr[nx_idx(m_3, (*self_0).mods_0.len, "self/check.nx:11931")]).dir_2;
     nx_string dir_24 = nx_clone_string(c, &_t95);
     nx_string _t96;
     if (((((dir_24).len)) == (((size_t)0ULL))))
@@ -86707,7 +86709,7 @@ static size_t nx_Checker_check_at_builtin_749(nx_ctx* c, nx_m2_Checker* self_0, 
       _t96 = _t97;
     }
     nx_string full_25 = _t96;
-    nx_slice_check(0, full_25.len, full_25.len, "self/check.nx:11930");
+    nx_slice_check(0, full_25.len, full_25.len, "self/check.nx:11933");
     nx_sl_u8 _t101 = ((nx_sl_u8){ nx_padd(full_25.ptr, 0), full_25.len - 0 });
     nx_eu_string _t102; { nx_string _s; if (nx_read_file(c, _t101, &_s)) { _t102.err = 0; _t102.val = _s; } else _t102.err = 8u; }
     nx_eu_string _t103 = _t102;
@@ -86722,7 +86724,7 @@ static size_t nx_Checker_check_at_builtin_749(nx_ctx* c, nx_m2_Checker* self_0, 
         nx_w_sl(&_t107, _t108);
         nx_w(&_t107, (const uint8_t*)nx_str_342, 1);
         nx_string _t109 = _t106;
-        nx_slice_check(0, _t109.len, _t109.len, "self/check.nx:11931");
+        nx_slice_check(0, _t109.len, _t109.len, "self/check.nx:11934");
         nx_sl_u8 _t110 = ((nx_sl_u8){ nx_padd(_t109.ptr, 0), _t109.len - 0 });
         nx_Checker_fail_here_527(c, self_0, start_7, _t110);
         size_t _t111 = nx_Checker_error_expr_588(c, self_0, start_7, end_8);
@@ -86744,8 +86746,8 @@ static size_t nx_Checker_check_at_builtin_749(nx_ctx* c, nx_m2_Checker* self_0, 
     size_t r_27 = _t114;
     nx_string _t115 = data_26; memset(&data_26, 0, sizeof data_26);
     nx_string _t116 = _t115;
-    nx_drop_string(c, &((*self_0).tir_20.nodes_0.ptr[nx_idx(r_27, (*self_0).tir_20.nodes_0.len, "self/check.nx:11935")].text_12));
-    (*self_0).tir_20.nodes_0.ptr[nx_idx(r_27, (*self_0).tir_20.nodes_0.len, "self/check.nx:11935")].text_12 = _t116;
+    nx_drop_string(c, &((*self_0).tir_20.nodes_0.ptr[nx_idx(r_27, (*self_0).tir_20.nodes_0.len, "self/check.nx:11938")].text_12));
+    (*self_0).tir_20.nodes_0.ptr[nx_idx(r_27, (*self_0).tir_20.nodes_0.len, "self/check.nx:11938")].text_12 = _t116;
     size_t _t117 = r_27;
     nx_drop_string(c, &data_26);
     nx_drop_string(c, &full_25);
@@ -86762,7 +86764,7 @@ static size_t nx_Checker_check_at_builtin_749(nx_ctx* c, nx_m2_Checker* self_0, 
   nx_sl_u8 _t118 = nx_str_slice(name_5);
   if (nx_sl_eq(_t118, nx_lit(nx_str_2497, 4)))
   {
-    nx_slice_check(0, args_6.len, args_6.len, "self/check.nx:11939");
+    nx_slice_check(0, args_6.len, args_6.len, "self/check.nx:11942");
     nx_sl_usize _t119 = ((nx_sl_usize){ nx_padd(args_6.ptr, 0), args_6.len - 0 });
     bool _t120 = nx_Checker_args_n_677(c, self_0, _t119, ((size_t)1ULL), nx_lit(nx_str_2498, 5), start_7);
     if ((!(_t120)))
@@ -86773,7 +86775,7 @@ static size_t nx_Checker_check_at_builtin_749(nx_ctx* c, nx_m2_Checker* self_0, 
       nx_drop_string(c, &name_5);
       return _t122;
     }
-    size_t _t123 = args_6.ptr[nx_idx(((size_t)0ULL), args_6.len, "self/check.nx:11940")];
+    size_t _t123 = args_6.ptr[nx_idx(((size_t)0ULL), args_6.len, "self/check.nx:11943")];
     nx_m4_Node* _t124 = nx_Checker_node_486(c, self_0, m_3, _t123);
     nx_m4_Node* an_28 = _t124;
     bool _t125 = nx_eq_m4_NodeKind(&(((*an_28)).k_0), &(((nx_m4_NodeKind){ .tag = 44 })));
@@ -86801,12 +86803,12 @@ static size_t nx_Checker_check_at_builtin_749(nx_ctx* c, nx_m2_Checker* self_0, 
     size_t _t135 = nx_Checker_mk_587(c, self_0, _t134, bytes_9, start_7, end_8);
     size_t lit_31 = _t135;
     nx_string _t136 = nx_clone_string(c, &((*an_28)).name_3);
-    nx_drop_string(c, &((*self_0).tir_20.nodes_0.ptr[nx_idx(lit_31, (*self_0).tir_20.nodes_0.len, "self/check.nx:11948")].text_12));
-    (*self_0).tir_20.nodes_0.ptr[nx_idx(lit_31, (*self_0).tir_20.nodes_0.len, "self/check.nx:11948")].text_12 = _t136;
+    nx_drop_string(c, &((*self_0).tir_20.nodes_0.ptr[nx_idx(lit_31, (*self_0).tir_20.nodes_0.len, "self/check.nx:11951")].text_12));
+    (*self_0).tir_20.nodes_0.ptr[nx_idx(lit_31, (*self_0).tir_20.nodes_0.len, "self/check.nx:11951")].text_12 = _t136;
     size_t _t137 = nx_Checker_builtin_node_605(c, self_0, nx_lit(nx_str_2040, 6), pt_30, start_7, end_8);
     size_t b_32 = _t137;
     size_t _t138 = lit_31;
-    nx_list_usize* _t139 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(b_32, (*self_0).tir_20.nodes_0.len, "self/check.nx:11950")].kids_9);
+    nx_list_usize* _t139 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(b_32, (*self_0).tir_20.nodes_0.len, "self/check.nx:11953")].kids_9);
     if (_t139->len == _t139->cap) nx_list_grow(c, (nx_rawlist*)_t139, sizeof(size_t), _Alignof(size_t), _t139->len + 1);
     _t139->ptr[_t139->len++] = _t138;
     size_t _t140 = b_32;
@@ -86822,7 +86824,7 @@ static size_t nx_Checker_check_at_builtin_749(nx_ctx* c, nx_m2_Checker* self_0, 
   }
   if (_t142)
   {
-    nx_slice_check(0, args_6.len, args_6.len, "self/check.nx:11954");
+    nx_slice_check(0, args_6.len, args_6.len, "self/check.nx:11957");
     nx_sl_usize _t144 = ((nx_sl_usize){ nx_padd(args_6.ptr, 0), args_6.len - 0 });
     nx_sl_u8 _t145 = nx_str_slice(name_5);
     nx_sl_u8 _t146;
@@ -86844,12 +86846,12 @@ static size_t nx_Checker_check_at_builtin_749(nx_ctx* c, nx_m2_Checker* self_0, 
       nx_drop_string(c, &name_5);
       return _t150;
     }
-    size_t _t151 = args_6.ptr[nx_idx(((size_t)0ULL), args_6.len, "self/check.nx:11955")];
+    size_t _t151 = args_6.ptr[nx_idx(((size_t)0ULL), args_6.len, "self/check.nx:11958")];
     size_t _t152 = ((size_t)18446744073709551615ULL);
     size_t _t153 = nx_Checker_check_expr_592(c, self_0, _t151, _t152);
     size_t x_33 = _t153;
     nx_m2_Types* _t154 = &((*self_0).tys_1);
-    size_t _t155 = ((*self_0).tir_20.nodes_0.ptr[nx_idx(x_33, (*self_0).tir_20.nodes_0.len, "self/check.nx:11956")]).ty_1;
+    size_t _t155 = ((*self_0).tir_20.nodes_0.ptr[nx_idx(x_33, (*self_0).tir_20.nodes_0.len, "self/check.nx:11959")]).ty_1;
     size_t _t156 = nx_Types_resolve_478(c, _t154, _t155, true);
     size_t t_34 = _t156;
     bool _t157 = nx_Checker_is_ref_class_565(c, self_0, t_34);
@@ -86862,7 +86864,7 @@ static size_t nx_Checker_check_at_builtin_749(nx_ctx* c, nx_m2_Checker* self_0, 
       nx_w_sl(&_t159, _t160);
       nx_w(&_t159, (const uint8_t*)nx_str_2503, 26);
       nx_string _t161 = _t158;
-      nx_slice_check(0, _t161.len, _t161.len, "self/check.nx:11958");
+      nx_slice_check(0, _t161.len, _t161.len, "self/check.nx:11961");
       nx_sl_u8 _t162 = ((nx_sl_u8){ nx_padd(_t161.ptr, 0), _t161.len - 0 });
       nx_Checker_fail_here_527(c, self_0, start_7, _t162);
       size_t _t163 = nx_Checker_error_expr_588(c, self_0, start_7, end_8);
@@ -86885,11 +86887,11 @@ static size_t nx_Checker_check_at_builtin_749(nx_ctx* c, nx_m2_Checker* self_0, 
       size_t _t170 = nx_Checker_builtin_node_605(c, self_0, nx_lit(nx_str_1481, 4), wt_35, start_7, end_8);
       size_t b_36 = _t170;
       size_t _t171 = x_33;
-      nx_list_usize* _t172 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(b_36, (*self_0).tir_20.nodes_0.len, "self/check.nx:11965")].kids_9);
+      nx_list_usize* _t172 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(b_36, (*self_0).tir_20.nodes_0.len, "self/check.nx:11968")].kids_9);
       if (_t172->len == _t172->cap) nx_list_grow(c, (nx_rawlist*)_t172, sizeof(size_t), _Alignof(size_t), _t172->len + 1);
       _t172->ptr[_t172->len++] = _t171;
       size_t _t173 = t_34;
-      nx_list_usize* _t174 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(b_36, (*self_0).tir_20.nodes_0.len, "self/check.nx:11966")].kids2_10);
+      nx_list_usize* _t174 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(b_36, (*self_0).tir_20.nodes_0.len, "self/check.nx:11969")].kids2_10);
       if (_t174->len == _t174->cap) nx_list_grow(c, (nx_rawlist*)_t174, sizeof(size_t), _Alignof(size_t), _t174->len + 1);
       _t174->ptr[_t174->len++] = _t173;
       size_t _t175 = b_36;
@@ -86903,7 +86905,7 @@ static size_t nx_Checker_check_at_builtin_749(nx_ctx* c, nx_m2_Checker* self_0, 
     size_t _t178 = nx_Checker_builtin_node_605(c, self_0, nx_lit(nx_str_2410, 8), u_37, start_7, end_8);
     size_t b_38 = _t178;
     size_t _t179 = x_33;
-    nx_list_usize* _t180 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(b_38, (*self_0).tir_20.nodes_0.len, "self/check.nx:11971")].kids_9);
+    nx_list_usize* _t180 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(b_38, (*self_0).tir_20.nodes_0.len, "self/check.nx:11974")].kids_9);
     if (_t180->len == _t180->cap) nx_list_grow(c, (nx_rawlist*)_t180, sizeof(size_t), _Alignof(size_t), _t180->len + 1);
     _t180->ptr[_t180->len++] = _t179;
     size_t _t181 = b_38;
@@ -86918,7 +86920,7 @@ static size_t nx_Checker_check_at_builtin_749(nx_ctx* c, nx_m2_Checker* self_0, 
   nx_w_sl(&_t183, _t184);
   nx_w(&_t183, (const uint8_t*)nx_str_342, 1);
   nx_string _t185 = _t182;
-  nx_slice_check(0, _t185.len, _t185.len, "self/check.nx:11974");
+  nx_slice_check(0, _t185.len, _t185.len, "self/check.nx:11977");
   nx_sl_u8 _t186 = ((nx_sl_u8){ nx_padd(_t185.ptr, 0), _t185.len - 0 });
   nx_Checker_fail_here_527(c, self_0, start_7, _t186);
   nx_sl_usize _t187 = ((nx_sl_usize){ args_6.ptr, args_6.len });
@@ -86951,15 +86953,15 @@ static uint64_t nx_Checker_size_of_750(nx_ctx* c, nx_m2_Checker* self_0, size_t 
   nx_m2_TK k_3 = _t4;
   if (nx_eq_m2_TK(&(k_3), &(((nx_m2_TK){ .tag = 0 }))))
   {
-    nx_slice_check(0, (*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:11983")].name_1.len, (*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:11983")].name_1.len, "self/check.nx:11983");
-    nx_sl_u8 _t5 = ((nx_sl_u8){ nx_padd((*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:11983")].name_1.ptr, 0), (*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:11983")].name_1.len - 0 });
+    nx_slice_check(0, (*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:11986")].name_1.len, (*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:11986")].name_1.len, "self/check.nx:11986");
+    nx_sl_u8 _t5 = ((nx_sl_u8){ nx_padd((*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:11986")].name_1.ptr, 0), (*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:11986")].name_1.len - 0 });
     uint32_t _t6 = nx_m2_int_bits(c, _t5);
-    uint64_t _t7 = ((uint64_t)(nx_div_u32(_t6, ((uint32_t)8ULL), "self/check.nx:11983")));
+    uint64_t _t7 = ((uint64_t)(nx_div_u32(_t6, ((uint32_t)8ULL), "self/check.nx:11986")));
     return _t7;
   }
   if (nx_eq_m2_TK(&(k_3), &(((nx_m2_TK){ .tag = 1 }))))
   {
-    nx_string _t8 = ((*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:11984")]).name_1;
+    nx_string _t8 = ((*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:11987")]).name_1;
     nx_sl_u8 _t9 = nx_str_slice(_t8);
     uint64_t _t10;
     if (nx_sl_eq(_t9, nx_lit(nx_str_232, 3)))
@@ -86994,9 +86996,9 @@ static uint64_t nx_Checker_size_of_750(nx_ctx* c, nx_m2_Checker* self_0, size_t 
   }
   if (nx_eq_m2_TK(&(k_3), &(((nx_m2_TK){ .tag = 8 }))))
   {
-    size_t _t16 = (*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:11988")].args_5.ptr[nx_idx(((size_t)0ULL), (*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:11988")].args_5.len, "self/check.nx:11988")];
+    size_t _t16 = (*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:11991")].args_5.ptr[nx_idx(((size_t)0ULL), (*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:11991")].args_5.len, "self/check.nx:11991")];
     uint64_t _t17 = nx_Checker_size_of_750(c, self_0, _t16);
-    uint64_t _t18 = nx_mul_u64(((*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:11988")]).n_3, _t17, "self/check.nx:11988");
+    uint64_t _t18 = nx_mul_u64(((*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:11991")]).n_3, _t17, "self/check.nx:11991");
     return _t18;
   }
   bool _t19 = nx_eq_m2_TK(&(k_3), &(((nx_m2_TK){ .tag = 9 })));
@@ -87019,9 +87021,9 @@ static uint64_t nx_Checker_size_of_750(nx_ctx* c, nx_m2_Checker* self_0, size_t 
   }
   if (nx_eq_m2_TK(&(k_3), &(((nx_m2_TK){ .tag = 11 }))))
   {
-    size_t e_4 = (*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:11992")].args_5.ptr[nx_idx(((size_t)0ULL), (*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:11992")].args_5.len, "self/check.nx:11992")];
+    size_t e_4 = (*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:11995")].args_5.ptr[nx_idx(((size_t)0ULL), (*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:11995")].args_5.len, "self/check.nx:11995")];
     uint64_t _t23 = nx_Checker_size_of_750(c, self_0, e_4);
-    uint64_t _t24 = nx_add_u64(_t23, ((uint64_t)1ULL), "self/check.nx:11993");
+    uint64_t _t24 = nx_add_u64(_t23, ((uint64_t)1ULL), "self/check.nx:11996");
     uint64_t _t25 = nx_Checker_align_of_751(c, self_0, e_4);
     uint64_t _t26 = _t25;
     uint64_t _t27 = nx_m2_round_up(c, _t24, _t26);
@@ -87030,7 +87032,7 @@ static uint64_t nx_Checker_size_of_750(nx_ctx* c, nx_m2_Checker* self_0, size_t 
   }
   if (nx_eq_m2_TK(&(k_3), &(((nx_m2_TK){ .tag = 12 }))))
   {
-    size_t e_5 = (*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:11996")].args_5.ptr[nx_idx(((size_t)0ULL), (*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:11996")].args_5.len, "self/check.nx:11996")];
+    size_t e_5 = (*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:11999")].args_5.ptr[nx_idx(((size_t)0ULL), (*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:11999")].args_5.len, "self/check.nx:11999")];
     uint64_t _t29 = nx_Checker_align_of_751(c, self_0, e_5);
     uint64_t _t30 = _t29;
     uint64_t _t31 = nx_m2_max64(c, _t30, ((uint64_t)4ULL));
@@ -87039,14 +87041,14 @@ static uint64_t nx_Checker_size_of_750(nx_ctx* c, nx_m2_Checker* self_0, size_t 
     uint64_t _t33 = _t32;
     uint64_t _t34 = nx_m2_round_up(c, ((uint64_t)4ULL), _t33);
     uint64_t _t35 = nx_Checker_size_of_750(c, self_0, e_5);
-    uint64_t _t36 = nx_add_u64(_t34, _t35, "self/check.nx:11998");
+    uint64_t _t36 = nx_add_u64(_t34, _t35, "self/check.nx:12001");
     uint64_t _t37 = nx_m2_round_up(c, _t36, a_6);
     uint64_t _t38 = _t37;
     return _t38;
   }
   if (nx_eq_m2_TK(&(k_3), &(((nx_m2_TK){ .tag = 15 }))))
   {
-    size_t _t39 = ((*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:12000")]).def_2;
+    size_t _t39 = ((*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:12003")]).def_2;
     size_t _t40 = nx_Checker_distinct_underlying_596(c, self_0, _t39);
     size_t _t41 = _t40;
     uint64_t _t42 = nx_Checker_size_of_750(c, self_0, _t41);
@@ -87091,7 +87093,7 @@ static uint64_t nx_Checker_size_of_750(nx_ctx* c, nx_m2_Checker* self_0, size_t 
     }
     else
     {
-      nx_list_usize _t53 = ((*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:12005")]).args_5;
+      nx_list_usize _t53 = ((*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:12008")]).args_5;
       _t51 = nx_clone_list_usize(c, &_t53);
     }
     nx_list_usize fts_7 = _t51;
@@ -87106,7 +87108,7 @@ static uint64_t nx_Checker_size_of_750(nx_ctx* c, nx_m2_Checker* self_0, size_t 
       maxa_9 = _t57;
       uint64_t _t58 = nx_m2_round_up(c, off_8, a_11);
       uint64_t _t59 = nx_Checker_size_of_750(c, self_0, f_10);
-      off_8 = nx_add_u64(_t58, _t59, "self/check.nx:12011");
+      off_8 = nx_add_u64(_t58, _t59, "self/check.nx:12014");
       nx_cont_0: ;
     }
     nx_brk_0: ;
@@ -87135,7 +87137,7 @@ static uint64_t nx_Checker_size_of_750(nx_ctx* c, nx_m2_Checker* self_0, size_t 
         maxa_14 = _t68;
         uint64_t _t69 = nx_m2_round_up(c, off_16, a_18);
         uint64_t _t70 = nx_Checker_size_of_750(c, self_0, f_17);
-        off_16 = nx_add_u64(_t69, _t70, "self/check.nx:12024");
+        off_16 = nx_add_u64(_t69, _t70, "self/check.nx:12027");
         nx_cont_2: ;
       }
       nx_brk_2: ;
@@ -87145,7 +87147,7 @@ static uint64_t nx_Checker_size_of_750(nx_ctx* c, nx_m2_Checker* self_0, size_t 
     }
     nx_brk_1: ;
     uint64_t _t72 = nx_m2_round_up(c, ((uint64_t)4ULL), maxa_14);
-    uint64_t _t73 = nx_add_u64(_t72, maxs_13, "self/check.nx:12028");
+    uint64_t _t73 = nx_add_u64(_t72, maxs_13, "self/check.nx:12031");
     uint64_t _t74 = nx_m2_round_up(c, _t73, maxa_14);
     uint64_t _t75 = _t74;
     nx_drop_list_list_usize(c, &vtys_12);
@@ -87166,17 +87168,17 @@ static uint64_t nx_Checker_align_of_751(nx_ctx* c, nx_m2_Checker* self_0, size_t
   nx_m2_TK k_3 = _t4;
   if (nx_eq_m2_TK(&(k_3), &(((nx_m2_TK){ .tag = 0 }))))
   {
-    nx_slice_check(0, (*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:12036")].name_1.len, (*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:12036")].name_1.len, "self/check.nx:12036");
-    nx_sl_u8 _t5 = ((nx_sl_u8){ nx_padd((*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:12036")].name_1.ptr, 0), (*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:12036")].name_1.len - 0 });
+    nx_slice_check(0, (*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:12039")].name_1.len, (*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:12039")].name_1.len, "self/check.nx:12039");
+    nx_sl_u8 _t5 = ((nx_sl_u8){ nx_padd((*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:12039")].name_1.ptr, 0), (*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:12039")].name_1.len - 0 });
     uint32_t _t6 = nx_m2_int_bits(c, _t5);
-    uint64_t _t7 = ((uint64_t)(nx_div_u32(_t6, ((uint32_t)8ULL), "self/check.nx:12036")));
+    uint64_t _t7 = ((uint64_t)(nx_div_u32(_t6, ((uint32_t)8ULL), "self/check.nx:12039")));
     uint64_t _t8 = nx_m2_min64(c, _t7, ((uint64_t)16ULL));
     uint64_t _t9 = _t8;
     return _t9;
   }
   if (nx_eq_m2_TK(&(k_3), &(((nx_m2_TK){ .tag = 1 }))))
   {
-    nx_string _t10 = ((*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:12037")]).name_1;
+    nx_string _t10 = ((*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:12040")]).name_1;
     nx_sl_u8 _t11 = nx_str_slice(_t10);
     uint64_t _t12;
     if (nx_sl_eq(_t11, nx_lit(nx_str_232, 3)))
@@ -87215,14 +87217,14 @@ static uint64_t nx_Checker_align_of_751(nx_ctx* c, nx_m2_Checker* self_0, size_t
   }
   if (_t18)
   {
-    size_t _t19 = (*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:12041")].args_5.ptr[nx_idx(((size_t)0ULL), (*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:12041")].args_5.len, "self/check.nx:12041")];
+    size_t _t19 = (*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:12044")].args_5.ptr[nx_idx(((size_t)0ULL), (*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:12044")].args_5.len, "self/check.nx:12044")];
     uint64_t _t20 = nx_Checker_align_of_751(c, self_0, _t19);
     uint64_t _t21 = _t20;
     return _t21;
   }
   if (nx_eq_m2_TK(&(k_3), &(((nx_m2_TK){ .tag = 12 }))))
   {
-    size_t _t22 = (*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:12042")].args_5.ptr[nx_idx(((size_t)0ULL), (*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:12042")].args_5.len, "self/check.nx:12042")];
+    size_t _t22 = (*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:12045")].args_5.ptr[nx_idx(((size_t)0ULL), (*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:12045")].args_5.len, "self/check.nx:12045")];
     uint64_t _t23 = nx_Checker_align_of_751(c, self_0, _t22);
     uint64_t _t24 = _t23;
     uint64_t _t25 = nx_m2_max64(c, _t24, ((uint64_t)4ULL));
@@ -87231,7 +87233,7 @@ static uint64_t nx_Checker_align_of_751(nx_ctx* c, nx_m2_Checker* self_0, size_t
   }
   if (nx_eq_m2_TK(&(k_3), &(((nx_m2_TK){ .tag = 15 }))))
   {
-    size_t _t27 = ((*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:12043")]).def_2;
+    size_t _t27 = ((*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:12046")]).def_2;
     size_t _t28 = nx_Checker_distinct_underlying_596(c, self_0, _t27);
     size_t _t29 = _t28;
     uint64_t _t30 = nx_Checker_align_of_751(c, self_0, _t29);
@@ -87262,7 +87264,7 @@ static uint64_t nx_Checker_align_of_751(nx_ctx* c, nx_m2_Checker* self_0, size_t
     }
     else
     {
-      nx_list_usize _t38 = ((*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:12046")]).args_5;
+      nx_list_usize _t38 = ((*self_0).tys_1.list_0.ptr[nx_idx(t_2, (*self_0).tys_1.list_0.len, "self/check.nx:12049")]).args_5;
       _t36 = nx_clone_list_usize(c, &_t38);
     }
     nx_list_usize fts_4 = _t36;
@@ -87343,12 +87345,12 @@ static size_t nx_Checker_check_closure_752(nx_ctx* c, nx_m2_Checker* self_0, siz
   uint64_t exp_eff_15 = ((uint64_t)255ULL);
   if (((exp_11) != (((size_t)18446744073709551615ULL))))
   {
-    nx_list_usize _t7 = ((*self_0).tys_1.list_0.ptr[nx_idx(exp_11, (*self_0).tys_1.list_0.len, "self/check.nx:12091")]).args_5;
+    nx_list_usize _t7 = ((*self_0).tys_1.list_0.ptr[nx_idx(exp_11, (*self_0).tys_1.list_0.len, "self/check.nx:12094")]).args_5;
     nx_list_usize all_16 = nx_clone_list_usize(c, &_t7);
     nx_sl_usize _t8 = ((nx_sl_usize){ all_16.ptr, all_16.len });
     for (size_t i_18 = 0; i_18 < _t8.len; i_18++) {
       size_t a_17 = _t8.ptr[i_18];
-      if (((nx_add_usize(i_18, ((size_t)1ULL), "self/check.nx:12092")) < (((all_16).len))))
+      if (((nx_add_usize(i_18, ((size_t)1ULL), "self/check.nx:12095")) < (((all_16).len))))
       {
         size_t _t9 = a_17;
         nx_list_usize* _t10 = &(exp_params_13);
@@ -87358,8 +87360,8 @@ static size_t nx_Checker_check_closure_752(nx_ctx* c, nx_m2_Checker* self_0, siz
       nx_cont_0: ;
     }
     nx_brk_0: ;
-    exp_ret_14 = all_16.ptr[nx_idx(nx_sub_usize(((all_16).len), ((size_t)1ULL), "self/check.nx:12093"), all_16.len, "self/check.nx:12093")];
-    exp_eff_15 = ((*self_0).tys_1.list_0.ptr[nx_idx(exp_11, (*self_0).tys_1.list_0.len, "self/check.nx:12094")]).n_3;
+    exp_ret_14 = all_16.ptr[nx_idx(nx_sub_usize(((all_16).len), ((size_t)1ULL), "self/check.nx:12096"), all_16.len, "self/check.nx:12096")];
+    exp_eff_15 = ((*self_0).tys_1.list_0.ptr[nx_idx(exp_11, (*self_0).tys_1.list_0.len, "self/check.nx:12097")]).n_3;
     nx_drop_list_usize(c, &all_16);
   }
   nx_m2_FnCtx* _t11 = nx_Checker_ctx_516(c, self_0);
@@ -87385,7 +87387,7 @@ static size_t nx_Checker_check_closure_752(nx_ctx* c, nx_m2_Checker* self_0, siz
     {
       if (((i_25) < (((exp_params_13).len))))
       {
-        t_31 = exp_params_13.ptr[nx_idx(i_25, exp_params_13.len, "self/check.nx:12110")];
+        t_31 = exp_params_13.ptr[nx_idx(i_25, exp_params_13.len, "self/check.nx:12113")];
       }
       else
       {
@@ -87396,7 +87398,7 @@ static size_t nx_Checker_check_closure_752(nx_ctx* c, nx_m2_Checker* self_0, siz
         nx_w_sl(&_t18, _t19);
         nx_w(&_t18, (const uint8_t*)nx_str_2507, 25);
         nx_string _t20 = _t17;
-        nx_slice_check(0, _t20.len, _t20.len, "self/check.nx:12112");
+        nx_slice_check(0, _t20.len, _t20.len, "self/check.nx:12115");
         nx_sl_u8 _t21 = ((nx_sl_u8){ nx_padd(_t20.ptr, 0), _t20.len - 0 });
         nx_Checker_fail_here_527(c, self_0, pstart_29, _t21);
         nx_m2_Types* _t22 = &((*self_0).tys_1);
@@ -87465,7 +87467,7 @@ static size_t nx_Checker_check_closure_752(nx_ctx* c, nx_m2_Checker* self_0, siz
     size_t _t41 = ((ptys_20).len);
     nx_w_int(&_t39, (nx_i128)(_t41), 10, 0, false);
     nx_string _t42 = _t38;
-    nx_slice_check(0, _t42.len, _t42.len, "self/check.nx:12132");
+    nx_slice_check(0, _t42.len, _t42.len, "self/check.nx:12135");
     nx_sl_u8 _t43 = ((nx_sl_u8){ nx_padd(_t42.ptr, 0), _t42.len - 0 });
     nx_Checker_fail_here_527(c, self_0, start_9, _t43);
     nx_drop_string(c, &_t42);
@@ -87487,7 +87489,7 @@ static size_t nx_Checker_check_closure_752(nx_ctx* c, nx_m2_Checker* self_0, siz
     bool mutable_44 = ((*cn_41)).flag2_6;
     size_t cstart_45 = ((*cn_41)).start_1;
     size_t cend_46 = ((*cn_41)).end_2;
-    nx_slice_check(0, cname_42.len, cname_42.len, "self/check.nx:12149");
+    nx_slice_check(0, cname_42.len, cname_42.len, "self/check.nx:12152");
     nx_sl_u8 _t47 = ((nx_sl_u8){ nx_padd(cname_42.ptr, 0), cname_42.len - 0 });
     size_t _t48 = nx_Checker_lookup_local_523(c, self_0, _t47);
     size_t l_47 = _t48;
@@ -87500,7 +87502,7 @@ static size_t nx_Checker_check_closure_752(nx_ctx* c, nx_m2_Checker* self_0, siz
       nx_w_sl(&_t50, _t51);
       nx_w(&_t50, (const uint8_t*)nx_str_2511, 16);
       nx_string _t52 = _t49;
-      nx_slice_check(0, _t52.len, _t52.len, "self/check.nx:12151");
+      nx_slice_check(0, _t52.len, _t52.len, "self/check.nx:12154");
       nx_sl_u8 _t53 = ((nx_sl_u8){ nx_padd(_t52.ptr, 0), _t52.len - 0 });
       nx_Checker_fail_here_527(c, self_0, cstart_45, _t53);
       nx_drop_string(c, &_t52);
@@ -87509,7 +87511,7 @@ static size_t nx_Checker_check_closure_752(nx_ctx* c, nx_m2_Checker* self_0, siz
     }
     nx_m2_FnCtx* _t54 = nx_Checker_ctx_516(c, self_0);
     nx_m2_FnCtx* _t55 = _t54;
-    size_t lt_48 = ((*_t55).locals_3.ptr[nx_idx(l_47, (*_t55).locals_3.len, "self/check.nx:12154")]).ty_1;
+    size_t lt_48 = ((*_t55).locals_3.ptr[nx_idx(l_47, (*_t55).locals_3.len, "self/check.nx:12157")]).ty_1;
     bool _t56 = by_ref_43;
     if (_t56) {
       _t56 = mutable_44;
@@ -87518,7 +87520,7 @@ static size_t nx_Checker_check_closure_752(nx_ctx* c, nx_m2_Checker* self_0, siz
     if (_t57) {
       nx_m2_FnCtx* _t58 = nx_Checker_ctx_516(c, self_0);
       nx_m2_FnCtx* _t59 = _t58;
-      _t57 = (!(((*_t59).locals_3.ptr[nx_idx(l_47, (*_t59).locals_3.len, "self/check.nx:12155")]).mutable_2));
+      _t57 = (!(((*_t59).locals_3.ptr[nx_idx(l_47, (*_t59).locals_3.len, "self/check.nx:12158")]).mutable_2));
     }
     if (_t57)
     {
@@ -87529,7 +87531,7 @@ static size_t nx_Checker_check_closure_752(nx_ctx* c, nx_m2_Checker* self_0, siz
       nx_w_sl(&_t61, _t62);
       nx_w(&_t61, (const uint8_t*)nx_str_2512, 45);
       nx_string _t63 = _t60;
-      nx_slice_check(0, _t63.len, _t63.len, "self/check.nx:12156");
+      nx_slice_check(0, _t63.len, _t63.len, "self/check.nx:12159");
       nx_sl_u8 _t64 = ((nx_sl_u8){ nx_padd(_t63.ptr, 0), _t63.len - 0 });
       nx_Checker_fail_here_527(c, self_0, cstart_45, _t64);
       nx_drop_string(c, &_t63);
@@ -87539,7 +87541,7 @@ static size_t nx_Checker_check_closure_752(nx_ctx* c, nx_m2_Checker* self_0, siz
       nx_m2_TKind _t65 = ((nx_m2_TKind){ .tag = 21 });
       size_t _t66 = nx_Checker_mk_587(c, self_0, _t65, lt_48, cstart_45, cend_46);
       size_t le_49 = _t66;
-      (*self_0).tir_20.nodes_0.ptr[nx_idx(le_49, (*self_0).tir_20.nodes_0.len, "self/check.nx:12160")].a_4 = l_47;
+      (*self_0).tir_20.nodes_0.ptr[nx_idx(le_49, (*self_0).tir_20.nodes_0.len, "self/check.nx:12163")].a_4 = l_47;
       size_t _t67 = nx_Checker_take_ownership_576(c, self_0, le_49);
       (void)(_t67);
     }
@@ -87582,12 +87584,12 @@ static size_t nx_Checker_check_closure_752(nx_ctx* c, nx_m2_Checker* self_0, siz
   nx_sl_usize _t83 = ((nx_sl_usize){ ptys_20.ptr, ptys_20.len });
   for (size_t i_54 = 0; i_54 < _t83.len; i_54++) {
     size_t t_53 = _t83.ptr[i_54];
-    nx_string _t84 = pnames_21.ptr[nx_idx(i_54, pnames_21.len, "self/check.nx:12176")];
+    nx_string _t84 = pnames_21.ptr[nx_idx(i_54, pnames_21.len, "self/check.nx:12179")];
     nx_string _t85 = nx_clone_string(c, &_t84);
     size_t _t86 = t_53;
     bool _t87 = false;
-    size_t _t88 = pstarts_22.ptr[nx_idx(i_54, pstarts_22.len, "self/check.nx:12176")];
-    size_t _t89 = pends_23.ptr[nx_idx(i_54, pends_23.len, "self/check.nx:12176")];
+    size_t _t88 = pstarts_22.ptr[nx_idx(i_54, pstarts_22.len, "self/check.nx:12179")];
+    size_t _t89 = pends_23.ptr[nx_idx(i_54, pends_23.len, "self/check.nx:12179")];
     bool _t90 = true;
     bool _t91 = false;
     bool _t92 = false;
@@ -87671,16 +87673,16 @@ static size_t nx_Checker_check_closure_752(nx_ctx* c, nx_m2_Checker* self_0, siz
   nx_m2_TKind _t150 = ((nx_m2_TKind){ .tag = 61 });
   size_t _t151 = nx_Checker_mk_587(c, self_0, _t150, ft_56, start_9, end_10);
   size_t r_57 = _t151;
-  (*self_0).tir_20.nodes_0.ptr[nx_idx(r_57, (*self_0).tir_20.nodes_0.len, "self/check.nx:12193")].a_4 = id_50;
+  (*self_0).tir_20.nodes_0.ptr[nx_idx(r_57, (*self_0).tir_20.nodes_0.len, "self/check.nx:12196")].a_4 = id_50;
   nx_sl_usize _t152 = ((nx_sl_usize){ cap_locals_33.ptr, cap_locals_33.len });
   for (size_t i_59 = 0; i_59 < _t152.len; i_59++) {
     size_t l_58 = _t152.ptr[i_59];
     size_t _t153 = l_58;
-    nx_list_usize* _t154 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(r_57, (*self_0).tir_20.nodes_0.len, "self/check.nx:12195")].kids2_10);
+    nx_list_usize* _t154 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(r_57, (*self_0).tir_20.nodes_0.len, "self/check.nx:12198")].kids2_10);
     if (_t154->len == _t154->cap) nx_list_grow(c, (nx_rawlist*)_t154, sizeof(size_t), _Alignof(size_t), _t154->len + 1);
     _t154->ptr[_t154->len++] = _t153;
     size_t _t155;
-    if (cap_refs_34.ptr[nx_idx(i_59, cap_refs_34.len, "self/check.nx:12196")])
+    if (cap_refs_34.ptr[nx_idx(i_59, cap_refs_34.len, "self/check.nx:12199")])
     {
       _t155 = ((size_t)1ULL);
     }
@@ -87689,7 +87691,7 @@ static size_t nx_Checker_check_closure_752(nx_ctx* c, nx_m2_Checker* self_0, siz
       _t155 = ((size_t)0ULL);
     }
     size_t _t156 = _t155;
-    nx_list_usize* _t157 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(r_57, (*self_0).tir_20.nodes_0.len, "self/check.nx:12196")].kids_9);
+    nx_list_usize* _t157 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(r_57, (*self_0).tir_20.nodes_0.len, "self/check.nx:12199")].kids_9);
     if (_t157->len == _t157->cap) nx_list_grow(c, (nx_rawlist*)_t157, sizeof(size_t), _Alignof(size_t), _t157->len + 1);
     _t157->ptr[_t157->len++] = _t156;
     nx_cont_4: ;
@@ -87735,14 +87737,14 @@ static size_t nx_Checker_check_closure_752(nx_ctx* c, nx_m2_Checker* self_0, siz
 
 static void nx_Checker_check_closure_body_753(nx_ctx* c, nx_m2_Checker* self_0, size_t inst_1, size_t body_node_2, nx_list_string* names_3, nx_list_bool* refs_4, nx_list_bool* muts_5, nx_list_usize* tys_6, nx_list_usize* starts_7, nx_list_usize* ends_8) {
   NX_UNUSED(c);
-  size_t m_9 = ((*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12202")]).module_24;
-  size_t ret_10 = ((*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12203")]).ret_7;
-  nx_slice_check(0, (*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12204")].name_0.len, (*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12204")].name_0.len, "self/check.nx:12204");
-  nx_sl_u8 _t1 = ((nx_sl_u8){ nx_padd((*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12204")].name_0.ptr, 0), (*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12204")].name_0.len - 0 });
+  size_t m_9 = ((*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12205")]).module_24;
+  size_t ret_10 = ((*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12206")]).ret_7;
+  nx_slice_check(0, (*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12207")].name_0.len, (*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12207")].name_0.len, "self/check.nx:12207");
+  nx_sl_u8 _t1 = ((nx_sl_u8){ nx_padd((*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12207")].name_0.ptr, 0), (*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12207")].name_0.len - 0 });
   nx_m2_FnCtx _t2 = nx_m2_new_ctx(c, ret_10, m_9, _t1);
   nx_m2_FnCtx ctx_11 = _t2;
-  ctx_11.self_ty_22 = ((*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12205")]).self_ty_25;
-  nx_list_m2_Local _t3 = ((*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12206")]).locals_8;
+  ctx_11.self_ty_22 = ((*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12208")]).self_ty_25;
+  nx_list_m2_Local _t3 = ((*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12209")]).locals_8;
   nx_list_m2_Local _t4 = nx_clone_list_m2_Local(c, &_t3);
   nx_drop_list_m2_Local(c, &(ctx_11.locals_3));
   ctx_11.locals_3 = _t4;
@@ -87750,11 +87752,11 @@ static void nx_Checker_check_closure_body_753(nx_ctx* c, nx_m2_Checker* self_0, 
   nx_list_usize* _t6 = &(ctx_11.scope_marks_7);
   if (_t6->len == _t6->cap) nx_list_grow(c, (nx_rawlist*)_t6, sizeof(size_t), _Alignof(size_t), _t6->len + 1);
   _t6->ptr[_t6->len++] = _t5;
-  nx_list_usize _t7 = ((*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12208")]).params_6;
+  nx_list_usize _t7 = ((*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12211")]).params_6;
   nx_sl_usize _t8 = ((nx_sl_usize){ _t7.ptr, _t7.len });
   for (size_t _t9 = 0; _t9 < _t8.len; _t9++) {
     size_t p_12 = _t8.ptr[_t9];
-    nx_string _t10 = (ctx_11.locals_3.ptr[nx_idx(p_12, ctx_11.locals_3.len, "self/check.nx:12209")]).name_0;
+    nx_string _t10 = (ctx_11.locals_3.ptr[nx_idx(p_12, ctx_11.locals_3.len, "self/check.nx:12212")]).name_0;
     nx_string _t11 = nx_clone_string(c, &_t10);
     nx_list_string* _t12 = &(ctx_11.scope_names_4);
     if (_t12->len == _t12->cap) nx_list_grow(c, (nx_rawlist*)_t12, sizeof(nx_string), _Alignof(nx_string), _t12->len + 1);
@@ -87774,20 +87776,20 @@ static void nx_Checker_check_closure_body_753(nx_ctx* c, nx_m2_Checker* self_0, 
   for (size_t i_14 = 0; i_14 < _t17.len; i_14++) {
     nx_string nm_13 = _t17.ptr[i_14];
     size_t lid_15 = (((ctx_11).locals_3).len);
-    bool by_ref_16 = (*refs_4).ptr[nx_idx(i_14, (*refs_4).len, "self/check.nx:12216")];
-    bool mutable_17 = (*muts_5).ptr[nx_idx(i_14, (*muts_5).len, "self/check.nx:12217")];
+    bool by_ref_16 = (*refs_4).ptr[nx_idx(i_14, (*refs_4).len, "self/check.nx:12219")];
+    bool mutable_17 = (*muts_5).ptr[nx_idx(i_14, (*muts_5).len, "self/check.nx:12220")];
     size_t _t18;
     if (by_ref_16)
     {
       nx_m2_Types* _t19 = &((*self_0).tys_1);
       nx_m2_TK _t20 = ((nx_m2_TK){ .tag = 10 });
-      size_t _t21 = (*tys_6).ptr[nx_idx(i_14, (*tys_6).len, "self/check.nx:12218")];
+      size_t _t21 = (*tys_6).ptr[nx_idx(i_14, (*tys_6).len, "self/check.nx:12221")];
       size_t _t22 = nx_Types_wrap_449(c, _t19, _t20, _t21, mutable_17);
       _t18 = _t22;
     }
     else
     {
-      _t18 = (*tys_6).ptr[nx_idx(i_14, (*tys_6).len, "self/check.nx:12218")];
+      _t18 = (*tys_6).ptr[nx_idx(i_14, (*tys_6).len, "self/check.nx:12221")];
     }
     size_t lty_18 = _t18;
     nx_string _t23 = {0}; _t23.ar = c->arena;
@@ -87802,8 +87804,8 @@ static void nx_Checker_check_closure_body_753(nx_ctx* c, nx_m2_Checker* self_0, 
       _t28 = (!(by_ref_16));
     }
     bool _t29 = _t28;
-    size_t _t30 = (*starts_7).ptr[nx_idx(i_14, (*starts_7).len, "self/check.nx:12219")];
-    size_t _t31 = (*ends_8).ptr[nx_idx(i_14, (*ends_8).len, "self/check.nx:12219")];
+    size_t _t30 = (*starts_7).ptr[nx_idx(i_14, (*starts_7).len, "self/check.nx:12222")];
+    size_t _t31 = (*ends_8).ptr[nx_idx(i_14, (*ends_8).len, "self/check.nx:12222")];
     bool _t32 = true;
     bool _t33 = false;
     bool _t34 = false;
@@ -87859,7 +87861,7 @@ static void nx_Checker_check_closure_body_753(nx_ctx* c, nx_m2_Checker* self_0, 
     size_t _t53 = nx_Checker_check_expr_592(c, self_0, body_node_2, ret_hint_24);
     size_t te_26 = _t53;
     nx_m2_Types* _t54 = &((*self_0).tys_1);
-    size_t _t55 = ((*self_0).tir_20.nodes_0.ptr[nx_idx(te_26, (*self_0).tir_20.nodes_0.len, "self/check.nx:12240")]).ty_1;
+    size_t _t55 = ((*self_0).tir_20.nodes_0.ptr[nx_idx(te_26, (*self_0).tir_20.nodes_0.len, "self/check.nx:12243")]).ty_1;
     size_t _t56 = nx_Types_shallow_473(c, _t54, _t55);
     size_t tt_27 = _t56;
     nx_m2_Types* _t57 = &((*self_0).tys_1);
@@ -87897,11 +87899,11 @@ static void nx_Checker_check_closure_body_753(nx_ctx* c, nx_m2_Checker* self_0, 
       size_t _t72 = nx_Checker_mk_587(c, self_0, _t71, tt_27, bstart_22, bend_23);
       size_t s_31 = _t72;
       size_t _t73 = te_26;
-      nx_list_usize* _t74 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(s_31, (*self_0).tir_20.nodes_0.len, "self/check.nx:12249")].kids_9);
+      nx_list_usize* _t74 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(s_31, (*self_0).tir_20.nodes_0.len, "self/check.nx:12252")].kids_9);
       if (_t74->len == _t74->cap) nx_list_grow(c, (nx_rawlist*)_t74, sizeof(size_t), _Alignof(size_t), _t74->len + 1);
       _t74->ptr[_t74->len++] = _t73;
       size_t _t75 = s_31;
-      nx_list_usize* _t76 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(tb_25, (*self_0).tir_20.nodes_0.len, "self/check.nx:12250")].kids_9);
+      nx_list_usize* _t76 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(tb_25, (*self_0).tir_20.nodes_0.len, "self/check.nx:12253")].kids_9);
       if (_t76->len == _t76->cap) nx_list_grow(c, (nx_rawlist*)_t76, sizeof(size_t), _Alignof(size_t), _t76->len + 1);
       _t76->ptr[_t76->len++] = _t75;
     }
@@ -87913,11 +87915,11 @@ static void nx_Checker_check_closure_body_753(nx_ctx* c, nx_m2_Checker* self_0, 
         size_t _t78 = nx_Checker_mk_587(c, self_0, _t77, tt_27, bstart_22, bend_23);
         size_t s_32 = _t78;
         size_t _t79 = te_26;
-        nx_list_usize* _t80 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(s_32, (*self_0).tir_20.nodes_0.len, "self/check.nx:12253")].kids_9);
+        nx_list_usize* _t80 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(s_32, (*self_0).tir_20.nodes_0.len, "self/check.nx:12256")].kids_9);
         if (_t80->len == _t80->cap) nx_list_grow(c, (nx_rawlist*)_t80, sizeof(size_t), _Alignof(size_t), _t80->len + 1);
         _t80->ptr[_t80->len++] = _t79;
         size_t _t81 = s_32;
-        nx_list_usize* _t82 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(tb_25, (*self_0).tir_20.nodes_0.len, "self/check.nx:12254")].kids_9);
+        nx_list_usize* _t82 = &((*self_0).tir_20.nodes_0.ptr[nx_idx(tb_25, (*self_0).tir_20.nodes_0.len, "self/check.nx:12257")].kids_9);
         if (_t82->len == _t82->cap) nx_list_grow(c, (nx_rawlist*)_t82, sizeof(size_t), _Alignof(size_t), _t82->len + 1);
         _t82->ptr[_t82->len++] = _t81;
       }
@@ -87934,11 +87936,11 @@ static void nx_Checker_check_closure_body_753(nx_ctx* c, nx_m2_Checker* self_0, 
         }
         size_t _t85 = nx_Checker_take_ownership_576(c, self_0, te_26);
         te_26 = _t85;
-        ty_30 = ((*self_0).tir_20.nodes_0.ptr[nx_idx(te_26, (*self_0).tir_20.nodes_0.len, "self/check.nx:12258")]).ty_1;
-        (*self_0).tir_20.nodes_0.ptr[nx_idx(tb_25, (*self_0).tir_20.nodes_0.len, "self/check.nx:12259")].a_4 = te_26;
+        ty_30 = ((*self_0).tir_20.nodes_0.ptr[nx_idx(te_26, (*self_0).tir_20.nodes_0.len, "self/check.nx:12261")]).ty_1;
+        (*self_0).tir_20.nodes_0.ptr[nx_idx(tb_25, (*self_0).tir_20.nodes_0.len, "self/check.nx:12262")].a_4 = te_26;
       }
     }
-    bool _t86 = ((((*self_0).tir_20.nodes_0.ptr[nx_idx(tb_25, (*self_0).tir_20.nodes_0.len, "self/check.nx:12261")]).a_4) == (((size_t)18446744073709551615ULL)));
+    bool _t86 = ((((*self_0).tir_20.nodes_0.ptr[nx_idx(tb_25, (*self_0).tir_20.nodes_0.len, "self/check.nx:12264")]).a_4) == (((size_t)18446744073709551615ULL)));
     if (_t86) {
       bool _t87 = nx_Checker_block_diverges_546(c, self_0, tb_25);
       _t86 = _t87;
@@ -87949,16 +87951,16 @@ static void nx_Checker_check_closure_body_753(nx_ctx* c, nx_m2_Checker* self_0, 
       size_t _t89 = nx_Types_never_459(c, _t88);
       ty_30 = _t89;
     }
-    (*self_0).tir_20.nodes_0.ptr[nx_idx(tb_25, (*self_0).tir_20.nodes_0.len, "self/check.nx:12262")].ty_1 = ty_30;
+    (*self_0).tir_20.nodes_0.ptr[nx_idx(tb_25, (*self_0).tir_20.nodes_0.len, "self/check.nx:12265")].ty_1 = ty_30;
     nx_Checker_pop_scope_520(c, self_0);
   }
   nx_m2_Types* _t90 = &((*self_0).tys_1);
   bool _t91 = nx_Types_contains_infer_479(c, _t90, ret_10);
   if (_t91)
   {
-    size_t bt_33 = ((*self_0).tir_20.nodes_0.ptr[nx_idx(tb_25, (*self_0).tir_20.nodes_0.len, "self/check.nx:12267")]).ty_1;
+    size_t bt_33 = ((*self_0).tir_20.nodes_0.ptr[nx_idx(tb_25, (*self_0).tir_20.nodes_0.len, "self/check.nx:12270")]).ty_1;
     size_t target_34 = ((size_t)18446744073709551615ULL);
-    if (((((*self_0).tir_20.nodes_0.ptr[nx_idx(tb_25, (*self_0).tir_20.nodes_0.len, "self/check.nx:12269")]).a_4) != (((size_t)18446744073709551615ULL))))
+    if (((((*self_0).tir_20.nodes_0.ptr[nx_idx(tb_25, (*self_0).tir_20.nodes_0.len, "self/check.nx:12272")]).a_4) != (((size_t)18446744073709551615ULL))))
     {
       target_34 = bt_33;
     }
@@ -87999,22 +88001,22 @@ static void nx_Checker_check_closure_body_753(nx_ctx* c, nx_m2_Checker* self_0, 
   } else { _t101 = _t100.val; }
   nx_m2_FnCtx done_36 = _t101;
   nx_list_m2_Local _t103 = nx_clone_list_m2_Local(c, &(done_36).locals_3);
-  nx_drop_list_m2_Local(c, &((*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12280")].locals_8));
-  (*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12280")].locals_8 = _t103;
-  (*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12281")].body_9 = tb2_35;
-  (*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12282")].own_effects_10 = (done_36).own_effects_10;
+  nx_drop_list_m2_Local(c, &((*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12283")].locals_8));
+  (*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12283")].locals_8 = _t103;
+  (*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12284")].body_9 = tb2_35;
+  (*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12285")].own_effects_10 = (done_36).own_effects_10;
   nx_list_m2_Witness _t104 = nx_clone_list_m2_Witness(c, &(done_36).witnesses_11);
-  nx_drop_list_m2_Witness(c, &((*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12283")].witnesses_26));
-  (*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12283")].witnesses_26 = _t104;
+  nx_drop_list_m2_Witness(c, &((*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12286")].witnesses_26));
+  (*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12286")].witnesses_26 = _t104;
   nx_list_usize _t105 = nx_clone_list_usize(c, &(done_36).callees_12);
-  nx_drop_list_usize(c, &((*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12284")].callees_27));
-  (*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12284")].callees_27 = _t105;
+  nx_drop_list_usize(c, &((*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12287")].callees_27));
+  (*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12287")].callees_27 = _t105;
   nx_list_usize _t106 = nx_clone_list_usize(c, &(done_36).callee_spans_13);
-  nx_drop_list_usize(c, &((*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12285")].callee_spans_28));
-  (*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12285")].callee_spans_28 = _t106;
+  nx_drop_list_usize(c, &((*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12288")].callee_spans_28));
+  (*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12288")].callee_spans_28 = _t106;
   nx_m2_Types* _t107 = &((*self_0).tys_1);
   size_t _t108 = nx_Types_resolve_478(c, _t107, ret_10, true);
-  (*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12286")].ret_7 = _t108;
+  (*self_0).insts_17.ptr[nx_idx(inst_1, (*self_0).insts_17.len, "self/check.nx:12289")].ret_7 = _t108;
   nx_drop_m2_FnCtx(c, &done_36);
   nx_drop_m2_FnCtx(c, &ctx_11);
 }

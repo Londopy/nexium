@@ -111,6 +111,45 @@ jobs:
           path: nx-out/fuzzing/findings/
           if-no-files-found: ignore
 
+  sanitizers:
+    name: sanitizers
+    # the compiler built with AddressSanitizer and UBSan checks every source in
+    # the tree, and every spec case, example and tutorial program is built with
+    # the sanitizers and run: a dangling view or undefined behaviour in the
+    # compiler, the runtime or the generated C is a failure here
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: Build the seed with the sanitizers
+        run: gcc -std=gnu11 -O1 -g -w -fno-strict-aliasing -fsanitize=address,undefined -fno-sanitize-recover=all -o nx-out-san-nx0 bootstrap/nx.c -lm -lc -lpthread
+      - name: The compiler checks every source under the sanitizers
+        run: |
+          export ASAN_OPTIONS=detect_leaks=0
+          export NX_ZIG=zig
+          bad=0
+          for f in examples/*.nx tests/spec/*.nx topo/code/*.nx std/*.nx gui/*.nx self/nx.nx tests/run.nx tests/fuzz.nx site/build.nx; do
+            out=$(./nx-out-san-nx0 check "$f" 2>&1)
+            if echo "$out" | grep -q "Sanitizer\|runtime error"; then echo "== $f"; echo "$out" | head -20; bad=1; fi
+          done
+          exit $bad
+      - name: Every program built with the sanitizers runs clean
+        run: |
+          set +e
+          export ASAN_OPTIONS=detect_leaks=0
+          export NX_CC="gcc -fsanitize=address,undefined -fno-sanitize-recover=all"
+          bad=0
+          for f in tests/spec/*.nx examples/hello.nx examples/tour.nx examples/binary.nx examples/ownership.nx examples/json.nx examples/records.nx examples/generics.nx examples/control.nx examples/stdlib.nx topo/code/*.nx; do
+            case "$f" in *_fails*) continue;; esac
+            want=$(grep -m1 '^// EXIT:' "$f" | sed 's#// EXIT: *##'); want=${want:-0}
+            out=$(./nx-out-san-nx0 run "$f" --out-dir nx-out/san 2>&1); code=$?
+            if echo "$out" | grep -q "Sanitizer\|runtime error"; then echo "== $f"; echo "$out" | head -20; bad=1
+            elif [ "$code" != "$want" ]; then echo "== $f exit $code (want $want)"; echo "$out" | tail -3; bad=1; fi
+          done
+          exit $bad
+
   editors:
     name: editor support
     runs-on: ubuntu-latest

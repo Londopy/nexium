@@ -11617,10 +11617,13 @@ impl Checker {
     /// Size arithmetic runs at pointer width: every identifier is widened to
     /// `usize` by a synthesized cast, mirroring the oracle's rewrite.
     fn widen_size_expr(self: *mut Self, m: usize, e: usize) -> usize {
+        // copied out of the node: adding nodes below may move the tree's storage
         let n = self.node(m, e)
         let k = n.k
         let start = n.start
         let end = n.end
+        let nx = n.x
+        let ny = n.y
         if k == parser.NodeKind.Ident {
             var tn = self.blank_node(parser.NodeKind.TName, start, end)
             tn.words.append(String.from("usize"))
@@ -11631,8 +11634,8 @@ impl Checker {
             return self.mods[m].parsed.tree.add(c)
         }
         if k == parser.NodeKind.Binary {
-            let lhs = self.widen_size_expr(m, n.x)
-            let rhs = self.widen_size_expr(m, n.y)
+            let lhs = self.widen_size_expr(m, nx)
+            let rhs = self.widen_size_expr(m, ny)
             var b = self.blank_node(parser.NodeKind.Binary, start, end)
             b.name = self.node(m, e).name.clone()
             b.x = lhs
@@ -11640,7 +11643,7 @@ impl Checker {
             return self.mods[m].parsed.tree.add(b)
         }
         if k == parser.NodeKind.Unary {
-            let inner = self.widen_size_expr(m, n.x)
+            let inner = self.widen_size_expr(m, nx)
             var u = self.blank_node(parser.NodeKind.Unary, start, end)
             u.name = self.node(m, e).name.clone()
             u.x = inner
