@@ -190,6 +190,175 @@ A 1.0 means the language stops changing under people's feet.
   and in which Apple SDKs it links against, and 0.7.0 found bugs that only
   one of them showed.
 
+## Past 1.0
+
+After 1.0 the language changes only by addition, under the stability policy
+of phase 5. Each minor version has a theme; a bullet moves into a version
+when it has a decision entry and a test plan. The compass sentence still
+decides the order: what the compiler and the tools in `self/` and `std/`
+needed first, what other people's programs need next. Everything here was
+found by writing Nexium, not by reading other languages' feature lists.
+
+### 1.1: the language the compiler wanted
+
+Ergonomics the self-hosted compiler paid for by hand.
+
+- `?T` chaining: `a?.b` is `null` when `a` is (deferred since phase 1).
+- Tuple destructuring: `let (a, b) = pair`, in `for` bindings too.
+- `derive(Clone)` for structs and enums whose fields all clone, the way
+  drops are derived (KNOWN_ISSUES: every deep copy in `check.nx` is a hand
+  written function).
+- Iterators: `for x in v` over any value with a `next(self: *mut Self) -> ?T`
+  method, so a user type iterates like a slice; `Map` iteration over
+  entries `(k, v)` as well as keys.
+- Slice patterns: `[first, rest..]`, `[a, b]`, and `x @ pat` bindings in
+  `match`.
+- Range facts through `while` conditions and `else` branches (KNOWN_ISSUES),
+  and proofs for `x / y` after `y != 0`, `.?` after `x != null`, and slice
+  bounds after `if s.len >= n`, so fewer functions carry `panics`.
+- Format width from a value (`{:>w}`) and named placeholders with an
+  anonymous literal (`format("{x}", .{ .x = 1 })`).
+- Intrinsics still missing from a systems language: `@bitCast`, `@min`,
+  `@max`, `@alignOf`, `@target()` (os, arch, pointer width) for compile-time
+  `if` in std.
+- `unbounded_stack`: the spec says reserved. Either a recursion-depth
+  proof (a function is bounded when every recursive call is on a strictly
+  smaller argument) or removal, the way decision 88 settled the others.
+
+Exit: the compile-time interpreter and `check.nx` lose their hand-written
+copies and index workarounds; `nx audit self/check.nx` reports fewer
+`panics` than in 1.0.
+
+### 1.2: the toolchain in Nexium
+
+The Rust crate becomes a bootstrap seed and nothing else.
+
+- `fmt`, `doc`, `lsp`, `ship`, packages, the REPL and the migrator in
+  Nexium, each diffed against the Rust tool until it retires.
+- Incremental builds: one C file per module, compiled separately and
+  cached by content hash, so a one-line change does not recompile a
+  100k-line translation unit; parallel checking of independent modules.
+- `#line` directives in the generated C, so a debugger shows `.nx` lines,
+  and `nx debug` launching lldb or gdb with formatters for `List`,
+  `String`, `Map`, slices and optionals.
+- A semantic language server: hover, diagnostics, go-to-definition and
+  rename backed by the checker's typed IR, not the parser (decision 84 was
+  syntactic on purpose, for 0.5).
+- `nx fix` applies the compiler's own hints: `+%`/`+|` where the note
+  suggests it, `.clone()`, `_ =`, the migrations.
+- `nx bench`: `bench "name" { }` blocks with warmup, iterations and
+  medians, in the same file as tests.
+- `nx build --sanitize address,undefined` through the C compiler, and
+  `nx test --sanitize` in this repository's CI.
+- Conditional compilation: `if comptime @target().os == "windows" { }` in
+  std replaces the runtime's `#ifdef`s one by one.
+
+Exit: `cargo` is used only to build the bootstrap seed; every tool a user
+runs is a Nexium program.
+
+### 1.3: a standard library people stop supplementing
+
+- Collections: `Set(T)`, `Deque(T)`, `std.sort` with comparators and
+  stable sort, `std.heap` (priority queue), binary search on sorted slices.
+- `std.path` (split off from `std.fs`), `std.env` (config files, XDG and
+  AppData directories), `std.csv`, `std.toml` (the manifest parser leaves
+  Rust), `std.base64`, `std.hash` (FNV, SipHash for `Map`, SHA-256 for
+  checksums), `std.uuid`, `std.log` with levels and structured fields.
+- `std.http` client with redirects, timeouts and streaming bodies; TLS
+  through the platform (SChannel, Security.framework, OpenSSL where the
+  system has it) so `https` works without vendoring a library.
+- `std.text`: grapheme clusters and case mapping tables, `chars()` over
+  scalars, width for terminal alignment.
+- `std.time`: time zones from the platform database, ISO 8601 parsing
+  in both directions, `Duration` arithmetic.
+- `std.process`: pipes as streams, signals, exit codes by name.
+- `std.thread`: `select` over channels, scoped threads that are joined
+  when the block ends (no handle can escape), atomics in `sync`.
+- `std.testing`: property-based tests (`check(gen, fn)`) with shrinking,
+  the same driver the fuzzers use.
+
+Exit: `examples/tool.nx`, `service.nx` and the self-hosted compiler import
+nothing they had to write themselves.
+
+### 1.4: platforms
+
+- WebAssembly: `--target wasm32-wasi` and `wasm32-freestanding`, the
+  runtime's process, socket and thread code behind `@target()`, and an
+  `artifact wasm` producing a `.wasm` with a JavaScript loader. The
+  self-hosted compiler compiled to wasm is the playground: `nx` running in
+  a browser, no server.
+- nexium-gui: X11 and Wayland, Cocoa backends beside Win32; the demo runs
+  on all three and in the browser through a canvas backend.
+- Static Linux binaries (musl), FreeBSD, and the tier list extended;
+  Linux aarch64 and Windows arm64 promoted to tier 1 when CI runs them.
+- Cross-compilation matrix in `nx ship`: every target the C toolchain
+  supports, from one machine, tested in CI for the tier-1 set.
+- Embedded targets: `-Os` builds without the runtime's file, socket and
+  thread parts (`@target().os == "none"`), the first program on a
+  microcontroller.
+
+Exit: a Nexium program runs in the browser, on a Raspberry Pi and on the
+three desktops from one source, and the docs say which combinations CI
+proves.
+
+### 1.5: the runtime that release builds deserve
+
+- ARC elision: retain/release pairs the checker proves redundant (a `ref
+  class` passed down and back within one function) are not emitted; the
+  `refcounts` effect reports the ones that remain.
+- Bounds-check elimination in loops from the range analysis; `nx audit`
+  shows which checks survive in a hot function.
+- `Map`: open addressing with a hash chosen per key type, iteration order
+  documented; small-string optimization for `String`; `List` growth policy
+  documented and tunable per `using` block.
+- `for parallel`: work stealing, a chunk size heuristic, and nested
+  parallel loops that share one pool.
+- Compile time: the checker's monomorphization cache, and preprocessed
+  `@cImport` headers cached by hash.
+- A benchmark suite (`bench/`) against C, Rust, Go and Python on the
+  programs the examples already implement, run by CI on a fixed runner
+  with results in the repository, so a regression is a failing check.
+
+Exit: every example in release mode is within a documented factor of its
+C counterpart, and the factor does not grow between releases.
+
+### 2.0 candidates: questions the spec review should settle
+
+Additions large enough to deserve a spec version of their own. Each is a
+decision entry first, an implementation second, and none is promised.
+
+- Errors that carry data: `error Parse { Bad{ line: u32 } }` with payloads
+  in `catch |e|` and `match`, or the position that error sets stay names
+  and context travels beside them.
+- Operator overloading through traits (`Add`, `Index`, `Eq` is derived
+  already) for numeric types written in Nexium, or the position that
+  operators mean what they mean for builtins only.
+- Named arguments, or the position that an anonymous literal parameter
+  (`f(.{ .width = 3 })`) is the language's way.
+- Generic traits and associated types (`trait Container(T)`,
+  `trait Iterator { type Item }`), which 1.1's iterator protocol may force.
+- Visibility levels (`pub(package)`) and re-exports (`pub import`).
+- An `unsafe` audit: `nx audit --unsafe` listing every `unsafe` block, its
+  reason comment (mandatory), and the foreign calls under it.
+
+### Ecosystem, in parallel with all of the above
+
+- The book: a chapter per spec section, each with a program; the tour is
+  chapter one. `nx doc` renders HTML for the book and for std, and the
+  docs site is built by CI from the repository.
+- `nx new <template>`: cli, service, library, gui, wasm.
+- Editors: Neovim and Helix configurations (the tree-sitter grammar and
+  the language server exist), an Emacs mode, a JetBrains plugin when the
+  language server is semantic.
+- The registry and `nx publish` (decision 27's last item), seeded with
+  the packages that leave the tree: the HTTP client, TLS, TOML, CSV,
+  SQLite through `@cImport`, a CLI parser richer than `std.args`.
+- Governance: an RFC process for additions (the decision log becomes
+  public proposals with a comment period), a release calendar, and the
+  stability policy applied to `std` (what a std module may change).
+- Translations of the book and the reference (docs/i18n exists for the
+  README, language and architecture pages).
+
 ## Always
 
 - Every release is verified on three platforms by CI before it is tagged.
@@ -202,6 +371,8 @@ A 1.0 means the language stops changing under people's feet.
 ## Not planned
 
 - A garbage collector. Reference counting with `weak` is the design.
+- `async`/`await`. Threads, channels and blocking calls are the concurrency
+  model (decision 82); an event loop can be a library.
 - A native backend. C is the backend; Zig or a system compiler is the
   toolchain, and the installers make that invisible.
 - Async/await as colored functions, unless phase 2 finds a design that fits
