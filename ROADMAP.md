@@ -704,6 +704,49 @@ for, in every situation it can find itself in:
   (packages, REPL history) or remove everything; a repair that reinstalls
   only the files whose checksum differs.
 
+**Every road in** (1.3 to 1.5). Today `nx` arrives by the Windows setup,
+the install script, the portable archives, source, and the GitHub
+Action. People install software the way their platform taught them, so
+each road below is a manifest or a package built by the release
+workflow from the same archives, in the order of how many people stand
+on it. The community usually maintains the distribution-owned ones
+(AUR, nixpkgs, Homebrew core); the project's job is a release that makes
+that easy: stable URLs, checksums, and no post-install step.
+
+- Windows: `winget install Londopy.Nexium`, Chocolatey, Scoop (a bucket
+  in the repository), an MSI for group policy, an MSIX for the Microsoft
+  Store, and the ARM64 setup.
+- macOS: a Homebrew tap (`brew install londopy/tap/nexium`) then core,
+  MacPorts, the signed and notarized `.pkg`, and a universal binary.
+- Linux: `.deb` and `.rpm` with an apt and a dnf repository so upgrades
+  come with the system's; a PPA, a Fedora COPR and an openSUSE OBS
+  project; the AUR; Alpine (`apk`, musl builds of 1.5); Nix (a
+  `flake.nix` in the repository, then nixpkgs) and Guix; Snap; Gentoo
+  and Void templates. Flatpak and AppImage for the Hut, not the compiler.
+- BSD: FreeBSD and OpenBSD ports once 1.5's tiers include them.
+- Containers: `ghcr.io/londopy/nexium` (the compiler on Alpine and on
+  Debian, with Zig), a dev container feature, so Codespaces and Gitpod
+  have `nx` in one line, and a `setup-nexium`-style step for GitLab CI.
+- Carried by other ecosystems: `pip install nexium` (a wheel that ships
+  the binary, the way Zig and Ruff ship on PyPI) so a Python project's
+  `nx ship` wheel builds in its own venv; `npm install nexium` and `npx
+  nx` the way esbuild ships; conda-forge; Composer, RubyGems and Cargo
+  carriers only when 1.7's artifacts for those languages exist.
+- Version managers: an `asdf`/`mise` plugin, `pkgx`, and `nxup`, the
+  project's own: several versions side by side, `nx +1.0.1 run`, a
+  `nexium.toml` pin honoured automatically, `nxup update`; `nx upgrade`
+  above is `nxup` for people with one version.
+- Editors and services: the VS Code Marketplace and Open VSX (the
+  extension is published to the first; the second is where VSCodium and
+  Gitpod look), the Zed and Neovim registries once the language server
+  is semantic, a pre-commit hook for `nx fmt`.
+- Elsewhere: Termux on Android, the playground in the browser (no
+  install at all), and a bootable "try it" image is not planned.
+- For programs written in Nexium: every channel above that takes a
+  binary becomes a target of the `installer` artifact (`nx ship
+  --winget`, `--brew`, `--deb`, `--docker`), so a Nexium program reaches
+  its users on the roads the compiler took.
+
 **`nx topo`: the tutorial you can run** (1.4).
 
 - An interactive tutorial runner: opens a chapter, shows its program, lets

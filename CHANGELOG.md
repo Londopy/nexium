@@ -26,6 +26,13 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   ecosystem items; the *Always* section commits to the corpus growing
   with the language, the sanitizers and the fuzzer on every release, and
   a patch within a week of a fix.
+- The roadmap's "every road in": the installation channels beyond the
+  setup and the script, per platform (winget, Chocolatey, Scoop, MSI,
+  MSIX; Homebrew, MacPorts, a notarized `.pkg`; apt and dnf repositories,
+  PPA, COPR, OBS, AUR, Alpine, Nix, Guix, Snap; BSD ports), containers
+  and dev containers, wheels and npm packages that carry the binary,
+  version managers and `nxup`, the extension registries, and the same
+  channels as targets of the `installer` artifact for Nexium programs.
 - The roadmap's "installer grown up": a setup mutex against two
   wizards at once, upgrade/repair/remove of an installed version, closing
   a running `nx` before files are replaced, checks for disk space, a
