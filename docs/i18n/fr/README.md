@@ -15,21 +15,26 @@
 <p align="center">
   <a href="https://github.com/Londopy/nexium/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Londopy/nexium/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white"></a>
   <a href="https://github.com/Londopy/nexium/releases"><img alt="Release" src="https://img.shields.io/github/v/release/Londopy/nexium?logo=github&color=8b7cf6"></a>
-  <a href="https://crates.io/crates/nexium"><img alt="crates.io" src="https://img.shields.io/crates/v/nexium?logo=rust&color=4fd1c5"></a>
+  <a href="https://londopy.github.io/nexium/"><img alt="Docs" src="https://img.shields.io/badge/docs-londopy.github.io%2Fnexium-5b4bd6"></a>
   <a href="../../../LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
   <a href="https://ziglang.org/download/"><img alt="Zig" src="https://img.shields.io/badge/backend-zig%20cc-f7a41d?logo=zig&logoColor=white"></a>
   <img alt="Platforms" src="https://img.shields.io/badge/platforms-windows%20%7C%20linux%20%7C%20macos-2b3a55">
 </p>
 
 <p align="center">
-  <b>Un langage assez complet pour tout construire, et en même temps le meilleur choix pour n'adopter qu'une pièce d'autre chose.</b>
+  <b>Un langage assez complet pour tout construire, et qui est aussi le meilleur choix pour une seule pièce d'autre chose.</b>
 </p>
 
-Nexium compile en code natif en passant par le C, possède un comptage de
-références automatique sans ramasse-miettes, un système d'effets vérifié par
-la machine qui dit si une fonction alloue, bloque ou peut paniquer, et un
-compilateur qui transforme un seul arbre de sources en bibliothèque C, en
-wheel Python, en crate Rust ou en outil en ligne de commande.
+<p align="center">
+  <a href="https://londopy.github.io/nexium/"><b>Documentation et le tutoriel « le Topo » &rarr; londopy.github.io/nexium</b></a><br>
+  <sub><a href="https://londopy.github.io/nexium/topo/01-base-camp.html">Commencer par le Topo</a> &middot; <a href="https://londopy.github.io/nexium/docs/language.html">Référence du langage</a> &middot; <a href="https://londopy.github.io/nexium/docs/install.html">Installation</a> &middot; <a href="https://londopy.github.io/nexium/docs/std.html">Bibliothèque standard</a> &middot; <a href="https://londopy.github.io/nexium/docs/embedding.html">Intégration</a> (en anglais)</sub>
+</p>
+
+Nexium compile en code natif via C, possède un comptage de références
+automatique sans ramasse-miettes, un système d'effets vérifié par la machine
+qui dit si une fonction alloue, bloque ou peut paniquer, et un compilateur
+qui transforme une seule arborescence de sources en bibliothèque C, en wheel
+Python, en crate Rust ou en outil en ligne de commande.
 
 <table>
 <tr>
@@ -78,42 +83,53 @@ shipped 4 artifact file(s) for x86_64-windows:
 La signature d'effets décide de l'ABI C : `checksum` est prouvée `!panics`,
 elle reçoit donc un simple `uint32_t checksum(const uint8_t*, size_t)`. Une
 fonction qui peut échouer renvoie un code d'état, et une panique Nexium en son
-sein est convertie à la frontière au lieu d'abattre le processus hôte.
+sein est convertie à la frontière au lieu d'interrompre le processus hôte.
 
-## Points forts
+## L'essentiel
 
 | | |
 | --- | --- |
-| 🧾 **Effets inférés et vérifiés** | `allocates` `refcounts` `blocks` `shared_mutable` `nondeterministic` `panics` `ffi`. Déclarez `!allocates` et le compilateur désigne la ligne exacte qui le violerait, à travers les appels. |
-| 🧠 **Propriété sans vérificateur d'emprunts** | Les collections se déplacent, `.clone()` copie, les valeurs `ref class` sont comptées par références, `weak` brise les cycles. Utiliser après déplacement est une erreur de compilation. |
-| 🔬 **Motifs binaires** | `<<version:4, ihl:4, len:16/big, rest:bytes>>` reconnaît et construit des paquets avec des tailles vérifiées. |
+| 🧾 **Effets inférés et vérifiés** | `allocates` `refcounts` `blocks` `shared_mutable` `nondeterministic` `panics` `ffi`. Déclarez `!allocates` et le compilateur pointe la ligne exacte qui le violerait, à travers les appels. |
+| 🧠 **Propriété sans borrow checker** | Les collections se déplacent, `.clone()` copie, les valeurs `ref class` sont comptées par références, `weak` casse les cycles. Utiliser après un déplacement est une erreur de compilation. |
+| 🔬 **Motifs binaires** | `<<version:4, ihl:4, len:16/big, rest:bytes>>` reconnaît et construit des paquets aux tailles vérifiées. |
 | 🧵 **Boucles parallèles, arènes, objets de trait** | `for parallel`, `using arena { }`, `dyn Trait !allocates`. |
-| 🔌 **Le C sans bindings** | `@cImport("header.h")` lit l'en-tête directement ; `artifact link` compile du C embarqué dans le programme. |
-| 📦 **Livrer depuis une seule source** | `nx ship` produit en-têtes et bibliothèques C, wheels Python et crates Rust avec des enveloppes sûres. |
-| 🖼 **Une GUI, en Nexium** | [`gui/`](../../../gui) : une GUI en mode immédiat (boutons, curseurs, champs de texte) avec rastérisation logicielle et police bitmap, entièrement en Nexium au-dessus d'une couche fenêtre de 200 lignes de C. |
-| 🛠 **Outils fournis** | `fmt`, `doc`, `lsp`, `size`, `leaks`, `refcounts`, `effects`, `audit`. Zéro dépendance. |
+| 🔌 **Du C sans bindings** | `@cImport("header.h")` lit l'en-tête directement ; `artifact link` compile du C embarqué dans le programme. |
+| 📦 **Livrer depuis une seule source** | `nx ship` produit des en-têtes et bibliothèques C, des wheels Python et des crates Rust avec des enveloppes sûres. |
+| 🖼 **Une GUI, en Nexium** | [`gui/`](../../../gui) : une GUI en mode immédiat (boutons, curseurs, champs de texte) avec un rastériseur logiciel et une police bitmap, tout en Nexium au-dessus d'une couche fenêtre C de 200 lignes. |
+| 🛠 **Outils inclus** | `fmt`, `doc`, `lsp`, `size`, `leaks`, `refcounts`, `effects`, `audit`. Zéro dépendance. |
 
 ## Installation
 
-La seule exigence à l'exécution est [Zig](https://ziglang.org/download/)
-dans votre `PATH`, utilisé comme compilateur C (`zig cc` compile aussi en
-croisé ; `--cc clang` fonctionne également).
+**Windows** : téléchargez et lancez l'installateur depuis la page
+[Releases](https://github.com/Londopy/nexium/releases). Il installe `nx`, une
+chaîne d'outils Zig embarquée (le compilateur C que `nx` utilise), la
+bibliothèque standard, les exemples, la documentation et l'extension VS Code,
+et ajoute `nx` à votre PATH. Rien d'autre à installer.
 
-Les binaires `nx` précompilés pour Windows, Linux et macOS sont sur la page
-[Releases](https://github.com/Londopy/nexium/releases). Décompressez et
-placez `nx` dans votre `PATH`.
-
-Ou compilez depuis les sources avec Rust 1.75 ou plus récent :
+**macOS et Linux** :
 
 ```bash
-cargo install nexium
+curl -fsSL https://raw.githubusercontent.com/Londopy/nexium/main/installers/install.sh | sh
 ```
+
+Le script vérifie le téléchargement contre les sommes de contrôle de la
+release, installe dans `~/.nexium`, met en place un compilateur C (les outils
+Xcode sur macOS ; sur Linux, Zig est téléchargé quand rien n'est trouvé) et
+ajoute `nx` à votre PATH.
+
+Ensuite, dans une nouvelle console, `nx doctor` montre ce qui sera utilisé.
+Tous les détails, y compris la vérification des sommes et chaque variable
+d'environnement, sont dans [docs/install.md](../../install.md) (anglais).
+
+Ou compilez depuis les sources avec rien d'autre qu'un compilateur C (Zig sur
+le PATH, ou `CC`), ce qui construit le compilateur écrit en Nexium à partir
+de sa graine en C :
 
 ```bash
-cargo install --git https://github.com/Londopy/nexium
+git clone https://github.com/Londopy/nexium && cd nexium && sh bootstrap/build.sh
 ```
 
-Puis :
+Le résultat est `nx-out/bootstrap/nx2` (`build.ps1` sous Windows). Ensuite :
 
 ```bash
 nx run examples/hello.nx
@@ -167,7 +183,7 @@ fn main() -> !void {
 ```
 
 <details>
-<summary><b>Filtrage par motifs binaires</b></summary>
+<summary><b>Reconnaissance de motifs binaires</b></summary>
 
 ```
 fn parse_ipv4(packet: []u8) -> Net!Ipv4 {
@@ -208,7 +224,7 @@ error: function `hot` is declared `!allocates` but has the `allocates` effect
 </details>
 
 <details>
-<summary><b>Appeler le C tient en une importation d'en-tête</b></summary>
+<summary><b>Appeler du C tient en un import d'en-tête</b></summary>
 
 ```
 const libc = @cImport("string.h")
@@ -218,9 +234,9 @@ artifact link { c_sources = ["cvendor.c"] }
 unsafe { println("{}", .{libc.strlen(@cstr("hello"))}) }
 ```
 
-Pas de générateur de bindings, pas d'étape de construction : l'en-tête est la
-seule source de vérité pour la disposition mémoire, et les appels étrangers
-portent l'effet `ffi`.
+Pas de générateur de bindings, pas d'étape de build : l'en-tête est l'unique
+source de vérité pour la disposition mémoire, et les appels étrangers portent
+l'effet `ffi`.
 
 </details>
 
@@ -229,7 +245,7 @@ portent l'effet `ffi`.
 
 ```
 for parallel p, i in positions {
-    out[i] = integrate(p)          // shared_mutable interdit ici
+    out[i] = integrate(p)          // pas de shared_mutable autorisé ici
 }
 
 using arena {
@@ -242,19 +258,31 @@ using arena {
 
 **Documentation**
 
-- [Comment fonctionne Nexium](../../architecture.md) : le pipeline de la source au binaire, l'inférence d'effets, la propriété, le runtime et la livraison.
-- [Référence du langage](../../language.md) : chaque construction implémentée par le compilateur.
+- [Spécification](../../../SPEC.md) (anglais) : le langage tel qu'implémenté, les parties prévues marquées.
+- [Feuille de route](../../../ROADMAP.md) (anglais) : phases, critères de sortie, et ce qui n'est pas prévu.
+- [Comment Nexium fonctionne](../../architecture.md) (anglais) : le pipeline de la source au binaire, l'inférence d'effets, la propriété, le runtime et la livraison.
+- [Référence du langage](../../language.md) (anglais) : chaque construction que le compilateur implémente.
 - [Intégration](../../embedding.md) (anglais) : appeler les bibliothèques livrées depuis Python, Rust et C.
-- [nexium-gui](../../gui.md) (anglais) : la bibliothèque GUI en mode immédiat et l'écriture d'un widget.
+- [La session interactive](../../repl.md) (anglais) : `nx` à une invite, comme `python`.
+- [Stabilité](../../stability.md) et [plateformes](../../platforms.md) (anglais) : ce qu'une version promet, le cycle de dépréciation, `nx fix`, les niveaux.
+- [Le Topo](https://londopy.github.io/nexium/topo/01-base-camp.html) (anglais) : le tutoriel, de l'installation du compilateur à un réseau de neurones, une GUI et une bibliothèque livrée ; la source est dans [`topo/`](../../../topo/). Tout ce qui précède, rendu, est sur [londopy.github.io/nexium](https://londopy.github.io/nexium/).
+- [Installation](../../install.md) (anglais) : l'installateur Windows, le script macOS/Linux, la compilation depuis les sources, les sommes de contrôle, et comment `nx` trouve un compilateur C.
+- [Paquets](../../packages.md) (anglais) : `nexium.toml`, `nx add`, `nx fetch`, dépendances git ou par chemin, le fichier de verrouillage.
+- [Bibliothèque standard](../../std.md) (anglais) : les modules écrits en Nexium (`std.strings`, `std.lists`, `std.bytes`, `std.num`, `std.json`, `std.args`, `std.fs`, `std.time`, `std.regex`, `std.text`, `std.testing`, `std.stream`, `std.net`, `std.http`, `std.thread`, `std.process`).
+- [nexium-gui](../../gui.md) (anglais) : la bibliothèque GUI en mode immédiat et comment écrire un widget.
 - [Publier votre programme](../../releasing-your-program.md) (anglais) : des binaires pour trois plateformes à partir d'un tag, installateurs en option.
-- [Support des éditeurs](../../../editors) (anglais) : extension VS Code, syntaxe Sublime, LSP.
-- [Décisions](../../../DECISIONS.md) (anglais) : chaque choix fait là où la spécification restait ouverte.
+- [Prise en charge des éditeurs](../../../editors) (anglais) : VS Code, Vim, Neovim, Helix, Zed, Emacs, Kate, JetBrains, Sublime Text, Notepad++, nano, et `nx lsp` pour les autres.
+- [Linguist](../../../linguist) (anglais) : la pull request prête à appliquer qui fera reconnaître `.nx` par GitHub une fois le seuil d'usage atteint.
+- [Traductions](../README.md) : ce README en six langues ; la référence du langage et le tour de l'architecture en espagnol, chinois et japonais.
+- [Noms des versions](../../release-names.md) (anglais) : chaque version est un lieu sur une montagne ; le schéma, le registre et les noms encore à utiliser.
+- [Décisions](../../../DECISIONS.md) (anglais) : chaque choix fait là où la spécification était ouverte.
+- [Problèmes connus](../../../KNOWN_ISSUES.md) (anglais) : bogues ouverts, manques et limites, avec reproductions.
 
 ## Commandes
 
-| commande | effet |
+| commande | ce qu'elle fait |
 | --- | --- |
-| `nx build file.nx` | compile en exécutable (ou en objet s'il n'y a pas de `main`) |
+| `nx build file.nx` | compile en exécutable (ou en objet quand il n'y a pas de `main`) |
 | `nx run file.nx` | compile et exécute |
 | `nx test file.nx [filter]` | exécute les blocs `test "..."` |
 | `nx check file.nx` | vérifie les types et signale les violations d'effets |
@@ -262,80 +290,128 @@ using arena {
 | `nx audit file.nx` | liste les blocs `unsafe` et les globales mutables |
 | `nx ship file.nx` | produit chaque `artifact` déclaré |
 | `nx emit-c file.nx` | affiche le C généré |
-| `nx tokens file.nx` | affiche le flux de jetons (l'oracle de l'auto-hébergement) |
+| `nx tir file.nx [--sigs]` | le programme vérifié en S-expressions (les tests du compilateur le lisent) |
 | `nx fmt file.nx [--check]` | formatage canonique |
-| `nx doc file.nx` | documentation HTML avec effets inférés |
+| `nx fix file.nx` | réécrit les formes dépréciées que le compilateur sait migrer (aucune en 1.0 ; voir [docs/stability.md](../../stability.md)) |
+| `nx doc file.nx` | documentation HTML avec les effets inférés |
 | `nx size file.nx` | attribue les octets du binaire aux déclarations |
-| `nx refcounts file.nx` | chaque site de rétention et de libération |
+| `nx refcounts file.nx` | chaque site de retain et de release |
 | `nx leaks file.nx` | exécute avec suivi des allocations et signale les fuites |
 | `nx lsp` | serveur de langage sur stdio |
+| `nx doctor` | quel compilateur C sera utilisé, et si l'installation fonctionne |
+| `nx repl`, ou simplement `nx` | une session interactive : tapez du code, voyez les valeurs, gardez les liaisons |
 
-Options : `--mode debug|safe|fast|small`, `--target x86_64-linux-gnu`
-(toute cible connue de `zig cc`), `--out-dir`, `--keep-c`, `--cc`, et pour
+Options : `--mode debug|safe|fast|small`, `--target x86_64-linux-gnu` (toute
+cible connue de `zig cc`), `--out-dir`, `--keep-c`, `--cc`, et pour
 l'interopérabilité C `-I`, `--link`, `--link-path`, `--c-source`.
 
 ## État
 
-C'est la première implémentation du design de `nexium-spec.txt`. Elle est
-assez complète pour écrire de vrais programmes (voir
-[`examples/`](../../../examples)) et livrer un composant Python, Rust ou C à
-partir d'un seul fichier. Les objets de trait, les boucles parallèles, les
-portées d'arène, l'importation directe d'en-têtes C et les outils sont tous
-là. C'est encore tôt : la bibliothèque standard n'est qu'une fraction de la
-section 16, et la vérification des régions ne couvre que les vues renvoyées.
-[`DECISIONS.md`](../../../DECISIONS.md) recense chaque choix fait là où la
-spécification restait ouverte, et le point 27 liste ce qui reste.
+**1.0 : langage stable, écosystème naissant.** Le langage ne change que par
+ajout, sous la [politique de stabilité](../../stability.md) ; le compilateur
+est écrit en Nexium et se construit lui-même ; chaque exemple, chaque cas de
+la spécification et chaque programme du tutoriel s'exécute en CI sur trois
+plateformes, sous les sanitizers et le fuzzer. Ce que 1.0 n'est pas encore,
+et où chaque point trouve sa réponse, est la première section de [la feuille
+de route](../../../ROADMAP.md) : la sûreté mémoire n'est pas garantie avant
+1.2 (une vue peut survivre à son stockage dans du code sans `unsafe`), il n'y
+a pas encore de chiffres de performance, et l'écosystème se résume à un seul
+mainteneur et seize modules de bibliothèque standard.
+[`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md) liste chaque bogue ouvert avec
+son correctif ; [`DECISIONS.md`](../../../DECISIONS.md), chaque choix fait là
+où la spécification était ouverte.
+
+## Noms des versions
+
+Une version majeure est une montagne, dans l'ordre où les quatorze sommets de
+8 000 mètres ont été gravis pour la première fois ; les versions en dessous
+sont l'ascension : camps, voies et faces pour les versions mineures, les
+membres de l'expédition de la première ascension pour les correctifs,
+`Summit` pour `X.0.0`. La ligne 0.x est l'approche et les camps de
+l'Annapurna, le premier 8 000 gravi (1950), donc 1.0.0 est
+`Annapurna: Summit` ; 0.7.0, où le compilateur a commencé à se construire
+lui-même, est `Annapurna: Camp V`, le dernier camp avant l'assaut du sommet.
+Le nom figure dans le changelog, dans le titre de la release et dans
+`nx version` ; [docs/release-names.md](../../release-names.md) (anglais)
+donne la règle, le registre et les montagnes qu'il reste à gravir.
 
 ## Auto-hébergement
 
-Le compilateur est en Rust aujourd'hui. La version Nexium grandit dans
-[`self/`](../../../self), une étape à la fois, chacune vérifiée contre le
-compilateur Rust sur les mêmes entrées :
+Le compilateur est écrit en Nexium, sous [`self/`](../../../self), et se
+construit lui-même. Une machine sans `nx` en construit un à partir de
+[`bootstrap/nx.c`](../../../bootstrap/nx.c), le C que le compilateur émet
+pour lui-même, avec n'importe quel compilateur C et sans Rust :
 
-| étape | fichier | oracle | état |
-| --- | --- | --- | --- |
-| lexeur | [`self/lexer.nx`](../../../self/lexer.nx) | `nx tokens` | ✅ identique sur chaque exemple et sur lui-même |
-| analyseur | [`self/parser.nx`](../../../self/parser.nx) | `nx sexp` | ✅ identique sur les 46 sources |
-| vérificateur | [`self/check.nx`](../../../self/check.nx) | `nx tir` | 🚧 déclarations et signatures identiques (`--sigs`, 41 sources) ; corps en cours |
-| émetteur C | | `nx emit-c` | |
+```sh
+sh bootstrap/build.sh     # nx.c -> nx0 ; nx0 construit self/nx.nx -> nx1 ; nx1 se reconstruit en le même C -> nx2
+```
 
-`cargo test` compile `self/lexer.nx` avec le compilateur Rust et compare sa
-sortie à l'oracle.
+| étape | fichier | rôle |
+| --- | --- | --- |
+| lexer | [`self/lexer.nx`](../../../self/lexer.nx) | jetons |
+| parser | [`self/parser.nx`](../../../self/parser.nx) | un arbre syntaxique dans une arène d'identifiants |
+| vérificateur | [`self/check.nx`](../../../self/check.nx), [`self/cimport.nx`](../../../self/cimport.nx) | types, effets, propriété, génériques, l'interprète à la compilation, l'import d'en-têtes C, chaque diagnostic |
+| émetteur C | [`self/cgen.nx`](../../../self/cgen.nx) | un fichier C par programme |
+| pilote | [`self/nx.nx`](../../../self/nx.nx) | build, run, test, check, emit-c, tir ; la bibliothèque standard embarquée |
+| outils | [`self/fmt.nx`](../../../self/fmt.nx), [`self/doc.nx`](../../../self/doc.nx), [`self/tools.nx`](../../../self/tools.nx), [`self/size.nx`](../../../self/size.nx), [`self/manifest.nx`](../../../self/manifest.nx), [`self/ship.nx`](../../../self/ship.nx), [`self/lsp.nx`](../../../self/lsp.nx), [`self/repl.nx`](../../../self/repl.nx) | le formateur, le générateur de documentation, les rapports, les paquets, `ship`, le serveur de langage, le REPL |
+
+Chaque exemple, chaque cas de la spécification et chaque cas de compile-fail
+passe par le compilateur amorcé, piloté par un harnais de tests qui est
+lui-même un programme Nexium (`nx run tests/run.nx`), en CI sur trois
+plateformes sans aucune chaîne d'outils Rust. Le premier compilateur, en
+Rust, a servi au portage et a été supprimé en 1.0 (décision 90).
 
 ## Langages du dépôt
 
-Lignes de code non vides, hors sorties de compilation, dépendances et
-fichiers générés :
+Lignes de code non vides, hors sortie de build, dépendances et fichiers
+générés (`bootstrap/nx.c`, le parser tree-sitter, `gui/font.bin`, fichiers de
+verrouillage) :
 
-| langage | lignes | part | rôle |
+| langage | lignes | part | ce que c'est |
 | --- | --- | --- | --- |
-| Rust | 22 393 | 86,9 % | le compilateur `nx` |
-| Nexium | 2 111 | 8,2 % | exemples, lexeur auto-hébergé, nexium-gui, tests |
-| C | 1 108 | 4,3 % | le runtime `nx_rt.h` et la couche fenêtre de la GUI |
-| JavaScript, TypeScript | 159 | 0,6 % | l'extension VS Code |
+| Nexium | 36 193 | 91,0 % | le compilateur et ses outils (25 400 lignes sous `self/`), la bibliothèque standard, le harnais de tests et le fuzzer, les exemples, les programmes du tutoriel, nexium-gui, le générateur du site, la suite de la spécification |
+| C | 2 021 | 5,1 % | le runtime `nx_rt.h`, la couche fenêtre de la GUI, du C de test embarqué |
+| fichiers d'éditeurs | 1 014 | 2,5 % | requêtes tree-sitter, Emacs Lisp, Vim script, Lua pour Neovim, et les 25 lignes de Rust que Zed exige d'une extension |
+| JavaScript, TypeScript | 550 | 1,4 % | l'extension VS Code et la grammaire tree-sitter |
+
+Il n'y a pas de Rust dans le compilateur : le premier compilateur a servi au
+portage et a été supprimé en 1.0 (décision 90) ; le Rust qui reste est la
+colle de l'extension Zed, que Zed compile en WebAssembly. Zig n'est pas dans
+le tableau parce qu'il n'y a aucune source Zig dans l'arbre : `zig cc` est le
+compilateur C que `nx` lance (embarqué par l'installateur Windows, téléchargé
+par le script d'installation), de la même façon qu'un compilateur C s'utilise
+et ne s'écrit pas.
 
 ## Organisation
 
 ```
-src/            le compilateur (lexeur, analyseur, vérificateur, comptime, backend C, pilote)
-runtime/        nx_rt.h, intégré dans chaque fichier C généré
+bootstrap/      la graine en C dont le compilateur est construit, et les scripts de build
+runtime/        nx_rt.h, embarqué dans chaque fichier C généré
+std/            la bibliothèque standard en Nexium, embarquée dans le compilateur
 self/           le compilateur en Nexium, étape par étape
-gui/            nexium-gui : GUI en mode immédiat en Nexium, démo et couche C de plateforme
-editors/        extension VS Code et syntaxe Sublime Text
-examples/       programmes avec sortie enregistrée, exécutés par `cargo test`
-tests/          tests d'intégration et cas compile-fail
-docs/           fonctionnement, référence du langage, guide d'intégration, traductions
+gui/            nexium-gui : GUI en mode immédiat en Nexium, démo, et la couche plateforme en C
+editors/        extension VS Code, grammaire tree-sitter, et les fichiers de dix autres éditeurs
+examples/       programmes avec sortie enregistrée, exécutés par les tests
+topo/           le tutoriel : les chapitres et les programmes qu'ils montrent (exécutés par les tests)
+site/           le générateur du site de documentation, un programme Nexium
+tests/          le harnais (run.nx), la suite de conformité à la spécification (tests/spec) et les cas de compile-fail
+docs/           comment ça marche, référence du langage, guide d'intégration, traductions dans i18n/
 assets/         logo et bannière
-nexium-spec.txt          le design
+nexium-spec.txt          la conception
 nexium-systems-spec.txt  le langage système archivé ; les sections 4 à 9 sont la référence de syntaxe
-DECISIONS.md    choix faits là où la spécification restait ouverte
+DECISIONS.md    décisions prises là où la spécification était ouverte
+KNOWN_ISSUES.md bogues ouverts et limites ; les correctifs passent dans le changelog
 ```
 
 ## Contribuer
 
-Voir [`CONTRIBUTING.md`](../../../CONTRIBUTING.md). Bugs et propositions
-passent par les issues GitHub ; un changement du langage doit nommer la
-contrainte dure de la section 3 de la spécification qu'il sert.
+Voir [`CONTRIBUTING.md`](../../../CONTRIBUTING.md). Les bogues et les
+propositions passent par les issues GitHub ; un changement du langage doit
+nommer la contrainte dure de la section 3 de la spécification qu'il sert. Les
+pull requests passent les tests sur trois plateformes, les formateurs, une
+vérification du changelog et l'[accord de licence de
+contribution](../../../CLA.md) avant d'être fusionnées ; vous gardez votre
+droit d'auteur.
 
 ## Licence
 

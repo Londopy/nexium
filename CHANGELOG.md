@@ -26,6 +26,12 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   ecosystem items; the *Always* section commits to the corpus growing
   with the language, the sanitizers and the fuzzer on every release, and
   a patch within a week of a fix.
+- The README's Status section describes 1.0 (language-stable, early
+  ecosystem, with the roadmap's ledger of what it is not yet) instead of
+  the first implementation; the six translated READMEs are regenerated
+  from the current English one, which had moved on to the self-hosted
+  compiler, the site, the Topo, the editors and the 1.0 numbers while
+  they still described `cargo install` and a Rust compiler.
 - The `CI` workflow skips a push that changes only prose and pictures;
   the `Pages` workflow builds the site from them and validates the
   changelog, so a roadmap edit no longer runs the compiler on three

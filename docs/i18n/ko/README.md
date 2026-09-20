@@ -15,27 +15,31 @@
 <p align="center">
   <a href="https://github.com/Londopy/nexium/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Londopy/nexium/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white"></a>
   <a href="https://github.com/Londopy/nexium/releases"><img alt="Release" src="https://img.shields.io/github/v/release/Londopy/nexium?logo=github&color=8b7cf6"></a>
-  <a href="https://crates.io/crates/nexium"><img alt="crates.io" src="https://img.shields.io/crates/v/nexium?logo=rust&color=4fd1c5"></a>
+  <a href="https://londopy.github.io/nexium/"><img alt="Docs" src="https://img.shields.io/badge/docs-londopy.github.io%2Fnexium-5b4bd6"></a>
   <a href="../../../LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
   <a href="https://ziglang.org/download/"><img alt="Zig" src="https://img.shields.io/badge/backend-zig%20cc-f7a41d?logo=zig&logoColor=white"></a>
   <img alt="Platforms" src="https://img.shields.io/badge/platforms-windows%20%7C%20linux%20%7C%20macos-2b3a55">
 </p>
 
 <p align="center">
-  <b>모든 것을 만들 수 있을 만큼 완전하면서도, 다른 무언가의 한 조각으로 도입하기에 가장 좋은 언어.</b>
+  <b>모든 것을 만들 수 있을 만큼 완전하면서도, 다른 무언가의 한 조각으로 도입하기에도 가장 좋은 언어.</b>
 </p>
 
-Nexium은 C를 거쳐 네이티브 코드로 컴파일되고, 추적 가비지 컬렉터 없이 자동
-참조 계수를 사용하며, 함수가 메모리를 할당하는지, 블로킹하는지, 패닉할 수
-있는지를 기계가 검사하는 효과 시스템을 갖추고 있습니다. 컴파일러는 하나의
-소스 트리를 C 라이브러리, Python wheel, Rust crate, 또는 명령줄 도구로
-바꿉니다.
+<p align="center">
+  <a href="https://londopy.github.io/nexium/"><b>문서와 튜토리얼 「the Topo」 &rarr; londopy.github.io/nexium</b></a><br>
+  <sub><a href="https://londopy.github.io/nexium/topo/01-base-camp.html">Topo로 시작하기</a> &middot; <a href="https://londopy.github.io/nexium/docs/language.html">언어 레퍼런스</a> &middot; <a href="https://londopy.github.io/nexium/docs/install.html">설치</a> &middot; <a href="https://londopy.github.io/nexium/docs/std.html">표준 라이브러리</a> &middot; <a href="https://londopy.github.io/nexium/docs/embedding.html">임베딩</a> (영어)</sub>
+</p>
+
+Nexium은 C를 거쳐 네이티브 코드로 컴파일되고, 추적 가비지 컬렉터 없는 자동 참조
+카운팅을 갖추며, 함수가 메모리를 할당하는지, 블로킹하는지, 패닉할 수 있는지를
+기계적으로 검사하는 이펙트 시스템을 가지고, 하나의 소스 트리를 C 라이브러리, Python
+wheel, Rust 크레이트 또는 명령줄 도구로 만들어 내는 컴파일러를 갖습니다.
 
 <table>
 <tr>
 <td width="50%" valign="top">
 
-**하나의 파일**
+**파일 하나**
 
 ```
 fn checksum(data: []u8) -> u32 export(c) {
@@ -54,7 +58,7 @@ artifact python { name = "hasher" }
 </td>
 <td width="50%" valign="top">
 
-**모든 대상**
+**모든 타깃**
 
 ```
 $ nx ship hasher.nx
@@ -75,45 +79,53 @@ shipped 4 artifact file(s) for x86_64-windows:
 </tr>
 </table>
 
-효과 시그니처가 C ABI를 결정합니다. `checksum`은 `!panics`로 증명되었으므로
-평범한 `uint32_t checksum(const uint8_t*, size_t)`를 얻습니다. 실패할 수 있는
-함수는 상태 코드를 반환하고, 그 안에서 발생한 Nexium 패닉은 호스트 프로세스를
-중단시키는 대신 경계에서 변환됩니다.
+이펙트 시그니처가 C ABI를 결정합니다. `checksum`은 `!panics`가 증명되었으므로 평범한
+`uint32_t checksum(const uint8_t*, size_t)`를 얻습니다. 실패할 수 있는 함수는 상태
+코드를 반환하고, 그 안에서 일어난 Nexium 패닉은 호스트 프로세스를 중단시키는 대신
+경계에서 변환됩니다.
 
-## 주요 특징
+## 핵심
 
 | | |
 | --- | --- |
-| 🧾 **추론되고 검사되는 효과** | `allocates` `refcounts` `blocks` `shared_mutable` `nondeterministic` `panics` `ffi`. `!allocates`를 선언하면 컴파일러가 호출을 따라가 그것을 깨뜨리는 정확한 줄을 가리킵니다. |
-| 🧠 **빌림 검사기 없는 소유권** | 컬렉션은 이동되고, `.clone()`은 복사하며, `ref class` 값은 참조 계수되고, `weak`가 순환을 끊습니다. 이동 후 사용은 컴파일 오류입니다. |
-| 🔬 **이진 패턴** | `<<version:4, ihl:4, len:16/big, rest:bytes>>`가 검사된 크기로 패킷을 매칭하고 구성합니다. |
+| 🧾 **추론되고 검사되는 이펙트** | `allocates` `refcounts` `blocks` `shared_mutable` `nondeterministic` `panics` `ffi`. `!allocates`를 선언하면 컴파일러가 호출을 따라가 이를 깨뜨릴 정확한 줄을 가리킵니다. |
+| 🧠 **빌림 검사기 없는 소유권** | 컬렉션은 이동하고, `.clone()`은 복사하고, `ref class` 값은 참조 카운팅되며, `weak`가 순환을 끊습니다. 이동 후 사용은 컴파일 오류입니다. |
+| 🔬 **바이너리 패턴** | `<<version:4, ihl:4, len:16/big, rest:bytes>>`가 크기를 검사하며 패킷을 매칭하고 조립합니다. |
 | 🧵 **병렬 루프, 아레나, 트레이트 객체** | `for parallel`, `using arena { }`, `dyn Trait !allocates`. |
-| 🔌 **바인딩 없는 C 호출** | `@cImport("header.h")`가 헤더를 직접 읽고, `artifact link`가 동봉된 C를 프로그램에 컴파일해 넣습니다. |
-| 📦 **하나의 소스에서 배포** | `nx ship`이 C 헤더와 라이브러리, Python wheel, 안전한 래퍼가 있는 Rust crate를 만듭니다. |
-| 🖼 **Nexium으로 쓴 GUI** | [`gui/`](../../../gui): 소프트웨어 래스터라이저와 비트맵 폰트를 갖춘 즉시 모드 GUI(버튼, 슬라이더, 텍스트 필드). 200줄짜리 C 창 계층 위는 전부 Nexium입니다. |
-| 🛠 **기본 제공 도구** | `fmt`, `doc`, `lsp`, `size`, `leaks`, `refcounts`, `effects`, `audit`. 의존성 없음. |
+| 🔌 **바인딩 없는 C** | `@cImport("header.h")`가 헤더를 직접 읽고, `artifact link`가 동봉한 C를 프로그램에 컴파일해 넣습니다. |
+| 📦 **하나의 소스에서 배포** | `nx ship`이 C 헤더와 라이브러리, Python wheel, 안전한 래퍼를 갖춘 Rust 크레이트를 만듭니다. |
+| 🖼 **Nexium으로 만든 GUI** | [`gui/`](../../../gui): 소프트웨어 래스터라이저와 비트맵 폰트를 갖춘 즉시 모드 GUI(버튼, 슬라이더, 텍스트 필드). 200줄짜리 C 창 계층 위는 전부 Nexium입니다. |
+| 🛠 **기본 제공 도구** | `fmt`, `doc`, `lsp`, `size`, `leaks`, `refcounts`, `effects`, `audit`. 의존성 제로. |
 
 ## 설치
 
-실행 시 필요한 것은 `PATH`에 있는 [Zig](https://ziglang.org/download/)뿐이며,
-C 컴파일러로 사용됩니다(`zig cc`는 크로스 컴파일도 가능하고, `--cc clang`도
-됩니다).
+**Windows**: [Releases](https://github.com/Londopy/nexium/releases) 페이지에서 설치
+프로그램을 내려받아 실행합니다. `nx`, 동봉된 Zig 툴체인(`nx`가 쓰는 C 컴파일러), 표준
+라이브러리, 예제, 문서, VS Code 확장을 설치하고 `nx`를 PATH에 추가합니다. 그 밖에
+설치할 것은 없습니다.
 
-Windows, Linux, macOS용으로 미리 빌드된 `nx` 바이너리는
-[Releases](https://github.com/Londopy/nexium/releases) 페이지에 있습니다. 압축을
-풀고 `nx`를 `PATH`에 두세요.
-
-또는 Rust 1.75 이상으로 소스에서 빌드합니다:
+**macOS와 Linux**:
 
 ```bash
-cargo install nexium
+curl -fsSL https://raw.githubusercontent.com/Londopy/nexium/main/installers/install.sh | sh
 ```
+
+내려받은 파일을 릴리스 체크섬과 대조하고, `~/.nexium`에 설치하고, C 컴파일러를
+준비하며(macOS에서는 Xcode 도구, Linux에서는 없으면 Zig를 내려받음), `nx`를 PATH에
+추가합니다.
+
+그다음 새 콘솔에서 `nx doctor`를 실행하면 무엇이 사용될지 보여 줍니다. 체크섬 검증과
+모든 환경 변수를 포함한 자세한 내용은 [docs/install.md](../../install.md)(영어)에
+있습니다.
+
+또는 C 컴파일러만으로(PATH의 Zig 또는 `CC`) 소스에서 빌드합니다. Nexium으로 쓰인
+컴파일러를 그 C 시드에서 빌드합니다:
 
 ```bash
-cargo install --git https://github.com/Londopy/nexium
+git clone https://github.com/Londopy/nexium && cd nexium && sh bootstrap/build.sh
 ```
 
-그다음:
+결과물은 `nx-out/bootstrap/nx2`입니다(Windows에서는 `build.ps1`). 그다음:
 
 ```bash
 nx run examples/hello.nx
@@ -167,7 +179,7 @@ fn main() -> !void {
 ```
 
 <details>
-<summary><b>이진 패턴 매칭</b></summary>
+<summary><b>바이너리 패턴 매칭</b></summary>
 
 ```
 fn parse_ipv4(packet: []u8) -> Net!Ipv4 {
@@ -188,7 +200,7 @@ let written = try <<4:4, 5:4, 0:8, 1500:16/big, "ab">> into buf[..]
 </details>
 
 <details>
-<summary><b>효과는 추론되고 검사됩니다</b></summary>
+<summary><b>이펙트는 추론되고 검사된다</b></summary>
 
 ```
 fn hot(xs: []i32) -> i32 !allocates !panics {
@@ -208,7 +220,7 @@ error: function `hot` is declared `!allocates` but has the `allocates` effect
 </details>
 
 <details>
-<summary><b>C 호출은 헤더 하나를 가져오는 것으로 끝납니다</b></summary>
+<summary><b>C 호출은 헤더 임포트 하나면 된다</b></summary>
 
 ```
 const libc = @cImport("string.h")
@@ -218,8 +230,8 @@ artifact link { c_sources = ["cvendor.c"] }
 unsafe { println("{}", .{libc.strlen(@cstr("hello"))}) }
 ```
 
-바인딩 생성기도 빌드 단계도 없습니다. 헤더가 메모리 배치의 유일한 진실이며,
-외부 호출은 `ffi` 효과를 가집니다.
+바인딩 생성기도, 빌드 단계도 없습니다. 헤더가 레이아웃의 유일한 진실이고, 외부
+호출은 `ffi` 이펙트를 지닙니다.
 
 </details>
 
@@ -232,7 +244,7 @@ for parallel p, i in positions {
 }
 
 using arena {
-    var scratch = List(Frame).new()   // 범프 할당, 한 번에 전부 해제
+    var scratch = List(Frame).new()   // 범프 할당, 한꺼번에 해제
     ...
 }
 ```
@@ -241,96 +253,147 @@ using arena {
 
 **문서**
 
-- [Nexium의 동작 원리](../../architecture.md): 소스에서 바이너리까지의 파이프라인, 효과 추론, 소유권, 런타임, 배포.
-- [언어 레퍼런스](../../language.md): 컴파일러가 구현하는 모든 구문.
-- [임베딩](../../embedding.md) (영어): 배포된 라이브러리를 Python, Rust, C에서 호출하기.
+- [명세](../../../SPEC.md) (영어): 구현된 그대로의 언어. 계획된 부분은 표시됨.
+- [로드맵](../../../ROADMAP.md) (영어): 단계, 완료 기준, 그리고 계획하지 않는 것.
+- [Nexium의 동작 원리](../../architecture.md) (영어): 소스에서 바이너리까지의 파이프라인, 이펙트 추론, 소유권, 런타임, 배포.
+- [언어 레퍼런스](../../language.md) (영어): 컴파일러가 구현하는 모든 구문.
+- [임베딩](../../embedding.md) (영어): 배포한 라이브러리를 Python, Rust, C에서 호출하기.
+- [대화형 세션](../../repl.md) (영어): 프롬프트에서의 `nx`, `python`처럼.
+- [안정성](../../stability.md)과 [플랫폼](../../platforms.md) (영어): 버전이 약속하는 것, 폐기 주기, `nx fix`, 티어.
+- [the Topo](https://londopy.github.io/nexium/topo/01-base-camp.html) (영어): 튜토리얼. 컴파일러 설치부터 신경망, GUI, 배포 라이브러리까지. 소스는 [`topo/`](../../../topo/)에 있습니다. 위의 모든 것을 렌더링한 결과는 [londopy.github.io/nexium](https://londopy.github.io/nexium/)에 있습니다.
+- [설치](../../install.md) (영어): Windows 설치 프로그램, macOS/Linux 스크립트, 소스 빌드, 체크섬, `nx`가 C 컴파일러를 찾는 방법.
+- [패키지](../../packages.md) (영어): `nexium.toml`, `nx add`, `nx fetch`, git 또는 경로 의존성, 잠금 파일.
+- [표준 라이브러리](../../std.md) (영어): Nexium으로 쓰인 모듈(`std.strings`, `std.lists`, `std.bytes`, `std.num`, `std.json`, `std.args`, `std.fs`, `std.time`, `std.regex`, `std.text`, `std.testing`, `std.stream`, `std.net`, `std.http`, `std.thread`, `std.process`).
 - [nexium-gui](../../gui.md) (영어): 즉시 모드 GUI 라이브러리와 위젯 작성법.
-- [프로그램 릴리스](../../releasing-your-program.md) (영어): 태그 하나로 세 플랫폼용 바이너리, 설치 프로그램은 선택.
-- [편집기 지원](../../../editors) (영어): VS Code 확장, Sublime 문법, LSP.
-- [설계 결정](../../../DECISIONS.md) (영어): 명세가 열어 둔 곳에서 내린 모든 결정.
+- [프로그램 릴리스하기](../../releasing-your-program.md) (영어): 태그 하나로 세 플랫폼의 바이너리를, 설치 프로그램은 선택.
+- [에디터 지원](../../../editors) (영어): VS Code, Vim, Neovim, Helix, Zed, Emacs, Kate, JetBrains, Sublime Text, Notepad++, nano, 나머지는 `nx lsp`로.
+- [Linguist](../../../linguist) (영어): 사용량 기준을 넘기면 GitHub가 `.nx`를 인식하게 할, 바로 적용할 수 있는 풀 리퀘스트.
+- [번역](../README.md): 이 README를 여섯 언어로. 언어 레퍼런스와 아키텍처 안내는 스페인어, 중국어, 일본어로.
+- [릴리스 이름](../../release-names.md) (영어): 모든 릴리스는 산 위의 한 장소. 규칙, 장부, 아직 쓰지 않은 이름.
+- [결정 기록](../../../DECISIONS.md) (영어): 명세가 열려 있던 곳에서 내린 모든 결정.
+- [알려진 문제](../../../KNOWN_ISSUES.md) (영어): 미해결 버그, 빈틈, 제한. 재현 방법 포함.
 
 ## 명령
 
 | 명령 | 하는 일 |
 | --- | --- |
-| `nx build file.nx` | 실행 파일로 컴파일(`main`이 없으면 오브젝트) |
+| `nx build file.nx` | 실행 파일로 컴파일(`main`이 없으면 오브젝트로) |
 | `nx run file.nx` | 빌드하고 실행 |
 | `nx test file.nx [filter]` | `test "..."` 블록 실행 |
-| `nx check file.nx` | 타입 검사와 효과 위반 보고 |
-| `nx effects file.nx` | 각 함수의 추론된 효과 출력 |
+| `nx check file.nx` | 타입 검사와 이펙트 위반 보고 |
+| `nx effects file.nx` | 모든 함수의 추론된 이펙트 출력 |
 | `nx audit file.nx` | `unsafe` 블록과 가변 전역 나열 |
 | `nx ship file.nx` | 선언된 모든 `artifact` 생성 |
 | `nx emit-c file.nx` | 생성된 C 출력 |
-| `nx tokens file.nx` | 토큰 스트림 덤프(셀프 호스팅의 기준) |
-| `nx fmt file.nx [--check]` | 정규 포매팅 |
-| `nx doc file.nx` | 추론된 효과가 포함된 HTML 문서 |
-| `nx size file.nx` | 바이너리 바이트를 선언별로 귀속 |
+| `nx tir file.nx [--sigs]` | 검사된 프로그램을 S-식으로(컴파일러 자체 테스트가 읽음) |
+| `nx fmt file.nx [--check]` | 표준 서식 |
+| `nx fix file.nx` | 컴파일러가 이전할 수 있는 폐기된 형태를 고쳐 씀(1.0에는 없음; [docs/stability.md](../../stability.md) 참고) |
+| `nx doc file.nx` | 추론된 이펙트가 담긴 HTML 문서 |
+| `nx size file.nx` | 바이너리의 바이트를 선언별로 귀속 |
 | `nx refcounts file.nx` | 모든 retain과 release 지점 |
-| `nx leaks file.nx` | 할당 추적과 함께 실행하고 누수 보고 |
-| `nx lsp` | stdio 기반 언어 서버 |
+| `nx leaks file.nx` | 할당을 추적하며 실행하고 누수 보고 |
+| `nx lsp` | stdio 위의 언어 서버 |
+| `nx doctor` | 어떤 C 컴파일러가 쓰일지, 설치가 동작하는지 |
+| `nx repl`, 또는 그냥 `nx` | 대화형 세션: 코드를 입력하고, 값을 보고, 바인딩을 유지 |
 
-옵션: `--mode debug|safe|fast|small`, `--target x86_64-linux-gnu`(`zig cc`가
-아는 모든 대상), `--out-dir`, `--keep-c`, `--cc`, 그리고 C 연동용 `-I`,
-`--link`, `--link-path`, `--c-source`.
+옵션: `--mode debug|safe|fast|small`, `--target x86_64-linux-gnu`(`zig cc`가 아는 모든
+타깃), `--out-dir`, `--keep-c`, `--cc`, C 연동용 `-I`, `--link`, `--link-path`,
+`--c-source`.
 
-## 현재 상태
+## 현황
 
-이것은 `nexium-spec.txt` 설계의 첫 구현입니다. 실제 프로그램을 쓰기에 충분하고
-([`examples/`](../../../examples) 참조), 하나의 파일에서 Python, Rust, C
-컴포넌트를 배포할 수 있습니다. 트레이트 객체, 병렬 루프, 아레나 스코프, C 헤더
-직접 가져오기, 도구들이 모두 들어 있습니다. 아직 초기입니다. 표준 라이브러리는
-16절의 일부이며, 영역 검사는 반환되는 뷰만 다룹니다.
-[`DECISIONS.md`](../../../DECISIONS.md)에 명세가 열어 둔 곳에서 내린 모든 결정이
-있고, 27번 항목에 남은 일이 정리되어 있습니다.
+**1.0: 언어는 안정, 생태계는 초기.** 언어는 [안정성 정책](../../stability.md)에 따라
+추가로만 바뀝니다. 컴파일러는 Nexium으로 쓰였고 스스로를 빌드합니다. 모든 예제, 명세
+케이스, 튜토리얼 프로그램이 CI에서 세 플랫폼 위에서, 새니타이저와 퍼저 아래에서
+실행됩니다. 1.0이 아직 아닌 것과 각각이 어디서 답을 얻는지는
+[로드맵](../../../ROADMAP.md)의 첫 절에 있습니다. 메모리 안전성은 1.2까지 보장되지
+않고(`unsafe` 없는 코드에서도 뷰가 저장소보다 오래 살 수 있음), 벤치마크 수치는 아직
+없으며, 생태계는 메인테이너 한 명과 표준 라이브러리 열여섯 모듈입니다.
+[`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md)는 미해결 버그를 수정 방안과 함께,
+[`DECISIONS.md`](../../../DECISIONS.md)는 명세가 열려 있던 곳에서 내린 모든 결정을
+나열합니다.
+
+## 릴리스 이름
+
+메이저 버전은 산이며, 열네 개의 8000미터 봉우리가 초등된 순서를 따릅니다. 그 아래
+버전들은 등반입니다. 마이너 버전에는 캠프, 루트, 벽을, 패치에는 초등 원정대의 대원을,
+`X.0.0`에는 `Summit`을 씁니다. 0.x 계열은 최초로 등정된 8000미터 봉 안나푸르나(1950년)의
+접근로와 캠프이므로 1.0.0은 `Annapurna: Summit`이고, 컴파일러가 스스로를 빌드하기
+시작한 0.7.0은 정상 공격 전 마지막 캠프인 `Annapurna: Camp V`입니다. 이름은 changelog,
+릴리스 제목, `nx version`에 나타납니다.
+[docs/release-names.md](../../release-names.md)(영어)에 규칙, 장부, 아직 오를 산이
+있습니다.
 
 ## 셀프 호스팅
 
-컴파일러는 현재 Rust입니다. Nexium 버전은 [`self/`](../../../self)에서 한 단계씩
-자라며, 각 단계는 같은 입력으로 Rust 컴파일러와 대조됩니다:
+컴파일러는 Nexium으로 쓰였고, [`self/`](../../../self)에 있으며, 스스로를 빌드합니다.
+`nx`가 없는 기계는 컴파일러가 자기 자신을 위해 내보낸 C인
+[`bootstrap/nx.c`](../../../bootstrap/nx.c)로부터, 아무 C 컴파일러로, Rust 없이 하나를
+만듭니다:
 
-| 단계 | 파일 | 기준 | 상태 |
+```sh
+sh bootstrap/build.sh     # nx.c -> nx0; nx0가 self/nx.nx를 빌드 -> nx1; nx1이 자신을 같은 C로 다시 빌드 -> nx2
+```
+
+| 단계 | 파일 | 역할 |
+| --- | --- | --- |
+| 렉서 | [`self/lexer.nx`](../../../self/lexer.nx) | 토큰 |
+| 파서 | [`self/parser.nx`](../../../self/parser.nx) | id 아레나 위의 구문 트리 |
+| 검사기 | [`self/check.nx`](../../../self/check.nx), [`self/cimport.nx`](../../../self/cimport.nx) | 타입, 이펙트, 소유권, 제네릭, 컴파일 타임 인터프리터, C 헤더 임포트, 모든 진단 |
+| C 생성기 | [`self/cgen.nx`](../../../self/cgen.nx) | 프로그램당 C 파일 하나 |
+| 드라이버 | [`self/nx.nx`](../../../self/nx.nx) | build, run, test, check, emit-c, tir; 표준 라이브러리 내장 |
+| 도구 | [`self/fmt.nx`](../../../self/fmt.nx), [`self/doc.nx`](../../../self/doc.nx), [`self/tools.nx`](../../../self/tools.nx), [`self/size.nx`](../../../self/size.nx), [`self/manifest.nx`](../../../self/manifest.nx), [`self/ship.nx`](../../../self/ship.nx), [`self/lsp.nx`](../../../self/lsp.nx), [`self/repl.nx`](../../../self/repl.nx) | 포매터, 문서 생성기, 각종 보고서, 패키지, `ship`, 언어 서버, REPL |
+
+모든 예제, 명세 케이스, 컴파일 실패 케이스가 그 자체로 Nexium 프로그램인 테스트
+하네스(`nx run tests/run.nx`)의 구동으로 부트스트랩된 컴파일러를 거쳐, CI에서 세
+플랫폼 위에서 Rust 툴체인 없이 실행됩니다. Rust로 쓰인 첫 컴파일러는 이식을 이끌었고
+1.0에서 삭제되었습니다(결정 90).
+
+## 저장소의 언어
+
+빌드 출력, 의존성, 생성 파일(`bootstrap/nx.c`, tree-sitter 파서, `gui/font.bin`, 잠금
+파일)을 제외한, 빈 줄이 아닌 코드 줄 수:
+
+| 언어 | 줄 수 | 비율 | 무엇인가 |
 | --- | --- | --- | --- |
-| 렉서 | [`self/lexer.nx`](../../../self/lexer.nx) | `nx tokens` | ✅ 모든 예제와 자기 자신에서 일치 |
-| 파서 | [`self/parser.nx`](../../../self/parser.nx) | `nx sexp` | ✅ 46개 소스 전부에서 일치 |
-| 검사기 | [`self/check.nx`](../../../self/check.nx) | `nx tir` | 🚧 선언과 시그니처 일치 (`--sigs`, 41개 소스); 본문 진행 중 |
-| C 생성기 | | `nx emit-c` | |
+| Nexium | 36,193 | 91.0% | 컴파일러와 그 도구(`self/` 아래 25,400줄), 표준 라이브러리, 테스트 하네스와 퍼저, 예제, 튜토리얼의 프로그램, nexium-gui, 사이트 생성기, 명세 스위트 |
+| C | 2,021 | 5.1% | 런타임 `nx_rt.h`, GUI 창 계층, 동봉된 테스트용 C |
+| 에디터 파일 | 1,014 | 2.5% | tree-sitter 쿼리, Emacs Lisp, Vim script, Neovim용 Lua, 그리고 Zed가 확장에 요구하는 Rust 25줄 |
+| JavaScript, TypeScript | 550 | 1.4% | VS Code 확장과 tree-sitter 문법 |
 
-`cargo test`는 Rust 컴파일러로 `self/lexer.nx`를 빌드하고 그 출력을 기준과
-비교합니다.
-
-## 저장소의 언어 구성
-
-빌드 산출물, 의존성, 생성 파일을 제외한 비어 있지 않은 코드 줄 수:
-
-| 언어 | 줄 | 비율 | 용도 |
-| --- | --- | --- | --- |
-| Rust | 22 393 | 86.9 % | `nx` 컴파일러 |
-| Nexium | 2 111 | 8.2 % | 예제, 셀프 호스트 렉서, nexium-gui, 테스트 |
-| C | 1 108 | 4.3 % | 런타임 `nx_rt.h`와 GUI 창 계층 |
-| JavaScript, TypeScript | 159 | 0.6 % | VS Code 확장 |
+컴파일러에는 Rust가 없습니다. 첫 컴파일러는 이식을 이끌고 1.0에서 삭제되었으며(결정
+90), 남은 Rust는 Zed가 WebAssembly로 컴파일하는 Zed 확장의 접착 코드뿐입니다. Zig가
+표에 없는 이유는 트리에 Zig 소스가 없기 때문입니다. `zig cc`는 `nx`가 실행하는 C
+컴파일러이며(Windows 설치 프로그램이 동봉하고, 설치 스크립트가 내려받음), C
+컴파일러를 쓰는 것이지 작성하는 것이 아닌 것과 같습니다.
 
 ## 구성
 
 ```
-src/            컴파일러(렉서, 파서, 검사기, comptime, C 백엔드, 드라이버)
-runtime/        nx_rt.h, 생성되는 모든 C 파일에 포함됨
-self/           Nexium으로 쓴 컴파일러, 단계별
+bootstrap/      컴파일러를 빌드하는 C 시드와 빌드 스크립트
+runtime/        nx_rt.h. 생성되는 모든 C 파일에 포함됨
+std/            Nexium으로 쓰인 표준 라이브러리. 컴파일러에 내장
+self/           Nexium으로 쓰인 컴파일러, 단계별로
 gui/            nexium-gui: Nexium 즉시 모드 GUI, 데모, C 플랫폼 계층
-editors/        VS Code 확장과 Sublime Text 문법
-examples/       출력이 기록된 프로그램, `cargo test`가 실행
-tests/          통합 테스트와 compile-fail 케이스
-docs/           동작 원리, 언어 레퍼런스, 임베딩 가이드, 번역
+editors/        VS Code 확장, tree-sitter 문법, 그리고 열 개 에디터를 위한 파일
+examples/       출력이 기록된 프로그램. 테스트가 실행
+topo/           튜토리얼: 각 장과 거기서 보여 주는 프로그램(테스트가 실행)
+site/           문서 사이트 생성기. Nexium 프로그램
+tests/          하네스(run.nx), 명세 적합성 스위트(tests/spec), 컴파일 실패 케이스
+docs/           동작 원리, 언어 레퍼런스, 임베딩 가이드, i18n/의 번역
 assets/         로고와 배너
 nexium-spec.txt          설계
-nexium-systems-spec.txt  보관된 시스템 언어. 4~9절이 문법 레퍼런스
-DECISIONS.md    명세가 열어 둔 곳에서 내린 결정
+nexium-systems-spec.txt  보관된 시스템 언어. 4~9절이 구문 레퍼런스
+DECISIONS.md    명세가 열려 있던 곳에서 내린 결정
+KNOWN_ISSUES.md 미해결 버그와 제한. 수정은 changelog로 옮겨감
 ```
 
 ## 기여
 
-[`CONTRIBUTING.md`](../../../CONTRIBUTING.md)를 보세요. 버그와 제안은 GitHub
-issues로 올립니다. 언어 변경은 그것이 명세 3절의 어떤 엄격한 제약에 기여하는지
-밝혀야 합니다.
+[`CONTRIBUTING.md`](../../../CONTRIBUTING.md)를 보세요. 버그와 제안은 GitHub 이슈로
+다룹니다. 언어 변경은 명세 3절의 어떤 엄격한 제약을 위한 것인지 밝혀야 합니다. 풀
+리퀘스트는 병합 전에 세 플랫폼의 테스트, 포매터, changelog 검사,
+[기여자 라이선스 동의서](../../../CLA.md)를 통과합니다. 저작권은 당신에게 남습니다.
 
 ## 라이선스
 

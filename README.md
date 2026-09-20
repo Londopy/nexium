@@ -304,14 +304,17 @@ target `zig cc` knows), `--out-dir`, `--keep-c`, `--cc`, and for C interop
 
 ## Status
 
-This is the first implementation of the design in `nexium-spec.txt`. It is
-complete enough to write real programs (see [`examples/`](examples)) and to
-ship a Python, Rust, or C component from one file. Trait objects, parallel
-loops, arena scopes, direct C header import, and the tooling are all in. Still
-early: the standard library is a fraction of section 16, and region checking
-covers only returned views. [`DECISIONS.md`](DECISIONS.md) lists every call
-made where the specification was open, for review, and item 27 lists what is
-left.
+**1.0: language-stable, early ecosystem.** The language changes only by
+addition under the [stability policy](docs/stability.md); the compiler is
+written in Nexium and builds itself; every example, spec case and tutorial
+program runs in CI on three platforms, under the sanitizers and the fuzzer.
+What 1.0 is not yet, and where each is answered, is the first section of
+[the roadmap](ROADMAP.md): memory safety is not guaranteed until 1.2 (a view
+can outlive its storage in code without `unsafe`), there are no benchmark
+numbers yet, and the ecosystem is one maintainer and sixteen standard
+library modules. [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) lists every open bug
+with its fix; [`DECISIONS.md`](DECISIONS.md) every call made where the
+specification was open.
 
 ## Release names
 
