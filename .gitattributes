@@ -4,6 +4,8 @@
 *.nx linguist-detectable=true
 
 # generated and vendored bits should not count toward language statistics
+bootstrap/nx.c linguist-generated=true text eol=lf
+bootstrap/rust/** linguist-vendored=true
 gui/font.bin binary linguist-generated=true
 editors/tree-sitter-nexium/src/** linguist-generated=true
 *.scm text eol=lf

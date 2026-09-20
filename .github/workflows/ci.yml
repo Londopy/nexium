@@ -91,6 +91,40 @@ jobs:
           print("ok")
           EOF
 
+  bootstrap:
+    name: bootstrap (${{ matrix.os }})
+    # `nx` from source with no Rust toolchain: the C seed, the compiler in
+    # Nexium building itself to a fixed point, and the spec suite through it.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Zig (the C compiler; the only toolchain this job has)
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: Build nx from the seed and reach the fixed point
+        shell: bash
+        run: sh bootstrap/build.sh
+      - name: The spec suite through the bootstrapped compiler
+        shell: bash
+        run: |
+          set -o pipefail
+          nx=nx-out/bootstrap/nx1; [ -f "$nx.exe" ] && nx="$nx.exe"
+          if [ "$RUNNER_OS" = macOS ]; then export NX_CC=cc; else export NX_ZIG=zig; fi
+          "$nx" run examples/hello.nx --out-dir nx-out/boot-spec
+          bad=0
+          for f in tests/spec/*.nx; do
+            want=$(grep -m1 '^// EXIT:' "$f" | sed 's#// EXIT: *##'); want=${want:-0}
+            got=$("$nx" run "$f" --out-dir nx-out/boot-spec 2>&1 | tr -d '\r' | sed 's#\\#/#g'); code=$?
+            exp=$(tr -d '\r' < "${f%.nx}.expected")
+            if [ "$got" != "$exp" ] || [ "$code" != "$want" ]; then echo "FAIL $f (exit $code, want $want)"; diff <(echo "$exp") <(echo "$got") | head -5; bad=1; fi
+          done
+          exit $bad
+
   editors:
     name: editor support
     runs-on: ubuntu-latest
