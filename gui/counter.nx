@@ -1,0 +1,43 @@
+// The Topo's first GUI: a counter with a button, a slider and a text field.
+//
+//     nx run gui/counter.nx                    a window
+//     nx run gui/counter.nx -- --shot out.ppm  one frame, drawn offscreen, saved
+
+import nexium_gui
+
+fn main() -> !void {
+    let args = os.args()
+    let shot = args.len > 2 and args[1] == "--shot"
+    var ui = nexium_gui.Ui.headless(360, 220)
+    if !shot {
+        ui = nexium_gui.Ui.open(@cstr("counter"), 360, 220) orelse {
+            eprintln("could not open a window", .{})
+            return
+        }
+    }
+
+    // the application's state is just variables; the widgets read and write them
+    var count: i32 = 0
+    var step: f32 = 1.0
+    var name = String.from("climber")
+
+    while ui.begin_frame() {
+        ui.heading(format("hello, {}", .{name}))
+        _ = ui.text_input(&mut name)
+        ui.space(6)
+        if ui.button("+") { count += step as i32 }
+        ui.same_line()
+        if ui.button("-") { count -= step as i32 }
+        ui.same_line()
+        ui.label(format("count: {}", .{count}))
+        _ = ui.slider("step", &mut step, 1.0, 10.0)
+        ui.progress((count as f32 / 100.0).min(1.0))
+        if shot {
+            try ui.canvas.save_ppm(args[2])
+            break
+        }
+        ui.end_frame()
+    }
+    ui.close()
+    if shot { println("wrote {} ({}x{})", .{args[2], ui.canvas.w, ui.canvas.h}) }
+}

@@ -1,0 +1,68 @@
+import std.fs
+
+/// A word and how often it appeared.
+struct Entry { count: u32, word: String }
+
+/// The ten most frequent words in a text file.
+fn main() -> !void {
+    let args = os.args()
+    let path = if args.len > 1 { args[1] } else { "topo/code/data/hike.txt" }
+    let text = try fs.read(path)
+
+    // count every word, lower-cased, letters only
+    var counts = Map(String, u32).new()
+    var total: u32 = 0
+    for line in text[..].lines() {
+        for raw in line.split(" ") {
+            let word = clean(raw)
+            if word.len == 0 { continue }
+            let n = counts.get(word[..]) orelse 0
+            counts.put(word, n + 1)
+            total += 1
+        }
+    }
+
+    // sort the words by count, then alphabetically
+    var entries = List(Entry).new()
+    for w in counts { entries.append(Entry{ .count = counts[w[..]].?, .word = w.clone() }) }
+    sort_entries(&mut entries)
+
+    println("{} words, {} distinct", .{total, counts.len})
+    for e, i in entries {
+        if i == 10 { break }
+        println("{>3}  {}", .{e.count, e.word})
+    }
+}
+
+/// Lower case, letters only.
+fn clean(s: []u8) -> String {
+    var out = String.new()
+    for c in s {
+        if c >= 'a' and c <= 'z' { out.push_byte(c) }
+        if c >= 'A' and c <= 'Z' { out.push_byte(c + 32) }
+    }
+    return out
+}
+
+/// Insertion sort: highest count first, ties alphabetical.
+fn sort_entries(xs: *mut List(Entry)) {
+    var i: usize = 1
+    while i < xs.len {
+        var j = i
+        while j > 0 and before(&xs[j], &xs[j - 1]) {
+            let count = xs[j].count
+            let word = xs[j].word.clone()
+            xs[j].count = xs[j - 1].count
+            xs[j].word = xs[j - 1].word.clone()
+            xs[j - 1].count = count
+            xs[j - 1].word = word
+            j -= 1
+        }
+        i += 1
+    }
+}
+
+fn before(a: *Entry, b: *Entry) -> bool {
+    if a.count != b.count { return a.count > b.count }
+    return a.word[..] < b.word[..]
+}

@@ -1,0 +1,6 @@
+fn main() {
+    println("hello, world", .{})
+    let name = "Nexium"
+    let year = 2026
+    println("hello from {}, in {}", .{name, year})
+}

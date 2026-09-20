@@ -1,0 +1,10 @@
+1 + 2 * 3 => 7.0
+(1 + 2) * 3 => 9.0
+2 ^ 3 ^ 2 => 512.0
+r = 2 => 2.0
+pi * r ^ 2 => 12.566370614359172
+-r + 10 => 8.0
+1 / 0 => error: DivideByZero
+2 + => error: UnexpectedEnd
+x * 2 => error: UnknownName
+7 $ 2 => error: UnexpectedChar

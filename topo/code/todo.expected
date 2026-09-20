@@ -1,0 +1,22 @@
+$ todo add buy rope
+added #1
+$ todo add sharpen crampons
+added #2
+$ todo add pack the tent
+added #3
+$ todo list
+ 1. [ ] buy rope
+ 2. [ ] sharpen crampons
+ 3. [ ] pack the tent
+$ todo done 2
+done: sharpen crampons
+$ todo list
+ 1. [ ] buy rope
+ 2. [x] sharpen crampons
+ 3. [ ] pack the tent
+$ todo done 9
+$ todo clear
+cleared
+$ todo list
+nothing to do
+no item #9

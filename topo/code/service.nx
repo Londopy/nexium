@@ -1,0 +1,68 @@
+//! A small HTTP service and the client that talks to it, in one program.
+//!
+//!     nx run topo/code/service.nx          # a self-test on a free port
+//!     nx run topo/code/service.nx -- 8080  # serve until killed
+
+import std.http
+import std.net
+import std.thread
+
+fn health(req: *http.Request) -> http.Response {
+    return http.json(200, "{\"ok\":true}")
+}
+
+fn greet(req: *http.Request) -> http.Response {
+    var body = String.from("hello, ")
+    body.append(req.param("name") orelse "stranger")
+    return http.text(200, body)
+}
+
+fn echo(req: *http.Request) -> http.Response {
+    let kind = req.header("content-type") orelse "application/octet-stream"
+    return http.respond(200, kind, req.body)
+}
+
+fn routes() -> http.Router {
+    var r = http.Router.new()
+    r.get("/health", health)
+    r.get("/greet", greet)
+    r.post("/echo", echo)
+    return r
+}
+
+/// The server, on its own thread: it answers `n` requests, then stops.
+struct Serving { port: u16, n: u32 }
+
+fn serve(s: *mut Serving) {
+    var server = http.Server.bind("127.0.0.1", s.port) catch { return }
+    var r = routes()
+    for _ in 0..s.n { server.serve_one(&r, 5000) catch { break } }
+    server.close()
+}
+
+fn main() -> !void {
+    let args = os.args()
+    if args.len > 1 {
+        let port = try args[1].parse_int(u16)
+        var server = try http.Server.bind("127.0.0.1", port)
+        var r = routes()
+        println("serving on http://127.0.0.1:{}/greet?name=you", .{port})
+        try server.serve(&r)
+        return
+    }
+    // find a free port, then hand it to the server thread
+    var probe = try net.TcpListener.bind("127.0.0.1", 0)
+    let port = try probe.port()
+    probe.close()
+    var worker = thread.run(Serving, serve, Serving{ .port = port, .n = 3 })
+    time.sleep(200)
+
+    let base = format("http://127.0.0.1:{}", .{port})
+    let h = try http.get(format("{}/health", .{base})[..])
+    println("{} {}", .{h.status, h.body})
+    let g = try http.get(format("{}/greet?name=climber", .{base})[..])
+    println("{} {}", .{g.status, g.body})
+    let e = try http.post(format("{}/echo", .{base})[..], "text/plain", "ping")
+    println("{} {} {}", .{e.status, e.header("content-type") orelse "?", e.body})
+    worker.join()
+}

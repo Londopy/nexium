@@ -12,6 +12,16 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Added
 
+- The documentation site, [londopy.github.io/nexium](https://londopy.github.io/nexium/),
+  built by `site/build.nx`, a Nexium program that renders the Markdown in
+  the repository (the docs, the project files, the tutorial) with the
+  language's own token rules for highlighting, and published by a Pages
+  workflow on every push. The test harness builds it.
+- The Topo, `topo/`: a 23-chapter tutorial from installing the compiler
+  to a neural network, a GUI, a network service and a library shipped to
+  C, Python and Node. Every program in it (`topo/code/`) is run by the
+  harness against its recorded output, and the diagnostics it shows are
+  recorded too. Writing it found the bugs below.
 - The roadmap's 1.2, memory safety without a garbage collector: the view
   rules V1 to V5 (returning, storing, growth, moving, arenas), `unsafe`
   for what the checker cannot prove, what stays (moves, scope-exit
@@ -49,9 +59,30 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Fixed
 
+- A bare `break`, `continue` or `return` ends a `match` arm before the
+  comma (`_ => break,` parsed the comma as an expression). A one-element
+  array literal can be indexed and sliced (`[x][..]`, `[x][0]`): only a
+  `[` that opens `[]T` or `[N]T` with a type after it starts an array
+  type in expression position.
+- `Set!T` widens into `!T` where `!T` is expected (an initializer, an
+  argument, a return); `!T` never narrows into a named set. Type names
+  now spell a named set (`Parse!i32`), so the diagnostic no longer reads
+  "expected `!i32` but found `!i32`".
+- The `!effect` diagnostic's first note points at the call that brings
+  the effect in, not at the function's header.
 - The fuzzer wrote its cases under `nx-out/fuzz`, the path of its own
   executable on Linux and macOS, so CI's fuzz job could not start; it
   works under `nx-out/fuzzing`.
+- `for k in m` over a `Map` emitted C that did not compile: the keys are
+  collected into an owned `List` the loop walks and releases, the same
+  as `for k in m.keys()`. `m[key]` crashed the emitter; it is the lookup
+  `m.get(key)` is. Both have a spec case now.
+- `@weak(x)` did not parse (`weak` is a keyword); a builtin may be spelled
+  with one. A weak reference created in a struct literal was retained a
+  second time on its way into the field and its storage never freed; and
+  an object whose fields held a weak reference back to it could be freed
+  while its own fields were still being released. A `ref class` now holds
+  its storage until its fields are gone; both cases are spec cases.
 
 ## [0.9.0] - 2026-09-20
 

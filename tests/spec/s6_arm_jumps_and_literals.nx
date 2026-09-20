@@ -1,0 +1,18 @@
+// SPEC 6: a bare `break` or `return` ends a match arm before the comma; a
+// one-element array literal is indexed and sliced like any other.
+fn first(xs: []i64) -> i64 { return if xs.len > 0 { xs[0] } else { -1 } }
+
+fn main() {
+    var rest: []u8 = "abc"
+    var seen: usize = 0
+    while true {
+        match rest {
+            <<c:8, tail:bytes>> => { seen += c as usize; rest = tail },
+            _ => break,
+        }
+    }
+    println("{}", .{seen})
+    println("{} {} {}", .{[7][0], [7][..].len, first([9][..])})
+    let one = [5]
+    println("{}", .{one[..].len + [1, 2][..].len})
+}

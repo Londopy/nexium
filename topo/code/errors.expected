@@ -1,0 +1,15 @@
+42: ok 42
+: Empty
+4x: NotANumber
+999: TooBig
+too big for a u8
+x at 2, z at 99
+m at 5
+3
+0
+  open
+  parsed 7
+  close
+  open
+  (rolled back after an error)
+  close

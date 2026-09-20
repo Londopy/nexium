@@ -1,0 +1,23 @@
+// SPEC 5.4: a `weak` back edge in a `ref class` field: `@weak(x)` in a
+// literal hands its count to the field (no retain on the way in), and an
+// object whose fields drop a weak reference to itself is freed once, after
+// its fields.
+ref class Node { value: i32, next: ?Node, back: ?weak Node }
+
+fn main() {
+    let first = Node{ .value = 1, .next = null, .back = null }
+    let second = Node{ .value = 2, .next = null, .back = @weak (first) }
+    first.next = second
+    println("first {} second {} weak {}", .{@refCount(first), @refCount(second), second.back != null})
+    if let w = second.back { if let up = w.upgrade() { println("back to {}", .{up.value}) } }
+    let third = Node{ .value = 3, .next = null, .back = first.weak () }
+    second.next = third
+    var n: ?Node = first
+    var sum: i32 = 0
+    while n != null {
+        let node = n.?
+        sum += node.value
+        n = node.next
+    }
+    println("sum {}", .{sum})
+}

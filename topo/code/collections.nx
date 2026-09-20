@@ -1,0 +1,66 @@
+import std.lists
+import std.strings
+
+fn is_even(x: i32) -> bool { return x % 2 == 0 }
+fn double(x: i32) -> i32 { return x * 2 }
+fn add(acc: i64, x: i32) -> i64 { return acc + x as i64 }
+
+fn main() {
+    // List(T): a growable, owned sequence
+    var xs = List(i32).new()
+    for i in 1..8 { let v = i as i32; xs.append(v * v) }
+    xs.insert(0, 0)
+    let last = xs.pop().?
+    println("{} items, last was {}, first {}", .{xs.len, last, xs[0]})
+    xs.sort()
+    xs.reverse()
+    println("{} {} contains 16: {}", .{xs[0], xs[1], xs[..].contains(16)})
+
+    // slices view a range without copying
+    let top = xs[0..3]
+    var sum: i32 = 0
+    for v in top { sum += v }
+    println("top three sum to {}", .{sum})
+
+    // std.lists: the usual higher-order helpers, over any slice
+    let evens = lists.filter(i32, xs[..], is_even)
+    let doubled = lists.map(i32, i32, evens[..], double)
+    let total = lists.fold(i32, i64, xs[..], 0, add)
+    println("{} evens, doubled: {} {} ..., total {}", .{evens.len, doubled[0], doubled[1], total})
+    println("max {} min {}", .{lists.max(i32, xs[..]) orelse 0, lists.min(i32, xs[..]) orelse 0})
+
+    // String: owned text; []u8: a view of bytes (a literal is one)
+    var s = String.from("base")
+    s.append(" camp")
+    s.append_char('!')
+    let upper = strings.to_upper(s[..])
+    println("{} / {} / {} bytes", .{s, upper, s.len})
+    for part, i in s[..].split(" ") { println("  part {}: {}", .{i, part}) }
+    println("{} {} {}", .{s[..].starts_with("base"), s[..].find("camp") orelse 0, s[..].trim().len})
+    let parts = ["one", "two", "three"]
+    println("{}", .{strings.join(parts[..], ", ")})
+    println("{}", .{strings.replace("a-b-c", "-", "+")})
+
+    // numbers from text
+    let n = "42".parse_int(i32) catch 0
+    let f = "2.5".parse_float() catch 0.0
+    println("{} {}", .{n + 1, f * 2.0})
+
+    // Map(K, V): keys are integers, bools, chars, text or Strings
+    var stock = Map(String, u32).new()
+    stock.put(String.from("rope"), 2)
+    stock.put(String.from("ice screw"), 12)
+    stock.put(String.from("rope"), 3)
+    println("{} kinds; rope: {}; tent: {}", .{stock.len, stock["rope"] orelse 0, stock["tent"] orelse 0})
+    if stock.contains("ice screw") { println("we have screws", .{}) }
+    _ = stock.remove("rope")
+    var names = stock.keys()
+    println("{} left: {}", .{stock.len, names[0]})
+
+    // arrays: fixed size, a value; copying one copies the elements
+    var grid = [[0, 0, 0], [0, 0, 0]]
+    grid[1][2] = 7
+    let copy = grid
+    grid[1][2] = 9
+    println("{} {}", .{copy[1][2], grid[1][2]})
+}

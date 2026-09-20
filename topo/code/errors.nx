@@ -1,0 +1,69 @@
+error Parse { Empty, NotANumber, TooBig }
+
+/// A decimal number from text, with the ways it can fail named.
+fn parse_small(text: []u8) -> Parse!u8 {
+    let t = text.trim()
+    if t.len == 0 { return error.Empty }
+    var value: u32 = 0
+    for c in t {
+        if c < '0' or c > '9' { return error.NotANumber }
+        value = value * 10 + (c - '0') as u32
+        if value > 255 { return error.TooBig }
+    }
+    return value as u8
+}
+
+/// Optionals: a value or `null`; here, the position of a byte.
+fn find_byte(haystack: []u8, needle: u8) -> ?usize {
+    for c, i in haystack { if c == needle { return i } }
+    return null
+}
+
+/// `try` hands an error to the caller; the caller's return type must allow it.
+fn sum_of(a: []u8, b: []u8) -> Parse!u32 {
+    let x = try parse_small(a)
+    let y = try parse_small(b)
+    return x as u32 + y as u32
+}
+
+/// `defer` runs when the scope ends, however it ends.
+fn with_cleanup(text: []u8) -> Parse!u8 {
+    println("  open", .{})
+    defer println("  close", .{})
+    errdefer println("  (rolled back after an error)", .{})
+    let v = try parse_small(text)
+    println("  parsed {}", .{v})
+    return v
+}
+
+fn main() {
+    // catch handles the error; the block's value stands in for the missing one
+    for input in ["42", "", "4x", "999"] {
+        let v = parse_small(input) catch |e| {
+            println("{}: {}", .{input, @errorName(e)})
+            continue
+        }
+        println("{}: ok {}", .{input, v})
+    }
+
+    // match on the error union, one arm per named error
+    match parse_small("300") {
+        error.TooBig => println("too big for a u8", .{}),
+        error.Empty => println("empty", .{}),
+        error.NotANumber => println("not a number", .{}),
+        v => println("value {}", .{v}),
+    }
+
+    // orelse gives an optional a default; `.?` insists (and panics on null)
+    let at = find_byte("nexium", 'x') orelse 99
+    let missing = find_byte("nexium", 'z') orelse 99
+    println("x at {}, z at {}", .{at, missing})
+    if let i = find_byte("nexium", 'm') { println("m at {}", .{i}) }
+
+    // errors travel through `try`
+    println("{}", .{sum_of("1", "2") catch 0})
+    println("{}", .{sum_of("1", "two") catch 0})
+
+    _ = with_cleanup("7") catch 0
+    _ = with_cleanup("seven") catch 0
+}

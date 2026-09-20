@@ -1,0 +1,6 @@
+fn first_word(text: []u8) -> []u8 {
+    let copy = String.from(text)
+    return copy[0..4]
+}
+
+fn main() { println("{}", .{first_word("base camp")}) }

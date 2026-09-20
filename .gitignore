@@ -5,3 +5,4 @@
 nexium_modules/
 .zig-cache/
 installers/windows/Output/
+site/out/

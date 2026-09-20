@@ -1,0 +1,6 @@
+error: this returns a slice into `copy`, a local that is released when the function returns (region rule R1)
+  --> topo/code/ownership_fails2.nx:3:5
+   |
+  3|     return copy[0..4]
+   |     ^
+1 error(s)

@@ -1,0 +1,12 @@
+import cases
+
+/// The library's face: what `import words` sees.
+pub fn shout(s: []u8) -> String {
+    var out = cases.upper(s)
+    out.append("!")
+    return out
+}
+
+test "shout" {
+    expect_eq(shout("go")[..], "GO!")
+}

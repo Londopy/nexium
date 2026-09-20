@@ -1,0 +1,93 @@
+//! A to-do list that lives in a JSON file.
+//!
+//!     todo add "buy rope"      todo list      todo done 1      todo clear
+//!
+//! With no arguments it runs a demonstration session against a temporary
+//! file. `--file PATH` chooses the file (default: todo.json in the temp dir).
+
+import std.args
+import std.fs
+import std.json
+
+struct Item { text: String, done: bool }
+
+/// The items in the file, or none when there is no file yet.
+fn load(path: []u8) -> !List(Item) {
+    var items = List(Item).new()
+    if !fs.exists(path) { return items }
+    let doc = try json.parse((try fs.read(path))[..])
+    for i in 0..json.len(&doc) {
+        let entry = json.at(&doc, i) orelse continue
+        let text = json.as_str(json.get(entry, "text") orelse continue) orelse continue
+        let done = json.as_bool(json.get(entry, "done") orelse continue) orelse false
+        items.append(Item{ .text = String.from(text), .done = done })
+    }
+    return items
+}
+
+fn save(path: []u8, items: *List(Item)) -> !void {
+    var doc = json.array()
+    for it in items.*{
+        var entry = json.object()
+        json.set(&mut entry, "text", json.string(it.text[..]))
+        json.set(&mut entry, "done", json.boolean(it.done))
+        json.push(&mut doc, entry)
+    }
+    try fs.write(path, json.pretty(&doc, 2)[..])
+}
+
+fn show(items: *List(Item)) {
+    if items.len == 0 { println("nothing to do", .{}); return }
+    for it, i in items.*{
+        println("{>2}. [{}] {}", .{i + 1, if it.done { "x" } else { " " }, it.text})
+    }
+}
+
+/// One command against the file; the exit code.
+fn run(path: []u8, command: []u8, rest: [][]u8) -> !i32 {
+    var items = try load(path)
+    if command == "list" {
+        show(&items)
+    } else if command == "add" {
+        if rest.len == 0 { eprintln("add what?", .{}); return 2 }
+        var text = String.new()
+        for w, i in rest { if i > 0 { text.append(" ") }; text.append(w) }
+        items.append(Item{ .text = text, .done = false })
+        try save(path, &items)
+        println("added #{}", .{items.len})
+    } else if command == "done" {
+        if rest.len == 0 { eprintln("done which?", .{}); return 2 }
+        let n = rest[0].parse_int(usize) catch { eprintln("not a number: {}", .{rest[0]}); return 2 }
+        if n == 0 or n > items.len { eprintln("no item #{}", .{n}); return 1 }
+        items[n - 1].done = true
+        try save(path, &items)
+        println("done: {}", .{items[n - 1].text})
+    } else if command == "clear" {
+        fs.remove(path) catch { }
+        println("cleared", .{})
+    } else {
+        eprintln("usage: todo [--file PATH] add TEXT | list | done N | clear", .{})
+        return 2
+    }
+    return 0
+}
+
+fn main() -> !u8 {
+    var p = args.Parser.new(os.args())
+    let given = p.option("--file", "-f")
+    let path = if let f = given { String.from(f) } else { fs.join(fs.temp_dir()[..], "todo.json") }
+    let rest = p.rest()
+    if rest.len > 0 {
+        return (try run(path[..], rest[0], rest[1..])) as u8
+    }
+    // no command: a demonstration against a fresh file
+    fs.remove(path[..]) catch { }
+    let session = ["add buy rope", "add sharpen crampons", "add pack the tent", "list", "done 2", "list", "done 9", "clear", "list"]
+    for line in session {
+        println("$ todo {}", .{line})
+        var words = List([]u8).new()
+        for w in line.split(" ") { words.append(w) }
+        _ = try run(path[..], words[0], words[1..])
+    }
+    return 0
+}

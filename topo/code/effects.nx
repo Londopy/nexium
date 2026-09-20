@@ -1,0 +1,46 @@
+/// No effects at all: pure arithmetic over a slice. `!allocates !panics` is a
+/// promise the compiler checks, not a comment.
+fn mean(xs: []f64) -> f64 !allocates !panics {
+    if xs.len == 0 { return 0.0 }
+    var total = 0.0
+    for x in xs { total += x }
+    return total / xs.len as f64
+}
+
+/// Indexing with `i` from `0..xs.len` is proven in bounds, so this cannot panic either.
+fn dot(a: []f64, b: []f64) -> f64 !allocates {
+    var sum = 0.0
+    for x, i in a { if i < b.len { sum += x * b[i] } }
+    return sum
+}
+
+/// This one allocates (it builds a String) and the compiler knows.
+fn describe(xs: []f64) -> String {
+    return format("{} values, mean {:.2}", .{xs.len, mean(xs)})
+}
+
+/// A function type may carry bounds too: only functions that satisfy them fit.
+fn apply(xs: []mut f64, f: fn(f64) -> f64 !allocates !panics) {
+    for i in 0..xs.len { xs[i] = f(xs[i]) }
+}
+
+fn halve(x: f64) -> f64 { return x / 2.0 }
+
+/// Checked arithmetic can panic; the wrapping form cannot.
+fn hash(data: []u8) -> u32 !panics {
+    var h: u32 = 2166136261
+    for b in data {
+        h ^= b as u32
+        h *%= 16777619
+    }
+    return h
+}
+
+fn main() {
+    var xs = [2.0, 4.0, 9.0]
+    println("{}", .{describe(xs[..])})
+    println("{}", .{dot(xs[..], xs[..])})
+    apply(xs[..], halve)
+    println("{} {} {}", .{xs[0], xs[1], xs[2]})
+    println("{x}", .{hash("nexium")})
+}

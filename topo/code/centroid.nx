@@ -1,0 +1,24 @@
+import std.json
+
+struct Point derive(Eq) { x: f64, y: f64 }
+
+fn centroid(points: []Point) -> ?Point {
+    if points.len == 0 { return null }
+    var sx = 0.0
+    var sy = 0.0
+    for p in points { sx += p.x; sy += p.y }
+    let n = points.len as f64
+    return Point{ .x = sx / n, .y = sy / n }
+}
+
+fn main() -> !void {
+    let doc = try json.parse("[[0, 0], [4, 0], [4, 4], [0, 4]]")
+    var points = List(Point).new()
+    for i in 0..json.len(&doc) {
+        let item = json.at(&doc, i) orelse continue
+        let x = json.as_num(json.at(item, 0) orelse continue) orelse continue
+        let y = json.as_num(json.at(item, 1) orelse continue) orelse continue
+        points.append(Point{ .x = x, .y = y })
+    }
+    if let c = centroid(points[..]) { println("centroid ({}, {})", .{c.x, c.y}) }
+}

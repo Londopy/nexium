@@ -1,0 +1,6 @@
+// EXPECT: type mismatch
+// the anonymous error union carries any error; a named set admits only its own
+error Parse { Bad }
+fn any_error() -> !i32 { return error.IoError }
+fn narrowed() -> Parse!i32 { return any_error() }
+fn main() { println("{}", .{narrowed() catch -1}) }

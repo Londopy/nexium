@@ -1,0 +1,37 @@
+//! A library and a program in one file: `nx run` runs `main`, `nx ship`
+//! produces the C header, the shared library, the Python package and the
+//! npm package for the exported functions.
+
+/// FNV-1a over the bytes: the same answer in C, Python and Node.
+fn checksum(data: []u8) -> u32 export(c) {
+    var h: u32 = 2166136261
+    for b in data {
+        h ^= b as u32
+        h *%= 16777619
+    }
+    return h
+}
+
+/// The mean of a slice of doubles; `!panics` is proven, so the C signature is the natural one.
+fn mean(xs: []f64) -> f64 !panics export(c) {
+    if xs.len == 0 { return 0.0 }
+    var t = 0.0
+    for x in xs { t += x }
+    return t / xs.len as f64
+}
+
+error Math { DivideByZero }
+
+/// A function that can fail crosses the boundary as a status code plus an out-parameter.
+fn divide(a: i64, b: i64) -> Math!i64 export(c) {
+    if b == 0 { return error.DivideByZero }
+    return a / b
+}
+
+artifact cabi { name = "hasher" }
+artifact python { name = "hasher" }
+artifact node { name = "hasher" }
+
+fn main() {
+    println("{x} {} {}", .{checksum("hello"), mean([1.0, 2.0, 6.0][..]), divide(84, 2) catch -1})
+}

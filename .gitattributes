@@ -25,3 +25,7 @@ editors/** linguist-vendored=false
 # embedded by tests/spec/s12_comptime.nx: its byte length is recorded
 tests/spec/helpers/*.txt text eol=lf
 *.sh text eol=lf
+# embedded and read by the tutorial programs: their byte lengths are recorded
+topo/code/data/* text eol=lf
+*.toml text eol=lf
+*.csv text eol=lf

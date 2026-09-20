@@ -1,0 +1,827 @@
+//! The documentation site, built by a Nexium program: the Markdown under
+//! `docs/`, the project files at the root and the chapters of the Topo under
+//! `topo/` become one static site in `site/out/`, which GitHub Pages serves.
+//!
+//!     nx run site/build.nx                 # writes site/out/
+//!     nx run site/build.nx -- --out DIR
+//!
+//! The renderer covers the Markdown the repository writes: ATX headings,
+//! paragraphs, fenced code (Nexium is highlighted with the language's own
+//! token rules), inline code, emphasis, links (links between the files
+//! become links between the pages), images, lists, block quotes, tables,
+//! rules and raw HTML lines. `{{include path}}` in a chapter inlines a source
+//! file as a code block and `{{output path}}` a recorded output, so the
+//! tutorial shows the programs the test harness runs.
+
+import std.fs
+import std.strings
+
+const REPO = "https://github.com/Londopy/nexium"
+const SITE_TITLE = "Nexium"
+
+/// One page of the site: where it comes from, where it goes, what it is called.
+struct Page {
+    // "topo", "docs", "reference", "project", "index"
+    section: String
+    // repository-relative source, forward slashes
+    src: String
+    // output path under the site root, forward slashes
+    out: String
+    title: String
+}
+
+/// The site's plan: sections in sidebar order; the Topo's chapters in file order.
+fn plan() -> List(Page) {
+    var pages = List(Page).new()
+    pages.append(Page{ .section = String.from("index"), .src = String.from("site/index.md"), .out = String.from("index.html"), .title = String.from("Nexium") })
+    // the Topo: every chapter under topo/, numbered by its file name
+    let chapters = fs.list("topo") catch { List(String).new() }
+    for c in chapters {
+        if !c[..].ends_with(".md") { continue }
+        let stem = fs.stem(c[..])
+        pages.append(Page{ .section = String.from("topo"), .src = fs.join("topo", c[..]), .out = format("topo/{}.html", .{stem}), .title = String.new() })
+    }
+    let docs = [
+        ("docs/install.md", "install"), ("docs/language.md", "language"), ("docs/std.md", "std"), ("docs/repl.md", "repl"),
+        ("docs/packages.md", "packages"), ("docs/gui.md", "gui"), ("docs/embedding.md", "embedding"),
+        ("docs/releasing-your-program.md", "releasing-your-program"), ("docs/architecture.md", "architecture"),
+        ("docs/stability.md", "stability"), ("docs/platforms.md", "platforms"), ("docs/release-names.md", "release-names"),
+    ]
+    for d in docs { pages.append(Page{ .section = String.from("docs"), .src = String.from(d.0), .out = format("docs/{}.html", .{d.1}), .title = String.new() }) }
+    let project = [
+        ("SPEC.md", "spec"), ("ROADMAP.md", "roadmap"), ("DECISIONS.md", "decisions"), ("CHANGELOG.md", "changelog"),
+        ("CONTRIBUTING.md", "contributing"), ("KNOWN_ISSUES.md", "known-issues"), ("SECURITY.md", "security"), ("CLA.md", "cla"),
+    ]
+    for d in project { pages.append(Page{ .section = String.from("project"), .src = String.from(d.0), .out = format("docs/{}.html", .{d.1}), .title = String.new() }) }
+    return pages
+}
+
+// ----- text helpers ----------------------------------------------------------------
+
+fn esc(s: []u8) -> String {
+    var out = String.with_capacity(s.len)
+    for c in s {
+        if c == '<' { out.append("&lt;") } else if c == '>' { out.append("&gt;") } else if c == '&' { out.append("&amp;") } else if c == '"' { out.append("&quot;") } else { out.push_byte(c) }
+    }
+    return out
+}
+
+/// A heading's anchor: lower case, runs of anything but letters and digits become one dash.
+fn slug(s: []u8) -> String {
+    var out = String.new()
+    var dash = false
+    for c in s {
+        let lower = if c >= 'A' and c <= 'Z' { c + 32 } else { c }
+        let ok = (lower >= 'a' and lower <= 'z') or (lower >= '0' and lower <= '9')
+        if ok {
+            if dash and out.len > 0 { out.push_byte('-') }
+            dash = false
+            out.push_byte(lower)
+        } else {
+            dash = true
+        }
+    }
+    return out
+}
+
+fn is_blank(s: []u8) -> bool { return s.trim().len == 0 }
+
+fn count_prefix(s: []u8, c: u8) -> usize {
+    var n: usize = 0
+    while n < s.len and s[n] == c { n += 1 }
+    return n
+}
+
+fn leading_spaces(s: []u8) -> usize { return count_prefix(s, ' ') }
+
+/// The text after `- `, `* ` or `N. `, or null when the line is not a list item.
+fn list_item(line: []u8, ordered: *mut bool) -> ?[]u8 {
+    let t = strings.trim_left(line)
+    if t.len >= 2 and (t[0] == '-' or t[0] == '*') and t[1] == ' ' { ordered.*= false; return t[2..] }
+    var i: usize = 0
+    while i < t.len and t[i] >= '0' and t[i] <= '9' { i += 1 }
+    if i > 0 and i + 1 < t.len and t[i] == '.' and t[i + 1] == ' ' { ordered.*= true; return t[i + 2..] }
+    return null
+}
+
+// ----- the Nexium highlighter --------------------------------------------------------
+
+const KEYWORDS = ["fn", "let", "var", "const", "struct", "enum", "record", "ref", "class", "trait", "impl", "pub", "import", "return", "if", "else", "for", "while", "match", "break", "continue", "try", "catch", "defer", "errdefer", "comptime", "unsafe", "error", "true", "false", "null", "undefined", "and", "or", "type", "distinct", "where", "into", "artifact", "test", "export", "unreachable", "as", "orelse", "in", "dyn", "weak", "parallel", "extern", "using", "own", "step", "derive", "layout", "self"]
+
+const TYPES = ["i8", "i16", "i32", "i64", "i128", "u8", "u16", "u32", "u64", "u128", "isize", "usize", "f32", "f64", "bool", "char", "void", "never", "String", "List", "Map", "Self"]
+
+fn is_ident_start(c: u8) -> bool { return (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or c == '_' }
+fn is_ident_char(c: u8) -> bool { return is_ident_start(c) or (c >= '0' and c <= '9') }
+
+fn in_list(word: []u8, words: [][]u8) -> bool {
+    for w in words { if w == word { return true } }
+    return false
+}
+
+fn span(out: *mut String, cls: []u8, text: []u8) {
+    out.append("<span class=\"")
+    out.append(cls)
+    out.append("\">")
+    out.append(esc(text)[..])
+    out.append("</span>")
+}
+
+/// Nexium source as HTML with token classes: k keyword, t type, s string,
+/// n number, c comment, f function, b builtin, a attribute-like `@name`.
+fn highlight_nexium(src: []u8) -> String {
+    var out = String.with_capacity(src.len * 2)
+    var i: usize = 0
+    let n = src.len
+    while i < n {
+        let c = src[i]
+        // comments to the end of the line
+        if c == '/' and i + 1 < n and src[i + 1] == '/' {
+            var j = i
+            while j < n and src[j] != '\n' { j += 1 }
+            let cls = if i + 2 < n and (src[i + 2] == '/' or src[i + 2] == '!') { "d" } else { "c" }
+            span(&mut out, cls, src[i..j])
+            i = j
+            continue
+        }
+        // strings, raw and byte strings
+        if c == '"' or ((c == 'r' or c == 'b') and i + 1 < n and src[i + 1] == '"' and (i == 0 or !is_ident_char(src[i - 1]))) {
+            let raw = c == 'r'
+            var j = if c == '"' { i + 1 } else { i + 2 }
+            while j < n and src[j] != '"' {
+                if src[j] == '\\' and !raw and j + 1 < n { j += 2 } else { j += 1 }
+            }
+            if j < n { j += 1 }
+            span(&mut out, "s", src[i..j])
+            i = j
+            continue
+        }
+        // char literals: 'x', '\n', '\''
+        if c == '\'' and i + 1 < n {
+            var j = i + 1
+            if src[j] == '\\' and j + 1 < n { j += 2 } else { j += 1 }
+            while j < n and src[j] != '\'' and src[j] != '\n' and j - i < 12 { j += 1 }
+            if j < n and src[j] == '\'' {
+                j += 1
+                span(&mut out, "s", src[i..j])
+                i = j
+                continue
+            }
+        }
+        // numbers
+        if c >= '0' and c <= '9' {
+            var j = i + 1
+            while j < n and (is_ident_char(src[j]) or src[j] == '.' and j + 1 < n and src[j + 1] >= '0' and src[j + 1] <= '9') { j += 1 }
+            span(&mut out, "n", src[i..j])
+            i = j
+            continue
+        }
+        // @builtins
+        if c == '@' and i + 1 < n and is_ident_start(src[i + 1]) {
+            var j = i + 1
+            while j < n and is_ident_char(src[j]) { j += 1 }
+            span(&mut out, "b", src[i..j])
+            i = j
+            continue
+        }
+        // identifiers, keywords, types, calls
+        if is_ident_start(c) {
+            var j = i
+            while j < n and is_ident_char(src[j]) { j += 1 }
+            let word = src[i..j]
+            if in_list(word, KEYWORDS[..]) {
+                span(&mut out, "k", word)
+            } else if in_list(word, TYPES[..]) or (word[0] >= 'A' and word[0] <= 'Z') {
+                span(&mut out, "t", word)
+            } else if j < n and src[j] == '(' {
+                span(&mut out, "f", word)
+            } else {
+                out.append(esc(word)[..])
+            }
+            i = j
+            continue
+        }
+        // everything else, one byte at a time, escaped
+        out.append(esc(src[i..i + 1])[..])
+        i += 1
+    }
+    return out
+}
+
+/// A shell transcript: the `$ ` prompts and comments stand out, the rest is plain.
+fn highlight_shell(src: []u8) -> String {
+    var out = String.new()
+    for line, li in src.lines() {
+        if li > 0 { out.append("\n") }
+        if line.starts_with("$ ") {
+            span(&mut out, "p", "$ ")
+            out.append(esc(line[2..])[..])
+        } else if line.starts_with("#") {
+            span(&mut out, "c", line)
+        } else {
+            out.append(esc(line)[..])
+        }
+    }
+    return out
+}
+
+fn code_block(out: *mut String, lang: []u8, text: []u8) {
+    var body = text
+    while body.len > 0 and body[body.len - 1] == '\n' { body = body[0..body.len - 1] }
+    let l = if lang.len == 0 { "text" } else { lang }
+    out.append(format("<pre class=\"code lang-{}\"><code>", .{esc(l)})[..])
+    if l == "nexium" or l == "nx" {
+        out.append(highlight_nexium(body)[..])
+    } else if l == "bash" or l == "sh" or l == "shell" or l == "console" or l == "powershell" {
+        out.append(highlight_shell(body)[..])
+    } else {
+        out.append(esc(body)[..])
+    }
+    out.append("</code></pre>\n")
+}
+
+// ----- inline Markdown ------------------------------------------------------------
+
+/// Where a link in `from` points on the site: another page, an anchor, or GitHub.
+struct Links {
+    // repository-relative source paths and the site paths they render to
+    srcs: List(String)
+    outs: List(String)
+}
+
+fn resolve_link(links: *Links, from_src: []u8, from_out: []u8, target: []u8) -> String {
+    if target.starts_with("http://") or target.starts_with("https://") or target.starts_with("mailto:") or target.starts_with("#") { return String.from(target) }
+    // split off an anchor
+    var path = target
+    var anchor = ""
+    if let h = target.find("#") { path = target[0..h]; anchor = target[h..] }
+    // resolve against the source file's directory
+    let dir = fs.parent(from_src)
+    let joined = fs.normalize(fs.join(dir, path)[..])
+    let rel = strings.replace(joined[..], "\\", "/")
+    for s, i in links.srcs {
+        if s[..] == rel[..] {
+            var url = relative(from_out, links.outs[i][..])
+            url.append(anchor)
+            return url
+        }
+    }
+    // the tutorial's images are copied to the same path under the site
+    if rel[..].starts_with("topo/img/") { return relative(from_out, rel[..]) }
+    // not a page of the site: the file on GitHub
+    var url = format("{}/blob/main/{}", .{REPO, rel})
+    url.append(anchor)
+    return url
+}
+
+/// `to` relative to the directory of `from`, both site paths.
+fn relative(from: []u8, to: []u8) -> String {
+    var up = String.new()
+    for c in from { if c == '/' { up.append("../") } }
+    up.append(to)
+    return up
+}
+
+/// Inline Markdown to HTML: code spans, images, links, bold, italic.
+fn inline(s: []u8, links: *Links, page: *Page) -> String {
+    var out = String.with_capacity(s.len + 16)
+    var i: usize = 0
+    let n = s.len
+    while i < n {
+        let c = s[i]
+        if c == '`' {
+            // a code span, one or more backticks long
+            let ticks = count_prefix(s[i..], '`')
+            var j = i + ticks
+            var close = NONE_IDX
+            while j < n {
+                if s[j] == '`' and count_prefix(s[j..], '`') == ticks { close = j; break }
+                j += 1
+            }
+            if close != NONE_IDX {
+                var body = s[i + ticks..close]
+                if body.len > 1 and body[0] == ' ' and body[body.len - 1] == ' ' { body = body[1..body.len - 1] }
+                out.append("<code>")
+                out.append(esc(body)[..])
+                out.append("</code>")
+                i = close + ticks
+                continue
+            }
+        }
+        if c == '!' and i + 1 < n and s[i + 1] == '[' {
+            if let e = link_end(s, i + 1) {
+                let alt = s[i + 2..e.0]
+                let src = s[e.0 + 2..e.1]
+                out.append(format("<img alt=\"{}\" src=\"{}\">", .{esc(alt), esc(resolve_link(links, page.src[..], page.out[..], src)[..])})[..])
+                i = e.1 + 1
+                continue
+            }
+        }
+        if c == '[' {
+            if let e = link_end(s, i) {
+                let text = s[i + 1..e.0]
+                let target = s[e.0 + 2..e.1]
+                out.append(format("<a href=\"{}\">{}</a>", .{esc(resolve_link(links, page.src[..], page.out[..], target)[..]), inline(text, links, page)})[..])
+                i = e.1 + 1
+                continue
+            }
+        }
+        if c == '*' and i + 1 < n and s[i + 1] == '*' {
+            if let e = strings.index_from(s, "**", i + 2) {
+                out.append("<strong>")
+                out.append(inline(s[i + 2..e], links, page)[..])
+                out.append("</strong>")
+                i = e + 2
+                continue
+            }
+        }
+        if c == '*' and i + 1 < n and s[i + 1] != ' ' {
+            if let e = strings.index_from(s, "*", i + 1) {
+                if e > i + 1 and s[e - 1] != ' ' {
+                    out.append("<em>")
+                    out.append(inline(s[i + 1..e], links, page)[..])
+                    out.append("</em>")
+                    i = e + 1
+                    continue
+                }
+            }
+        }
+        if c == '<' and i + 1 < n and (s[i + 1..].starts_with("https://") or s[i + 1..].starts_with("http://")) {
+            if let e = strings.index_from(s, ">", i) {
+                let url = s[i + 1..e]
+                out.append(format("<a href=\"{}\">{}</a>", .{esc(url), esc(url)})[..])
+                i = e + 1
+                continue
+            }
+        }
+        if c == '<' or c == '>' or c == '&' or c == '"' {
+            out.append(esc(s[i..i + 1])[..])
+        } else {
+            out.push_byte(c)
+        }
+        i += 1
+    }
+    return out
+}
+
+const NONE_IDX: usize = 18446744073709551615
+
+/// For `[text](target)` starting at `open`: the index of `]` and of the closing `)`.
+fn link_end(s: []u8, open: usize) -> ?(usize, usize) {
+    var depth: usize = 0
+    var i = open
+    var close = NONE_IDX
+    while i < s.len {
+        if s[i] == '`' {
+            // a code span inside the text: skip to its end
+            let ticks = count_prefix(s[i..], '`')
+            var j = i + ticks
+            while j < s.len and ! (s[j] == '`' and count_prefix(s[j..], '`') == ticks) { j += 1 }
+            i = if j < s.len { j + ticks } else { s.len }
+            continue
+        }
+        if s[i] == '[' { depth += 1 }
+        if s[i] == ']' { depth -= 1; if depth == 0 { close = i; break } }
+        i += 1
+    }
+    if close == NONE_IDX or close + 1 >= s.len or s[close + 1] != '(' { return null }
+    var j = close + 2
+    var pdepth: usize = 1
+    while j < s.len {
+        if s[j] == '(' { pdepth += 1 }
+        if s[j] == ')' { pdepth -= 1; if pdepth == 0 { return (close, j) } }
+        if s[j] == ' ' or s[j] == '\n' { return null }
+        j += 1
+    }
+    return null
+}
+
+// ----- block Markdown ---------------------------------------------------------------
+
+/// A heading the page has, for the table of contents.
+struct Heading {
+    level: usize
+    text: String
+    id: String
+}
+
+/// The rendered body of one Markdown file and its headings; the first `# `
+/// heading is the title and is not repeated in the body.
+fn render_markdown(src: []u8, links: *Links, page: *Page, title: *mut String, headings: *mut List(Heading)) -> String {
+    var out = String.with_capacity(src.len * 2)
+    var lines = List([]u8).new()
+    for l in src.lines() { lines.append(l) }
+    let n = lines.len
+    var i: usize = 0
+    var para = List([]u8).new()
+    var list_depths = List(usize).new()
+    var list_ordered = List(bool).new()
+
+    while i < n {
+        let line = lines[i]
+
+        // a fenced code block, or an include of a source file
+        if line.starts_with("```") or line.starts_with("{{include ") or line.starts_with("{{output ") {
+            flush_para(&mut out, &mut para, links, page)
+            close_lists(&mut out, &mut list_depths, &mut list_ordered, 0)
+            if line.starts_with("```") {
+                let lang = String.from(line[3..].trim())
+                var body = String.new()
+                i += 1
+                while i < n and !lines[i].starts_with("```") { body.append(lines[i]); body.append("\n"); i += 1 }
+                i += 1
+                code_block(&mut out, lang[..], body[..])
+            } else {
+                let is_code = line.starts_with("{{include ")
+                let start: usize = if is_code { 10 } else { 9 }
+                let end = line.find("}}") orelse line.len
+                let path = line[start..end].trim()
+                let text = fs.read(path) catch { format("(missing {})", .{path}) }
+                let ext = fs.extension(path)
+                let lang = if !is_code { "text" } else if ext == "nx" { "nexium" } else if ext == "toml" { "toml" } else if ext == "sh" { "bash" } else { "text" }
+                out.append(format("<div class=\"included\"><span class=\"file\">{}</span>", .{esc(path)})[..])
+                code_block(&mut out, lang, text[..])
+                out.append("</div>\n")
+                i += 1
+            }
+            continue
+        }
+
+        if is_blank(line) {
+            flush_para(&mut out, &mut para, links, page)
+            // a blank line inside a list keeps the list open only when the next item continues it
+            var next = i + 1
+            while next < n and is_blank(lines[next]) { next += 1 }
+            var ordered = false
+            if list_depths.len > 0 and (next >= n or list_item(lines[next], &mut ordered) == null) { close_lists(&mut out, &mut list_depths, &mut list_ordered, 0) }
+            i += 1
+            continue
+        }
+
+        // headings
+        let hashes = count_prefix(line, '#')
+        if hashes >= 1 and hashes <= 6 and line.len > hashes and line[hashes] == ' ' {
+            flush_para(&mut out, &mut para, links, page)
+            close_lists(&mut out, &mut list_depths, &mut list_ordered, 0)
+            let text = line[hashes + 1..].trim()
+            if hashes == 1 and title.len == 0 {
+                title.*= String.from(text)
+            } else {
+                let id = slug(text)
+                headings.append(Heading{ .level = hashes, .text = String.from(text), .id = id.clone() })
+                out.append(format("<h{} id=\"{}\">{}<a class=\"anchor\" href=\"#{}\">#</a></h{}>\n", .{hashes, id, inline(text, links, page), id, hashes})[..])
+            }
+            i += 1
+            continue
+        }
+
+        // a rule
+        if (line.starts_with("---") or line.starts_with("***")) and line.trim().len >= 3 and strings.trim_right(line)[..].len == count_prefix(strings.trim_right(line), line[0]) {
+            flush_para(&mut out, &mut para, links, page)
+            close_lists(&mut out, &mut list_depths, &mut list_ordered, 0)
+            out.append("<hr>\n")
+            i += 1
+            continue
+        }
+
+        // a block quote
+        if line.starts_with(">") {
+            flush_para(&mut out, &mut para, links, page)
+            close_lists(&mut out, &mut list_depths, &mut list_ordered, 0)
+            var inner = String.new()
+            while i < n and lines[i].starts_with(">") {
+                var t = lines[i][1..]
+                if t.len > 0 and t[0] == ' ' { t = t[1..] }
+                inner.append(t)
+                inner.append("\n")
+                i += 1
+            }
+            var qt = String.new()
+            var qh = List(Heading).new()
+            out.append("<blockquote>\n")
+            out.append(render_markdown(inner[..], links, page, &mut qt, &mut qh)[..])
+            out.append("</blockquote>\n")
+            continue
+        }
+
+        // a table: a header row, a separator row, body rows
+        if line.starts_with("|") and i + 1 < n and lines[i + 1].starts_with("|") and lines[i + 1].find("---") != null {
+            flush_para(&mut out, &mut para, links, page)
+            close_lists(&mut out, &mut list_depths, &mut list_ordered, 0)
+            out.append("<table>\n<thead><tr>")
+            for cell in table_cells(line) { out.append(format("<th>{}</th>", .{inline(cell, links, page)})[..]) }
+            out.append("</tr></thead>\n<tbody>\n")
+            i += 2
+            while i < n and lines[i].starts_with("|") {
+                out.append("<tr>")
+                for cell in table_cells(lines[i]) { out.append(format("<td>{}</td>", .{inline(cell, links, page)})[..]) }
+                out.append("</tr>\n")
+                i += 1
+            }
+            out.append("</tbody>\n</table>\n")
+            continue
+        }
+
+        // raw HTML: a line that opens a tag is passed through to the blank line
+        if line.starts_with("<") and line.len > 1 and (is_ident_start(line[1]) or line[1] == '/' or line[1] == '!') {
+            flush_para(&mut out, &mut para, links, page)
+            close_lists(&mut out, &mut list_depths, &mut list_ordered, 0)
+            while i < n and !is_blank(lines[i]) { out.append(lines[i]); out.append("\n"); i += 1 }
+            continue
+        }
+
+        // list items, nested by indentation
+        var ordered = false
+        if let item = list_item(line, &mut ordered) {
+            flush_para(&mut out, &mut para, links, page)
+            let depth = leading_spaces(line) / 2 + 1
+            close_lists(&mut out, &mut list_depths, &mut list_ordered, depth)
+            if list_depths.len < depth {
+                list_depths.append(depth)
+                list_ordered.append(ordered)
+                out.append(if ordered { "<ol>\n" } else { "<ul>\n" })
+            } else {
+                out.append("</li>\n")
+            }
+            // continuation lines of the item, indented deeper than its marker
+            var text = String.from(item)
+            var j = i + 1
+            while j < n and !is_blank(lines[j]) {
+                var o2 = false
+                if list_item(lines[j], &mut o2) != null or lines[j].starts_with("```") or lines[j].starts_with("#") { break }
+                text.append(" ")
+                text.append(lines[j].trim())
+                j += 1
+            }
+            out.append(format("<li>{}", .{inline(text[..], links, page)})[..])
+            i = j
+            continue
+        }
+
+        // a paragraph line
+        para.append(line)
+        i += 1
+    }
+    flush_para(&mut out, &mut para, links, page)
+    close_lists(&mut out, &mut list_depths, &mut list_ordered, 0)
+    return out
+}
+
+fn table_cells(line: []u8) -> List([]u8) {
+    var cells = List([]u8).new()
+    var t = line.trim()
+    if t.len > 0 and t[0] == '|' { t = t[1..] }
+    if t.len > 0 and t[t.len - 1] == '|' { t = t[0..t.len - 1] }
+    // a `\|` inside a cell is a literal bar; split on the others
+    var start: usize = 0
+    var i: usize = 0
+    while i <= t.len {
+        if i == t.len or (t[i] == '|' and (i == 0 or t[i - 1] != '\\')) {
+            cells.append(t[start..i].trim())
+            start = i + 1
+        }
+        i += 1
+    }
+    return cells
+}
+
+fn flush_para(out: *mut String, para: *mut List([]u8), links: *Links, page: *Page) {
+    if para.len == 0 { return }
+    var text = String.new()
+    for l, i in para.*{
+        if i > 0 { text.append(" ") }
+        text.append(l.trim())
+    }
+    out.append("<p>")
+    out.append(inline(text[..], links, page)[..])
+    out.append("</p>\n")
+    para.clear()
+}
+
+fn close_lists(out: *mut String, depths: *mut List(usize), ordered: *mut List(bool), keep: usize) {
+    while depths.len > keep {
+        let o = ordered.pop().?
+        _ = depths.pop()
+        out.append(if o { "</li>\n</ol>\n" } else { "</li>\n</ul>\n" })
+    }
+}
+
+// ----- the page shell -----------------------------------------------------------------
+
+const CSS = r"
+:root { --bg: #ffffff; --fg: #1b1f27; --muted: #5d6675; --line: #e3e6eb; --side: #f6f7f9; --accent: #5b4bd6; --accent-2: #0f9d8a; --code-bg: #f3f4f7; --k: #a626a4; --t: #0b6e99; --s: #3e7f2f; --n: #b36b00; --c: #7a8290; --f: #4b5bd6; --b: #c0392b; }
+@media (prefers-color-scheme: dark) { :root { --bg: #0f1117; --fg: #e6e8ee; --muted: #9aa3b2; --line: #262b36; --side: #141821; --accent: #9d8cff; --accent-2: #4fd1c5; --code-bg: #171b25; --k: #d68cf0; --t: #67c8ff; --s: #9ad27a; --n: #f0b25a; --c: #7d8798; --f: #9fb0ff; --b: #ff7b72; } }
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; font: 16px/1.6 -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: var(--fg); background: var(--bg); }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code, pre { font-family: ui-monospace, 'Cascadia Code', 'JetBrains Mono', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 0.92em; }
+code { background: var(--code-bg); padding: 0.1em 0.35em; border-radius: 4px; }
+pre.code { background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; padding: 0.9rem 1.1rem; overflow-x: auto; line-height: 1.5; }
+pre.code code { background: none; padding: 0; font-size: 0.9em; }
+.k { color: var(--k); font-weight: 600; } .t { color: var(--t); } .s { color: var(--s); } .n { color: var(--n); } .c { color: var(--c); font-style: italic; } .d { color: var(--c); } .f { color: var(--f); } .b { color: var(--b); } .p { color: var(--muted); }
+.layout { display: grid; grid-template-columns: 270px minmax(0, 1fr); min-height: 100vh; }
+nav.side { background: var(--side); border-right: 1px solid var(--line); padding: 1.2rem 1rem 3rem; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+nav.side .brand { display: flex; align-items: center; gap: 0.6rem; font-weight: 700; font-size: 1.15rem; margin-bottom: 1rem; color: var(--fg); }
+nav.side .brand img { width: 30px; height: 30px; }
+nav.side h4 { margin: 1.1rem 0 0.35rem; font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+nav.side a { display: block; padding: 0.22rem 0.5rem; border-radius: 6px; color: var(--fg); font-size: 0.93rem; }
+nav.side a:hover { background: var(--line); text-decoration: none; }
+nav.side a.current { background: var(--accent); color: #fff; }
+nav.side a .num { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 0.35rem; }
+nav.side a.current .num { color: #eee; }
+main { padding: 2rem 3rem 4rem; max-width: 62rem; }
+main h1 { font-size: 2.1rem; margin: 0 0 1rem; line-height: 1.2; }
+main h2 { margin-top: 2.2rem; border-bottom: 1px solid var(--line); padding-bottom: 0.3rem; }
+main h3 { margin-top: 1.6rem; }
+main h2 .anchor, main h3 .anchor, main h4 .anchor { opacity: 0; margin-left: 0.4rem; font-weight: 400; color: var(--muted); }
+main h2:hover .anchor, main h3:hover .anchor, main h4:hover .anchor { opacity: 1; }
+main img { max-width: 100%; }
+table { border-collapse: collapse; margin: 1rem 0; width: 100%; font-size: 0.93rem; }
+th, td { border: 1px solid var(--line); padding: 0.4rem 0.6rem; text-align: left; vertical-align: top; }
+th { background: var(--side); }
+blockquote { margin: 1rem 0; padding: 0.2rem 1rem; border-left: 4px solid var(--accent-2); color: var(--muted); }
+hr { border: 0; border-top: 1px solid var(--line); margin: 2rem 0; }
+.included .file { display: inline-block; font-family: ui-monospace, Consolas, monospace; font-size: 0.78rem; color: var(--muted); background: var(--side); border: 1px solid var(--line); border-bottom: 0; border-radius: 6px 6px 0 0; padding: 0.15rem 0.6rem; }
+.included pre.code { margin-top: 0; border-top-left-radius: 0; }
+.toc { float: right; width: 15rem; margin: 0 0 1rem 1.5rem; padding: 0.6rem 0.9rem; border: 1px solid var(--line); border-radius: 8px; background: var(--side); font-size: 0.85rem; }
+.toc h4 { margin: 0 0 0.3rem; font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.toc a { display: block; color: var(--fg); padding: 0.1rem 0; }
+.toc a.l3 { padding-left: 0.9rem; color: var(--muted); }
+.pager { display: flex; justify-content: space-between; margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line); gap: 1rem; }
+.pager a { max-width: 48%; }
+.pager .label { display: block; font-size: 0.75rem; color: var(--muted); }
+footer { margin-top: 3rem; color: var(--muted); font-size: 0.85rem; }
+.hero { padding: 1rem 0 2rem; }
+.hero h1 { font-size: 2.6rem; }
+.hero p.tag { font-size: 1.2rem; color: var(--muted); max-width: 46rem; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 1rem; margin: 1.5rem 0; }
+.card { border: 1px solid var(--line); border-radius: 10px; padding: 1rem 1.1rem; background: var(--side); }
+.card h3 { margin: 0 0 0.4rem; }
+.card p { margin: 0; color: var(--muted); font-size: 0.93rem; }
+.two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1rem; }
+.menu-toggle, .menu-label { display: none; }
+.brand-row { display: flex; align-items: center; justify-content: space-between; }
+@media (max-width: 900px) {
+  .layout { grid-template-columns: minmax(0, 1fr); }
+  nav.side { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); padding-bottom: 0.8rem; }
+  nav.side .brand { margin-bottom: 0; }
+  .menu-label { display: inline-block; cursor: pointer; padding: 0.3rem 0.8rem; border: 1px solid var(--line); border-radius: 6px; font-size: 0.9rem; color: var(--fg); }
+  nav.side .menu { display: none; margin-top: 0.8rem; }
+  .menu-toggle:checked ~ .layout nav.side .menu { display: block; }
+  main { padding: 1.2rem 1rem 3rem; }
+  .toc { float: none; width: auto; margin: 0 0 1rem; }
+  .two { grid-template-columns: 1fr; }
+}
+"
+
+fn page_head(out: *mut String, title: []u8, root: []u8, description: []u8) {
+    out.append("<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
+    out.append(format("<title>{}</title>\n", .{esc(title)})[..])
+    if description.len > 0 { out.append(format("<meta name=\"description\" content=\"{}\">\n", .{esc(description)})[..]) }
+    out.append(format("<link rel=\"icon\" href=\"{}assets/logo.svg\">\n<link rel=\"stylesheet\" href=\"{}style.css\">\n</head>\n<body>\n<input type=\"checkbox\" id=\"menu\" class=\"menu-toggle\">\n<div class=\"layout\">\n", .{root, root})[..])
+}
+
+fn nav_link(out: *mut String, root: []u8, p: *Page, current: bool, number: usize) {
+    out.append(format("<a href=\"{}{}\"{}>", .{root, p.out, if current { " class=\"current\"" } else { "" }})[..])
+    if number > 0 { out.append(format("<span class=\"num\">{}</span>", .{number})[..]) }
+    out.append(esc(p.title[..])[..])
+    out.append("</a>\n")
+}
+
+fn sidebar(out: *mut String, pages: *List(Page), current: usize, root: []u8) {
+    out.append("<nav class=\"side\">\n")
+    out.append(format("<div class=\"brand-row\"><a class=\"brand\" href=\"{}index.html\"><img src=\"{}assets/logo.svg\" alt=\"\">Nexium</a><label for=\"menu\" class=\"menu-label\">Menu</label></div>\n<div class=\"menu\">\n", .{root, root})[..])
+    out.append("<h4>The Topo</h4>\n")
+    var num: usize = 0
+    for p, i in pages.*{
+        if p.section[..] != "topo" { continue }
+        num += 1
+        nav_link(out, root, &p, i == current, num)
+    }
+    out.append("<h4>Docs</h4>\n")
+    for p, i in pages.*{ if p.section[..] == "docs" { nav_link(out, root, &p, i == current, 0) } }
+    out.append("<h4>Project</h4>\n")
+    for p, i in pages.*{ if p.section[..] == "project" { nav_link(out, root, &p, i == current, 0) } }
+    out.append(format("<h4>Elsewhere</h4>\n<a href=\"{}\">GitHub</a>\n<a href=\"{}/releases\">Releases</a>\n<a href=\"{}/issues\">Issues</a>\n", .{REPO, REPO, REPO})[..])
+    out.append("</div>\n</nav>\n")
+}
+
+fn toc(out: *mut String, headings: *List(Heading), links: *Links, page: *Page) {
+    var count: usize = 0
+    for h in headings.*{ if h.level == 2 or h.level == 3 { count += 1 } }
+    if count < 3 { return }
+    out.append("<div class=\"toc\"><h4>On this page</h4>\n")
+    for h in headings.*{
+        if h.level == 2 { out.append(format("<a href=\"#{}\">{}</a>\n", .{h.id, inline(h.text[..], links, page)})[..]) }
+        else if h.level == 3 { out.append(format("<a class=\"l3\" href=\"#{}\">{}</a>\n", .{h.id, inline(h.text[..], links, page)})[..]) }
+    }
+    out.append("</div>\n")
+}
+
+fn pager(out: *mut String, pages: *List(Page), current: usize, root: []u8) {
+    if pages.*[current].section[..] != "topo" { return }
+    var prev = NONE_IDX
+    var next = NONE_IDX
+    for p, i in pages.*{
+        if p.section[..] != "topo" { continue }
+        if i < current { prev = i }
+        if i > current and next == NONE_IDX { next = i }
+    }
+    out.append("<div class=\"pager\">\n")
+    if prev != NONE_IDX { out.append(format("<a href=\"{}{}\"><span class=\"label\">Previous</span>{}</a>", .{root, pages.*[prev].out, esc(pages.*[prev].title[..])})[..]) } else { out.append("<span></span>") }
+    if next != NONE_IDX { out.append(format("<a href=\"{}{}\" style=\"text-align:right\"><span class=\"label\">Next</span>{}</a>", .{root, pages.*[next].out, esc(pages.*[next].title[..])})[..]) } else { out.append("<span></span>") }
+    out.append("</div>\n")
+}
+
+fn footer(out: *mut String, src: []u8) {
+    out.append(format("<footer>Nexium is MIT licensed. This page is built from <a href=\"{}/blob/main/{}\">{}</a> by <code>site/build.nx</code>, a Nexium program.</footer>\n", .{REPO, src, esc(src)})[..])
+    out.append("</main>\n</div>\n</body>\n</html>\n")
+}
+
+// ----- main ---------------------------------------------------------------------------
+
+fn main() -> u8 {
+    let args = os.args()
+    var out_dir = String.from("site/out")
+    var i: usize = 1
+    while i < args.len {
+        if args[i] == "--out" and i + 1 < args.len { out_dir = String.from(args[i + 1]); i += 2; continue }
+        eprintln("usage: nx run site/build.nx -- [--out DIR]", .{})
+        return 2
+    }
+    var pages = plan()
+    // read every page once: its text and its title (the first `# ` line)
+    var texts = List(String).new()
+    for p in pages {
+        let text = fs.read(p.src[..]) catch {
+            eprintln("error: cannot read {}", .{p.src})
+            return 1
+        }
+        texts.append(text)
+    }
+    for p, pi in pages {
+        if p.title.len > 0 { continue }
+        for l in texts[pi][..].lines() {
+            if l.starts_with("# ") { pages[pi].title = String.from(l[2..].trim()); break }
+        }
+        if pages[pi].title.len == 0 { pages[pi].title = String.from(fs.stem(p.src[..])) }
+    }
+    var links = Links{ .srcs = List(String).new(), .outs = List(String).new() }
+    for p in pages { links.srcs.append(p.src.clone()); links.outs.append(p.out.clone()) }
+    // the README and the licence point at GitHub through the fallback; the docs index is the site root
+    links.srcs.append(String.from("README.md")); links.outs.append(String.from("index.html"))
+    links.srcs.append(String.from("docs/README.md")); links.outs.append(String.from("index.html"))
+
+    fs.make_dirs(fs.join(out_dir[..], "docs")[..]) catch { eprintln("error: cannot create {}", .{out_dir}); return 1 }
+    fs.make_dirs(fs.join(out_dir[..], "topo")[..]) catch { }
+    fs.make_dirs(fs.join(out_dir[..], "assets")[..]) catch { }
+    fs.write(fs.join(out_dir[..], "style.css")[..], CSS) catch { eprintln("error: cannot write the stylesheet", .{}); return 1 }
+    for a in ["logo.svg", "banner.svg", "icon-256.png"] {
+        fs.copy(fs.join("assets", a)[..], fs.join(fs.join(out_dir[..], "assets")[..], a)[..]) catch { eprintln("warning: cannot copy assets/{}", .{a}) }
+    }
+    fs.write(fs.join(out_dir[..], ".nojekyll")[..], "") catch { }
+    fs.make_dirs(fs.join(out_dir[..], "topo/img")[..]) catch { }
+    for img in fs.list("topo/img") catch { List(String).new() } {
+        fs.copy(fs.join("topo/img", img[..])[..], fs.join(fs.join(out_dir[..], "topo/img")[..], img[..])[..]) catch { eprintln("warning: cannot copy topo/img/{}", .{img}) }
+    }
+
+    var written: usize = 0
+    for p, pi in pages {
+        let root = if p.out[..].find("/") != null { "../" } else { "" }
+        var title = String.new()
+        var headings = List(Heading).new()
+        let body = render_markdown(texts[pi][..], &links, &p, &mut title, &mut headings)
+        var html = String.with_capacity(body.len + 8192)
+        let full_title = if p.section[..] == "index" { String.from("Nexium: a language that compiles to C and ships everywhere") } else { format("{} · Nexium", .{p.title}) }
+        page_head(&mut html, full_title[..], root, first_paragraph(body[..])[..])
+        sidebar(&mut html, &pages, pi, root)
+        html.append("<main>\n")
+        if p.section[..] != "index" {
+            toc(&mut html, &headings, &links, &p)
+            html.append(format("<h1>{}</h1>\n", .{inline(p.title[..], &links, &p)})[..])
+        }
+        html.append(body[..])
+        pager(&mut html, &pages, pi, root)
+        footer(&mut html, p.src[..])
+        let path = fs.join(out_dir[..], p.out[..])
+        fs.write(path[..], html[..]) catch { eprintln("error: cannot write {}", .{path}); return 1 }
+        written += 1
+    }
+    println("site: {} pages in {}", .{written, out_dir})
+    return 0
+}
+
+/// The text of the first paragraph, for the description tag.
+fn first_paragraph(html: []u8) -> String {
+    let start = html.find("<p>") orelse return String.new()
+    let rest = html[start + 3..]
+    let end = rest.find("</p>") orelse return String.new()
+    var text = String.new()
+    var in_tag = false
+    for c in rest[0..end] {
+        if c == '<' { in_tag = true } else if c == '>' { in_tag = false } else if !in_tag { text.push_byte(c) }
+    }
+    if text.len > 200 { text = String.from(text[0..200]) }
+    return strings.replace(text[..], "&quot;", "'")
+}

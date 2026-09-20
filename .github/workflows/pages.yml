@@ -1,0 +1,50 @@
+name: Pages
+
+# The documentation site, built by site/build.nx (a Nexium program) from the
+# Markdown in the repository and published to GitHub Pages on every push to
+# main.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+env:
+  ZIG_VERSION: "0.14.1"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: Build nx from the seed
+        run: sh bootstrap/build.sh
+      - name: Build the site
+        run: |
+          export NX_ZIG=zig
+          nx-out/bootstrap/nx2 run site/build.nx
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: site/out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

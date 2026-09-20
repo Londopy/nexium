@@ -1,0 +1,203 @@
+//! A calculator: expressions with + - * / ^, parentheses, variables and
+//! assignment, evaluated line by line. Run it with lines as arguments, or
+//! with none for the built-in session.
+
+error Calc { UnexpectedEnd, UnexpectedChar, UnknownName, DivideByZero, Trailing }
+
+// ----- tokens ----------------------------------------------------------------
+
+enum Tok { Num(f64), Name(String), Op(u8), LParen, RParen, End }
+
+/// The tokens of one line.
+fn tokenize(line: []u8) -> Calc!List(Tok){
+    var out = List(Tok).new()
+    var i: usize = 0
+    while i < line.len {
+        let c = line[i]
+        if c == ' ' or c == '\t' { i += 1; continue }
+        if (c >= '0' and c <= '9') or c == '.' {
+            var j = i
+            while j < line.len and ((line[j] >= '0' and line[j] <= '9') or line[j] == '.') { j += 1 }
+            let v = line[i..j].parse_float() catch { return error.UnexpectedChar }
+            out.append(Tok.Num(v))
+            i = j
+            continue
+        }
+        if (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or c == '_' {
+            var j = i
+            while j < line.len and ((line[j] >= 'a' and line[j] <= 'z') or (line[j] >= 'A' and line[j] <= 'Z') or line[j] == '_' or (line[j] >= '0' and line[j] <= '9')) { j += 1 }
+            out.append(Tok.Name(String.from(line[i..j])))
+            i = j
+            continue
+        }
+        if c == '(' { out.append(Tok.LParen) } else if c == ')' { out.append(Tok.RParen) } else if c == '+' or c == '-' or c == '*' or c == '/' or c == '^' or c == '=' { out.append(Tok.Op(c)) } else { return error.UnexpectedChar }
+        i += 1
+    }
+    out.append(Tok.End)
+    return out
+}
+
+// ----- the parser and evaluator, in one pass ---------------------------------------
+
+/// A session: the variables defined so far.
+struct Session { vars: Map(String, f64) }
+
+/// Where the parser is in the token list.
+struct Cursor { toks: List(Tok), pos: usize }
+
+impl Cursor {
+    fn peek_op(self: *Self) -> ?u8 {
+        match self.toks[self.pos] {
+            .Op(c) => return c,
+            _ => return null,
+        }
+    }
+
+    fn at_end(self: *Self) -> bool {
+        match self.toks[self.pos] {
+            .End => return true,
+            _ => return false,
+        }
+    }
+
+    /// Is the next token this operator?
+    fn is_op(self: *Self, op: u8) -> bool {
+        return (self.peek_op() orelse 0) == op
+    }
+}
+
+/// expression := term (('+' | '-') term)*
+fn expression(s: *Session, c: *mut Cursor) -> Calc!f64 {
+    var value = try term(s, c)
+    while true {
+        let op = c.peek_op() orelse break
+        if op != '+' and op != '-' { break }
+        c.pos += 1
+        let rhs = try term(s, c)
+        value = if op == '+' { value + rhs } else { value - rhs }
+    }
+    return value
+}
+
+/// term := power (('*' | '/') power)*
+fn term(s: *Session, c: *mut Cursor) -> Calc!f64 {
+    var value = try power(s, c)
+    while true {
+        let op = c.peek_op() orelse break
+        if op != '*' and op != '/' { break }
+        c.pos += 1
+        let rhs = try power(s, c)
+        if op == '/' and rhs == 0.0 { return error.DivideByZero }
+        value = if op == '*' { value * rhs } else { value / rhs }
+    }
+    return value
+}
+
+/// power := unary ('^' power)?     (right associative)
+fn power(s: *Session, c: *mut Cursor) -> Calc!f64 {
+    let base = try unary(s, c)
+    if c.is_op('^') {
+        c.pos += 1
+        let exp = try power(s, c)
+        return math.pow(base, exp)
+    }
+    return base
+}
+
+/// unary := '-' unary | atom
+fn unary(s: *Session, c: *mut Cursor) -> Calc!f64 {
+    if c.is_op('-') {
+        c.pos += 1
+        return - (try unary(s, c))
+    }
+    return atom(s, c)
+}
+
+/// atom := number | name | '(' expression ')'
+fn atom(s: *Session, c: *mut Cursor) -> Calc!f64 {
+    let t = &c.toks[c.pos]
+    match t.*{
+        .Num(v) => { c.pos += 1; return v },
+        .Name(n) => {
+            c.pos += 1
+            return s.vars.get(n[..]) orelse return error.UnknownName
+        },
+        .LParen => {
+            c.pos += 1
+            let v = try expression(s, c)
+            match c.toks[c.pos] {
+                .RParen => { c.pos += 1; return v },
+                _ => return error.UnexpectedEnd,
+            }
+        },
+        .End => return error.UnexpectedEnd,
+        _ => return error.UnexpectedChar,
+    }
+}
+
+/// One line: `name = expression` defines a variable, anything else is evaluated.
+fn evaluate(s: *mut Session, line: []u8) -> Calc!f64 {
+    let toks = try tokenize(line)
+    var c = Cursor{ .toks = toks, .pos = 0 }
+    // an assignment starts with a name followed by `=`
+    var target = String.new()
+    if c.toks.len > 2 {
+        match c.toks[0] {
+            .Name(n) => {
+                match c.toks[1] {
+                    .Op(op) => { if op == '=' { target = n.clone(); c.pos = 2 } },
+                    _ => { },
+                }
+            },
+            _ => { },
+        }
+    }
+    let value = try expression(s, &mut c)
+    if !c.at_end() { return error.Trailing }
+    if target.len > 0 { s.vars.put(target, value) }
+    return value
+}
+
+fn main() {
+    var session = Session{ .vars = Map(String, f64).new() }
+    session.vars.put(String.from("pi"), math.PI)
+    let args = os.args()
+    var lines = List([]u8).new()
+    if args.len > 1 {
+        for a in args[1..] { lines.append(a) }
+    } else {
+        for l in ["1 + 2 * 3", "(1 + 2) * 3", "2 ^ 3 ^ 2", "r = 2", "pi * r ^ 2", "-r + 10", "1 / 0", "2 +", "x * 2", "7 $ 2"] { lines.append(l) }
+    }
+    for line in lines {
+        let v = evaluate(&mut session, line) catch |e| {
+            println("{} => error: {}", .{line, @errorName(e)})
+            continue
+        }
+        println("{} => {}", .{line, v})
+    }
+}
+
+// ----- tests -------------------------------------------------------------------
+
+fn calc(line: []u8) -> Calc!f64 {
+    var s = Session{ .vars = Map(String, f64).new() }
+    return evaluate(&mut s, line)
+}
+
+test "precedence and parentheses" {
+    expect_eq(try calc("1 + 2 * 3"), 7.0)
+    expect_eq(try calc("(1 + 2) * 3"), 9.0)
+    expect_eq(try calc("2 ^ 3 ^ 2"), 512.0)
+    expect_eq(try calc("-2 ^ 2"), 4.0)
+}
+
+test "variables persist within a session" {
+    var s = Session{ .vars = Map(String, f64).new() }
+    _ = try evaluate(&mut s, "a = 4")
+    expect_eq(try evaluate(&mut s, "a * a"), 16.0)
+}
+
+test "errors are named" {
+    _ = calc("1 / 0") catch |e| { expect(e == error.DivideByZero); return }
+    expect(false)
+}

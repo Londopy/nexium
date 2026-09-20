@@ -1,0 +1,16 @@
+error: function `tag` is declared `!allocates` but has the `allocates` effect
+  --> topo/code/effects_fails.nx:6:1
+   |
+  6| fn tag(n: i32) -> String !allocates {
+   | ^
+  note: this call acquires `allocates`
+  --> topo/code/effects_fails.nx:7:12
+   |
+  7|     return label(n)
+   |            ^
+  note: introduced by `label` here: `format` builds an owned String
+  --> topo/code/effects_fails.nx:1:1
+   |
+  1| fn label(n: i32) -> String {
+   | ^
+1 error(s)

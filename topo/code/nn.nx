@@ -1,0 +1,173 @@
+//! A neural network from nothing: a two-layer perceptron trained by
+//! backpropagation, in plain Nexium. It learns two problems: XOR, the classic
+//! that a single layer cannot solve, and telling two rings of points apart.
+
+/// A dense matrix, row major.
+struct Matrix { rows: usize, cols: usize, data: List(f64) }
+
+impl Matrix {
+    fn zeros(rows: usize, cols: usize) -> Matrix {
+        var data = List(f64).with_capacity(rows * cols)
+        for _ in 0..rows * cols { data.append(0.0) }
+        return Matrix{ .rows = rows, .cols = cols, .data = data }
+    }
+
+    /// Small random weights, the usual starting point.
+    fn random(rows: usize, cols: usize, scale: f64) -> Matrix {
+        var m = Matrix.zeros(rows, cols)
+        for i in 0..m.data.len { m.data[i] = (random.float() * 2.0 - 1.0) * scale }
+        return m
+    }
+
+    fn at(self: *Self, r: usize, c: usize) -> f64 { return self.data[r * self.cols + c] }
+    fn set(self: *mut Self, r: usize, c: usize, v: f64) { self.data[r * self.cols + c] = v }
+}
+
+fn sigmoid(x: f64) -> f64 { return 1.0 / (1.0 + math.exp(-x)) }
+
+/// One layer: `outputs` neurons, each with a weight per input and a bias.
+struct Layer {
+    w: Matrix
+    b: List(f64)
+    // what the layer saw and produced in the last forward pass, for backprop
+    input: List(f64)
+    output: List(f64)
+}
+
+impl Layer {
+    fn new(inputs: usize, outputs: usize) -> Layer {
+        var b = List(f64).new()
+        for _ in 0..outputs { b.append(0.0) }
+        return Layer{ .w = Matrix.random(outputs, inputs, 1.0), .b = b, .input = List(f64).new(), .output = List(f64).new() }
+    }
+
+    fn forward(self: *mut Self, x: []f64) -> List(f64) {
+        self.input = x.to_owned()
+        var out = List(f64).with_capacity(self.w.rows)
+        for r in 0..self.w.rows {
+            var s = self.b[r]
+            for c in 0..self.w.cols { s += self.w.at(r, c) * x[c] }
+            out.append(sigmoid(s))
+        }
+        self.output = out.clone()
+        return out
+    }
+
+    /// Given dLoss/dOutput, update the weights and return dLoss/dInput for the layer below.
+    fn backward(self: *mut Self, grad_out: []f64, lr: f64) -> List(f64) {
+        var grad_in = List(f64).new()
+        for _ in 0..self.w.cols { grad_in.append(0.0) }
+        for r in 0..self.w.rows {
+            let y = self.output[r]
+            let delta = grad_out[r] * y *(1.0 - y) // the sigmoid's derivative
+            for c in 0..self.w.cols {
+                grad_in[c] += delta * self.w.at(r, c)
+                self.w.set(r, c, self.w.at(r, c) - lr * delta * self.input[c])
+            }
+            self.b[r] -= lr * delta
+        }
+        return grad_in
+    }
+}
+
+struct Network { layers: List(Layer) }
+
+impl Network {
+    fn new(sizes: []usize) -> Network {
+        var layers = List(Layer).new()
+        for i in 1..sizes.len { layers.append(Layer.new(sizes[i - 1], sizes[i])) }
+        return Network{ .layers = layers }
+    }
+
+    fn predict(self: *mut Self, x: []f64) -> List(f64) {
+        var cur = x.to_owned()
+        for i in 0..self.layers.len { cur = self.layers[i].forward(cur[..]) }
+        return cur
+    }
+
+    /// One example: forward, squared-error loss, backward through every layer.
+    fn train_one(self: *mut Self, x: []f64, target: []f64, lr: f64) -> f64 {
+        let out = self.predict(x)
+        var loss = 0.0
+        var grad = List(f64).new()
+        for o, i in out {
+            let d = o - target[i]
+            loss += d * d
+            grad.append(2.0 * d)
+        }
+        var i = self.layers.len
+        while i > 0 {
+            i -= 1
+            grad = self.layers[i].backward(grad[..], lr)
+        }
+        return loss
+    }
+}
+
+/// A labelled data set: inputs and the expected outputs, row by row.
+struct Data { xs: List(List(f64)), ys: List(List(f64)) }
+
+fn xor_data() -> Data {
+    var d = Data{ .xs = List(List(f64)).new(), .ys = List(List(f64)).new() }
+    for a in 0..2 {
+        for b in 0..2 {
+            d.xs.append(List(f64).from([a as f64, b as f64]))
+            d.ys.append(List(f64).from([if a != b { 1.0 } else { 0.0 }]))
+        }
+    }
+    return d
+}
+
+/// Points on an inner ring (class 0) and an outer ring (class 1), with noise.
+fn rings_data(n: usize) -> Data {
+    var d = Data{ .xs = List(List(f64)).new(), .ys = List(List(f64)).new() }
+    for i in 0..n {
+        let outer = i % 2 == 1
+        let radius = (if outer { 2.0 } else { 0.7 }) + (random.float() - 0.5) * 0.4
+        let angle = random.float() * math.TAU
+        d.xs.append(List(f64).from([radius * math.cos(angle) / 2.5, radius * math.sin(angle) / 2.5]))
+        d.ys.append(List(f64).from([if outer { 1.0 } else { 0.0 }]))
+    }
+    return d
+}
+
+fn train(net: *mut Network, d: *Data, epochs: usize, lr: f64, report_every: usize) {
+    for epoch in 0..epochs {
+        var loss = 0.0
+        for i in 0..d.xs.len { loss += net.train_one(d.xs[i][..], d.ys[i][..], lr) }
+        if epoch % report_every == 0 or epoch + 1 == epochs {
+            println("  epoch {>4}  loss {:.3}", .{epoch, loss / d.xs.len as f64})
+        }
+    }
+}
+
+fn accuracy(net: *mut Network, d: *Data) -> f64 {
+    var right: usize = 0
+    for i in 0..d.xs.len {
+        let out = net.predict(d.xs[i][..])
+        let guess = if out[0] >= 0.5 { 1.0 } else { 0.0 }
+        if guess == d.ys[i][0] { right += 1 }
+    }
+    return 100.0 * right as f64 / d.xs.len as f64
+}
+
+fn main() {
+    random.seed(7)
+
+    println("XOR", .{})
+    let xor = xor_data()
+    var net = Network.new([2, 4, 1][..])
+    train(&mut net, &xor, 3000, 0.5, 1000)
+    for i in 0..xor.xs.len {
+        let out = net.predict(xor.xs[i][..])
+        println("  {} xor {} = {:.2}", .{xor.xs[i][0], xor.xs[i][1], out[0]})
+    }
+    println("  accuracy {:.0}%", .{accuracy(&mut net, &xor)})
+
+    println("two rings", .{})
+    let training = rings_data(200)
+    let held_out = rings_data(100)
+    var rings = Network.new([2, 8, 1][..])
+    train(&mut rings, &training, 300, 0.3, 100)
+    println("  training accuracy {:.0}%, held-out accuracy {:.0}%", .{accuracy(&mut rings, &training), accuracy(&mut rings, &held_out)})
+}

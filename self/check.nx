@@ -813,6 +813,8 @@ pub struct Inst {
     self_ty: usize
     witnesses: List(Witness)
     callees: List(usize)
+    // where each callee was called, for the effect diagnostics
+    callee_spans: List(usize)
 }
 
 const EFF_ALLOCATES: u64 = 1
@@ -1790,7 +1792,11 @@ impl Checker {
         if k == TK.Slice { return format("[]{}{}", .{if ty.flag { "mut " } else { "" }, self.ty_name(ty.args[0])}) }
         if k == TK.Ptr { return format("*{}{}", .{if ty.flag { "mut " } else { "" }, self.ty_name(ty.args[0])}) }
         if k == TK.Opt { return format("?{}", .{self.ty_name(ty.args[0])}) }
-        if k == TK.ErrUnion { return format("!{}", .{self.ty_name(ty.args[0])}) }
+        if k == TK.ErrUnion {
+            // a named set is part of the type's name: `Parse!i32`
+            if ty.flag and ty.def < self.error_sets.len { return format("{}!{}", .{self.error_sets[ty.def].name, self.ty_name(ty.args[0])}) }
+            return format("!{}", .{self.ty_name(ty.args[0])})
+        }
         if k == TK.Weak { return format("weak {}", .{self.ty_name(ty.args[0])}) }
         if k == TK.List { return format("List({})", .{self.ty_name(ty.args[0])}) }
         if k == TK.Map { return format("Map({}, {})", .{self.ty_name(ty.args[0]), self.ty_name(ty.args[1])}) }
@@ -2258,7 +2264,7 @@ impl Checker {
                 .own_effects = 0, .effects = 0, .declared_neg = neg, .declared_pos = pos, .export_name = export_name,
                 .is_extern = is_extern, .is_variadic = is_variadic, .is_pub = is_pub, .is_test = is_test, .test_comptime = test_comptime,
                 .is_closure = false, .closure_by_ref = List(bool).new(), .start = start, .end = end, .module = m, .self_ty = self_ty,
-                .witnesses = List(Witness).new(), .callees = List(usize).new(),
+                .witnesses = List(Witness).new(), .callees = List(usize).new(), .callee_spans = List(usize).new(),
         })
         // a std module's tests belong to the compiler's own suite
         let from_std = self.mods[m].name.len >= 4 and self.mods[m].name[0..4] == "std."
@@ -2357,7 +2363,12 @@ impl Checker {
                 if intro == i {
                     self.note(fm, self.insts[intro].start, format("the effect is introduced here: {}", .{why})[..])
                 } else {
-                    self.note(fm, fstart, format("this call acquires `{}`", .{nm})[..])
+                    // the first call in this function on a path to the introducer
+                    var call_at = fstart
+                    for c, ci in self.insts[i].callees {
+                        if (self.insts[c].effects & bit) != 0 and ci < self.insts[i].callee_spans.len { call_at = self.insts[i].callee_spans[ci]; break }
+                    }
+                    self.note(fm, call_at, format("this call acquires `{}`", .{nm})[..])
                     self.note(self.insts[intro].module, self.insts[intro].start, format("introduced by `{}` here: {}", .{self.insts[intro].name, why})[..])
                 }
             }
@@ -2571,6 +2582,7 @@ impl Checker {
         self.insts[inst].own_effects = done.own_effects
         self.insts[inst].witnesses = done.witnesses.clone()
         self.insts[inst].callees = done.callees.clone()
+        self.insts[inst].callee_spans = done.callee_spans.clone()
     }
 
     fn is_void_like_ret(self: *mut Self, ret: usize) -> bool {
@@ -3373,6 +3385,9 @@ impl Checker {
         let k = self.tir.nodes[e].k
         if self.is_ref_like(t) {
             if k == TKind.RefNew or k == TKind.Call or k == TKind.Retained { return e }
+            // a fresh reference already owns its count: `@weak(x)`, `w.upgrade()`,
+            // and either wrapped into an optional; retaining it again would leak
+            if self.is_fresh_ref(e) { return e }
             self.add_effect(EFF_REFCOUNTS, self.tir.nodes[e].start, "copying a reference retains it")
             var r = tblank(TKind.Retained, self.tir.nodes[e].ty, self.tir.nodes[e].start, self.tir.nodes[e].end)
             r.kids.append(e)
@@ -3420,6 +3435,15 @@ impl Checker {
             self.note(self.cur_module(), self.tir.nodes[e].start, "use `.clone()` for an owned copy")
         }
         return e
+    }
+
+    /// A reference the expression itself created, with a count of its own.
+    fn is_fresh_ref(self: *mut Self, e: usize) -> bool {
+        let k = self.tir.nodes[e].k
+        if k == TKind.RefNew or k == TKind.Call or k == TKind.Retained { return true }
+        if k == TKind.Builtin { return self.tir.nodes[e].name == "Weak" or self.tir.nodes[e].name == "Upgrade" }
+        if k == TKind.OptWrap or k == TKind.ErrWrap { return self.is_fresh_ref(self.tir.nodes[e].kids[0]) }
+        return false
     }
 
     /// A field, element, or dereference: a view into something else's storage.
@@ -3586,6 +3610,12 @@ impl Checker {
                 return self.retype(e, target)
             }
             return self.wrap_node(TKind.ErrToUnion, e, target)
+        }
+        if kf == TK.ErrUnion and kt == TK.ErrUnion {
+            // `Set!T` widens into `!T` (and into itself); `!T` never narrows into a named set
+            let widening = !self.tys.list[to].flag or (self.tys.list[from].flag and self.tys.list[from].def == self.tys.list[to].def)
+            if widening and self.unify(self.tys.list[from].args[0], self.tys.list[to].args[0]) { return self.retype(e, target) }
+            return NONE
         }
         if kt == TK.ErrUnion {
             let inner = self.tys.list[to].args[0]
@@ -6105,7 +6135,10 @@ impl Checker {
             var key = self.check_expr(index_node, lk)
             key = self.coerce_or_error(key, lk, "map key")
             let ot = self.tys.wrap(TK.Opt, vt, false)
+            // the same node `m.get(key)` builds: the key and value types ride in kids2
             let r = self.builtin_node("MapGet", ot, start, end)
+            self.tir.nodes[r].kids2.append(kt)
+            self.tir.nodes[r].kids2.append(vt)
             self.tir.nodes[r].kids.append(b)
             self.tir.nodes[r].kids.append(key)
             return r
@@ -6713,12 +6746,15 @@ impl Checker {
                 elem = self.tys.u8_ty()
             } else if k == TK.Map {
                 let kt = self.tys.list[t].args[0]
-                let ks = self.tys.wrap(TK.Slice, kt, false)
+                // the keys are collected into an owned List, a temporary the loop
+                // walks as a slice and drops afterwards, like `for k in m.keys()`
+                let ks = self.tys.wrap(TK.List, kt, false)
                 let b = self.builtin_node("MapKeys", ks, istart, iend)
                 self.tir.nodes[b].kids.append(te)
                 self.tir.nodes[b].kids2.append(kt)
                 self.add_effect(EFF_ALLOCATES, istart, "iterating a Map collects its keys")
-                checked.append(b)
+                let st = self.tys.wrap(TK.Slice, kt, false)
+                checked.append(self.wrap_node(TKind.ListToSlice, b, st))
                 elems.append(kt)
                 continue
             } else {
@@ -12148,7 +12184,7 @@ impl Checker {
                 .own_effects = 0, .effects = 0, .declared_neg = 0, .declared_pos = 0, .export_name = String.from("-"),
                 .is_extern = false, .is_variadic = false, .is_pub = false, .is_test = false, .test_comptime = false,
                 .is_closure = true, .closure_by_ref = cap_refs.clone(), .start = start, .end = end, .module = m, .self_ty = st,
-                .witnesses = List(Witness).new(), .callees = List(usize).new(),
+                .witnesses = List(Witness).new(), .callees = List(usize).new(), .callee_spans = List(usize).new(),
         })
         self.check_closure_body(id, body_node, &cap_names, &cap_refs, &cap_muts, &cap_tys, &cap_starts, &cap_ends)
         if exp_eff != EFF_ALL { self.oblige(id, EFF_ALL & ~exp_eff, start) }
@@ -12246,6 +12282,7 @@ impl Checker {
         self.insts[inst].own_effects = done.own_effects
         self.insts[inst].witnesses = done.witnesses.clone()
         self.insts[inst].callees = done.callees.clone()
+        self.insts[inst].callee_spans = done.callee_spans.clone()
         self.insts[inst].ret = self.tys.resolve(ret, true)
     }
 }

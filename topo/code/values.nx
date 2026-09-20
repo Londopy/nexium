@@ -1,0 +1,80 @@
+fn main() {
+    // bindings: `let` is immutable, `var` can be reassigned
+    let answer = 42
+    var count = 0
+    count += 1
+    println("{} {}", .{answer, count})
+
+    // integers have a width; the literal takes the type the context asks for
+    let small: u8 = 200
+    let wide: i64 = 3_000_000_000
+    let hex = 0xFF
+    let bits = 0b1010
+    println("{} {} {} {}", .{small, wide, hex, bits})
+
+    // arithmetic traps on overflow; wrapping and saturating forms never do
+    let wrapped = small +% 100
+    let clamped = small +| 100
+    println("{} {}", .{wrapped, clamped})
+
+    // floats, bools, chars, text
+    let ratio = 22.0 / 7.0
+    let precise = ratio > 3.14 and ratio < 3.15
+    let letter = 'n'
+    let text = "Nexium"
+    println("{:.3} {} {} {} {}", .{ratio, precise, letter, text, text.len})
+
+    // casts are explicit; narrowing is checked at run time
+    let f = 7.9
+    let truncated = f as i32
+    let widened = small as u32 * 1000
+    println("{} {}", .{truncated, widened})
+
+    // arrays have a fixed length, slices view a range of anything
+    let primes = [2, 3, 5, 7, 11]
+    let middle = primes[1..4]
+    println("{} {} {}", .{primes.len, middle.len, middle[0]})
+
+    // tuples group values of different types
+    let pair = (3, "three")
+    println("{} is {}", .{pair.0, pair.1})
+
+    // if is an expression; blocks are expressions whose value is the last line
+    let size = if answer > 40 { "big" } else { "small" }
+    let squared = {
+        let base = answer
+        base * base
+    }
+    println("{} {}", .{size, squared})
+
+    // loops
+    var total = 0
+    for p in primes { total += p }
+    for p, i in primes { if i == 0 { println("first prime {}", .{p}) } }
+    for i in 0..10 step 3 { print("{} ", .{i}) }
+    println("", .{})
+    while total > 20 { total -= 10 }
+    println("{}", .{total})
+
+    // match on numbers, ranges, strings, and anything else with `_`
+    for n in [1, 7, 15, 100] {
+        let word = match n {
+            1 => "one",
+            2..=9 => "a few",
+            10..=99 => "some",
+            _ => "many",
+        }
+        println("{}: {}", .{n, word})
+    }
+    match text {
+        "Nexium" => println("named", .{}),
+        _ => println("unnamed", .{}),
+    }
+
+    // a labeled block yields a value with break
+    let found = search: {
+        for p in primes { if p > 4 { break :search p } }
+        0
+    }
+    println("first prime above 4: {}", .{found})
+}

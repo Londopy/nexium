@@ -1,0 +1,64 @@
+/// Built once, by the interpreter, when the program is compiled: the CRC-32
+/// table that would otherwise be computed at every start or typed by hand.
+fn make_crc_table() -> [256]u32 {
+    var table: [256]u32 = undefined
+    for n in 0..256 {
+        var c = n as u32
+        for k in 0..8 {
+            c = if c & 1 == 1 { 0xEDB88320 ^ (c >> 1) } else { c >> 1 }
+        }
+        table[n] = c
+    }
+    return table
+}
+
+const CRC_TABLE: [256]u32 = comptime make_crc_table()
+
+fn crc32(data: []u8) -> u32 {
+    var c: u32 = 0xFFFFFFFF
+    for b in data { c = CRC_TABLE[((c ^ b as u32) & 0xFF) as usize] ^ (c >> 8) }
+    return c ^ 0xFFFFFFFF
+}
+
+/// A file embedded at compile time; the bytes are part of the executable.
+const ROUTES = @embedFile("data/routes.csv")
+
+/// Counted when the program is compiled, not when it runs.
+const ROUTE_COUNT = comptime count_lines(ROUTES) - 1
+
+fn count_lines(text: []u8) -> usize {
+    var n: usize = 0
+    for l in text.lines() { if l.len > 0 { n += 1 } }
+    return n
+}
+
+/// Any pure function can run at compile time: here, a lookup checked before the C compiler runs.
+fn grade_points(grade: []u8) -> u32 {
+    if grade == "IV" { return 4 }
+    if grade == "V" { return 5 }
+    if grade == "VI" { return 6 }
+    return 0
+}
+
+const HARDEST = comptime grade_points("VI")
+
+fn main() {
+    println("crc of \"nexium\": {x}", .{crc32("nexium")})
+    println("{} routes embedded, {} bytes, hardest grade {} points", .{ROUTE_COUNT, ROUTES.len, HARDEST})
+    for line, i in ROUTES.lines() {
+        if i == 0 or line.len == 0 { continue }
+        let cols = line.split(",")
+        println("  {} ({}): {} m", .{cols[0], cols[1], cols[2]})
+    }
+    println("{} {}", .{@typeName(u32), @sizeOf(u64)})
+}
+
+comptime test "the table starts the way every CRC-32 table does" {
+    expect_eq(CRC_TABLE[0], 0)
+    expect_eq(CRC_TABLE[1], 0x77073096)
+    expect_eq(CRC_TABLE[255], 0x2D02EF8D)
+}
+
+comptime test "the embedded data has a header" {
+    expect(ROUTES.starts_with("name,grade"))
+}

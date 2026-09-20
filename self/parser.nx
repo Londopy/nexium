@@ -1167,7 +1167,8 @@ impl Parser {
             if s == "return" {
                 self.bump()
                 var n = blank(NodeKind.Return, start, start)
-                if ! (self.at(lexer.Kind.Newline) or self.at(lexer.Kind.RBrace) or self.at(lexer.Kind.Semi)) { n.x = try self.parse_expr() }
+                // a bare jump ends at the end of its line, block, statement or match arm
+                if ! (self.at(lexer.Kind.Newline) or self.at(lexer.Kind.RBrace) or self.at(lexer.Kind.Semi) or self.at(lexer.Kind.Comma)) { n.x = try self.parse_expr() }
                 n.end = self.prev_end()
                 return self.tree.add(n)
             }
@@ -1179,7 +1180,8 @@ impl Parser {
                     self.bump()
                     n.name = try self.expect_ident()
                 }
-                if ! (self.at(lexer.Kind.Newline) or self.at(lexer.Kind.RBrace) or self.at(lexer.Kind.Semi)) { n.x = try self.parse_expr() }
+                // a bare jump ends at the end of its line, block, statement or match arm
+                if ! (self.at(lexer.Kind.Newline) or self.at(lexer.Kind.RBrace) or self.at(lexer.Kind.Semi) or self.at(lexer.Kind.Comma)) { n.x = try self.parse_expr() }
                 n.end = self.prev_end()
                 return self.tree.add(n)
             }
@@ -1584,13 +1586,25 @@ impl Parser {
         return k == lexer.Kind.Ident or k == lexer.Kind.LBracket or k == lexer.Kind.Star or k == lexer.Kind.Question
     }
 
+    /// Like `ident_or_type_start`, but a `[` counts only when it opens a
+    /// slice or array type (`[]T`, `[N]T`), not an index (`[i]`, `[..]`).
+    fn type_start_at(self: *Self, n: usize) -> bool {
+        let k = self.peek_at(n)
+        if k == lexer.Kind.LBracket {
+            // `[]T` or `[N]T`: the element type must follow the bracket
+            if self.peek_at(n + 1) == lexer.Kind.RBracket { return self.type_start_at(n + 2) }
+            return self.peek_at(n + 1) == lexer.Kind.Int and self.peek_at(n + 2) == lexer.Kind.RBracket and self.type_start_at(n + 3)
+        }
+        return k == lexer.Kind.Ident or k == lexer.Kind.Star or k == lexer.Kind.Question
+    }
+
     fn parse_arg(self: *mut Self) -> !usize {
         let start = self.start()
         let k = self.peek()
         var is_type = false
         if k == lexer.Kind.LBracket {
-            is_type = (self.peek_at(1) == lexer.Kind.RBracket and self.ident_or_type_start(2))
-                or (self.peek_at(1) == lexer.Kind.Int and self.peek_at(2) == lexer.Kind.RBracket and self.ident_or_type_start(3))
+            is_type = (self.peek_at(1) == lexer.Kind.RBracket and self.type_start_at(2))
+                or (self.peek_at(1) == lexer.Kind.Int and self.peek_at(2) == lexer.Kind.RBracket and self.type_start_at(3))
         } else if k == lexer.Kind.Star or k == lexer.Kind.Question {
             is_type = true
         } else if k == lexer.Kind.Ident {
@@ -1878,7 +1892,8 @@ impl Parser {
             }
             self.skip_newlines()
             try self.expect(lexer.Kind.RBracket)
-            if elems.len == 1 and self.ident_or_type_start(0) and !self.at_ident("as") and !self.at_ident("and")
+            // `[N]T` is an array type; `[x][i]` and `[x][..]` index a one-element literal
+            if elems.len == 1 and self.type_start_at(0) and !self.at_ident("as") and !self.at_ident("and")
                 and !self.at_ident("or") and !self.at_ident("catch") and !self.at_ident("orelse") and !self.at_ident("into") {
                 let elem = try self.parse_type()
                 var arr = blank(NodeKind.TArray, start, self.prev_end())
@@ -1949,7 +1964,10 @@ impl Parser {
         if k == lexer.Kind.Pipe { return self.parse_closure() }
         if k == lexer.Kind.At {
             self.bump()
-            let name = try self.expect_ident()
+            // a builtin may be spelled with a keyword: `@weak(x)`
+            if self.peek() != lexer.Kind.Ident { _ = try self.expect_ident() }
+            let name = String.from(self.text())
+            self.bump()
             let args = try self.parse_args()
             var n = blank(NodeKind.Builtin, start, self.prev_end())
             n.name = name

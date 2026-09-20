@@ -1,0 +1,6 @@
+error: use of `names` after it was moved
+  --> topo/code/ownership_fails.nx:5:35
+   |
+  5|     println("{} {}", .{moved.len, names.len})
+   |                                   ^
+1 error(s)

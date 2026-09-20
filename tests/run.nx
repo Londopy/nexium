@@ -13,7 +13,8 @@
 //! the exit code is the number of failures, capped at 100.
 //!
 //! Suites: bootstrap (the fixed point), examples, spec, compile_fail, fmt,
-//! std, gui, packages, ship, installer, repl, lsp.
+//! std, gui, packages, ship, installer, repl, lsp, topo (the tutorial's
+//! programs and the site generator).
 
 import std.fs
 import std.process
@@ -208,6 +209,14 @@ fn run_case(e: *Env, c: *Case) -> ?String {
         }
         return null
     }
+    if kind == "topo_fails" {
+        // a program the tutorial shows failing: the diagnostic is recorded
+        let out = nx(e, ["check", path][..])
+        if out.code == 0 { return format("{} was accepted but the Topo shows it failing", .{path}) }
+        let expected = normalize((fs.read(fs.with_extension(path, "expected")[..]) catch { String.new() })[..])
+        if let d = same_text(expected[..].trim(), normalize(out.stderr[..])[..].trim(), format("diagnostic of {} differs", .{path})[..]) { return d }
+        return null
+    }
     if kind == "compile_fail" {
         let text = fs.read(path) catch { return format("cannot read {}", .{path}) }
         var expects = List(String).new()
@@ -283,6 +292,35 @@ fn suite_compile_fail(e: *Env, failures: *mut List(String)) {
     println("compile_fail: {} cases", .{cases.len})
 }
 
+/// The Topo's programs reproduce their recorded output (the site shows
+/// exactly what the harness ran), the tests among them pass, the packages
+/// example builds from its own directory, the GUI chapter renders its frame,
+/// and the site generator builds the site.
+fn suite_topo(e: *Env, failures: *mut List(String)) {
+    var cases = List(Case).new()
+    for f in tree_files("topo/code") {
+        let stem = fs.stem(f[..])
+        if !fs.exists(fs.with_extension(f[..], "expected")[..]) { continue }
+        let kind = if stem.find("_fails") != null { "topo_fails" } else { "example" }
+        cases.append(Case{ .kind = String.from(kind), .path = f.clone() })
+    }
+    run_cases(e, &cases, failures)
+    for f in ["topo/code/calc.nx", "topo/code/testing.nx"] {
+        let t = nx(e, ["test", f, "--out-dir", format("{}/nx-out/cases/{}-tests", .{e.root, fs.stem(f)})[..]][..])
+        if t.code != 0 { failures.append(format("topo: tests in {} failed:\n{}{}", .{f, t.stdout, t.stderr})) }
+    }
+    let app = fs.join(e.root[..], "topo/code/pkg/app")
+    let pkg = nx_in(e, ["run", "main.nx", "--out-dir", fs.join(e.root[..], "nx-out/cases/topo-pkg")[..]][..], "", app[..])
+    if pkg.code != 0 or pkg.text() != "SUMMIT!\nquiet" { failures.append(format("topo: the packages example printed:\n{}{}", .{pkg.stdout, pkg.stderr})) }
+    let shot = fs.join(e.root[..], "nx-out/cases/topo-counter.ppm")
+    let g = nx(e, ["run", "gui/counter.nx", "--out-dir", fs.join(e.root[..], "nx-out/cases/topo-gui")[..], "--", "--shot", shot[..]][..])
+    if g.code != 0 { failures.append(format("topo: the counter GUI failed:\n{}", .{g.stderr})) }
+    let site = nx(e, ["run", "site/build.nx", "--out-dir", fs.join(e.root[..], "nx-out/cases/topo-site")[..], "--", "--out", fs.join(e.root[..], "nx-out/site")[..]][..])
+    if site.code != 0 { failures.append(format("topo: the site did not build:\n{}{}", .{site.stdout, site.stderr})) }
+    if !fs.exists(fs.join(e.root[..], "nx-out/site/index.html")[..]) { failures.append(String.from("topo: the site has no index.html")) }
+    println("topo: {} programs, the tests, the package, the GUI frame, the site", .{cases.len})
+}
+
 /// Every module of the standard library passes its own tests.
 fn suite_std(e: *Env, failures: *mut List(String)) {
     var cases = List(Case).new()
@@ -297,7 +335,7 @@ fn suite_fmt(e: *Env, failures: *mut List(String)) {
     var args = List([]u8).new()
     args.append("fmt")
     var files = List(String).new()
-    for dir in ["examples", "std", "gui", "self", "tests/spec", "tests/compile_fail"] { for f in tree_files(dir) { files.append(f.clone()) } }
+    for dir in ["examples", "std", "gui", "self", "tests/spec", "tests/compile_fail", "tests", "topo/code", "site"] { for f in tree_files(dir) { files.append(f.clone()) } }
     for f in files { args.append(f[..]) }
     args.append("--check")
     let out = nx(e, args[..])
@@ -522,7 +560,7 @@ fn suite_lsp(e: *Env, failures: *mut List(String)) {
 
 fn usage() {
     eprintln("usage: nx run tests/run.nx -- [suite ...] [--jobs N] [--nx PATH] [--rebuild]", .{})
-    eprintln("suites: bootstrap examples spec compile_fail fmt std gui packages ship installer repl lsp", .{})
+    eprintln("suites: bootstrap examples spec compile_fail fmt std gui packages ship installer repl lsp topo", .{})
 }
 
 fn main() -> u8 {
@@ -546,7 +584,7 @@ fn main() -> u8 {
     }
     // the compiler under test runs the C compiler this host has
     if macos { os.set_env("NX_CC", "cc") } else { os.set_env("NX_ZIG", "zig") }
-    let all = ["bootstrap", "examples", "spec", "compile_fail", "fmt", "std", "gui", "packages", "ship", "installer", "repl", "lsp"]
+    let all = ["bootstrap", "examples", "spec", "compile_fail", "fmt", "std", "gui", "packages", "ship", "installer", "repl", "lsp", "topo"]
     for w in wanted {
         var known = false
         for s in all { if w[..] == s { known = true } }
@@ -577,6 +615,7 @@ fn main() -> u8 {
         else if s == "installer" { suite_installer(&e, &mut failures) }
         else if s == "repl" { suite_repl(&e, &mut failures) }
         else if s == "lsp" { suite_lsp(&e, &mut failures) }
+        else if s == "topo" { suite_topo(&e, &mut failures) }
         if failures.len > before { println("{}: {} failure(s)", .{s, failures.len - before}) }
     }
     let secs = (time.monotonic() - started) / 1000000000

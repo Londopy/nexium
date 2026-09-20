@@ -1,0 +1,16 @@
+XOR
+  epoch    0  loss 0.288
+  epoch 1000  loss 0.002
+  epoch 2000  loss 0.001
+  epoch 2999  loss 0.000
+  0.0 xor 0.0 = 0.02
+  0.0 xor 1.0 = 0.98
+  1.0 xor 0.0 = 0.98
+  1.0 xor 1.0 = 0.02
+  accuracy 100%
+two rings
+  epoch    0  loss 0.281
+  epoch  100  loss 0.001
+  epoch  200  loss 0.001
+  epoch  299  loss 0.000
+  training accuracy 100%, held-out accuracy 100%

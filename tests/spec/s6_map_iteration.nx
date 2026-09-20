@@ -1,0 +1,23 @@
+// SPEC 6, statements and loops: `for k in m` walks a Map's keys (collected
+// into an owned List, released after the loop); `m[key]` is `?V`, the same
+// lookup as `m.get(key)`; `m.keys()` and `m.values()` collect into Lists.
+fn main() {
+    var m = Map(String, i32).new()
+    m.put(String.from("b"), 2)
+    m.put(String.from("a"), 1)
+    m.put(String.from("c"), 3)
+    var total: i32 = 0
+    for k in m { total += m[k[..]].?}
+    println("{} keys, total {}", .{m.len, total})
+    let keys = m.keys()
+    var names = List([]u8).new()
+    for k in keys { names.append(k[..]) }
+    names.sort()
+    for n in names { println("{} -> {}", .{n, m.get(n) orelse -1}) }
+    var seen = Map(i32, bool).new()
+    seen.put(7, true)
+    seen.put(9, false)
+    var sum: i32 = 0
+    for k in seen { sum += k }
+    println("sum {} missing {}", .{sum, seen[42] == null})
+}

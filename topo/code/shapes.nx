@@ -1,0 +1,102 @@
+/// A struct: named fields, a value type.
+struct Point derive(Eq) { x: f64, y: f64 }
+
+impl Point {
+    fn origin() -> Point { return Point{ .x = 0.0, .y = 0.0 } }
+
+    fn distance(self: *Self, other: *Point) -> f64 {
+        let dx = self.x - other.x
+        let dy = self.y - other.y
+        return math.sqrt(dx * dx + dy * dy)
+    }
+
+    fn shift(self: *mut Self, dx: f64, dy: f64) {
+        self.x += dx
+        self.y += dy
+    }
+}
+
+/// An enum: one of several cases, some with data.
+enum Shape {
+    Circle(f64),
+    Rect { w: f64, h: f64 },
+    Triangle(f64, f64, f64),
+    Empty,
+}
+
+fn area(s: *Shape) -> f64 {
+    match s.*{
+        .Circle(r) => math.PI * r * r,
+        .Rect(w, h) => w * h,
+        .Triangle(a, b, c) => {
+            let p = (a + b + c) / 2.0
+            math.sqrt(p *(p - a) *(p - b) *(p - c))
+        },
+        .Empty => 0.0,
+    }
+}
+
+/// A trait: a set of methods a type promises.
+trait Named {
+    fn name(self: *Self) -> String
+}
+
+impl Named for Point {
+    fn name(self: *Self) -> String { return format("point ({}, {})", .{self.x, self.y}) }
+}
+
+impl Named for Shape {
+    fn name(self: *Self) -> String {
+        return match self.*{
+            .Circle(_) => String.from("circle"),
+            .Rect(_, _) => String.from("rectangle"),
+            .Triangle(_, _, _) => String.from("triangle"),
+            .Empty => String.from("nothing"),
+        }
+    }
+}
+
+/// A generic function: `T` is a type parameter, checked once per use.
+fn largest(comptime T: type where T: Ord, items: []T) -> ?T {
+    if items.len == 0 { return null }
+    var best = items[0]
+    for x in items { if x > best { best = x } }
+    return best
+}
+
+/// A generic struct.
+struct Pair(T) { first: T, second: T }
+
+impl(T) Pair(T) {
+    fn swapped(self: *Self) -> Pair(T) { return Pair(T){ .first = self.second, .second = self.first } }
+}
+
+fn describe(thing: dyn Named) {
+    println("this is a {}", .{thing.name()})
+}
+
+fn main() {
+    var p = Point{ .x = 3.0, .y = 4.0 }
+    let o = Point.origin()
+    println("{} from the origin", .{p.distance(&o)})
+    p.shift(1.0, 1.0)
+    println("moved to ({}, {}); equal to origin: {}", .{p.x, p.y, p == o})
+
+    let shapes = [Shape.Circle(1.0), Shape.Rect{ .w = 2.0, .h = 3.0 }, Shape.Triangle(3.0, 4.0, 5.0), Shape.Empty]
+    for s in shapes { println("{}: {:.2}", .{s.name(), area(&s)}) }
+
+    let numbers = [3, 9, 4]
+    println("{}", .{largest(i32, numbers[..]) orelse 0})
+    let none = List(f64).new()
+    println("{}", .{largest(f64, none[..]) orelse -1.0})
+    let words = ["pear", "apple", "fig"]
+    println("{}", .{largest([]u8, words[..]) orelse ""})
+
+    let pair = Pair(i32){ .first = 1, .second = 2 }
+    let sw = pair.swapped()
+    println("{} {}", .{sw.first, sw.second})
+
+    // trait objects: one function, any type that implements the trait
+    describe(&p)
+    describe(&shapes[0])
+}

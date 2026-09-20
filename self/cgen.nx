@@ -711,7 +711,9 @@ impl Gen {
             let dm = self.c.structs[d].module
             if self.c.structs[d].kind == "ref" {
                 body.append(format("  {}_obj* o = *v; if (!o) return;\n", .{cn})[..])
-                body.append("  if (--o->rc == 0) {\n")
+                // the object holds its own storage while its fields go: a weak
+                // reference back to it dropped by a field must not free it first
+                body.append("  if (--o->rc == 0) {\n    o->weak++;\n")
                 for f, i in fields_nodes {
                     if self.needs_drop(ftys[i]) {
                         let fd = self.drop_fn(ftys[i])
@@ -719,7 +721,7 @@ impl Gen {
                         body.append(format("    {}(c, &o->{}_{});\n", .{fd, sanitize_ident(fname[..]), i})[..])
                     }
                 }
-                body.append(format("    if (o->weak == 0) nx_free_bytes(c, o, sizeof({}_obj));\n", .{cn})[..])
+                body.append(format("    if (--o->weak == 0) nx_free_bytes(c, o, sizeof({}_obj));\n", .{cn})[..])
                 body.append("  }\n  *v = NULL;\n")
             } else {
                 for f, i in fields_nodes {

@@ -1,0 +1,68 @@
+struct Token { kind: u8, text: String }
+
+/// Parameters are borrowed: the caller keeps `words`.
+fn longest(words: *List(String)) -> usize {
+    var best: usize = 0
+    for w in words.*{ if w.len > best { best = w.len } }
+    return best
+}
+
+/// `*mut` lets a function change what it is handed.
+fn shout(words: *mut List(String)) {
+    for i in 0..words.len {
+        var up = String.new()
+        for c in words[i] { up.push_byte(if c >= 'a' and c <= 'z' { c - 32 } else { c }) }
+        words[i] = up
+    }
+}
+
+/// `own` takes the value: the caller gives it up, no copy is made.
+fn make_token(kind: u8, own text: String) -> Token {
+    return Token{ .kind = kind, .text = text }
+}
+
+/// A reference-counted object: copies share it, the last one frees it.
+ref class Node { value: i32, next: ?Node, back: ?weak Node }
+
+fn main() {
+    // owning values move; the old name is unusable afterwards
+    var a = List(String).new()
+    a.append(String.from("ridge"))
+    a.append(String.from("col"))
+    let b = a // `a` is moved into `b`
+    println("{} words", .{b.len}) // fine; using `a` here would not compile
+
+    // a clone is a real copy
+    var c = b.clone()
+    c.append(String.from("summit"))
+    println("{} and {}", .{b.len, c.len})
+
+    // borrowing: pass a pointer, keep ownership
+    println("longest: {}", .{longest(&c)})
+    shout(&mut c)
+    println("{}", .{c[2]})
+
+    // views: a slice looks into storage it does not own
+    let text = String.from("base camp")
+    let word = text[0..4]
+    println("{} of {}", .{word, text})
+
+    // loop variables and `if let` bindings are views too: clone to keep one
+    var kept = List(String).new()
+    for w in c { kept.append(w.clone()) }
+    println("kept {}", .{kept.len})
+
+    // `own` parameters move the argument in
+    let name = String.from("ident")
+    let tok = make_token(1, name) // `name` is moved; `tok.text` owns it now
+    println("token {} {}", .{tok.kind, tok.text})
+
+    // reference counting
+    let first = Node{ .value = 1, .next = null, .back = null }
+    let second = Node{ .value = 2, .next = null, .back = @weak (first) }
+    first.next = second
+    let alias = first // the same object, count 2
+    println("{} -> {}", .{alias.value, alias.next.?.value})
+    if let w = second.back { if let up = w.upgrade() { println("back to {}", .{up.value}) } }
+    println("refs {}", .{@refCount(first)})
+}

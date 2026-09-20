@@ -1,0 +1,10 @@
+fn label(n: i32) -> String {
+    return format("#{}", .{n})
+}
+
+/// The promise cannot be kept: `label` allocates, and the compiler says where.
+fn tag(n: i32) -> String !allocates {
+    return label(n)
+}
+
+fn main() { println("{}", .{tag(1)}) }

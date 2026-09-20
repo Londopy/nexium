@@ -15,7 +15,7 @@
 <p align="center">
   <a href="https://github.com/Londopy/nexium/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Londopy/nexium/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white"></a>
   <a href="https://github.com/Londopy/nexium/releases"><img alt="Release" src="https://img.shields.io/github/v/release/Londopy/nexium?logo=github&color=8b7cf6"></a>
-  <a href="https://crates.io/crates/nexium"><img alt="crates.io" src="https://img.shields.io/crates/v/nexium?logo=rust&color=4fd1c5"></a>
+  <a href="https://londopy.github.io/nexium/"><img alt="Docs" src="https://img.shields.io/badge/docs-londopy.github.io%2Fnexium-5b4bd6"></a>
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
   <a href="https://ziglang.org/download/"><img alt="Zig" src="https://img.shields.io/badge/backend-zig%20cc-f7a41d?logo=zig&logoColor=white"></a>
   <img alt="Platforms" src="https://img.shields.io/badge/platforms-windows%20%7C%20linux%20%7C%20macos-2b3a55">
@@ -257,6 +257,7 @@ using arena {
 - [Embedding](docs/embedding.md): calling shipped libraries from Python, Rust, and C.
 - [The interactive session](docs/repl.md): `nx` at a prompt, like `python`.
 - [Stability](docs/stability.md) and [platforms](docs/platforms.md): what a version promises, the deprecation cycle, `nx fix`, the tiers.
+- [The Topo](https://londopy.github.io/nexium/topo/01-base-camp.html): the tutorial, from installing the compiler to a neural network, a GUI and a shipped library; the source is [`topo/`](topo/). All of the above, rendered, is at [londopy.github.io/nexium](https://londopy.github.io/nexium/).
 - [Installing](docs/install.md): the Windows installer, the macOS/Linux script, source builds, checksums, and how `nx` finds a C compiler.
 - [Packages](docs/packages.md): `nexium.toml`, `nx add`, `nx fetch`, git or path dependencies, the lock file.
 - [Standard library](docs/std.md): the modules written in Nexium (`std.strings`, `std.lists`, `std.bytes`, `std.num`, `std.json`, `std.args`, `std.fs`, `std.time`, `std.regex`, `std.text`, `std.testing`, `std.stream`, `std.net`, `std.http`, `std.thread`, `std.process`).
@@ -372,6 +373,8 @@ self/           the compiler in Nexium, stage by stage
 gui/            nexium-gui: immediate-mode GUI in Nexium, demo, and the C platform layer
 editors/        VS Code extension and Sublime Text syntax
 examples/       programs with recorded output, run by the tests
+topo/           the tutorial: chapters, and the programs they show (run by the tests)
+site/           the documentation site generator, a Nexium program
 tests/          the harness (run.nx), the spec conformance suite (tests/spec) and compile-fail cases
 docs/           how it works, language reference, embedding guide, i18n/ translations
 assets/         logo and banner

@@ -1,0 +1,101 @@
+import std.thread
+
+// ----- for parallel: data parallelism without threads in your code -----------
+
+/// Is `n` prime? Slow on purpose: trial division.
+fn is_prime(n: u64) -> bool {
+    if n < 2 { return false }
+    var d: u64 = 2
+    while d * d <= n {
+        if n % d == 0 { return false }
+        d += 1
+    }
+    return true
+}
+
+fn count_primes_parallel(limit: u64) -> u64 {
+    // one slot per chunk; each iteration writes its own slot, so nothing is shared
+    var counts: [16]u64 = undefined
+    let out = counts[..]
+    let chunk = limit / 16
+    for parallel _slot, i in counts[..] {
+        let from = i as u64 * chunk
+        let to = if i == 15 { limit } else { from + chunk }
+        var found: u64 = 0
+        var n = from
+        while n < to { if is_prime(n) { found += 1 }; n += 1 }
+        out[i] = found
+    }
+    var total: u64 = 0
+    for c in counts { total += c }
+    return total
+}
+
+// ----- threads with results ---------------------------------------------------
+
+struct Range { from: u64, to: u64 }
+
+fn sum_range(r: *mut Range) -> u64 {
+    var s: u64 = 0
+    var i = r.from
+    while i < r.to { s += i; i += 1 }
+    return s
+}
+
+// ----- a channel between a producer and the main thread ---------------------------
+
+struct Producer { out: *mut thread.Channel(String), n: u32 }
+
+fn produce(p: *mut Producer) {
+    for i in 0..p.n { p.out.send(format("message {}", .{i})) }
+    p.out.close()
+}
+
+// ----- a mutex around shared state -------------------------------------------------
+
+struct Bumper { counter: *mut thread.Mutex(i64), times: i64 }
+
+fn bump(b: *mut Bumper) {
+    for _ in 0..b.times {
+        let n = b.counter.lock()
+        n.*+= 1
+        b.counter.unlock()
+    }
+}
+
+fn main() {
+    println("{} primes below 20000", .{count_primes_parallel(20000)})
+
+    var a = thread.spawn(Range, u64, sum_range, Range{ .from = 0, .to = 500000 })
+    var b = thread.spawn(Range, u64, sum_range, Range{ .from = 500000, .to = 1000000 })
+    println("sum {}", .{a.join() + b.join()})
+
+    var ch = thread.channel(String)
+    var producer = thread.run(Producer, produce, Producer{ .out = &mut ch, .n = 5 })
+    while true {
+        let msg = ch.recv() orelse break
+        println("got {}", .{msg})
+    }
+    producer.join()
+    ch.free()
+
+    var counter = thread.mutex(i64, 0)
+    var workers = List(thread.Worker(Bumper)).new()
+    for _ in 0..4 { workers.append(thread.run(Bumper, bump, Bumper{ .counter = &mut counter, .times = 1000 })) }
+    for i in 0..workers.len { workers[i].join() }
+    let n = counter.lock()
+    println("counter {}", .{n.*})
+    counter.unlock()
+    counter.free()
+
+    // an arena: allocate freely inside, everything is freed at once at the end
+    var lengths = List(usize).new()
+    using arena {
+        for i in 0..1000 {
+            let s = format("item number {}", .{i})
+            lengths.append(s.len)
+        }
+    }
+    println("{} strings measured, first {} bytes", .{lengths.len, lengths[0]})
+    println("{} hardware threads", .{if thread.count() >= 1 { "some" } else { "no" }})
+}

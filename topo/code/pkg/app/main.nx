@@ -1,0 +1,7 @@
+import words
+import words.cases
+
+fn main() {
+    println("{}", .{words.shout("summit")})
+    println("{}", .{cases.lower("QUIET")})
+}

@@ -1,0 +1,6 @@
+fn main() {
+    var names = List(String).new()
+    names.append(String.from("col"))
+    let moved = names
+    println("{} {}", .{moved.len, names.len})
+}

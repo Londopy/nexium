@@ -1,0 +1,58 @@
+import std.testing
+
+/// Celsius from Fahrenheit.
+fn to_celsius(f: f64) -> f64 { return (f - 32.0) * 5.0 / 9.0 }
+
+/// The median of a sorted slice; null when it is empty.
+fn median(sorted: []i32) -> ?i32 {
+    if sorted.len == 0 { return null }
+    let mid = sorted.len / 2
+    if sorted.len % 2 == 1 { return sorted[mid] }
+    return (sorted[mid - 1] + sorted[mid]) / 2
+}
+
+error Parse { Bad }
+
+fn parse_bool(s: []u8) -> Parse!bool {
+    if s == "yes" { return true }
+    if s == "no" { return false }
+    return error.Bad
+}
+
+fn main() {
+    var readings: [3]i32 = [3, 1, 2]
+    readings[..].sort()
+    println("{:.1} {}", .{to_celsius(212.0), median(readings[..]) orelse -1})
+}
+
+test "freezing and boiling" {
+    expect_eq(to_celsius(32.0), 0.0)
+    expect_eq(to_celsius(212.0), 100.0)
+}
+
+test "body temperature, approximately" {
+    testing.expect_approx(to_celsius(98.6), 37.0, 0.01)
+}
+
+test "median of odd, even and empty" {
+    let odd = [1, 2, 3]
+    let even = [1, 2, 3, 4]
+    expect_eq(median(odd[..]) orelse -1, 2)
+    expect_eq(median(even[..]) orelse -1, 2)
+    let empty = List(i32).new()
+    expect(median(empty[..]) == null)
+}
+
+test "errors" {
+    expect(try parse_bool("yes"))
+    testing.expect_error(bool, parse_bool("maybe"), error.Bad)
+}
+
+test "text" {
+    testing.expect_contains("base camp", "camp")
+    testing.expect_lines("a\nb\n", "a\nb\n")
+}
+
+comptime test "runs while compiling" {
+    expect_eq(median([5][..]) orelse 0, 5)
+}

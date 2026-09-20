@@ -1,0 +1,12 @@
+/// A second module of the package, reached from the app as `words.cases`.
+pub fn upper(s: []u8) -> String {
+    var out = String.new()
+    for c in s { out.push_byte(if c >= 'a' and c <= 'z' { c - 32 } else { c }) }
+    return out
+}
+
+pub fn lower(s: []u8) -> String {
+    var out = String.new()
+    for c in s { out.push_byte(if c >= 'A' and c <= 'Z' { c + 32 } else { c }) }
+    return out
+}

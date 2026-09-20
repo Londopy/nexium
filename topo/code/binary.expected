@@ -1,0 +1,8 @@
+1x1 depth 8 color type 6
+NotPng
+Truncated
+ipv4 version 4 header 5 words
+8 bytes: 0300616263012c85
+frame 0: abc
+frame 1: hello
+frame 2: ok

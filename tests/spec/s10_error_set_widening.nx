@@ -1,0 +1,29 @@
+// SPEC 10: a `Set!T` value widens into `!T` wherever `!T` is expected (an
+// initializer, an argument, a return); the anonymous union never narrows
+// into a named set (see the compile-fail case).
+error Parse { Empty, Bad }
+
+fn parse(s: []u8) -> Parse!i32 {
+    if s.len == 0 { return error.Empty }
+    return s.parse_int(i32) catch { return error.Bad }
+}
+
+fn count_errors(results: [][]u8) -> usize {
+    var n: usize = 0
+    for s in results {
+        let r: !i32 = parse(s)
+        _ = r catch { n += 1; continue }
+    }
+    return n
+}
+
+fn forward(s: []u8) -> !i32 { return parse(s) }
+
+fn main() {
+    let a: !i32 = parse("42")
+    let b: !i32 = parse("")
+    let inputs = ["7", "x", ""]
+    let name = b catch |e| { println("b failed: {}", .{@errorName(e)}); -1 }
+    println("{} {} {}", .{a catch -1, name, count_errors(inputs[..])})
+    println("{}", .{forward("5") catch -1})
+}
