@@ -239,7 +239,11 @@ Compound assignment: `= += -= *= /= %= &= |= ^= <<= >>= +%= -%= *%=`.
   `if c { return v }` or `let m = if a > b { a } else { b }`. A struct
   literal in a condition needs parentheses, `if (Point{ .x = 1 }) == p { }`,
   because the `{` would otherwise open the body.
-- `if let v = opt { } else { }` unwraps an optional.
+- `if let v = opt { } else { }` unwraps an optional. When `opt` is a
+  place (a local, a field, an element) the binding is a view of the
+  payload, like a loop variable: it cannot be moved out of (`.clone()`
+  it, or take the value with `opt.?`). When `opt` is an owned temporary,
+  such as a call result, the binding owns the payload.
 - `while c { }`, `for x in items { }`, `for x, i in items { }`,
   `for x, y in a, b { }` (lengths must match), `for i in lo..hi { }`,
   `for i in lo..hi step s { }` (a negative step counts down and needs a

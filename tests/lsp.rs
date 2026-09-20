@@ -15,7 +15,10 @@ fn frame(body: &str) -> Vec<u8> {
 
 /// Send the requests in order, then read everything the server writes.
 fn session(requests: &[String]) -> String {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_nx")).arg("lsp").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().expect("start nx lsp");
+    // the server under test is the one written in Nexium, built by the examples harness (nx-out/bootstrap/nx2)
+    let nx2 = root().join("nx-out").join("bootstrap").join(if cfg!(windows) { "nx2.exe" } else { "nx2" });
+    let server = if nx2.exists() { nx2 } else { PathBuf::from(env!("CARGO_BIN_EXE_nx")) };
+    let mut child = Command::new(server).arg("lsp").env("NX_ZIG", "zig").current_dir(root()).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().expect("start nx lsp");
     {
         let stdin = child.stdin.as_mut().unwrap();
         for r in requests {

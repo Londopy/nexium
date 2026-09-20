@@ -1,0 +1,9 @@
+// EXPECT: cannot move `t` out of an `if let`
+fn main() {
+    let text: ?String = String.from("hello")
+    var kept = List(String).new()
+    if let t = text {
+        kept.append(t)
+    }
+    println("{}", .{kept.len})
+}

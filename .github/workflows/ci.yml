@@ -114,7 +114,7 @@ jobs:
         run: |
           # the runner's bash has -e; a spec case may exit non-zero on purpose
           set +e -o pipefail
-          nx=nx-out/bootstrap/nx1; [ -f "$nx.exe" ] && nx="$nx.exe"
+          nx=nx-out/bootstrap/nx2; [ -f "$nx.exe" ] && nx="$nx.exe"
           if [ "$RUNNER_OS" = macOS ]; then export NX_CC=cc; else export NX_ZIG=zig; fi
           "$nx" run examples/hello.nx --out-dir nx-out/boot-spec || exit 1
           bad=0

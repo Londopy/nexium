@@ -8,9 +8,9 @@ Start with `docs/architecture.md` for a map of the compiler.
 ## Building
 
 ```bash
-sh bootstrap/build.sh  # the compiler in Nexium from the C seed, no Rust: nx-out/bootstrap/nx1
+sh bootstrap/build.sh  # the compiler in Nexium from the C seed, no Rust: nx-out/bootstrap/nx2
 cargo build            # the frozen Rust compiler and the tools still in it, target/debug/nx
-cargo test             # builds nx1 from the seed and runs every example, spec case and
+cargo test             # builds nx2 from the seed and runs every example, spec case and
                        # compile-fail case through it; the fixed point; the tool tests
 ```
 

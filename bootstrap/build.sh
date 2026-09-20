@@ -4,7 +4,7 @@
 # release), nx0 builds self/nx.nx into nx1, and nx1 must rebuild itself to
 # the same C. Run from the repository root:
 #
-#     sh bootstrap/build.sh            # -> nx-out/bootstrap/nx1 (nx1.exe on Windows)
+#     sh bootstrap/build.sh            # -> nx-out/bootstrap/nx2 (nx2.exe on Windows)
 #     CC="zig cc" sh bootstrap/build.sh
 #
 # CC defaults to `zig cc`, or `cc` on macOS (zig 0.14 cannot link against the
@@ -33,4 +33,5 @@ fi
 if ! cmp -s bootstrap/nx.c "$out/nx1.c"; then
   echo "note: bootstrap/nx.c is behind self/; at the release: cp $out/nx1.c bootstrap/nx.c"
 fi
-echo "built $out/nx1$exe"
+# nx1 was linked against the runtime the seed carries; nx2 against runtime/nx_rt.h
+echo "built $out/nx2$exe"

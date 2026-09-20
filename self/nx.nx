@@ -23,6 +23,7 @@ import manifest
 import ship
 import ship_node
 import installer
+import lsp
 import std.fs
 
 const VERSION = "0.8.0"
@@ -53,7 +54,7 @@ fn usage() {
     eprintln("       nx fmt <file.nx>... [--check]", .{})
     eprintln("       nx doc <file.nx> [-o <dir>]", .{})
     eprintln("       nx ship <file.nx> [--mode m] [--target t]   produce the declared artifacts", .{})
-    eprintln("       nx version | nx doctor", .{})
+    eprintln("       nx version | nx doctor | nx lsp", .{})
     eprintln("       nx init [name] | nx add <name> --git URL [--tag TAG] | --path DIR | nx fetch", .{})
     eprintln("  -o <path>          output file", .{})
     eprintln("  --out-dir <dir>    where C and binaries go (default nx-out)", .{})
@@ -66,7 +67,7 @@ fn usage() {
 
 fn parse_opts(args: [][]u8) -> ?Opts {
     if args.len < 3 {
-        if args.len == 2 and (args[1] == "version" or args[1] == "--version" or args[1] == "-V" or args[1] == "doctor") {
+        if args.len == 2 and (args[1] == "version" or args[1] == "--version" or args[1] == "-V" or args[1] == "doctor" or args[1] == "lsp") {
             var padded = List([]u8).new()
             for a in args { padded.append(a) }
             padded.append("")
@@ -1062,6 +1063,9 @@ fn main() -> u8 {
         code = cmd_version()
     } else if o.command == "doctor" {
         code = cmd_doctor(&o)
+    } else if o.command == "lsp" {
+        lsp.run(VERSION, o.std_dir[..], &o.cc)
+        code = 0
     } else {
         usage()
         return 2

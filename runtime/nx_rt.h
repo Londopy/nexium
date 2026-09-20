@@ -236,6 +236,7 @@ NX_INLINE nx_ctx nx_default_ctx(int argc, char** argv) {
     c.args_cache = NULL; c.args_len = 0;
 #if defined(_WIN32)
     /* byte-exact output on every platform: no CRLF translation */
+    _setmode(_fileno(stdin), _O_BINARY);
     _setmode(_fileno(stdout), _O_BINARY);
     _setmode(_fileno(stderr), _O_BINARY);
 #endif
@@ -1183,12 +1184,38 @@ NX_INLINE int64_t nx_file_open(nx_sl_u8 path, nx_sl_u8 mode) {
     fclose(f);
     return -2;
 }
+/* stdin is read at the descriptor level, so a pipe or a terminal hands over what it
+   has instead of waiting for a full buffer the way fread does; every stdin reader in
+   the runtime consumes from this one buffer */
+static uint8_t nx_stdin_buf[65536];
+static size_t nx_stdin_pos, nx_stdin_len;
+NX_INLINE bool nx_stdin_fill(void) {
+    if (nx_stdin_pos < nx_stdin_len) return true;
+#if defined(_WIN32)
+    int n = _read(0, nx_stdin_buf, (unsigned)sizeof nx_stdin_buf);
+#else
+    ssize_t n;
+    do { n = read(0, nx_stdin_buf, sizeof nx_stdin_buf); } while (n < 0 && errno == EINTR);
+#endif
+    if (n <= 0) return false;
+    nx_stdin_pos = 0; nx_stdin_len = (size_t)n;
+    return true;
+}
 /* up to n bytes; an empty result means end of input */
 NX_INLINE bool nx_file_read(nx_ctx* c, int64_t h, size_t n, nx_string* out) {
     FILE* f = nx_fh(h);
     if (!f) return false;
     nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;
-    if (n > 0) {
+    if (n > 0 && h == 1) {
+        if (nx_stdin_fill()) {
+            size_t have = nx_stdin_len - nx_stdin_pos;
+            if (have > n) have = n;
+            nx_list_grow(c, (nx_rawlist*)&s, 1, 1, have);
+            memcpy(s.ptr, nx_stdin_buf + nx_stdin_pos, have);
+            s.len = have;
+            nx_stdin_pos += have;
+        }
+    } else if (n > 0) {
         nx_list_grow(c, (nx_rawlist*)&s, 1, 1, n);
         s.len = fread(s.ptr, 1, n, f);
         if (s.len == 0 && ferror(f)) return false;
@@ -1589,11 +1616,15 @@ NX_INLINE void nx_cond_free(int64_t cv) { pthread_cond_destroy((pthread_cond_t*)
 
 NX_INLINE bool nx_read_line(nx_ctx* c, nx_string* out) {
     nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;
-    int ch; bool any = false;
-    while ((ch = fgetc(stdin)) != EOF) {
+    bool any = false;
+    while (nx_stdin_fill()) {
+        uint8_t b = nx_stdin_buf[nx_stdin_pos++];
+#if defined(_WIN32)
+        /* a console in binary mode passes Ctrl-Z through; keep it as end of input */
+        if (b == 0x1A && !any) return false;
+#endif
         any = true;
-        if (ch == '\n') break;
-        uint8_t b = (uint8_t)ch;
+        if (b == '\n') break;
         nx_str_append(c, &s, &b, 1);
     }
     if (!any) return false;

@@ -455,6 +455,12 @@ fn std_text(std_dir: []u8, short: []u8) -> ?String {
 }
 
 pub fn load(root: []u8, std_dir: []u8) -> !List(Mod) {
+    return load_with_text(root, "", std_dir)
+}
+
+/// `load`, with `root_text` standing in for the root file's contents when
+/// it is not empty (an editor's unsaved buffer).
+pub fn load_with_text(root: []u8, root_text: []u8, std_dir: []u8) -> !List(Mod) {
     var mods = List(Mod).new()
     let root_dir = dir_of(root)
     let root_name = stem_of(root)
@@ -477,9 +483,11 @@ pub fn load(root: []u8, std_dir: []u8) -> !List(Mod) {
         let pkg = queue_pkgs.pop() orelse break
         if seen.contains(name[..]) { continue }
         seen.put(name.clone(), true)
-        let text = io.read_file(path[..]) catch {
-            eprintln("error: cannot read {}", .{path})
-            return error.NotFound
+        let text = if mods.len == 0 and root_text.len > 0 { String.from(root_text) } else {
+            io.read_file(path[..]) catch {
+                eprintln("error: cannot read {}", .{path})
+                return error.NotFound
+            }
         }
         let parsed = parser.parse_source(text[..])
         if parsed.errors.len > 0 {
@@ -689,6 +697,7 @@ pub struct Local {
     is_param: bool
     owned: bool
     loop_item: bool
+    if_let: bool
 }
 
 pub struct LabelInfo {
@@ -704,6 +713,15 @@ pub struct Witness {
     effects: u64
     at: usize
     why: String
+}
+
+/// A diagnostic as data: where, what, and whether it is a note on the
+/// error before it (the language server reads these).
+pub struct Diag {
+    module: usize
+    at: usize
+    msg: String
+    note: bool
 }
 
 /// Tarjan's strongly connected components over the instance call graph.
@@ -824,6 +842,7 @@ pub struct Checker {
     aliases: List(AliasDef)
     error_sets: List(ErrorSetDef)
     errors: List(String)
+    diags: List(Diag)
     // error names, 1-based ids in order of first mention
     error_names: List(String)
     error_ids: Map(String, usize)
@@ -905,11 +924,13 @@ impl Checker {
     ///        |     ^
     fn fail(self: *mut Self, module: usize, at: usize, msg: []u8) {
         self.errors.append(format("{}\n{}", .{msg, self.render_at(module, at)}))
+        self.diags.append(Diag{ .module = module, .at = at, .msg = String.from(msg), .note = false })
     }
 
     /// A note attached to the error just reported.
     fn note(self: *mut Self, module: usize, at: usize, msg: []u8) {
         self.errors.append(format("  note: {}\n{}", .{msg, self.render_at(module, at)}))
+        self.diags.append(Diag{ .module = module, .at = at, .msg = String.from(msg), .note = true })
     }
 
     /// `path:line:col` of a byte offset in a module.
@@ -2048,7 +2069,7 @@ impl Checker {
     fn declare_local(self: *mut Self, name: []u8, ty: usize, mutable: bool, start: usize, end: usize) -> usize {
         let c = self.ctx()
         let id = c.locals.len
-        c.locals.append(Local{ .name = String.from(name), .ty = ty, .mutable = mutable, .start = start, .end = end, .is_param = false, .owned = false, .loop_item = false })
+        c.locals.append(Local{ .name = String.from(name), .ty = ty, .mutable = mutable, .start = start, .end = end, .is_param = false, .owned = false, .loop_item = false, .if_let = false })
         c.scope_names.append(String.from(name))
         c.scope_locals.append(id)
         c.scope_deref.append(false)
@@ -2189,7 +2210,7 @@ impl Checker {
                     self.fail(m, pstart, format("`own` applies to owning types (`List`, `String`, `Map`, or structs holding them); `{}` is copied anyway", .{self.ty_name(t)})[..])
                 }
                 if owned { any_owned = true }
-                locals.append(Local{ .name = pname, .ty = t, .mutable = owned, .start = pstart, .end = pend, .is_param = true, .owned = owned, .loop_item = false })
+                locals.append(Local{ .name = pname, .ty = t, .mutable = owned, .start = pstart, .end = pend, .is_param = true, .owned = owned, .loop_item = false, .if_let = false })
                 params.append(locals.len - 1)
             }
             ret = if ret_node == NONE { self.tys.void() } else { self.resolve_type(m, ret_node, self_ty) }
@@ -3355,6 +3376,7 @@ impl Checker {
             let is_param = self.ctx().locals[l].is_param
             let owned = self.ctx().locals[l].owned
             let loop_item = self.ctx().locals[l].loop_item
+            let if_let = self.ctx().locals[l].if_let
             let lname = self.ctx().locals[l].name.clone()
             if is_param and !owned {
                 if k == TKind.Local {
@@ -3367,6 +3389,12 @@ impl Checker {
                     self.fail_here(at, format("cannot move `{}` out of a loop; a loop variable is a view of the element", .{lname})[..])
                 } else {
                     self.fail_here(at, format("cannot move the `{}` out of the loop variable `{}`; it is a view of the element", .{self.ty_name(t), lname})[..])
+                }
+            } else if if_let {
+                if k == TKind.Local {
+                    self.fail_here(at, format("cannot move `{}` out of an `if let`; the binding is a view of the optional's payload (use `.clone()`, or take the value with `.?`)", .{lname})[..])
+                } else {
+                    self.fail_here(at, format("cannot move the `{}` out of the `if let` binding `{}`; it is a view of the optional's payload", .{self.ty_name(t), lname})[..])
                 }
             } else {
                 self.ctx().moved.put(l, at)
@@ -6593,6 +6621,9 @@ impl Checker {
         let payload = self.tys.list[ct].args[0]
         self.push_scope()
         let local = self.declare_local(binding[..], payload, false, start, end)
+        // a binding over a place is a view of the payload (the optional keeps ownership);
+        // only an owned temporary hands its payload to the binding
+        if self.is_place(c) or self.is_borrowed_view(c) { self.ctx().locals[local].if_let = true }
         let moved_before = self.moved_snapshot()
         let v = self.tys.void()
         let then_expected = if els_node != NONE { expected } else { v }
@@ -8716,9 +8747,9 @@ impl Checker {
             code = 2
             msg = format("exceeded the compile-time step budget ({} steps)", .{STEP_BUDGET})
             at = self.insts[inst].start
-        } else if let v = r {
+        } else if r != null {
             code = 0
-            out = v
+            out = r.?
         }
         self.it_leave(&saved)
         self.it_out = out
@@ -11708,7 +11739,7 @@ impl Checker {
         var locals = List(Local).new()
         var params = List(usize).new()
         for t, i in ptys {
-            locals.append(Local{ .name = pnames[i].clone(), .ty = t, .mutable = false, .start = pstarts[i], .end = pends[i], .is_param = true, .owned = false, .loop_item = false })
+            locals.append(Local{ .name = pnames[i].clone(), .ty = t, .mutable = false, .start = pstarts[i], .end = pends[i], .is_param = true, .owned = false, .loop_item = false, .if_let = false })
             params.append(i)
         }
         let fname = self.ctx().fn_name.clone()
@@ -11751,7 +11782,7 @@ impl Checker {
             let by_ref = refs[i]
             let mutable = muts[i]
             let lty = if by_ref { self.tys.wrap(TK.Ptr, tys[i], mutable) } else { tys[i] }
-            ctx.locals.append(Local{ .name = format("cap_{}", .{nm}), .ty = lty, .mutable = mutable or !by_ref, .start = starts[i], .end = ends[i], .is_param = true, .owned = false, .loop_item = false })
+            ctx.locals.append(Local{ .name = format("cap_{}", .{nm}), .ty = lty, .mutable = mutable or !by_ref, .start = starts[i], .end = ends[i], .is_param = true, .owned = false, .loop_item = false, .if_let = false })
             ctx.scope_names.append(nm.clone())
             ctx.scope_locals.append(lid)
             ctx.scope_deref.append(by_ref)
@@ -11828,7 +11859,7 @@ pub fn new_checker(own mods: List(Mod)) -> Checker {
         .structs = List(StructDef).new(), .enums = List(EnumDef).new(), .traits = List(TraitDef).new(),
         .impls = List(ImplDef).new(), .fns = List(FnDef).new(), .consts = List(ConstDef).new(),
         .globals = List(GlobalDef).new(), .aliases = List(AliasDef).new(), .error_sets = List(ErrorSetDef).new(),
-        .errors = List(String).new(), .error_names = List(String).new(), .error_ids = Map(String, usize).new(),
+        .errors = List(String).new(), .diags = List(Diag).new(), .error_names = List(String).new(), .error_ids = Map(String, usize).new(),
         .insts = List(Inst).new(), .inst_map = Map(String, usize).new(), .queue = List(usize).new(), .tir = Tir{ .nodes = List(T).new() },
         .ctxs = List(FnCtx).new(), .main_inst = NONE, .tests = List(usize).new(),
         .env_names = List(String).new(), .env_tys = List(usize).new(),

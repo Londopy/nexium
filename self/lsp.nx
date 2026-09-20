@@ -1,0 +1,878 @@
+// `nx lsp`: a language server over stdin and stdout (JSON-RPC with
+// Content-Length framing). Diagnostics come from a full check of the
+// editor's buffer on every change; hover from the checked program (or the
+// signature as written when the file has errors); definition, completion and
+// rename from the token stream and the parsed modules, so they answer while
+// the code is half-written (decision 84). Names resolve the way the
+// language does: locals in the enclosing function first (the last `let`,
+// `var`, parameter or capture before the cursor), then the file's items,
+// then imported modules and the std modules; `alias.name` looks inside the
+// imported module; `value.method` finds a method of that name in any `impl`.
+
+import lexer
+import parser
+import check
+import manifest
+import std.json
+import std.stream
+import std.fs
+
+const KIND_METHOD: f64 = 2
+const KIND_FUNCTION: f64 = 3
+const KIND_FIELD: f64 = 5
+const KIND_VARIABLE: f64 = 6
+const KIND_MODULE: f64 = 9
+const KIND_ENUM: f64 = 13
+const KIND_KEYWORD: f64 = 14
+const KIND_CONSTANT: f64 = 21
+const KIND_STRUCT: f64 = 22
+const KIND_TYPE: f64 = 25
+
+/// The builtin namespaces and what they offer (kept in step with the checker).
+const NAMESPACE_NAMES = ["math", "io", "os", "process", "time", "random", "net", "thread", "sync", "mem"]
+const NAMESPACE_MEMBERS = [
+    "PI E TAU INF NAN sqrt abs floor ceil round sin cos tan exp log log2 min max pow atan2 clamp",
+    "read_file write_file append_file read_line file_kind file_size file_modified make_dir remove_file remove_dir rename list_dir cwd temp_dir open read write flush close",
+    "args env environ exit",
+    "run exec last_stdout last_stderr",
+    "now monotonic sleep utc_offset",
+    "int float seed",
+    "connect listen accept send recv close peer local resolve udp_bind send_to recv_from last_peer",
+    "start join count",
+    "mutex_new lock unlock mutex_free cond_new wait signal broadcast cond_free",
+    "copy",
+]
+const PRIMITIVES = ["i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize", "f32", "f64", "bool", "char", "void", "never", "type", "error", "String", "List", "Map"]
+const COMMON_METHODS = "append append_char push_byte pop clear clone len is_empty last first insert remove swap_remove extend reserve items contains index_of sort reverse fill get put keys values starts_with ends_with find trim split lines to_string parse_int parse_float eq_ignore_case bytes to_owned copy_from abs min max to_lower to_upper is_digit is_alpha is_space"
+const BUILTIN_ERRORS = ["OutOfMemory", "Panic", "NotFound", "IoError", "InvalidInput", "Timeout", "ConnectionRefused", "Truncated", "Overflow", "InvalidUtf8", "BufferTooSmall", "InvalidRecord"]
+const BUILTIN_FNS = ["println", "print", "eprintln", "format", "expect", "expect_eq", "panic", "assert"]
+
+// ----- positions ---------------------------------------------------------------
+
+/// 0-based line and column of a byte offset in `text`.
+fn offset_to_pos(text: []u8, off: usize, line: *mut usize, col: *mut usize) {
+    var l: usize = 0
+    var c: usize = 0
+    var i: usize = 0
+    let stop = if off < text.len { off } else { text.len }
+    while i < stop {
+        if text[i] == '\n' { l += 1; c = 0 } else { c += 1 }
+        i += 1
+    }
+    line.*= l
+    col.*= c
+}
+
+fn byte_offset(text: []u8, line: usize, col: usize) -> usize {
+    var off: usize = 0
+    for l, i in text.split("\n") {
+        if i == line { return off + (if col < l.len { col } else { l.len }) }
+        off += l.len + 1
+    }
+    return text.len
+}
+
+// ----- the editor's modules ------------------------------------------------------
+
+/// A module as the IDE features see it: its name, path, text and parse tree.
+pub struct EditorMod {
+    name: String
+    path: String
+    text: String
+    parsed: parser.Parsed
+}
+
+/// The root buffer plus the modules it imports directly, read from disk
+/// (siblings, packages) or the embedded std, whatever their errors; the root
+/// is index 0.
+pub fn editor_modules(path: []u8, text: []u8) -> List(EditorMod) {
+    var mods = List(EditorMod).new()
+    let dir = fs.parent(path)
+    let root_dir = if dir.len == 0 { String.from(".") } else { String.from(dir) }
+    var pkgs = List(manifest.Package).new()
+    if let mf = manifest.find(root_dir[..]) { pkgs = manifest.packages(&mf) catch { List(manifest.Package).new() } }
+    mods.append(EditorMod{ .name = String.from(fs.stem(path)), .path = String.from(path), .text = String.from(text), .parsed = parser.parse_source(text) })
+    let items = mods[0].parsed.items.clone()
+    for it in items {
+        if mods[0].parsed.tree.nodes[it].k != parser.NodeKind.Import { continue }
+        var words = List(String).new()
+        for w in mods[0].parsed.tree.nodes[it].words.clone() { if w == "+" { break }; words.append(w.clone()) }
+        var dotted = String.new()
+        for w, i in words { if i > 0 { dotted.append(".") }; dotted.append(w[..]) }
+        if words[0] == "std" {
+            if words.len == 2 {
+                if let src = check.std_source(words[1][..]) {
+                    mods.append(EditorMod{ .name = dotted, .path = format("<std>/{}.nx", .{words[1]}), .text = String.from(src), .parsed = parser.parse_source(src) })
+                }
+            }
+            continue
+        }
+        var candidate = String.new()
+        var pkg_src = String.new()
+        for pk in pkgs { if pk.name == words[0] { pkg_src = pk.src.clone() } }
+        if pkg_src.len > 0 {
+            candidate = pkg_src.clone()
+            if words.len == 1 { candidate.append("/lib") } else { for w in words[1..] { candidate.append("/"); candidate.append(w[..]) } }
+        } else {
+            candidate = root_dir.clone()
+            for w in words { candidate.append("/"); candidate.append(w[..]) }
+        }
+        candidate.append(".nx")
+        let t = io.read_file(candidate[..]) catch { continue }
+        mods.append(EditorMod{ .name = dotted, .path = candidate.clone(), .text = t.clone(), .parsed = parser.parse_source(t[..]) })
+    }
+    return mods
+}
+
+fn lex(text: []u8) -> List(lexer.Token) {
+    var lx = lexer.new_lexer(text)
+    lx.lex()
+    return lx.toks.clone()
+}
+
+/// The identifier token at `off`: its index and text.
+fn ident_at(toks: *List(lexer.Token), off: usize) -> ?usize {
+    for t, i in toks {
+        if t.kind == lexer.Kind.Ident and t.start <= off and off <= t.end { return i }
+    }
+    return null
+}
+
+/// `a.b` where `b` is the token at `i`: the qualifier `a`.
+fn qualifier(toks: *List(lexer.Token), i: usize) -> ?[]u8 {
+    if i >= 2 and toks[i - 1].kind == lexer.Kind.Dot and toks[i - 2].kind == lexer.Kind.Ident { return toks[i - 2].text[..] }
+    return null
+}
+
+fn item_kind(k: parser.NodeKind) -> f64 {
+    if k == parser.NodeKind.Fn { return KIND_FUNCTION }
+    if k == parser.NodeKind.Struct { return KIND_STRUCT }
+    if k == parser.NodeKind.Enum or k == parser.NodeKind.ErrorSet { return KIND_ENUM }
+    if k == parser.NodeKind.Trait or k == parser.NodeKind.TypeAlias { return KIND_TYPE }
+    if k == parser.NodeKind.Const { return KIND_CONSTANT }
+    if k == parser.NodeKind.Global { return KIND_VARIABLE }
+    return -1.0
+}
+
+fn is_named_item(k: parser.NodeKind) -> bool { return item_kind(k) >= 0.0 }
+
+/// The functions and methods of a module, in order.
+fn all_fns(m: *EditorMod) -> List(usize) {
+    var out = List(usize).new()
+    for it in m.parsed.items {
+        let k = m.parsed.tree.nodes[it].k
+        if k == parser.NodeKind.Fn { out.append(it) }
+        else if k == parser.NodeKind.Impl or k == parser.NodeKind.Trait { for f in m.parsed.tree.nodes[it].kids { out.append(f) } }
+    }
+    return out
+}
+
+/// The function (or method) of the root module whose span holds `off`.
+fn enclosing_fn(root: *EditorMod, off: usize) -> ?usize {
+    var best = parser.NONE
+    for f in all_fns(root) {
+        let n = &root.parsed.tree.nodes[f]
+        if n.start <= off and off <= n.end {
+            if best == parser.NONE or n.end - n.start < root.parsed.tree.nodes[best].end - root.parsed.tree.nodes[best].start { best = f }
+        }
+    }
+    if best == parser.NONE { return null }
+    return best
+}
+
+/// A local's name and where it is declared.
+struct LocalDef {
+    name: String
+    start: usize
+    end: usize
+}
+
+/// Local definitions visible at `off` inside `f`: parameters, and the
+/// `let`/`var`/capture bindings whose token comes before the cursor.
+fn locals_before(root: *EditorMod, f: usize, toks: *List(lexer.Token), off: usize) -> List(LocalDef) {
+    var out = List(LocalDef).new()
+    let fnode = &root.parsed.tree.nodes[f]
+    for p in fnode.kids {
+        let pn = &root.parsed.tree.nodes[p]
+        out.append(LocalDef{ .name = pn.name.clone(), .start = pn.start, .end = pn.end })
+    }
+    let start = fnode.start
+    for t, i in toks {
+        if t.start < start or t.start >= off or t.kind != lexer.Kind.Ident or i == 0 { continue }
+        let prev = &toks[i - 1]
+        var declared = false
+        if prev.kind == lexer.Kind.Ident and (prev.text == "let" or prev.text == "var" or prev.text == "for" or prev.text == "parallel") { declared = true }
+        else if (prev.kind == lexer.Kind.Pipe or prev.kind == lexer.Kind.Comma) and in_capture(toks, i) { declared = true }
+        else if prev.kind == lexer.Kind.Comma and in_for_header(toks, i) { declared = true }
+        if declared { out.append(LocalDef{ .name = t.text.clone(), .start = t.start, .end = t.end }) }
+    }
+    return out
+}
+
+/// Is the identifier at `i` inside a `|...|` capture list?
+fn in_capture(toks: *List(lexer.Token), i: usize) -> bool {
+    var j = i
+    while j > 0 {
+        j -= 1
+        let k = toks[j].kind
+        if k == lexer.Kind.Pipe { return true }
+        if k == lexer.Kind.Newline or k == lexer.Kind.LBrace or k == lexer.Kind.RBrace { return false }
+    }
+    return false
+}
+
+/// Is the identifier at `i` among the bindings of a `for` header, before `in`?
+fn in_for_header(toks: *List(lexer.Token), i: usize) -> bool {
+    var j = i
+    while j > 0 {
+        j -= 1
+        let t = &toks[j]
+        if t.kind == lexer.Kind.Ident and t.text == "for" { return true }
+        if t.kind == lexer.Kind.Ident and t.text == "in" { return false }
+        if t.kind != lexer.Kind.Ident and t.kind != lexer.Kind.Comma { return false }
+    }
+    return false
+}
+
+fn module_index(mods: *List(EditorMod), target: []u8) -> ?usize {
+    for m, i in mods {
+        if m.name == target or m.name[..].ends_with(format(".{}", .{target})[..]) { return i }
+    }
+    return null
+}
+
+/// The import alias and dotted path of an import node.
+fn import_parts(m: *EditorMod, it: usize, alias: *mut String, dotted: *mut String, names: *mut List(String)) {
+    let n = &m.parsed.tree.nodes[it]
+    var in_names = false
+    var last = String.new()
+    var d = String.new()
+    for w in n.words {
+        if w == "+" { in_names = true; continue }
+        if in_names { names.append(w.clone()); continue }
+        if d.len > 0 { d.append(".") }
+        d.append(w[..])
+        last = w.clone()
+    }
+    alias.*= if n.name == "-" { last } else { n.name.clone() }
+    dotted.*= d
+}
+
+/// The module an import alias refers to.
+fn alias_module(mods: *List(EditorMod), alias: []u8) -> ?usize {
+    let root = &mods[0]
+    for it in root.parsed.items {
+        if root.parsed.tree.nodes[it].k != parser.NodeKind.Import { continue }
+        var a = String.new()
+        var d = String.new()
+        var names = List(String).new()
+        import_parts(root, it, &mut a, &mut d, &mut names)
+        if a == alias { return module_index(mods, d[..]) }
+    }
+    return null
+}
+
+/// Where a name is defined: a module index and a span in it.
+pub struct DefLoc {
+    module: usize
+    start: usize
+    end: usize
+}
+
+fn find_item(mods: *List(EditorMod), mi: usize, name: []u8, pub_only: bool) -> ?DefLoc {
+    let m = &mods[mi]
+    for it in m.parsed.items {
+        let n = &m.parsed.tree.nodes[it]
+        if is_named_item(n.k) and n.name == name and (!pub_only or n.flag) { return DefLoc{ .module = mi, .start = n.start, .end = n.end } }
+    }
+    return null
+}
+
+fn find_method(mods: *List(EditorMod), name: []u8) -> ?DefLoc {
+    for m, mi in mods {
+        for it in m.parsed.items {
+            if m.parsed.tree.nodes[it].k != parser.NodeKind.Impl { continue }
+            for f in m.parsed.tree.nodes[it].kids {
+                let fnode = &m.parsed.tree.nodes[f]
+                if fnode.name == name { return DefLoc{ .module = mi, .start = fnode.start, .end = fnode.end } }
+            }
+        }
+    }
+    return null
+}
+
+fn is_namespace(q: []u8) -> bool {
+    for n in NAMESPACE_NAMES { if n == q { return true } }
+    return false
+}
+
+/// Where the name under the cursor is defined.
+pub fn definition(mods: *List(EditorMod), text: []u8, off: usize) -> ?DefLoc {
+    let toks = lex(text)
+    let i = ident_at(&toks, off) orelse return null
+    let name = toks[i].text.clone()
+    if let q = qualifier(&toks, i) {
+        if let mi = alias_module(mods, q) { return find_item(mods, mi, name[..], true) }
+        if is_namespace(q) { return null }
+        // `Type.assoc()` or `value.method()`
+        if let d = find_method(mods, name[..]) { return d }
+        return find_item(mods, 0, name[..], false)
+    }
+    if let f = enclosing_fn(&mods[0], off) {
+        let locals = locals_before(&mods[0], f, &toks, off)
+        var k = locals.len
+        while k > 0 {
+            k -= 1
+            if locals[k].name == name { return DefLoc{ .module = 0, .start = locals[k].start, .end = locals[k].end } }
+        }
+    }
+    if let d = find_item(mods, 0, name[..], false) { return d }
+    // `import a.{x}` and the std modules, by name
+    for mi in 1..mods.len {
+        if let d = find_item(mods, mi, name[..], true) { return d }
+    }
+    return find_method(mods, name[..])
+}
+
+/// A completion: label, LSP kind, detail.
+pub struct Completion {
+    label: String
+    kind: f64
+    detail: String
+}
+
+fn push_completion(out: *mut List(Completion), prefix: []u8, label: []u8, kind: f64, detail: []u8) {
+    if !label.starts_with(prefix) { return }
+    for c in out { if c.label == label { return } }
+    out.append(Completion{ .label = String.from(label), .kind = kind, .detail = String.from(detail) })
+}
+
+fn is_ident_byte(c: u8) -> bool { return (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '_' }
+
+/// Completions at `off` (the identifier being typed ends there).
+pub fn completions(mods: *List(EditorMod), text: []u8, off0: usize) -> List(Completion) {
+    let off = if off0 < text.len { off0 } else { text.len }
+    var start = off
+    while start > 0 and is_ident_byte(text[start - 1]) { start -= 1 }
+    let prefix = text[start..off]
+    var before = start
+    while before > 0 and text[before - 1] == ' ' { before -= 1 }
+    let after_dot = before > 0 and text[before - 1] == '.'
+    var out = List(Completion).new()
+    if after_dot {
+        var q_end = before - 1
+        while q_end > 0 and text[q_end - 1] == ' ' { q_end -= 1 }
+        var q_start = q_end
+        while q_start > 0 and is_ident_byte(text[q_start - 1]) { q_start -= 1 }
+        let q = text[q_start..q_end]
+        for n, ni in NAMESPACE_NAMES {
+            if n == q {
+                for m in NAMESPACE_MEMBERS[ni].split(" ") { push_completion(&mut out, prefix, m, KIND_FUNCTION, format("{}.{}", .{q, m})[..]) }
+                return out
+            }
+        }
+        if let mi = alias_module(mods, q) {
+            for it in mods[mi].parsed.items {
+                let n = &mods[mi].parsed.tree.nodes[it]
+                if is_named_item(n.k) and n.flag { push_completion(&mut out, prefix, n.name[..], item_kind(n.k), mods[mi].name[..]) }
+            }
+            return out
+        }
+        if q == "error" {
+            for m in mods {
+                for it in m.parsed.items {
+                    let n = &m.parsed.tree.nodes[it]
+                    if n.k != parser.NodeKind.ErrorSet { continue }
+                    for w in n.words { push_completion(&mut out, prefix, w[..], KIND_CONSTANT, format("error set {}", .{n.name})[..]) }
+                }
+            }
+            for n in BUILTIN_ERRORS { push_completion(&mut out, prefix, n, KIND_CONSTANT, "builtin error") }
+            return out
+        }
+        // fields and methods declared anywhere, then the builtin methods
+        for m in mods {
+            for it in m.parsed.items {
+                let n = &m.parsed.tree.nodes[it]
+                if n.k == parser.NodeKind.Struct {
+                    for f in n.kids { push_completion(&mut out, prefix, m.parsed.tree.nodes[f].name[..], KIND_FIELD, format("field of {}", .{n.name})[..]) }
+                } else if n.k == parser.NodeKind.Impl {
+                    for f in n.kids { push_completion(&mut out, prefix, m.parsed.tree.nodes[f].name[..], KIND_METHOD, "method") }
+                } else if n.k == parser.NodeKind.Enum {
+                    for v in n.kids { push_completion(&mut out, prefix, m.parsed.tree.nodes[v].name[..], KIND_ENUM, format("variant of {}", .{n.name})[..]) }
+                }
+            }
+        }
+        for m in COMMON_METHODS.split(" ") { push_completion(&mut out, prefix, m, KIND_METHOD, "builtin method") }
+        return out
+    }
+    if let f = enclosing_fn(&mods[0], off) {
+        let toks = lex(text)
+        for l in locals_before(&mods[0], f, &toks, off) { push_completion(&mut out, prefix, l.name[..], KIND_VARIABLE, "local") }
+    }
+    let root = &mods[0]
+    for it in root.parsed.items {
+        let n = &root.parsed.tree.nodes[it]
+        if is_named_item(n.k) { push_completion(&mut out, prefix, n.name[..], item_kind(n.k), "this file") }
+        if n.k == parser.NodeKind.Import {
+            var a = String.new()
+            var d = String.new()
+            var names = List(String).new()
+            import_parts(root, it, &mut a, &mut d, &mut names)
+            push_completion(&mut out, prefix, a[..], KIND_MODULE, format("import {}", .{d})[..])
+            for nm in names { push_completion(&mut out, prefix, nm[..], KIND_FUNCTION, format("from {}", .{d})[..]) }
+        }
+    }
+    for n in NAMESPACE_NAMES { push_completion(&mut out, prefix, n, KIND_MODULE, "builtin namespace") }
+    for p in PRIMITIVES { push_completion(&mut out, prefix, p, KIND_TYPE, "type") }
+    for k in lexer.KEYWORDS { push_completion(&mut out, prefix, k, KIND_KEYWORD, "keyword") }
+    for b in BUILTIN_FNS { push_completion(&mut out, prefix, b, KIND_FUNCTION, "builtin") }
+    return out
+}
+
+/// A span to rewrite for a rename.
+struct Span {
+    start: usize
+    end: usize
+}
+
+/// The spans in `text` to rewrite when renaming the identifier at `off`:
+/// every occurrence inside the enclosing function for a local, or in the
+/// whole file otherwise.
+fn rename_spans(mods: *List(EditorMod), text: []u8, off: usize) -> List(Span) {
+    var out = List(Span).new()
+    let toks = lex(text)
+    let i = ident_at(&toks, off) orelse return out
+    let name = toks[i].text.clone()
+    if lexer.is_keyword(name[..]) { return out }
+    var lo: usize = 0
+    var hi = text.len
+    if qualifier(&toks, i) == null {
+        if let f = enclosing_fn(&mods[0], off) {
+            var is_local = false
+            for l in locals_before(&mods[0], f, &toks, off) { if l.name == name { is_local = true } }
+            if is_local { lo = mods[0].parsed.tree.nodes[f].start; hi = mods[0].parsed.tree.nodes[f].end }
+        }
+    }
+    for t in toks {
+        if t.kind == lexer.Kind.Ident and t.text == name and t.start >= lo and t.end <= hi { out.append(Span{ .start = t.start, .end = t.end }) }
+    }
+    return out
+}
+
+// ----- diagnostics and hover, from the checker --------------------------------------
+
+/// An LSP diagnostic: 0-based range, severity, message.
+struct LspDiag {
+    line: usize
+    col: usize
+    end_line: usize
+    end_col: usize
+    severity: f64
+    message: String
+}
+
+fn diag_at(text: []u8, at: usize, width: usize, severity: f64, own message: String) -> LspDiag {
+    var l: usize = 0
+    var c: usize = 0
+    offset_to_pos(text, at, &mut l, &mut c)
+    var el: usize = 0
+    var ec: usize = 0
+    offset_to_pos(text, at + (if width > 0 { width } else { 1 }), &mut el, &mut ec)
+    return LspDiag{ .line = l, .col = c, .end_line = el, .end_col = ec, .severity = severity, .message = message }
+}
+
+/// The offset in an `error at N: message` line from the lexer or parser.
+fn parse_error_offset(e: []u8, msg: *mut String) -> usize {
+    if !e.starts_with("error at ") { msg.*= String.from(e); return 0 }
+    let rest = e[9..]
+    let colon = rest.find(":") orelse { msg.*= String.from(e); return 0 }
+    let off = rest[0..colon].parse_int(usize) catch { 0 }
+    msg.*= String.from(rest[colon + 1..].trim())
+    return off
+}
+
+/// Check the buffer and return its diagnostics (only those in the open
+/// file) and, when it checks, the checker for hover.
+fn analyze(path: []u8, text: []u8, std_dir: []u8, cc: *List(String), out: *mut List(LspDiag)) -> ?check.Checker {
+    let parsed = parser.parse_source(text)
+    if parsed.errors.len > 0 {
+        for e in parsed.errors {
+            var msg = String.new()
+            let off = parse_error_offset(e[..], &mut msg)
+            out.append(diag_at(text, off, 1, 1.0, msg))
+        }
+        return null
+    }
+    let mods = check.load_with_text(path, text, std_dir) catch { return null }
+    var c = check.new_checker(mods)
+    c.cc = cc.clone()
+    c.collect()
+    c.reserve_errors()
+    c.check_program()
+    // notes join the error before them; only the root file's diagnostics show
+    var i: usize = 0
+    while i < c.diags.len {
+        let d = &c.diags[i]
+        i += 1
+        if d.note { continue }
+        var message = d.msg.clone()
+        while i < c.diags.len and c.diags[i].note {
+            message.append("\n")
+            message.append(c.diags[i].msg[..])
+            i += 1
+        }
+        if d.module != 0 { continue }
+        out.append(diag_at(text, d.at, 1, 1.0, message))
+    }
+    if c.errors.len > 0 { return null }
+    return c
+}
+
+/// Hover: the signature of the function holding `off`, with its inferred
+/// effects; or, when the file does not check, the signature as written.
+fn hover(path: []u8, text: []u8, off: usize, std_dir: []u8, cc: *List(String)) -> ?String {
+    var diags = List(LspDiag).new()
+    var c = analyze(path, text, std_dir, cc, &mut diags) orelse return hover_from_syntax(text, off)
+    var best = parser.NONE
+    let n = c.insts.len
+    for i in 0..n {
+        let inst = &c.insts[i]
+        if inst.module != 0 or inst.body == parser.NONE or inst.is_closure or inst.is_test { continue }
+        if inst.start <= off and off <= inst.end {
+            if best == parser.NONE or inst.end - inst.start < c.insts[best].end - c.insts[best].start { best = i }
+        }
+    }
+    if best == parser.NONE { return null }
+    var params = String.new()
+    for p, pi in c.insts[best].params.clone() {
+        if pi > 0 { params.append(", ") }
+        let l = &c.insts[best].locals[p]
+        params.append(format("{}: {}", .{l.name, c.ty_name(l.ty)})[..])
+    }
+    let ret = c.ty_name(c.insts[best].ret)
+    let eff = if c.insts[best].effects == 0 { String.from("pure (no effects)") } else { format("effects: {}", .{check.render_effects(c.insts[best].effects)}) }
+    return format("```nexium\nfn {}({}) -> {}\n```\n{}", .{c.insts[best].name, params, ret, eff})
+}
+
+/// Hover for a file that does not check: the signature as written, without effects.
+fn hover_from_syntax(text: []u8, off: usize) -> ?String {
+    let m = EditorMod{ .name = String.new(), .path = String.new(), .text = String.from(text), .parsed = parser.parse_source(text) }
+    let f = enclosing_fn(&m, off) orelse return null
+    let n = &m.parsed.tree.nodes[f]
+    let end = if n.y != parser.NONE { m.parsed.tree.nodes[n.y].start } else { n.end }
+    var sig = text[n.start..end].trim()
+    while sig.len > 0 and (sig[sig.len - 1] == '{' or sig[sig.len - 1] == ' ') { sig = sig[0..sig.len - 1] }
+    return format("```nexium\n{}\n```\nfile has errors; effects not inferred", .{sig})
+}
+
+// ----- the protocol -----------------------------------------------------------------
+
+fn path_to_uri(p: []u8) -> String {
+    var s = String.new()
+    if p.len == 0 or p[0] != '/' { s.append("/") }
+    for c in p { s.push_byte(if c == '\\' { '/' } else { c }) }
+    var out = String.from("file://")
+    for c in s {
+        if c == ' ' { out.append("%20") } else if c == ':' { out.append("%3A") } else { out.push_byte(c) }
+    }
+    return out
+}
+
+fn hex_digit(c: u8) -> ?u8 {
+    if c >= '0' and c <= '9' { return c - '0' }
+    if c >= 'a' and c <= 'f' { return c - 'a' + 10 }
+    if c >= 'A' and c <= 'F' { return c - 'A' + 10 }
+    return null
+}
+
+fn uri_to_path(uri: []u8) -> String {
+    var p = uri
+    if p.starts_with("file:///") { p = p[8..] } else if p.starts_with("file://") { p = p[7..] }
+    var s = String.new()
+    var i: usize = 0
+    while i < p.len {
+        if p[i] == '%' and i + 2 < p.len {
+            if let h = hex_digit(p[i + 1]) {
+                if let l = hex_digit(p[i + 2]) { s.push_byte(h * 16 + l); i += 3; continue }
+            }
+        }
+        s.push_byte(p[i])
+        i += 1
+    }
+    if is_windows() {
+        var w = String.new()
+        for c in s { w.push_byte(if c == '/' { '\\' } else { c }) }
+        return w
+    }
+    if s.len == 0 or s[0] != '/' { var a = String.from("/"); a.append(s[..]); return a }
+    return s
+}
+
+fn is_windows() -> bool { return os.env("COMSPEC") != null and os.env("WINDIR") != null }
+
+fn num(v: f64) -> json.Json { return json.number(v) }
+fn str(s: []u8) -> json.Json { return json.string(s) }
+
+fn range_json(line: usize, col: usize, end_line: usize, end_col: usize) -> json.Json {
+    var start = json.object()
+    json.set(&mut start, "line", num(line as f64))
+    json.set(&mut start, "character", num(col as f64))
+    var end = json.object()
+    json.set(&mut end, "line", num(end_line as f64))
+    json.set(&mut end, "character", num(end_col as f64))
+    var r = json.object()
+    json.set(&mut r, "start", start)
+    json.set(&mut r, "end", end)
+    return r
+}
+
+/// A place in a file, 0-based, for a definition or a rename edit.
+struct Loc {
+    path: String
+    line: usize
+    col: usize
+    end_line: usize
+    end_col: usize
+}
+
+fn loc_of(text: []u8, path: []u8, start: usize, end: usize) -> Loc {
+    var l: usize = 0
+    var c: usize = 0
+    var el: usize = 0
+    var ec: usize = 0
+    offset_to_pos(text, start, &mut l, &mut c)
+    offset_to_pos(text, end, &mut el, &mut ec)
+    return Loc{ .path = String.from(path), .line = l, .col = c, .end_line = el, .end_col = ec }
+}
+
+fn position(params: *json.Json, uri: *mut String, line: *mut usize, col: *mut usize) {
+    if let td = json.get(params, "textDocument") { if let u = json.get(td, "uri") { if let s = json.as_str(u) { uri.*= String.from(s) } } }
+    if let pos = json.get(params, "position") {
+        if let l = json.get(pos, "line") { if let v = json.as_num(l) { line.*= v as usize } }
+        if let ch = json.get(pos, "character") { if let v = json.as_num(ch) { col.*= v as usize } }
+    }
+}
+
+fn read_message(input: *mut stream.Reader) -> ?String {
+    var len: usize = 0
+    while true {
+        let line = input.read_line() catch { return null } orelse return null
+        let t = line[..].trim()
+        if t.len == 0 { break }
+        if t.starts_with("Content-Length:") { len = t[15..].trim().parse_int(usize) catch { 0 } }
+    }
+    var body = String.new()
+    while body.len < len {
+        let chunk = input.read(len - body.len) catch { return null }
+        if chunk.len == 0 { return null }
+        body.append(chunk[..])
+    }
+    return body
+}
+
+fn send(out: *mut stream.Writer, msg: *json.Json) {
+    let body = json.stringify(msg)
+    out.write(format("Content-Length: {}\r\n\r\n{}", .{body.len, body})[..]) catch { }
+    out.flush() catch { }
+}
+
+fn reply(out: *mut stream.Writer, id: *json.Json, own result: json.Json) {
+    var m = json.object()
+    json.set(&mut m, "jsonrpc", str("2.0"))
+    json.set(&mut m, "id", clone_json(id))
+    json.set(&mut m, "result", result)
+    send(out, &m)
+}
+
+fn clone_json(v: *json.Json) -> json.Json {
+    let text = json.stringify(v)
+    return json.parse(text[..]) catch { json.null_value() }
+}
+
+fn publish(out: *mut stream.Writer, uri: []u8, own items: json.Json) {
+    var params = json.object()
+    json.set(&mut params, "uri", str(uri))
+    json.set(&mut params, "diagnostics", items)
+    var m = json.object()
+    json.set(&mut m, "jsonrpc", str("2.0"))
+    json.set(&mut m, "method", str("textDocument/publishDiagnostics"))
+    json.set(&mut m, "params", params)
+    send(out, &m)
+}
+
+/// Run the server until the client says exit.
+pub fn run(version: []u8, std_dir: []u8, cc: *List(String)) {
+    var input = stream.Reader.stdin()
+    var out = stream.Writer.stdout()
+    var doc_uris = List(String).new()
+    var doc_texts = List(String).new()
+    while true {
+        let msg = read_message(&mut input) orelse break
+        let req = json.parse(msg[..]) catch { continue }
+        var method = String.new()
+        if let m = json.get(&req, "method") { if let s = json.as_str(m) { method = String.from(s) } }
+        var id = json.null_value()
+        if let i = json.get(&req, "id") { id = clone_json(i) }
+        var params = json.null_value()
+        if let p = json.get(&req, "params") { params = clone_json(p) }
+        if method == "initialize" {
+            var sync = json.object()
+            json.set(&mut sync, "openClose", json.boolean(true))
+            json.set(&mut sync, "change", num(1.0))
+            json.set(&mut sync, "save", json.boolean(true))
+            var triggers = json.array()
+            json.push(&mut triggers, str("."))
+            var completion = json.object()
+            json.set(&mut completion, "triggerCharacters", triggers)
+            var rename = json.object()
+            json.set(&mut rename, "prepareProvider", json.boolean(true))
+            var caps = json.object()
+            json.set(&mut caps, "textDocumentSync", sync)
+            json.set(&mut caps, "hoverProvider", json.boolean(true))
+            json.set(&mut caps, "definitionProvider", json.boolean(true))
+            json.set(&mut caps, "completionProvider", completion)
+            json.set(&mut caps, "renameProvider", rename)
+            var info = json.object()
+            json.set(&mut info, "name", str("nx"))
+            json.set(&mut info, "version", str(version))
+            var result = json.object()
+            json.set(&mut result, "capabilities", caps)
+            json.set(&mut result, "serverInfo", info)
+            reply(&mut out, &id, result)
+        } else if method == "initialized" {
+        } else if method == "shutdown" {
+            reply(&mut out, &id, json.null_value())
+        } else if method == "exit" {
+            break
+        } else if method == "textDocument/didOpen" or method == "textDocument/didChange" or method == "textDocument/didSave" {
+            var uri = String.new()
+            var text: ?String = null
+            if let td = json.get(&params, "textDocument") {
+                if let u = json.get(td, "uri") { if let s = json.as_str(u) { uri = String.from(s) } }
+                if method == "textDocument/didOpen" { if let t = json.get(td, "text") { if let s = json.as_str(t) { text = String.from(s) } } }
+            }
+            if method == "textDocument/didChange" {
+                if let changes = json.get(&params, "contentChanges") {
+                    let n = json.len(changes)
+                    if n > 0 { if let last = json.at(changes, n - 1) { if let t = json.get(last, "text") { if let s = json.as_str(t) { text = String.from(s) } } } }
+                }
+            } else if method == "textDocument/didSave" {
+                if let t = json.get(&params, "text") { if let s = json.as_str(t) { text = String.from(s) } }
+            }
+            if text != null {
+                let t = text.?
+                var found = false
+                for u, i in doc_uris { if u == uri { doc_texts[i] = t.clone(); found = true } }
+                if !found { doc_uris.append(uri.clone()); doc_texts.append(t) }
+            }
+            var current: ?String = null
+            for u, i in doc_uris { if u == uri { current = doc_texts[i].clone() } }
+            if let t = current {
+                let path = uri_to_path(uri[..])
+                var diags = List(LspDiag).new()
+                let checker = analyze(path[..], t[..], std_dir, cc, &mut diags)
+                var items = json.array()
+                for d in diags {
+                    var item = json.object()
+                    json.set(&mut item, "range", range_json(d.line, d.col, d.end_line, d.end_col))
+                    json.set(&mut item, "severity", num(d.severity))
+                    json.set(&mut item, "source", str("nx"))
+                    json.set(&mut item, "message", str(d.message[..]))
+                    json.push(&mut items, item)
+                }
+                publish(&mut out, uri[..], items)
+            }
+        } else if method == "textDocument/didClose" {
+            var uri = String.new()
+            if let td = json.get(&params, "textDocument") { if let u = json.get(td, "uri") { if let s = json.as_str(u) { uri = String.from(s) } } }
+            var keep_uris = List(String).new()
+            var keep_texts = List(String).new()
+            for u, i in doc_uris { if u != uri { keep_uris.append(u.clone()); keep_texts.append(doc_texts[i].clone()) } }
+            doc_uris = keep_uris
+            doc_texts = keep_texts
+            publish(&mut out, uri[..], json.array())
+        } else if method == "textDocument/definition" or method == "textDocument/completion" or method == "textDocument/prepareRename" or method == "textDocument/rename" or method == "textDocument/hover" {
+            var uri = String.new()
+            var line: usize = 0
+            var col: usize = 0
+            position(&params, &mut uri, &mut line, &mut col)
+            var current: ?String = null
+            for u, i in doc_uris { if u == uri { current = doc_texts[i].clone() } }
+            var result = json.null_value()
+            if let t = current {
+                let path = uri_to_path(uri[..])
+                let off = byte_offset(t[..], line, col)
+                if method == "textDocument/definition" {
+                    let mods = editor_modules(path[..], t[..])
+                    if let d = definition(&mods, t[..], off) {
+                        // the std sources have no file on disk; nothing to point at
+                        if !mods[d.module].path[..].starts_with("<std>") {
+                            let l = loc_of(mods[d.module].text[..], mods[d.module].path[..], d.start, d.end)
+                            var r = json.object()
+                            json.set(&mut r, "uri", str(path_to_uri(l.path[..])[..]))
+                            json.set(&mut r, "range", range_json(l.line, l.col, l.end_line, l.end_col))
+                            result = r
+                        }
+                    }
+                } else if method == "textDocument/completion" {
+                    let mods = editor_modules(path[..], t[..])
+                    var items = json.array()
+                    for c in completions(&mods, t[..], off) {
+                        var item = json.object()
+                        json.set(&mut item, "label", str(c.label[..]))
+                        json.set(&mut item, "kind", num(c.kind))
+                        json.set(&mut item, "detail", str(c.detail[..]))
+                        json.push(&mut items, item)
+                    }
+                    result = items
+                } else if method == "textDocument/prepareRename" {
+                    let mods = editor_modules(path[..], t[..])
+                    for sp in rename_spans(&mods, t[..], off) {
+                        let l = loc_of(t[..], path[..], sp.start, sp.end)
+                        if l.line == line and l.col <= col and col <= l.end_col { result = range_json(l.line, l.col, l.end_line, l.end_col) }
+                    }
+                } else if method == "textDocument/rename" {
+                    var new_name = String.new()
+                    if let n = json.get(&params, "newName") { if let s = json.as_str(n) { new_name = String.from(s) } }
+                    let mods = editor_modules(path[..], t[..])
+                    var edits = json.array()
+                    var any = false
+                    for sp in rename_spans(&mods, t[..], off) {
+                        let l = loc_of(t[..], path[..], sp.start, sp.end)
+                        var e = json.object()
+                        json.set(&mut e, "range", range_json(l.line, l.col, l.end_line, l.end_col))
+                        json.set(&mut e, "newText", str(new_name[..]))
+                        json.push(&mut edits, e)
+                        any = true
+                    }
+                    if any {
+                        var changes = json.object()
+                        json.set(&mut changes, uri[..], edits)
+                        var r = json.object()
+                        json.set(&mut r, "changes", changes)
+                        result = r
+                    }
+                } else if method == "textDocument/hover" {
+                    if let h = hover(path[..], t[..], off, std_dir, cc) {
+                        var contents = json.object()
+                        json.set(&mut contents, "kind", str("markdown"))
+                        json.set(&mut contents, "value", str(h[..]))
+                        var r = json.object()
+                        json.set(&mut r, "contents", contents)
+                        result = r
+                    }
+                }
+            }
+            reply(&mut out, &id, result)
+        } else if !json.is_null(&id) {
+            var err = json.object()
+            json.set(&mut err, "code", num(-32601.0))
+            json.set(&mut err, "message", str(format("method not supported: {}", .{method})[..]))
+            var m = json.object()
+            json.set(&mut m, "jsonrpc", str("2.0"))
+            json.set(&mut m, "id", clone_json(&id))
+            json.set(&mut m, "error", err)
+            send(&mut out, &m)
+        }
+    }
+}

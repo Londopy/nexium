@@ -533,7 +533,7 @@ pub fn is_keyword(s: []u8) -> bool {
     return false
 }
 
-const KEYWORDS = ["fn", "let", "var", "const", "struct", "enum", "record", "ref", "class", "trait", "impl", "pub", "import", "return", "if", "else", "for", "while", "match", "break", "continue", "try", "catch", "defer", "errdefer", "comptime", "unsafe", "error", "true", "false", "null", "undefined", "and", "or", "type", "distinct", "where", "into", "artifact", "test", "export", "unreachable", "as", "orelse", "in", "dyn", "weak", "parallel", "extern", "using"]
+pub const KEYWORDS = ["fn", "let", "var", "const", "struct", "enum", "record", "ref", "class", "trait", "impl", "pub", "import", "return", "if", "else", "for", "while", "match", "break", "continue", "try", "catch", "defer", "errdefer", "comptime", "unsafe", "error", "true", "false", "null", "undefined", "and", "or", "type", "distinct", "where", "into", "artifact", "test", "export", "unreachable", "as", "orelse", "in", "dyn", "weak", "parallel", "extern", "using"]
 
 fn main() -> !void {
     let args = os.args()

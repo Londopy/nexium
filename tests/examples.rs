@@ -60,26 +60,38 @@ fn exe(name: &str) -> String {
 /// `bootstrap/nx.c` -> `nx0` (a C compiler), `nx0` builds `self/nx.nx` ->
 /// `nx1`. Every language suite runs through `nx1`.
 fn nx_self() -> PathBuf {
-    static NX1: OnceLock<PathBuf> = OnceLock::new();
-    NX1.get_or_init(|| {
+    static NX2: OnceLock<PathBuf> = OnceLock::new();
+    NX2.get_or_init(|| {
         let out_dir = root().join("nx-out").join("bootstrap");
         let _ = std::fs::create_dir_all(&out_dir);
         let nx0 = out_dir.join(exe("nx0"));
-        let mut cc = host_cc();
-        cc.args(["-std=gnu11", "-O2", "-w", "-fno-strict-aliasing", "-o"]).arg(&nx0).arg(root().join("bootstrap").join("nx.c"));
-        if cfg!(windows) {
-            cc.arg("-lws2_32");
-        } else if !cfg!(target_os = "macos") {
-            cc.args(["-lm", "-lc"]);
-        }
-        let out = cc.current_dir(root()).output().expect("run the C compiler");
-        assert!(out.status.success(), "the seed bootstrap/nx.c did not build:\n{}", String::from_utf8_lossy(&out.stderr));
+        build_c(&root().join("bootstrap").join("nx.c"), &nx0, "the seed bootstrap/nx.c");
         let nx1 = out_dir.join(exe("nx1"));
         let out = driver_cc(&mut Command::new(&nx0)).args(["build", "self/nx.nx", "--mode", "safe", "-o"]).arg(&nx1).arg("--out-dir").arg(&out_dir).current_dir(root()).output().expect("run nx0");
         assert!(out.status.success(), "the seed compiler could not build self/nx.nx:\n{}", String::from_utf8_lossy(&out.stderr));
-        nx1
+        // nx1 runs on the runtime the seed carries; nx2, built from nx1's own C, runs on the one in the tree
+        let emit = driver_cc(&mut Command::new(&nx1)).args(["emit-c", "self/nx.nx", "--mode", "safe"]).current_dir(root()).output().expect("run nx1");
+        assert!(emit.status.success(), "nx1 could not emit self/nx.nx:\n{}", String::from_utf8_lossy(&emit.stderr));
+        let c1 = out_dir.join("nx1.c");
+        std::fs::write(&c1, &emit.stdout).unwrap();
+        let nx2 = out_dir.join(exe("nx2"));
+        build_c(&c1, &nx2, "nx1.c");
+        nx2
     })
     .clone()
+}
+
+/// The host C compiler builds one emitted file into an executable.
+fn build_c(c_file: &Path, exe_path: &Path, what: &str) {
+    let mut cc = host_cc();
+    cc.args(["-std=gnu11", "-O2", "-w", "-fno-strict-aliasing", "-o"]).arg(exe_path).arg(c_file);
+    if cfg!(windows) {
+        cc.arg("-lws2_32");
+    } else if !cfg!(target_os = "macos") {
+        cc.args(["-lm", "-lc"]);
+    }
+    let out = cc.current_dir(root()).output().expect("run the C compiler");
+    assert!(out.status.success(), "{} did not build:\n{}", what, String::from_utf8_lossy(&out.stderr));
 }
 
 /// A command for the compiler under test, run from the repository root with
@@ -271,30 +283,18 @@ fn bootstrap_reaches_a_fixed_point() {
         return;
     }
     let out_dir = root().join("nx-out").join("bootstrap");
-    let emit = nxs().args(["emit-c", "self/nx.nx", "--mode", "safe"]).output().unwrap();
-    assert!(emit.status.success(), "nx1 could not emit self/nx.nx:\n{}", String::from_utf8_lossy(&emit.stderr));
-    let c1 = out_dir.join("nx1.c");
-    std::fs::write(&c1, &emit.stdout).unwrap();
-    let nx2 = out_dir.join(exe("nx2"));
-    let mut cc = host_cc();
-    cc.args(["-std=gnu11", "-O2", "-w", "-fno-strict-aliasing", "-o"]).arg(&nx2).arg(&c1);
-    if cfg!(windows) {
-        cc.arg("-lws2_32");
-    } else if !cfg!(target_os = "macos") {
-        cc.args(["-lm", "-lc"]);
-    }
-    let out = cc.current_dir(root()).output().expect("run the C compiler");
-    assert!(out.status.success(), "the C compiler could not build nx2:\n{}", String::from_utf8_lossy(&out.stderr));
-    let again = driver_cc(&mut Command::new(&nx2)).args(["emit-c", "self/nx.nx", "--mode", "safe"]).current_dir(root()).output().unwrap();
+    // nx_self() built nx2 from nx1's C; nx2 must emit that same C
+    let c1 = std::fs::read(out_dir.join("nx1.c")).unwrap();
+    let again = nxs().args(["emit-c", "self/nx.nx", "--mode", "safe"]).output().unwrap();
     assert!(again.status.success(), "nx2 could not emit self/nx.nx:\n{}", String::from_utf8_lossy(&again.stderr));
-    assert_same_text(&String::from_utf8_lossy(&emit.stdout), &String::from_utf8_lossy(&again.stdout), "nx1 and nx2 emit different C for self/nx.nx");
+    assert_same_text(&String::from_utf8_lossy(&c1), &String::from_utf8_lossy(&again.stdout), "nx1 and nx2 emit different C for self/nx.nx");
     // nx2 is a working compiler, not just a matching emitter
-    let hello = driver_cc(&mut Command::new(&nx2)).args(["run", "examples/hello.nx", "--out-dir"]).arg(&out_dir).current_dir(root()).output().unwrap();
+    let hello = nxs().args(["run", "examples/hello.nx", "--out-dir"]).arg(&out_dir).output().unwrap();
     assert!(hello.status.success(), "nx2 could not run hello:\n{}", String::from_utf8_lossy(&hello.stderr));
     let expected = std::fs::read_to_string(root().join("examples").join("hello.expected")).unwrap();
     assert_same_text(normalize(&expected).trim(), normalize(&String::from_utf8_lossy(&hello.stdout)).trim(), "hello through nx2");
     let seed = std::fs::read(root().join("bootstrap").join("nx.c")).unwrap();
-    if seed != emit.stdout {
+    if seed != c1 {
         eprintln!("note: bootstrap/nx.c is behind self/: regenerate it at the release (nx emit-c self/nx.nx --mode safe > bootstrap/nx.c)");
     }
 }

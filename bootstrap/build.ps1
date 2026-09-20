@@ -1,7 +1,7 @@
 # Build `nx` from source with no Rust (see build.sh for the stages). Run from
 # the repository root in PowerShell:
 #
-#     .\bootstrap\build.ps1            # -> nx-out\bootstrap\nx1.exe
+#     .\bootstrap\build.ps1            # -> nx-out\bootstrap\nx2.exe
 #
 # $env:CC overrides the C compiler (default: zig cc).
 $ErrorActionPreference = "Stop"
@@ -21,4 +21,5 @@ Invoke-CC @("-std=gnu11", "-O2", "-w", "-fno-strict-aliasing", "-o", "$out\nx2.e
 if ((Get-FileHash "$out\nx1.c").Hash -ne (Get-FileHash "$out\nx2.c").Hash) { throw "nx1 and nx2 emit different C" }
 Write-Host "fixed point: nx1 and nx2 emit the same C"
 if ((Get-FileHash "bootstrap\nx.c").Hash -ne (Get-FileHash "$out\nx1.c").Hash) { Write-Host "note: bootstrap\nx.c is behind self\; at the release: copy $out\nx1.c bootstrap\nx.c" }
-Write-Host "built $out\nx1.exe"
+# nx1 was linked against the runtime the seed carries; nx2 against runtime\nx_rt.h
+Write-Host "built $out\nx2.exe"

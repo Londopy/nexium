@@ -120,8 +120,10 @@ edges (`@weak(x)` or `x.weak()`, then `w.upgrade()`).
   and types that `derive(Eq)` / `derive(Ord)`. Logical `and`, `or`, `!`.
 - `x |> f(a)` is `f(x, a)`.
 - `if c { a } else { b }` is an expression; `if let v = opt { } else { }`
-  unwraps. Conditions take no parentheses and bodies always take braces, so
-  a one-liner is `if c { return v }`; `else` may start the next line.
+  unwraps (over a place the binding is a view, like a loop variable: clone
+  it or take the value with `opt.?`). Conditions take no parentheses and
+  bodies always take braces, so a one-liner is `if c { return v }`; `else`
+  may start the next line.
 - `match v { pat => expr, ... }` on integers (literals, ranges `1..=9`),
   strings, bools, chars, enums (`.Variant(p)`), optionals (`null`, binding),
   error unions (`error.Name`, binding), tuples, and byte slices (binary

@@ -16,6 +16,45 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   formatter, byte for byte the same as the first one on every source in
   the tree with its layout disturbed, which `cargo test` checks while the
   Rust one exists. The lexer keeps `//` comments as tokens on request.
+- `nx effects`, `audit`, `refcounts`, `leaks`, `size`, `version` and
+  `doctor` in Nexium (`self/tools.nx`, `self/size.nx`): the reports over
+  the checked program and the section-table reader for ELF64 and COFF
+  binaries, matching the frozen Rust commands on every example except
+  where the Nexium compiler does better (`dyn` and `fn` types printed as
+  written, recursive functions showing `unbounded_stack`).
+- `nx doc` in Nexium (`self/doc.nx`): the same page as the first
+  generator on every source, apart from a function's effects coming from
+  its own module and generic functions saying so instead of showing one
+  instantiation. The parser keeps each `///` run's text (`Tree.docs`).
+- Packages in Nexium (`self/manifest.nx`): the `nexium.toml` subset,
+  `nx init`, `nx add`, `nx fetch` and the lock file; the loader resolves
+  `import dep` and `import dep.module` through the manifest and scopes a
+  package's own imports to its `src`.
+- `nx ship` in Nexium (`self/ship.nx`, `self/ship_node.nx`,
+  `self/installer.nx`): the C header, shared and static libraries, the
+  Python package and wheel, the Rust crate, the npm package and the
+  installers, from the export records `cgen.nx` writes as it emits each
+  wrapper. The header and typings carry each function's `///` comment.
+- `nx lsp` in Nexium (`self/lsp.nx`): the language server over stdio,
+  with diagnostics, hover, go to definition, completion and rename, and
+  the editor-module loader and IDE queries behind it; `cargo test` drives
+  it the way an editor does.
+
+### Fixed
+
+- `if let v = opt` over a place (a local, a field, an element) bound a
+  bitwise copy of the payload that could then be moved on, so the
+  optional and the binding both freed it. The binding is now a view of
+  the payload, like a loop variable: moving out of it is an error with a
+  `.clone()` / `.?` hint, while a binding over an owned temporary (a call
+  result) still takes the payload. The comptime interpreter and the
+  language server had such copies.
+- Reading standard input through `std.stream.Reader` blocked until 64 KiB
+  arrived or the pipe closed, since `fread` fills its whole count; the
+  runtime now reads the descriptor and hands over what the pipe has, so
+  a server on stdin answers each message as it comes. `io.read_line` and
+  the reader share one buffer. Standard input is binary on Windows, like
+  the other two streams.
 
 ## [0.8.0] - 2026-09-20
 
