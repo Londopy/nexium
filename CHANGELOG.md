@@ -56,6 +56,11 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Fixed
 
+- The documentation site's menu no longer jumps back to the top on every
+  page: it is its own scroll box, and a page load reset it, so reading
+  the chapters in order meant scrolling the menu down again each time.
+  The menu now keeps its position from page to page and brings the
+  current page's entry into view when it is not.
 - The links under "Files" in the release notes were relative, so GitHub
   resolved them under the tag page and every one was a 404. The notes
   script writes the download URL now, and the notes of every release

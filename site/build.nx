@@ -19,6 +19,7 @@ import std.strings
 const REPO = "https://github.com/Londopy/nexium"
 const SITE_TITLE = "Nexium"
 const SITE_URL = "https://londopy.github.io/nexium/"
+const SIDE_SCRIPT = r"<script>(function(){var n=document.querySelector('nav.side');if(!n)return;var k='nx-side-scroll';try{var s=sessionStorage.getItem(k);if(s!==null)n.scrollTop=+s;}catch(e){}var c=n.querySelector('a.current');if(c){var r=c.getBoundingClientRect(),h=n.getBoundingClientRect();if(r.top<h.top+8||r.bottom>h.bottom-8)n.scrollTop+=(r.top-h.top)-n.clientHeight/2+r.height/2;}function save(){try{sessionStorage.setItem(k,n.scrollTop)}catch(e){}}n.addEventListener('scroll',save);n.addEventListener('click',save);window.addEventListener('pagehide',save);})();</script>"
 
 /// One page of the site: where it comes from, where it goes, what it is called.
 struct Page {
@@ -721,6 +722,10 @@ fn sidebar(out: *mut String, pages: *List(Page), current: usize, root: []u8) {
     for p, i in pages.*{ if p.section[..] == "project" { nav_link(out, root, &p, i == current, 0) } }
     out.append(format("<h4>Elsewhere</h4>\n<a href=\"{}\">GitHub</a>\n<a href=\"{}/releases\">Releases</a>\n<a href=\"{}/issues\">Issues</a>\n", .{REPO, REPO, REPO})[..])
     out.append("</div>\n</nav>\n")
+    // the menu keeps its scroll position from page to page, and the current
+    // page's link is brought into view when it is not
+    out.append(SIDE_SCRIPT)
+    out.append("\n")
 }
 
 fn toc(out: *mut String, headings: *List(Heading), links: *Links, page: *Page) {
