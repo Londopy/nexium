@@ -36,6 +36,8 @@ pub struct Node {
     z: usize
     // string lists: names, derives, modifiers
     words: List(String)
+    // the `///` text of an item or field: an index into Tree.docs, NONE when none
+    doc: usize
 }
 
 pub enum NodeKind {
@@ -58,6 +60,9 @@ pub const NONE: usize = 0xFFFFFFFFFFFFFFFF
 
 pub struct Tree {
     nodes: List(Node)
+    // doc comment runs, one entry per `parse_docs` call: the lines joined by a space, and how many there were
+    docs: List(String)
+    doc_counts: List(usize)
 }
 
 fn blank(k: NodeKind, start: usize, end: usize) -> Node {
@@ -65,7 +70,7 @@ fn blank(k: NodeKind, start: usize, end: usize) -> Node {
         .k = k, .start = start, .end = end, .name = String.new(), .text = String.new(),
         .flag = false, .flag2 = false, .a = 0, .b = 0,
         .kids = List(usize).new(), .kids2 = List(usize).new(),
-        .x = NONE, .y = NONE, .z = NONE, .words = List(String).new(),
+        .x = NONE, .y = NONE, .z = NONE, .words = List(String).new(), .doc = NONE,
     }
 }
 
@@ -294,10 +299,15 @@ impl Parser {
         return items
     }
 
+    /// The `///` lines before an item or field: their text goes to
+    /// `tree.docs`, and the index comes back (the count is beside it).
     fn parse_docs(self: *mut Self) -> usize {
         var n: usize = 0
+        var text = String.new()
         while true {
             if self.peek() == lexer.Kind.Doc {
+                if n > 0 { text.append(" ") }
+                text.append(self.toks[self.pos].text[..])
                 n += 1
                 self.bump()
             } else if self.peek() == lexer.Kind.Newline and n > 0 {
@@ -306,7 +316,9 @@ impl Parser {
                 break
             }
         }
-        return n
+        self.tree.docs.append(text)
+        self.tree.doc_counts.append(n)
+        return self.tree.docs.len - 1
     }
 
     fn parse_item(self: *mut Self) -> !usize {
@@ -498,7 +510,8 @@ impl Parser {
         n.text = export_name
         n.flag = is_pub
         n.flag2 = extern_c
-        n.a = docs
+        n.a = self.tree.doc_counts[docs]
+        n.doc = docs
         n.kids = params
         n.kids2 = wheres
         n.words = effects
@@ -545,7 +558,8 @@ impl Parser {
         n.name = name
         n.text = String.from(kind)
         n.flag = is_pub
-        n.a = docs
+        n.a = self.tree.doc_counts[docs]
+        n.doc = docs
         n.kids = fields
         n.kids2 = List(usize).new()
         n.words = type_params
@@ -575,7 +589,8 @@ impl Parser {
             if self.eat_ident("where") { constraint = try self.parse_expr() }
             var n = blank(NodeKind.Field, start, self.prev_end())
             n.name = name
-            n.a = docs
+            n.a = self.tree.doc_counts[docs]
+            n.doc = docs
             n.x = ty
             n.y = dflt
             n.z = constraint
@@ -632,7 +647,8 @@ impl Parser {
         var n = blank(NodeKind.Enum, start, self.prev_end())
         n.name = name
         n.flag = is_pub
-        n.a = docs
+        n.a = self.tree.doc_counts[docs]
+        n.doc = docs
         n.kids = variants
         n.words = type_params
         for d in derives { n.words.append(String.from("+")); n.words.append(d.clone()) }
@@ -663,7 +679,8 @@ impl Parser {
         var n = blank(NodeKind.Trait, start, self.prev_end())
         n.name = name
         n.flag = is_pub
-        n.a = docs
+        n.a = self.tree.doc_counts[docs]
+        n.doc = docs
         n.kids = methods
         n.words = assoc
         return self.tree.add(n)
@@ -729,7 +746,8 @@ impl Parser {
         var n = blank(NodeKind.Const, start, self.prev_end())
         n.name = name
         n.flag = is_pub
-        n.a = docs
+        n.a = self.tree.doc_counts[docs]
+        n.doc = docs
         n.x = ty
         n.y = value
         return self.tree.add(n)
@@ -759,7 +777,8 @@ impl Parser {
         n.name = name
         n.text = align
         n.flag = is_pub
-        n.a = docs
+        n.a = self.tree.doc_counts[docs]
+        n.doc = docs
         n.x = ty
         n.y = value
         return self.tree.add(n)
@@ -775,7 +794,8 @@ impl Parser {
         n.name = name
         n.flag = is_pub
         n.flag2 = is_distinct
-        n.a = docs
+        n.a = self.tree.doc_counts[docs]
+        n.doc = docs
         n.x = ty
         return self.tree.add(n)
     }
@@ -797,7 +817,8 @@ impl Parser {
         var n = blank(NodeKind.ErrorSet, start, self.prev_end())
         n.name = name
         n.flag = is_pub
-        n.a = docs
+        n.a = self.tree.doc_counts[docs]
+        n.doc = docs
         n.words = names
         return self.tree.add(n)
     }
@@ -3038,10 +3059,10 @@ pub fn parse_source(src: []u8) -> Parsed {
     lx.lex()
     var errors = List(String).new()
     for e in lx.errors { errors.append(String.from(e)) }
-    var p = Parser{ .toks = lx.toks.clone(), .pos = 0, .tree = Tree{ .nodes = List(Node).new() }, .errors = List(String).new(), .no_struct_lit = false }
+    var p = Parser{ .toks = lx.toks.clone(), .pos = 0, .tree = Tree{ .nodes = List(Node).new(), .docs = List(String).new(), .doc_counts = List(usize).new() }, .errors = List(String).new(), .no_struct_lit = false }
     let items = p.parse_module()
     for e in p.errors { errors.append(String.from(e)) }
-    return Parsed{ .tree = Tree{ .nodes = p.tree.nodes.clone() }, .items = items, .errors = errors }
+    return Parsed{ .tree = Tree{ .nodes = p.tree.nodes.clone(), .docs = p.tree.docs.clone(), .doc_counts = p.tree.doc_counts.clone() }, .items = items, .errors = errors }
 }
 
 /// Parse `src` and print the tree; errors are returned as text.
@@ -3050,7 +3071,7 @@ pub fn parse_and_print(src: []u8) -> (String, List(String)) {
     lx.lex()
     var errors = List(String).new()
     for e in lx.errors { errors.append(String.from(e)) }
-    var p = Parser{ .toks = lx.toks.clone(), .pos = 0, .tree = Tree{ .nodes = List(Node).new() }, .errors = List(String).new(), .no_struct_lit = false }
+    var p = Parser{ .toks = lx.toks.clone(), .pos = 0, .tree = Tree{ .nodes = List(Node).new(), .docs = List(String).new(), .doc_counts = List(usize).new() }, .errors = List(String).new(), .no_struct_lit = false }
     let items = p.parse_module()
     for e in p.errors { errors.append(String.from(e)) }
     var pr = Printer{ .tree = &p.tree, .out = String.new(), .depth = 0 }

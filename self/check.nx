@@ -1039,7 +1039,7 @@ impl Checker {
         let mid = self.mods.len
         self.mods.append(Mod{
                 .name = format("cimport:{}", .{header}), .source = String.new(), .dir = String.new(), .path = String.new(),
-                .parsed = parser.Parsed{ .tree = parser.Tree{ .nodes = List(parser.Node).new() }, .items = List(usize).new(), .errors = List(String).new() },
+                .parsed = parser.Parsed{ .tree = parser.Tree{ .nodes = List(parser.Node).new(), .docs = List(String).new(), .doc_counts = List(usize).new() }, .items = List(usize).new(), .errors = List(String).new() },
         })
         let bend = bnode.end
         let ci = cimport.import_header(header[..], &opts, &mut self.mods[mid].parsed.tree) catch |e| {
@@ -11138,7 +11138,7 @@ impl Checker {
             .k = k, .start = start, .end = end, .name = String.new(), .text = String.new(),
             .flag = false, .flag2 = false, .a = 0, .b = 0,
             .kids = List(usize).new(), .kids2 = List(usize).new(),
-            .x = NONE, .y = NONE, .z = NONE, .words = List(String).new(),
+            .x = NONE, .y = NONE, .z = NONE, .words = List(String).new(), .doc = parser.NONE,
         }
     }
 

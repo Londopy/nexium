@@ -432,7 +432,7 @@ fn blank(k: parser.NodeKind) -> parser.Node {
         .k = k, .start = 0, .end = 0, .name = String.new(), .text = String.new(),
         .flag = false, .flag2 = false, .a = 0, .b = 0,
         .kids = List(usize).new(), .kids2 = List(usize).new(),
-        .x = NONE, .y = NONE, .z = NONE, .words = List(String).new(),
+        .x = NONE, .y = NONE, .z = NONE, .words = List(String).new(), .doc = parser.NONE,
     }
 }
 

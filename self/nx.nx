@@ -18,6 +18,7 @@ import cgen
 import fmt
 import tools
 import size
+import doc
 
 const VERSION = "0.8.0"
 const RELEASE_NAME = "Annapurna: the Sickle"
@@ -45,6 +46,7 @@ pub struct Opts {
 fn usage() {
     eprintln("usage: nx <build|run|test|check|effects|audit|refcounts|leaks|size|emit-c|tir> <file.nx> [options] [-- args]", .{})
     eprintln("       nx fmt <file.nx>... [--check]", .{})
+    eprintln("       nx doc <file.nx> [-o <dir>]", .{})
     eprintln("       nx version | nx doctor", .{})
     eprintln("  -o <path>          output file", .{})
     eprintln("  --out-dir <dir>    where C and binaries go (default nx-out)", .{})
@@ -503,6 +505,22 @@ fn cmd_size(o: *Opts) -> i32 {
     return 0
 }
 
+/// `nx doc`: the HTML page for a program, into `-o` or `<out-dir>/doc`.
+fn cmd_doc(o: *Opts) -> i32 {
+    var c = check_program(o) orelse return 1
+    let stem = stem_of(o.file[..])
+    let html = doc.generate(stem, &mut c)
+    let dir = if o.out.len > 0 { o.out.clone() } else { format("{}/doc", .{o.out_dir}) }
+    io.make_dir(dir[..]) catch { }
+    let path = format("{}/{}.html", .{dir, stem})
+    io.write_file(path[..], html[..]) catch {
+        eprintln("error: cannot write {}", .{path})
+        return 1
+    }
+    println("wrote {}", .{path})
+    return 0
+}
+
 fn cmd_version() -> i32 {
     println("nx {} ({})", .{VERSION, RELEASE_NAME})
     return 0
@@ -618,6 +636,8 @@ fn main() -> u8 {
         code = cmd_audit(&o)
     } else if o.command == "refcounts" {
         code = cmd_refcounts(&o)
+    } else if o.command == "doc" {
+        code = cmd_doc(&o)
     } else if o.command == "size" {
         var so = o
         var mode_given = false
