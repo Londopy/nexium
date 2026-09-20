@@ -223,7 +223,7 @@ fn emit_with(c: *mut check.Checker, o: *Opts, entry: u8, lib_name: []u8, mode: u
 
 /// Write the C next to a current copy of the runtime header.
 fn write_c(o: *Opts, stem: []u8, text: []u8) -> ?String {
-    io.make_dir(o.out_dir[..]) catch { }
+    fs.make_dirs(o.out_dir[..]) catch { }
     let path = format("{}/{}.c", .{o.out_dir, stem})
     io.write_file(path[..], text) catch {
         eprintln("error: cannot write {}", .{path})

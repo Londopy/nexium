@@ -125,7 +125,7 @@ test "button reports a click across frames" {
 }
 ```
 
-`nx test gui/nexium_gui.nx` runs these; `cargo test` runs them too, on every
+`nx test gui/nexium_gui.nx` runs these; the test harness runs them too, on every
 platform, together with an offscreen render of the demo.
 
 ## Platform layer

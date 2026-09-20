@@ -35,16 +35,19 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Build nx
-        run: cargo build
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: "0.14.1"
+      - name: Build nx from the seed
+        shell: bash
+        run: sh bootstrap/build.sh
       - name: nx fmt --check on every .nx file the pull request touches
         run: |
           base="${{ github.event.pull_request.base.sha }}"
           bad=0
           for f in $(git diff --name-only "$base"...HEAD | grep '\.nx$'); do
             [ -f "$f" ] || continue
-            if ! ./target/debug/nx fmt "$f" --check > /dev/null 2>&1; then
+            if ! ./nx-out/bootstrap/nx2 fmt "$f" --check > /dev/null 2>&1; then
               echo "not formatted: $f (run: nx fmt $f)"; bad=1
             fi
           done

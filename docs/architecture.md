@@ -245,14 +245,16 @@ the compiler:
 
 ## Self-hosting
 
-The compiler is being rewritten in Nexium under `self/`, one stage at a
-time, each stage validated by diffing its output against the Rust compiler on
-the same input. The lexer is done and is part of `cargo test`. The parser is
-next; its AST will be an id-arena, nodes in a `List` referring to each other
-by index (see `examples/tree.nx`), which needs no recursive types and frees
-in one release. When all four stages exist, the Rust `nx` compiles the Nexium
-`nx` once, that binary compiles its own source again, and if the two outputs
-match byte for byte the language builds itself.
+The compiler is written in Nexium under `self/`, one file per stage, and
+builds itself: `bootstrap/nx.c` is the C it emits for itself, any C compiler
+turns that into `nx0`, `nx0` builds `self/nx.nx` into `nx1`, and `nx1` must
+emit the same C again (`nx2`), which is the compiler under test and the one
+releases ship (`bootstrap/build.sh`, `bootstrap/README.md`). The syntax tree
+and the typed IR are id-arenas, nodes in a `List` referring to each other by
+index (see `examples/tree.nx`), which needs no recursive types and frees in
+one release. Every stage was validated during the port by diffing its output
+against the first compiler on every source in the tree; the test harness
+that now drives the suites is itself a Nexium program, `tests/run.nx`.
 
 ## Where to look when something goes wrong
 

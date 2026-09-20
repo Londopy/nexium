@@ -52,6 +52,13 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   cache is not safe against several `zig cc` starting at once on Windows.
 - The seed `bootstrap/nx.c` is regenerated when `self/` needs a builtin
   the seed lacks, not only at a release.
+- The test harness is a Nexium program, `tests/run.nx`: it builds the
+  compiler from the seed (when the sources are newer than it), checks the
+  fixed point, and runs the examples, the spec cases, the compile-fail
+  cases, `fmt --check` on the tree, the standard library's tests, the GUI,
+  packages, `ship`, the installer, the REPL and the language server, the
+  cases on several threads. `cargo test` and the Rust harness retire; CI's
+  test jobs have no Rust toolchain.
 - Releases ship the compiler written in Nexium: the release workflow
   builds it from the C seed on each platform with Zig alone (`cc` on
   macOS), checks the tag against `self/nx.nx`, and packages that binary

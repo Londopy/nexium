@@ -340,8 +340,9 @@ sh bootstrap/build.sh     # nx.c -> nx0; nx0 builds self/nx.nx -> nx1; nx1 rebui
 | tools | [`self/fmt.nx`](self/fmt.nx), [`self/doc.nx`](self/doc.nx), [`self/tools.nx`](self/tools.nx), [`self/size.nx`](self/size.nx), [`self/manifest.nx`](self/manifest.nx), [`self/ship.nx`](self/ship.nx), [`self/lsp.nx`](self/lsp.nx), [`self/repl.nx`](self/repl.nx) | the formatter, the documentation generator, the reports, packages, `ship`, the language server, the REPL |
 
 Every example, every spec case and every compile-fail case runs through the
-bootstrapped compiler in `cargo test` and in CI, on three platforms, with a
-job that has no Rust toolchain at all. The first compiler, in Rust, is
+bootstrapped compiler, driven by a test harness that is itself a Nexium
+program (`nx run tests/run.nx`), in CI on three platforms with no Rust
+toolchain at all. The first compiler, in Rust, is
 frozen in [`bootstrap/rust/`](bootstrap/rust) with nothing left in it
 that the Nexium compiler does not do; it leaves at 1.0 (decision 90).
 
@@ -369,8 +370,8 @@ std/            the standard library in Nexium, embedded in the compiler
 self/           the compiler in Nexium, stage by stage
 gui/            nexium-gui: immediate-mode GUI in Nexium, demo, and the C platform layer
 editors/        VS Code extension and Sublime Text syntax
-examples/       programs with recorded output, run by `cargo test`
-tests/          integration tests, the spec conformance suite (tests/spec) and compile-fail cases
+examples/       programs with recorded output, run by the tests
+tests/          the harness (run.nx), the spec conformance suite (tests/spec) and compile-fail cases
 docs/           how it works, language reference, embedding guide, i18n/ translations
 assets/         logo and banner
 nexium-spec.txt          the design

@@ -35,6 +35,7 @@
 #else
 #include <sys/time.h>
 #include <unistd.h>
+#include <poll.h>
 #include <spawn.h>
 #include <sys/wait.h>
 #include <dirent.h>
@@ -886,8 +887,8 @@ NX_INLINE bool nx_cpath(nx_sl_u8 path, char* buf, size_t cap) {
 }
 /* Run a program with its stdin fed from `input`, in `cwd` when given, and
    its stdout and stderr captured. The captured text is kept for
-   nx_last_stdout / nx_last_stderr to hand over. */
-static nx_string nx_cap_out, nx_cap_err;
+   nx_last_stdout / nx_last_stderr to hand over; each thread has its own. */
+static NX_THREAD_LOCAL nx_string nx_cap_out, nx_cap_err;
 NX_INLINE void nx_cap_reset(nx_ctx* c) {
     nx_str_free(c, &nx_cap_out); nx_str_free(c, &nx_cap_err);
     nx_cap_out.ptr = NULL; nx_cap_out.len = 0; nx_cap_out.cap = 0; nx_cap_out.ar = c->arena;
@@ -907,6 +908,14 @@ NX_INLINE nx_string nx_last_stderr(nx_ctx* c) {
 NX_INLINE void nx_win_drain(nx_ctx* c, HANDLE h, nx_string* out) {
     char buf[65536]; DWORD n;
     while (ReadFile(h, buf, sizeof buf, &n, NULL) && n > 0) nx_str_append(c, out, (const uint8_t*)buf, n);
+}
+/* stderr is drained on a helper thread while this one drains stdout, so a child
+   that fills one pipe before finishing the other cannot stall */
+typedef struct { nx_ctx* c; HANDLE h; nx_string* out; } nx_win_drain_job;
+static DWORD WINAPI nx_win_drain_thread(LPVOID p) {
+    nx_win_drain_job* j = (nx_win_drain_job*)p;
+    nx_win_drain(j->c, j->h, j->out);
+    return 0;
 }
 #endif
 NX_INLINE bool nx_run_capture(nx_ctx* c, const nx_sl_u8* argv, size_t argc, nx_sl_u8 input, nx_sl_u8 cwd, int* code) {
@@ -952,8 +961,12 @@ NX_INLINE bool nx_run_capture(nx_ctx* c, const nx_sl_u8* argv, size_t argc, nx_s
     if (!ok) { CloseHandle(in_w); CloseHandle(out_r); CloseHandle(err_r); return false; }
     if (input.len > 0) { DWORD w; WriteFile(in_w, input.ptr, (DWORD)input.len, &w, NULL); }
     CloseHandle(in_w);
+    nx_string err_buf; err_buf.ptr = NULL; err_buf.len = 0; err_buf.cap = 0; err_buf.ar = c->arena;
+    nx_win_drain_job job; job.c = c; job.h = err_r; job.out = &err_buf;
+    HANDLE drain = CreateThread(NULL, 0, nx_win_drain_thread, &job, 0, NULL);
     nx_win_drain(c, out_r, &nx_cap_out);
-    nx_win_drain(c, err_r, &nx_cap_err);
+    if (drain) { WaitForSingleObject(drain, INFINITE); CloseHandle(drain); } else nx_win_drain(c, err_r, &err_buf);
+    nx_cap_err = err_buf;
     CloseHandle(out_r); CloseHandle(err_r);
     WaitForSingleObject(pi.hProcess, INFINITE);
     DWORD ec = 1;
@@ -984,9 +997,22 @@ NX_INLINE bool nx_run_capture(nx_ctx* c, const nx_sl_u8* argv, size_t argc, nx_s
     nx_free_bytes(c, av, (argc + 1) * sizeof(char*));
     if (input.len > 0) { size_t off = 0; while (off < input.len) { ssize_t w = write(inp[1], input.ptr + off, input.len - off); if (w <= 0) break; off += (size_t)w; } }
     close(inp[1]);
+    /* both pipes are drained as the child fills them, so a child that fills one
+       before finishing the other cannot stall */
     char buf[65536]; ssize_t n;
-    while ((n = read(outp[0], buf, sizeof buf)) > 0) nx_str_append(c, &nx_cap_out, (const uint8_t*)buf, (size_t)n);
-    while ((n = read(errp[0], buf, sizeof buf)) > 0) nx_str_append(c, &nx_cap_err, (const uint8_t*)buf, (size_t)n);
+    struct pollfd pfd[2];
+    pfd[0].fd = outp[0]; pfd[0].events = POLLIN;
+    pfd[1].fd = errp[0]; pfd[1].events = POLLIN;
+    int open_fds = 2;
+    while (open_fds > 0) {
+        if (poll(pfd, 2, -1) < 0) { if (errno == EINTR) continue; break; }
+        for (int i = 0; i < 2; i++) {
+            if (pfd[i].fd < 0 || !(pfd[i].revents & (POLLIN | POLLHUP | POLLERR))) continue;
+            n = read(pfd[i].fd, buf, sizeof buf);
+            if (n > 0) nx_str_append(c, i == 0 ? &nx_cap_out : &nx_cap_err, (const uint8_t*)buf, (size_t)n);
+            else if (n == 0 || errno != EINTR) { pfd[i].fd = -1; open_fds--; }
+        }
+    }
     close(outp[0]); close(errp[0]);
     int st = 0;
     if (waitpid(pid, &st, 0) < 0) return false;

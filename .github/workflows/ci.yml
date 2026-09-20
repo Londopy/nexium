@@ -15,6 +15,9 @@ env:
 jobs:
   test:
     name: test (${{ matrix.os }})
+    # `nx` from source with no Rust toolchain: the C seed, the compiler in
+    # Nexium building itself to a fixed point, and every suite through it,
+    # run by the harness written in Nexium (tests/run.nx).
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -23,33 +26,27 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - name: Install Zig (C compiler for nx)
+      - name: Install Zig (the C compiler; the only toolchain nx needs)
         uses: mlugg/setup-zig@v2
         with:
           version: ${{ env.ZIG_VERSION }}
 
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - name: Build nx from the seed and reach the fixed point
+        shell: bash
+        run: sh bootstrap/build.sh
 
-      - name: Build
-        run: cargo build --locked
-
-      - name: Test
-        run: cargo test --locked
+      - name: Every suite, through the harness written in Nexium
+        shell: bash
+        run: |
+          nx=nx-out/bootstrap/nx2; [ -f "$nx.exe" ] && nx="$nx.exe"
+          "$nx" run tests/run.nx
 
       - name: Ship the example library
-        run: cargo run --locked -- ship examples/ropesim.nx
+        shell: bash
+        run: |
+          nx=nx-out/bootstrap/nx2; [ -f "$nx.exe" ] && nx="$nx.exe"
+          if [ "$RUNNER_OS" = macOS ]; then export NX_CC=cc; else export NX_ZIG=zig; fi
+          "$nx" ship examples/ropesim.nx
 
       - name: Use the shipped Rust crate
         shell: bash
@@ -64,7 +61,8 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist-win | Out-Null
-          Copy-Item target/debug/nx.exe, README.md, LICENSE, CHANGELOG.md dist-win/
+          Copy-Item nx-out/bootstrap/nx2.exe dist-win/nx.exe
+          Copy-Item README.md, LICENSE, CHANGELOG.md dist-win/
           Copy-Item -Recurse examples, std, docs dist-win/
           pip install pillow
           python scripts/make_icon.py
@@ -91,40 +89,15 @@ jobs:
           print("ok")
           EOF
 
-  bootstrap:
-    name: bootstrap (${{ matrix.os }})
-    # `nx` from source with no Rust toolchain: the C seed, the compiler in
-    # Nexium building itself to a fixed point, and the spec suite through it.
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+  rust:
+    name: the frozen Rust crate builds
+    # bootstrap/rust/ still compiles until it is deleted at 1.0
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - name: Install Zig (the C compiler; the only toolchain this job has)
-        uses: mlugg/setup-zig@v2
-        with:
-          version: ${{ env.ZIG_VERSION }}
-      - name: Build nx from the seed and reach the fixed point
-        shell: bash
-        run: sh bootstrap/build.sh
-      - name: The spec suite through the bootstrapped compiler
-        shell: bash
-        run: |
-          # the runner's bash has -e; a spec case may exit non-zero on purpose
-          set +e -o pipefail
-          nx=nx-out/bootstrap/nx2; [ -f "$nx.exe" ] && nx="$nx.exe"
-          if [ "$RUNNER_OS" = macOS ]; then export NX_CC=cc; else export NX_ZIG=zig; fi
-          "$nx" run examples/hello.nx --out-dir nx-out/boot-spec || exit 1
-          bad=0
-          for f in tests/spec/*.nx; do
-            want=$(grep -m1 '^// EXIT:' "$f" | sed 's#// EXIT: *##' || true); want=${want:-0}
-            got=$("$nx" run "$f" --out-dir nx-out/boot-spec 2>&1 | tr -d '\r' | sed 's#\\#/#g'); code=$?
-            exp=$(tr -d '\r' < "${f%.nx}.expected")
-            if [ "$got" != "$exp" ] || [ "$code" != "$want" ]; then echo "FAIL $f (exit $code, want $want)"; diff <(echo "$exp") <(echo "$got") | head -5; bad=1; fi
-          done
-          exit $bad
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --locked
+      - run: cargo test --locked
 
   editors:
     name: editor support

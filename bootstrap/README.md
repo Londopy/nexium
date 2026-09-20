@@ -14,9 +14,9 @@ How `nx` is built on a machine that has no `nx`.
   linked against the runtime header the seed carries, `nx2` against the one
   in `runtime/`, so a runtime change is live in `nx2`.
 - `rust/` — the first compiler, written in Rust, frozen at 0.7 semantics.
-  It still builds (`cargo build`) and hosts the test harness; every tool it
-  held is now in `self/`. It is deleted at 1.0. Language changes do not go
-  in it.
+  It still builds (`cargo build`); every tool it held is now in `self/` and
+  the test harness is `tests/run.nx`. It is deleted at 1.0. Language changes
+  do not go in it.
 
-`cargo test` runs the same chain and every language suite through `nx2`.
+`nx run tests/run.nx` runs the same chain and every suite through `nx2`.
 CI runs `build.sh` on the three platforms with no Rust toolchain installed.

@@ -8,16 +8,16 @@ Start with `docs/architecture.md` for a map of the compiler.
 ## Building
 
 ```bash
-sh bootstrap/build.sh  # the compiler in Nexium from the C seed, no Rust: nx-out/bootstrap/nx2
-cargo build            # the frozen Rust compiler and the tools still in it, target/debug/nx
-cargo test             # builds nx2 from the seed and runs every example, spec case and
-                       # compile-fail case through it; the fixed point; the tool tests
+sh bootstrap/build.sh              # the compiler in Nexium from the C seed, no Rust: nx-out/bootstrap/nx2
+nx-out/bootstrap/nx2 run tests/run.nx   # every suite through it (the harness is a Nexium program)
+nx-out/bootstrap/nx2 run tests/run.nx -- spec fmt   # only these suites
 ```
 
 `nx` needs a C compiler. It looks for `zig` on your `PATH` and uses `zig cc`;
-pass `--cc clang` (or `--cc gcc`) to use another one. The integration tests
-skip the parts that need a C compiler when `zig` is missing, so `cargo test`
-still passes on a machine without it, but you will want it installed.
+pass `--cc clang` (or `--cc gcc`) to use another one. The harness rebuilds
+the compiler when anything under `self/`, `std/`, `runtime/` or the seed is
+newer than it, and skips the parts of the `ship` suite whose tools (`cargo`,
+`npm`) are not installed.
 
 ## Layout
 
@@ -27,17 +27,21 @@ still passes on a machine without it, but you will want it installed.
 | `self/check.nx`, `self/cimport.nx` | name resolution, type checking, monomorphization, effects, the compile-time interpreter, C header import |
 | `self/cgen.nx` | the C backend |
 | `self/nx.nx` | the `nx` driver: build, run, test, check, emit-c, tir |
-| `bootstrap/` | the C seed `nx.c`, the build scripts, and `rust/`: the frozen first compiler with the tools not yet ported (`fmt`, `doc`, `lsp`, `ship`, packages, the REPL) |
+| `self/fmt.nx`, `self/doc.nx`, `self/tools.nx`, `self/size.nx`, `self/manifest.nx`, `self/ship.nx`, `self/lsp.nx`, `self/repl.nx` | the tools: formatter, docs, reports, packages, `ship`, the language server, the REPL |
+| `bootstrap/` | the C seed `nx.c`, the build scripts, and `rust/`: the frozen first compiler, deleted at 1.0 |
 | `runtime/nx_rt.h` | the C runtime, embedded into generated code |
 | `examples/` | programs with `.expected` output, run by the tests |
+| `tests/run.nx` | the test harness |
+| `tests/spec/` | the specification's conformance cases, one per claim, with recorded output |
 | `tests/compile_fail/` | programs that must be rejected, with `// EXPECT:` lines |
 
 ## Adding a test
 
 - A behaviour that should work: add or extend a program in `examples/`, run it
   with `nx run`, and save the output as `examples/<name>.expected` (the
-  integration test compares stdout+stderr). Add the name to the list in
-  `tests/examples.rs` if it is a new file.
+  harness compares stdout+stderr). Add the name to the list in
+  `suite_examples` in `tests/run.nx` if it is a new file. A claim the
+  specification makes gets a case in `tests/spec/` instead, picked up by name.
 - A program that must be rejected: add `tests/compile_fail/<name>.nx` with one
   or more `// EXPECT: <substring of the diagnostic>` lines at the top.
 
@@ -87,7 +91,8 @@ line under `Unreleased` in the right category (`Added`, `Changed`,
 ## Pull requests
 
 Keep them focused. Describe what changed and why, link the issue, and make
-sure `cargo test` passes on your machine. CI runs on Windows, Linux, and macOS.
+sure `nx run tests/run.nx` passes on your machine. CI runs on Windows, Linux,
+and macOS.
 
 Every pull request has to pass, before it can merge:
 
@@ -142,10 +147,10 @@ naming the covered accounts instead.
 1. Move the `Unreleased` entries in `CHANGELOG.md` under a new
    `## [x.y.z] - YYYY-MM-DD` heading and add its compare link at the bottom.
    `patchnotes validate CHANGELOG.md` must pass.
-2. Set the same version in `Cargo.toml` and run `cargo build` so
-   `Cargo.lock` follows.
+2. Set the same version and release name in `self/nx.nx` (`VERSION`,
+   `RELEASE_NAME`) and regenerate the seed:
+   `nx emit-c self/nx.nx --mode safe > bootstrap/nx.c`.
 3. Tag and push: `git tag vx.y.z && git push origin vx.y.z`. The release
-   workflow refuses a tag that does not match `Cargo.toml`, builds `nx` for
-   Windows, Linux, and macOS, and publishes a GitHub release with the
-   changelog section as its notes.
-4. Optionally `cargo publish` for `cargo install nexium`.
+   workflow refuses a tag that does not match `self/nx.nx`, builds `nx` from
+   the seed for Windows, Linux, and macOS, and publishes a GitHub release
+   with the changelog section as its notes.

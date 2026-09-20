@@ -7,7 +7,7 @@ The core containers (`List`, `String`, `Map`), formatting, and the `math`,
 builtins and are documented in [`language.md`](language.md).
 
 Sources are in [`std/`](../std); each module carries its own `test` blocks,
-run by `nx test std/<module>.nx` and by `cargo test`. This file is generated
+run by `nx test std/<module>.nx` and by the test harness. This file is generated
 by `scripts/std_docs.py` from the doc comments.
 
 | module | what |

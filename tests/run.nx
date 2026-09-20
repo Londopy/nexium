@@ -1,0 +1,590 @@
+//! The test harness, a Nexium program: it builds the compiler from the C
+//! seed with no Rust and runs every suite through the result.
+//!
+//!     nx run tests/run.nx                  every suite
+//!     nx run tests/run.nx -- spec fmt      only these
+//!     nx run tests/run.nx -- --jobs 4      how many cases run at once
+//!
+//! The chain is `bootstrap/nx.c` -> `nx0` (a C compiler), `nx0` builds
+//! `self/nx.nx` -> `nx1`, `nx1` emits its own C -> `nx2`; `nx2` is the
+//! compiler under test (`nx1` runs on the runtime the seed carries, `nx2` on
+//! the one in the tree). It is rebuilt when anything under `self/`, `std/`,
+//! `runtime/` or the seed is newer than it. Every suite records what failed;
+//! the exit code is the number of failures, capped at 100.
+//!
+//! Suites: bootstrap (the fixed point), examples, spec, compile_fail, fmt,
+//! std, gui, packages, ship, installer, repl, lsp.
+
+import std.fs
+import std.process
+import std.thread
+import std.strings
+
+/// The harness's view of the machine: where the tree is, which compiler is
+/// under test, and how C is compiled here.
+struct Env {
+    root: String
+    nx: String
+    windows: bool
+    macos: bool
+    jobs: usize
+}
+
+/// One case of a suite: what to run and what to expect.
+struct Case {
+    // "example", "test" (nx test), "spec", "compile_fail", "std"
+    kind: String
+    path: String
+}
+
+/// A worker's share of cases and what it found wrong.
+struct Job {
+    env: Env
+    cases: List(Case)
+    failures: List(String)
+}
+
+fn env_clone(e: *Env) -> Env {
+    return Env{ .root = e.root.clone(), .nx = e.nx.clone(), .windows = e.windows, .macos = e.macos, .jobs = e.jobs }
+}
+
+// ----- running programs -------------------------------------------------------
+
+/// Run a program from the repository root and capture what it printed.
+fn run(e: *Env, argv: [][]u8) -> process.Output {
+    return run_in(e, argv, "", e.root[..])
+}
+
+fn run_in(e: *Env, argv: [][]u8, stdin: []u8, cwd: []u8) -> process.Output {
+    return process.run_with(argv, process.Options{ .stdin = stdin, .cwd = cwd }) catch {
+        return process.Output{ .code = -1, .stdout = String.new(), .stderr = format("cannot run {}", .{argv[0]}) }
+    }
+}
+
+fn nx(e: *Env, args: [][]u8) -> process.Output {
+    var argv = List([]u8).new()
+    argv.append(e.nx[..])
+    for a in args { argv.append(a) }
+    return run(e, argv[..])
+}
+
+fn nx_in(e: *Env, args: [][]u8, stdin: []u8, cwd: []u8) -> process.Output {
+    var argv = List([]u8).new()
+    argv.append(e.nx[..])
+    for a in args { argv.append(a) }
+    return run_in(e, argv[..], stdin, cwd)
+}
+
+/// The host C compiler builds one emitted file into an executable.
+fn build_c(e: *Env, c_file: []u8, exe_path: []u8) -> ?String {
+    var argv = List([]u8).new()
+    if e.macos { argv.append("cc") } else { argv.append("zig"); argv.append("cc") }
+    for a in ["-std=gnu11", "-O2", "-w", "-fno-strict-aliasing", "-o"] { argv.append(a) }
+    argv.append(exe_path)
+    argv.append(c_file)
+    if e.windows { argv.append("-lws2_32") } else if !e.macos { argv.append("-lm"); argv.append("-lc") }
+    let out = run(e, argv[..])
+    if out.code != 0 { return format("{} did not build:\n{}", .{c_file, out.stderr}) }
+    return null
+}
+
+fn is_program(path: []u8) -> bool {
+    return path.ends_with(".nx")
+}
+
+/// Text as the recorded outputs store it: LF line ends, forward slashes.
+fn normalize(s: []u8) -> String {
+    return strings.replace(strings.replace(s, "\r\n", "\n")[..], "\\", "/")
+}
+
+/// Two texts must match; on a mismatch, the first line that differs.
+fn same_text(expected: []u8, got: []u8, what: []u8) -> ?String {
+    if expected == got { return null }
+    let el = expected.lines()
+    let gl = got.lines()
+    var first = if el.len < gl.len { el.len } else { gl.len }
+    for a, i in el {
+        if i >= gl.len { break }
+        if a != gl[i] { first = i; break }
+    }
+    let eline = if first < el.len { el[first] } else { "<end>" }
+    let gline = if first < gl.len { gl[first] } else { "<end>" }
+    return format("{} at line {} ({} vs {} lines):\n  expected: {}\n  got:      {}", .{what, first + 1, el.len, gl.len, eline, gline})
+}
+
+fn tree_files(dir: []u8) -> List(String) {
+    var out = List(String).new()
+    let names = fs.list(dir) catch { return out }
+    for n in names { if is_program(n[..]) { out.append(fs.join(dir, n[..])) } }
+    return out
+}
+
+fn newest(dir: []u8) -> i64 {
+    var t: i64 = 0
+    let files = fs.walk(dir) catch { return t }
+    for f in files {
+        let m = fs.modified(f[..]) catch { continue }
+        if m > t { t = m }
+    }
+    return t
+}
+
+// ----- the bootstrap chain ------------------------------------------------------
+
+/// The compiler under test, built from the seed when it is missing or
+/// older than the sources it comes from.
+fn bootstrap(e: *mut Env, failures: *mut List(String), force: bool) -> bool {
+    let out = fs.join(e.root[..], "nx-out/bootstrap")
+    fs.make_dirs(out[..]) catch { }
+    let exe = if e.windows { ".exe" } else { "" }
+    let nx0 = format("{}/nx0{}", .{out, exe})
+    let nx1 = format("{}/nx1{}", .{out, exe})
+    let nx2 = format("{}/nx2{}", .{out, exe})
+    let c1 = format("{}/nx1.c", .{out})
+    e.nx = nx2.clone()
+    let seed = fs.join(e.root[..], "bootstrap/nx.c")
+    var fresh = !force and fs.exists(nx2[..]) and fs.exists(c1[..])
+    if fresh {
+        let built = fs.modified(nx2[..]) catch { 0 }
+        let seed_at = fs.modified(seed[..]) catch { 0 }
+        for d in ["self", "std", "runtime"] { if newest(fs.join(e.root[..], d)[..]) > built { fresh = false } }
+        if seed_at > built { fresh = false }
+    }
+    if fresh {
+        println("bootstrap: {} is current", .{nx2})
+        return true
+    }
+    println("bootstrap: stage 0, the C compiler builds nx0 from the seed", .{})
+    if let err = build_c(e, seed[..], nx0[..]) { failures.append(err); return false }
+    println("bootstrap: stage 1, nx0 builds self/nx.nx", .{})
+    let args1 = [nx0[..], "build", "self/nx.nx", "--mode", "safe", "-o", nx1[..], "--out-dir", out[..]]
+    let b1 = run(e, args1[..])
+    if b1.code != 0 { failures.append(format("the seed compiler could not build self/nx.nx:\n{}", .{b1.stderr})); return false }
+    println("bootstrap: stage 2, nx1 emits its own C, the C compiler builds nx2", .{})
+    let args2 = [nx1[..], "emit-c", "self/nx.nx", "--mode", "safe"]
+    let em = run(e, args2[..])
+    if em.code != 0 { failures.append(format("nx1 could not emit self/nx.nx:\n{}", .{em.stderr})); return false }
+    fs.write(c1[..], em.stdout[..]) catch { failures.append(String.from("cannot write nx1.c")); return false }
+    if let err = build_c(e, c1[..], nx2[..]) { failures.append(err); return false }
+    return true
+}
+
+/// `nx2` emits the C it was built from, and runs a program.
+fn suite_bootstrap(e: *Env, failures: *mut List(String)) {
+    let out = fs.join(e.root[..], "nx-out/bootstrap")
+    let c1 = fs.read(format("{}/nx1.c", .{out})[..]) catch { failures.append(String.from("bootstrap: nx1.c is missing")); return }
+    let again = nx(e, ["emit-c", "self/nx.nx", "--mode", "safe"][..])
+    if again.code != 0 { failures.append(format("bootstrap: nx2 could not emit self/nx.nx:\n{}", .{again.stderr})); return }
+    if let d = same_text(c1[..], again.stdout[..], "bootstrap: nx1 and nx2 emit different C for self/nx.nx") { failures.append(d); return }
+    let hello = nx(e, ["run", "examples/hello.nx", "--out-dir", out[..]][..])
+    if hello.code != 0 { failures.append(format("bootstrap: nx2 could not run hello:\n{}", .{hello.stderr})); return }
+    let expected = fs.read(fs.join(e.root[..], "examples/hello.expected")[..]) catch { String.new() }
+    if let d = same_text(normalize(expected[..])[..].trim(), normalize(hello.stdout[..])[..].trim(), "bootstrap: hello through nx2") { failures.append(d) }
+    let seed = fs.read(fs.join(e.root[..], "bootstrap/nx.c")[..]) catch { String.new() }
+    if seed[..] != c1[..] { println("note: bootstrap/nx.c is behind self/: regenerate it (nx emit-c self/nx.nx --mode safe > bootstrap/nx.c)", .{}) }
+    println("bootstrap: the fixed point holds", .{})
+}
+
+// ----- cases that run in parallel -------------------------------------------------
+
+/// A recorded program: its output and exit code must match.
+fn run_case(e: *Env, c: *Case) -> ?String {
+    let kind = c.kind[..]
+    let path = c.path[..]
+    let out_dir = format("{}/nx-out/cases/{}", .{e.root, fs.stem(path)})
+    if kind == "example" or kind == "test" or kind == "spec" {
+        let sub = if kind == "test" { "test" } else { "run" }
+        let out = nx(e, [sub, path, "--out-dir", out_dir[..]][..])
+        var got = normalize(out.stdout[..])
+        got.append(normalize(out.stderr[..])[..])
+        let expected = normalize((fs.read(fs.with_extension(path, "expected")[..]) catch { String.new() })[..])
+        fs.remove_all(out_dir[..]) catch { }
+        if let d = same_text(expected[..].trim(), got[..].trim(), format("output of {} differs", .{path})[..]) { return d }
+        if kind == "spec" {
+            let text = fs.read(path) catch { String.new() }
+            var want: i32 = 0
+            for l in text[..].lines() { if let rest = strings.strip_prefix(l, "// EXIT:") { want = rest.trim().parse_int(i32) catch { 0 } } }
+            if out.code != want { return format("exit code of {} is {}, expected {}", .{path, out.code, want}) }
+        }
+        return null
+    }
+    if kind == "compile_fail" {
+        let text = fs.read(path) catch { return format("cannot read {}", .{path}) }
+        var expects = List(String).new()
+        for l in text[..].lines() { if let rest = strings.strip_prefix(l, "// EXPECT:") { expects.append(String.from(rest.trim())) } }
+        if expects.len == 0 { return format("{} has no // EXPECT: line", .{path}) }
+        let out = nx(e, ["check", path][..])
+        if out.code == 0 { return format("{} was accepted but should fail", .{path}) }
+        let diag = normalize(out.stderr[..])
+        for x in expects {
+            if diag[..].find(x[..]) == null { return format("{}: expected a diagnostic containing `{}`, got:\n{}", .{path, x, diag}) }
+        }
+        return null
+    }
+    if kind == "std" {
+        let out = nx(e, ["test", path][..])
+        if out.code != 0 { return format("std tests failed for {}:\n{}{}", .{path, out.stdout, out.stderr}) }
+        return null
+    }
+    return format("unknown case kind {}", .{kind})
+}
+
+fn run_job(j: *mut Job) -> usize {
+    for c in j.cases {
+        if let f = run_case(&j.env, &c) { j.failures.append(f) }
+    }
+    return j.failures.len
+}
+
+/// Run cases on `jobs` threads; the failures, in case order per thread.
+fn run_cases(e: *Env, cases: *List(Case), failures: *mut List(String)) {
+    let n = if e.jobs < 1 { 1 } else { e.jobs }
+    fs.make_dirs(fs.join(e.root[..], "nx-out/cases")[..]) catch { }
+    var jobs = List(Job).new()
+    for i in 0..n { jobs.append(Job{ .env = env_clone(e), .cases = List(Case).new(), .failures = List(String).new() }) }
+    for c, i in cases { jobs[i % n].cases.append(Case{ .kind = c.kind.clone(), .path = c.path.clone() }) }
+    var threads = List(thread.Thread(Job, usize)).new()
+    while jobs.len > 0 {
+        let j = jobs.pop().?
+        threads.append(thread.spawn(Job, usize, run_job, j))
+    }
+    var ti = threads.len
+    while ti > 0 {
+        ti -= 1
+        _ = threads[ti].join()
+        let done = threads[ti].arg()
+        for f in done.failures { failures.append(f.clone()) }
+    }
+}
+
+fn suite_examples(e: *Env, failures: *mut List(String)) {
+    var cases = List(Case).new()
+    for name in ["hello", "tour", "binary", "ownership", "generics", "control", "ctest", "arena", "dyn", "parallel", "cimport", "process", "tree", "own", "stdlib", "json", "guard_scope", "records", "binary_sizes"] {
+        cases.append(Case{ .kind = String.from("example"), .path = format("examples/{}.nx", .{name}) })
+    }
+    cases.append(Case{ .kind = String.from("test"), .path = String.from("examples/tests.nx") })
+    run_cases(e, &cases, failures)
+    println("examples: {} programs", .{cases.len})
+}
+
+fn suite_spec(e: *Env, failures: *mut List(String)) {
+    var cases = List(Case).new()
+    for f in tree_files("tests/spec") { cases.append(Case{ .kind = String.from("spec"), .path = f.clone() }) }
+    if cases.len == 0 { failures.append(String.from("spec: no cases found")); return }
+    run_cases(e, &cases, failures)
+    println("spec: {} cases", .{cases.len})
+}
+
+fn suite_compile_fail(e: *Env, failures: *mut List(String)) {
+    var cases = List(Case).new()
+    for f in tree_files("tests/compile_fail") { cases.append(Case{ .kind = String.from("compile_fail"), .path = f.clone() }) }
+    if cases.len == 0 { failures.append(String.from("compile_fail: no cases found")); return }
+    run_cases(e, &cases, failures)
+    println("compile_fail: {} cases", .{cases.len})
+}
+
+/// Every module of the standard library passes its own tests.
+fn suite_std(e: *Env, failures: *mut List(String)) {
+    var cases = List(Case).new()
+    for f in tree_files("std") { cases.append(Case{ .kind = String.from("std"), .path = f.clone() }) }
+    run_cases(e, &cases, failures)
+    println("std: {} modules", .{cases.len})
+}
+
+/// `nx fmt --check` passes on every source in the tree: formatting is
+/// idempotent and the sources are canonical.
+fn suite_fmt(e: *Env, failures: *mut List(String)) {
+    var args = List([]u8).new()
+    args.append("fmt")
+    var files = List(String).new()
+    for dir in ["examples", "std", "gui", "self", "tests/spec", "tests/compile_fail"] { for f in tree_files(dir) { files.append(f.clone()) } }
+    for f in files { args.append(f[..]) }
+    args.append("--check")
+    let out = nx(e, args[..])
+    if out.code != 0 { failures.append(format("fmt: sources are not canonically formatted:\n{}{}", .{out.stdout, out.stderr})) }
+    println("fmt: {} files", .{files.len})
+}
+
+// ----- the tool suites ------------------------------------------------------------
+
+fn program_found(e: *Env, name: []u8) -> bool {
+    let out = run(e, [name, "--version"][..])
+    return out.code == 0
+}
+
+/// `nx ship` on a library: the header, the Python package and wheel, the
+/// Rust crate (built when cargo is around), the npm package (run when node is).
+fn suite_ship(e: *Env, failures: *mut List(String)) {
+    let out_dir = fs.join(e.root[..], "nx-out/ship-test")
+    fs.remove_all(out_dir[..]) catch { }
+    let out = nx(e, ["ship", "examples/ropesim.nx", "--out-dir", out_dir[..]][..])
+    if out.code != 0 { failures.append(format("ship: failed:\n{}", .{out.stderr})); return }
+    let lib = fs.join(out_dir[..], "ropesim")
+    for rel in ["ropesim.h", "python/ropesim/__init__.py", "rust/Cargo.toml", "node/index.js", "node/index.d.ts", "node/package.json"] {
+        if !fs.exists(fs.join(lib[..], rel)[..]) { failures.append(format("ship: {} was not produced", .{rel})) }
+    }
+    var has_wheel = false
+    for n in fs.list(lib[..]) catch { List(String).new() } { if n[..].ends_with(".whl") { has_wheel = true } }
+    if !has_wheel { failures.append(String.from("ship: no wheel produced")) }
+    let dts = fs.read(fs.join(lib[..], "node/index.d.ts")[..]) catch { String.new() }
+    if dts[..].find("export function dot(a: Float64Array | ArrayLike<number>, b: Float64Array | ArrayLike<number>): number;") == null {
+        failures.append(format("ship: typings:\n{}", .{dts}))
+    }
+    if program_found(e, "cargo") {
+        let build = run_in(e, ["cargo", "build", "-q"][..], "", fs.join(lib[..], "rust")[..])
+        if build.code != 0 { failures.append(format("ship: the generated crate does not build:\n{}", .{build.stderr})) }
+    } else {
+        println("ship: cargo not found; the Rust crate is not built", .{})
+    }
+    let npm = if e.windows { "npm.cmd" } else { "npm" }
+    let node_dir = fs.join(lib[..], "node")
+    if program_found(e, npm) {
+        let install = run_in(e, [npm, "install", "--silent", "--no-audit", "--no-fund"][..], "", node_dir[..])
+        if install.code == 0 {
+            let script = "const m = require('.'); const pos = new Float64Array([0, 1, 2]); const r = m.simulate(pos, 0.1, 3); let err = ''; try { m.dot([1, 2], [1]); } catch (e) { err = e.errorName; } let panic = ''; try { m.divide(1n, 0n); } catch (e) { panic = e.name; } console.log(JSON.stringify({ dot: m.dot([1, 2, 3], [4, 5, 6]), sum: m.checksum('hello') > 0, moved: pos[1] !== 1, r: r > 0, err, panic, div: String(m.divide(84n, 2n)) }));"
+            let node = run_in(e, ["node", "-e", script][..], "", node_dir[..])
+            if node.code != 0 {
+                failures.append(format("ship: the node package failed:\n{}", .{node.stderr}))
+            } else if node.text() != "{\"dot\":32,\"sum\":true,\"moved\":true,\"r\":true,\"err\":\"InvalidInput\",\"panic\":\"NexiumPanic\",\"div\":\"42\"}" {
+                failures.append(format("ship: the node package answered:\n{}", .{node.stdout}))
+            }
+        } else {
+            println("ship: npm install failed (offline?); the node run is skipped", .{})
+        }
+    } else {
+        println("ship: npm not found; the node package is not run", .{})
+    }
+    fs.remove_all(out_dir[..]) catch { }
+    println("ship: the library artifacts", .{})
+}
+
+/// The GUI's headless tests and the offscreen demo; then a build from
+/// inside the directory with a bare file name (the declared C source must
+/// still be compiled in).
+fn suite_gui(e: *Env, failures: *mut List(String)) {
+    let t = nx(e, ["test", "gui/nexium_gui.nx"][..])
+    if t.code != 0 { failures.append(format("gui: tests failed:\n{}{}", .{t.stdout, t.stderr})); return }
+    let shot = fs.join(e.root[..], "nx-out/demo-shot.ppm")
+    let d = nx(e, ["run", "gui/demo.nx", "--", "--shot", shot[..]][..])
+    if d.code != 0 { failures.append(format("gui: the offscreen demo failed:\n{}", .{d.stderr})); return }
+    let size = fs.size(shot[..]) catch { 0 }
+    if size <= 640 * 440 * 3 { failures.append(String.from("gui: the screenshot was not written")) }
+    let bare = nx_in(e, ["build", "demo.nx", "--out-dir", fs.join(e.root[..], "nx-out/demo-bare")[..]][..], "", fs.join(e.root[..], "gui")[..])
+    if bare.code != 0 { failures.append(format("gui: a build with a bare file name failed:\n{}", .{bare.stderr})) }
+    println("gui: headless tests, the demo, a bare-name build", .{})
+}
+
+/// Packages: a manifest with a path dependency, `import dep` (src/lib.nx),
+/// `import dep.module`, a package importing its own sibling, and a lock file.
+fn suite_packages(e: *Env, failures: *mut List(String)) {
+    let base = fs.join(e.root[..], "nx-out/pkg-test")
+    fs.remove_all(base[..]) catch { }
+    let files = [
+        ("words/nexium.toml", "[package]\nname = \"words\"\nversion = \"0.1.0\"\n"),
+        ("words/src/lib.nx", "pub fn planet() -> []u8 { return \"world\" }\n"),
+        ("greet/nexium.toml", "[package]\nname = \"greet\"\nversion = \"0.1.0\"\n\n[dependencies]\nwords = { path = \"../words\" }\n"),
+        ("greet/src/lib.nx", "import util\nimport words\npub fn hello() -> String { return util.wrap(words.planet()) }\n"),
+        ("greet/src/util.nx", "pub fn wrap(s: []u8) -> String { var out = String.from(\"hello, \"); out.append(s); return out }\n"),
+        ("greet/src/extra.nx", "pub fn punct() -> []u8 { return \"!\" }\n"),
+        ("app/nexium.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\ngreet = { path = \"../greet\" }\n"),
+        ("app/main.nx", "import greet\nimport greet.extra\nfn main() {\n    println(\"{}{}\", .{greet.hello(), extra.punct()})\n}\n"),
+    ]
+    for f in files {
+        let p = fs.join(base[..], f.0)
+        fs.make_dirs(fs.parent(p[..])) catch { }
+        fs.write(p[..], f.1) catch { failures.append(format("packages: cannot write {}", .{p})); return }
+    }
+    let app = fs.join(base[..], "app")
+    let out = nx_in(e, ["run", "main.nx"][..], "", app[..])
+    if out.code != 0 { failures.append(format("packages: the program failed:\n{}", .{out.stderr})); return }
+    if out.text() != "hello, world!" { failures.append(format("packages: the program printed {}", .{out.stdout})) }
+    let fetch_args = ["fetch"]
+    let fetch = nx_in(e, fetch_args[..], "", app[..])
+    if fetch.code != 0 { failures.append(format("packages: nx fetch failed:\n{}", .{fetch.stderr})); return }
+    let lock = fs.read(fs.join(app[..], "nexium.lock")[..]) catch { String.new() }
+    if lock[..].find("greet\tpath\t../greet") == null { failures.append(format("packages: lock file:\n{}", .{lock})) }
+    if lock[..].find("words\tpath") == null { failures.append(format("packages: the transitive dependency is missing from the lock:\n{}", .{lock})) }
+    println("packages: path dependencies, module imports, the lock file", .{})
+}
+
+/// `artifact installer`: `nx ship` writes an Inno Setup script on Windows
+/// and an install script elsewhere, next to the built program.
+fn suite_installer(e: *Env, failures: *mut List(String)) {
+    let base = fs.join(e.root[..], "nx-out/installer-test")
+    fs.remove_all(base[..]) catch { }
+    fs.make_dirs(fs.join(base[..], "assets")[..]) catch { }
+    let files = [
+        ("assets/data.txt", "data\n"),
+        ("LICENSE", "MIT\n"),
+        ("README.md", "# Greeter\n"),
+        ("greeter.nx", "artifact cli { name = \"greeter\" }\nartifact installer { name = \"Greeter\", publisher = \"Londopy\", version = \"1.0.0\", license = \"LICENSE\", readme = \"README.md\", files = [\"assets\"], add_to_path = true }\nfn main() { println(\"hi\", .{}) }\n"),
+    ]
+    for f in files { fs.write(fs.join(base[..], f.0)[..], f.1) catch { failures.append(format("installer: cannot write {}", .{f.0})); return } }
+    // an installed Inno Setup would also compile the script; the script itself is what this checks
+    os.set_env("ISCC", "")
+    let out = nx_in(e, ["ship", "greeter.nx"][..], "", base[..])
+    if out.code != 0 { failures.append(format("installer: nx ship failed:\n{}", .{out.stderr})); return }
+    let dir = fs.join(base[..], "nx-out/greeter")
+    if !fs.exists(fs.join(dir[..], "assets/data.txt")[..]) { failures.append(String.from("installer: files were not copied next to the program")) }
+    if e.windows {
+        let iss = fs.read(fs.join(dir[..], "Greeter.iss")[..]) catch { failures.append(String.from("installer: no Greeter.iss")); return }
+        for want in ["AppName=Greeter", "AppVersion=1.0.0", "addtopath", "assets\\*", "AppId={{"] {
+            if iss[..].find(want) == null { failures.append(format("installer: the script lacks `{}`:\n{}", .{want, iss})) }
+        }
+    } else {
+        let sh = fs.read(fs.join(dir[..], "install.sh")[..]) catch { failures.append(String.from("installer: no install.sh")); return }
+        for want in ["copy_tree 'assets'", "exe='greeter'"] {
+            if sh[..].find(want) == null { failures.append(format("installer: the script lacks `{}`:\n{}", .{want, sh})) }
+        }
+        if !fs.exists(fs.join(dir[..], "greeter-1.0.0-linux.tar.gz")[..]) and !fs.exists(fs.join(dir[..], "greeter-1.0.0-macos.tar.gz")[..]) {
+            failures.append(String.from("installer: no archive was written"))
+        }
+    }
+    println("installer: the scripts and the staged files", .{})
+}
+
+/// The REPL evaluates lines, keeps bindings, accepts items, reports errors, and prints.
+fn suite_repl(e: *Env, failures: *mut List(String)) {
+    let script = "let x = 2\nx * 21\nfn sq(n: i32) -> i32 { return n * n }\nsq(x)\nprintln(\"hi {}\", .{x})\nimport std.strings\nstrings.to_upper(\"ok\")\nlet s = String.from(\"a\")\ns\nundefined_name\nvar xs = List(i32).new()\nxs.append(7)\nxs\n:quit\n"
+    let repl_args = ["repl"]
+    let out = nx_in(e, repl_args[..], script, e.root[..])
+    if out.code != 0 { failures.append(format("repl: exited with {}:\n{}", .{out.code, out.stderr})); return }
+    for want in ["i64: 42", "i32: 4", "hi 2", "String: \"OK\"", "String: \"a\"", "List(i32): [7]"] {
+        if out.stdout[..].find(want) == null { failures.append(format("repl: missing `{}` in:\n{}", .{want, out.stdout})) }
+    }
+    if out.stderr[..].find("undefined_name") == null { failures.append(format("repl: the error for an unknown name was not reported:\n{}", .{out.stderr})) }
+    println("repl: a session", .{})
+}
+
+fn frame(body: []u8) -> String {
+    return format("Content-Length: {}\r\n\r\n{}", .{body.len, body})
+}
+
+fn json_escape(s: []u8) -> String {
+    return strings.replace(strings.replace(strings.replace(s, "\\", "\\\\")[..], "\"", "\\\"")[..], "\n", "\\n")
+}
+
+/// The response with the given id, up to the next frame.
+fn response(out: []u8, id: usize) -> []u8 {
+    var start = out.find(format("\"id\":{},", .{id})[..])
+    if start == null { start = out.find(format("\"id\":{}}}", .{id})[..]) }
+    let s = start orelse return ""
+    let rest = out[s..]
+    let end = rest.find("Content-Length") orelse rest.len
+    return rest[0..end]
+}
+
+/// The language server over stdio: diagnostics, go to definition,
+/// completion and rename, driven the way an editor drives them.
+fn suite_lsp(e: *Env, failures: *mut List(String)) {
+    let dir = fs.join(e.root[..], "nx-out/lsp-test")
+    fs.make_dirs(dir[..]) catch { }
+    fs.write(fs.join(dir[..], "helper.nx")[..], "pub fn twice(x: i32) -> i32 { return x * 2 }\npub const LIMIT: i32 = 10\n") catch { failures.append(String.from("lsp: cannot write helper.nx")); return }
+    let main = fs.join(dir[..], "main.nx")
+    let text = "import helper\n\nstruct Point { x: i32, y: i32 }\n\nfn origin() -> Point { return Point{ .x = 0, .y = 0 } }\n\nfn main() {\n    let total = helper.twice(3)\n    let p = origin()\n    println(\"{} {}\", .{total + p.x, helper.LIMIT})\n    let again = total\n    for item, idx in [1, 2] { println(\"{}\", .{item + idx}) }\n}\n"
+    fs.write(main[..], text) catch { failures.append(String.from("lsp: cannot write main.nx")); return }
+    let uri = format("file:///{}", .{strings.replace(strings.replace(main[..], "\\", "/")[..], ":", "%3A")})
+    var input = String.new()
+    input.append(frame("{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"initialize\",\"params\":{}}")[..])
+    input.append(frame(format("{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{{\"textDocument\":{{\"uri\":\"{}\",\"languageId\":\"nexium\",\"version\":1,\"text\":\"{}\"}}}}}}", .{uri, json_escape(text)})[..])[..])
+    // (id, method, line, character): `helper.twice` on line 7, `origin()` on 8, the local `total` on 10,
+    // completion after `helper.` and after `p.` on line 9, `idx` on line 11
+    let asks = [(1, "definition", 7, 24), (2, "definition", 8, 13), (3, "definition", 10, 17), (4, "completion", 9, 43), (5, "completion", 9, 33), (7, "definition", 11, 53)]
+    for a in asks {
+        input.append(frame(format("{{\"jsonrpc\":\"2.0\",\"id\":{},\"method\":\"textDocument/{}\",\"params\":{{\"textDocument\":{{\"uri\":\"{}\"}},\"position\":{{\"line\":{},\"character\":{}}}}}}}", .{a.0, a.1, uri, a.2, a.3})[..])[..])
+    }
+    input.append(frame(format("{{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"textDocument/rename\",\"params\":{{\"textDocument\":{{\"uri\":\"{}\"}},\"position\":{{\"line\":10,\"character\":17}},\"newName\":\"sum\"}}}}", .{uri})[..])[..])
+    input.append(frame("{\"jsonrpc\":\"2.0\",\"id\":99,\"method\":\"shutdown\"}")[..])
+    input.append(frame("{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}")[..])
+    let lsp_args = ["lsp"]
+    let out = nx_in(e, lsp_args[..], input[..], e.root[..])
+    let o = out.stdout[..]
+    if o.find("\"definitionProvider\":true") == null { failures.append(format("lsp: capabilities:\n{}", .{o})); return }
+    let r1 = response(o, 1)
+    if r1.find("helper.nx") == null or r1.find("\"line\":0") == null { failures.append(format("lsp: definition of helper.twice: {}", .{r1})) }
+    let r2 = response(o, 2)
+    if r2.find("main.nx") == null or r2.find("\"line\":4") == null { failures.append(format("lsp: definition of origin: {}", .{r2})) }
+    let r3 = response(o, 3)
+    if r3.find("\"line\":7") == null { failures.append(format("lsp: definition of the local total: {}", .{r3})) }
+    let r4 = response(o, 4)
+    if r4.find("\"label\":\"LIMIT\"") == null or r4.find("\"label\":\"twice\"") == null { failures.append(format("lsp: module completion: {}", .{r4})) }
+    let r5 = response(o, 5)
+    if r5.find("\"label\":\"x\"") == null or r5.find("\"label\":\"y\"") == null { failures.append(format("lsp: field completion: {}", .{r5})) }
+    let r6 = response(o, 6)
+    if strings.count(r6, "\"newText\":\"sum\"") != 3 { failures.append(format("lsp: rename edits: {}", .{r6})) }
+    // `idx` resolves to its binding in the `for` header on the same line, column 14
+    let r7 = response(o, 7)
+    if r7.find("\"line\":11") == null or r7.find("\"character\":14") == null { failures.append(format("lsp: definition of the for binding: {}", .{r7})) }
+    println("lsp: an editor session", .{})
+}
+
+// ----- main -------------------------------------------------------------------
+
+fn usage() {
+    eprintln("usage: nx run tests/run.nx -- [suite ...] [--jobs N] [--nx PATH] [--rebuild]", .{})
+    eprintln("suites: bootstrap examples spec compile_fail fmt std gui packages ship installer repl lsp", .{})
+}
+
+fn main() -> u8 {
+    let args = os.args()
+    let windows = os.env("COMSPEC") != null and os.env("WINDIR") != null
+    let macos = !windows and io.file_kind("/System/Library/CoreServices") == 2
+    var e = Env{ .root = fs.cwd() catch { String.from(".") }, .nx = String.new(), .windows = windows, .macos = macos, .jobs = thread.count() }
+    if e.jobs > 8 { e.jobs = 8 }
+    var wanted = List(String).new()
+    var force = false
+    var given_nx = String.new()
+    var i: usize = 1
+    while i < args.len {
+        let a = args[i]
+        if a == "--jobs" and i + 1 < args.len { e.jobs = args[i + 1].parse_int(usize) catch { 1 }; i += 2; continue }
+        if a == "--nx" and i + 1 < args.len { given_nx = String.from(args[i + 1]); i += 2; continue }
+        if a == "--rebuild" { force = true; i += 1; continue }
+        if a.starts_with("-") { usage(); return 2 }
+        wanted.append(String.from(a))
+        i += 1
+    }
+    // the compiler under test runs the C compiler this host has
+    if macos { os.set_env("NX_CC", "cc") } else { os.set_env("NX_ZIG", "zig") }
+    let all = ["bootstrap", "examples", "spec", "compile_fail", "fmt", "std", "gui", "packages", "ship", "installer", "repl", "lsp"]
+    for w in wanted {
+        var known = false
+        for s in all { if w[..] == s { known = true } }
+        if !known { eprintln("unknown suite {}", .{w}); usage(); return 2 }
+    }
+    var failures = List(String).new()
+    let started = time.monotonic()
+    if given_nx.len > 0 {
+        e.nx = given_nx
+    } else if !bootstrap(&mut e, &mut failures, force) {
+        for f in failures { eprintln("FAIL {}", .{f}) }
+        return 1
+    }
+    for s in all {
+        var run_it = wanted.len == 0
+        for w in wanted { if w[..] == s { run_it = true } }
+        if !run_it { continue }
+        let before = failures.len
+        if s == "bootstrap" { suite_bootstrap(&e, &mut failures) }
+        else if s == "examples" { suite_examples(&e, &mut failures) }
+        else if s == "spec" { suite_spec(&e, &mut failures) }
+        else if s == "compile_fail" { suite_compile_fail(&e, &mut failures) }
+        else if s == "fmt" { suite_fmt(&e, &mut failures) }
+        else if s == "std" { suite_std(&e, &mut failures) }
+        else if s == "gui" { suite_gui(&e, &mut failures) }
+        else if s == "packages" { suite_packages(&e, &mut failures) }
+        else if s == "ship" { suite_ship(&e, &mut failures) }
+        else if s == "installer" { suite_installer(&e, &mut failures) }
+        else if s == "repl" { suite_repl(&e, &mut failures) }
+        else if s == "lsp" { suite_lsp(&e, &mut failures) }
+        if failures.len > before { println("{}: {} failure(s)", .{s, failures.len - before}) }
+    }
+    let secs = (time.monotonic() - started) / 1000000000
+    if failures.len == 0 {
+        println("ok: every suite passed in {}s", .{secs})
+        return 0
+    }
+    for f in failures { eprintln("FAIL {}\n", .{f}) }
+    eprintln("{} failure(s) in {}s", .{failures.len, secs})
+    return (if failures.len > 100 { 100 } else { failures.len }) as u8
+}
