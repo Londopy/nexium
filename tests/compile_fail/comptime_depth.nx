@@ -1,0 +1,7 @@
+// EXPECT: exceeded the call depth
+// a compile-time call that never bottoms out is a diagnostic, not a stack
+// overflow of the compiler (found by the fuzzer, which moved a call to
+// `fib` into `fib`)
+fn down(n: u64) -> u64 { return down(n + 1) }
+const D: u64 = comptime down(0)
+fn main() { println("{}", .{D}) }

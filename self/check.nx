@@ -3829,7 +3829,22 @@ impl Checker {
 
     // ----- expressions ---------------------------------------------------------------------
 
+    /// An expression in a value position. A namespace (`math`, an imported
+    /// module) is an expression only as the base of a member access, so it is
+    /// an error here; `check_expr_any` is for the three places that take one.
     fn check_expr(self: *mut Self, e: usize, expected: usize) -> usize {
+        let r = self.check_expr_any(e, expected)
+        if self.is_namespace(r) {
+            let m = self.cur_module()
+            let n = self.node(m, e)
+            let what = if n.k == parser.NodeKind.Ident { n.name.clone() } else { String.from("this") }
+            self.fail_here(n.start, format("`{}` is a module, not a value; use one of its members (`{}.name`)", .{what, what})[..])
+            return self.error_expr(n.start, n.end)
+        }
+        return r
+    }
+
+    fn check_expr_any(self: *mut Self, e: usize, expected: usize) -> usize {
         let m = self.cur_module()
         let n = self.node(m, e)
         let k = n.k
@@ -4557,7 +4572,7 @@ impl Checker {
             // `Type.assoc(...)`, `mod.f(...)`, `ns.f(...)`, or a call through a field of function type
             let base_node = cn.x
             let fname = cn.name.clone()
-            let b = self.check_expr(base_node, NONE)
+            let b = self.check_expr_any(base_node, NONE)
             if self.is_namespace(b) {
                 let ns = self.tir.nodes[b].name.clone()
                 return self.check_namespace_call(ns[..], fname[..], args[..], expected, start, end)
@@ -5965,7 +5980,7 @@ impl Checker {
         let name = n.name.clone()
         let start = n.start
         let end = n.end
-        let b = self.check_expr(base_node, NONE)
+        let b = self.check_expr_any(base_node, NONE)
         if self.is_namespace(b) {
             let ns = self.tir.nodes[b].name.clone()
             return self.check_namespace_member(ns[..], name[..], start, end, expected)
@@ -7604,7 +7619,7 @@ impl Checker {
         let args = n.kids.clone()
         let start = n.start
         let end = n.end
-        let recv = self.check_expr(recv_node, NONE)
+        let recv = self.check_expr_any(recv_node, NONE)
         if self.is_namespace(recv) {
             let ns = self.tir.nodes[recv].name.clone()
             return self.check_namespace_call(ns[..], method[..], args[..], expected, start, end)
@@ -8619,6 +8634,13 @@ impl Checker {
 // A step budget turns a runaway evaluation into an error.
 
 const STEP_BUDGET: u64 = 20000000
+/// Nested calls the compile-time interpreter allows. It recurses on the
+/// compiler's own stack and its frames are large (about 165 KiB per
+/// nested call: the interpreter's big functions hold every temporary at
+/// function scope), so a runaway recursion must become a diagnostic well
+/// before an 8 MiB stack runs out (KNOWN_ISSUES: the limit rises when the
+/// compiler runs its work on a thread with a stack of its own).
+const CALL_DEPTH: usize = 32
 
 // control flow out of a statement or block
 const FL_NEXT: u8 = 0
@@ -9164,6 +9186,10 @@ impl Checker {
         if !self.it_step() { return null }
         if !self.it_ensure_body(inst) { return null }
         if self.insts[inst].is_extern { return null }
+        if self.frames.len >= CALL_DEPTH {
+            self.it_panic_at(format("compile-time evaluation exceeded the call depth ({} nested calls); is the recursion unbounded?", .{CALL_DEPTH})[..], self.insts[inst].start)
+            return null
+        }
         var fr = Frame{ .vals = List(CV).new() }
         let nlocals = self.insts[inst].locals.len
         for i in 0..nlocals { fr.vals.append(cv(VK_NONE)) }

@@ -1,0 +1,10 @@
+// EXPECT: `math` is a module, not a value
+// a namespace is an expression only as the base of a member access; as a
+// value it has no type, and the checker used to index its inference table
+// with the missing one and crash (found by the fuzzer)
+import std.thread
+fn main() {
+    let x = math
+    var t = thread
+    println("{}", .{x})
+}

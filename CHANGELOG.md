@@ -63,6 +63,15 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Fixed
 
+- A module name used as a value (`let x = math`, `var t = thread`) crashed
+  the checker with an index out of bounds; it is the diagnostic "`math` is
+  a module, not a value" now (found by the fuzzer in CI).
+- A compile-time call chain that never bottoms out overflowed the
+  compiler's stack (found by the fuzzer, which moved the call to `fib`
+  into `fib`); the compile-time interpreter stops at 32 nested calls with
+  a diagnostic. The limit is low because each nested call costs about
+  165 KiB of the compiler's stack; `KNOWN_ISSUES.md` has the fix that
+  raises it.
 - The documentation site's menu no longer jumps back to the top on every
   page: it is its own scroll box, and a page load reset it, so reading
   the chapters in order meant scrolling the menu down again each time.

@@ -442,7 +442,8 @@ compiler because ownership, effects, and the runtime need them there
 
 `comptime expr` evaluates in an interpreter over the typed IR. Allowed:
 pure computation, collections, calls to Nexium functions. Forbidden: I/O,
-clocks, randomness, foreign calls, globals. A step budget turns a runaway
+clocks, randomness, foreign calls, globals. A step budget and a call-depth
+limit (32 nested calls in 1.0; see `KNOWN_ISSUES.md`) turn a runaway
 evaluation into a compile error. `const` initializers, `@embedFile`, record
 checks on literals, and `comptime test` blocks run here. Intrinsics:
 `@typeName(T) @sizeOf(T) @truncate(T, x) @errorName(e) @embedFile(path)
