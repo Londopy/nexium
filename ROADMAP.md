@@ -778,11 +778,17 @@ minors the same way as the tools above.
 
 **The first five minutes** (1.3, 1.5).
 
-- The installer's editor page: checkboxes for VS Code, Vim and Neovim,
-  Notepad++, JetBrains and the rest, each putting the files from
-  `editors/` where that editor looks; an "Open REPL here" entry in the
-  folder context menu and a Windows Terminal profile; a finish page that
-  opens the first chapter of the Topo.
+- The installer's editor page: a checkbox per editor found on the
+  machine (VS Code, Sublime Text, Vim and Neovim, Notepad++, Emacs, Kate,
+  JetBrains and the rest), each putting the files from `editors/` where
+  that editor looks: Sublime's syntax into `Packages\User`, Notepad++'s
+  UDL into `userDefineLangs`, the Vim files into `vimfiles`, the VS Code
+  `.vsix` through `code`; the boxes are ticked for the editors that are
+  installed and greyed with a reason for the ones that are not. An
+  "Open REPL here" entry in the folder context menu and a Windows Terminal
+  profile; a finish page that opens the first chapter of the Topo. The
+  install script does the same on macOS and Linux (`~/.config/sublime-text`,
+  `~/.vim`, `~/.config/nvim`, `~/.emacs.d`), asking first.
 - `nx upgrade`: fetches the new release, verifies the checksum, swaps
   itself; `nx doctor` says when one is available.
 - A macOS `.pkg` and a Linux `.deb`/`.rpm` with the same pages (1.5), and
