@@ -19,6 +19,7 @@ import fmt
 import tools
 import size
 import doc
+import manifest
 
 const VERSION = "0.8.0"
 const RELEASE_NAME = "Annapurna: the Sickle"
@@ -48,6 +49,7 @@ fn usage() {
     eprintln("       nx fmt <file.nx>... [--check]", .{})
     eprintln("       nx doc <file.nx> [-o <dir>]", .{})
     eprintln("       nx version | nx doctor", .{})
+    eprintln("       nx init [name] | nx add <name> --git URL [--tag TAG] | --path DIR | nx fetch", .{})
     eprintln("  -o <path>          output file", .{})
     eprintln("  --out-dir <dir>    where C and binaries go (default nx-out)", .{})
     eprintln("  --mode <m>         debug (default), safe, fast, small", .{})
@@ -521,6 +523,72 @@ fn cmd_doc(o: *Opts) -> i32 {
     return 0
 }
 
+/// `nx init [name]`: a manifest here (and a main.nx when there is no source).
+fn cmd_init(rest: [][]u8) -> i32 {
+    let cwd = io.cwd() catch { String.from(".") }
+    var name = String.new()
+    if rest.len > 0 { name = String.from(rest[0]) } else {
+        let base = stem_of(cwd[..])
+        name = if base.len > 0 { String.from(base) } else { String.from("app") }
+    }
+    var clean = String.new()
+    for c in name { clean.push_byte(if (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') { c } else { '_' }) }
+    let files = manifest.init(cwd[..], clean[..]) catch { return 1 }
+    for f in files { println("wrote {}", .{f}) }
+    return 0
+}
+
+/// `nx add <name> --git URL [--tag TAG] | --path DIR`: a dependency in the
+/// manifest, then `nx fetch`.
+fn cmd_add(rest: [][]u8) -> i32 {
+    var name = String.new()
+    var dep = manifest.Dep{ .name = String.new(), .git = String.new(), .tag = String.new(), .path = String.new() }
+    var i: usize = 0
+    while i < rest.len {
+        let a = rest[i]
+        if a == "--git" and i + 1 < rest.len { dep.git = String.from(rest[i + 1]); i += 2; continue }
+        if a == "--tag" and i + 1 < rest.len { dep.tag = String.from(rest[i + 1]); i += 2; continue }
+        if a == "--path" and i + 1 < rest.len { dep.path = String.from(rest[i + 1]); i += 2; continue }
+        if name.len == 0 and !a.starts_with("--") { name = String.from(a); i += 1; continue }
+        eprintln("error: unexpected argument `{}`", .{a})
+        return 1
+    }
+    if name.len == 0 {
+        eprintln("usage: nx add <name> --git URL [--tag TAG] | --path DIR", .{})
+        return 1
+    }
+    dep.name = name
+    let cwd = io.cwd() catch { String.from(".") }
+    let mf = manifest.find(cwd[..]) orelse {
+        eprintln("error: no {} here or above; run `nx init` first", .{manifest.MANIFEST})
+        return 1
+    }
+    let mpath = format("{}/{}", .{mf.dir, manifest.MANIFEST})
+    manifest.add(mpath[..], &dep) catch { return 1 }
+    println("added `{}` to {}", .{dep.name, mpath})
+    return cmd_fetch()
+}
+
+/// `nx fetch`: clone every git dependency and write the lock file.
+fn cmd_fetch() -> i32 {
+    let cwd = io.cwd() catch { String.from(".") }
+    let mf = manifest.find(cwd[..]) orelse {
+        eprintln("error: no {} here or above; run `nx init` first", .{manifest.MANIFEST})
+        return 1
+    }
+    let lock = manifest.fetch(&mf) catch { return 1 }
+    for l in lock {
+        if l.source != "path" {
+            let short = if l.commit.len > 10 { l.commit[0..10] } else { l.commit[..] }
+            println("{} {} ({})", .{l.name, l.tag, short})
+        } else {
+            println("{} path {}", .{l.name, l.tag})
+        }
+    }
+    println("wrote {}/{}", .{mf.dir, manifest.LOCK})
+    return 0
+}
+
 fn cmd_version() -> i32 {
     println("nx {} ({})", .{VERSION, RELEASE_NAME})
     return 0
@@ -609,6 +677,11 @@ fn cmd_tir(o: *Opts) -> i32 {
 
 fn main() -> u8 {
     let args = os.args()
+    if args.len >= 2 and (args[1] == "init" or args[1] == "add" or args[1] == "fetch") {
+        let rest = args[2..]
+        let c = if args[1] == "init" { cmd_init(rest) } else if args[1] == "add" { cmd_add(rest) } else { cmd_fetch() }
+        return (if c < 0 or c > 255 { 1 } else { c }) as u8
+    }
     let o = parse_opts(args) orelse {
         usage()
         return 2

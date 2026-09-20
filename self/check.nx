@@ -11,6 +11,7 @@
 
 import lexer
 import parser
+import manifest
 import cimport
 
 const NONE: usize = 0xFFFFFFFFFFFFFFFF
@@ -407,6 +408,8 @@ pub struct Mod {
     // the path diagnostics and generated code name it by (`<std>/x.nx` for std)
     path: String
     parsed: parser.Parsed
+    // the package the module belongs to (its imports resolve inside it); empty for the program's own files
+    pkg: String
 }
 
 // ---------------------------------------------------------------- loading
@@ -455,15 +458,23 @@ pub fn load(root: []u8, std_dir: []u8) -> !List(Mod) {
     var mods = List(Mod).new()
     let root_dir = dir_of(root)
     let root_name = stem_of(root)
+    // packages: the manifest above the root file names the dependencies
+    var pkgs = List(manifest.Package).new()
+    if let mf = manifest.find(root_dir) {
+        pkgs = try manifest.packages(&mf)
+    }
     var queue = List(String).new()
     var queue_paths = List(String).new()
+    var queue_pkgs = List(String).new()
     queue.append(String.from(root_name))
     queue_paths.append(String.from(root))
+    queue_pkgs.append(String.new())
     var seen = Map(String, bool).new()
     var std_pending = List(String).new()
     while queue.len > 0 {
         let name = queue.pop() orelse break
         let path = queue_paths.pop() orelse break
+        let pkg = queue_pkgs.pop() orelse break
         if seen.contains(name[..]) { continue }
         seen.put(name.clone(), true)
         let text = io.read_file(path[..]) catch {
@@ -490,6 +501,36 @@ pub fn load(root: []u8, std_dir: []u8) -> !List(Mod) {
                 }
                 continue
             }
+            // a dependency: `import foo` is its src/lib.nx, `import foo.bar` its src/bar.nx
+            var dep_src = String.new()
+            for pk in pkgs { if pk.name == words[0] { dep_src = pk.src.clone() } }
+            if dep_src.len > 0 {
+                var candidate = dep_src.clone()
+                if words.len == 1 { candidate.append("/lib") } else { for w in words[1..] { candidate.append("/"); candidate.append(w[..]) } }
+                candidate.append(".nx")
+                if io.file_kind(candidate[..]) != 1 {
+                    eprintln("error: package `{}` has no module `{}` (expected {})", .{words[0], join_words(&words, "."), candidate})
+                    return error.NotFound
+                }
+                queue.append(join_words(&words, "."))
+                queue_paths.append(candidate)
+                queue_pkgs.append(words[0].clone())
+                continue
+            }
+            // inside a package, imports are relative to its src and named under the package
+            if pkg.len > 0 {
+                var src = String.new()
+                for pk in pkgs { if pk.name == pkg { src = pk.src.clone() } }
+                var candidate = src.clone()
+                for w in words { candidate.append("/"); candidate.append(w[..]) }
+                candidate.append(".nx")
+                if io.file_kind(candidate[..]) == 1 {
+                    queue.append(format("{}.{}", .{pkg, join_words(&words, ".")}))
+                    queue_paths.append(candidate)
+                    queue_pkgs.append(pkg.clone())
+                }
+                continue
+            }
             var rel = String.from(root_dir)
             for w, i in words {
                 if i > 0 or rel.len > 0 { rel.append("/") }
@@ -499,9 +540,10 @@ pub fn load(root: []u8, std_dir: []u8) -> !List(Mod) {
             if io.file_kind(rel[..]) == 1 {
                 queue.append(join_words(&words, "."))
                 queue_paths.append(rel)
+                queue_pkgs.append(String.new())
             }
         }
-        mods.append(Mod{ .name = name, .source = text, .dir = String.from(dir_of(path[..])), .path = path.clone(), .parsed = parsed })
+        mods.append(Mod{ .name = name, .source = text, .dir = String.from(dir_of(path[..])), .path = path.clone(), .parsed = parsed, .pkg = pkg })
     }
     var si: usize = 0
     while si < std_pending.len {
@@ -528,7 +570,7 @@ pub fn load(root: []u8, std_dir: []u8) -> !List(Mod) {
                 }
             }
         }
-        mods.append(Mod{ .name = mname, .source = text, .dir = String.from(std_dir), .path = format("<std>/{}.nx", .{short}), .parsed = parsed })
+        mods.append(Mod{ .name = mname, .source = text, .dir = String.from(std_dir), .path = format("<std>/{}.nx", .{short}), .parsed = parsed, .pkg = String.new() })
     }
     return mods
 }
@@ -1038,7 +1080,7 @@ impl Checker {
         let opts = cimport.ImportOptions{ .cc = self.cc.clone(), .target = self.target.clone(), .include_dirs = self.include_dirs(), .windows = windows }
         let mid = self.mods.len
         self.mods.append(Mod{
-                .name = format("cimport:{}", .{header}), .source = String.new(), .dir = String.new(), .path = String.new(),
+                .name = format("cimport:{}", .{header}), .source = String.new(), .dir = String.new(), .path = String.new(), .pkg = String.new(),
                 .parsed = parser.Parsed{ .tree = parser.Tree{ .nodes = List(parser.Node).new(), .docs = List(String).new(), .doc_counts = List(usize).new() }, .items = List(usize).new(), .errors = List(String).new() },
         })
         let bend = bnode.end
@@ -1217,8 +1259,17 @@ impl Checker {
         }
         let target = join_words(&path, ".")
         var target_mod = NONE
-        for mm, i in self.mods {
-            if mm.name == target { target_mod = i; break }
+        // inside package `foo`, `import util` is the module named `foo.util`
+        if self.mods[m].pkg.len > 0 {
+            let scoped = format("{}.{}", .{self.mods[m].pkg, target})
+            for mm, i in self.mods {
+                if mm.name == scoped { target_mod = i; break }
+            }
+        }
+        if target_mod == NONE {
+            for mm, i in self.mods {
+                if mm.name == target { target_mod = i; break }
+            }
         }
         if target_mod == NONE {
             if path[0] == "std" or is_builtin_namespace(path[path.len - 1][..]) { return }

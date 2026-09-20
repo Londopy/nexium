@@ -1,0 +1,478 @@
+// Packages: the `nexium.toml` manifest, the `nexium.lock` file, and fetching
+// dependencies into `nexium_modules/` (docs/packages.md).
+//
+// A package is a directory with a manifest and a `src/` folder. `import
+// foo` loads `src/lib.nx` of the dependency `foo`; `import foo.bar` loads
+// `src/bar.nx`. Dependencies come from a git tag or a local path:
+//
+//     [package]
+//     name = "app"
+//     version = "0.1.0"
+//
+//     [dependencies]
+//     greet = { git = "https://github.com/someone/greet", tag = "v1.2.0" }
+//     local = { path = "../local" }
+//
+// The TOML reader covers this subset: tables, string, number and boolean
+// values, inline tables, arrays of strings, comments.
+
+import std.fs
+
+pub const MANIFEST = "nexium.toml"
+pub const LOCK = "nexium.lock"
+pub const MODULES_DIR = "nexium_modules"
+
+/// A TOML value of the subset: a string (numbers and booleans keep their
+/// text), an inline table, or an array.
+pub struct Value {
+    kind: u8
+    text: String
+    keys: List(String)
+    items: List(Value)
+}
+
+pub const V_STR: u8 = 0
+pub const V_TABLE: u8 = 1
+pub const V_LIST: u8 = 2
+
+fn str_value(s: []u8) -> Value {
+    return Value{ .kind = V_STR, .text = String.from(s), .keys = List(String).new(), .items = List(Value).new() }
+}
+
+impl Value {
+    /// The entry `key` of an inline table.
+    pub fn get(self: *Self, key: []u8) -> ?*Value {
+        if self.kind != V_TABLE { return null }
+        for k, i in self.keys { if k == key { return &self.items[i] } }
+        return null
+    }
+    pub fn as_str(self: *Self) -> ?[]u8 {
+        if self.kind != V_STR { return null }
+        return self.text[..]
+    }
+}
+
+/// One `key = value` line of a table.
+pub struct Entry {
+    key: String
+    value: Value
+}
+
+/// A table of the manifest: its header path and its entries in order.
+pub struct Table {
+    name: String
+    entries: List(Entry)
+}
+
+fn strip_comment(line: []u8) -> []u8 {
+    var in_str = false
+    for c, i in line {
+        if c == '"' { in_str = !in_str }
+        else if c == '#' and !in_str { return line[0..i] }
+    }
+    return line
+}
+
+/// Split on commas outside strings and brackets.
+fn split_top(s: []u8) -> List(String) {
+    var out = List(String).new()
+    var depth: i64 = 0
+    var in_str = false
+    var cur = String.new()
+    for c in s {
+        if c == '"' { in_str = !in_str; cur.push_byte(c) }
+        else if (c == '{' or c == '[') and !in_str { depth += 1; cur.push_byte(c) }
+        else if (c == '}' or c == ']') and !in_str { depth -= 1; cur.push_byte(c) }
+        else if c == ',' and !in_str and depth == 0 { out.append(cur); cur = String.new() }
+        else { cur.push_byte(c) }
+    }
+    if cur[..].trim().len > 0 { out.append(cur) }
+    return out
+}
+
+fn parse_value(v: []u8) -> !Value {
+    if v.len > 0 and v[0] == '"' {
+        let inner = v[1..]
+        let end = inner.find("\"") orelse return error.UnterminatedString
+        return str_value(inner[0..end])
+    }
+    if v.len > 0 and v[0] == '{' {
+        if v[v.len - 1] != '}' { return error.UnterminatedTable }
+        let inner = v[1..v.len - 1]
+        var t = Value{ .kind = V_TABLE, .text = String.new(), .keys = List(String).new(), .items = List(Value).new() }
+        for part in split_top(inner) {
+            let p = part[..].trim()
+            if p.len == 0 { continue }
+            let eq = p.find("=") orelse return error.ExpectedKeyValue
+            t.keys.append(String.from(p[0..eq].trim()))
+            t.items.append(try parse_value(p[eq + 1..].trim()))
+        }
+        return t
+    }
+    if v.len > 0 and v[0] == '[' {
+        if v[v.len - 1] != ']' { return error.UnterminatedArray }
+        let inner = v[1..v.len - 1]
+        var l = Value{ .kind = V_LIST, .text = String.new(), .keys = List(String).new(), .items = List(Value).new() }
+        for part in split_top(inner) {
+            let p = part[..].trim()
+            if p.len > 0 { l.items.append(try parse_value(p)) }
+        }
+        return l
+    }
+    // numbers and booleans are kept as their text
+    return str_value(v)
+}
+
+/// What a parse error means, for the diagnostic.
+fn explain(e: error) -> []u8 {
+    if e == error.UnterminatedString { return "unterminated string" }
+    if e == error.UnterminatedTable { return "unterminated inline table" }
+    if e == error.UnterminatedArray { return "unterminated array" }
+    if e == error.ExpectedKeyValue { return "expected `key = value` in the inline table" }
+    if e == error.UnterminatedHeader { return "unterminated table header" }
+    if e == error.ExpectedLine { return "expected `key = value`" }
+    return "invalid manifest"
+}
+
+/// Parse the TOML subset into tables; a message names the line on failure.
+pub fn parse_toml(text: []u8) -> !List(Table) {
+    var tables = List(Table).new()
+    tables.append(Table{ .name = String.new(), .entries = List(Entry).new() })
+    var current: usize = 0
+    for raw, i in text.lines() {
+        let line = strip_comment(raw).trim()
+        if line.len == 0 { continue }
+        if line[0] == '[' {
+            if line[line.len - 1] != ']' {
+                eprintln("error: {}:{}: {}", .{MANIFEST, i + 1, explain(error.UnterminatedHeader)})
+                return error.InvalidInput
+            }
+            let name = line[1..line.len - 1].trim()
+            current = tables.len
+            for t, ti in tables { if t.name == name { current = ti } }
+            if current == tables.len { tables.append(Table{ .name = String.from(name), .entries = List(Entry).new() }) }
+            continue
+        }
+        let eq = line.find("=") orelse {
+            eprintln("error: {}:{}: {}", .{MANIFEST, i + 1, explain(error.ExpectedLine)})
+            return error.InvalidInput
+        }
+        var key = line[0..eq].trim()
+        if key.len >= 2 and key[0] == '"' and key[key.len - 1] == '"' { key = key[1..key.len - 1] }
+        let value = parse_value(line[eq + 1..].trim()) catch |e| {
+            eprintln("error: {}:{}: {}", .{MANIFEST, i + 1, explain(e)})
+            return error.InvalidInput
+        }
+        tables[current].entries.append(Entry{ .key = String.from(key), .value = value })
+    }
+    return tables
+}
+
+fn table_of(tables: *List(Table), name: []u8) -> ?*Table {
+    for t, i in tables { if t.name == name { return &tables[i] } }
+    return null
+}
+
+/// A dependency as the manifest names it.
+pub struct Dep {
+    name: String
+    git: String
+    tag: String
+    path: String
+}
+
+/// A manifest: the package's name and version, its dependencies, and the
+/// directory holding it.
+pub struct Manifest {
+    name: String
+    version: String
+    deps: List(Dep)
+    dir: String
+}
+
+fn is_ident(s: []u8) -> bool {
+    if s.len == 0 { return false }
+    for c in s { if ! ((c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '_') { return false } }
+    return true
+}
+
+/// Read a manifest file; errors are printed and returned.
+pub fn read(path: []u8) -> !Manifest {
+    let text = fs.read(path) catch {
+        eprintln("error: cannot read {}", .{path})
+        return error.NotFound
+    }
+    let tables = try parse_toml(text[..])
+    let pkg = table_of(&tables, "package") orelse {
+        eprintln("error: {}: missing a [package] table", .{path})
+        return error.InvalidInput
+    }
+    var name = String.new()
+    var version = String.from("0.0.0")
+    for e in pkg.entries {
+        if e.key == "name" { if let s = e.value.as_str() { name = String.from(s) } }
+        if e.key == "version" { if let s = e.value.as_str() { version = String.from(s) } }
+    }
+    if name.len == 0 {
+        eprintln("error: {}: [package] needs a name", .{path})
+        return error.InvalidInput
+    }
+    if !is_ident(name[..]) {
+        eprintln("error: {}: package name `{}` must be an identifier (letters, digits, underscores)", .{path, name})
+        return error.InvalidInput
+    }
+    var deps = List(Dep).new()
+    if let d = table_of(&tables, "dependencies") {
+        for e in d.entries {
+            var dep = Dep{ .name = e.key.clone(), .git = String.new(), .tag = String.new(), .path = String.new() }
+            if e.value.kind == V_STR {
+                dep.tag = e.value.text.clone()
+            } else if e.value.kind == V_TABLE {
+                if let g = e.value.get("git") { if let s = g.as_str() { dep.git = String.from(s) } }
+                if let t = e.value.get("tag") { if let s = t.as_str() { dep.tag = String.from(s) } }
+                if let p = e.value.get("path") { if let s = p.as_str() { dep.path = String.from(s) } }
+            } else {
+                eprintln("error: {}: dependency `{}` cannot be an array", .{path, e.key})
+                return error.InvalidInput
+            }
+            if dep.git.len == 0 and dep.path.len == 0 {
+                eprintln("error: {}: dependency `{}` needs `git = \"url\"` (with `tag`) or `path = \"dir\"`", .{path, e.key})
+                return error.InvalidInput
+            }
+            deps.append(dep)
+        }
+    }
+    return Manifest{ .name = name, .version = version, .deps = deps, .dir = String.from(fs.parent(path)) }
+}
+
+impl Manifest {
+    /// Where a dependency's checkout lives.
+    pub fn dep_dir(self: *Self, dep: *Dep) -> String {
+        if dep.path.len > 0 { return fs.join(self.dir[..], dep.path[..]) }
+        return fs.join(fs.join(self.dir[..], MODULES_DIR)[..], dep.name[..])
+    }
+}
+
+/// The manifest governing a directory: the nearest `nexium.toml` at or above it.
+pub fn find(start: []u8) -> ?Manifest {
+    var dir = if fs.is_dir(start) { String.from(start) } else { String.from(fs.parent(start)) }
+    if dir.len == 0 { dir = String.from(".") }
+    if !fs.is_absolute(dir[..]) {
+        let cwd = io.cwd() catch { String.from(".") }
+        dir = fs.normalize(fs.join(cwd[..], dir[..])[..])
+    }
+    while true {
+        let m = fs.join(dir[..], MANIFEST)
+        if fs.exists(m[..]) {
+            return read(m[..]) catch { return null }
+        }
+        let parent = fs.parent(dir[..])
+        if parent.len == 0 or parent == dir[..] { return null }
+        dir = String.from(parent)
+    }
+    return null
+}
+
+/// A package reachable from a manifest: its name and its `src` directory.
+pub struct Package {
+    name: String
+    src: String
+}
+
+/// Every package reachable from the manifest, the root's direct
+/// dependencies first. Transitive dependencies are read from each
+/// dependency's own manifest; the first package to claim a name wins.
+pub fn packages(root: *Manifest) -> !List(Package) {
+    var out = List(Package).new()
+    var queue = List(Manifest).new()
+    queue.append(Manifest{ .name = root.name.clone(), .version = root.version.clone(), .deps = root.deps.clone(), .dir = root.dir.clone() })
+    var qi: usize = 0
+    while qi < queue.len {
+        let deps = queue[qi].deps.clone()
+        let qdir = queue[qi].dir.clone()
+        qi += 1
+        for d in deps {
+            var known = false
+            for p in out { if p.name == d.name { known = true } }
+            if known { continue }
+            let dir = if d.path.len > 0 { fs.join(qdir[..], d.path[..]) } else { fs.join(fs.join(root.dir[..], MODULES_DIR)[..], d.name[..]) }
+            if !fs.exists(dir[..]) {
+                eprintln("error: dependency `{}` is not fetched; run `nx fetch` in {}", .{d.name, root.dir})
+                return error.NotFound
+            }
+            out.append(Package{ .name = d.name.clone(), .src = fs.join(dir[..], "src") })
+            let sub = fs.join(dir[..], MANIFEST)
+            if fs.exists(sub[..]) { queue.append(try read(sub[..])) }
+        }
+    }
+    return out
+}
+
+fn git(args: [][]u8, cwd: []u8) -> !String {
+    var argv = List([]u8).new()
+    argv.append("git")
+    for a in args { argv.append(a) }
+    let code = process.exec(argv[..], "", cwd) catch {
+        eprintln("error: cannot run git", .{})
+        return error.IoError
+    }
+    if code != 0 {
+        var joined = String.new()
+        for a, i in args { if i > 0 { joined.append(" ") }; joined.append(a) }
+        let err = process.last_stderr()
+        eprintln("error: git {} failed: {}", .{joined, err[..].trim()})
+        return error.IoError
+    }
+    let out = process.last_stdout()
+    return String.from(out[..].trim())
+}
+
+/// A line of the lock file: name, source, tag, commit.
+pub struct Locked {
+    name: String
+    source: String
+    tag: String
+    commit: String
+}
+
+/// Clone every git dependency (transitively) into `nexium_modules/` and
+/// write `nexium.lock` with the commit each one resolved to.
+pub fn fetch(root: *Manifest) -> !List(Locked) {
+    let modules = fs.join(root.dir[..], MODULES_DIR)
+    var lock = List(Locked).new()
+    var done = List(String).new()
+    var queue = List(Manifest).new()
+    queue.append(Manifest{ .name = root.name.clone(), .version = root.version.clone(), .deps = root.deps.clone(), .dir = root.dir.clone() })
+    var qi: usize = 0
+    while qi < queue.len {
+        let deps = queue[qi].deps.clone()
+        let qdir = queue[qi].dir.clone()
+        qi += 1
+        for d in deps {
+            var seen = false
+            for x in done { if x == d.name { seen = true } }
+            if seen { continue }
+            done.append(d.name.clone())
+            let dir = if d.path.len > 0 { fs.join(qdir[..], d.path[..]) } else { fs.join(modules[..], d.name[..]) }
+            if d.git.len > 0 {
+                if !fs.exists(dir[..]) {
+                    fs.make_dirs(modules[..]) catch {
+                        eprintln("error: cannot create {}", .{modules})
+                        return error.IoError
+                    }
+                    var args = List([]u8).new()
+                    args.append("clone")
+                    args.append("--depth")
+                    args.append("1")
+                    args.append("--quiet")
+                    if d.tag.len > 0 { args.append("--branch"); args.append(d.tag[..]) }
+                    args.append(d.git[..])
+                    args.append(dir[..])
+                    _ = try git(args[..], "")
+                }
+                var rp = List([]u8).new()
+                rp.append("rev-parse")
+                rp.append("HEAD")
+                let commit = try git(rp[..], dir[..])
+                lock.append(Locked{ .name = d.name.clone(), .source = d.git.clone(), .tag = d.tag.clone(), .commit = commit })
+            } else {
+                if !fs.exists(dir[..]) {
+                    eprintln("error: dependency `{}`: path {} does not exist", .{d.name, dir})
+                    return error.NotFound
+                }
+                lock.append(Locked{ .name = d.name.clone(), .source = String.from("path"), .tag = d.path.clone(), .commit = String.new() })
+            }
+            let sub = fs.join(dir[..], MANIFEST)
+            if fs.exists(sub[..]) { queue.append(try read(sub[..])) }
+        }
+    }
+    var text = String.from("# nexium.lock: dependency\tsource\ttag\tcommit (written by `nx fetch`)\n")
+    for l in lock { text.append(format("{}\t{}\t{}\t{}\n", .{l.name, l.source, l.tag, l.commit})[..]) }
+    fs.write(fs.join(root.dir[..], LOCK)[..], text[..]) catch {
+        eprintln("error: cannot write {}", .{LOCK})
+        return error.IoError
+    }
+    return lock
+}
+
+/// Create a manifest (and a `main.nx` when the directory has no source yet);
+/// the files written come back.
+pub fn init(dir: []u8, name: []u8) -> !List(String) {
+    var written = List(String).new()
+    let m = fs.join(dir, MANIFEST)
+    if fs.exists(m[..]) {
+        eprintln("error: {} already exists", .{m})
+        return error.AlreadyExists
+    }
+    fs.write(m[..], format("[package]\nname = \"{}\"\nversion = \"0.1.0\"\n\n[dependencies]\n", .{name})[..]) catch {
+        eprintln("error: cannot write {}", .{m})
+        return error.IoError
+    }
+    written.append(m)
+    var has_source = false
+    let entries = fs.list(dir) catch { List(String).new() }
+    for e in entries { if e[..].ends_with(".nx") { has_source = true } }
+    if !has_source {
+        let main = fs.join(dir, "main.nx")
+        fs.write(main[..], "fn main() {\n    println(\"hello from a Nexium package\", .{})\n}\n") catch {
+            eprintln("error: cannot write {}", .{main})
+            return error.IoError
+        }
+        written.append(main)
+    }
+    return written
+}
+
+/// Append a dependency to the manifest text.
+pub fn add(manifest_path: []u8, dep: *Dep) -> !void {
+    var text = fs.read(manifest_path) catch {
+        eprintln("error: cannot read {}", .{manifest_path})
+        return error.NotFound
+    }
+    var line = String.new()
+    if dep.git.len > 0 {
+        if dep.tag.len > 0 { line = format("{} = {{ git = \"{}\", tag = \"{}\" }}\n", .{dep.name, dep.git, dep.tag}) }
+        else { line = format("{} = {{ git = \"{}\" }}\n", .{dep.name, dep.git}) }
+    } else if dep.path.len > 0 {
+        var p = String.new()
+        for c in dep.path { p.push_byte(if c == '\\' { '/' } else { c }) }
+        line = format("{} = {{ path = \"{}\" }}\n", .{dep.name, p})
+    } else {
+        eprintln("error: a dependency needs --git URL or --path DIR", .{})
+        return error.InvalidInput
+    }
+    var out = String.new()
+    if let i = text[..].find("[dependencies]") {
+        let after = i + "[dependencies]".len
+        var nl = text.len
+        if let k = text[after..].find("\n") { nl = after + k + 1 }
+        out.append(text[0..nl])
+        out.append(line[..])
+        out.append(text[nl..])
+    } else {
+        out.append(text[..])
+        if out.len == 0 or out[out.len - 1] != '\n' { out.append("\n") }
+        out.append("\n[dependencies]\n")
+        out.append(line[..])
+    }
+    fs.write(manifest_path, out[..]) catch {
+        eprintln("error: cannot write {}", .{manifest_path})
+        return error.IoError
+    }
+}
+
+test "toml subset" {
+    let t = parse_toml("# c\n[package]\nname = \"app\" # trailing\nversion = \"0.1.0\"\n\n[dependencies]\ngreet = { git = \"https://x/y\", tag = \"v1\" }\nloc = { path = \"../loc\" }\nlist = [\"a\", \"b\"]\n") catch {
+        expect(false)
+        return
+    }
+    let pkg = table_of(&t, "package") orelse { expect(false); return }
+    expect_eq(pkg.entries[0].key[..], "name")
+    expect_eq(pkg.entries[0].value.text[..], "app")
+    let deps = table_of(&t, "dependencies") orelse { expect(false); return }
+    let tag = deps.entries[0].value.get("tag") orelse { expect(false); return }
+    expect_eq(tag.text[..], "v1")
+    let path = deps.entries[1].value.get("path") orelse { expect(false); return }
+    expect_eq(path.text[..], "../loc")
+    expect_eq(deps.entries[2].value.items.len, 2)
+}
