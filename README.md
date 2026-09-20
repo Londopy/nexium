@@ -380,7 +380,9 @@ KNOWN_ISSUES.md open bugs and limitations; fixes move to the changelog
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md). Bugs and proposals go through GitHub
 issues; a language change must name the hard constraint in section 3 of the
-specification that it serves.
+specification that it serves. Pull requests pass the tests on three
+platforms, the formatters, a changelog check and the [Contributor License
+Agreement](CLA.md) before they merge; you keep your copyright.
 
 ## License
 
