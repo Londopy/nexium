@@ -112,13 +112,14 @@ jobs:
       - name: The spec suite through the bootstrapped compiler
         shell: bash
         run: |
-          set -o pipefail
+          # the runner's bash has -e; a spec case may exit non-zero on purpose
+          set +e -o pipefail
           nx=nx-out/bootstrap/nx1; [ -f "$nx.exe" ] && nx="$nx.exe"
           if [ "$RUNNER_OS" = macOS ]; then export NX_CC=cc; else export NX_ZIG=zig; fi
-          "$nx" run examples/hello.nx --out-dir nx-out/boot-spec
+          "$nx" run examples/hello.nx --out-dir nx-out/boot-spec || exit 1
           bad=0
           for f in tests/spec/*.nx; do
-            want=$(grep -m1 '^// EXIT:' "$f" | sed 's#// EXIT: *##'); want=${want:-0}
+            want=$(grep -m1 '^// EXIT:' "$f" | sed 's#// EXIT: *##' || true); want=${want:-0}
             got=$("$nx" run "$f" --out-dir nx-out/boot-spec 2>&1 | tr -d '\r' | sed 's#\\#/#g'); code=$?
             exp=$(tr -d '\r' < "${f%.nx}.expected")
             if [ "$got" != "$exp" ] || [ "$code" != "$want" ]; then echo "FAIL $f (exit $code, want $want)"; diff <(echo "$exp") <(echo "$got") | head -5; bad=1; fi
