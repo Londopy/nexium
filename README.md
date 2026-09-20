@@ -268,6 +268,7 @@ using arena {
 - [Editor support](editors): VS Code extension, Sublime syntax, LSP.
 - [Linguist](linguist): the ready-to-apply pull request that will make GitHub recognize `.nx` once the usage bar is met.
 - [Translations](docs/i18n): this README in six languages; the language reference and the architecture tour in Spanish, Chinese, and Japanese.
+- [Release names](docs/release-names.md): every release is a place on a mountain; the scheme, the ledger, and the names still to use.
 - [Decisions](DECISIONS.md): every call made where the specification was open.
 - [Known issues](KNOWN_ISSUES.md): open bugs, gaps and limitations, with repros.
 
@@ -309,6 +310,19 @@ early: the standard library is a fraction of section 16, and region checking
 covers only returned views. [`DECISIONS.md`](DECISIONS.md) lists every call
 made where the specification was open, for review, and item 27 lists what is
 left.
+
+## Release names
+
+A major version is a mountain, in the order the fourteen 8000-metre peaks
+were first climbed; the versions under it are the climb: camps, routes and
+faces for minor versions, the first-ascent expedition's members for
+patches, `Summit` for `X.0.0`. The 0.x line is the approach and the camps
+of Annapurna, the first 8000er climbed (1950), so 1.0.0 is
+`Annapurna: Summit`; 0.7.0, where the compiler started building itself, is
+`Annapurna: Camp V`, the last camp before the summit push. The name is in
+the changelog, the release title and `nx version`;
+[docs/release-names.md](docs/release-names.md) has the rule, the ledger,
+and the mountains still to climb.
 
 ## Self-hosting
 

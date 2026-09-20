@@ -117,12 +117,14 @@ jobs:
           path: artifacts
           merge-multiple: true
       - name: Release notes and checksums
+        id: notes
         run: |
           pip install patchnotes
           python scripts/release_notes.py "${{ github.ref_name }}" artifacts notes.md
+          echo "title=$(cat title.txt)" >> "$GITHUB_OUTPUT"
           cat notes.md
       - uses: softprops/action-gh-release@v2
         with:
-          name: Nexium ${{ github.ref_name }}
+          name: ${{ steps.notes.outputs.title }}
           body_path: notes.md
           files: artifacts/*

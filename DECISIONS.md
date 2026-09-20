@@ -543,6 +543,24 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
       allocations freed at once); `using pool` was always an error.
     A feature wanted later comes back through the stability policy, as an
     addition in a minor version, not as a promise in the spec.
+89. **Releases are named after places on a mountain.** A major version is a
+    mountain, in the order the fourteen 8000-metre peaks were first climbed
+    (0.x and 1.x Annapurna, 2.x Everest, 3.x Nanga Parbat, 4.x K2, ...);
+    `X.0.0` is `Mountain: Summit`; a minor version is a camp, route, face or
+    feature of that mountain, chosen to fit the release with one line of
+    why in the changelog; a patch is a member of the mountain's first-ascent
+    expedition, in roster order, so nothing is forced onto a bug-fix
+    release. The 0.x line is the approach and the camps of the first
+    climb, so 1.0.0 is the top of the mountain the project has been on
+    since 0.1.0. The mountain always comes first in the name
+    (`Annapurna: Camp V`), so a name reads without knowing the scheme.
+    After the 8000ers come the Seven Summits, then the great north faces
+    of the Alps; a range beyond those is a new decision. The name appears
+    under the version header in `CHANGELOG.md`, in the release title and
+    tag message, and in `nx version`; `docs/release-names.md` is the
+    reference and the ledger, with the pools of names per mountain. The
+    0.x releases were named retroactively. The name fits the release; the
+    release is never shaped to fit a name.
 
 ## Compiler selection
 

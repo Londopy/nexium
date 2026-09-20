@@ -5,6 +5,8 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 The file is validated in CI with [patchnotes](https://pypi.org/project/patchnotes/).
+The line under each version header is the release's name, a place on a
+mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ## [Unreleased]
 
@@ -20,6 +22,8 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
   contents by luck.
 
 ## [0.7.0] - 2026-09-19
+
+*Annapurna: Camp V* — the last camp, at 7,400 m; the summit push starts here: the compiler builds itself.
 
 ### Added
 
@@ -124,6 +128,8 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
 
 ## [0.6.1] - 2026-09-19
 
+*Annapurna: Lachenal* — patch.
+
 ### Added
 
 - `nx tir`: the checked program as S-expressions, the oracle for the
@@ -158,6 +164,8 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
 - The tree-sitter parser is regenerated for 0.6.0 (its version is embedded).
 
 ## [0.6.0] - 2026-09-19
+
+*Annapurna: Camp IV* — the syntax settled for 1.0; the parser in Nexium.
 
 ### Changed
 
@@ -204,6 +212,8 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
 
 ## [0.5.0] - 2026-09-19
 
+*Annapurna: Camp III* — other people can build on it: packages, editors, installers.
+
 ### Added
 
 - Packages: a `nexium.toml` manifest with `[dependencies]` from a git tag
@@ -243,6 +253,8 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
   output directory unless `ZIG_LOCAL_CACHE_DIR` is set.
 
 ## [0.4.0] - 2026-09-19
+
+*Annapurna: Camp II* — the language talks to the world: sockets, HTTP, threads.
 
 ### Added
 
@@ -288,6 +300,8 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
   a block is not a struct literal).
 
 ## [0.3.0] - 2026-09-19
+
+*Annapurna: Camp I* — the first camp on the mountain: the tools' standard library.
 
 ### Added
 
@@ -351,6 +365,8 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
 
 ## [0.2.1] - 2026-09-19
 
+*Annapurna: Herzog* — patch.
+
 ### Added
 
 - `SPEC.md`, the language specification as implemented, and `ROADMAP.md`.
@@ -376,6 +392,8 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
   after move.
 
 ## [0.2.0] - 2026-09-19
+
+*Annapurna: Base Camp* — where the expedition is staged: the installer, the spec, the roadmap.
 
 ### Added
 
@@ -424,6 +442,8 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
   between an `if` condition and a parenthesized body.
 
 ## [0.1.0] - 2026-09-18
+
+*Annapurna: Miristi Khola* — the gorge the 1950 expedition spent weeks finding a way through; the approach.
 
 First public release.
 

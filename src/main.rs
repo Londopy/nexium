@@ -35,6 +35,9 @@ use std::path::{Path, PathBuf};
 use std::process::{exit, Command};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// The release's name, a place on a mountain (docs/release-names.md); set
+/// with the version by the release commit.
+const RELEASE_NAME: &str = "Annapurna: Camp V";
 
 fn usage() -> ! {
     eprintln!(
@@ -675,7 +678,7 @@ fn cmd_fetch() -> i32 {
 }
 
 fn cmd_doctor() -> i32 {
-    println!("nx {}", VERSION);
+    println!("nx {} ({})", VERSION, RELEASE_NAME);
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("nx"));
     println!("executable:  {}", exe.display());
     let opts = Opts {
@@ -2196,7 +2199,7 @@ fn real_main() -> i32 {
     let rest = &args[1..];
     let code = match cmd {
         "version" | "--version" | "-V" => {
-            println!("nx {}", VERSION);
+            println!("nx {} ({})", VERSION, RELEASE_NAME);
             0
         }
         "doctor" => cmd_doctor(),
