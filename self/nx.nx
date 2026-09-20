@@ -15,6 +15,7 @@
 import parser
 import check
 import cgen
+import fmt
 
 const NONE: usize = 0xFFFFFFFFFFFFFFFF
 
@@ -36,6 +37,7 @@ pub struct Opts {
 
 fn usage() {
     eprintln("usage: nx <build|run|test|check|emit-c|tir> <file.nx> [options] [-- args]", .{})
+    eprintln("       nx fmt <file.nx>... [--check]", .{})
     eprintln("  -o <path>          output file", .{})
     eprintln("  --out-dir <dir>    where C and binaries go (default nx-out)", .{})
     eprintln("  --mode <m>         debug (default), safe, fast, small", .{})
@@ -362,6 +364,44 @@ fn cmd_emit_c(o: *Opts) -> i32 {
     return 0
 }
 
+/// `nx fmt FILE...`: rewrite each file in canonical form; `--check` only
+/// reports the files that would change, and fails when there are any.
+fn cmd_fmt(o: *Opts) -> i32 {
+    var check_only = false
+    var files = List(String).new()
+    files.append(o.file.clone())
+    for a in o.rest {
+        if a == "--check" { check_only = true }
+        else if a == "--migrate-only" { }
+        else if !a[..].starts_with("--") { files.append(a.clone()) }
+    }
+    var changed: i32 = 0
+    for f in files {
+        let original = io.read_file(f[..]) catch {
+            eprintln("error: cannot read {}", .{f})
+            return 1
+        }
+        let formatted = fmt.format_source(original[..]) catch {
+            eprintln("error: {}: the file has lexical errors; fix them before formatting", .{f})
+            return 1
+        }
+        if formatted != original {
+            changed += 1
+            if check_only {
+                println("would reformat {}", .{f})
+            } else {
+                io.write_file(f[..], formatted[..]) catch {
+                    eprintln("error: cannot write {}", .{f})
+                    return 1
+                }
+                println("formatted {}", .{f})
+            }
+        }
+    }
+    if check_only and changed > 0 { return 1 }
+    return 0
+}
+
 fn cmd_tir(o: *Opts) -> i32 {
     let mods = check.load(o.file[..], o.std_dir[..]) catch { return 1 }
     var c = check.new_checker(mods)
@@ -404,6 +444,8 @@ fn main() -> u8 {
         code = cmd_emit_c(&o)
     } else if o.command == "tir" {
         code = cmd_tir(&o)
+    } else if o.command == "fmt" {
+        code = cmd_fmt(&o)
     } else {
         usage()
         return 2

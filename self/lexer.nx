@@ -6,7 +6,7 @@
 // `error at OFFSET: message` and the exit code is 1.
 
 pub enum Kind {
-    Ident, Int, Float, Str, Bytes, Char, Doc, Newline, Eof,
+    Ident, Int, Float, Str, Bytes, Char, Doc, Comment, Newline, Eof,
     LParen, RParen, LBrace, RBrace, LBracket, RBracket,
     Comma, Colon, Semi, Dot, DotStar, DotQuestion, DotDot, DotLBrace,
     Arrow, FatArrow, Question, Bang, Tilde, At, Pipe, PipeGt, Hash, Dollar,
@@ -22,7 +22,7 @@ pub enum Kind {
 pub fn kind_name(k: Kind) -> []u8 {
     match k {
         .Ident => "Ident", .Int => "Int", .Float => "Float", .Str => "Str", .Bytes => "Bytes",
-        .Char => "Char", .Doc => "Doc", .Newline => "Newline", .Eof => "Eof",
+        .Char => "Char", .Doc => "Doc", .Comment => "Comment", .Newline => "Newline", .Eof => "Eof",
         .LParen => "LParen", .RParen => "RParen", .LBrace => "LBrace", .RBrace => "RBrace",
         .LBracket => "LBracket", .RBracket => "RBracket",
         .Comma => "Comma", .Colon => "Colon", .Semi => "Semi", .Dot => "Dot", .DotStar => "DotStar",
@@ -56,6 +56,8 @@ pub struct Lexer {
     depth: List(u8)
     toks: List(Token)
     errors: List(String)
+    /// keep `//` comments as tokens (the formatter needs them; the parser never sees them)
+    keep_comments: bool
 }
 
 fn is_digit(c: u8) -> bool { return c >= '0' and c <= '9' }
@@ -239,6 +241,9 @@ impl Lexer {
                 if is_doc {
                     let text = String.from(self.src[s..self.pos].trim())
                     self.push(Kind.Doc, start, text)
+                } else if self.keep_comments {
+                    let text = String.from(self.src[s..self.pos].trim())
+                    self.push(Kind.Comment, start, text)
                 }
             } else if is_alpha(c) or c == '_' {
                 if (c == 'r' or c == 'b') and self.peek_at(1) == '"' {
@@ -512,7 +517,14 @@ impl Lexer {
 
 /// A lexer over `src`, ready to `lex()`.
 pub fn new_lexer(src: []u8) -> Lexer {
-    return Lexer{ .src = src, .pos = 0, .depth = List(u8).new(), .toks = List(Token).new(), .errors = List(String).new() }
+    return Lexer{ .src = src, .pos = 0, .depth = List(u8).new(), .toks = List(Token).new(), .errors = List(String).new(), .keep_comments = false }
+}
+
+/// A lexer that keeps `//` comments as `Comment` tokens, for the formatter.
+pub fn new_lexer_with_comments(src: []u8) -> Lexer {
+    var l = new_lexer(src)
+    l.keep_comments = true
+    return l
 }
 
 /// Is `s` a reserved word?
@@ -530,7 +542,7 @@ fn main() -> !void {
         os.exit(2)
     }
     let text = try io.read_file(args[1])
-    var lx = Lexer{ .src = text, .pos = 0, .depth = List(u8).new(), .toks = List(Token).new(), .errors = List(String).new() }
+    var lx = new_lexer(text)
     lx.lex()
     var out = String.new()
     for t in lx.toks {

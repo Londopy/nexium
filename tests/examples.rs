@@ -344,7 +344,7 @@ fn std_modules_pass_their_tests() {
     for f in files {
         let out = nxs().arg("test").arg(&f).output().unwrap();
         assert!(out.status.success(), "std tests failed for {}:\n{}{}", f.display(), String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-        let fmt = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).arg("fmt").arg(&f).arg("--check").current_dir(root).output().unwrap();
+        let fmt = nxs().arg("fmt").arg(&f).arg("--check").output().unwrap();
         assert!(fmt.status.success(), "{} is not canonically formatted", f.display());
     }
 }
@@ -367,25 +367,50 @@ fn repl_session() {
     assert!(stderr.contains("undefined_name"), "the error for an unknown name was not reported:\n{}", stderr);
 }
 
+/// `nx fmt --check` passes on every source in the tree: formatting is
+/// idempotent and the sources are canonical. The formatter in Nexium
+/// (`self/fmt.nx`) is also held to the frozen Rust one while that exists:
+/// both must produce the same text for every source after its layout is
+/// disturbed.
 #[test]
 fn examples_are_canonically_formatted() {
-    // `nx fmt --check` must pass on every example: formatting is idempotent and the sources are canonical
-    let dir = root().join("examples");
-    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().map(|x| x == "nx").unwrap_or(false)).collect();
+    if !have_cc() {
+        eprintln!("skipping: zig not found");
+        return;
+    }
+    let mut files: Vec<PathBuf> = Vec::new();
+    for dir in ["examples", "std", "gui", "self", "tests/spec", "tests/compile_fail"] {
+        files.extend(std::fs::read_dir(root().join(dir)).unwrap().filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().map(|x| x == "nx").unwrap_or(false)));
+    }
     files.sort();
-    let mut cmd = Command::new(nx());
+    let mut cmd = nxs();
     cmd.arg("fmt");
     for f in &files {
         cmd.arg(f);
     }
     cmd.arg("--check");
-    let out = cmd.current_dir(root()).output().expect("run nx fmt");
+    let out = cmd.output().expect("run nx fmt");
     assert!(
         out.status.success(),
         "unformatted examples:
 {}",
         String::from_utf8_lossy(&out.stdout)
     );
+    let scratch = root().join("nx-out").join("fmt-oracle");
+    let _ = std::fs::create_dir_all(&scratch);
+    for f in &files {
+        let src = std::fs::read_to_string(f).unwrap();
+        let disturbed: String = src.lines().map(|l| l.trim().replace(", ", " , ").replace(" = ", "=")).collect::<Vec<_>>().join("\n");
+        let a = scratch.join("a.nx");
+        let b = scratch.join("b.nx");
+        std::fs::write(&a, &disturbed).unwrap();
+        std::fs::write(&b, &disturbed).unwrap();
+        let ra = Command::new(nx()).arg("fmt").arg(&a).current_dir(root()).output().unwrap();
+        let rb = nxs().arg("fmt").arg(&b).output().unwrap();
+        assert_eq!(ra.status.code(), rb.status.code(), "fmt exit codes differ for {}", f.display());
+        assert_same_text(&std::fs::read_to_string(&a).unwrap(), &std::fs::read_to_string(&b).unwrap(), &format!("the two formatters disagree on {}", f.display()));
+    }
+    let _ = std::fs::remove_dir_all(&scratch);
 }
 
 /// Packages: a manifest with a path dependency, `import dep` (src/lib.nx),

@@ -10,6 +10,13 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ## [Unreleased]
 
+### Added
+
+- `nx fmt` in Nexium (`self/fmt.nx`, a command of `self/nx.nx`): the
+  formatter, byte for byte the same as the first one on every source in
+  the tree with its layout disturbed, which `cargo test` checks while the
+  Rust one exists. The lexer keeps `//` comments as tokens on request.
+
 ## [0.8.0] - 2026-09-20
 
 *Annapurna: the Sickle* — the exposed glacier crossing below the summit: the compiler in Nexium is the compiler, and builds from its own C with no Rust.

@@ -1,0 +1,442 @@
+// `nx fmt`: canonical formatting, no options (specification 16).
+//
+// The formatter is token based and line preserving: it never joins or splits
+// lines, so a program's shape stays the author's. It normalizes indentation
+// (four spaces per open brace, one extra level for a continuation line),
+// spacing around operators, after commas and colons, trailing whitespace,
+// and runs of blank lines (at most one). Comments stay where they are.
+//
+// A port of the first formatter (bootstrap/rust/src/fmt.rs), byte for byte on
+// every source in the tree.
+
+import lexer
+
+const EFFECT_NAMES = ["allocates", "refcounts", "blocks", "shared_mutable", "nondeterministic", "panics", "ffi", "unbounded_stack"]
+
+/// The tokens of one line, as indices into the lexer's token list, with the
+/// per-line state the spacing rules consult.
+struct Line {
+    toks: List(usize)
+    in_enum_body: bool
+    /// binary patterns open at the start of this line
+    pattern_depth_at_start: i64
+}
+
+/// The canonical form of `src`, or an error when the file does not lex.
+pub fn format_source(src: []u8) -> !String {
+    var lx = lexer.new_lexer_with_comments(src)
+    lx.lex()
+    if lx.errors.len > 0 { return error.InvalidInput }
+    let toks = &lx.toks
+    // tokens per line; a token's line is the count of newlines before it
+    var n_lines: usize = 1
+    for c in src { if c == '\n' { n_lines += 1 } }
+    n_lines += 1
+    var lines = List(List(usize)).new()
+    for _ in 0..n_lines { lines.append(List(usize).new()) }
+    var line: usize = 0
+    var scanned: usize = 0
+    for t, ti in toks {
+        if t.kind == lexer.Kind.Newline or t.kind == lexer.Kind.Eof { continue }
+        while scanned < t.start { if src[scanned] == '\n' { line += 1 }; scanned += 1 }
+        if line < lines.len { lines[line].append(ti) }
+    }
+    var out = String.new()
+    var depth: i64 = 0
+    var paren: i64 = 0
+    var blank_run: i64 = 0
+    var prev_line_last: ?lexer.Kind = null
+    // depth at which an `enum` body opened (variants with `{` payloads live there)
+    var enum_body_depth: i64 = -1
+    var pending_enum = false
+    var had_content = false
+    var pattern_depth: i64 = 0
+    for ids in lines {
+        if ids.len == 0 {
+            if had_content {
+                blank_run += 1
+                if blank_run == 1 { out.append("\n") }
+            }
+            continue
+        }
+        had_content = true
+        blank_run = 0
+        var line_depth = depth
+        let first = toks[ids[0]].kind
+        if first == lexer.Kind.RBrace { line_depth -= 1 }
+        var prev_blocks_dot = true
+        var prev_is_binary = false
+        if let pk = prev_line_last {
+            prev_blocks_dot = pk == lexer.Kind.LBrace or pk == lexer.Kind.Comma or pk == lexer.Kind.FatArrow or pk == lexer.Kind.RBrace
+            prev_is_binary = is_binary_op(pk) and pk != lexer.Kind.FatArrow and pk != lexer.Kind.Eq
+        }
+        let leading_dot_continues = first == lexer.Kind.Dot and !prev_blocks_dot
+        let first_text = toks[ids[0]].text[..]
+        let first_word_continues = first == lexer.Kind.Ident and (first_text == "catch" or first_text == "orelse" or first_text == "and" or first_text == "or")
+        let continuation = paren > 0 or leading_dot_continues or first == lexer.Kind.PipeGt or first_word_continues or prev_is_binary
+        let extra: i64 = if continuation and ! (first == lexer.Kind.RBrace or first == lexer.Kind.RParen or first == lexer.Kind.RBracket) { 4 } else { 0 }
+        let indent = (if line_depth > 0 { line_depth } else { 0 }) * 4 + extra
+        for _ in 0..indent { out.append(" ") }
+        var ctx = Line{ .toks = ids.clone(), .in_enum_body = enum_body_depth == depth, .pattern_depth_at_start = pattern_depth }
+        for id, i in ids {
+            let t = &toks[id]
+            if i > 0 and needs_space(toks, &ctx, i) { out.append(" ") }
+            out.append(src[t.start..t.end])
+            let k = t.kind
+            if k == lexer.Kind.LBrace or k == lexer.Kind.DotLBrace {
+                depth += 1
+                if pending_enum {
+                    enum_body_depth = depth
+                    pending_enum = false
+                }
+            } else if k == lexer.Kind.RBrace {
+                if enum_body_depth == depth { enum_body_depth = -1 }
+                depth -= 1
+            } else if k == lexer.Kind.LParen or k == lexer.Kind.LBracket {
+                paren += 1
+            } else if k == lexer.Kind.RParen or k == lexer.Kind.RBracket {
+                paren -= 1
+            } else if k == lexer.Kind.Ident and t.text == "enum" {
+                pending_enum = true
+            } else if k == lexer.Kind.LtLt and (i == 0 or !ends_operand(toks, ids[i - 1])) {
+                pattern_depth += 1
+                paren += 1
+            } else if k == lexer.Kind.GtGt and pattern_depth > 0 {
+                pattern_depth -= 1
+                paren -= 1
+            }
+        }
+        while out.len > 0 and out[out.len - 1] == ' ' { _ = out.pop() }
+        out.append("\n")
+        prev_line_last = toks[ids[ids.len - 1]].kind
+    }
+    while out.len >= 2 and out[out.len - 1] == '\n' and out[out.len - 2] == '\n' { _ = out.pop() }
+    if out.len == 0 or out[out.len - 1] != '\n' { out.append("\n") }
+    return out
+}
+
+/// Is position `i` inside a `<< ... >>` binary pattern on this line?
+fn in_pattern(toks: *List(lexer.Token), ctx: *Line, i: usize) -> bool {
+    var d = ctx.pattern_depth_at_start
+    for j in 0..i {
+        let k = toks[ctx.toks[j]].kind
+        if k == lexer.Kind.LtLt and (j == 0 or !ends_operand(toks, ctx.toks[j - 1])) { d += 1 }
+        else if k == lexer.Kind.GtGt and d > 0 { d -= 1 }
+    }
+    return d > 0
+}
+
+fn is_binary_op(k: lexer.Kind) -> bool {
+    return k == lexer.Kind.Plus or k == lexer.Kind.Minus or k == lexer.Kind.Star or k == lexer.Kind.Slash or k == lexer.Kind.Percent
+        or k == lexer.Kind.PlusPct or k == lexer.Kind.MinusPct or k == lexer.Kind.StarPct
+        or k == lexer.Kind.PlusPipe or k == lexer.Kind.MinusPipe or k == lexer.Kind.StarPipe
+        or k == lexer.Kind.Amp or k == lexer.Kind.Caret or k == lexer.Kind.LtLt or k == lexer.Kind.GtGt
+        or k == lexer.Kind.Eq or k == lexer.Kind.EqEq or k == lexer.Kind.Ne or k == lexer.Kind.Lt or k == lexer.Kind.Le or k == lexer.Kind.Gt or k == lexer.Kind.Ge
+        or k == lexer.Kind.PlusEq or k == lexer.Kind.MinusEq or k == lexer.Kind.StarEq or k == lexer.Kind.SlashEq or k == lexer.Kind.PercentEq
+        or k == lexer.Kind.AmpEq or k == lexer.Kind.PipeEq or k == lexer.Kind.CaretEq or k == lexer.Kind.ShlEq or k == lexer.Kind.ShrEq
+        or k == lexer.Kind.PlusPctEq or k == lexer.Kind.MinusPctEq or k == lexer.Kind.StarPctEq
+        or k == lexer.Kind.PipeGt or k == lexer.Kind.Arrow or k == lexer.Kind.FatArrow
+}
+
+fn is_word(k: lexer.Kind) -> bool {
+    return k == lexer.Kind.Ident or k == lexer.Kind.Int or k == lexer.Kind.Float or k == lexer.Kind.Str or k == lexer.Kind.Bytes or k == lexer.Kind.Char
+}
+
+fn is_kw(t: *lexer.Token, k: []u8) -> bool { return t.kind == lexer.Kind.Ident and t.text == k }
+
+fn is_keyword_tok(t: *lexer.Token) -> bool { return t.kind == lexer.Kind.Ident and lexer.is_keyword(t.text[..]) }
+
+fn is_effect_name(t: *lexer.Token) -> bool {
+    if t.kind != lexer.Kind.Ident { return false }
+    for e in EFFECT_NAMES { if e == t.text { return true } }
+    return false
+}
+
+const BAR_OPENING: u8 = 0
+const BAR_CLOSING: u8 = 1
+const BAR_BINARY: u8 = 2
+
+/// What the `|` at `at` is: the bars of a line are classified left to right,
+/// so a bit-or inside a closure body is not mistaken for its closing bar.
+fn bar_role(toks: *List(lexer.Token), ctx: *Line, at: usize) -> u8 {
+    var open = false
+    var role = BAR_BINARY
+    for k in 0..at + 1 {
+        if toks[ctx.toks[k]].kind != lexer.Kind.Pipe { continue }
+        if open {
+            open = false
+            role = BAR_CLOSING
+        } else if k > 0 and ends_operand(toks, ctx.toks[k - 1]) {
+            role = BAR_BINARY
+        } else {
+            open = true
+            role = BAR_OPENING
+        }
+    }
+    return role
+}
+
+/// Ends an operand: a word or a closer, so the next `-`/`&`/`*` is binary.
+fn ends_operand(toks: *List(lexer.Token), id: usize) -> bool {
+    let t = &toks[id]
+    let k = t.kind
+    return (is_word(k) and !is_keyword_tok(t)) or k == lexer.Kind.RParen or k == lexer.Kind.RBracket or k == lexer.Kind.RBrace or k == lexer.Kind.DotQuestion or k == lexer.Kind.DotStar
+        or is_kw(t, "true") or is_kw(t, "false") or is_kw(t, "null")
+}
+
+/// Is the token a type-position introducer (`:` `->` `?` `*` `[]`)?
+fn type_position_before(t: *lexer.Token) -> bool {
+    let k = t.kind
+    return k == lexer.Kind.Colon or k == lexer.Kind.Arrow or k == lexer.Kind.Question or k == lexer.Kind.Bang or k == lexer.Kind.Comma or k == lexer.Kind.LParen or k == lexer.Kind.LBracket or k == lexer.Kind.RBracket or k == lexer.Kind.Eq or k == lexer.Kind.FatArrow
+        or is_kw(t, "mut") or is_kw(t, "as") or is_kw(t, "distinct") or is_kw(t, "weak") or is_kw(t, "type")
+}
+
+/// Does the `)` at `at` close the condition of an `if`, `while`, or `for`?
+fn closes_control_head(toks: *List(lexer.Token), ctx: *Line, at: usize) -> bool {
+    var depth: i64 = 0
+    var j = at
+    while true {
+        let k = toks[ctx.toks[j]].kind
+        if k == lexer.Kind.RParen { depth += 1 }
+        else if k == lexer.Kind.LParen {
+            depth -= 1
+            if depth == 0 { break }
+        }
+        if j == 0 { return false }
+        j -= 1
+    }
+    if j == 0 { return false }
+    let t = &toks[ctx.toks[j - 1]]
+    return is_kw(t, "if") or is_kw(t, "while") or is_kw(t, "for")
+}
+
+/// Is the `{` at `i` the body of an `if`/`while`/`for`/`match` head on this
+/// line? Walks back at bracket depth 0 to the keyword; any brace in between
+/// means the head is over.
+fn opens_control_body(toks: *List(lexer.Token), ctx: *Line, i: usize) -> bool {
+    var depth: i64 = 0
+    var j = i
+    while j > 0 {
+        j -= 1
+        let t = &toks[ctx.toks[j]]
+        let k = t.kind
+        if k == lexer.Kind.RParen or k == lexer.Kind.RBracket { depth += 1 }
+        else if k == lexer.Kind.LParen or k == lexer.Kind.LBracket {
+            depth -= 1
+            if depth < 0 { return false }
+        } else if (k == lexer.Kind.LBrace or k == lexer.Kind.RBrace or k == lexer.Kind.DotLBrace) and depth == 0 {
+            return false
+        } else if k == lexer.Kind.Ident and depth == 0 and (t.text == "if" or t.text == "while" or t.text == "for" or t.text == "match") {
+            return true
+        }
+    }
+    return false
+}
+
+/// The kind of the token `n` places before position `i` on the line, or
+/// null at the start of the line.
+fn kind_back(toks: *List(lexer.Token), ctx: *Line, i: usize, n: usize) -> ?lexer.Kind {
+    if i < n { return null }
+    return toks[ctx.toks[i - n]].kind
+}
+
+fn kind_is(k: ?lexer.Kind, want: lexer.Kind) -> bool {
+    if let v = k { return v == want }
+    return false
+}
+
+fn starts_upper(t: *lexer.Token) -> bool {
+    return t.text.len > 0 and t.text[0] >= 'A' and t.text[0] <= 'Z'
+}
+
+/// Should a space separate the tokens at `i-1` and `i` on this line?
+fn needs_space(toks: *List(lexer.Token), ctx: *Line, i: usize) -> bool {
+    let ta = &toks[ctx.toks[i - 1]]
+    let tb = &toks[ctx.toks[i]]
+    let a = ta.kind
+    let b = tb.kind
+    let pp = kind_back(toks, ctx, i, 2)
+    let has_next = i + 1 < ctx.toks.len
+    if b == lexer.Kind.Comment or b == lexer.Kind.Doc { return true }
+    // ranges and member access are tight: `0..n`, `1..=9`
+    if a == lexer.Kind.DotDot or b == lexer.Kind.DotDot or (a == lexer.Kind.Eq and kind_is(pp, lexer.Kind.DotDot)) { return false }
+    // or-patterns in match arms: `.A | .B => ...`
+    var arm_line = false
+    for j in i..ctx.toks.len { if toks[ctx.toks[j]].kind == lexer.Kind.FatArrow { arm_line = true } }
+    var first_bar = ctx.toks.len
+    for j in 0..ctx.toks.len { if first_bar == ctx.toks.len and toks[ctx.toks[j]].kind == lexer.Kind.Pipe { first_bar = j } }
+    var closure_bar = false
+    if first_bar < ctx.toks.len and first_bar > 0 {
+        let fp = &toks[ctx.toks[first_bar - 1]]
+        let fk = fp.kind
+        closure_bar = fk == lexer.Kind.Eq or fk == lexer.Kind.LParen or fk == lexer.Kind.RParen or fk == lexer.Kind.Comma or fk == lexer.Kind.FatArrow or is_keyword_tok(fp)
+    }
+    if (a == lexer.Kind.Pipe or b == lexer.Kind.Pipe) and arm_line and !closure_bar { return true }
+    // labels: `break :outer`, `outer: {`
+    if b == lexer.Kind.Colon and (is_kw(ta, "break") or is_kw(ta, "continue")) { return true }
+    if a == lexer.Kind.Colon and i >= 2 {
+        let t2 = &toks[ctx.toks[i - 2]]
+        if is_kw(t2, "break") or is_kw(t2, "continue") { return false }
+    }
+    // binary patterns: `<<a:4, rest:bytes>>` is written tight
+    let inside_pattern = in_pattern(toks, ctx, i)
+    if inside_pattern {
+        if a == lexer.Kind.LtLt or b == lexer.Kind.GtGt or a == lexer.Kind.Colon or b == lexer.Kind.Colon or a == lexer.Kind.Slash or b == lexer.Kind.Slash or a == lexer.Kind.Minus or b == lexer.Kind.Minus or a == lexer.Kind.Star or b == lexer.Kind.Star {
+            return false
+        }
+    } else if b == lexer.Kind.LtLt and !ends_operand(toks, ctx.toks[i - 1]) {
+        return ! (a == lexer.Kind.LParen or a == lexer.Kind.LBracket or a == lexer.Kind.Comma) or a == lexer.Kind.Comma
+    }
+    // openers and member access never have a space after them
+    if a == lexer.Kind.LParen or a == lexer.Kind.LBracket or a == lexer.Kind.Dot or a == lexer.Kind.DotStar or a == lexer.Kind.DotQuestion or a == lexer.Kind.At { return false }
+    if a == lexer.Kind.Pipe and b == lexer.Kind.LBracket { return false }
+    // closers and separators never have a space before them
+    if b == lexer.Kind.RParen or b == lexer.Kind.RBracket or b == lexer.Kind.Comma or b == lexer.Kind.Semi or b == lexer.Kind.DotStar or b == lexer.Kind.DotQuestion { return false }
+    // `.field` after a comma or an opening brace is a field initializer; otherwise member access
+    if b == lexer.Kind.Dot { return a == lexer.Kind.Comma or a == lexer.Kind.LBrace or a == lexer.Kind.DotLBrace }
+    if a == lexer.Kind.Colon or a == lexer.Kind.Comma { return true }
+    // inside braces: `{ .x = 1 }` and blocks get spaces, `.{a, b}` tuples do not
+    if a == lexer.Kind.LBrace or a == lexer.Kind.DotLBrace { return a == lexer.Kind.LBrace or b == lexer.Kind.Dot }
+    if b == lexer.Kind.RBrace {
+        var depth: i64 = 0
+        var j = i - 1
+        while true {
+            let k = toks[ctx.toks[j]].kind
+            if k == lexer.Kind.RBrace { depth += 1 }
+            else if k == lexer.Kind.LBrace or k == lexer.Kind.DotLBrace {
+                if depth == 0 {
+                    let after_dot = j + 1 < ctx.toks.len and toks[ctx.toks[j + 1]].kind == lexer.Kind.Dot
+                    return k == lexer.Kind.LBrace or after_dot
+                }
+                depth -= 1
+            }
+            if j == 0 { break }
+            j -= 1
+        }
+        return true
+    }
+    // `name:` in fields/params/labels/segments, but `error.X => ...` and `a ? b`
+    if b == lexer.Kind.Colon { return false }
+    // calls, indexing, generic instantiation: `f(`, `xs[`, `List(`
+    if b == lexer.Kind.LParen {
+        if is_kw(ta, "impl") or is_kw(ta, "fn") or is_kw(ta, "export") or is_kw(ta, "derive") or is_kw(ta, "layout") { return false }
+        if a == lexer.Kind.RParen and closes_control_head(toks, ctx, i - 1) { return true }
+        return ! (ends_operand(toks, ctx.toks[i - 1]) or a == lexer.Kind.Question or a == lexer.Kind.Star)
+            or is_kw(ta, "return") or is_kw(ta, "if") or is_kw(ta, "while") or is_kw(ta, "for") or is_kw(ta, "match") or is_kw(ta, "and") or is_kw(ta, "or") or is_kw(ta, "in")
+    }
+    if b == lexer.Kind.LBracket {
+        // `xs[i]` vs `: []u8`, `-> [N]T`, `= [1, 2]`, `?[]u8`
+        if a == lexer.Kind.Question or a == lexer.Kind.Star or a == lexer.Kind.Bang { return false }
+        return !ends_operand(toks, ctx.toks[i - 1]) or is_kw(ta, "return") or is_kw(ta, "as")
+    }
+    // `[]u8`, `[N]T`, `[]dyn T`: no space after `]` in type position
+    if a == lexer.Kind.RBracket and is_word(b) and (!is_keyword_tok(tb) or is_kw(tb, "dyn") or is_kw(tb, "weak") or is_kw(tb, "fn") or is_kw(tb, "mut")) {
+        // find the matching bracket's predecessor: scan back on this line
+        var depth: i64 = 0
+        var j = i - 1
+        while true {
+            let k = toks[ctx.toks[j]].kind
+            if k == lexer.Kind.RBracket { depth += 1 }
+            else if k == lexer.Kind.LBracket {
+                depth -= 1
+                if depth == 0 { break }
+            }
+            if j == 0 { break }
+            j -= 1
+        }
+        if j == 0 { return false }
+        let before = &toks[ctx.toks[j - 1]]
+        return !type_position_before(before) and !is_kw(before, "mut")
+    }
+    // struct literals `Point{`, declarations `struct Point {`, blocks `) {`
+    if b == lexer.Kind.LBrace {
+        let t0 = &toks[ctx.toks[0]]
+        if t0.kind == lexer.Kind.Ident and (t0.text == "struct" or t0.text == "enum" or t0.text == "record" or t0.text == "ref" or t0.text == "impl" or t0.text == "trait" or t0.text == "error" or t0.text == "artifact" or t0.text == "using" or t0.text == "test") {
+            return true
+        }
+        // the body brace of `if c {`, `while c {`, `for x in xs {`, `match v {`:
+        // a bare struct literal cannot appear in such a head, so `if k == Kind.Defer {`
+        if opens_control_body(toks, ctx, i) { return true }
+        if a == lexer.Kind.Ident {
+            var declared = false
+            if i >= 2 {
+                let t2 = &toks[ctx.toks[i - 2]]
+                declared = is_kw(t2, "struct") or is_kw(t2, "enum") or is_kw(t2, "record") or is_kw(t2, "class") or is_kw(t2, "trait") or is_kw(t2, "impl") or is_kw(t2, "error") or is_kw(t2, "for") or is_kw(t2, "using") or is_kw(t2, "artifact")
+            }
+            let uppercase = starts_upper(ta)
+            // `-> http.Response {`: look back over a dotted path to the arrow
+            var k = i - 1
+            while k >= 2 and toks[ctx.toks[k - 1]].kind == lexer.Kind.Dot and toks[ctx.toks[k - 2]].kind == lexer.Kind.Ident { k -= 2 }
+            var type_pos = false
+            if k >= 1 {
+                let bk = toks[ctx.toks[k - 1]].kind
+                type_pos = bk == lexer.Kind.Arrow or bk == lexer.Kind.Colon or bk == lexer.Kind.Bang or bk == lexer.Kind.Question or bk == lexer.Kind.Star
+            }
+            if uppercase and !declared and !type_pos and !ctx.in_enum_body and !lexer.is_keyword(ta.text[..]) { return false }
+        }
+        if a == lexer.Kind.RParen and i >= 2 and is_word(toks[ctx.toks[i - 2]].kind) {
+            // `Pair(i32){` generic instantiation literal vs `if (c) {`
+            var depth: i64 = 0
+            var j = i - 1
+            while true {
+                let k = toks[ctx.toks[j]].kind
+                if k == lexer.Kind.RParen { depth += 1 }
+                else if k == lexer.Kind.LParen {
+                    depth -= 1
+                    if depth == 0 { break }
+                }
+                if j == 0 { break }
+                j -= 1
+            }
+            if j > 0 {
+                let head = &toks[ctx.toks[j - 1]]
+                if head.kind == lexer.Kind.Ident {
+                    // `-> List(T) {`, `-> !List(T) {`, `-> ?Pair(T) {`: a return type, not a literal
+                    let bh = kind_back(toks, ctx, j, 2)
+                    var in_return_type = kind_is(bh, lexer.Kind.Arrow)
+                    if (kind_is(bh, lexer.Kind.Bang) or kind_is(bh, lexer.Kind.Question)) and j > 2 and toks[ctx.toks[j - 3]].kind == lexer.Kind.Arrow { in_return_type = true }
+                    if starts_upper(head) and !in_return_type { return false }
+                }
+            }
+        }
+        return true
+    }
+    // error unions and effect bounds: `ParseError!i64`, `!void`, `-> i32 !allocates`
+    if b == lexer.Kind.Bang {
+        var next_is_effect = false
+        if has_next { next_is_effect = is_effect_name(&toks[ctx.toks[i + 1]]) }
+        return ! (is_word(a) and !is_keyword_tok(ta) and !next_is_effect)
+    }
+    if a == lexer.Kind.Bang { return false }
+    if a == lexer.Kind.Question or a == lexer.Kind.Tilde { return false }
+    if b == lexer.Kind.Question {
+        return a == lexer.Kind.Arrow or a == lexer.Kind.Eq or a == lexer.Kind.FatArrow or a == lexer.Kind.RParen or is_kw(ta, "mut") or is_kw(ta, "as") or is_kw(ta, "return")
+    }
+    // unary minus / address-of / pointer types
+    if a == lexer.Kind.Minus or a == lexer.Kind.Amp or a == lexer.Kind.Star {
+        // `step -2`: the word before a unary minus is a clause, not an operand
+        var binary = false
+        if i >= 2 {
+            let t2 = &toks[ctx.toks[i - 2]]
+            binary = ends_operand(toks, ctx.toks[i - 2]) and !is_kw(t2, "step")
+        }
+        if !binary { return false }
+    }
+    if is_kw(ta, "step") and b == lexer.Kind.Minus { return true }
+    if (b == lexer.Kind.Minus or b == lexer.Kind.Amp or b == lexer.Kind.Star) and !ends_operand(toks, ctx.toks[i - 1]) {
+        // unary after an operator or opener: `x = -1`, `f(&x)`, `: *mut T`
+        return ! (a == lexer.Kind.LParen or a == lexer.Kind.LBracket or a == lexer.Kind.DotLBrace or a == lexer.Kind.Colon or a == lexer.Kind.Arrow) or a == lexer.Kind.Colon or a == lexer.Kind.Arrow
+    }
+    // closure parameter bars open where no operand precedes them (`= |x|`,
+    // `catch |e|`, `f(|x| x)`) and close at the next bar; any other bar is
+    // bit-or: `a | b`
+    if a == lexer.Kind.Pipe {
+        let role = bar_role(toks, ctx, i - 1)
+        if role == BAR_BINARY { return true }
+        if role == BAR_OPENING { return false }
+        return is_word(b) or b == lexer.Kind.LParen or b == lexer.Kind.Minus or b == lexer.Kind.Bang or b == lexer.Kind.At or b == lexer.Kind.LBrace or (is_binary_op(b) and b != lexer.Kind.Pipe)
+    }
+    if b == lexer.Kind.Pipe { return bar_role(toks, ctx, i) != BAR_CLOSING }
+    if is_binary_op(a) or is_binary_op(b) { return true }
+    return true
+}
