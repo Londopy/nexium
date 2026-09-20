@@ -94,6 +94,28 @@ merge` label (and loses it when a new push restarts the checks). The
 maintainer reviews every change (`.github/CODEOWNERS`); `main` only takes
 what these checks have passed.
 
+## AI-assisted contributions
+
+You may use AI tools to help write a contribution. Three rules, which the
+CLA makes binding:
+
+- **Say so in the pull request.** The template has a line for it: which
+  tool, and what it did (drafted the change, wrote the tests, explained the
+  code, translated the docs). "None" is a fine answer.
+- **You are the author.** Read and understand everything the tool produced
+  before you submit it; you are answerable for it in review exactly as for
+  code you typed. A pull request whose author cannot explain a change is
+  sent back. Commits and files name people, not tools: an AI tool is never
+  listed as an author or co-author.
+- **No laundering.** Do not submit output that reproduces someone else's
+  work under a license incompatible with MIT, or that you have no right to
+  license. If a tool hands you a recognizable chunk of another project,
+  leave it out.
+
+An undisclosed AI-assisted contribution is closed when discovered, whatever
+its quality. Disclosed ones are reviewed like any other: the tests are the
+bar.
+
 ## Contributor License Agreement
 
 Your first pull request gets a comment from the CLA check asking you to
@@ -101,9 +123,9 @@ accept [`CLA.md`](CLA.md) by replying with one sentence. You keep the
 copyright in your work; the agreement gives the project a license to
 distribute it under the MIT License (or another OSI-approved license, never
 a proprietary one) and a patent license for what your contribution
-necessarily uses, and it records that the work is yours to give. Companies
-contributing on behalf of employees can open an issue naming the covered
-accounts instead.
+necessarily uses, and it records that the work is yours to give, AI-assisted
+or not. Companies contributing on behalf of employees can open an issue
+naming the covered accounts instead.
 
 ## Releasing
 

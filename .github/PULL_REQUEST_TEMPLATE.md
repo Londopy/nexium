@@ -6,6 +6,10 @@
 
 <!-- the problem, or the issue number -->
 
+## AI tools
+
+<!-- "None", or which tool and what it did (drafted the change, wrote the tests, ...). Required; see CONTRIBUTING.md. -->
+
 ## Checklist
 
 - [ ] `cargo test` passes locally (with `zig` installed so the examples run)
@@ -13,4 +17,5 @@
 - [ ] `CHANGELOG.md` has a line under `Unreleased`
 - [ ] a language change names the hard constraint it serves (see `CONTRIBUTING.md`)
 - [ ] `nx fmt --check` passes on every `.nx` file touched
+- [ ] the "AI tools" line above is filled in, and I have read and understood everything I am submitting
 - [ ] I accept the [Contributor License Agreement](../CLA.md) (the CLA check will ask on a first pull request)

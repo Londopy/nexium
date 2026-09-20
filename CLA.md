@@ -55,13 +55,31 @@ on the day the litigation is filed.
 - You will tell the maintainers if you learn that any of the above is no
   longer accurate.
 
-## 5. No warranty, no obligation
+## 5. AI-assisted contributions
+
+If you used an AI tool (a code generator, a language model, an assistant of
+any kind) to produce any part of a Contribution, then:
+
+- you disclose it in the pull request, in the form the pull request template
+  asks for: which tool, and what it did;
+- you have read and understood what the tool produced, and you submit it as
+  your own work under this agreement, with the same representations as for
+  anything you wrote yourself; the tool is not a party to this agreement and
+  is not an author of the Contribution;
+- you have not included output that reproduces someone else's work under a
+  license incompatible with MIT, or that you have no right to license.
+
+The project accepts AI-assisted contributions on these terms and rejects
+undisclosed ones. Authorship in commits and files names people; a tool is
+not listed as an author or co-author.
+
+## 6. No warranty, no obligation
 
 Your Contribution is provided as is, without warranty of any kind, unless
 you say otherwise in writing. You are not required to support it, and the
 project is not required to accept it: the maintainers decide what merges.
 
-## 6. Signing
+## 7. Signing
 
 The CLA check on your first pull request asks you to comment with the
 sentence it shows; that comment is your acceptance, recorded with your
