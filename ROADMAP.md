@@ -253,12 +253,79 @@ Exit: the compile-time interpreter and `check.nx` lose their hand-written
 copies and index workarounds; `nx audit self/check.nx` reports fewer
 `panics` than in 1.0.
 
-### 1.2: the toolchain in Nexium
+### 1.2: memory safety without a garbage collector
 
-The Rust crate becomes a bootstrap seed and nothing else.
+The promise of section 12, no undefined behaviour in safe code, has four
+holes that 5.6 and 5.7 hand to the programmer: a view stored past the
+storage it points into, a view kept across a growth of its container, a
+view into a value that is then moved or dropped, and a value that leaves
+its arena. 1.2 closes them, so that ordinary safe Nexium code cannot
+create a dangling view and `unsafe` marks everything the compiler cannot
+prove: memory-safe by default, with explicit escape hatches, the
+guarantee Rust gives, kept in Nexium's simpler shape.
 
-- `fmt`, `doc`, `lsp`, `ship`, packages, the REPL and the migrator in
-  Nexium, each diffed against the Rust tool until it retires.
+Not a garbage collector. A GC would simplify the language and weaken
+several of its defining promises at once: predictable destruction,
+visible allocation behaviour, `!allocates`, embedding in C, Python, Rust
+and Node processes, no substantial runtime. And not a borrow checker
+with lifetime annotations either: the language keeps ownership without
+one. What it keeps, and what it adds:
+
+- Move semantics and destruction at scope exit stay as they are; so do
+  reference counting for shared `ref class` objects and `weak` for cycles.
+- The checker learns where every view points (its *origin*: a local, a
+  parameter, a container, an arena) and, per function, whether the view is
+  still used later (liveness, not lifetimes). The rules are decided one
+  entry each and enforced by the same pass:
+  - **V1** (R1 today): a function may not return a view into its own
+    locals.
+  - **V2, storing**: a view may be stored in a variable, a field, an
+    element or a closure capture only when the storage it points into
+    outlives that place; `out = s[..]` with `s` a local of an inner block
+    is an error, and so is a closure capturing such a view and escaping.
+  - **V3, growth**: while a view into a `List`, `String` or `Map` is live,
+    the container may not be grown, cleared, reassigned or moved:
+    `append`, `insert`, `put`, `clear`, `=` and passing it by value are
+    errors until the view's last use. The same for `*mut T` pointers
+    obtained with `&mut`.
+  - **V4, moving**: a view into a value is dead once the value moves or
+    drops; a use of the view after that is the `use after move` error the
+    language already has, applied to views.
+  - **V5, arenas**: a value allocated inside `using arena { }` may not be
+    stored in a place that outlives the block: not returned, not assigned
+    outward, not appended to an outer container. The decision entry
+    settles how results leave a block (a heap copy made explicitly, or
+    numbers and other values that carry no allocation).
+- `unsafe` is required for what the checker cannot prove: raw pointers
+  from `@cImport`, casts to `*mut`, a view the programmer knows outlives
+  its origin. Every `unsafe` block in `std/` and `self/` carries a reason
+  comment, and `nx audit` lists them with it.
+- Threads and data races stay outside the promise (section 13): memory
+  safety is not race freedom. The scoped threads of 1.4 (joined when the
+  block ends, no handle escapes) remove the one way a thread could outlive
+  the storage its argument points into.
+- Leak detection stays. Reference cycles that `weak` does not break may
+  still leak; a leak is not a memory-safety violation, and `nx leaks`
+  reports it.
+- The diagnostics name the origin and the moment it dies: "`out` keeps a
+  view into `s`, which is dropped at the end of the block on line 12;
+  clone it, or declare `s` where `out` lives". `nx fix` inserts the
+  `.clone()` where that is the fix.
+
+Rolling it out under the stability policy: undefined behaviour was never
+promised, so a program that had it may become an error in a minor
+(`docs/stability.md`). Each rule arrives as a warning in one release and
+an error in the next, so a codebase gets a release to run `nx fix`.
+
+Exit: sections 5.6 and 5.7 list no case that is the programmer's
+responsibility; `SECURITY.md` extends its promise to views; every rule
+has a compile-fail case and a spec case; the fuzzer gains a hunter that
+compiles mutants in debug mode (freed storage filled with `0xDD`) and
+runs them, so a dangling view that slips through is a finding rather than
+luck.
+
+### 1.3: the toolchain grown up
+
 - Incremental builds: one C file per module, compiled separately and
   cached by content hash, so a one-line change does not recompile a
   100k-line translation unit; parallel checking of independent modules.
@@ -269,7 +336,7 @@ The Rust crate becomes a bootstrap seed and nothing else.
   rename backed by the checker's typed IR, not the parser (decision 84 was
   syntactic on purpose, for 0.5).
 - `nx fix` applies the compiler's own hints: `+%`/`+|` where the note
-  suggests it, `.clone()`, `_ =`, the migrations.
+  suggests it, `.clone()`, `_ =`, the view rules' fixes from 1.2.
 - `nx bench`: `bench "name" { }` blocks with warmup, iterations and
   medians, in the same file as tests.
 - `nx build --sanitize address,undefined` through the C compiler, and
@@ -277,10 +344,10 @@ The Rust crate becomes a bootstrap seed and nothing else.
 - Conditional compilation: `if comptime @target().os == "windows" { }` in
   std replaces the runtime's `#ifdef`s one by one.
 
-Exit: `cargo` is used only to build the bootstrap seed; every tool a user
-runs is a Nexium program.
+Exit: a one-line change rebuilds in well under a second on the compiler's
+own sources, and the language server answers from the checker.
 
-### 1.3: a standard library people stop supplementing
+### 1.4: a standard library people stop supplementing
 
 - Collections: `Set(T)`, `Deque(T)`, `std.sort` with comparators and
   stable sort, `std.heap` (priority queue), binary search on sorted slices.
@@ -304,7 +371,7 @@ runs is a Nexium program.
 Exit: `examples/tool.nx`, `service.nx` and the self-hosted compiler import
 nothing they had to write themselves.
 
-### 1.4: platforms
+### 1.5: platforms
 
 - WebAssembly: `--target wasm32-wasi` and `wasm32-freestanding`, the
   runtime's process, socket and thread code behind `@target()`, and an
@@ -325,7 +392,7 @@ Exit: a Nexium program runs in the browser, on a Raspberry Pi and on the
 three desktops from one source, and the docs say which combinations CI
 proves.
 
-### 1.5: the runtime that release builds deserve
+### 1.6: the runtime that release builds deserve
 
 - ARC elision: retain/release pairs the checker proves redundant (a `ref
   class` passed down and back within one function) are not emitted; the

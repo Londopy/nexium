@@ -100,11 +100,12 @@ fits and the pencilled one goes back in the pool.
 | version | name | why |
 | --- | --- | --- |
 | 1.1.0 | Annapurna: Dutch Rib | the safer line that became the everyday route: the ergonomics the compiler wanted |
-| 1.2.0 | Annapurna: South Face | the great wall climbed by siege: the toolchain in Nexium, incremental builds, the semantic language server |
-| 1.3.0 | Annapurna: the Sanctuary | the basin that holds everything and supplies every route: a standard library people stop supplementing |
-| 1.4.0 | Annapurna: East Ridge | the long traverse over several summits: one source, many platforms |
-| 1.5.0 | Annapurna: North-West Face | fast and light, no fixed ropes: the runtime release builds deserve |
-| 1.6.0 | Annapurna: Gangapurna | a summit of the same massif, climbed beside the main line: a side theme (the GUI, the registry) |
+| 1.2.0 | Annapurna: South Face | the great wall climbed by siege: memory safety without a garbage collector, the view rules |
+| 1.3.0 | Annapurna: North Face | the original line completed: the toolchain grown up, incremental builds, the semantic language server |
+| 1.4.0 | Annapurna: the Sanctuary | the basin that holds everything and supplies every route: a standard library people stop supplementing |
+| 1.5.0 | Annapurna: East Ridge | the long traverse over several summits: one source, many platforms |
+| 1.6.0 | Annapurna: North-West Face | fast and light, no fixed ropes: the runtime release builds deserve |
+| 1.7.0 | Annapurna: Gangapurna | a summit of the same massif, climbed beside the main line: a side theme (the GUI, the registry) |
 | 1.x | Annapurna: Machapuchare | reserved for a release that is only deprecations: it stops short on purpose |
 | 2.0.0 | Everest: Summit | the next mountain; a major, so the first breaking changes since 1.0 |
 | 2.1.0 | Everest: Khumbu Icefall | the dangerous, unglamorous crossing right after the major: migrations, `nx fix`, the fallout |
@@ -143,14 +144,14 @@ summiters lost fingers and toes on the descent.
 | Cauliflower Ridge | the ice ridge tried first and abandoned for the Sickle route | course change: a removed feature, a reversed decision |
 | the Sickle | the crescent glacier the summit route crosses; exposed, avalanche-prone | the last risky structural change before a major (used: 0.8.0) |
 | Summit Ridge | the final ridge; nothing left but walking up | the last minor before a major (used: 0.9.0) |
-| Summit | 3 June 1950 | `X.0.0` (planned: 1.0.0) |
-| North Face | the 1950 route, the face the camps are on | a release that completes the original line: finishes something begun in 0.x |
+| Summit | 3 June 1950 | `X.0.0` (used: 1.0.0) |
+| North Face | the 1950 route, the face the camps are on | a release that completes the original line: finishes something begun in 0.x (planned: 1.3.0) |
 | Dutch Rib | the 1977 route on the North Face, now the usual line because it is safer than the Sickle | the release that makes the everyday path easier and safer: ergonomics (planned: 1.1.0) |
 | South Face | Bonington's 1970 siege of the great wall; Whillans and Haston to the top; the first big-wall climb in the Himalaya | the biggest minor of a line, climbed the hard way (planned: 1.2.0) |
-| the Sanctuary | the glacial basin ringed by the Annapurna peaks; the base of every south-side route | the release that supplies everything else: the standard library (planned: 1.3.0) |
-| East Ridge | the long traverse route over the massif's summits (1984) | traverse: many platforms from one source (planned: 1.4.0) |
-| North-West Face | Messner and Kammerlander, 1985, fast and light | performance: fewer instructions, less memory, the same programs (planned: 1.5.0) |
-| Gangapurna, Annapurna South, Hiunchuli, Annapurna II, III, IV | the massif's other summits | side line: the GUI, the registry, a tool beside the compiler (Gangapurna planned: 1.6.0) |
+| the Sanctuary | the glacial basin ringed by the Annapurna peaks; the base of every south-side route | the release that supplies everything else: the standard library (planned: 1.4.0) |
+| East Ridge | the long traverse route over the massif's summits (1984) | traverse: many platforms from one source (planned: 1.5.0) |
+| North-West Face | Messner and Kammerlander, 1985, fast and light | performance: fewer instructions, less memory, the same programs (planned: 1.6.0) |
+| Gangapurna, Annapurna South, Hiunchuli, Annapurna II, III, IV | the massif's other summits | side line: the GUI, the registry, a tool beside the compiler (Gangapurna planned: 1.7.0) |
 | Machapuchare | the fishtail peak at the mouth of the Sanctuary, sacred and unclimbed by agreement | a release that stops short on purpose: deprecations only, a feature freeze |
 | Fang | the sharp neighbour of Annapurna South | hard crux: one small difficult change |
 | Descent | the retreat through the monsoon after the summit, on frostbitten feet | recovery |

@@ -49,6 +49,12 @@ major, however small.
 `nx fmt` may change its output in a minor: formatting is a tool, not a
 language feature. Such a change is listed in the changelog.
 
+Undefined behaviour was never promised. A program that has it under
+`SPEC.md` (the view cases of 5.6, a value leaving its arena in 5.7) may
+become an error in a minor as the checker learns to see it; such a rule
+arrives as a warning in one release and an error in the next, so the
+program gets a release to run `nx fix`. The roadmap's 1.2 is this.
+
 ## Deprecation
 
 A feature that has to go is deprecated first:

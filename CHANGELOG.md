@@ -10,6 +10,16 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ## [Unreleased]
 
+### Added
+
+- The roadmap's 1.2, memory safety without a garbage collector: the view
+  rules V1 to V5 (returning, storing, growth, moving, arenas), `unsafe`
+  for what the checker cannot prove, what stays (moves, scope-exit
+  destruction, reference counting, `weak`, leak detection) and how the
+  rules roll out under the stability policy, which now says that
+  undefined behaviour may become an error in a minor. The later themes
+  move down one number.
+
 ### Fixed
 
 - A function checked on demand while a constant was evaluated at compile

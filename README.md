@@ -357,7 +357,10 @@ files (`bootstrap/nx.c`, the tree-sitter parser, `gui/font.bin`, lock files):
 | JavaScript, TypeScript | 550 | 1.5% | the VS Code extension and the tree-sitter grammar |
 
 There is no Rust left: the first compiler drove the port and was deleted at
-1.0 (decision 90).
+1.0 (decision 90). Zig is not in the table because there is no Zig source
+in the tree: `zig cc` is the C compiler `nx` runs (bundled by the Windows
+installer, downloaded by the install script), the same way a C compiler is
+used and not written.
 
 ## Layout
 

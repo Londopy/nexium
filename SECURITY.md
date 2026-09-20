@@ -22,7 +22,8 @@ be made to:
 - execute arbitrary code during compilation through `comptime` or
   `@embedFile` beyond the declared build inputs,
 
-are security issues. Compiler crashes on invalid input are bugs, not
+are security issues; the view cases `SPEC.md` 5.6 and 5.7 leave to the
+programmer are the known gap, closed by the roadmap's 1.2. Compiler crashes on invalid input are bugs, not
 vulnerabilities, but are welcome as ordinary issues; CI fuzzes the front end
 with mutated sources and the binary pattern engine with random bytes on
 every push (`tests/fuzz.nx`, a fresh seed each run) and keeps any finding
