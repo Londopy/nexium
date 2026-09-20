@@ -19,6 +19,13 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   debugger and workbench, hot reload, one-liners, REPL sessions as files,
   watch mode, snapshot tests, a Jupyter kernel and the playground, each
   pencilled into a minor.
+- The roadmap names what 1.0 is not yet (memory safety, maturity,
+  numbers, ecosystem) and where each is answered; the numbers page
+  (benchmarks against C, Rust, Go and Python, published on the site)
+  moves from 1.6 to 1.1; a second maintainer and a list of packages are
+  ecosystem items; the *Always* section commits to the corpus growing
+  with the language, the sanitizers and the fuzzer on every release, and
+  a patch within a week of a fix.
 - The roadmap's clickable line: the REPL with an inspector window,
   `:plot` and `:watch`, the installer's editor page and `nx upgrade`,
   `nx topo` as an interactive tutorial runner, `std.tui`, the visual

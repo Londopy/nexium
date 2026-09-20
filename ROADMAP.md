@@ -223,6 +223,18 @@ Every item is done: 1.0 is the release that deletes `bootstrap/rust/`.
 
 ## Past 1.0
 
+### What 1.0 is not yet
+
+The four things a careful reader will hold against 1.0, and where this
+roadmap answers each:
+
+| weakness | where it is answered |
+| --- | --- |
+| Memory safety is not guaranteed: ownership without a borrow checker still lets a view outlive its storage (two were found in `std` and the compiler under AddressSanitizer while the tutorial was written) | 1.2, the whole theme; until it lands the docs say "memory-safe by default" nowhere |
+| Maturity: writing one tutorial found eight compiler bugs; a stranger will find more | the hardening commitments under *Always* below: the corpus, the fuzz budget, the sanitizer job, a patch within a week of a fix |
+| No performance numbers: it compiles through C, which is not the same as a table | the numbers page, pulled forward from 1.6 into 1.1 |
+| No ecosystem: sixteen std modules, no registry, no third-party packages, one maintainer | 1.4 (std), the registry and the second-maintainer items under *Ecosystem*; `async` is answered under *Not planned*, errors with payloads under *2.0 candidates* |
+
 After 1.0 the language changes only by addition, under the stability policy
 of phase 5. Each minor version has a theme; a bullet moves into a version
 when it has a decision entry and a test plan. The compass sentence still
@@ -255,6 +267,12 @@ Ergonomics the self-hosted compiler paid for by hand.
 - `unbounded_stack`: the spec says reserved. Either a recursion-depth
   proof (a function is bounded when every recursive call is on a strictly
   smaller argument) or removal, the way decision 88 settled the others.
+- The numbers page (pulled forward from 1.6): `bench/`, the programs the
+  examples already implement written the same way in C, Rust, Go and
+  Python, run by CI on a fixed runner, the medians published on the site
+  with the compiler versions and the machine, and a regression a failing
+  check. Before 1.2, so the memory-safety work is measured against a
+  number rather than a feeling.
 
 Exit: the compile-time interpreter and `check.nx` lose their hand-written
 copies and index workarounds; `nx audit self/check.nx` reports fewer
@@ -413,9 +431,8 @@ proves.
   parallel loops that share one pool.
 - Compile time: the checker's monomorphization cache, and preprocessed
   `@cImport` headers cached by hash.
-- A benchmark suite (`bench/`) against C, Rust, Go and Python on the
-  programs the examples already implement, run by CI on a fixed runner
-  with results in the repository, so a regression is a failing check.
+- The numbers page of 1.1 is the measure: each item above lands with its
+  before-and-after row.
 
 Exit: every example in release mode is within a documented factor of its
 C counterpart, and the factor does not grow between releases.
@@ -722,12 +739,31 @@ decision entry first, an implementation second, and none is promised.
 - Governance: an RFC process for additions (the decision log becomes
   public proposals with a comment period), a release calendar, and the
   stability policy applied to `std` (what a std module may change).
+- A second maintainer, on purpose: `good first issue` labels kept
+  stocked, "the compiler in an afternoon" (a guided read of `self/` in the
+  order the architecture tour uses), every subsystem's owner named in
+  `CONTRIBUTING.md`, and release rights shared before 1.4. A project with
+  one maintainer is a project with a bus factor of one, and that is a
+  weakness of the project, not of the language.
+- Third-party packages before the registry: a `packages.md` list of
+  packages people can `nx add` from git today, curated, so the ecosystem
+  has a front door before it has infrastructure.
 - Translations of the book and the reference (docs/i18n exists for the
   README, language and architecture pages).
 
 ## Always
 
-- Every release is verified on three platforms by CI before it is tagged.
+- Every release is verified on three platforms by CI before it is tagged,
+  under the sanitizers, and by the fuzzer (1,500 iterations on every push
+  today; a nightly long run, its findings filed, is the next step).
+- The corpus grows at least as fast as the language: every release adds
+  programs to `examples/`, `topo/code/` and `tests/spec` shaped like the
+  programs people write (a JSON tool, a server, an editor, a ray tracer),
+  because the tutorial's twenty-one programs found eight bugs the spec
+  suite had not.
+- A bug reported from outside gets a patch release within a week of its
+  fix; `KNOWN_ISSUES.md` lists what is open, with the workaround, so the
+  reader never discovers a known bug the hard way.
 - Every language change names the spec constraint it serves and lands with
   an example or a compile-fail case.
 - Every open design call goes in `DECISIONS.md` the day it is made.
