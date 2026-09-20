@@ -10,8 +10,19 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-09-20
+
+*Annapurna: Terray* — the one who carried the frostbitten summiters down: the hotfix. The x86-64 binaries of 1.0.0 and 1.0.1 were built for the CPU of the machine that built them and crashed on any other; every build is for the architecture's baseline now, and the release refuses one that is not. With it, the fuzzer's two fixes, UTF-8 on the Windows console, and the day's documentation.
+
 ### Added
 
+- `--cpu baseline|native|<name>` and `NX_CPU`, the CPU a build without
+  `--target` is for; `nx doctor` prints it. `os.arch()`, the architecture
+  a program runs on.
+- Nexium programs print UTF-8 on the Windows console: the generated
+  `main` switches the console to code page 65001 for the program's life
+  and restores it at exit, so `nx version` shows `Rébuffat` rather than
+  `R├⌐buffat`.
 - The roadmap's "tools only this language can have": `nx explain` for an
   effect's provenance, an effects lockfile for CI, proofs as editor code
   lenses, profiling by effect, record-and-replay tests, `nx layout`, the
@@ -86,6 +97,14 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Fixed
 
+- The x86-64 release binaries of 1.0.0 and 1.0.1 crashed with an illegal
+  instruction on machines without AVX-512 (`nx version` and `nx doctor`
+  worked; anything that compiled did not): `zig cc` compiles for the CPU
+  it runs on, and the release runner's had AVX-512. Every build without
+  `--target` is now for the architecture's baseline (plain x86-64) unless
+  `--cpu native` or `NX_CPU` asks for more; the bootstrap scripts do the
+  same; the release workflow and CI refuse an x86-64 compiler that
+  contains AVX instructions.
 - A module name used as a value (`let x = math`, `var t = thread`) crashed
   the checker with an index out of bounds; it is the diagnostic "`math` is
   a module, not a value" now (found by the fuzzer in CI).
@@ -830,7 +849,8 @@ First public release.
   Korean, French, and German; the language reference and architecture tour in
   Spanish, Chinese, and Japanese.
 
-[Unreleased]: https://github.com/Londopy/nexium/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/Londopy/nexium/compare/v1.0.2...HEAD
+[1.0.2]: https://github.com/Londopy/nexium/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/Londopy/nexium/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/Londopy/nexium/compare/v0.9.0...v1.0.0
 [0.9.0]: https://github.com/Londopy/nexium/compare/v0.8.0...v0.9.0

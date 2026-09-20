@@ -56,6 +56,13 @@ jobs:
           nx=nx-out/bootstrap/nx2; [ -f "$nx.exe" ] && nx="$nx.exe"
           "$nx" run tests/run.nx
 
+      - name: The compiler is built for the baseline instruction set
+        if: runner.os == 'Linux'
+        run: |
+          n=$(objdump -d nx-out/bootstrap/nx2 | grep -c -E '%[yz]mm' || true)
+          echo "AVX instructions: $n"
+          [ "$n" = 0 ]
+
       - name: Ship the example library
         shell: bash
         run: |

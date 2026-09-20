@@ -47,7 +47,7 @@ adds the bin directory to your PATH in `~/.profile`, `~/.bashrc`, and
 used (`xcode-select --install` if missing). On Linux, when no compiler is
 found, it downloads Zig into `~/.nexium/zig`.
 
-Variables: `NEXIUM_VERSION=v1.0.1` pins a release, `NEXIUM_HOME` changes the
+Variables: `NEXIUM_VERSION=v1.0.2` pins a release, `NEXIUM_HOME` changes the
 directory, `NEXIUM_NO_MODIFY_PATH=1` leaves shell files alone,
 `NEXIUM_NO_ZIG=1` never downloads Zig. Uninstall by deleting `~/.nexium` and
 the three lines the script added.
@@ -80,6 +80,18 @@ In order, the first that applies wins:
 
 `nx doctor` prints which one is in effect and whether it runs. Cross-compiling
 (`--target`) always uses Zig, since that is what makes it possible.
+
+## Which CPU a binary is built for
+
+By default, the baseline of the machine's architecture: on x86-64 that is
+plain x86-64 (SSE2), so a binary built on one machine runs on every 64-bit
+x86 machine, which is what a release, a wheel or an installer needs. `zig cc`
+on its own compiles for the CPU it runs on, and a compiler built on a
+machine with AVX-512 crashed with an illegal instruction on one without it
+(1.0.1). `--cpu native` (or `NX_CPU=native`) asks for this machine's CPU,
+for a program that will only run here; `--cpu x86_64_v3` names one (Zig's
+names with `zig cc`, `-march` names with gcc or clang). `nx doctor` prints
+the choice, and `os.arch()` tells a program which architecture it runs on.
 
 ## An editor
 
@@ -116,7 +128,7 @@ shasum -a 256 -c SHA256SUMS.txt --ignore-missing   # macOS
 ```
 
 ```powershell
-Get-FileHash .\nexium-1.0.1-setup-x64.exe -Algorithm SHA256
+Get-FileHash .\nexium-1.0.2-setup-x64.exe -Algorithm SHA256
 ```
 
 The install script verifies automatically and refuses a mismatch.

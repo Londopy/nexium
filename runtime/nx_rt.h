@@ -245,6 +245,34 @@ NX_INLINE nx_ctx nx_default_ctx(int argc, char** argv) {
 #endif
     return c;
 }
+/* the architecture this program runs on; the driver chooses a CPU baseline by it */
+NX_INLINE nx_sl_u8 nx_host_arch(void) {
+#if defined(__x86_64__) || defined(_M_X64)
+    return nx_lit("x86_64", 6);
+#elif defined(__aarch64__) || defined(_M_ARM64)
+    return nx_lit("aarch64", 7);
+#elif defined(__i386__) || defined(_M_IX86)
+    return nx_lit("x86", 3);
+#elif defined(__arm__) || defined(_M_ARM)
+    return nx_lit("arm", 3);
+#elif defined(__riscv) && (__riscv_xlen == 64)
+    return nx_lit("riscv64", 7);
+#else
+    return nx_lit("unknown", 7);
+#endif
+}
+/* UTF-8 on the Windows console for the program's life (the console's own code
+   page shows `é` as two symbols); the previous page comes back at exit */
+#if defined(_WIN32)
+static UINT nx_prev_console_cp = 0;
+static void nx_console_restore(void) { if (nx_prev_console_cp) SetConsoleOutputCP(nx_prev_console_cp); }
+#endif
+NX_INLINE void nx_console_utf8(void) {
+#if defined(_WIN32)
+    UINT cur = GetConsoleOutputCP();
+    if (cur != 0 && cur != 65001) { nx_prev_console_cp = cur; SetConsoleOutputCP(65001); atexit(nx_console_restore); }
+#endif
+}
 /* the tracking allocator needs the context as its state; installed by entry points */
 NX_INLINE void nx_ctx_track_self(nx_ctx* c) {
 #ifdef NX_LEAK_CHECK

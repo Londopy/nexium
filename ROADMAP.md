@@ -242,14 +242,15 @@ decides the order: what the compiler and the tools in `self/` and `std/`
 needed first, what other people's programs need next. Everything here was
 found by writing Nexium, not by reading other languages' feature lists.
 
-### Before anything: the open bugs, and 1.0.2
+### Before anything: the open bugs, and 1.0.3
 
 `KNOWN_ISSUES.md` is this roadmap's page zero: every open bug lives there
 with a reproduction and the fix it needs, a fix removes the entry, adds a
 `Fixed` line and a regression test, and the next patch release ships it.
 Nothing below is started while a known bug that a user can hit sits
-there. The entries an outside review of 1.0.1 added, in the order they
-will be fixed, all for 1.0.2:
+there. (1.0.2 was the hotfix for the release binaries, which were built
+for the runner's CPU.) The entries an outside review of 1.0.1 added, in
+the order they will be fixed, all for 1.0.3:
 
 1. A contained panic leaks what the call acquired: the export wrapper's
    `longjmp` skips every drop between the panic and the boundary. The

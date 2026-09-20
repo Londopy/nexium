@@ -299,8 +299,10 @@ using arena {
 | `nx repl`, or just `nx` | an interactive session: type code, see values, keep bindings |
 
 Options: `--mode debug|safe|fast|small`, `--target x86_64-linux-gnu` (any
-target `zig cc` knows), `--out-dir`, `--keep-c`, `--cc`, and for C interop
-`-I`, `--link`, `--link-path`, `--c-source`.
+target `zig cc` knows), `--cpu baseline|native|<name>` (baseline by default,
+so a binary runs on any machine of its architecture), `--out-dir`,
+`--keep-c`, `--cc`, and for C interop `-I`, `--link`, `--link-path`,
+`--c-source`.
 
 ## Status
 

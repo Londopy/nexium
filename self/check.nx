@@ -6887,6 +6887,7 @@ const NS_FNS = [
     NsFn{ .ns = "os", .name = "env", .args = "bytes", .ret = "?bytes", .op = "Env", .effects = EFF_NONDETERMINISTIC },
     NsFn{ .ns = "os", .name = "set_env", .args = "bytes bytes", .ret = "void", .op = "SetEnv", .effects = EFF_SHARED_MUTABLE },
     NsFn{ .ns = "os", .name = "exe_path", .args = "", .ret = "string", .op = "ExePath", .effects = EFF_ALLOCATES },
+    NsFn{ .ns = "os", .name = "arch", .args = "", .ret = "bytes", .op = "Arch", .effects = 0 },
     NsFn{ .ns = "os", .name = "exit", .args = "i32", .ret = "never", .op = "Exit", .effects = 0 },
     NsFn{ .ns = "os", .name = "exec", .args = "[]bytes bytes bytes", .ret = "!i32", .op = "Exec", .effects = EFF_BLOCKS | EFF_NONDETERMINISTIC | EFF_ALLOCATES },
     NsFn{ .ns = "os", .name = "last_stdout", .args = "", .ret = "string", .op = "LastStdout", .effects = 0 },
@@ -10704,6 +10705,7 @@ impl Checker {
             return cv_seq(VK_LIST, items)
         }
         if name == "ExePath" { return cv_owned(os.exe_path()[..]) }
+        if name == "Arch" { return cv_str(os.arch()) }
         if name == "TimeNow" { return cv_int(time.now() as i128) }
         if name == "TimeMonotonic" { return cv_int(time.monotonic() as i128) }
         // the interpreter has no time zone database: local time is UTC at the prompt

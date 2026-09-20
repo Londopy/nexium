@@ -3500,6 +3500,7 @@ impl Gen {
         }
         if name == "FsTempDir" { return String.from("nx_fs_temp_dir(c)") }
         if name == "ExePath" { return String.from("nx_exe_path(c)") }
+        if name == "Arch" { return String.from("nx_host_arch()") }
         if name == "FileOpen" {
             let p = self.simple(args[0])
             let md = self.simple(args[1])
@@ -4549,7 +4550,7 @@ impl Gen {
         let target = self.fn_c_name(main)
         let ret_t = self.res(self.c.insts[main].ret)
         var out = String.new()
-        out.append("int main(int argc, char** argv) {\n  nx_ctx ctx = nx_default_ctx(argc, argv);\n  nx_ctx_track_self(&ctx);\n  nx_boundary b; nx_tls_boundary = &b;\n  if (setjmp(b.jb)) { fflush(stdout); fprintf(stderr, \"panic: %s\\n  at %s\\n\", b.msg, b.loc); return 101; }\n")
+        out.append("int main(int argc, char** argv) {\n  nx_console_utf8();\n  nx_ctx ctx = nx_default_ctx(argc, argv);\n  nx_ctx_track_self(&ctx);\n  nx_boundary b; nx_tls_boundary = &b;\n  if (setjmp(b.jb)) { fflush(stdout); fprintf(stderr, \"panic: %s\\n  at %s\\n\", b.msg, b.loc); return 101; }\n")
         if self.c.insts[main].params.len > 0 { self.errors.append(String.from("`main` takes no parameters; read arguments with `os.args()`")) }
         let rk = self.c.tys.kind(ret_t)
         if rk == check.TK.Void {
@@ -4569,7 +4570,7 @@ impl Gen {
 
     fn test_runner(self: *mut Self) -> String {
         var out = String.new()
-        out.append("int main(int argc, char** argv) {\n  nx_ctx ctx = nx_default_ctx(argc, argv);\n  const char* filter = NULL; int verbose = 0;\n  for (int ai = 1; ai < argc; ai++) { if (strcmp(argv[ai], \"--verbose\") == 0) verbose = 1; else filter = argv[ai]; }\n  int passed = 0, failed = 0, skipped = 0;\n  nx_boundary b; uint64_t t0 = 0;\n")
+        out.append("int main(int argc, char** argv) {\n  nx_console_utf8();\n  nx_ctx ctx = nx_default_ctx(argc, argv);\n  const char* filter = NULL; int verbose = 0;\n  for (int ai = 1; ai < argc; ai++) { if (strcmp(argv[ai], \"--verbose\") == 0) verbose = 1; else filter = argv[ai]; }\n  int passed = 0, failed = 0, skipped = 0;\n  nx_boundary b; uint64_t t0 = 0;\n")
         for t in self.c.tests.clone() {
             let full = self.c.insts[t].name.clone()
             let name = full[5..]

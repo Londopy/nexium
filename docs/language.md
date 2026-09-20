@@ -253,6 +253,9 @@ the inferred set per function.
   `sync.signal(cv)`, `sync.broadcast(cv)`, `sync.cond_free(cv)`. Starting a
   thread carries `nondeterministic` and `shared_mutable`; joining, locking
   and waiting `block`. Not available at the REPL.
+- `os.arch() -> []u8`: the architecture the program runs on (`x86_64`,
+  `aarch64`, `x86`, `arm`, `riscv64`, or `unknown`), decided when the
+  program was compiled.
 - `os.args() -> [][]u8`, `os.exe_path() -> String` (the running
   executable; empty when the platform will not say), `os.env(name) ->
   ?[]u8`, `os.set_env(name, value)` (for this process and the ones it

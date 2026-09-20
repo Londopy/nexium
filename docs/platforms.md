@@ -47,6 +47,11 @@ welcome.
   libraries `nx ship` produces for C, Python, Rust and Node.
 - The GUI (`gui/`) on tier 1 in its headless mode; a window needs a
   display, which CI has not.
+- Every binary, the compiler's and the programs', is built for the
+  baseline of its architecture (plain x86-64 on x86-64) unless `--cpu`
+  says otherwise, so it runs on any machine of that architecture; the
+  release workflow refuses an x86-64 build that contains AVX
+  instructions.
 
 The C toolchain policy, which Zig versions are tested and what other C
 compilers are expected to do, is in [stability.md](stability.md).

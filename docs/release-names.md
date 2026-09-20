@@ -91,6 +91,7 @@ ordering; the name carries the character.
 | 0.9.0 | Annapurna: Summit Ridge | the last ridge, nothing left but walking up: every tool in Nexium, the shipped `nx` the Nexium one, a harness and a fuzzer in Nexium, the stability policy and the tiers |
 | 1.0.0 | Annapurna: Summit | the top of the mountain the project has been on since 0.1: the language stops changing under people's feet, the compiler is written in itself, and nothing but Nexium, one C file and a runtime header is left |
 | 1.0.1 | Annapurna: Rébuffat | patch (roster 3): the loose ends after the summit; the fixes the tutorial found, the docs site and the Topo, eleven editors |
+| 1.0.2 | Annapurna: Terray | patch (roster 4): the hotfix; the release binaries were built for the build machine's CPU and crashed on others |
 
 ## The plan
 
@@ -164,7 +165,7 @@ summiters lost fingers and toes on the descent.
 | --- | --- | --- |
 | Herzog | leader and summiter; wrote the book | follows a big release, shipped by whoever leads it (used: 0.2.1) |
 | Lachenal | summiter; wanted to turn back and went on | finishes something against the odds (used: 0.6.1) |
-| Terray | carried the frostbitten summiters down | rescues a broken release: the hotfix |
+| Terray | carried the frostbitten summiters down | rescues a broken release: the hotfix (used: 1.0.2) |
 | Rébuffat | the guide; roped the snow-blind party together on the descent | ties loose ends: docs, tests, consistency (used: 1.0.1) |
 | Couzy | the engineer of the team | fixes the build, the toolchain, the C |
 | Schatz | found the summit party in the crevasse the morning after | finds a long-hidden bug |

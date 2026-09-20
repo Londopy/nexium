@@ -46,6 +46,27 @@ jobs:
           mkdir -p build
           if [ "$RUNNER_OS" = Windows ]; then cp nx-out/bootstrap/nx2.exe build/nx.exe; else cp nx-out/bootstrap/nx2 build/nx && strip build/nx; fi
           ./build/nx* version
+          ./build/nx* run examples/hello.nx
+
+      # the binary must run on every machine of its architecture, not only on
+      # the runner that built it: no AVX in an x86-64 release (1.0.1 shipped
+      # AVX-512 from the runner's CPU and trapped on machines without it)
+      - name: The binary uses the baseline instruction set
+        if: runner.os == 'Linux'
+        run: |
+          n=$(objdump -d build/nx | grep -c -E '%[yz]mm' || true)
+          echo "AVX instructions: $n"
+          [ "$n" = 0 ]
+      - name: The binary uses the baseline instruction set (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath
+          $dumpbin = Get-ChildItem "$vs\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Select-Object -First 1
+          if (-not $dumpbin) { Write-Host "dumpbin not found; the check is skipped"; exit 0 }
+          $n = (& $dumpbin.FullName /DISASM /NOLOGO build\nx.exe | Select-String -Pattern 'ymm|zmm').Count
+          Write-Host "AVX instructions: $n"
+          if ($n -ne 0) { exit 1 }
 
       - name: Package (unix)
         if: runner.os != 'Windows'

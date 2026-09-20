@@ -17,13 +17,16 @@ case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*|Windows_NT) CC="${CC:-zig cc}"; libs="-lws2_32"; exe=.exe ;;
   *) CC="${CC:-zig cc}"; libs="-lm -lc" ;;
 esac
+# zig cc compiles for the machine it runs on; the architecture's baseline
+# instead, so a compiler built on one machine runs on every machine of it
+case "$CC" in *zig*) march="-mcpu=baseline" ;; *) case "$(uname -m)" in x86_64|amd64) march="-march=x86-64" ;; *) march="" ;; esac ;; esac
 echo "stage 0: $CC builds nx0 from bootstrap/nx.c"
-$CC -std=gnu11 -O2 -w -fno-strict-aliasing -o "$out/nx0$exe" bootstrap/nx.c $libs
+$CC -std=gnu11 -O2 -w -fno-strict-aliasing $march -o "$out/nx0$exe" bootstrap/nx.c $libs
 echo "stage 1: nx0 builds self/nx.nx"
 "$out/nx0$exe" build self/nx.nx --mode safe -o "$out/nx1$exe" --out-dir "$out"
 echo "stage 2: nx1 emits itself, $CC builds nx2, nx2 emits itself"
 "$out/nx1$exe" emit-c self/nx.nx --mode safe > "$out/nx1.c"
-$CC -std=gnu11 -O2 -w -fno-strict-aliasing -o "$out/nx2$exe" "$out/nx1.c" $libs
+$CC -std=gnu11 -O2 -w -fno-strict-aliasing $march -o "$out/nx2$exe" "$out/nx1.c" $libs
 "$out/nx2$exe" emit-c self/nx.nx --mode safe > "$out/nx2.c"
 if cmp -s "$out/nx1.c" "$out/nx2.c"; then
   echo "fixed point: nx1 and nx2 emit the same C"
