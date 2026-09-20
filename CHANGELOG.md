@@ -31,6 +31,11 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   C, Python and Node. Every program in it (`topo/code/`) is run by the
   harness against its recorded output, and the diagnostics it shows are
   recorded too. Writing it found the bugs below.
+- The documentation site on a phone: one column with the navigation
+  behind a Menu button, tables that scroll sideways instead of widening
+  the page, grids and code blocks that stay inside the screen, larger
+  touch targets, and a theme colour for the browser chrome. Every page
+  is checked at 375 pixels wide.
 - `assets/social-preview.svg` and its 1280x640 PNG, the card GitHub and
   the chat apps show for a link to the repository (uploaded under the
   repository's settings); every page of the documentation site carries

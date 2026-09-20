@@ -510,7 +510,7 @@ fn render_markdown(src: []u8, links: *Links, page: *Page, title: *mut String, he
         if line.starts_with("|") and i + 1 < n and lines[i + 1].starts_with("|") and lines[i + 1].find("---") != null {
             flush_para(&mut out, &mut para, links, page)
             close_lists(&mut out, &mut list_depths, &mut list_ordered, 0)
-            out.append("<table>\n<thead><tr>")
+            out.append("<div class=\"table\"><table>\n<thead><tr>")
             for cell in table_cells(line) { out.append(format("<th>{}</th>", .{inline(cell, links, page)})[..]) }
             out.append("</tr></thead>\n<tbody>\n")
             i += 2
@@ -520,7 +520,7 @@ fn render_markdown(src: []u8, links: *Links, page: *Page, title: *mut String, he
                 out.append("</tr>\n")
                 i += 1
             }
-            out.append("</tbody>\n</table>\n")
+            out.append("</tbody>\n</table></div>\n")
             continue
         }
 
@@ -619,7 +619,7 @@ body { margin: 0; font: 16px/1.6 -apple-system, 'Segoe UI', Roboto, Helvetica, A
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 code, pre { font-family: ui-monospace, 'Cascadia Code', 'JetBrains Mono', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 0.92em; }
-code { background: var(--code-bg); padding: 0.1em 0.35em; border-radius: 4px; }
+code { background: var(--code-bg); padding: 0.1em 0.35em; border-radius: 4px; overflow-wrap: anywhere; }
 pre.code { background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; padding: 0.9rem 1.1rem; overflow-x: auto; line-height: 1.5; }
 pre.code code { background: none; padding: 0; font-size: 0.9em; }
 .k { color: var(--k); font-weight: 600; } .t { color: var(--t); } .s { color: var(--s); } .n { color: var(--n); } .c { color: var(--c); font-style: italic; } .d { color: var(--c); } .f { color: var(--f); } .b { color: var(--b); } .p { color: var(--muted); }
@@ -634,13 +634,15 @@ nav.side a.current { background: var(--accent); color: #fff; }
 nav.side a .num { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 0.35rem; }
 nav.side a.current .num { color: #eee; }
 main { padding: 2rem 3rem 4rem; max-width: 62rem; }
+main { overflow-wrap: break-word; }
 main h1 { font-size: 2.1rem; margin: 0 0 1rem; line-height: 1.2; }
 main h2 { margin-top: 2.2rem; border-bottom: 1px solid var(--line); padding-bottom: 0.3rem; }
 main h3 { margin-top: 1.6rem; }
 main h2 .anchor, main h3 .anchor, main h4 .anchor { opacity: 0; margin-left: 0.4rem; font-weight: 400; color: var(--muted); }
 main h2:hover .anchor, main h3:hover .anchor, main h4:hover .anchor { opacity: 1; }
 main img { max-width: 100%; }
-table { border-collapse: collapse; margin: 1rem 0; width: 100%; font-size: 0.93rem; }
+.table { overflow-x: auto; margin: 1rem 0; -webkit-overflow-scrolling: touch; }
+table { border-collapse: collapse; width: 100%; font-size: 0.93rem; }
 th, td { border: 1px solid var(--line); padding: 0.4rem 0.6rem; text-align: left; vertical-align: top; }
 th { background: var(--side); }
 blockquote { margin: 1rem 0; padding: 0.2rem 1rem; border-left: 4px solid var(--accent-2); color: var(--muted); }
@@ -672,14 +674,22 @@ footer { margin-top: 3rem; color: var(--muted); font-size: 0.85rem; }
   .menu-label { display: inline-block; cursor: pointer; padding: 0.3rem 0.8rem; border: 1px solid var(--line); border-radius: 6px; font-size: 0.9rem; color: var(--fg); }
   nav.side .menu { display: none; margin-top: 0.8rem; }
   .menu-toggle:checked ~ .layout nav.side .menu { display: block; }
+  nav.side a { padding: 0.45rem 0.6rem; font-size: 1rem; }
   main { padding: 1.2rem 1rem 3rem; }
+  main h1 { font-size: 1.75rem; }
+  .hero h1 { font-size: 2.1rem; }
+  .hero p.tag { font-size: 1.1rem; }
   .toc { float: none; width: auto; margin: 0 0 1rem; }
-  .two { grid-template-columns: 1fr; }
+  .two { grid-template-columns: minmax(0, 1fr); }
+  .cards { grid-template-columns: minmax(0, 1fr); }
+  pre.code { padding: 0.8rem 0.9rem; font-size: 0.9em; }
+  .pager { flex-direction: column; }
+  .pager a { max-width: none; }
 }
 "
 
 fn page_head(out: *mut String, title: []u8, root: []u8, description: []u8) {
-    out.append("<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
+    out.append("<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<meta name=\"theme-color\" content=\"#ffffff\" media=\"(prefers-color-scheme: light)\">\n<meta name=\"theme-color\" content=\"#0f1117\" media=\"(prefers-color-scheme: dark)\">\n")
     out.append(format("<title>{}</title>\n", .{esc(title)})[..])
     if description.len > 0 { out.append(format("<meta name=\"description\" content=\"{}\">\n", .{esc(description)})[..]) }
     // the card a link to the page gets on social sites and in chats
