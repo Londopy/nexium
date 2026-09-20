@@ -123,7 +123,7 @@ jobs:
           python scripts/release_notes.py "${{ github.ref_name }}" artifacts notes.md
           echo "title=$(cat title.txt)" >> "$GITHUB_OUTPUT"
           cat notes.md
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           name: ${{ steps.notes.outputs.title }}
           body_path: notes.md
