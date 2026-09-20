@@ -252,7 +252,16 @@ NX_INLINE void nx_ctx_track_self(nx_ctx* c) {
 }
 
 NX_INLINE void* nx_alloc_bytes(nx_ctx* c, size_t size, size_t align) { return c->alloc.alloc(c->alloc.state, size, align); }
-NX_INLINE void nx_free_bytes(nx_ctx* c, void* p, size_t size) { if (p) c->alloc.free(c->alloc.state, p, size); }
+/* A debug build fills storage with a fixed byte before freeing it, so a
+ * view that outlived its storage (specification 5.6) reads garbage or
+ * panics on its length instead of yielding the old contents by luck. */
+NX_INLINE void nx_free_bytes(nx_ctx* c, void* p, size_t size) {
+    if (!p) return;
+#ifdef NX_MODE_DEBUG
+    memset(p, 0xDD, size);
+#endif
+    c->alloc.free(c->alloc.state, p, size);
+}
 NX_INLINE void nx_ctx_release(nx_ctx* c) {
     if (c->args_cache) { nx_free_bytes(c, c->args_cache, (c->args_len ? c->args_len : 1) * sizeof(nx_sl_u8)); c->args_cache = NULL; }
 }
