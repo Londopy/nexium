@@ -531,6 +531,87 @@ copy and raises `ropesim.InvalidInput`; the Rust crate's error enums come
 from the Nexium error sets; an example calls a Rust crate and a Python
 library from Nexium; `--abi-check` fails on a removed export.
 
+### Tools only this language can have
+
+The REPL was the first of these: a feature no systems language is
+expected to have, cheap because the compiler was already there. Each item
+below is the same shape, built on a fact the compiler already knows
+(every function's effects, every move and drop, every binary pattern's
+shape) and offered as a tool. Each is pencilled into the minor it fits;
+the cheap ones may land earlier as patches to the tools, since none
+changes the language.
+
+**Answers from the effect system.**
+
+- `nx explain f allocates` (1.3): the provenance of an effect, the call
+  chain from `f` down to the primitive that brings it in, as a tree.
+  Today the diagnostic shows the first hop.
+- An effects lockfile (1.3): `nx audit --lock` writes each public
+  function's effects to `effects.lock`; a change that adds an effect (a
+  function starts allocating, can now panic) fails CI until the lock is
+  updated on purpose. Semver for behaviour.
+- Proofs in the editor (1.3): the language server already infers effects;
+  a code lens above every function reads `cannot panic` or `panics: index
+  at :12`, and hover on a slice index says which fact proved the bound.
+- Profile by effect (1.6): `nx run --trace allocates` instruments only the
+  allocation sites, `--trace blocks` only the blocking calls, and prints
+  a histogram per function: a profiler with no configuration, from the
+  effect system.
+- Record and replay (1.3): a function without `nondeterministic` is pure
+  with respect to time, random and the environment, so `nx test --record`
+  knows exactly which calls to capture and `--replay` makes a flaky test
+  reproducible.
+
+**Answers from ownership and layout.**
+
+- `nx layout Type` (1.3): field offsets, sizes, padding bytes and the
+  reordering that removes them, for any struct; `layout(c)` structs shown
+  as the C compiler will see them.
+- The ownership trace (1.3): `nx run --trace own` prints every move,
+  clone, retain, release and drop with its source span, and the REPL's
+  `:own` shows them for the line just entered. Ownership without a borrow
+  checker, made visible.
+- Ask the checker (1.3): `:facts x` in the REPL, and a hover in the
+  editor, print the range facts and proofs the checker holds about a
+  value at that point (`x < xs.len`, `y != 0`), so "why is this bounds
+  check still here" has an answer.
+
+**Binary patterns.**
+
+- A binary-pattern debugger (1.3): `nx bin parse_png file.png` runs a
+  `<<...>>` pattern from the source against a real file and prints which
+  bytes bound to which field, and where a match failed.
+- A binary workbench (1.4): the same as a terminal view, a hex dump on
+  one side and a pattern on the other, the match updating as the pattern
+  is edited; `:bin` in the REPL renders a pattern's bytes.
+
+**Interactive, in the family of the REPL.**
+
+- Hot reload (1.3): `nx run --hot` rebuilds on save and swaps the changed
+  functions into the running program through a shared library, keeping
+  the state. The effect system says which swaps are safe (a function
+  without `shared_mutable` touches no global); the GUI library, being
+  immediate mode, redraws with the new `frame` on the next tick, so a
+  window is edited live the way a web page is.
+- One-liners (1.1): `nx -e 'for l in io.lines() { ... }'` and `nx -p
+  'expr'` for shell pipelines, on the REPL's compile cache, so Nexium
+  takes the awk seat as well as the C seat.
+- REPL sessions as files (1.1): `:undo` pops the last line (the session
+  is a program the REPL recompiles), `:save f.nx` writes it as a script
+  with the outputs as comments, `:load f.nx` resumes it, `:effects expr`
+  prints the effects an expression carries.
+- Watch mode (1.3): `nx test --watch` reruns on save only the tests whose
+  dependencies changed, from the module graph the incremental build keeps;
+  `nx run --watch` for programs.
+- Snapshot tests (1.4): `expect_snapshot(value)` in `std.testing` writes
+  and compares `.snap` files, the mechanism this repository uses for its
+  own examples, offered to every project.
+- A Jupyter kernel (ecosystem): the REPL behind the notebook protocol, so
+  a Nexium cell runs beside Python ones; the effect chips as cell
+  badges.
+- The playground (1.5): the compiler compiled to WebAssembly puts a "run"
+  button on every code block of the documentation site and the Topo.
+
 ### 2.0 candidates: questions the spec review should settle
 
 Additions large enough to deserve a spec version of their own. Each is a

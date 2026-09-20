@@ -10,6 +10,16 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ## [Unreleased]
 
+### Added
+
+- The roadmap's "tools only this language can have": `nx explain` for an
+  effect's provenance, an effects lockfile for CI, proofs as editor code
+  lenses, profiling by effect, record-and-replay tests, `nx layout`, the
+  ownership trace, asking the checker for its facts, a binary-pattern
+  debugger and workbench, hot reload, one-liners, REPL sessions as files,
+  watch mode, snapshot tests, a Jupyter kernel and the playground, each
+  pencilled into a minor.
+
 ## [1.0.1] - 2026-09-20
 
 *Annapurna: Rébuffat* — the guide who roped the snow-blind party together on the descent: a patch that ties the loose ends after the summit. The fixes the tutorial found, the documentation site and the Topo, and support for eleven editors; the language is the same.
