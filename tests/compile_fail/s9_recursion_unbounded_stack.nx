@@ -1,0 +1,4 @@
+// EXPECT: is declared `!unbounded_stack` but has the `unbounded_stack` effect
+// EXPECT: calls itself: the recursion depth depends on the input
+fn walk(n: u32) -> u32 !unbounded_stack { if n == 0 { return 0 }; return walk(n - 1) }
+fn main() { _ = walk(3) }

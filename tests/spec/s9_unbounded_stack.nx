@@ -1,0 +1,19 @@
+// SPEC 9: recursion carries `unbounded_stack`; a loop over an explicit stack does not; fn values permit it.
+fn depth_rec(n: u32) -> u32 { if n == 0 { return 0 }; return 1 + depth_rec(n - 1) }
+fn is_even(n: u32) -> bool { if n == 0 { return true }; return is_odd(n - 1) }
+fn is_odd(n: u32) -> bool { if n == 0 { return false }; return is_even(n - 1) }
+fn depth_loop(n: u32) -> u32 !unbounded_stack {
+    var todo = List(u32).new()
+    todo.append(n)
+    var d: u32 = 0
+    while true {
+        let k = todo.pop() orelse break
+        if k > 0 { todo.append(k - 1); d += 1 }
+    }
+    return d
+}
+fn twice(f: fn(u32) -> u32 !unbounded_stack, x: u32) -> u32 !unbounded_stack { return f(f(x)) }
+fn plus_one(x: u32) -> u32 { return x + 1 }
+fn main() {
+    println("{} {} {} {} {}", .{depth_rec(10), is_even(7), depth_loop(10), twice(plus_one, 5), depth_loop(0)})
+}

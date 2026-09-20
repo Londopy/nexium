@@ -661,6 +661,16 @@ pub struct Witness {
     why: String
 }
 
+/// Tarjan's strongly connected components over the instance call graph.
+struct Tarjan {
+    index: List(usize)
+    low: List(usize)
+    on_stack: List(bool)
+    stack: List(usize)
+    next: usize
+    comp: List(usize)
+}
+
 pub struct Range {
     lo: i128
     hi: i128
@@ -825,18 +835,63 @@ pub struct Checker {
     cv_bad: CV
 }
 
+/// Print the diagnostics: errors with their prefix, notes as they are, and
+/// the count at the end.
+pub fn print_errors(errors: *List(String)) {
+    var n: usize = 0
+    for e in errors {
+        if e[..].starts_with("  note:") { eprintln("{}", .{e}) } else { eprintln("error: {}", .{e}); n += 1 }
+    }
+    if n > 0 { eprintln("{} error(s)", .{n}) }
+}
+
 fn item_key(module: usize, name: []u8) -> String {
     return format("{}:{}", .{module, name})
 }
 
 impl Checker {
+    /// A diagnostic: the message, then where, with the source line and a
+    /// caret under the position, in the shape every Nexium tool prints:
+    ///
+    ///     error: message
+    ///       --> path:line:col
+    ///        |
+    ///      12| let x = ...
+    ///        |     ^
     fn fail(self: *mut Self, module: usize, at: usize, msg: []u8) {
-        self.errors.append(format("{}:{}: {}", .{self.mods[module].name, at, msg}))
+        self.errors.append(format("{}\n{}", .{msg, self.render_at(module, at)}))
     }
 
     /// A note attached to the error just reported.
     fn note(self: *mut Self, module: usize, at: usize, msg: []u8) {
-        self.errors.append(format("  note: {}:{}: {}", .{self.mods[module].name, at, msg}))
+        self.errors.append(format("  note: {}\n{}", .{msg, self.render_at(module, at)}))
+    }
+
+    /// The location block of a diagnostic: `  --> path:line:col`, the source
+    /// line, and a caret. Positions are byte offsets into the module's text.
+    fn render_at(self: *Self, module: usize, at: usize) -> String {
+        let src = self.mods[module].source[..]
+        let path = if self.mods[module].path.len > 0 { self.mods[module].path[..] } else { self.mods[module].name[..] }
+        var line: usize = 1
+        var line_start: usize = 0
+        var i: usize = 0
+        let stop = if at < src.len { at } else { src.len }
+        while i < stop {
+            if src[i] == '\n' { line += 1; line_start = i + 1 }
+            i += 1
+        }
+        let col = at - line_start + 1
+        var line_end = line_start
+        while line_end < src.len and src[line_end] != '\n' { line_end += 1 }
+        var text = src[line_start..line_end]
+        if text.len > 0 and text[text.len - 1] == '\r' { text = text[0..text.len - 1] }
+        var out = format("  --> {}:{}:{}\n", .{path, line, col})
+        out.append("   |\n")
+        out.append(format("{>3}| {}\n", .{line, text})[..])
+        out.append("   | ")
+        for _ in 1..col { out.append(" ") }
+        out.append("^")
+        return out
     }
 
     fn node(self: *Self, module: usize, id: usize) -> *parser.Node {
@@ -2254,6 +2309,7 @@ impl Checker {
     /// effects(f) = own(f) plus the effects of every callee, to a fixpoint.
     fn propagate_effects(self: *mut Self) {
         let n = self.insts.len
+        self.mark_recursion()
         for i in 0..n {
             var e = self.insts[i].own_effects
             if self.insts[i].is_extern {
@@ -2272,6 +2328,67 @@ impl Checker {
                     self.insts[i].effects = e
                     changed = true
                 }
+            }
+        }
+    }
+
+    /// A function on a cycle of the call graph (it calls itself, or calls
+    /// something that calls it back) has the `unbounded_stack` effect: its
+    /// stack use depends on its input (specification 9). Calls through
+    /// function values and trait objects acquire it the way they acquire
+    /// every effect the type permits. Strongly connected components of the
+    /// instance call graph, by Tarjan's algorithm.
+    fn mark_recursion(self: *mut Self) {
+        let n = self.insts.len
+        var t = Tarjan{ .index = List(usize).new(), .low = List(usize).new(), .on_stack = List(bool).new(), .stack = List(usize).new(), .next = 0, .comp = List(usize).new() }
+        for _ in 0..n { t.index.append(NONE); t.low.append(0); t.on_stack.append(false); t.comp.append(NONE) }
+        for i in 0..n { if t.index[i] == NONE { self.tarjan_visit(&mut t, i) } }
+        // a component is a cycle when it has more than one member, or its one
+        // member calls itself
+        var size = List(usize).new()
+        for _ in 0..n { size.append(0) }
+        for i in 0..n { size[t.comp[i]] += 1 }
+        for i in 0..n {
+            let c = t.comp[i]
+            var partner = NONE
+            if size[c] > 1 {
+                for k in self.insts[i].callees { if k != i and t.comp[k] == c { partner = k } }
+            } else {
+                for k in self.insts[i].callees { if k == i { partner = i } }
+            }
+            if partner == NONE { continue }
+            let name = self.insts[i].name.clone()
+            let why = if partner == i {
+                format("`{}` calls itself: the recursion depth depends on the input", .{name})
+            } else {
+                format("`{}` and `{}` call each other: the recursion depth depends on the input", .{name, self.insts[partner].name})
+            }
+            self.insts[i].own_effects = self.insts[i].own_effects | EFF_UNBOUNDED_STACK
+            self.insts[i].witnesses.append(Witness{ .effects = EFF_UNBOUNDED_STACK, .at = self.insts[i].start, .why = why })
+        }
+    }
+
+    fn tarjan_visit(self: *mut Self, t: *mut Tarjan, v: usize) {
+        t.index[v] = t.next
+        t.low[v] = t.next
+        t.next += 1
+        t.stack.append(v)
+        t.on_stack[v] = true
+        let callees = self.insts[v].callees.clone()
+        for w in callees {
+            if t.index[w] == NONE {
+                self.tarjan_visit(t, w)
+                if t.low[w] < t.low[v] { t.low[v] = t.low[w] }
+            } else if t.on_stack[w] {
+                if t.index[w] < t.low[v] { t.low[v] = t.index[w] }
+            }
+        }
+        if t.low[v] == t.index[v] {
+            while true {
+                let w = t.stack.pop() orelse break
+                t.on_stack[w] = false
+                t.comp[w] = v
+                if w == v { break }
             }
         }
     }
@@ -11686,6 +11803,6 @@ fn main() -> !void {
         c.print_program(&mut out)
     }
     print("{}", .{out})
-    for e in c.errors { eprintln("error: {}", .{e}) }
+    print_errors(&c.errors)
     if c.errors.len > 0 { os.exit(1) }
 }

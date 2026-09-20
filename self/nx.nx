@@ -145,7 +145,7 @@ fn check_program(o: *Opts) -> ?check.Checker {
     c.reserve_errors()
     c.check_program()
     if c.errors.len > 0 {
-        for e in c.errors { eprintln("error: {}", .{e}) }
+        check.print_errors(&c.errors)
         return null
     }
     return c
@@ -378,7 +378,7 @@ fn cmd_tir(o: *Opts) -> i32 {
         c.print_program(&mut out)
     }
     print("{}", .{out})
-    for e in c.errors { eprintln("error: {}", .{e}) }
+    check.print_errors(&c.errors)
     if c.errors.len > 0 { return 1 }
     return 0
 }

@@ -1,0 +1,4 @@
+// EXPECT: `ping` and `pong` call each other: the recursion depth depends on the input
+fn ping(n: u32) -> u32 !unbounded_stack { if n == 0 { return 0 }; return pong(n - 1) }
+fn pong(n: u32) -> u32 { if n == 0 { return 1 }; return ping(n - 1) }
+fn main() { _ = ping(3) }
