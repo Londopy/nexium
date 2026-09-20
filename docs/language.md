@@ -231,7 +231,8 @@ the inferred set per function.
   mode) -> !i64` (mode `r`, `w`, `a`), `io.read(h, n) -> !String` (up to
   `n` bytes; empty at end of input), `io.write(h, bytes) -> !void`,
   `io.flush(h) -> !void`, `io.close(h) -> !void`. Handles 1, 2 and 3 are
-  stdin, stdout and stderr. Not available at the REPL.
+  stdin, stdout and stderr; `io.is_terminal(h) -> bool` says whether one of
+  those is a terminal. Not available at the REPL.
 - Sockets (`std.net` and `std.http` build on these; every call `blocks`):
   `net.connect(host, port, timeout_ms) -> !i64`, `net.listen(host, port) ->
   !i64`, `net.accept(listener, timeout_ms) -> !i64`, `net.send(sock, bytes)
@@ -252,8 +253,10 @@ the inferred set per function.
   `sync.signal(cv)`, `sync.broadcast(cv)`, `sync.cond_free(cv)`. Starting a
   thread carries `nondeterministic` and `shared_mutable`; joining, locking
   and waiting `block`. Not available at the REPL.
-- `os.args() -> [][]u8`, `os.env(name) -> ?[]u8`, `os.environ() ->
-  List(String)` (every `NAME=value`), `os.exit(code)`,
+- `os.args() -> [][]u8`, `os.env(name) -> ?[]u8`, `os.set_env(name, value)`
+  (for this process and the ones it starts; an empty value removes the
+  variable), `os.environ() -> List(String)` (every `NAME=value`),
+  `os.exit(code)`,
   `process.run(argv: [][]u8) -> !i32` (spawns, waits, returns the exit code;
   `error.IoError` when the program cannot be started), `process.exec(argv,
   stdin, cwd) -> !i32` (the same with stdin fed from `stdin`, run in `cwd`

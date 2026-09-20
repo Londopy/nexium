@@ -1,0 +1,194 @@
+//! `nx repl`: an interactive session on the compile-time interpreter.
+//!
+//! Every line is added to a synthetic program (items at the top level,
+//! statements inside a synthetic `main`), the whole program is re-checked so
+//! the prompt gets the compiler's real diagnostics, and only the new
+//! statements are executed against the values kept from earlier lines. In
+//! REPL mode the interpreter may perform I/O, which `comptime` never may.
+
+import lexer
+import check
+
+const ITEM_KEYWORDS = ["fn", "pub", "struct", "enum", "record", "ref", "trait", "impl", "import", "type", "error", "test", "extern", "artifact", "comptime"]
+
+struct Session {
+    items: List(String)
+    stmts: List(String)
+    // the kept bindings, by name, and the same rendered with their types
+    names: List(String)
+    values: List(check.CV)
+    shown: List(String)
+}
+
+fn new_session() -> Session {
+    return Session{ .items = List(String).new(), .stmts = List(String).new(), .names = List(String).new(), .values = List(check.CV).new(), .shown = List(String).new() }
+}
+
+/// The synthetic program: the items, then `main` holding the statements.
+/// An empty `extra_item` or `extra_stmt` adds nothing.
+fn source(s: *Session, extra_item: []u8, extra_stmt: []u8) -> String {
+    var out = String.new()
+    for it in s.items { out.append(it[..]); out.append("\n") }
+    if extra_item.len > 0 { out.append(extra_item); out.append("\n") }
+    out.append("fn main() -> !void {\n")
+    for st in s.stmts { out.append(st[..]); out.append("\n") }
+    if extra_stmt.len > 0 { out.append(extra_stmt); out.append("\n") }
+    out.append("    return\n}\n")
+    return out
+}
+
+/// Is the text a complete input? Unbalanced brackets or an unterminated
+/// string mean the user is still typing.
+fn complete(text: []u8) -> bool {
+    var lx = lexer.new_lexer(text)
+    lx.lex()
+    for e in lx.errors { if e[..].find("unterminated") != null { return false } }
+    var depth: i32 = 0
+    for t in lx.toks {
+        let k = t.kind
+        if k == lexer.Kind.LParen or k == lexer.Kind.LBracket or k == lexer.Kind.LBrace or k == lexer.Kind.DotLBrace { depth += 1 }
+        if k == lexer.Kind.RParen or k == lexer.Kind.RBracket or k == lexer.Kind.RBrace { depth -= 1 }
+    }
+    return depth <= 0
+}
+
+/// Does the text declare an item rather than run a statement?
+fn is_item(text: []u8) -> bool {
+    var lx = lexer.new_lexer(text)
+    lx.lex()
+    if lx.toks.len == 0 or lx.toks[0].kind != lexer.Kind.Ident { return false }
+    let first = lx.toks[0].text[..]
+    for k in ITEM_KEYWORDS { if first == k { return true } }
+    if first == "const" { for t in lx.toks { if t.kind == lexer.Kind.At { return true } } }
+    return false
+}
+
+fn help() {
+    println("Type Nexium code; each line is checked by the compiler and run.", .{})
+    println("  let x = 2 * 21          bind a value (kept for later lines)", .{})
+    println("  x + 1                   evaluate and print an expression", .{})
+    println("  fn f(n: i32) -> i32 {{ return n * 2 }}", .{})
+    println("  import std.json         then json.parse(\"[1, 2]\")", .{})
+    println("Lines with open brackets continue on the next prompt.", .{})
+    println("Commands:", .{})
+    println("  :help          this text            :quit, :q      exit", .{})
+    println("  :vars          the kept bindings    :items         the declared items", .{})
+    println("  :load FILE     add a file's items    :reset         start over", .{})
+    println("Not available at the prompt: @cImport, for parallel, using arena, artifacts.", .{})
+}
+
+/// Check the synthetic program and run its new statements. Null after
+/// errors, which have been printed.
+fn repl_check(text: []u8, start: usize, s: *Session, std_dir: []u8, cc: *List(String)) -> ?check.ReplOutcome {
+    let mods = check.load_with_text("<repl>", text, std_dir) catch { return null }
+    var c = check.new_checker(mods)
+    c.cc = cc.clone()
+    c.repl_mode = true
+    c.collect()
+    c.reserve_errors()
+    c.check_program()
+    if c.errors.len > 0 {
+        // the diagnostics without the count: one line's worth at a time
+        for e in c.errors { if e[..].starts_with("  note:") { eprintln("{}", .{e}) } else { eprintln("error: {}", .{e}) } }
+        return null
+    }
+    return c.run_repl(start, &s.names, &s.values)
+}
+
+/// The first line of an item, for `:items`.
+fn first_line(text: []u8) -> []u8 {
+    for l in text.lines() { return l }
+    return text
+}
+
+/// Run the session until the input ends or the user quits; the exit code.
+pub fn run(version: []u8, compiler: []u8, host: []u8, std_dir: []u8, cc: *List(String)) -> i32 {
+    let interactive = io.is_terminal(1)
+    if interactive and (host != "windows" or os.env("WT_SESSION") != null) { print("\x1b]0;Nexium {}\x07", .{version}) }
+    println("Nexium {} (nx repl, {}) on {}", .{version, compiler, host})
+    println("Type :help for commands, :quit to exit.", .{})
+    var session = new_session()
+    var pending = String.new()
+    while true {
+        if interactive { print("{}", .{if pending.len == 0 { "> " } else { "... " }}) }
+        let raw = io.read_line() orelse {
+            if interactive { println("", .{}) }
+            return 0
+        }
+        var line = raw[..]
+        while line.len > 0 and (line[line.len - 1] == '\n' or line[line.len - 1] == '\r') { line = line[0..line.len - 1] }
+        if pending.len == 0 {
+            let t = line.trim()
+            if t.len == 0 { continue }
+            if t.starts_with(":") {
+                let cmd = t[1..]
+                var word = cmd
+                var rest = ""
+                if let sp = cmd.find(" ") {
+                    word = cmd[0..sp]
+                    rest = cmd[sp + 1..]
+                }
+                if word == "q" or word == "quit" or word == "exit" {
+                    return 0
+                } else if word == "help" or word == "h" or word == "?" {
+                    help()
+                } else if word == "reset" {
+                    session = new_session()
+                    println("reset", .{})
+                } else if word == "vars" {
+                    if session.shown.len == 0 { println("(no bindings)", .{}) }
+                    for v, i in session.shown { println("{}: {}", .{session.names[i], v}) }
+                } else if word == "items" {
+                    if session.items.len == 0 { println("(no items)", .{}) }
+                    for it in session.items { println("{}", .{first_line(it[..])}) }
+                } else if word == "load" {
+                    let path = rest.trim()
+                    let text = io.read_file(path) catch {
+                        eprintln("cannot read: {}", .{path})
+                        continue
+                    }
+                    let src = source(&session, text[..], "")
+                    if repl_check(src[..], session.stmts.len, &session, std_dir, cc) != null {
+                        session.items.append(text)
+                        println("loaded", .{})
+                    }
+                } else {
+                    println("unknown command :{}; try :help", .{word})
+                }
+                continue
+            }
+            if t == "exit" or t == "quit" { return 0 }
+        }
+        if pending.len > 0 { pending.append("\n") }
+        pending.append(line)
+        if !complete(pending[..]) { continue }
+        let input = pending.clone()
+        pending = String.new()
+        if is_item(input[..]) {
+            let src = source(&session, input[..], "")
+            if repl_check(src[..], session.stmts.len, &session, std_dir, cc) != null { session.items.append(input) }
+            continue
+        }
+        let src = source(&session, "", input[..])
+        let out = repl_check(src[..], session.stmts.len, &session, std_dir, cc) orelse continue
+        if out.has_panic {
+            eprintln("panic: {}", .{out.panic})
+            continue
+        }
+        session.stmts.append(input)
+        var names = List(String).new()
+        var values = List(check.CV).new()
+        var shown = List(String).new()
+        for n, i in out.names {
+            if !check.cv_keepable(&out.values[i]) { continue }
+            names.append(n.clone())
+            values.append(check.cv_clone(&out.values[i]))
+            shown.append(out.shown[i].clone())
+        }
+        session.names = names
+        session.values = values
+        session.shown = shown
+        if out.has_printed { println("{}: {}", .{out.printed_ty, out.printed_val}) }
+    }
+    return 0
+}

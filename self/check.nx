@@ -881,6 +881,8 @@ pub struct Checker {
     cimport_unsupported: Map(String, String)
     // aggregate `(value ...)` payloads, by index
     values: List(CV)
+    // `nx repl`: unused values in `main` are printed, and the interpreter may talk to the world
+    repl_mode: bool
     // the compile-time interpreter's state (see `it_enter`)
     it_steps: u64
     it_panic: String
@@ -2732,6 +2734,8 @@ impl Checker {
     }
 
     fn check_unused(self: *mut Self, te: usize) {
+        // the REPL prints the value of a trailing expression
+        if self.repl_mode and self.ctx().fn_name == "main" { return }
         let t = self.tys.shallow(self.tir.nodes[te].ty)
         let k = self.tys.kind(t)
         if k == TK.Void or k == TK.Never { return }
@@ -6816,9 +6820,11 @@ const NS_FNS = [
     NsFn{ .ns = "io", .name = "write", .args = "i64 bytes", .ret = "!void", .op = "FileWrite", .effects = EFF_BLOCKS },
     NsFn{ .ns = "io", .name = "flush", .args = "i64", .ret = "!void", .op = "FileFlush", .effects = EFF_BLOCKS },
     NsFn{ .ns = "io", .name = "close", .args = "i64", .ret = "!void", .op = "FileClose", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "io", .name = "is_terminal", .args = "i64", .ret = "bool", .op = "IsTerminal", .effects = 0 },
     NsFn{ .ns = "os", .name = "args", .args = "", .ret = "[]bytes", .op = "Args", .effects = 0 },
     NsFn{ .ns = "os", .name = "environ", .args = "", .ret = "List(string)", .op = "Environ", .effects = EFF_NONDETERMINISTIC | EFF_ALLOCATES },
     NsFn{ .ns = "os", .name = "env", .args = "bytes", .ret = "?bytes", .op = "Env", .effects = EFF_NONDETERMINISTIC },
+    NsFn{ .ns = "os", .name = "set_env", .args = "bytes bytes", .ret = "void", .op = "SetEnv", .effects = EFF_SHARED_MUTABLE },
     NsFn{ .ns = "os", .name = "exit", .args = "i32", .ret = "never", .op = "Exit", .effects = 0 },
     NsFn{ .ns = "os", .name = "exec", .args = "[]bytes bytes bytes", .ret = "!i32", .op = "Exec", .effects = EFF_BLOCKS | EFF_NONDETERMINISTIC | EFF_ALLOCATES },
     NsFn{ .ns = "os", .name = "last_stdout", .args = "", .ret = "string", .op = "LastStdout", .effects = 0 },
@@ -6880,6 +6886,7 @@ impl Checker {
         if code == "string" { return self.tys.string() }
         if code == "void" { return self.tys.void() }
         if code == "never" { return self.tys.never() }
+        if code == "bool" { return self.tys.bool_ty() }
         if code == "f64" { return self.tys.float64() }
         return self.tys.int(code)
     }
@@ -8177,7 +8184,15 @@ fn cv_seq(kind: u8, own items: List(CV)) -> CV { var c = cv(kind); c.items = ite
 fn cv_wrap(kind: u8, own inner: CV) -> CV { var c = cv(kind); c.items.append(inner); return c }
 fn cv_ptr(fi: usize, l: usize, own path: List(usize)) -> CV { var c = cv(VK_PTR); c.ival = fi as i128; c.b = l; c.path = path; return c }
 
-fn cv_clone(v: *CV) -> CV {
+/// A value that can be carried to the next REPL line: no compile-time-only handles.
+pub fn cv_keepable(v: *CV) -> bool {
+    let k = v.kind
+    if k == VK_TYPE or k == VK_FN or k == VK_PTR { return false }
+    for it in v.items { if !cv_keepable(&it) { return false } }
+    return true
+}
+
+pub fn cv_clone(v: *CV) -> CV {
     var c = CV{ .kind = v.kind, .ival = v.ival, .fval = v.fval, .flag = v.flag, .text = v.text.clone(), .items = List(CV).new(), .path = v.path.clone(), .b = v.b }
     for it in v.items { c.items.append(cv_clone(&it)) }
     return c
@@ -8322,6 +8337,57 @@ fn cv_format(v: *CV) -> String {
     if k == VK_SOME { return cv_format(&v.items[0]) }
     if k == VK_ENUM { return format("variant {}", .{v.ival}) }
     return String.from("?")
+}
+
+/// `format`'s output for a format string and its arguments; null when the
+/// string is not a literal or an argument is missing.
+fn it_format_values(vs: *List(CV)) -> ?String {
+    if vs.len == 0 or vs[0].kind != VK_STR { return null }
+    let fmt = vs[0].text.clone()
+    var out = String.new()
+    var ai: usize = 1
+    var i: usize = 0
+    while i < fmt.len {
+        if fmt[i] == '{' {
+            if i + 1 < fmt.len and fmt[i + 1] == '{' { out.push_byte('{'); i += 2; continue }
+            var j = i + 1
+            while j < fmt.len and fmt[j] != '}' { j += 1 }
+            if ai >= vs.len { return null }
+            out.append(cv_format(&vs[ai])[..])
+            ai += 1
+            i = j + 1
+        } else if fmt[i] == '}' and i + 1 < fmt.len and fmt[i + 1] == '}' {
+            out.push_byte('}')
+            i += 2
+        } else {
+            out.push_byte(fmt[i])
+            i += 1
+        }
+    }
+    return out
+}
+
+/// A string the way source code would write it: quoted, with control
+/// characters escaped and other text kept as it is.
+pub fn source_quote(b: []u8) -> String {
+    var s = String.from("\"")
+    for c in b {
+        if c == '"' { s.append("\\\"") }
+        else if c == '\\' { s.append("\\\\") }
+        else if c == '\n' { s.append("\\n") }
+        else if c == '\r' { s.append("\\r") }
+        else if c == '\t' { s.append("\\t") }
+        else if c < 0x20 or c == 0x7f {
+            let hex = "0123456789abcdef"
+            s.append("\\u{")
+            if c >= 0x10 { s.push_byte(hex[(c >> 4) as usize]) }
+            s.push_byte(hex[(c & 15) as usize])
+            s.append("}")
+        }
+        else { s.push_byte(c) }
+    }
+    s.append("\"")
+    return s
 }
 
 /// Rust's `{}` for f64 with a `.0` on whole numbers.
@@ -8518,6 +8584,20 @@ const FL_FAIL: u8 = 4
 /// unset). Temporaries made for `&rvalue` are appended past the locals.
 pub struct Frame {
     vals: List(CV)
+}
+
+/// What one REPL line produced: every binding of the synthetic `main` by
+/// name (later declarations winning), the same bindings rendered with their
+/// types, the value of a trailing expression, or a panic.
+pub struct ReplOutcome {
+    names: List(String)
+    values: List(CV)
+    shown: List(String)
+    printed_ty: String
+    printed_val: String
+    has_printed: bool
+    panic: String
+    has_panic: bool
 }
 
 /// The interpreter state of an outer evaluation while an inner one runs
@@ -8810,6 +8890,215 @@ impl Checker {
         if k == TK.Str { return cv_owned("") }
         if k == TK.Distinct { return self.it_default_value(self.distinct_underlying(self.tys.list[ty].def)) }
         return cv(VK_UNDEFINED)
+    }
+
+    /// `nx repl`: run the statements of the synthetic `main` from `start`,
+    /// with the bindings of earlier lines seeded by name, and report every
+    /// binding afterwards and the value of a trailing expression.
+    pub fn run_repl(self: *mut Self, start: usize, names: *List(String), vals: *List(CV)) -> ReplOutcome {
+        var out = ReplOutcome{
+            .names = List(String).new(), .values = List(CV).new(), .shown = List(String).new(),
+            .printed_ty = String.new(), .printed_val = String.new(), .has_printed = false, .panic = String.new(), .has_panic = false,
+        }
+        let inst = self.main_inst
+        if inst == NONE { return out }
+        let saved = self.it_enter()
+        if !self.it_ensure_body(inst) { self.it_leave(&saved); return out }
+        var fr = Frame{ .vals = List(CV).new() }
+        let nlocals = self.insts[inst].locals.len
+        for i in 0..nlocals { fr.vals.append(cv(VK_NONE)) }
+        self.frames.append(fr)
+        self.it_cur_fn = inst
+        let body = self.insts[inst].body
+        let stmts = self.tir.nodes[body].kids.clone()
+        // the local each earlier name refers to
+        for st, i in stmts {
+            if i >= start { break }
+            if self.tir.nodes[st].k != TKind.SLet { continue }
+            let l = self.tir.nodes[st].a
+            let lname = self.insts[inst].locals[l].name.clone()
+            for n, j in names { if n == lname { self.it_env_set(l, cv_clone(&vals[j])) } }
+        }
+        var last = cv(VK_NONE)
+        var last_ty = NONE
+        var has_last = false
+        var i = start
+        while i < stmts.len {
+            let st = stmts[i]
+            i += 1
+            let k = self.tir.nodes[st].k
+            var flow = FL_NEXT
+            if k == TKind.SExpr {
+                let e = self.tir.nodes[st].kids[0]
+                let r = self.it_eval(e)
+                if r == null { flow = FL_FAIL } else { last = r.?; last_ty = self.tir.nodes[e].ty; has_last = true }
+            } else if k == TKind.SReturn and self.tir.nodes[st].kids.len == 0 {
+                // the synthetic main ends with a bare `return`: the session is done
+                break
+            } else {
+                has_last = false
+                flow = self.it_exec_stmt(st)
+            }
+            var failed = false
+            if self.it_has_panic {
+                out.panic = self.it_panic.clone()
+                failed = true
+            } else if self.it_budget {
+                out.panic = format("exceeded the step budget ({} steps)", .{STEP_BUDGET})
+                failed = true
+            } else if flow == FL_FAIL {
+                var at = String.new()
+                if self.it_failed_at != NONE { at = format(" (at {})", .{self.location(self.insts[inst].module, self.it_failed_at)}) }
+                out.panic = format("this statement cannot be evaluated by the interpreter{}; foreign calls, parallel loops, and arenas need a compiled program", .{at})
+                failed = true
+            }
+            if failed {
+                out.has_panic = true
+                _ = self.frames.pop()
+                self.it_leave(&saved)
+                return out
+            }
+            if flow != FL_NEXT { break }
+        }
+        // bindings afterwards, later declarations winning
+        let fi = self.frames.len - 1
+        for st in stmts {
+            if self.tir.nodes[st].k != TKind.SLet { continue }
+            let l = self.tir.nodes[st].a
+            if l >= self.frames[fi].vals.len or self.frames[fi].vals[l].kind == VK_NONE { continue }
+            let lname = self.insts[inst].locals[l].name.clone()
+            var idx = NONE
+            for n, j in out.names { if n == lname { idx = j } }
+            if idx == NONE {
+                out.names.append(lname)
+                out.values.append(cv_clone(&self.frames[fi].vals[l]))
+            } else {
+                out.values[idx] = cv_clone(&self.frames[fi].vals[l])
+            }
+        }
+        for n, j in out.names {
+            // the last local declared under the name, for its type
+            var l = NONE
+            for st in stmts {
+                if self.tir.nodes[st].k != TKind.SLet { continue }
+                if self.insts[inst].locals[self.tir.nodes[st].a].name == n { l = self.tir.nodes[st].a }
+            }
+            if l == NONE {
+                out.shown.append(cv_format(&out.values[j]))
+            } else {
+                let lt = self.tys.resolve(self.insts[inst].locals[l].ty, true)
+                out.shown.append(format("{}: {}", .{self.ty_name(lt), self.render_typed(&out.values[j], lt)}))
+            }
+        }
+        if has_last {
+            let ty = self.tys.resolve(last_ty, true)
+            let tk = self.tys.kind(self.tys.shallow(ty))
+            if tk != TK.Void and tk != TK.Never {
+                out.printed_ty = self.ty_name(ty)
+                out.printed_val = self.render_typed(&last, ty)
+                out.has_printed = true
+            }
+        }
+        _ = self.frames.pop()
+        self.it_leave(&saved)
+        return out
+    }
+
+    /// A value the way source code would write it, using its type.
+    pub fn render_typed(self: *mut Self, v: *CV, ty: usize) -> String {
+        let t = self.tys.shallow(ty)
+        let k = self.tys.kind(t)
+        let vk = v.kind
+        let is_text = vk == VK_STR or vk == VK_OWNED_STR
+        if k == TK.Str and is_text { return source_quote(v.text[..]) }
+        if k == TK.Slice and is_text {
+            let e = self.tys.shallow(self.tys.list[t].args[0])
+            if self.tys.kind(e) == TK.Int and self.tys.list[e].name == "u8" { return source_quote(v.text[..]) }
+        }
+        if k == TK.Char and vk == VK_CHAR {
+            if v.ival == '\'' as i128 { return String.from("'\\''") }
+            if v.ival == '\\' as i128 { return String.from("'\\\\'") }
+            if v.ival == '\n' as i128 { return String.from("'\\n'") }
+            if v.ival == '\r' as i128 { return String.from("'\\r'") }
+            if v.ival == '\t' as i128 { return String.from("'\\t'") }
+            return format("'{}'", .{cv_format(v)})
+        }
+        if (k == TK.List or k == TK.Slice or k == TK.Array) and (vk == VK_LIST or vk == VK_ARRAY) {
+            let e = self.tys.list[t].args[0]
+            var s = String.from("[")
+            for it, i in v.items {
+                if i > 0 { s.append(", ") }
+                s.append(self.render_typed(&it, e)[..])
+            }
+            s.append("]")
+            return s
+        }
+        if k == TK.Map and vk == VK_MAP {
+            let kt = self.tys.list[t].args[0]
+            let vt = self.tys.list[t].args[1]
+            var s = String.from("{")
+            var i: usize = 0
+            while i + 1 < v.items.len {
+                if i > 0 { s.append(", ") }
+                s.append(format("{}: {}", .{self.render_typed(&v.items[i], kt), self.render_typed(&v.items[i + 1], vt)})[..])
+                i += 2
+            }
+            s.append("}")
+            return s
+        }
+        if k == TK.Tuple and vk == VK_TUPLE {
+            let ts = self.tys.list[t].args.clone()
+            var s = String.from("(")
+            for it, i in v.items {
+                if i > 0 { s.append(", ") }
+                s.append((if i < ts.len { self.render_typed(&it, ts[i]) } else { cv_format(&it) })[..])
+            }
+            s.append(")")
+            return s
+        }
+        if k == TK.Opt and vk == VK_NULL { return String.from("null") }
+        if k == TK.Opt and vk == VK_SOME { return self.render_typed(&v.items[0], self.tys.list[t].args[0]) }
+        if k == TK.ErrUnion and vk == VK_OK { return self.render_typed(&v.items[0], self.tys.list[t].args[0]) }
+        if vk == VK_ERR {
+            let id = v.ival as usize
+            let name = if id >= 1 and id <= self.error_names.len { self.error_names[id - 1].clone() } else { String.from("?") }
+            return format("error.{}", .{name})
+        }
+        if k == TK.Struct and vk == VK_STRUCT {
+            let d = self.tys.list[t].def
+            let dm = self.structs[d].module
+            let fields = self.structs[d].fields.clone()
+            let ftys = self.struct_field_types(t)
+            var s = format("{}{{ ", .{self.structs[d].name})
+            for f, i in fields {
+                if i >= v.items.len { break }
+                if i > 0 { s.append(", ") }
+                let text = if i < ftys.len { self.render_typed(&v.items[i], ftys[i]) } else { cv_format(&v.items[i]) }
+                s.append(format(".{} = {}", .{self.node(dm, f).name, text})[..])
+            }
+            s.append(" }")
+            return s
+        }
+        if k == TK.Enum and vk == VK_ENUM {
+            let d = self.tys.list[t].def
+            let em = self.enums[d].module
+            let vi = v.ival as usize
+            let name = if vi < self.enums[d].variants.len { self.node(em, self.enums[d].variants[vi]).name.clone() } else { format("{}", .{vi}) }
+            if v.items.len == 0 { return format(".{}", .{name}) }
+            let vtys = self.enum_variant_types(t)
+            var s = format(".{}(", .{name})
+            for it, i in v.items {
+                if i > 0 { s.append(", ") }
+                let text = if vi < vtys.len and i < vtys[vi].len { self.render_typed(&it, vtys[vi][i]) } else { cv_format(&it) }
+                s.append(text[..])
+            }
+            s.append(")")
+            return s
+        }
+        if vk == VK_FN { return String.from("<function>") }
+        if vk == VK_PTR { return String.from("<pointer>") }
+        if vk == VK_TYPE { return self.ty_name(v.ival as usize) }
+        return cv_format(v)
     }
 
     fn it_ensure_body(self: *mut Self, inst: usize) -> bool {
@@ -10220,30 +10509,10 @@ impl Checker {
             }
             return cv(VK_NULL)
         }
-        if name == "Format" {
-            if vs[0].kind != VK_STR { return null }
-            let fmt = vs[0].text.clone()
-            var out = String.new()
-            var ai: usize = 1
-            var i: usize = 0
-            while i < fmt.len {
-                if fmt[i] == '{' {
-                    if i + 1 < fmt.len and fmt[i + 1] == '{' { out.push_byte('{'); i += 2; continue }
-                    var j = i + 1
-                    while j < fmt.len and fmt[j] != '}' { j += 1 }
-                    if ai >= vs.len { return null }
-                    out.append(cv_format(&vs[ai])[..])
-                    ai += 1
-                    i = j + 1
-                } else if fmt[i] == '}' and i + 1 < fmt.len and fmt[i + 1] == '}' {
-                    out.push_byte('}')
-                    i += 2
-                } else {
-                    out.push_byte(fmt[i])
-                    i += 1
-                }
-            }
-            return cv_owned(out[..])
+        if name == "Format" { return cv_owned((it_format_values(&vs) orelse return null)[..]) }
+        if self.repl_mode {
+            let r = self.it_repl_builtin(name[..], &vs)
+            if r != null { return r }
         }
         if name == "IntToStr" or name == "FloatToStr" { return cv_owned(cv_format(&vs[0])[..]) }
         if name == "CharIsDigit" { let c = cv_as_int(&vs[0]) orelse return null; return cv_bool(c >= '0' as i128 and c <= '9' as i128) }
@@ -10268,6 +10537,123 @@ impl Checker {
             if c >= '0' as i128 and c <= '9' as i128 { return cv_wrap(VK_SOME, cv_int(c - '0' as i128)) }
             return cv(VK_NULL)
         }
+        return null
+    }
+
+    /// In a REPL the program may talk to the world, which `comptime` never
+    /// may: printing, the console, files, the clock, randomness. Null for
+    /// any other builtin.
+    fn it_repl_builtin(self: *mut Self, name: []u8, vs: *List(CV)) -> ?CV {
+        if name == "Println" or name == "Print" or name == "Eprintln" {
+            let text = it_format_values(vs) orelse return null
+            if name == "Print" { print("{}", .{text}) } else if name == "Eprintln" { eprintln("{}", .{text}) } else { println("{}", .{text}) }
+            return cv(VK_VOID)
+        }
+        if name == "ReadLine" {
+            if let line = io.read_line() { return cv_wrap(VK_SOME, cv_owned(line[..])) }
+            return cv(VK_NULL)
+        }
+        if name == "ReadFile" {
+            let path = cv_bytes(&vs[0]) orelse return null
+            let data = io.read_file(path) catch { return cv_err(self.error_id("IoError")) }
+            return cv_wrap(VK_OK, cv_owned(data[..]))
+        }
+        if name == "WriteFile" or name == "AppendFile" {
+            let path = cv_bytes(&vs[0]) orelse return null
+            let data = cv_bytes(&vs[1]) orelse return null
+            if name == "WriteFile" {
+                io.write_file(path, data) catch { return cv_err(self.error_id("IoError")) }
+            } else {
+                io.append_file(path, data) catch { return cv_err(self.error_id("IoError")) }
+            }
+            return cv_wrap(VK_OK, cv(VK_VOID))
+        }
+        if name == "FsCwd" {
+            let d = io.cwd() catch { return cv_err(self.error_id("IoError")) }
+            return cv_wrap(VK_OK, cv_owned(d[..]))
+        }
+        if name == "FsTempDir" { return cv_owned(io.temp_dir()[..]) }
+        if name == "FsKind" {
+            let path = cv_bytes(&vs[0]) orelse return null
+            return cv_int(io.file_kind(path) as i128)
+        }
+        if name == "FsSize" or name == "FsModified" {
+            let path = cv_bytes(&vs[0]) orelse return null
+            if io.file_kind(path) == 0 { return cv_err(self.error_id("NotFound")) }
+            if name == "FsSize" {
+                let n = io.file_size(path) catch { return cv_err(self.error_id("IoError")) }
+                return cv_wrap(VK_OK, cv_int(n as i128))
+            }
+            let t = io.file_modified(path) catch { return cv_err(self.error_id("IoError")) }
+            return cv_wrap(VK_OK, cv_int(t as i128))
+        }
+        if name == "FsMkdir" or name == "FsRemoveFile" or name == "FsRemoveDir" {
+            let path = cv_bytes(&vs[0]) orelse return null
+            if name == "FsMkdir" {
+                io.make_dir(path) catch { return cv_err(self.error_id("IoError")) }
+            } else if io.file_kind(path) == 0 {
+                return cv_err(self.error_id("NotFound"))
+            } else if name == "FsRemoveFile" {
+                io.remove_file(path) catch { return cv_err(self.error_id("IoError")) }
+            } else {
+                io.remove_dir(path) catch { return cv_err(self.error_id("IoError")) }
+            }
+            return cv_wrap(VK_OK, cv(VK_VOID))
+        }
+        if name == "FsRename" {
+            let a = cv_bytes(&vs[0]) orelse return null
+            let b = cv_bytes(&vs[1]) orelse return null
+            if io.file_kind(a) == 0 { return cv_err(self.error_id("NotFound")) }
+            io.rename(a, b) catch { return cv_err(self.error_id("IoError")) }
+            return cv_wrap(VK_OK, cv(VK_VOID))
+        }
+        if name == "FsListDir" {
+            let path = cv_bytes(&vs[0]) orelse return null
+            if io.file_kind(path) == 0 { return cv_err(self.error_id("NotFound")) }
+            let names = io.list_dir(path) catch { return cv_err(self.error_id("IoError")) }
+            var items = List(CV).new()
+            for n in names { items.append(cv_owned(n[..])) }
+            return cv_wrap(VK_OK, cv_seq(VK_LIST, items))
+        }
+        if name == "Environ" {
+            var items = List(CV).new()
+            for e in os.environ() { items.append(cv_owned(e[..])) }
+            return cv_seq(VK_LIST, items)
+        }
+        if name == "Env" {
+            let n = cv_bytes(&vs[0]) orelse return null
+            if let v = os.env(n) { return cv_wrap(VK_SOME, cv_owned(v)) }
+            return cv(VK_NULL)
+        }
+        if name == "Args" {
+            var items = List(CV).new()
+            items.append(cv_str("nx"))
+            return cv_seq(VK_LIST, items)
+        }
+        if name == "TimeNow" { return cv_int(time.now() as i128) }
+        if name == "TimeMonotonic" { return cv_int(time.monotonic() as i128) }
+        // the interpreter has no time zone database: local time is UTC at the prompt
+        if name == "TimeUtcOffset" { return cv_int(0) }
+        if name == "Sleep" {
+            let ms = cv_as_int(&vs[0]) orelse return null
+            time.sleep((if ms < 0 { 0 } else { ms }) as u64)
+            return cv(VK_VOID)
+        }
+        if name == "Exit" {
+            let code = cv_as_int(&vs[0]) orelse return null
+            os.exit(code as i32)
+        }
+        if name == "RandomSeed" {
+            let v = cv_as_int(&vs[0]) orelse return null
+            random.seed(v as u64)
+            return cv(VK_VOID)
+        }
+        if name == "RandomInt" {
+            let lo = cv_as_int(&vs[0]) orelse return null
+            let hi = cv_as_int(&vs[1]) orelse return null
+            return cv_int(random.int(lo as i64, hi as i64) as i128)
+        }
+        if name == "RandomFloat" { return cv_float(random.float()) }
         return null
     }
 
@@ -11866,7 +12252,7 @@ pub fn new_checker(own mods: List(Mod)) -> Checker {
         .record_new_mode = false, .vtables = List(VTable).new(), .obligations = List(Obligation).new(),
         .parallel_calls = List(Obligation).new(), .global_uses = List(Obligation).new(), .global_use_fns = List(String).new(), .artifact_kinds = List(String).new(), .wild_pat_node = NONE,
         .cc = List(String).new(), .target = String.new(), .cimport_headers = List(String).new(), .cimport_system = List(bool).new(), .cimport_unsupported = Map(String, String).new(),
-        .values = List(CV).new(),
+        .values = List(CV).new(), .repl_mode = false,
         .it_steps = 0, .it_panic = String.new(), .it_panic_at = NONE, .it_has_panic = false, .it_budget = false,
         .it_pending = 0, .it_pending_label = NONE, .it_pending_val = cv_none(), .it_failed_at = NONE,
         .frames = List(Frame).new(), .it_cur_fn = NONE, .it_out = cv_none(), .it_flow_val = cv_none(), .it_flow_label = NONE,

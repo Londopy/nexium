@@ -39,6 +39,17 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   with diagnostics, hover, go to definition, completion and rename, and
   the editor-module loader and IDE queries behind it; `cargo test` drives
   it the way an editor does.
+- `nx repl` in Nexium (`self/repl.nx`): the interactive session on the
+  compile-time interpreter, which in REPL mode may print, read the
+  console, touch files, the clock and randomness (`check.nx` `repl_mode`,
+  `run_repl`, values rendered by their types). `nx` alone at a terminal
+  opens it. The last tool leaves the Rust crate.
+- `io.is_terminal(h)` and `os.set_env(name, value)`. The driver gives
+  each build its own Zig cache under the output directory when
+  `ZIG_LOCAL_CACHE_DIR` is not set, as the Rust driver did, since Zig's
+  cache is not safe against several `zig cc` starting at once on Windows.
+- The seed `bootstrap/nx.c` is regenerated when `self/` needs a builtin
+  the seed lacks, not only at a release.
 
 ### Fixed
 

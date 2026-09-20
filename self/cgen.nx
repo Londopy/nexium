@@ -3631,6 +3631,16 @@ impl Gen {
             self.line(format("{} {}; {{ char _nb[256]; size_t _l = {}.len < 255 ? {}.len : 255; memcpy(_nb, {}.ptr, _l); _nb[_l] = 0; const char* _v = getenv(_nb); {}.has = _v != NULL; if (_v) {{ {}.val.ptr = (uint8_t*)_v; {}.val.len = strlen(_v); }} }}", .{cn, t, n, n, n, t, t, t})[..])
             return t
         }
+        if name == "SetEnv" {
+            let n = self.simple(args[0])
+            let v = self.simple(args[1])
+            self.line(format("nx_set_env({}, {});", .{n, v})[..])
+            return String.from("0")
+        }
+        if name == "IsTerminal" {
+            let h = self.simple(args[0])
+            return format("nx_is_terminal({})", .{h})
+        }
         if name == "Exit" {
             let v = self.simple(args[0])
             self.line(format("exit((int)({}));", .{v})[..])

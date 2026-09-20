@@ -341,13 +341,13 @@ sh bootstrap/build.sh     # nx.c -> nx0; nx0 builds self/nx.nx -> nx1; nx1 rebui
 | checker | [`self/check.nx`](self/check.nx), [`self/cimport.nx`](self/cimport.nx) | types, effects, ownership, generics, the compile-time interpreter, C header import, every diagnostic |
 | C emitter | [`self/cgen.nx`](self/cgen.nx) | one C file per program |
 | driver | [`self/nx.nx`](self/nx.nx) | build, run, test, check, emit-c, tir; the standard library embedded |
-| tools | [`self/fmt.nx`](self/fmt.nx), [`self/doc.nx`](self/doc.nx), [`self/tools.nx`](self/tools.nx), [`self/size.nx`](self/size.nx), [`self/manifest.nx`](self/manifest.nx), [`self/ship.nx`](self/ship.nx), [`self/lsp.nx`](self/lsp.nx) | the formatter, the documentation generator, the reports, packages, `ship`, the language server |
+| tools | [`self/fmt.nx`](self/fmt.nx), [`self/doc.nx`](self/doc.nx), [`self/tools.nx`](self/tools.nx), [`self/size.nx`](self/size.nx), [`self/manifest.nx`](self/manifest.nx), [`self/ship.nx`](self/ship.nx), [`self/lsp.nx`](self/lsp.nx), [`self/repl.nx`](self/repl.nx) | the formatter, the documentation generator, the reports, packages, `ship`, the language server, the REPL |
 
 Every example, every spec case and every compile-fail case runs through the
 bootstrapped compiler in `cargo test` and in CI, on three platforms, with a
 job that has no Rust toolchain at all. The first compiler, in Rust, is
-frozen in [`bootstrap/rust/`](bootstrap/rust) and still holds the REPL,
-the one tool not yet ported; it leaves at 1.0 (decision 90).
+frozen in [`bootstrap/rust/`](bootstrap/rust) with nothing left in it
+that the Nexium compiler does not do; it leaves at 1.0 (decision 90).
 
 ## Languages in the repository
 

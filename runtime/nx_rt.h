@@ -1239,6 +1239,29 @@ NX_INLINE bool nx_file_close(int64_t h) {
     nx_files[h - 4] = NULL;
     return fclose(f) == 0;
 }
+/* set a variable in this process's environment (and its children's); an
+   empty value removes it */
+NX_INLINE void nx_set_env(nx_sl_u8 name, nx_sl_u8 value) {
+    char n[256], v[4096];
+    if (name.len == 0 || name.len >= sizeof n || value.len >= sizeof v) return;
+    memcpy(n, name.ptr, name.len); n[name.len] = 0;
+    memcpy(v, value.ptr, value.len); v[value.len] = 0;
+#if defined(_WIN32)
+    _putenv_s(n, v);
+#else
+    if (value.len == 0) unsetenv(n); else setenv(n, v, 1);
+#endif
+}
+/* is the handle (1 stdin, 2 stdout, 3 stderr) a terminal? */
+NX_INLINE bool nx_is_terminal(int64_t h) {
+    int fd = h == 1 ? 0 : h == 2 ? 1 : h == 3 ? 2 : -1;
+    if (fd < 0) return false;
+#if defined(_WIN32)
+    return _isatty(fd) != 0;
+#else
+    return isatty(fd) != 0;
+#endif
+}
 /* every environment variable as "NAME=value" */
 NX_INLINE void nx_environ(nx_ctx* c, nx_rawlist* out) {
     nx_rawlist l; l.ptr = NULL; l.len = 0; l.cap = 0; l.ar = c->arena;
