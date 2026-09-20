@@ -27,8 +27,8 @@ import lsp
 import repl
 import std.fs
 
-const VERSION = "0.9.0"
-const RELEASE_NAME = "Annapurna: Summit Ridge"
+const VERSION = "1.0.0"
+const RELEASE_NAME = "Annapurna: Summit"
 
 const NONE: usize = 0xFFFFFFFFFFFFFFFF
 

@@ -1,6 +1,6 @@
 {
   "name": "tree-sitter-nexium",
-  "version": "0.9.0",
+  "version": "1.0.0",
   "description": "Nexium grammar for tree-sitter",
   "license": "MIT",
   "author": "Londopy",

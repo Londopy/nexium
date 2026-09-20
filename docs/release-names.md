@@ -89,6 +89,7 @@ ordering; the name carries the character.
 | 0.7.0 | Annapurna: Camp V | the last camp, at 7,400 m; the summit push starts here: the compiler builds itself |
 | 0.8.0 | Annapurna: the Sickle | the exposed glacier crossing below the summit: the compiler in Nexium is the compiler, and builds from its own C with no Rust |
 | 0.9.0 | Annapurna: Summit Ridge | the last ridge, nothing left but walking up: every tool in Nexium, the shipped `nx` the Nexium one, a harness and a fuzzer in Nexium, the stability policy and the tiers |
+| 1.0.0 | Annapurna: Summit | the top of the mountain the project has been on since 0.1: the language stops changing under people's feet, the compiler is written in itself, and nothing but Nexium, one C file and a runtime header is left |
 
 ## The plan
 
@@ -98,7 +99,6 @@ fits and the pencilled one goes back in the pool.
 
 | version | name | why |
 | --- | --- | --- |
-| 1.0.0 | Annapurna: Summit | the top of the mountain the project has been on since 0.1 |
 | 1.1.0 | Annapurna: Dutch Rib | the safer line that became the everyday route: the ergonomics the compiler wanted |
 | 1.2.0 | Annapurna: South Face | the great wall climbed by siege: the toolchain in Nexium, incremental builds, the semantic language server |
 | 1.3.0 | Annapurna: the Sanctuary | the basin that holds everything and supplies every route: a standard library people stop supplementing |

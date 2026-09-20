@@ -9,7 +9,7 @@ The spec's one sentence is the compass: *a language complete enough to build
 everything in, that is also the best thing to adopt for one piece of
 something else.* The second half is ahead of the first, on purpose.
 
-## Now: 0.9.0
+## Now: 1.0.0
 
 What exists and is verified on Windows, Linux, and macOS:
 
