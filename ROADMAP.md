@@ -283,6 +283,14 @@ queue in front of them.
 
 **Hours each.**
 
+0. `nx doctor` compiles and runs a one-line program before it says
+   "everything works": the checker, the C emitter, the C compiler, the
+   linker and the executable all have to answer, and an illegal
+   instruction from the probe is named as such with the fix. 1.0.1's
+   doctor reported a working installation on a machine where the
+   compiler could not compile a line, because it had only asked the C
+   compiler for its version. The harness runs the check. (The code for
+   this was written and set aside on 2026-09-20; it is the next thing.)
 1. The installer refuses to run twice (a setup mutex naming the one
    already open), closes a running `nx` before replacing files, and
    writes a log; the uninstaller the same.
