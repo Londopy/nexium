@@ -1,0 +1,20 @@
+// SPEC 2: a line continues after a trailing operator or before |> .method( orelse catch and or.
+fn double(x: i64) -> i64 { return x * 2 }
+fn opt(x: i64) -> ?i64 { return if x > 0 { x } else { null } }
+fn err(x: i64) -> !i64 { if x > 0 { return x }; return error.InvalidInput }
+fn main() {
+    let a = 20 +
+        1
+    let b = a
+        |> double()
+    let c = opt(-1)
+        orelse 7
+    let d = err(-1)
+        catch 9
+    let e = a > 1
+        and b > 1
+    let items = List(i64).new()
+    let n = items
+        .len
+    println("{} {} {} {} {} {}", .{a, b, c, d, e, n})
+}

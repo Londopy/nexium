@@ -66,14 +66,36 @@ fn run_pp(opts: &ImportOptions, source: &str, extra: &[&str]) -> Result<String, 
         cmd.arg(format!("-I{}", d));
     }
     cmd.arg(&path);
-    let out = cmd.output().map_err(|e| format!("cannot run the C compiler: {}", e))?;
+    // a failure without a diagnostic is the compiler itself giving up (zig's
+    // shared cache refuses concurrent runs now and then): try again
+    let mut out = cmd.output().map_err(|e| format!("cannot run the C compiler: {}", e))?;
+    let mut attempt = 0;
+    while !out.status.success() && attempt < 5 && !String::from_utf8_lossy(&out.stderr).contains("error:") {
+        attempt += 1;
+        std::thread::sleep(std::time::Duration::from_millis(50 * attempt));
+        out = cmd.output().map_err(|e| format!("cannot run the C compiler: {}", e))?;
+    }
     let _ = std::fs::remove_file(&path);
     if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr);
-        let first = err.lines().find(|l| l.contains("error")).unwrap_or("").trim().to_string();
-        return Err(format!("the C preprocessor failed: {}", first));
+        return Err(format!("the C preprocessor failed: {}", pp_failure(&out)));
     }
     Ok(String::from_utf8_lossy(&out.stdout).to_string())
+}
+
+/// What a failed preprocessor run said: its first `error` line, else its
+/// first line, else the exit status.
+fn pp_failure(out: &std::process::Output) -> String {
+    let err = String::from_utf8_lossy(&out.stderr);
+    if let Some(l) = err.lines().find(|l| l.contains("error")) {
+        return l.trim().to_string();
+    }
+    if let Some(l) = err.lines().find(|l| !l.trim().is_empty()) {
+        return l.trim().to_string();
+    }
+    match out.status.code() {
+        Some(c) => format!("exit code {}", c),
+        None => "killed by a signal".to_string(),
+    }
 }
 
 pub fn import(header: &str, opts: &ImportOptions, span: Span) -> Result<CImport, String> {

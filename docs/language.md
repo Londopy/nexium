@@ -65,6 +65,7 @@ default (`verbose: u8 = 0`).
 | `*T`, `*mut T` | pointer to one value (`&x`, `&mut x`, `p.*`) |
 | `?T` | optional; `null` is the empty value |
 | `!T`, `Set!T` | error union |
+| `error` | any error value (the anonymous error set) |
 | `List(T)`, `String`, `Map(K, V)` | owning collections (values, section 5.3) |
 | `fn(A, B) -> R !effects` | function value (closures and functions coerce to it) |
 | `(A, B)` | tuple; fields `.0`, `.1`; also allowed as a type argument, `List((A, B))` |
@@ -118,9 +119,9 @@ edges (`@weak(x)` or `x.weak()`, then `w.upgrade()`).
   `== != < <= > >=` on numbers, chars, bools, `[]u8`, `String`, unit enums,
   and types that `derive(Eq)` / `derive(Ord)`. Logical `and`, `or`, `!`.
 - `x |> f(a)` is `f(x, a)`.
-- `if (c) a else b` is an expression; `if (opt) |v| { } else { }` unwraps.
-  Without braces the body is one statement, so `if (c) x = 1 else x = 2` and
-  `if (c) return v` are fine.
+- `if c { a } else { b }` is an expression; `if let v = opt { } else { }`
+  unwraps. Conditions take no parentheses and bodies always take braces, so
+  a one-liner is `if c { return v }`; `else` may start the next line.
 - `match v { pat => expr, ... }` on integers (literals, ranges `1..=9`),
   strings, bools, chars, enums (`.Variant(p)`), optionals (`null`, binding),
   error unions (`error.Name`, binding), tuples, and byte slices (binary
@@ -144,12 +145,14 @@ edges (`@weak(x)` or `x.weak()`, then `w.upgrade()`).
 ## Statements and loops
 
 ```
-while (cond) { }
-for (items) |x| { }               // arrays, slices, lists, strings, map keys
-for (items) |x, i| { }            // with index
-for (a, b) |x, y| { }             // lockstep; lengths must match
-for (0..n) |i| { }
-outer: for (...) |a| { for (...) |b| { continue :outer } }
+while cond { }
+for x in items { }               // arrays, slices, lists, strings, map keys
+for x, i in items { }            // with index
+for x, y in a, b { }             // lockstep; lengths must match
+for i in 0..10 step 2 { }        // 0 2 4 6 8; `for i in 10..0 step -1` counts down (signed)
+while cond { } else { }          // the else runs when cond turns false, not after a break
+for i in 0..n { }
+outer: for a in ... { for b in ... { continue :outer } }
 break, continue, return
 _ = expr                          // explicit discard; unused values are errors
 ```
@@ -201,7 +204,7 @@ the inferred set per function.
   `bytes`, `len`, plus `[]u8` methods.
 - `Map(K, V)` (keys: integers, bool, char, `[]u8`, `String`): `new`, `put`,
   `get`, `contains`, `remove`, `clear`, `clone`, `keys`, `values`, `len`,
-  `m[key]`; `for (m) |k|` iterates keys.
+  `m[key]`; `for k in m` iterates keys.
 - Slices: `len`, `fill`, `reverse`, `sort`, `contains`, `index_of`,
   `copy_from`, `to_owned`, `is_empty`; `[]u8` also `starts_with`,
   `ends_with`, `find`, `trim`, `split`, `lines`, `to_string`, `parse_int(T)`,
@@ -213,11 +216,51 @@ the inferred set per function.
 - `math`: `PI E TAU INF NAN`, `sqrt abs floor ceil round sin cos tan exp log
   log2 min max pow atan2 clamp`.
 - `io.read_file(path) -> !String`, `io.write_file(path, bytes) -> !void`,
-  `io.read_line() -> ?String`.
-- `os.args() -> [][]u8`, `os.env(name) -> ?[]u8`, `os.exit(code)`,
+  `io.append_file(path, bytes) -> !void`, `io.read_line() -> ?String`.
+- File system primitives (`std.fs` wraps them with paths and walking):
+  `io.file_kind(path) -> i32` (0 missing, 1 file, 2 directory),
+  `io.file_size(path) -> !u64`, `io.file_modified(path) -> !i64` (ms),
+  `io.make_dir(path) -> !void`, `io.remove_file(path) -> !void`,
+  `io.remove_dir(path) -> !void` (empty), `io.rename(from, to) -> !void`,
+  `io.list_dir(path) -> !List(String)`, `io.cwd() -> !String`,
+  `io.temp_dir() -> String`. Failures are `error.NotFound` or
+  `error.IoError`.
+- File handles (`std.stream` wraps them with buffering): `io.open(path,
+  mode) -> !i64` (mode `r`, `w`, `a`), `io.read(h, n) -> !String` (up to
+  `n` bytes; empty at end of input), `io.write(h, bytes) -> !void`,
+  `io.flush(h) -> !void`, `io.close(h) -> !void`. Handles 1, 2 and 3 are
+  stdin, stdout and stderr. Not available at the REPL.
+- Sockets (`std.net` and `std.http` build on these; every call `blocks`):
+  `net.connect(host, port, timeout_ms) -> !i64`, `net.listen(host, port) ->
+  !i64`, `net.accept(listener, timeout_ms) -> !i64`, `net.send(sock, bytes)
+  -> !void`, `net.recv(sock, n, timeout_ms) -> !String` (empty when the
+  peer closed), `net.close(sock)`, `net.peer(sock)` / `net.local(sock) ->
+  !String` (`ip:port`), `net.resolve(host) -> !List(String)`,
+  `net.udp_bind(host, port) -> !i64`, `net.send_to(sock, host, port,
+  bytes)`, `net.recv_from(sock, n, timeout_ms) -> !String` with
+  `net.last_peer()` naming the sender. A timeout of 0 waits forever.
+  Errors: `NotFound` (name lookup), `ConnectionRefused`, `Timeout`,
+  `IoError`. Not available at the REPL.
+- Threads (`std.thread` builds `Thread`, `Channel` and `Mutex` on these):
+  `thread.start(f: fn(*mut T) -> void, arg: *mut T) -> i64` runs `f(arg)` on
+  a new thread with its own context, `thread.join(h)` waits for it and
+  re-raises its panic, `thread.count() -> usize` is the hardware thread
+  count. `sync.mutex_new() -> i64`, `sync.lock(m)`, `sync.unlock(m)`,
+  `sync.mutex_free(m)`, `sync.cond_new() -> i64`, `sync.wait(cv, m)`,
+  `sync.signal(cv)`, `sync.broadcast(cv)`, `sync.cond_free(cv)`. Starting a
+  thread carries `nondeterministic` and `shared_mutable`; joining, locking
+  and waiting `block`. Not available at the REPL.
+- `os.args() -> [][]u8`, `os.env(name) -> ?[]u8`, `os.environ() ->
+  List(String)` (every `NAME=value`), `os.exit(code)`,
   `process.run(argv: [][]u8) -> !i32` (spawns, waits, returns the exit code;
-  `error.IoError` when the program cannot be started).
+  `error.IoError` when the program cannot be started), `process.exec(argv,
+  stdin, cwd) -> !i32` (the same with stdin fed from `stdin`, run in `cwd`
+  when non-empty, and stdout/stderr captured) followed by
+  `process.last_stdout()` / `process.last_stderr() -> String`; `std.process`
+  wraps these.
 - `time.now() -> i64` (ms since the epoch), `time.monotonic() -> u64` (ns),
+  `time.utc_offset(ms) -> i64` (minutes east of UTC of local time at that
+  instant; `std.time` builds dates on these),
   `time.sleep(ms)`.
 - `random.int(lo, hi)`, `random.float()`, `random.seed(n)`.
 - `mem.copy(dst, src)`.
@@ -265,7 +308,7 @@ may mention `Self` only in receiver position.
 
 ## Parallel loops
 
-`for parallel (items) |x, i| { ... }` runs the body over the index range on a
+`for parallel x, i in items { ... }` runs the body over the index range on a
 thread pool (spec 7.2). The body may not have the `shared_mutable` effect,
 may not `return` or `break` (use `continue`), and writes results through a
 mutable slice indexed by `i`. A panic in a worker is re-raised in the caller
@@ -316,6 +359,6 @@ stored into an outer variable is not tracked.
 
 ## Not implemented yet
 
-`soa` and `packed` layouts, `node` and `installer` artifacts, `nx publish`
-and the registry, `pool`/`stack` allocation strategies, and region checking
-beyond rule R1.
+`nx publish` and the registry. `soa` and `packed` layouts, `pool` and
+`stack` allocation strategies, and region rules beyond R1 are not part of
+the language (decision 88); the compiler rejects the spellings.

@@ -1,0 +1,1089 @@
+// `@cImport("header.h")`: direct C header import, the Rust `cimport.rs`.
+//
+// The header is preprocessed by the C compiler (`zig cc -E`), so include
+// guards, conditionals, and object-like macros are handled by the real
+// preprocessor. The declarations that come out are read by a small C
+// declaration parser covering the subset a binding needs: functions,
+// typedefs of scalars and pointers, structs of scalars/pointers/arrays,
+// enums, and integer/float/string macros. Anything else is imported as an
+// opaque declaration that is an error to use, and the diagnostic names it.
+//
+// The result is a synthetic module: parser nodes in a tree of their own,
+// which the checker collects like any other module's items.
+
+import parser
+
+const NONE: usize = 0xFFFFFFFFFFFFFFFF
+
+// token kinds
+const CT_IDENT: u8 = 0
+const CT_NUM: u8 = 1
+const CT_STR: u8 = 2
+const CT_PUNCT: u8 = 3
+
+pub struct CTok {
+    kind: u8
+    text: String
+}
+
+fn tok(kind: u8, text: []u8) -> CTok { return CTok{ .kind = kind, .text = String.from(text) } }
+fn is_punct(t: *CTok, p: []u8) -> bool { return t.kind == CT_PUNCT and t.text[..] == p }
+fn is_ident(t: *CTok, s: []u8) -> bool { return t.kind == CT_IDENT and t.text[..] == s }
+
+/// What an import yields: nodes added to the checker's `tree` for the
+/// synthetic module, and the declarations as node ids in the order the
+/// checker registers them.
+pub struct CImport {
+    header: String
+    is_system: bool
+    tree: *mut parser.Tree
+    // struct nodes and their C spellings (`struct tag` or a typedef name)
+    structs: List(usize)
+    struct_cnames: List(String)
+    aliases: List(usize)
+    functions: List(usize)
+    consts: List(usize)
+    // constant values, for the enum and macro evaluator
+    const_names: List(String)
+    const_ivals: List(i128)
+    const_is_int: List(bool)
+    // declarations that could not be translated, with the reason
+    unsupported_names: List(String)
+    unsupported_whys: List(String)
+}
+
+pub struct ImportOptions {
+    cc: List(String)
+    target: String
+    include_dirs: List(String)
+    windows: bool
+}
+
+fn ends_with(s: []u8, suffix: []u8) -> bool {
+    if suffix.len > s.len { return false }
+    return s[s.len - suffix.len..] == suffix
+}
+
+fn starts_with(s: []u8, prefix: []u8) -> bool {
+    if prefix.len > s.len { return false }
+    return s[0..prefix.len] == prefix
+}
+
+fn run_pp(opts: *ImportOptions, source: []u8, extra: []u8) -> !String {
+    // a directory of this run's own: several checkers may preprocess at once
+    let dir = format("{}/nx-cimport-self-{}", .{io.temp_dir(), time.monotonic()})
+    io.make_dir(dir[..]) catch { }
+    let path = format("{}/probe.c", .{dir})
+    try io.write_file(path[..], source)
+    var argv = List([]u8).new()
+    for c in opts.cc { argv.append(c[..]) }
+    argv.append("-E")
+    argv.append("-w")
+    argv.append(extra)
+    if opts.target.len > 0 {
+        argv.append("-target")
+        argv.append(opts.target[..])
+    }
+    var inc_flags = List(String).new()
+    for d in opts.include_dirs { inc_flags.append(format("-I{}", .{d})) }
+    for f in inc_flags { argv.append(f[..]) }
+    argv.append(path[..])
+    var code: i32 = 1
+    // a failure without a diagnostic is the compiler itself giving up (zig's
+    // shared cache refuses concurrent runs now and then): try again
+    for attempt in 0..6 {
+        code = os.exec(argv[..], "", "") catch { return error.IoError }
+        if code == 0 { break }
+        let err = os.last_stderr()
+        if err[..].find("error:") != null { break }
+        time.sleep(50 *((attempt as u64) + 1))
+    }
+    unsafe { last_code = code }
+    io.remove_file(path[..]) catch { }
+    io.remove_dir(dir[..]) catch { }
+    if code != 0 { return error.InvalidInput }
+    return os.last_stdout()
+}
+
+var last_code: i32 = 0
+
+/// What the failed preprocessor run said, for the diagnostic: its first
+/// `error` line, else its first line, else the exit code.
+pub fn pp_error_line() -> String {
+    let err = os.last_stderr()
+    for line in err[..].lines() {
+        if line.find("error") != null { return String.from(line.trim()) }
+    }
+    for line in err[..].lines() {
+        if line.trim().len > 0 { return String.from(line.trim()) }
+    }
+    let code = unsafe { last_code }
+    if code >= 128 { return String.from("killed by a signal") }
+    return format("exit code {}", .{code})
+}
+
+pub fn import_header(header: []u8, opts: *ImportOptions, tree: *mut parser.Tree) -> !CImport {
+    var is_system = true
+    for d in opts.include_dirs {
+        if io.file_kind(format("{}/{}", .{d, header})[..]) == 1 { is_system = false }
+    }
+    let include = if is_system { format("#include <{}>\n", .{header}) } else { format("#include \"{}\"\n", .{header}) }
+    let text = try run_pp(opts, include[..], "-P")
+    let macros = try run_pp(opts, include[..], "-dM")
+    var ci = CImport{
+        .header = String.from(header), .is_system = is_system, .tree = tree,
+        .structs = List(usize).new(), .struct_cnames = List(String).new(), .aliases = List(usize).new(), .functions = List(usize).new(),
+        .consts = List(usize).new(), .const_names = List(String).new(), .const_ivals = List(i128).new(), .const_is_int = List(bool).new(),
+        .unsupported_names = List(String).new(), .unsupported_whys = List(String).new(),
+    }
+    var p = CParser{ .toks = tokenize(text[..]), .pos = 0, .typedefs = Map(String, usize).new(), .bad_typedefs = Map(String, String).new(), .windows = opts.windows, .seen = Map(String, bool).new() }
+    p.parse_all(&mut ci)
+    parse_macros(macros[..], &mut ci)
+    return ci
+}
+
+// ----- tokens ------------------------------------------------------------------
+
+fn is_alpha(c: u8) -> bool { return (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or c == '_' }
+fn is_digit(c: u8) -> bool { return c >= '0' and c <= '9' }
+fn is_space(c: u8) -> bool { return c == ' ' or c == '\t' or c == '\n' or c == '\r' or c == 12 or c == 11 }
+
+fn tokenize(src: []u8) -> List(CTok) {
+    var out = List(CTok).new()
+    var i: usize = 0
+    while i < src.len {
+        let c = src[i]
+        if is_space(c) { i += 1; continue }
+        if c == '#' {
+            // line markers / directives that survived: skip the line
+            while i < src.len and src[i] != '\n' { i += 1 }
+            continue
+        }
+        if is_alpha(c) {
+            let s = i
+            while i < src.len and (is_alpha(src[i]) or is_digit(src[i])) { i += 1 }
+            out.append(tok(CT_IDENT, src[s..i]))
+            continue
+        }
+        if is_digit(c) or (c == '.' and i + 1 < src.len and is_digit(src[i + 1])) {
+            let s = i
+            while i < src.len {
+                let d = src[i]
+                let exp_sign = (d == '+' or d == '-') and i > 0 and (src[i - 1] == 'e' or src[i - 1] == 'E' or src[i - 1] == 'p' or src[i - 1] == 'P')
+                if ! (is_alpha(d) or is_digit(d) or d == '.' or exp_sign) { break }
+                i += 1
+            }
+            out.append(tok(CT_NUM, src[s..i]))
+            continue
+        }
+        if c == '"' or (c == 'L' and i + 1 < src.len and src[i + 1] == '"') {
+            if c == 'L' { i += 1 }
+            i += 1
+            var s = String.new()
+            while i < src.len and src[i] != '"' {
+                if src[i] == '\\' and i + 1 < src.len {
+                    i += 1
+                    let e = src[i]
+                    if e == 'n' { s.push_byte('\n') }
+                    else if e == 't' { s.push_byte('\t') }
+                    else if e == 'r' { s.push_byte('\r') }
+                    else if e == '0' { s.push_byte(0) }
+                    else { s.push_byte(e) }
+                } else {
+                    s.push_byte(src[i])
+                }
+                i += 1
+            }
+            i += 1
+            out.append(tok(CT_STR, s[..]))
+            continue
+        }
+        if c == '\'' {
+            i += 1
+            let s = i
+            while i < src.len and src[i] != '\'' {
+                if src[i] == '\\' { i += 1 }
+                i += 1
+            }
+            let lit = src[s..if i < src.len { i } else { src.len }]
+            i += 1
+            var v: u32 = 0
+            if lit.len > 0 and lit[0] == '\\' {
+                if lit.len > 1 { v = lit[1] as u32 }
+            } else if lit.len > 0 {
+                v = utf8_first(lit)
+            }
+            out.append(tok(CT_NUM, format("{}", .{v})[..]))
+            continue
+        }
+        // punctuation (longest first)
+        if i + 3 <= src.len {
+            let three = src[i..i + 3]
+            if three == "..." or three == "<<=" or three == ">>=" {
+                out.append(tok(CT_PUNCT, three))
+                i += 3
+                continue
+            }
+        }
+        if i + 2 <= src.len {
+            let two = src[i..i + 2]
+            if two == "->" or two == "++" or two == "--" or two == "<<" or two == ">>" or two == "<=" or two == ">=" or two == "=="
+                or two == "!=" or two == "&&" or two == "||" or two == "+=" or two == "-=" or two == "*=" or two == "/=" or two == "%="
+                or two == "&=" or two == "|=" or two == "^=" or two == "##" {
+                out.append(tok(CT_PUNCT, two))
+                i += 2
+                continue
+            }
+        }
+        out.append(tok(CT_PUNCT, src[i..i + 1]))
+        i += 1
+    }
+    return out
+}
+
+/// The first scalar of a UTF-8 sequence (a character literal's value).
+fn utf8_first(s: []u8) -> u32 {
+    let b0 = s[0] as u32
+    if b0 < 0x80 { return b0 }
+    var n: usize = 0
+    var cp: u32 = 0
+    if b0 >> 5 == 6 { n = 1; cp = b0 & 0x1F }
+    else if b0 >> 4 == 14 { n = 2; cp = b0 & 0x0F }
+    else if b0 >> 3 == 30 { n = 3; cp = b0 & 0x07 }
+    else { return b0 }
+    if s.len < n + 1 { return b0 }
+    for i in 0..n { cp = (cp << 6) | ((s[i + 1] as u32) & 0x3F) }
+    return cp
+}
+
+// ----- declarations ---------------------------------------------------------
+
+const SKIP_WORDS = [
+    "extern", "static", "inline", "__inline", "__inline__", "__forceinline", "__restrict", "__restrict__", "restrict",
+    "volatile", "__volatile__", "_Noreturn", "__extension__", "__cdecl", "__stdcall", "__fastcall", "__thiscall",
+    "__vectorcall", "__attribute__", "__declspec", "__asm__", "__asm", "asm", "_Nullable", "_Nonnull", "__unaligned",
+    "__w64", "__ptr32", "__ptr64", "register", "auto", "__thread", "_Thread_local",
+]
+
+fn is_skip_word(s: []u8) -> bool {
+    for w in SKIP_WORDS { if w == s { return true } }
+    return false
+}
+
+fn is_type_word(s: []u8) -> bool {
+    let words = [
+        "void", "char", "short", "int", "long", "float", "double", "signed", "unsigned", "_Bool", "bool", "const", "struct",
+        "union", "enum", "size_t", "int8_t", "int16_t", "int32_t", "int64_t", "uint8_t", "uint16_t", "uint32_t", "uint64_t",
+        "uintptr_t", "intptr_t", "ptrdiff_t", "ssize_t", "wchar_t",
+    ]
+    for w in words { if w == s { return true } }
+    return false
+}
+
+pub struct CParser {
+    toks: List(CTok)
+    pos: usize
+    // typedef name (or `struct tag`) -> a type node; failures in `bad_typedefs`
+    typedefs: Map(String, usize)
+    bad_typedefs: Map(String, String)
+    windows: bool
+    seen: Map(String, bool)
+}
+
+fn clone_toks(ts: []CTok) -> List(CTok) {
+    var out = List(CTok).new()
+    for t in ts { out.append(tok(t.kind, t.text[..])) }
+    return out
+}
+
+/// Remove attributes, calling conventions, and storage-class words.
+fn strip_noise(toks: []CTok) -> List(CTok) {
+    var out = List(CTok).new()
+    var i: usize = 0
+    while i < toks.len {
+        let t = &toks[i]
+        if t.kind == CT_IDENT and (t.text == "__attribute__" or t.text == "__attribute" or t.text == "__declspec" or t.text == "__asm__"
+            or t.text == "__asm" or t.text == "asm" or t.text == "_Alignas" or t.text == "__alignof__") {
+            // skip the parenthesized group
+            i += 1
+            if i < toks.len and is_punct(&toks[i], "(") {
+                var depth: i32 = 0
+                while i < toks.len {
+                    if is_punct(&toks[i], "(") { depth += 1 }
+                    else if is_punct(&toks[i], ")") {
+                        depth -= 1
+                        if depth == 0 { i += 1; break }
+                    }
+                    i += 1
+                }
+            }
+            continue
+        }
+        if t.kind == CT_IDENT and is_skip_word(t.text[..]) { i += 1; continue }
+        out.append(tok(t.kind, t.text[..]))
+        i += 1
+    }
+    return out
+}
+
+fn split_commas(toks: []CTok) -> List(List(CTok)) {
+    var out = List(List(CTok)).new()
+    out.append(List(CTok).new())
+    var depth: i32 = 0
+    for t in toks {
+        if is_punct(&t, "(") or is_punct(&t, "[") or is_punct(&t, "{") { depth += 1 }
+        else if is_punct(&t, ")") or is_punct(&t, "]") or is_punct(&t, "}") { depth -= 1 }
+        else if is_punct(&t, ",") and depth == 0 {
+            out.append(List(CTok).new())
+            continue
+        }
+        out[out.len - 1].append(tok(t.kind, t.text[..]))
+    }
+    return out
+}
+
+fn parse_c_int(s0: []u8) -> ?i128 {
+    var end = s0.len
+    while end > 0 and (s0[end - 1] == 'u' or s0[end - 1] == 'U' or s0[end - 1] == 'l' or s0[end - 1] == 'L') { end -= 1 }
+    let t = s0[0..end]
+    if t.len == 0 { return null }
+    if starts_with(t, "0x") or starts_with(t, "0X") {
+        var v: i128 = 0
+        for c in t[2..] {
+            var d: i128 = 0
+            if is_digit(c) { d = (c - '0') as i128 }
+            else if c >= 'a' and c <= 'f' { d = (c - 'a' + 10) as i128 }
+            else if c >= 'A' and c <= 'F' { d = (c - 'A' + 10) as i128 }
+            else { return null }
+            v = v * 16 + d
+        }
+        if t.len == 2 { return null }
+        return v
+    }
+    var all_digits = true
+    for c in t { if !is_digit(c) { all_digits = false } }
+    if !all_digits { return null }
+    if t.len > 1 and t[0] == '0' {
+        var v: i128 = 0
+        for c in t[1..] {
+            if c > '7' { return null }
+            v = v * 8 + (c - '0') as i128
+        }
+        return v
+    }
+    let v = t.parse_int(i128) catch { return null }
+    return v
+}
+
+fn eval_const_simple(toks: []CTok) -> ?i128 {
+    if toks.len == 1 and toks[0].kind == CT_NUM { return parse_c_int(toks[0].text[..]) }
+    if toks.len == 2 and is_punct(&toks[0], "-") and toks[1].kind == CT_NUM {
+        let v = parse_c_int(toks[1].text[..]) orelse return null
+        return -v
+    }
+    if toks.len >= 2 and is_punct(&toks[0], "(") and is_punct(&toks[toks.len - 1], ")") { return eval_const_simple(toks[1..toks.len - 1]) }
+    return null
+}
+
+fn const_lookup(ci: *CImport, name: []u8) -> ?i128 {
+    for n, i in ci.const_names {
+        if n == name {
+            if !ci.const_is_int[i] { return null }
+            return ci.const_ivals[i]
+        }
+    }
+    return null
+}
+
+/// Constant expressions in enums and macros: integers, negation, parentheses,
+/// references to earlier constants, and `a << b`, `a | b`, `a + b`.
+fn eval_const(toks0: []CTok, ci: *CImport) -> ?i128 {
+    var toks = List(CTok).new()
+    for t in toks0 { if ! (is_punct(&t, "(") or is_punct(&t, ")")) { toks.append(tok(t.kind, t.text[..])) } }
+    if toks.len == 1 { return const_val(&toks[0], ci) }
+    if toks.len == 2 and is_punct(&toks[0], "-") { let v = const_val(&toks[1], ci) orelse return null; return -v }
+    if toks.len == 2 and is_punct(&toks[0], "~") { let v = const_val(&toks[1], ci) orelse return null; return ~v }
+    if toks.len == 3 and toks[1].kind == CT_PUNCT {
+        let x = const_val(&toks[0], ci) orelse return null
+        let y = const_val(&toks[2], ci) orelse return null
+        let op = toks[1].text[..]
+        if op == "<<" { return x << (y as u32) }
+        if op == ">>" { return x >> (y as u32) }
+        if op == "|" { return x | y }
+        if op == "&" { return x & y }
+        if op == "+" { return x + y }
+        if op == "-" { return x - y }
+        if op == "*" { return x * y }
+        return null
+    }
+    return null
+}
+
+fn const_val(t: *CTok, ci: *CImport) -> ?i128 {
+    if t.kind == CT_NUM { return parse_c_int(t.text[..]) }
+    if t.kind == CT_IDENT { return const_lookup(ci, t.text[..]) }
+    return null
+}
+
+// ----- synthetic nodes ---------------------------------------------------------
+
+fn blank(k: parser.NodeKind) -> parser.Node {
+    return parser.Node{
+        .k = k, .start = 0, .end = 0, .name = String.new(), .text = String.new(),
+        .flag = false, .flag2 = false, .a = 0, .b = 0,
+        .kids = List(usize).new(), .kids2 = List(usize).new(),
+        .x = NONE, .y = NONE, .z = NONE, .words = List(String).new(),
+    }
+}
+
+fn named_type(ci: *mut CImport, name: []u8) -> usize {
+    var n = blank(parser.NodeKind.TName)
+    n.words.append(String.from(name))
+    return ci.tree.add(n)
+}
+
+fn ptr_type(ci: *mut CImport, elem: usize, mutable: bool) -> usize {
+    var n = blank(parser.NodeKind.TPtr)
+    n.flag = mutable
+    n.x = elem
+    return ci.tree.add(n)
+}
+
+fn int_lit(ci: *mut CImport, v: i128) -> usize {
+    var n = blank(parser.NodeKind.Lit)
+    n.text = String.from("int")
+    n.name = format("{}", .{v})
+    return ci.tree.add(n)
+}
+
+fn array_type(ci: *mut CImport, len: i128, elem: usize) -> usize {
+    var n = blank(parser.NodeKind.TArray)
+    n.x = int_lit(ci, len)
+    n.y = elem
+    return ci.tree.add(n)
+}
+
+/// The type a node names, when it is a plain name; used to follow aliases.
+fn type_head(ci: *CImport, t: usize) -> []u8 {
+    let n = &ci.tree.*.nodes[t]
+    if n.k == parser.NodeKind.TName and n.words.len == 1 { return n.words[0][..] }
+    return ""
+}
+
+impl CImport {
+    fn add_unsupported(self: *mut Self, name: []u8, why: []u8) {
+        for n, i in self.unsupported_names {
+            if n == name { self.unsupported_whys[i] = String.from(why); return }
+        }
+        self.unsupported_names.append(String.from(name))
+        self.unsupported_whys.append(String.from(why))
+    }
+
+    fn has_const(self: *Self, name: []u8) -> bool {
+        for n in self.const_names { if n == name { return true } }
+        return false
+    }
+
+    fn add_alias(self: *mut Self, name: []u8, t: usize) {
+        var n = blank(parser.NodeKind.TypeAlias)
+        n.name = String.from(name)
+        n.flag = true
+        n.x = t
+        let id = self.tree.add(n)
+        self.aliases.append(id)
+    }
+
+    fn add_int_const(self: *mut Self, name: []u8, v: i128) {
+        var n = blank(parser.NodeKind.Const)
+        n.name = String.from(name)
+        n.flag = true
+        // C integer constants are `int` unless they need more bits
+        var ty: []u8 = "i32"
+        if v < -2147483648 or v > 2147483647 { ty = "i64" }
+        if v < -9223372036854775808 or v > 9223372036854775807 { ty = "u64" }
+        n.x = named_type(self, ty)
+        var mag = int_lit(self, if v < 0 { -v } else { v })
+        if v < 0 {
+            var u = blank(parser.NodeKind.Unary)
+            u.name = String.from("-")
+            u.x = mag
+            mag = self.tree.add(u)
+        }
+        n.y = mag
+        self.consts.append(self.tree.add(n))
+        self.const_names.append(String.from(name))
+        self.const_ivals.append(v)
+        self.const_is_int.append(true)
+    }
+
+    fn add_float_const(self: *mut Self, name: []u8, v: f64, spelling: []u8) {
+        var n = blank(parser.NodeKind.Const)
+        n.name = String.from(name)
+        n.flag = true
+        n.x = named_type(self, "f64")
+        var lit = blank(parser.NodeKind.Lit)
+        lit.text = String.from("float")
+        lit.name = String.from(spelling)
+        n.y = self.tree.add(lit)
+        self.consts.append(self.tree.add(n))
+        self.const_names.append(String.from(name))
+        self.const_ivals.append(0)
+        self.const_is_int.append(false)
+        _ = v
+    }
+
+    fn add_str_const(self: *mut Self, name: []u8, s: []u8) {
+        var n = blank(parser.NodeKind.Const)
+        n.name = String.from(name)
+        n.flag = true
+        var lit = blank(parser.NodeKind.Lit)
+        lit.text = String.from("str")
+        lit.name = String.from(s)
+        n.y = self.tree.add(lit)
+        self.consts.append(self.tree.add(n))
+        self.const_names.append(String.from(name))
+        self.const_ivals.append(0)
+        self.const_is_int.append(false)
+    }
+}
+
+impl CParser {
+    /// Collect one top-level declaration's tokens (up to `;` at depth 0, or a
+    /// function body's closing brace), with attributes and noise removed.
+    /// `body` receives a struct/union/enum body's tokens; `has_body` says so.
+    fn next_decl(self: *mut Self, out: *mut List(CTok), body: *mut List(CTok), has_body: *mut bool) -> bool {
+        out.clear()
+        body.clear()
+        has_body.*= false
+        var depth: i32 = 0
+        var paren: i32 = 0
+        var saw_body_brace = false
+        while self.pos < self.toks.len {
+            let t = tok(self.toks[self.pos].kind, self.toks[self.pos].text[..])
+            self.pos += 1
+            var skip_push = false
+            if is_punct(&t, "{") {
+                depth += 1
+                if depth == 1 {
+                    var is_type = false
+                    for x in out { if x.kind == CT_IDENT and (x.text == "struct" or x.text == "union" or x.text == "enum") { is_type = true } }
+                    if !is_type { saw_body_brace = true }
+                    if is_type {
+                        has_body.*= true
+                        continue
+                    }
+                }
+            } else if is_punct(&t, "}") {
+                depth -= 1
+                if depth == 0 {
+                    if saw_body_brace { return true } // function definition: body dropped
+                    continue
+                }
+            } else if is_punct(&t, ";") and depth == 0 and paren == 0 {
+                return true
+            } else if is_punct(&t, "(") {
+                paren += 1
+            } else if is_punct(&t, ")") {
+                paren -= 1
+            }
+            if depth >= 1 {
+                if has_body.*{
+                    if ! (depth == 1 and is_punct(&t, "{")) { body.append(tok(t.kind, t.text[..])) }
+                }
+                if saw_body_brace { skip_push = true }
+            }
+            if skip_push { continue }
+            if depth == 0 or !has_body.*{ out.append(tok(t.kind, t.text[..])) }
+        }
+        return out.len > 0
+    }
+
+    fn parse_all(self: *mut Self, ci: *mut CImport) {
+        var raw = List(CTok).new()
+        var body = List(CTok).new()
+        var has_body = false
+        while self.next_decl(&mut raw, &mut body, &mut has_body) {
+            let toks = strip_noise(raw[..])
+            if toks.len == 0 { continue }
+            self.decl(toks[..], body[..], has_body, ci)
+        }
+    }
+
+    fn decl(self: *mut Self, toks: []CTok, body: []CTok, has_body: bool, ci: *mut CImport) {
+        if toks[0].kind != CT_IDENT { return }
+        let first = toks[0].text[..]
+        if first == "typedef" {
+            let rest = toks[1..]
+            if rest.len == 0 { return }
+            // typedef struct tag { ... } Name;   /  typedef struct tag Name;  / typedef int Name;
+            if rest[0].kind == CT_IDENT and (rest[0].text == "struct" or rest[0].text == "union" or rest[0].text == "enum") {
+                let kind = rest[0].text.clone()
+                let last = &rest[rest.len - 1]
+                if last.kind != CT_IDENT { return }
+                let name = last.text.clone()
+                if name == "struct" or name == "union" or name == "enum" { return }
+                var tag = String.new()
+                var has_tag = false
+                if rest.len > 1 and rest[1].kind == CT_IDENT and rest[1].text[..] != name[..] {
+                    tag = rest[1].text.clone()
+                    has_tag = true
+                }
+                if kind == "enum" {
+                    if has_body { self.enum_body(body, ci) }
+                    let i32t = named_type(ci, "i32")
+                    self.typedefs.put(name.clone(), i32t)
+                    ci.add_alias(name[..], i32t)
+                    return
+                }
+                if kind == "union" {
+                    self.bad_typedefs.put(name.clone(), String.from("unions are not supported"))
+                    ci.add_unsupported(name[..], "C unions are not supported")
+                    return
+                }
+                var fields = List(usize).new()
+                var fields_ok = true
+                if has_body {
+                    fields_ok = self.struct_fields(body, ci, &mut fields)
+                } else if has_tag {
+                    if let existing = self.typedefs.get(format("struct {}", .{tag})[..]) {
+                        let head = type_head(ci, existing)
+                        if head.len > 0 {
+                            // alias of an already imported struct
+                            let te = named_type(ci, head)
+                            self.typedefs.put(name.clone(), te)
+                            ci.add_alias(name[..], te)
+                            return
+                        }
+                    }
+                    // opaque struct: usable through pointers
+                }
+                // fields we cannot translate make the struct opaque (usable through
+                // pointers, like a forward declaration), not unusable
+                if !fields_ok { fields = List(usize).new() }
+                if !self.seen.contains(name[..]) {
+                    self.seen.put(name.clone(), true)
+                    self.push_struct(ci, name[..], name[..], fields)
+                }
+                let te = named_type(ci, name[..])
+                self.typedefs.put(name.clone(), te)
+                if has_tag { self.typedefs.put(format("struct {}", .{tag}), te) }
+                return
+            }
+            // function pointer typedef: typedef ret (*Name)(...)
+            var lp = NONE
+            for t, i in rest { if lp == NONE and is_punct(&t, "(") { lp = i } }
+            if lp != NONE {
+                if lp + 2 < rest.len and rest[lp + 2].kind == CT_IDENT {
+                    let n = rest[lp + 2].text.clone()
+                    self.bad_typedefs.put(n.clone(), String.from("function pointer types are not supported"))
+                    ci.add_unsupported(n[..], "function pointer typedefs are not supported")
+                }
+                return
+            }
+            let last = &rest[rest.len - 1]
+            if last.kind != CT_IDENT { return }
+            let name = last.text.clone()
+            var why = String.new()
+            let t = self.ctype(rest[0..rest.len - 1], ci, &mut why)
+            if t != NONE {
+                self.typedefs.put(name.clone(), t)
+                ci.add_alias(name[..], t)
+            } else {
+                self.bad_typedefs.put(name.clone(), why.clone())
+                ci.add_unsupported(name[..], why[..])
+            }
+            return
+        }
+        if first == "struct" or first == "union" {
+            if toks.len > 1 and toks[1].kind == CT_IDENT and has_body {
+                let tag = toks[1].text.clone()
+                if first == "union" {
+                    self.bad_typedefs.put(format("struct {}", .{tag}), String.from("unions are not supported"))
+                    return
+                }
+                // untranslatable fields: opaque, see the typedef case above
+                var fields = List(usize).new()
+                if !self.struct_fields(body, ci, &mut fields) { fields = List(usize).new() }
+                if !self.seen.contains(tag[..]) {
+                    self.seen.put(tag.clone(), true)
+                    self.push_struct(ci, tag[..], format("struct {}", .{tag})[..], fields)
+                }
+                self.typedefs.put(format("struct {}", .{tag}), named_type(ci, tag[..]))
+            }
+            return
+        }
+        if first == "enum" {
+            if has_body { self.enum_body(body, ci) }
+            return
+        }
+        // function: ... name ( params )
+        var lp = NONE
+        for t, i in toks { if lp == NONE and is_punct(&t, "(") { lp = i } }
+        if lp == NONE or lp == 0 { return }
+        if toks[lp - 1].kind != CT_IDENT { return }
+        let name = toks[lp - 1].text.clone()
+        if !is_punct(&toks[toks.len - 1], ")") { return }
+        if self.seen.contains(name[..]) { return }
+        self.seen.put(name.clone(), true)
+        var why = String.new()
+        let ret = self.ctype(toks[0..lp - 1], ci, &mut why)
+        if ret == NONE {
+            ci.add_unsupported(name[..], format("return type: {}", .{why})[..])
+            return
+        }
+        let params_toks = toks[lp + 1..toks.len - 1]
+        var params = List(usize).new()
+        var variadic = false
+        let parts = split_commas(params_toks)
+        for p, k in parts {
+            if p.len == 0 { continue }
+            if p.len == 1 and is_punct(&p[0], "...") { variadic = true; continue }
+            if p.len == 1 and is_ident(&p[0], "void") { continue }
+            // trailing identifier is the parameter name unless it is a type word
+            var ty_toks = List(CTok).new()
+            var pname = String.new()
+            let lastp = &p[p.len - 1]
+            if lastp.kind == CT_IDENT and !is_type_word(lastp.text[..]) and !self.typedefs.contains(lastp.text[..]) and !self.bad_typedefs.contains(lastp.text[..]) and p.len > 1 {
+                ty_toks = clone_toks(p[0..p.len - 1])
+                pname = lastp.text.clone()
+            } else {
+                ty_toks = clone_toks(p[..])
+                pname = format("arg{}", .{k})
+            }
+            // array parameter `int a[]` is a pointer
+            var bpos = NONE
+            for t, i in ty_toks { if bpos == NONE and is_punct(&t, "[") { bpos = i } }
+            if bpos != NONE {
+                while ty_toks.len > bpos { _ = ty_toks.pop() }
+                ty_toks.append(tok(CT_PUNCT, "*"))
+            }
+            var pwhy = String.new()
+            let pt = self.ctype(ty_toks[..], ci, &mut pwhy)
+            if pt == NONE {
+                ci.add_unsupported(name[..], format("parameter `{}`: {}", .{pname, pwhy})[..])
+                return
+            }
+            var pn = blank(parser.NodeKind.Param)
+            pn.name = pname
+            pn.x = pt
+            params.append(ci.tree.add(pn))
+        }
+        var fnode = blank(parser.NodeKind.Fn)
+        fnode.name = name
+        fnode.text = String.from("-")
+        fnode.flag = true
+        fnode.flag2 = true
+        fnode.b = if variadic { 1 } else { 0 }
+        fnode.kids = params
+        fnode.x = ret
+        ci.functions.append(ci.tree.add(fnode))
+    }
+
+    fn push_struct(self: *mut Self, ci: *mut CImport, name: []u8, c_name: []u8, own fields: List(usize)) {
+        var n = blank(parser.NodeKind.Struct)
+        n.name = String.from(name)
+        n.text = String.from("struct")
+        n.flag = true
+        n.kids = fields
+        var lay = blank(parser.NodeKind.Ident)
+        lay.name = String.from("c")
+        n.x = ci.tree.add(lay)
+        ci.structs.append(ci.tree.add(n))
+        ci.struct_cnames.append(String.from(c_name))
+    }
+
+    fn enum_body(self: *mut Self, b: []CTok, ci: *mut CImport) {
+        var next: i128 = 0
+        let items = split_commas(b)
+        for item in items {
+            if item.len == 0 { continue }
+            if item[0].kind != CT_IDENT { continue }
+            let name = item[0].text.clone()
+            if item.len > 2 {
+                if let v = eval_const(item[2..], ci) { next = v }
+            }
+            ci.add_int_const(name[..], next)
+            next += 1
+        }
+    }
+
+    /// The fields of a struct body as field nodes; false when one cannot be
+    /// translated.
+    fn struct_fields(self: *mut Self, b: []CTok, ci: *mut CImport, fields: *mut List(usize)) -> bool {
+        var start: usize = 0
+        var i: usize = 0
+        while i <= b.len {
+            if i == b.len or is_punct(&b[i], ";") {
+                let decl = strip_noise(b[start..i])
+                start = i + 1
+                i += 1
+                if decl.len == 0 { continue }
+                for t in decl { if is_punct(&t, ":") or is_punct(&t, "(") or is_punct(&t, "{") { return false } }
+                // int a, b;  char name[16];
+                var base_end = decl.len
+                var names = List(String).new()
+                var dims = List(List(CTok)).new()
+                var j: usize = 0
+                while j < decl.len {
+                    if decl[j].kind == CT_IDENT {
+                        let nm = decl[j].text.clone()
+                        var next_ok = j + 1 >= decl.len
+                        if !next_ok { next_ok = is_punct(&decl[j + 1], ",") or is_punct(&decl[j + 1], "[") }
+                        let is_name = !is_type_word(nm[..]) and !self.typedefs.contains(nm[..]) and !self.bad_typedefs.contains(nm[..])
+                            and ! (nm == "struct" or nm == "union" or nm == "enum" or nm == "const" or nm == "unsigned" or nm == "signed") and next_ok
+                        if is_name {
+                            if j < base_end { base_end = j }
+                            var d = List(CTok).new()
+                            var q = j + 1
+                            while q < decl.len and is_punct(&decl[q], "[") {
+                                var r = q + 1
+                                while r < decl.len and !is_punct(&decl[r], "]") {
+                                    d.append(tok(decl[r].kind, decl[r].text[..]))
+                                    r += 1
+                                }
+                                q = r + 1
+                            }
+                            names.append(nm)
+                            dims.append(d)
+                            j = q
+                            continue
+                        }
+                    }
+                    j += 1
+                }
+                if names.len == 0 { return false }
+                var why = String.new()
+                let base = self.ctype(decl[0..base_end], ci, &mut why)
+                if base == NONE { return false }
+                for nm, k in names {
+                    var t = base
+                    if dims[k].len > 0 {
+                        let len = eval_const_simple(dims[k][..]) orelse return false
+                        t = array_type(ci, len, base)
+                    }
+                    var f = blank(parser.NodeKind.Field)
+                    f.name = nm.clone()
+                    f.x = t
+                    fields.append(ci.tree.add(f))
+                }
+                continue
+            }
+            i += 1
+        }
+        return true
+    }
+
+    /// Translate a C type (specifiers plus pointer stars) into a type node;
+    /// NONE with the reason in `why` when it has no Nexium spelling.
+    fn ctype(self: *mut Self, toks: []CTok, ci: *mut CImport, why: *mut String) -> usize {
+        var words = List(String).new()
+        var stars: usize = 0
+        // `const T*` points at immutable data: the innermost pointer becomes `*T`
+        var const_target = false
+        for t in toks {
+            if t.kind == CT_IDENT and (t.text == "const" or t.text == "__const") {
+                if stars == 0 { const_target = true }
+            } else if t.kind == CT_IDENT and t.text == "volatile" {
+            } else if t.kind == CT_IDENT {
+                words.append(t.text.clone())
+            } else if is_punct(&t, "*") {
+                stars += 1
+            } else if is_punct(&t, "[") or is_punct(&t, "]") {
+            } else if t.kind == CT_PUNCT {
+                why.*= format("unexpected `{}` in a type", .{t.text})
+                return NONE
+            } else if t.kind == CT_STR {
+                why.*= String.from("unexpected string in a type")
+                return NONE
+            }
+        }
+        if words.len == 0 {
+            why.*= String.from("missing type")
+            return NONE
+        }
+        var base = NONE
+        if words[0] == "struct" or words[0] == "union" or words[0] == "enum" {
+            if words.len < 2 {
+                why.*= String.from("missing tag")
+                return NONE
+            }
+            let tag = words[1].clone()
+            if words[0] == "enum" {
+                base = named_type(ci, "i32")
+            } else {
+                let key = format("struct {}", .{tag})
+                if let t = self.typedefs.get(key[..]) {
+                    base = t
+                } else if let e = self.bad_typedefs.get(key[..]) {
+                    why.*= e.clone()
+                    return NONE
+                } else {
+                    // forward-declared: opaque, only usable through pointers
+                    if stars == 0 {
+                        why.*= format("struct {} is opaque here", .{tag})
+                        return NONE
+                    }
+                    base = named_type(ci, "u8")
+                }
+            }
+        } else {
+            var key = String.new()
+            for w, i in words {
+                if i > 0 { key.append(" ") }
+                key.append(w[..])
+            }
+            let scalar = scalar_type(key[..], self.windows)
+            if scalar.len > 0 {
+                base = named_type(ci, scalar)
+            } else if words.len == 1 {
+                if let t = self.typedefs.get(words[0][..]) {
+                    base = t
+                } else if let e = self.bad_typedefs.get(words[0][..]) {
+                    why.*= e.clone()
+                    return NONE
+                } else {
+                    why.*= format("unknown type `{}`", .{words[0]})
+                    return NONE
+                }
+            } else {
+                why.*= format("unsupported type `{}`", .{key})
+                return NONE
+            }
+        }
+        var t = base
+        let is_void = type_head(ci, t) == "void"
+        for k in 0..stars {
+            if k == 0 and is_void { t = named_type(ci, "u8") } // void* is a pointer to bytes
+            t = ptr_type(ci, t, ! (k == 0 and const_target))
+        }
+        return t
+    }
+}
+
+/// The Nexium spelling of a C scalar type, or "" when there is none.
+fn scalar_type(key: []u8, win: bool) -> []u8 {
+    if key == "void" { return "void" }
+    if key == "char" or key == "signed char" or key == "unsigned char" { return "u8" }
+    if key == "short" or key == "short int" or key == "signed short" or key == "signed short int" { return "i16" }
+    if key == "unsigned short" or key == "unsigned short int" { return "u16" }
+    if key == "int" or key == "signed" or key == "signed int" { return "i32" }
+    if key == "unsigned" or key == "unsigned int" { return "u32" }
+    if key == "long" or key == "long int" or key == "signed long" or key == "signed long int" { return if win { "i32" } else { "i64" } }
+    if key == "unsigned long" or key == "unsigned long int" { return if win { "u32" } else { "u64" } }
+    if key == "long long" or key == "long long int" or key == "signed long long" or key == "signed long long int" { return "i64" }
+    if key == "unsigned long long" or key == "unsigned long long int" { return "u64" }
+    if key == "float" { return "f32" }
+    if key == "double" { return "f64" }
+    if key == "_Bool" or key == "bool" { return "bool" }
+    if key == "size_t" or key == "uintptr_t" or key == "rsize_t" { return "usize" }
+    if key == "ssize_t" or key == "ptrdiff_t" or key == "intptr_t" or key == "intmax_t" { return "isize" }
+    if key == "uintmax_t" { return "u64" }
+    if key == "int8_t" { return "i8" }
+    if key == "int16_t" { return "i16" }
+    if key == "int32_t" { return "i32" }
+    if key == "int64_t" { return "i64" }
+    if key == "uint8_t" { return "u8" }
+    if key == "uint16_t" { return "u16" }
+    if key == "uint32_t" { return "u32" }
+    if key == "uint64_t" { return "u64" }
+    if key == "wchar_t" { return if win { "u16" } else { "u32" } }
+    if key == "__int64" { return "i64" }
+    if key == "unsigned __int64" { return "u64" }
+    if key == "__int32" { return "i32" }
+    if key == "__int128" { return "i128" }
+    return ""
+}
+
+// ----- macros ------------------------------------------------------------------
+
+fn trim_parens(s: []u8) -> []u8 {
+    var a: usize = 0
+    var b = s.len
+    while a < b and (s[a] == '(' or s[a] == ')') { a += 1 }
+    while b > a and (s[b - 1] == '(' or s[b - 1] == ')') { b -= 1 }
+    return s[a..b]
+}
+
+fn is_float_spelling(f: []u8) -> bool {
+    // a hexadecimal float (`0x1.fffffep+127f`, macOS's MAXFLOAT) is not
+    // imported: the Rust importer's number parser does not read them, and
+    // the two must agree on every header
+    if f.len > 1 and f[0] == '0' and (f[1] == 'x' or f[1] == 'X') { return false }
+    var seen_dot = false
+    var seen_e = false
+    for c in f { if c == '.' { seen_dot = true }; if c == 'e' or c == 'E' { seen_e = true } }
+    return seen_dot or seen_e
+}
+
+/// Object-like macros with literal values from `-dM` output.
+fn parse_macros(text: []u8, ci: *mut CImport) {
+    var defs = Map(String, String).new()
+    var names = List(String).new()
+    for line in text.lines() {
+        if !starts_with(line, "#define ") { continue }
+        let rest = line[8..]
+        var sp = rest.len
+        for c, i in rest { if sp == rest.len and c == ' ' { sp = i } }
+        let name = rest[0..sp]
+        var value: []u8 = ""
+        if sp < rest.len { value = rest[sp + 1..].trim() }
+        if name.len == 0 or name.find("(") != null { continue }
+        if !defs.contains(name) { names.append(String.from(name)) }
+        defs.put(String.from(name), String.from(value))
+    }
+    sort_strings(&mut names)
+    for name in names {
+        if starts_with(name[..], "__") and !starts_with(name[..], "__STDC") { continue }
+        var value = String.new()
+        if let dv = defs.get(name[..]) { value = dv.clone() }
+        // follow one level of indirection (INT_MAX -> __INT_MAX__)
+        for _i in 0..3 {
+            let key = trim_parens(value[..])
+            if let v = defs.get(key) { value = v.clone() } else { break }
+        }
+        let v = trim_parens(value[..].trim()).trim()
+        if v.len == 0 { continue }
+        if ci.has_const(name[..]) { continue }
+        if v.len >= 2 and v[0] == '"' and v[v.len - 1] == '"' {
+            ci.add_str_const(name[..], v[1..v.len - 1])
+        } else if let i = parse_c_int(v) {
+            ci.add_int_const(name[..], i)
+        } else if v.len > 1 and v[0] == '-' and parse_c_int(v[1..]) != null {
+            let i = parse_c_int(v[1..]) orelse 0
+            ci.add_int_const(name[..], -i)
+        } else {
+            var end = v.len
+            while end > 0 and (v[end - 1] == 'f' or v[end - 1] == 'F' or v[end - 1] == 'l' or v[end - 1] == 'L') { end -= 1 }
+            let f = v[0..end]
+            if is_float_spelling(f) {
+                let fv = f.parse_float() catch { continue }
+                ci.add_float_const(name[..], fv, f)
+            }
+        }
+    }
+}
+
+fn bytes_less(a: []u8, b: []u8) -> bool {
+    var i: usize = 0
+    while i < a.len and i < b.len {
+        if a[i] < b[i] { return true }
+        if a[i] > b[i] { return false }
+        i += 1
+    }
+    return a.len < b.len
+}
+
+fn sort_strings(xs: *mut List(String)) {
+    let n = xs.len
+    var i: usize = 1
+    while i < n {
+        var j = i
+        while j > 0 and bytes_less(xs[j][..], xs[j - 1][..]) {
+            let t = xs[j - 1].clone()
+            xs[j - 1] = xs[j].clone()
+            xs[j] = t
+            j -= 1
+        }
+        i += 1
+    }
+}

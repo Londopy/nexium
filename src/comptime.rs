@@ -29,11 +29,38 @@ pub struct Interp<'c, 'a> {
     pub budget_exceeded: bool,
     /// control flow (return/break/continue) escaping from inside an expression
     pending: Option<Flow>,
+    /// the first expression the interpreter could not evaluate (for diagnostics)
+    pub failed_at: Option<Span>,
+    /// the environments of the callers of the running function, outermost
+    /// first; a `Value::Ptr` names a local in one of these or in the current one
+    frames: Vec<Env>,
+    /// the function whose body is executing, for the types of its locals
+    cur_fn: Option<InstId>,
+    /// temporaries created for `&rvalue`, numbered down from the top of the id space
+    temps: u32,
+}
+
+/// The root value a pointer refers to: a local in a suspended caller frame or
+/// in the current environment (`fi == frames.len()`).
+fn frame_root<'e>(frames: &'e mut [Env], env: &'e mut Env, fi: u32, l: LocalId) -> Option<&'e mut Value> {
+    if fi as usize == frames.len() {
+        env.get_mut(&l)
+    } else {
+        frames.get_mut(fi as usize)?.get_mut(&l)
+    }
+}
+
+fn frame_get<'e>(frames: &'e [Env], env: &'e Env, fi: u32, l: LocalId) -> Option<&'e Value> {
+    if fi as usize == frames.len() {
+        env.get(&l)
+    } else {
+        frames.get(fi as usize)?.get(&l)
+    }
 }
 
 /// Evaluate an expression with no locals. Reports compile-time panics as errors.
 pub fn eval_const_expr(c: &mut Checker, e: &TExpr) -> Option<Value> {
-    let mut it = Interp { c, steps: 0, panic: None, budget_exceeded: false, pending: None };
+    let mut it = Interp { c, steps: 0, panic: None, budget_exceeded: false, pending: None, failed_at: None, frames: vec![], cur_fn: None, temps: 0 };
     let mut env = Env::new();
     let r = it.eval(e, &mut env);
     let panic = it.panic.take();
@@ -49,7 +76,7 @@ pub fn eval_const_expr(c: &mut Checker, e: &TExpr) -> Option<Value> {
 
 /// Evaluate with one local bound; silent on failure (used to probe record constraints).
 pub fn eval_with_local(c: &mut Checker, e: &TExpr, local: LocalId, v: Value) -> Option<Value> {
-    let mut it = Interp { c, steps: 0, panic: None, budget_exceeded: false, pending: None };
+    let mut it = Interp { c, steps: 0, panic: None, budget_exceeded: false, pending: None, failed_at: None, frames: vec![], cur_fn: None, temps: 0 };
     let mut env = Env::new();
     env.insert(local, v);
     it.eval(e, &mut env)
@@ -57,7 +84,7 @@ pub fn eval_with_local(c: &mut Checker, e: &TExpr, local: LocalId, v: Value) -> 
 
 /// Run a function instance at compile time with the given arguments.
 pub fn call_instance(c: &mut Checker, inst: InstId, args: Vec<Value>) -> Result<Option<Value>, (String, Span)> {
-    let mut it = Interp { c, steps: 0, panic: None, budget_exceeded: false, pending: None };
+    let mut it = Interp { c, steps: 0, panic: None, budget_exceeded: false, pending: None, failed_at: None, frames: vec![], cur_fn: None, temps: 0 };
     let r = it.call(inst, args);
     if let Some(p) = it.panic.take() {
         return Err(p);
@@ -115,6 +142,12 @@ impl<'c, 'a> Interp<'c, 'a> {
     }
 
     /// A zero-initialized value of the given type, used for `undefined` locals.
+    /// Record a panic with a location and stop evaluation.
+    fn panic_at(&mut self, msg: &str, sp: Span) -> Option<Value> {
+        self.panic = Some((msg.to_string(), sp));
+        None
+    }
+
     pub fn default_value(&mut self, ty: TyId) -> Value {
         let ty = self.c.tys.resolve(ty, true);
         match self.c.tys.kind(ty).clone() {
@@ -182,11 +215,24 @@ impl<'c, 'a> Interp<'c, 'a> {
             env.insert(*p, a);
         }
         let body = f.body.as_ref().unwrap();
-        let (flow, v) = self.exec_block(body, &mut env)?;
+        let outer = self.cur_fn.replace(inst);
+        let r = self.exec_block(body, &mut env);
+        self.cur_fn = outer;
+        let (flow, v) = r?;
         Some(match flow {
             Flow::Return(v) => v,
             _ => v.unwrap_or(Value::Void),
         })
+    }
+
+    /// Call from inside a running function: the caller's environment is
+    /// suspended on the frame stack so pointers into it stay valid.
+    fn call_in(&mut self, env: &mut Env, inst: InstId, args: Vec<Value>) -> Option<Value> {
+        let saved = std::mem::take(env);
+        self.frames.push(saved);
+        let r = self.call(inst, args);
+        *env = self.frames.pop().unwrap_or_default();
+        r
     }
 
     fn exec_block(&mut self, b: &TBlock, env: &mut Env) -> Option<(Flow, Option<Value>)> {
@@ -289,7 +335,8 @@ impl<'c, 'a> Interp<'c, 'a> {
             TStmt::Continue { label, .. } => Some(Flow::Continue(*label)),
             TStmt::Defer { body, .. } => self.exec_stmt(body, env),
             TStmt::ErrDefer { .. } => Some(Flow::Next),
-            TStmt::While { cond, body, label, .. } => {
+            TStmt::While { cond, body, els, label, .. } => {
+                let mut broke = false;
                 loop {
                     if !self.step() {
                         return None;
@@ -300,18 +347,32 @@ impl<'c, 'a> Interp<'c, 'a> {
                     }
                     match self.exec_block(body, env)?.0 {
                         Flow::Next => {}
-                        Flow::Break(l, _) if l == *label => break,
+                        Flow::Break(l, _) if l == *label => {
+                            broke = true;
+                            break;
+                        }
                         Flow::Continue(l) if l == *label => continue,
                         other => return Some(other),
                     }
                 }
+                if let (false, Some(eb)) = (broke, els) {
+                    return Some(self.exec_block(eb, env)?.0);
+                }
                 Some(Flow::Next)
             }
-            TStmt::ForRange { var, start, end, body, label, .. } => {
+            TStmt::ForRange { var, start, end, step, body, label, span } => {
                 let s = self.eval(start, env)?.as_int()?;
                 let e = self.eval(end, env)?.as_int()?;
+                let st = match step {
+                    Some(x) => self.eval(x, env)?.as_int()?,
+                    None => 1,
+                };
+                if st == 0 {
+                    self.panic = Some(("a range step cannot be zero".into(), *span));
+                    return None;
+                }
                 let mut i = s;
-                while i < e {
+                while if st > 0 { i < e } else { i > e } {
                     if !self.step() {
                         return None;
                     }
@@ -322,7 +383,7 @@ impl<'c, 'a> Interp<'c, 'a> {
                         Flow::Continue(l) if l == *label => {}
                         other => return Some(other),
                     }
-                    i += 1;
+                    i += st;
                 }
                 Some(Flow::Next)
             }
@@ -365,23 +426,40 @@ impl<'c, 'a> Interp<'c, 'a> {
         }
     }
 
+    /// The place a mutating builtin acts on: the receiver place, following
+    /// any pointer stored there (a `*mut List(T)` local names the list).
+    fn recv_place(&mut self, e: &TExpr, env: &mut Env) -> Option<(u32, LocalId, Vec<usize>)> {
+        let (mut fi, mut l, mut path) = self.place_path(e, env)?;
+        loop {
+            let root = frame_get(&self.frames, env, fi, l)?;
+            match self.read_path(root, &path)? {
+                Value::Ptr(f2, l2, p2) => {
+                    fi = f2;
+                    l = l2;
+                    path = p2;
+                }
+                _ => return Some((fi, l, path)),
+            }
+        }
+    }
+
     /// Resolve a place expression to a root local and a path of indices.
-    fn place_path(&mut self, e: &TExpr, env: &mut Env) -> Option<(LocalId, Vec<usize>)> {
+    fn place_path(&mut self, e: &TExpr, env: &mut Env) -> Option<(u32, LocalId, Vec<usize>)> {
         match &e.kind {
-            TExprKind::Local(l) => Some((*l, vec![])),
+            TExprKind::Local(l) => Some((self.frames.len() as u32, *l, vec![])),
             TExprKind::Field { base, idx } | TExprKind::TupleField { base, idx } | TExprKind::RefField { base, idx } => {
-                let (l, mut p) = self.place_path(base, env)?;
+                let (fi, l, mut p) = self.place_path(base, env)?;
                 p.push(*idx as usize);
-                Some((l, p))
+                Some((fi, l, p))
             }
             TExprKind::Index { base, index, .. } => {
                 let i = self.eval(index, env)?.as_int()?;
-                let (l, mut p) = self.place_path(base, env)?;
+                let (fi, l, mut p) = self.place_path(base, env)?;
                 p.push(i as usize);
-                Some((l, p))
+                Some((fi, l, p))
             }
             TExprKind::Deref(p) => match self.eval(p, env)? {
-                Value::Ptr(l, path) => Some((l, path)),
+                Value::Ptr(fi, l, path) => Some((fi, l, path)),
                 _ => None,
             },
             TExprKind::ListToSlice(inner) | TExprKind::ArrayToSlice(inner) | TExprKind::StrToSlice(inner) => self.place_path(inner, env),
@@ -390,14 +468,15 @@ impl<'c, 'a> Interp<'c, 'a> {
     }
 
     fn assign(&mut self, target: &TExpr, v: Value, env: &mut Env) -> Option<()> {
-        let (l, path) = self.place_path(target, env)?;
-        let root = env.get_mut(&l)?;
+        let (fi, l, path) = self.place_path(target, env)?;
+        let root = frame_root(&mut self.frames, env, fi, l)?;
         let mut cur = root;
         for (k, &step) in path.iter().enumerate() {
             let last = k == path.len() - 1;
             let next: &mut Value = match cur {
                 Value::Array(a) | Value::List(a) | Value::Tuple(a) | Value::Struct(a) => a.get_mut(step)?,
                 Value::Enum(_, a) => a.get_mut(step)?,
+                Value::Opt(Some(b)) | Value::Ok(b) if step == 0 => b.as_mut(),
                 Value::OwnedStr(s) => {
                     if last {
                         *s.get_mut(step)? = v.as_int()? as u8;
@@ -419,6 +498,7 @@ impl<'c, 'a> Interp<'c, 'a> {
             cur = match cur {
                 Value::Array(a) | Value::List(a) | Value::Tuple(a) | Value::Struct(a) => a.get(step)?,
                 Value::Enum(_, a) => a.get(step)?,
+                Value::Opt(Some(b)) | Value::Ok(b) if step == 0 => b.as_ref(),
                 Value::OwnedStr(s) | Value::Str(s) => return Some(Value::Int(*s.get(step)? as i128)),
                 _ => return None,
             };
@@ -432,6 +512,14 @@ impl<'c, 'a> Interp<'c, 'a> {
     }
 
     pub fn eval(&mut self, e: &TExpr, env: &mut Env) -> Option<Value> {
+        let r = self.eval_inner(e, env);
+        if r.is_none() && self.panic.is_none() && !self.budget_exceeded && self.failed_at.is_none() {
+            self.failed_at = Some(e.span);
+        }
+        r
+    }
+
+    fn eval_inner(&mut self, e: &TExpr, env: &mut Env) -> Option<Value> {
         if !self.step() {
             return None;
         }
@@ -498,22 +586,29 @@ impl<'c, 'a> Interp<'c, 'a> {
                 })
             }
             TExprKind::Deref(p) => match self.eval(p, env)? {
-                Value::Ptr(l, path) => {
-                    let root = env.get(&l)?.clone();
+                Value::Ptr(fi, l, path) => {
+                    let root = frame_get(&self.frames, env, fi, l)?.clone();
                     self.read_path(&root, &path)
                 }
                 _ => None,
             },
-            TExprKind::AddrOf { expr, .. } => {
-                let (l, path) = self.place_path(expr, env)?;
-                Some(Value::Ptr(l, path))
-            }
+            TExprKind::AddrOf { expr, .. } => match self.place_path(expr, env) {
+                Some((fi, l, path)) => Some(Value::Ptr(fi, l, path)),
+                None => {
+                    // the address of a temporary: give the value a slot of its own
+                    let v = self.eval(expr, env)?;
+                    let id = u32::MAX - self.temps;
+                    self.temps += 1;
+                    env.insert(id, v);
+                    Some(Value::Ptr(self.frames.len() as u32, id, vec![]))
+                }
+            },
             TExprKind::Call { inst, args } => {
                 let mut vs = Vec::new();
                 for a in args {
                     vs.push(self.eval(a, env)?);
                 }
-                self.call(*inst, vs)
+                self.call_in(env, *inst, vs)
             }
             TExprKind::CallPtr { callee, args } => {
                 let f = self.eval(callee, env)?;
@@ -522,7 +617,7 @@ impl<'c, 'a> Interp<'c, 'a> {
                     vs.push(self.eval(a, env)?);
                 }
                 match f {
-                    Value::Fn(i) => self.call(i, vs),
+                    Value::Fn(i) => self.call_in(env, i, vs),
                     _ => None,
                 }
             }
@@ -650,8 +745,13 @@ impl<'c, 'a> Interp<'c, 'a> {
             }
             TExprKind::Match { scrutinee, arms } => {
                 let v = self.eval(scrutinee, env)?;
+                // `match p.*`: payload bindings typed as pointers point into the place
+                let place = match &scrutinee.kind {
+                    TExprKind::Deref(_) => self.place_path(scrutinee, env),
+                    _ => None,
+                };
                 for arm in arms {
-                    if self.match_pat(&arm.pat, &v, env)? {
+                    if self.match_pat(&arm.pat, &v, place.as_ref(), env)? {
                         if let Some(g) = &arm.guard {
                             if !self.eval(g, env)?.as_bool()? {
                                 continue;
@@ -730,6 +830,7 @@ impl<'c, 'a> Interp<'c, 'a> {
             TExprKind::OptWrap(inner) => Some(Value::Opt(Some(Box::new(self.eval(inner, env)?)))),
             TExprKind::OptNull => Some(Value::Opt(None)),
             TExprKind::ErrWrap(inner) => Some(Value::Ok(Box::new(self.eval(inner, env)?))),
+            TExprKind::ErrToUnion(inner) => self.eval(inner, env),
             TExprKind::ErrVal(id) => Some(Value::Err(*id)),
             TExprKind::ArrayToSlice(inner) => match self.eval(inner, env)? {
                 Value::Array(a) => Some(Value::Array(a)),
@@ -774,11 +875,21 @@ impl<'c, 'a> Interp<'c, 'a> {
         }
     }
 
-    fn match_pat(&mut self, p: &TPat, v: &Value, env: &mut Env) -> Option<bool> {
+    fn match_pat(&mut self, p: &TPat, v: &Value, place: Option<&(u32, LocalId, Vec<usize>)>, env: &mut Env) -> Option<bool> {
         Some(match p {
             TPat::Wild => true,
             TPat::Bind(l) => {
-                env.insert(*l, v.clone());
+                let by_ptr = match (place, self.cur_fn) {
+                    (Some(_), Some(f)) => {
+                        let lt = self.c.funcs[f as usize].locals[*l as usize].ty;
+                        matches!(self.c.tys.kind(self.c.tys.shallow(lt)), TyKind::Ptr(..)) && !matches!(v, Value::Ptr(..))
+                    }
+                    _ => false,
+                };
+                match (by_ptr, place) {
+                    (true, Some((fi, root, path))) => env.insert(*l, Value::Ptr(*fi, *root, path.clone())),
+                    _ => env.insert(*l, v.clone()),
+                };
                 true
             }
             TPat::Int(i) => v.as_int() == Some(*i),
@@ -799,8 +910,9 @@ impl<'c, 'a> Interp<'c, 'a> {
             }
             TPat::Variant { idx, args } => match v {
                 Value::Enum(i, payload) if i == idx => {
-                    for (a, pv) in args.iter().zip(payload.iter()) {
-                        if !self.match_pat(a, pv, env)? {
+                    for (k, (a, pv)) in args.iter().zip(payload.iter()).enumerate() {
+                        let sub = place.map(|(fi, l, p)| (*fi, *l, [p.as_slice(), &[k]].concat()));
+                        if !self.match_pat(a, pv, sub.as_ref(), env)? {
                             return Some(false);
                         }
                     }
@@ -811,17 +923,23 @@ impl<'c, 'a> Interp<'c, 'a> {
             TPat::Error(id) => matches!(v, Value::Err(x) if x == id),
             TPat::Null => matches!(v, Value::Opt(None)),
             TPat::Some(inner) => match v {
-                Value::Opt(Some(x)) => self.match_pat(inner, x, env)?,
+                Value::Opt(Some(x)) => {
+                    let sub = place.map(|(fi, l, p)| (*fi, *l, [p.as_slice(), &[0]].concat()));
+                    self.match_pat(inner, x, sub.as_ref(), env)?
+                }
                 _ => false,
             },
             TPat::Ok(inner) => match v {
-                Value::Ok(x) => self.match_pat(inner, x, env)?,
+                Value::Ok(x) => {
+                    let sub = place.map(|(fi, l, p)| (*fi, *l, [p.as_slice(), &[0]].concat()));
+                    self.match_pat(inner, x, sub.as_ref(), env)?
+                }
                 Value::Err(_) => false,
-                other => self.match_pat(inner, other, env)?,
+                other => self.match_pat(inner, other, place, env)?,
             },
             TPat::Or(alts) => {
                 for a in alts {
-                    if self.match_pat(a, v, env)? {
+                    if self.match_pat(a, v, place, env)? {
                         return Some(true);
                     }
                 }
@@ -829,8 +947,9 @@ impl<'c, 'a> Interp<'c, 'a> {
             }
             TPat::Tuple(ps) => match v {
                 Value::Tuple(vs) if vs.len() == ps.len() => {
-                    for (a, pv) in ps.iter().zip(vs.iter()) {
-                        if !self.match_pat(a, pv, env)? {
+                    for (k, (a, pv)) in ps.iter().zip(vs.iter()).enumerate() {
+                        let sub = place.map(|(fi, l, p)| (*fi, *l, [p.as_slice(), &[k]].concat()));
+                        if !self.match_pat(a, pv, sub.as_ref(), env)? {
                             return Some(false);
                         }
                     }
@@ -864,7 +983,7 @@ impl<'c, 'a> Interp<'c, 'a> {
         for seg in segs {
             let size_bits = match &seg.size {
                 TBinSize::Bits(b) => *b as usize,
-                TBinSize::Expr(e) => self.eval(e, env)?.as_int()? as usize * 8,
+                TBinSize::Expr(e) => self.eval(e, env)?.as_int()? as usize,
                 TBinSize::Rest => total_bits - bit,
             };
             if bit + size_bits > total_bits {
@@ -1056,7 +1175,293 @@ impl<'c, 'a> Interp<'c, 'a> {
             })
         };
         match op {
+            Builtin::Len if matches!(&vs[0], Value::Map(_)) => match &vs[0] {
+                Value::Map(kv) => Some(Value::Int(kv.len() as i128)),
+                _ => None,
+            },
             Builtin::Len => Some(Value::Int(seq_len(&vs[0])? as i128)),
+            // ---- lists (mutating through the receiver place)
+            Builtin::ListClear => {
+                let (fi, l, path) = self.recv_place(&args[0], env)?;
+                match walk(frame_root(&mut self.frames, env, fi, l)?, &path)? {
+                    Value::List(a) => a.clear(),
+                    _ => return None,
+                }
+                Some(Value::Void)
+            }
+            Builtin::ListInsert => {
+                let (fi, l, path) = self.recv_place(&args[0], env)?;
+                let i = vs[1].as_int()? as usize;
+                let v = vs[2].clone();
+                let bad = match walk(frame_root(&mut self.frames, env, fi, l)?, &path)? {
+                    Value::List(a) if i <= a.len() => {
+                        a.insert(i, v);
+                        false
+                    }
+                    Value::List(_) => true,
+                    _ => return None,
+                };
+                if bad {
+                    return self.panic_at("insert index out of range", e.span);
+                }
+                Some(Value::Void)
+            }
+            Builtin::ListRemove | Builtin::ListSwapRemove => {
+                let (fi, l, path) = self.recv_place(&args[0], env)?;
+                let i = vs[1].as_int()? as usize;
+                let r = match walk(frame_root(&mut self.frames, env, fi, l)?, &path)? {
+                    Value::List(a) if i < a.len() => Some(if op == Builtin::ListRemove { a.remove(i) } else { a.swap_remove(i) }),
+                    Value::List(_) => None,
+                    _ => return None,
+                };
+                match r {
+                    Some(v) => Some(v),
+                    None => self.panic_at("remove index out of range", e.span),
+                }
+            }
+            Builtin::ListExtend => {
+                let (fi, l, path) = self.recv_place(&args[0], env)?;
+                let more: Vec<Value> = match &vs[1] {
+                    Value::List(a) | Value::Array(a) => a.clone(),
+                    Value::Str(s) | Value::OwnedStr(s) => s.iter().map(|b| Value::Int(*b as i128)).collect(),
+                    _ => return None,
+                };
+                match walk(frame_root(&mut self.frames, env, fi, l)?, &path)? {
+                    Value::List(a) => a.extend(more),
+                    _ => return None,
+                }
+                Some(Value::Void)
+            }
+            Builtin::ListReserve => Some(Value::Void),
+            Builtin::StringClear => {
+                let (fi, l, path) = self.recv_place(&args[0], env)?;
+                match walk(frame_root(&mut self.frames, env, fi, l)?, &path)? {
+                    Value::OwnedStr(s) | Value::Str(s) => s.clear(),
+                    _ => return None,
+                }
+                Some(Value::Void)
+            }
+            Builtin::StringPop => {
+                let (fi, l, path) = self.recv_place(&args[0], env)?;
+                match walk(frame_root(&mut self.frames, env, fi, l)?, &path)? {
+                    Value::OwnedStr(s) | Value::Str(s) => Some(Value::Opt(s.pop().map(|b| Box::new(Value::Int(b as i128))))),
+                    _ => None,
+                }
+            }
+            // ---- maps
+            Builtin::MapNew => Some(Value::Map(vec![])),
+            Builtin::MapPut => {
+                let (fi, l, path) = self.recv_place(&args[0], env)?;
+                let (k, v) = (vs[1].clone(), vs[2].clone());
+                match walk(frame_root(&mut self.frames, env, fi, l)?, &path)? {
+                    Value::Map(kv) => match kv.iter_mut().find(|(kk, _)| key_eq(kk, &k)) {
+                        Some(slot) => slot.1 = v,
+                        None => kv.push((k, v)),
+                    },
+                    slot @ Value::Undefined => *slot = Value::Map(vec![(k, v)]),
+                    _ => return None,
+                }
+                Some(Value::Void)
+            }
+            Builtin::MapGet => match &vs[0] {
+                Value::Map(kv) => Some(Value::Opt(kv.iter().find(|(k, _)| key_eq(k, &vs[1])).map(|(_, v)| Box::new(v.clone())))),
+                _ => None,
+            },
+            Builtin::MapContains => match &vs[0] {
+                Value::Map(kv) => Some(Value::Bool(kv.iter().any(|(k, _)| key_eq(k, &vs[1])))),
+                _ => None,
+            },
+            Builtin::MapRemove => {
+                let (fi, l, path) = self.recv_place(&args[0], env)?;
+                match walk(frame_root(&mut self.frames, env, fi, l)?, &path)? {
+                    Value::Map(kv) => {
+                        let before = kv.len();
+                        kv.retain(|(k, _)| !key_eq(k, &vs[1]));
+                        Some(Value::Bool(kv.len() != before))
+                    }
+                    _ => None,
+                }
+            }
+            Builtin::MapClear => {
+                let (fi, l, path) = self.recv_place(&args[0], env)?;
+                match walk(frame_root(&mut self.frames, env, fi, l)?, &path)? {
+                    Value::Map(kv) => kv.clear(),
+                    _ => return None,
+                }
+                Some(Value::Void)
+            }
+            Builtin::MapKeys => match &vs[0] {
+                Value::Map(kv) => Some(Value::List(kv.iter().map(|(k, _)| k.clone()).collect())),
+                _ => None,
+            },
+            Builtin::MapValues => match &vs[0] {
+                Value::Map(kv) => Some(Value::List(kv.iter().map(|(_, v)| v.clone()).collect())),
+                _ => None,
+            },
+            // ---- slices
+            Builtin::SliceCopy => {
+                let (fi, l, path) = self.recv_place(&args[0], env)?;
+                let src: Vec<Value> = seq_items(&vs[1])?;
+                match walk(frame_root(&mut self.frames, env, fi, l)?, &path)? {
+                    Value::List(a) | Value::Array(a) => {
+                        for (d, s) in a.iter_mut().zip(src.into_iter()) {
+                            *d = s;
+                        }
+                    }
+                    Value::OwnedStr(s) | Value::Str(s) => {
+                        for (d, v) in s.iter_mut().zip(src.into_iter()) {
+                            *d = v.as_int()? as u8;
+                        }
+                    }
+                    _ => return None,
+                }
+                Some(Value::Void)
+            }
+            Builtin::SliceFill => {
+                let (fi, l, path) = self.recv_place(&args[0], env)?;
+                let v = vs[1].clone();
+                match walk(frame_root(&mut self.frames, env, fi, l)?, &path)? {
+                    Value::List(a) | Value::Array(a) => {
+                        for d in a.iter_mut() {
+                            *d = v.clone();
+                        }
+                    }
+                    Value::OwnedStr(s) | Value::Str(s) => {
+                        let b = v.as_int()? as u8;
+                        for d in s.iter_mut() {
+                            *d = b;
+                        }
+                    }
+                    _ => return None,
+                }
+                Some(Value::Void)
+            }
+            Builtin::SliceReverse => {
+                let (fi, l, path) = self.recv_place(&args[0], env)?;
+                match walk(frame_root(&mut self.frames, env, fi, l)?, &path)? {
+                    Value::List(a) | Value::Array(a) => a.reverse(),
+                    Value::OwnedStr(s) | Value::Str(s) => s.reverse(),
+                    _ => return None,
+                }
+                Some(Value::Void)
+            }
+            Builtin::SliceSort => {
+                let (fi, l, path) = self.recv_place(&args[0], env)?;
+                match walk(frame_root(&mut self.frames, env, fi, l)?, &path)? {
+                    Value::List(a) | Value::Array(a) => a.sort_by(value_cmp),
+                    Value::OwnedStr(s) | Value::Str(s) => s.sort(),
+                    _ => return None,
+                }
+                Some(Value::Void)
+            }
+            Builtin::SliceIndexOf => {
+                let items = seq_items(&vs[0])?;
+                Some(Value::Opt(items.iter().position(|x| key_eq(x, &vs[1])).map(|i| Box::new(Value::Int(i as i128)))))
+            }
+            Builtin::SliceFind => {
+                let hay = bytes_of(&vs[0])?;
+                let needle = bytes_of(&vs[1])?;
+                let pos = if needle.is_empty() { Some(0) } else { hay.windows(needle.len()).position(|w| w == needle) };
+                Some(Value::Opt(pos.map(|i| Box::new(Value::Int(i as i128)))))
+            }
+            Builtin::SliceTrim => {
+                let s = bytes_of(&vs[0])?;
+                let t = String::from_utf8_lossy(s).trim().to_string();
+                Some(Value::OwnedStr(t.into_bytes()))
+            }
+            Builtin::SliceSplit => {
+                let s = bytes_of(&vs[0])?;
+                let sep = bytes_of(&vs[1])?;
+                let mut out = Vec::new();
+                if sep.is_empty() {
+                    out.push(Value::OwnedStr(s.to_vec()));
+                } else {
+                    let mut start = 0;
+                    let mut i = 0;
+                    while i + sep.len() <= s.len() {
+                        if &s[i..i + sep.len()] == sep {
+                            out.push(Value::OwnedStr(s[start..i].to_vec()));
+                            i += sep.len();
+                            start = i;
+                        } else {
+                            i += 1;
+                        }
+                    }
+                    out.push(Value::OwnedStr(s[start..].to_vec()));
+                }
+                Some(Value::List(out))
+            }
+            Builtin::SliceLines => {
+                let s = bytes_of(&vs[0])?;
+                Some(Value::List(s.split(|b| *b == b'\n').map(|l| Value::OwnedStr(l.strip_suffix(b"\r").unwrap_or(l).to_vec())).collect()))
+            }
+            Builtin::SliceToOwned => Some(match &vs[0] {
+                Value::Str(s) => Value::OwnedStr(s.clone()),
+                Value::Array(a) => Value::List(a.clone()),
+                other => other.clone(),
+            }),
+            Builtin::SliceParseInt => {
+                let s = String::from_utf8_lossy(bytes_of(&vs[0])?).to_string();
+                Some(match s.trim().parse::<i128>() {
+                    Ok(v) => Value::Ok(Box::new(Value::Int(v))),
+                    Err(_) => Value::Err(self.c.error_id("InvalidInput")),
+                })
+            }
+            Builtin::SliceParseFloat => {
+                let s = String::from_utf8_lossy(bytes_of(&vs[0])?).to_string();
+                Some(match s.trim().parse::<f64>() {
+                    Ok(v) => Value::Ok(Box::new(Value::Float(v))),
+                    Err(_) => Value::Err(self.c.error_id("InvalidInput")),
+                })
+            }
+            Builtin::SliceEqIgnoreCase => Some(Value::Bool(bytes_of(&vs[0])?.eq_ignore_ascii_case(bytes_of(&vs[1])?))),
+            // ---- checks and misc
+            Builtin::ExpectEq => {
+                if key_eq(&vs[0], &vs[1]) {
+                    Some(Value::Void)
+                } else {
+                    self.panic_at(&format!("expectation failed: {} != {}", format_value(&vs[0]), format_value(&vs[1])), e.span)
+                }
+            }
+            Builtin::Assert => {
+                if vs[0] == Value::Bool(true) {
+                    Some(Value::Void)
+                } else {
+                    self.panic_at("assertion failed", e.span)
+                }
+            }
+            Builtin::Unreachable => self.panic_at("reached unreachable code", e.span),
+            Builtin::TypeName => Some(Value::OwnedStr(self.c.type_name(*_tys.first()?).into_bytes())),
+            Builtin::Utf8Validate => Some(Value::Bool(std::str::from_utf8(bytes_of(&vs[0])?).is_ok())),
+            Builtin::Utf8Encode => {
+                let cp = char::from_u32(vs[0].as_int()? as u32)?;
+                let mut b = [0u8; 4];
+                Some(Value::OwnedStr(cp.encode_utf8(&mut b).as_bytes().to_vec()))
+            }
+            Builtin::Utf8Decode => {
+                let s = bytes_of(&vs[0])?;
+                Some(Value::Opt(std::str::from_utf8(s).ok().and_then(|t| t.chars().next()).map(|c| Box::new(Value::Char(c as u32)))))
+            }
+            Builtin::TimeMonotonic if self.c.repl_mode => Some(Value::Int(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as i128).unwrap_or(0))),
+            Builtin::RandomSeed if self.c.repl_mode => Some(Value::Void),
+            Builtin::RandomInt if self.c.repl_mode => {
+                let (lo, hi) = (vs[0].as_int()?, vs[1].as_int()?);
+                let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as i128).unwrap_or(0);
+                Some(Value::Int(if hi > lo { lo + (t.rem_euclid(hi - lo + 1)) } else { lo }))
+            }
+            Builtin::RandomFloat if self.c.repl_mode => {
+                let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0);
+                Some(Value::Float(t as f64 / 1e9))
+            }
+            // ---- reference classes are plain values in the interpreter
+            Builtin::Retain | Builtin::Release | Builtin::Drop => Some(Value::Void),
+            Builtin::Weak => Some(Value::Opt(Some(Box::new(vs[0].clone())))),
+            Builtin::Upgrade => Some(match &vs[0] {
+                Value::Opt(v) => Value::Opt(v.clone()),
+                other => Value::Opt(Some(Box::new(other.clone()))),
+            }),
+            Builtin::RefCount => Some(Value::Int(1)),
+            Builtin::RefEq => Some(Value::Bool(key_eq(&vs[0], &vs[1]))),
             Builtin::ListNew | Builtin::ListWithCapacity => Some(Value::List(vec![])),
             Builtin::ListFromSlice => match &vs[0] {
                 Value::Array(a) => Some(Value::List(a.clone())),
@@ -1064,16 +1469,9 @@ impl<'c, 'a> Interp<'c, 'a> {
                 _ => None,
             },
             Builtin::ListAppend => {
-                let (l, path) = self.place_path(&args[0], env)?;
+                let (fi, l, path) = self.recv_place(&args[0], env)?;
                 let v = vs[1].clone();
-                let root = env.get_mut(&l)?;
-                let mut cur = root;
-                for &s in &path {
-                    cur = match cur {
-                        Value::Array(a) | Value::List(a) | Value::Struct(a) | Value::Tuple(a) => a.get_mut(s)?,
-                        _ => return None,
-                    };
-                }
+                let cur = walk(frame_root(&mut self.frames, env, fi, l)?, &path)?;
                 match cur {
                     Value::List(a) => a.push(v),
                     Value::Undefined => *cur = Value::List(vec![v]),
@@ -1082,15 +1480,8 @@ impl<'c, 'a> Interp<'c, 'a> {
                 Some(Value::Void)
             }
             Builtin::ListPop => {
-                let (l, path) = self.place_path(&args[0], env)?;
-                let root = env.get_mut(&l)?;
-                let mut cur = root;
-                for &s in &path {
-                    cur = match cur {
-                        Value::Array(a) | Value::List(a) | Value::Struct(a) | Value::Tuple(a) => a.get_mut(s)?,
-                        _ => return None,
-                    };
-                }
+                let (fi, l, path) = self.recv_place(&args[0], env)?;
+                let cur = walk(frame_root(&mut self.frames, env, fi, l)?, &path)?;
                 match cur {
                     Value::List(a) => Some(Value::Opt(a.pop().map(Box::new))),
                     _ => None,
@@ -1113,7 +1504,7 @@ impl<'c, 'a> Interp<'c, 'a> {
                 _ => None,
             },
             Builtin::StringAppend | Builtin::StringAppendChar | Builtin::StringPushByte => {
-                let (l, path) = self.place_path(&args[0], env)?;
+                let (fi, l, path) = self.recv_place(&args[0], env)?;
                 let add: Vec<u8> = match &vs[1] {
                     Value::Str(s) | Value::OwnedStr(s) => s.clone(),
                     Value::Char(c) => {
@@ -1123,14 +1514,7 @@ impl<'c, 'a> Interp<'c, 'a> {
                     Value::Int(i) => vec![*i as u8],
                     _ => return None,
                 };
-                let root = env.get_mut(&l)?;
-                let mut cur = root;
-                for &s in &path {
-                    cur = match cur {
-                        Value::Array(a) | Value::List(a) | Value::Struct(a) | Value::Tuple(a) => a.get_mut(s)?,
-                        _ => return None,
-                    };
-                }
+                let cur = walk(frame_root(&mut self.frames, env, fi, l)?, &path)?;
                 match cur {
                     Value::OwnedStr(s) => s.extend(add),
                     Value::Undefined => *cur = Value::OwnedStr(add),
@@ -1233,6 +1617,120 @@ impl<'c, 'a> Interp<'c, 'a> {
                 let range = int_range(self.c, args[0].ty)?;
                 Some(Value::Opt(r.filter(|v| *v >= range.0 && *v <= range.1).map(|v| Box::new(Value::Int(v)))))
             }
+            // in a REPL the program may talk to the world; `comptime` never may
+            Builtin::Println | Builtin::Print | Builtin::Eprintln if self.c.repl_mode => {
+                use std::io::Write;
+                let mut out = format_values(&vs)?;
+                if op != Builtin::Print {
+                    out.push(b'\n');
+                }
+                if op == Builtin::Eprintln {
+                    let _ = std::io::stderr().write_all(&out);
+                } else {
+                    let _ = std::io::stdout().write_all(&out);
+                    let _ = std::io::stdout().flush();
+                }
+                Some(Value::Void)
+            }
+            Builtin::ReadFile if self.c.repl_mode => {
+                let path = String::from_utf8_lossy(bytes_of(&vs[0])?).to_string();
+                Some(match std::fs::read(&path) {
+                    Ok(d) => Value::Ok(Box::new(Value::OwnedStr(d))),
+                    Err(_) => Value::Err(self.c.error_id("IoError")),
+                })
+            }
+            Builtin::WriteFile if self.c.repl_mode => {
+                let path = String::from_utf8_lossy(bytes_of(&vs[0])?).to_string();
+                Some(match std::fs::write(&path, bytes_of(&vs[1])?) {
+                    Ok(()) => Value::Ok(Box::new(Value::Void)),
+                    Err(_) => Value::Err(self.c.error_id("IoError")),
+                })
+            }
+            Builtin::AppendFile if self.c.repl_mode => {
+                let path = String::from_utf8_lossy(bytes_of(&vs[0])?).to_string();
+                let data = bytes_of(&vs[1])?.to_vec();
+                let r = std::fs::OpenOptions::new().append(true).create(true).open(&path).and_then(|mut f| std::io::Write::write_all(&mut f, &data));
+                Some(match r {
+                    Ok(()) => Value::Ok(Box::new(Value::Void)),
+                    Err(_) => Value::Err(self.c.error_id("IoError")),
+                })
+            }
+            Builtin::FsKind if self.c.repl_mode => {
+                let path = String::from_utf8_lossy(bytes_of(&vs[0])?).to_string();
+                Some(Value::Int(match std::fs::metadata(&path) {
+                    Ok(m) if m.is_dir() => 2,
+                    Ok(_) => 1,
+                    Err(_) => 0,
+                }))
+            }
+            Builtin::FsSize | Builtin::FsModified if self.c.repl_mode => {
+                let path = String::from_utf8_lossy(bytes_of(&vs[0])?).to_string();
+                Some(match std::fs::metadata(&path) {
+                    Ok(m) if op == Builtin::FsSize => Value::Ok(Box::new(Value::Int(m.len() as i128))),
+                    Ok(m) => {
+                        let ms = m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as i128).unwrap_or(0);
+                        Value::Ok(Box::new(Value::Int(ms)))
+                    }
+                    Err(e) => Value::Err(self.c.error_id(if e.kind() == std::io::ErrorKind::NotFound { "NotFound" } else { "IoError" })),
+                })
+            }
+            Builtin::FsMkdir | Builtin::FsRemoveFile | Builtin::FsRemoveDir if self.c.repl_mode => {
+                let path = String::from_utf8_lossy(bytes_of(&vs[0])?).to_string();
+                let r = match op {
+                    Builtin::FsMkdir => std::fs::create_dir(&path).or_else(|e| if e.kind() == std::io::ErrorKind::AlreadyExists { Ok(()) } else { Err(e) }),
+                    Builtin::FsRemoveFile => std::fs::remove_file(&path),
+                    _ => std::fs::remove_dir(&path),
+                };
+                Some(match r {
+                    Ok(()) => Value::Ok(Box::new(Value::Void)),
+                    Err(e) => Value::Err(self.c.error_id(if e.kind() == std::io::ErrorKind::NotFound { "NotFound" } else { "IoError" })),
+                })
+            }
+            Builtin::FsRename if self.c.repl_mode => {
+                let a = String::from_utf8_lossy(bytes_of(&vs[0])?).to_string();
+                let b = String::from_utf8_lossy(bytes_of(&vs[1])?).to_string();
+                Some(match std::fs::rename(&a, &b) {
+                    Ok(()) => Value::Ok(Box::new(Value::Void)),
+                    Err(e) => Value::Err(self.c.error_id(if e.kind() == std::io::ErrorKind::NotFound { "NotFound" } else { "IoError" })),
+                })
+            }
+            Builtin::FsListDir if self.c.repl_mode => {
+                let path = String::from_utf8_lossy(bytes_of(&vs[0])?).to_string();
+                Some(match std::fs::read_dir(&path) {
+                    Ok(rd) => Value::Ok(Box::new(Value::List(rd.filter_map(|e| e.ok()).map(|e| Value::OwnedStr(e.file_name().to_string_lossy().into_owned().into_bytes())).collect()))),
+                    Err(e) => Value::Err(self.c.error_id(if e.kind() == std::io::ErrorKind::NotFound { "NotFound" } else { "IoError" })),
+                })
+            }
+            Builtin::Environ if self.c.repl_mode => Some(Value::List(std::env::vars().map(|(k, v)| Value::OwnedStr(format!("{}={}", k, v).into_bytes())).collect())),
+            Builtin::FsCwd if self.c.repl_mode => Some(match std::env::current_dir() {
+                Ok(d) => Value::Ok(Box::new(Value::OwnedStr(d.to_string_lossy().into_owned().into_bytes()))),
+                Err(_) => Value::Err(self.c.error_id("IoError")),
+            }),
+            Builtin::FsTempDir if self.c.repl_mode => {
+                let d = std::env::temp_dir();
+                let s = d.to_string_lossy().trim_end_matches(['/', '\\']).to_string();
+                Some(Value::OwnedStr(s.into_bytes()))
+            }
+            Builtin::ReadLine if self.c.repl_mode => {
+                let mut line = String::new();
+                Some(match std::io::stdin().read_line(&mut line) {
+                    Ok(n) if n > 0 => Value::Opt(Some(Box::new(Value::OwnedStr(line.trim_end_matches(['\n', '\r']).as_bytes().to_vec())))),
+                    _ => Value::Opt(None),
+                })
+            }
+            Builtin::Args if self.c.repl_mode => Some(Value::List(vec![Value::Str(b"nx".to_vec())])),
+            Builtin::Env if self.c.repl_mode => {
+                let name = String::from_utf8_lossy(bytes_of(&vs[0])?).to_string();
+                Some(Value::Opt(std::env::var(&name).ok().map(|v| Box::new(Value::OwnedStr(v.into_bytes())))))
+            }
+            Builtin::TimeNow if self.c.repl_mode => Some(Value::Int(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i128).unwrap_or(0))),
+            // the interpreter has no time zone database: local time is UTC at the prompt
+            Builtin::TimeUtcOffset if self.c.repl_mode => Some(Value::Int(0)),
+            Builtin::Sleep if self.c.repl_mode => {
+                std::thread::sleep(std::time::Duration::from_millis(vs[0].as_int()?.max(0) as u64));
+                Some(Value::Void)
+            }
+            Builtin::Exit if self.c.repl_mode => std::process::exit(vs[0].as_int()? as i32),
             Builtin::Format => {
                 let fmt = match &vs[0] {
                     Value::Str(s) => s.clone(),
@@ -1275,6 +1773,264 @@ impl<'c, 'a> Interp<'c, 'a> {
             Builtin::CharToDigit => Some(Value::Opt(char::from_u32(vs[0].as_int()? as u32)?.to_digit(10).map(|d| Box::new(Value::Int(d as i128))))),
             _ => None,
         }
+    }
+}
+
+/// Follow a place path (field and element indices) into a value.
+fn walk<'v>(root: &'v mut Value, path: &[usize]) -> Option<&'v mut Value> {
+    let mut cur = root;
+    for &s in path {
+        cur = match cur {
+            Value::Array(a) | Value::List(a) | Value::Struct(a) | Value::Tuple(a) => a.get_mut(s)?,
+            Value::Enum(_, a) => a.get_mut(s)?,
+            Value::Opt(Some(b)) | Value::Ok(b) if s == 0 => b.as_mut(),
+            _ => return None,
+        };
+    }
+    Some(cur)
+}
+
+/// Equality that treats a string literal and an owned string alike.
+fn key_eq(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Str(x) | Value::OwnedStr(x), Value::Str(y) | Value::OwnedStr(y)) => x == y,
+        (Value::List(x) | Value::Array(x), Value::List(y) | Value::Array(y)) => x.len() == y.len() && x.iter().zip(y).all(|(p, q)| key_eq(p, q)),
+        _ => a == b,
+    }
+}
+
+fn value_cmp(a: &Value, b: &Value) -> std::cmp::Ordering {
+    use std::cmp::Ordering::*;
+    match (a, b) {
+        (Value::Int(x), Value::Int(y)) => x.cmp(y),
+        (Value::Float(x), Value::Float(y)) => x.partial_cmp(y).unwrap_or(Equal),
+        (Value::Bool(x), Value::Bool(y)) => x.cmp(y),
+        (Value::Char(x), Value::Char(y)) => x.cmp(y),
+        (Value::Str(x) | Value::OwnedStr(x), Value::Str(y) | Value::OwnedStr(y)) => x.cmp(y),
+        (Value::Struct(x), Value::Struct(y)) | (Value::Tuple(x), Value::Tuple(y)) => x.iter().zip(y).map(|(p, q)| value_cmp(p, q)).find(|o| *o != Equal).unwrap_or(Equal),
+        _ => Equal,
+    }
+}
+
+/// The elements of an array, list, or byte string as values.
+fn seq_items(v: &Value) -> Option<Vec<Value>> {
+    match v {
+        Value::Array(a) | Value::List(a) => Some(a.clone()),
+        Value::Str(s) | Value::OwnedStr(s) => Some(s.iter().map(|b| Value::Int(*b as i128)).collect()),
+        _ => None,
+    }
+}
+
+fn bytes_of(v: &Value) -> Option<&[u8]> {
+    match v {
+        Value::Str(s) | Value::OwnedStr(s) => Some(s.as_slice()),
+        _ => None,
+    }
+}
+
+/// `format("...", .{args})` over evaluated values: the placeholder loop.
+fn format_values(vs: &[Value]) -> Option<Vec<u8>> {
+    let fmt = bytes_of(vs.first()?)?;
+    let mut out = Vec::new();
+    let mut ai = 1;
+    let mut i = 0;
+    while i < fmt.len() {
+        if fmt[i] == b'{' {
+            if i + 1 < fmt.len() && fmt[i + 1] == b'{' {
+                out.push(b'{');
+                i += 2;
+                continue;
+            }
+            let mut j = i + 1;
+            while j < fmt.len() && fmt[j] != b'}' {
+                j += 1;
+            }
+            let v = vs.get(ai)?;
+            ai += 1;
+            out.extend(format_value(v).into_bytes());
+            i = j + 1;
+        } else if fmt[i] == b'}' && i + 1 < fmt.len() && fmt[i + 1] == b'}' {
+            out.push(b'}');
+            i += 2;
+        } else {
+            out.push(fmt[i]);
+            i += 1;
+        }
+    }
+    Some(out)
+}
+
+/// `nx repl`: run `main`'s statements from `start`, with earlier bindings seeded
+/// by name, and report the bindings afterwards and the value of a trailing
+/// expression statement.
+pub fn run_repl(c: &mut Checker, start: usize, seed: Vec<(String, Value)>) -> crate::tir::ReplOutcome {
+    let mut out = crate::tir::ReplOutcome::default();
+    let inst = match c.main {
+        Some(i) => i,
+        None => return out,
+    };
+    let mut it = Interp { c, steps: 0, panic: None, budget_exceeded: false, pending: None, failed_at: None, frames: vec![], cur_fn: None, temps: 0 };
+    if !it.ensure_body(inst) {
+        return out;
+    }
+    let f = it.c.funcs[inst as usize].clone();
+    it.cur_fn = Some(inst);
+    let body = match &f.body {
+        Some(b) => b.clone(),
+        None => return out,
+    };
+    // the local each earlier name refers to at `start`
+    let mut by_name: HashMap<String, LocalId> = HashMap::new();
+    for s in body.stmts.iter().take(start) {
+        if let TStmt::Let { local, .. } = s {
+            by_name.insert(f.locals[*local as usize].name.clone(), *local);
+        }
+    }
+    let mut env = Env::new();
+    for (name, v) in seed {
+        if let Some(l) = by_name.get(&name) {
+            env.insert(*l, v);
+        }
+    }
+    let mut last: Option<(TyId, Value)> = None;
+    for s in body.stmts.iter().skip(start) {
+        let r = match s {
+            TStmt::Expr(e) => it.eval(e, &mut env).map(|v| {
+                last = Some((e.ty, v));
+                Flow::Next
+            }),
+            // the synthetic main ends with a bare `return`: the session is done
+            TStmt::Return { value: None, .. } => break,
+            other => {
+                last = None;
+                it.exec_stmt(other, &mut env)
+            }
+        };
+        if let Some((msg, _)) = it.panic.take() {
+            out.panic = Some(msg);
+            return out;
+        }
+        if it.budget_exceeded {
+            out.panic = Some(format!("exceeded the step budget ({} steps)", STEP_BUDGET));
+            return out;
+        }
+        match r {
+            Some(Flow::Next) => {}
+            Some(Flow::Return(_)) => break,
+            Some(_) => break,
+            None => {
+                let at = match it.failed_at {
+                    Some(sp) => match it.c.sm.line_col(sp) {
+                        Some((line, col)) => format!(" (at {}:{}:{})", it.c.sm.file(sp.file).map(|f| f.name.as_str()).unwrap_or("?"), line, col),
+                        None => String::new(),
+                    },
+                    None => String::new(),
+                };
+                out.panic = Some(format!("this statement cannot be evaluated by the interpreter{}; foreign calls, parallel loops, and arenas need a compiled program", at));
+                return out;
+            }
+        }
+    }
+    // bindings afterwards, later declarations winning
+    let mut seen: HashMap<String, usize> = HashMap::new();
+    for s in &body.stmts {
+        if let TStmt::Let { local, .. } = s {
+            if let Some(v) = env.get(local) {
+                let name = f.locals[*local as usize].name.clone();
+                match seen.get(&name) {
+                    Some(&idx) => out.bindings[idx] = (name, v.clone()),
+                    None => {
+                        seen.insert(name.clone(), out.bindings.len());
+                        out.bindings.push((name, v.clone()));
+                    }
+                }
+            }
+        }
+    }
+    for (name, v) in &out.bindings {
+        let text = match by_name_all(&body, &f, name) {
+            Some(l) => {
+                let lt = it.c.tys.resolve(f.locals[l as usize].ty, true);
+                format!("{}: {}", it.c.type_name(lt), format_value_typed(it.c, v, lt))
+            }
+            None => format_value(v),
+        };
+        out.shown.push((name.clone(), text));
+    }
+    if let Some((ty, v)) = last {
+        let ty = it.c.tys.resolve(ty, true);
+        let t = it.c.tys.shallow(ty);
+        if !matches!(it.c.tys.kind(t), TyKind::Void | TyKind::Never) {
+            let tn = it.c.type_name(ty);
+            let text = format_value_typed(it.c, &v, ty);
+            out.printed = Some((tn, text));
+        }
+    }
+    out
+}
+
+/// The last local declared under `name` anywhere in the body.
+fn by_name_all(body: &TBlock, f: &TFunc, name: &str) -> Option<LocalId> {
+    let mut found = None;
+    for s in &body.stmts {
+        if let TStmt::Let { local, .. } = s {
+            if f.locals[*local as usize].name == name {
+                found = Some(*local);
+            }
+        }
+    }
+    found
+}
+
+/// Render a value the way source code would write it, using its type.
+pub fn format_value_typed(c: &Checker, v: &Value, ty: TyId) -> String {
+    let t = c.tys.shallow(ty);
+    match (c.tys.kind(t).clone(), v) {
+        (TyKind::Str, Value::Str(s)) | (TyKind::Str, Value::OwnedStr(s)) => format!("{:?}", String::from_utf8_lossy(s)),
+        (TyKind::Slice(_, e), Value::Str(s)) | (TyKind::Slice(_, e), Value::OwnedStr(s)) if matches!(c.tys.kind(c.tys.shallow(e)), TyKind::Int(crate::types::IntTy::U8)) => {
+            format!("{:?}", String::from_utf8_lossy(s))
+        }
+        (TyKind::Char, Value::Char(ch)) => format!("{:?}", char::from_u32(*ch).unwrap_or('?')),
+        (TyKind::List(e), Value::List(xs))
+        | (TyKind::Slice(_, e), Value::List(xs))
+        | (TyKind::Array(_, e), Value::Array(xs))
+        | (TyKind::Slice(_, e), Value::Array(xs))
+        | (TyKind::List(e), Value::Array(xs)) => {
+            format!("[{}]", xs.iter().map(|x| format_value_typed(c, x, e)).collect::<Vec<_>>().join(", "))
+        }
+        (TyKind::Map(k, v), Value::Map(kv)) => format!("{{{}}}", kv.iter().map(|(a, b)| format!("{}: {}", format_value_typed(c, a, k), format_value_typed(c, b, v))).collect::<Vec<_>>().join(", ")),
+        (TyKind::Tuple(ts), Value::Tuple(xs)) => format!("({})", xs.iter().zip(ts.iter()).map(|(x, &t)| format_value_typed(c, x, t)).collect::<Vec<_>>().join(", ")),
+        (TyKind::Opt(_), Value::Opt(None)) => "null".into(),
+        (TyKind::Opt(e), Value::Opt(Some(b))) => format_value_typed(c, b, e),
+        (TyKind::ErrUnion(_, e), Value::Ok(b)) => format_value_typed(c, b, e),
+        (TyKind::ErrUnion(..), Value::Err(id)) => format!("error.{}", c.error_names.get((*id as usize).saturating_sub(1)).cloned().unwrap_or_else(|| "?".into())),
+        (TyKind::Struct(d, _), Value::Struct(xs)) => {
+            let def = &c.structs[d as usize];
+            let ftys = c.struct_field_tys.get(&t).cloned().unwrap_or_default();
+            let fields: Vec<String> = def
+                .fields
+                .iter()
+                .zip(xs.iter())
+                .enumerate()
+                .map(|(i, (f, x))| format!(".{} = {}", f.name, ftys.get(i).map(|&ft| format_value_typed(c, x, ft)).unwrap_or_else(|| format_value(x))))
+                .collect();
+            format!("{}{{ {} }}", def.name, fields.join(", "))
+        }
+        (TyKind::Enum(d, _), Value::Enum(vi, xs)) => {
+            let def = &c.enums[d as usize];
+            let name = def.variants.get(*vi as usize).map(|v| v.name.clone()).unwrap_or_else(|| vi.to_string());
+            if xs.is_empty() {
+                format!(".{}", name)
+            } else {
+                let vtys = c.enum_variant_tys.get(&t).and_then(|v| v.get(*vi as usize).cloned()).unwrap_or_default();
+                let args: Vec<String> = xs.iter().enumerate().map(|(i, x)| vtys.get(i).map(|&at| format_value_typed(c, x, at)).unwrap_or_else(|| format_value(x))).collect();
+                format!(".{}({})", name, args.join(", "))
+            }
+        }
+        (_, Value::Fn(_)) => "<function>".into(),
+        (_, Value::Ptr(..)) => "<pointer>".into(),
+        (_, Value::Type(t)) => c.type_name(*t),
+        _ => format_value(v),
     }
 }
 

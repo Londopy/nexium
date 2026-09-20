@@ -1,0 +1,43 @@
+// Two corners the standard library tripped over: two modules may both
+// define a function with the same name (`fs.copy` and `stream.copy`), and a
+// caught error value can be returned from a function that returns `!T`.
+
+import std.fs
+import std.stream
+
+fn maybe(ok: bool) -> !i32 {
+    if !ok { return error.InvalidInput }
+    return 7
+}
+
+fn rethrow(ok: bool) -> !i32 {
+    let v = maybe(ok) catch |e| {
+        if e == error.InvalidInput { return e }
+        0
+    }
+    return v
+}
+
+fn main() -> !void {
+    let dir = fs.temp_path("nx-errors-")
+    try fs.make_dirs(dir)
+    let a = fs.join(dir, "a.txt")
+    let b = fs.join(dir, "b.txt")
+    let c = fs.join(dir, "c.txt")
+    try fs.write(a, "same bytes\n")
+    try fs.copy(a, b)
+    var src = try stream.Reader.open(b)
+    var dst = try stream.Writer.open(c)
+    let moved = try stream.copy(&mut src, &mut dst)
+    try dst.close()
+    src.close()
+    println("copied {} bytes twice: {}", .{moved, try fs.read(c) == try fs.read(a)})
+    try fs.remove_all(dir)
+
+    println("{}", .{try rethrow(true)})
+    let again = rethrow(false) catch |e| {
+        println("caught {}", .{e})
+        -1
+    }
+    println("{}", .{again})
+}

@@ -1,0 +1,3 @@
+// EXPECT: unsafe
+const cs = @cImport("../spec/helpers/cspec.h")
+fn main() { _ = cs.cs_next(1) }

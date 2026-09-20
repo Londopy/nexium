@@ -385,7 +385,7 @@ impl Gen {
             TStmt::ErrDefer { body, .. } => {
                 self.st().scopes.last_mut().unwrap().defers.push((true, (**body).clone()));
             }
-            TStmt::While { cond, body, label, .. } => {
+            TStmt::While { cond, body, els, label, .. } => {
                 let depth = self.st().scopes.len();
                 self.st().loop_labels.push((*label, depth));
                 self.line("for (;;) {");
@@ -399,10 +399,19 @@ impl Gen {
                 self.body.last_mut().unwrap().push_str(&inner);
                 self.line(format!("  nx_cont_{}: ;", label));
                 self.line("}");
-                self.line(format!("nx_brk_{}: ;", label));
                 self.st().loop_labels.pop();
+                // the `else` sits between the loop and its break label: a false
+                // condition falls into it, a `break` jumps over it
+                if let Some(eb) = els {
+                    self.line("{");
+                    self.push_scope(true);
+                    self.block_stmt(eb);
+                    self.pop_scope_emit();
+                    self.line("}");
+                }
+                self.line(format!("nx_brk_{}: ;", label));
             }
-            TStmt::ForRange { var, start, end, body, label, .. } => {
+            TStmt::ForRange { var, start, end, step, body, label, .. } => {
                 let s = self.expr(start);
                 let e = self.simple(end);
                 let name = self.local_name(*var);
@@ -412,7 +421,20 @@ impl Gen {
                 self.st().loop_labels.push((*label, depth));
                 let et = self.tmp();
                 self.line(format!("{} {} = {};", cn, et, e));
-                self.line(format!("for ({} {} = {}; {} < {}; {}++) {{", cn, name, s, name, et, name));
+                match step {
+                    None => self.line(format!("for ({} {} = {}; {} < {}; {}++) {{", cn, name, s, name, et, name)),
+                    Some(st) => {
+                        let sv = self.simple(st);
+                        let stt = self.tmp();
+                        self.line(format!("{} {} = {};", cn, stt, sv));
+                        // a constant step picks its direction at compile time
+                        match st.kind {
+                            TExprKind::Int(v) if v > 0 => self.line(format!("for ({} {} = {}; {} < {}; {} += {}) {{", cn, name, s, name, et, name, stt)),
+                            TExprKind::Int(_) => self.line(format!("for ({} {} = {}; {} > {}; {} += {}) {{", cn, name, s, name, et, name, stt)),
+                            _ => self.line(format!("for ({} {} = {}; {} > 0 ? {} < {} : {} > {}; {} += {}) {{", cn, name, s, stt, name, et, name, et, name, stt)),
+                        }
+                    }
+                }
                 self.push_buf();
                 self.push_scope(true);
                 self.block_stmt(body);
@@ -677,7 +699,33 @@ impl Gen {
                 return t;
             }
         }
+        // `opt.?`, `opt orelse d`, `try res` on a local: the payload moves out, so
+        // the source is zeroed afterwards (a zeroed optional is null, a zeroed
+        // resource is empty) and its drop becomes a no-op
+        if let TExprKind::Unwrap { expr: inner, .. } | TExprKind::OrElse { expr: inner, .. } | TExprKind::Try(inner) = &e.kind {
+            if let TExprKind::Local(l) = &inner.kind {
+                let rt = self.res(e.ty);
+                if self.needs_drop(e.ty) && !self.is_ref(rt) {
+                    let name = self.local_name(*l);
+                    let cn = self.cty(e.ty);
+                    let v = self.expr(e);
+                    let t = self.tmp();
+                    self.line(format!("{} {} = {}; memset(&{}, 0, sizeof {});", cn, t, v, name, name));
+                    return t;
+                }
+            }
+        }
         self.expr(e)
+    }
+
+    /// An owned value for a field of a literal, materialized now: a later field
+    /// that moves the same local must not zero it before this one reads it.
+    fn field_value(&mut self, x: &TExpr) -> String {
+        let v = self.expr_owned(x);
+        let t = self.tmp();
+        let cn = self.cty(x.ty);
+        self.line(format!("{} {} = {};", cn, t, v));
+        t
     }
 
     pub fn expr(&mut self, e: &TExpr) -> String {
@@ -818,8 +866,12 @@ impl Gen {
                 self.line(format!("bool {} = {};", t, l));
                 self.line(format!("if ({}{}) {{", if *and { "" } else { "!" }, t));
                 self.push_buf();
+                // temporaries the right side creates live in its C block, so
+                // they are released there and not at the statement's end
+                self.push_scope(false);
                 let r = self.expr(rhs);
                 self.line(format!("{} = {};", t, r));
+                self.pop_scope_emit();
                 let inner = self.pop_buf();
                 self.body.last_mut().unwrap().push_str(&inner);
                 self.line("}");
@@ -913,7 +965,7 @@ impl Gen {
                 let cn = self.cty(e.ty);
                 let mut parts = Vec::new();
                 for (i, f) in fields {
-                    let v = self.expr_owned(f);
+                    let v = self.field_value(f);
                     let fname = self.field_name(e.ty, *i);
                     parts.push(format!(".{} = {}", fname, v));
                 }
@@ -929,7 +981,7 @@ impl Gen {
                 self.line(format!("{} {} = ({})nx_alloc_bytes(c, sizeof({}_obj), _Alignof({}_obj));", cn, t, cn, cn, cn));
                 self.line(format!("{}->rc = 1; {}->weak = 0;", t, t));
                 for (i, f) in fields {
-                    let v = self.expr_owned(f);
+                    let v = self.field_value(f);
                     let fname = self.field_name(e.ty, *i);
                     self.line(format!("{}->{} = {};", t, fname, v));
                 }
@@ -942,7 +994,7 @@ impl Gen {
                 } else {
                     let mut parts = Vec::new();
                     for (i, p) in payload.iter().enumerate() {
-                        let v = self.expr_owned(p);
+                        let v = self.field_value(p);
                         parts.push(format!(".f{} = {}", i, v));
                     }
                     format!("(({}){{ .tag = {}, .u = {{ .v{} = {{ {} }} }} }})", cn, variant, variant, parts.join(", "))
@@ -971,7 +1023,7 @@ impl Gen {
                 let cn = self.cty(e.ty);
                 let mut parts = Vec::new();
                 for (i, x) in elems.iter().enumerate() {
-                    let v = self.expr_owned(x);
+                    let v = self.field_value(x);
                     parts.push(format!(".f{} = {}", i, v));
                 }
                 format!("(({}){{ {} }})", cn, parts.join(", "))
@@ -1101,6 +1153,11 @@ impl Gen {
                     format!("(({}){{ .err = 0, .val = {} }})", cn, v)
                 }
             }
+            TExprKind::ErrToUnion(inner) => {
+                let cn = self.cty(e.ty);
+                let v = self.simple(inner);
+                format!("(({}){{ .err = {} }})", cn, v)
+            }
             TExprKind::ErrVal(id) => {
                 let t = self.res(e.ty);
                 match self.p.tys.kind(t) {
@@ -1159,7 +1216,14 @@ impl Gen {
             TExprKind::Unreachable => {
                 let loc = self.loc(e.span);
                 self.line(format!("nx_panic(\"reached unreachable code\", {});", loc));
-                "0".into()
+                // never runs, but must be a value of the expression's type when that
+                // type is an aggregate (an error union, a struct) rather than a scalar
+                let cn = self.cty(e.ty);
+                if cn == "void" {
+                    "0".into()
+                } else {
+                    format!("(({}){{0}})", cn)
+                }
             }
             TExprKind::Undefined => {
                 let cn = self.cty(e.ty);
@@ -1310,6 +1374,7 @@ impl Gen {
         let m = self.int_mangle(ty);
         let loc = self.loc(span);
         match mode {
+            ArithMode::Float if op == BinOp::Rem => format!("fmod({}, {})", l, r),
             ArithMode::Float | ArithMode::Plain => match op {
                 BinOp::Shl => format!("(({}) << ({}))", l, r),
                 BinOp::Shr => format!("(({}) >> ({}))", l, r),
@@ -1370,6 +1435,11 @@ impl Gen {
                     format!("(({})({}))", cn, v)
                 }
             }
+            CastKind::Bits if matches!(self.kind_of(inner.ty), TyKind::Enum(..)) => {
+                // a unit enum's integer is its tag
+                let t = if self.is_simple(inner) { v } else { self.bind_tmp(&v, inner.ty) };
+                format!("(({})({}).tag)", cn, t)
+            }
             CastKind::IntToFloat | CastKind::FloatToFloat | CastKind::Bits | CastKind::PtrToPtr => format!("(({})({}))", cn, v),
             CastKind::FloatToInt => {
                 if self.opts.mode == BuildMode::FastRelease {
@@ -1422,7 +1492,7 @@ impl Gen {
         if self.opts.mode != BuildMode::FastRelease {
             self.line(format!("nx_slice_check({}, {}, {}, {});", s, en, len, loc));
         }
-        format!("(({}){{ {} + {}, {} - {} }})", cn, ptr, s, en, s)
+        format!("(({}){{ nx_padd({}, {}), {} - {} }})", cn, ptr, s, en, s)
     }
 
     // ----- match -----------------------------------------------------------------
@@ -1689,7 +1759,7 @@ impl Gen {
                 TBinSize::Expr(e) => {
                     // size expressions may use earlier bindings: bind them progressively
                     let v = self.expr(e);
-                    format!("((size_t)({}) * 8)", v)
+                    format!("((size_t)({}))", v)
                 }
                 TBinSize::Rest => format!("({} - {})", total, bit),
             };
@@ -1704,7 +1774,7 @@ impl Gen {
                     let name = self.local_name(*l);
                     if is_bytes {
                         self.line(format!("if (({} & 7) || ({} & 7)) break;", bit, sz));
-                        self.line(format!("nx_sl_u8 {} = {{ {}.ptr + {} / 8, {} / 8 }};", name, buf, bit, sz));
+                        self.line(format!("nx_sl_u8 {} = {{ nx_padd({}.ptr, {} / 8), {} / 8 }};", name, buf, bit, sz));
                         if sg.utf8 {
                             self.line(format!("if (!nx_utf8_valid({})) break;", name));
                         }
@@ -1718,7 +1788,7 @@ impl Gen {
                     if is_bytes {
                         let vc = self.simple(v);
                         self.line(format!("if (({} & 7) || {} != {}.len * 8) break;", bit, sz, vc));
-                        self.line(format!("if (memcmp({}.ptr + {} / 8, {}.ptr, {}.len) != 0) break;", buf, bit, vc, vc));
+                        self.line(format!("if (memcmp(nx_padd({}.ptr, {} / 8), {}.ptr, {}.len) != 0) break;", buf, bit, vc, vc));
                     } else {
                         let cn = self.cty(sg.ty);
                         let read = self.bits_read_expr(&buf, &bit, &sz, sg);
@@ -1769,7 +1839,7 @@ impl Gen {
                 TBinSize::Bits(b) => b.to_string(),
                 TBinSize::Expr(e) => {
                     let v = self.expr(e);
-                    format!("((size_t)({}) * 8)", v)
+                    format!("((size_t)({}))", v)
                 }
                 TBinSize::Rest => format!("({} - {})", total, bit),
             };
@@ -1779,7 +1849,7 @@ impl Gen {
             if let TBinSegKind::Bind(l) | TBinSegKind::Rest(l) = &sg.kind {
                 let name = self.local_name(*l);
                 if is_bytes {
-                    self.line(format!("nx_sl_u8 {} = {{ {}.ptr + {} / 8, {} / 8 }};", name, buf, bit, sz));
+                    self.line(format!("nx_sl_u8 {} = {{ nx_padd({}.ptr, {} / 8), {} / 8 }};", name, buf, bit, sz));
                 } else {
                     let cn = self.cty(sg.ty);
                     let read = self.bits_read_expr(&buf, &bit, &sz, sg);
@@ -1814,7 +1884,7 @@ impl Gen {
                 TBinSize::Bits(b) => b.to_string(),
                 TBinSize::Expr(x) => {
                     let s = self.expr(x);
-                    format!("((size_t)({}) * 8)", s)
+                    format!("((size_t)({}))", s)
                 }
                 TBinSize::Rest => format!("({}.len * 8)", v),
             };
@@ -1823,7 +1893,7 @@ impl Gen {
             self.line(format!("if ({} + {} > {}) {{ {}.err = {}u; break; }}", bit, sz, total, out, fail));
             if is_bytes {
                 self.line(format!("if (({} & 7) || {} > {}.len * 8) {{ {}.err = {}u; break; }}", bit, sz, v, out, fail));
-                self.line(format!("memcpy({}.ptr + {} / 8, {}.ptr, {} / 8);", buf, bit, v, sz));
+                self.line(format!("memcpy(nx_padd({}.ptr, {} / 8), {}.ptr, {} / 8);", buf, bit, v, sz));
             } else {
                 let raw = if sg.float {
                     if let TBinSize::Bits(32) = sg.size {

@@ -300,14 +300,14 @@ impl Gen {
     pub fn test_runner(&mut self) -> String {
         let tests = self.p.tests.clone();
         let mut out = String::new();
-        let _ = writeln!(out, "int main(int argc, char** argv) {{\n  nx_ctx ctx = nx_default_ctx(argc, argv);\n  const char* filter = argc > 1 ? argv[1] : NULL;\n  int passed = 0, failed = 0, skipped = 0;\n  nx_boundary b;");
+        let _ = writeln!(out, "int main(int argc, char** argv) {{\n  nx_ctx ctx = nx_default_ctx(argc, argv);\n  const char* filter = NULL; int verbose = 0;\n  for (int ai = 1; ai < argc; ai++) {{ if (strcmp(argv[ai], \"--verbose\") == 0) verbose = 1; else filter = argv[ai]; }}\n  int passed = 0, failed = 0, skipped = 0;\n  nx_boundary b; uint64_t t0 = 0;");
         for t in tests {
             let f = self.p.funcs[t as usize].clone();
             let name = f.name.trim_start_matches("test:").to_string();
             let target = self.fn_c_name(t);
             let rcn = self.cty(f.ret);
             let esc = c_escape_bytes(name.as_bytes());
-            let _ = writeln!(out, "  if (!filter || strstr({esc}, filter)) {{\n    nx_tls_boundary = &b;\n    if (setjmp(b.jb)) {{ failed++; printf(\"FAIL  %s\\n      panic: %s\\n      at %s\\n\", {esc}, b.msg, b.loc); }}\n    else {{ {rcn} r = {target}(&ctx); if (r.err) {{ failed++; printf(\"FAIL  %s\\n      error: %s\\n\", {esc}, nx_error_name(r.err)); }} else {{ passed++; printf(\"ok    %s\\n\", {esc}); }} }}\n    nx_tls_boundary = NULL;\n  }} else skipped++;", esc = esc, rcn = rcn, target = target);
+            let _ = writeln!(out, "  if (!filter || strstr({esc}, filter)) {{\n    nx_tls_boundary = &b; t0 = nx_time_monotonic_ns();\n    if (setjmp(b.jb)) {{ failed++; printf(\"FAIL  %s\\n      panic: %s\\n      at %s\\n\", {esc}, b.msg, b.loc); }}\n    else {{ {rcn} r = {target}(&ctx); if (r.err) {{ failed++; printf(\"FAIL  %s\\n      error: %s\\n\", {esc}, nx_error_name(r.err)); }} else {{ passed++; if (verbose) printf(\"ok    %s  (%.1f ms)\\n\", {esc}, (double)(nx_time_monotonic_ns() - t0) / 1e6); else printf(\"ok    %s\\n\", {esc}); }} }}\n    nx_tls_boundary = NULL;\n  }} else {{ skipped++; if (verbose) printf(\"skip  %s\\n\", {esc}); }}", esc = esc, rcn = rcn, target = target);
         }
         let _ = writeln!(out, "  printf(\"\\n%d passed, %d failed%s\\n\", passed, failed, skipped ? \" (some skipped by filter)\" : \"\");\n  return failed ? 1 : 0;\n}}");
         out

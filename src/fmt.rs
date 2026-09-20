@@ -198,6 +198,35 @@ fn is_effect_name(t: &Tok) -> bool {
 }
 
 /// Ends an operand: a word or a closer, so the next `-`/`&`/`*` is binary.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BarRole {
+    Opening,
+    Closing,
+    Binary,
+}
+
+/// What the `|` at `at` is: the bars of a line are classified left to right,
+/// so a bit-or inside a closure body is not mistaken for its closing bar.
+fn bar_role(toks: &[&Token], at: usize) -> BarRole {
+    let mut open = false;
+    let mut role = BarRole::Binary;
+    for (k, t) in toks.iter().enumerate().take(at + 1) {
+        if !matches!(t.tok, Tok::Pipe) {
+            continue;
+        }
+        role = if open {
+            open = false;
+            BarRole::Closing
+        } else if k > 0 && ends_operand(&toks[k - 1].tok) {
+            BarRole::Binary
+        } else {
+            open = true;
+            BarRole::Opening
+        };
+    }
+    role
+}
+
 fn ends_operand(t: &Tok) -> bool {
     (is_word(t) && !is_keyword_tok(t)) || matches!(t, Tok::RParen | Tok::RBracket | Tok::RBrace | Tok::DotQuestion | Tok::DotStar) || is_kw(t, "true") || is_kw(t, "false") || is_kw(t, "null")
 }
@@ -234,6 +263,30 @@ fn closes_control_head(toks: &[&Token], at: usize) -> bool {
         j -= 1;
     }
     j > 0 && matches!(&toks[j - 1].tok, Tok::Ident(k) if k == "if" || k == "while" || k == "for")
+}
+
+/// Is the `{` at `i` the body of an `if`/`while`/`for`/`match` head on this
+/// line? Walks back at bracket depth 0 to the keyword; any brace in between
+/// means the head is over.
+fn opens_control_body(toks: &[&Token], i: usize) -> bool {
+    let mut depth = 0i32;
+    let mut j = i;
+    while j > 0 {
+        j -= 1;
+        match &toks[j].tok {
+            Tok::RParen | Tok::RBracket => depth += 1,
+            Tok::LParen | Tok::LBracket => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+            Tok::LBrace | Tok::RBrace | Tok::DotLBrace if depth == 0 => return false,
+            Tok::Ident(k) if depth == 0 && matches!(k.as_str(), "if" | "while" | "for" | "match") => return true,
+            _ => {}
+        }
+    }
+    false
 }
 
 fn needs_space(toks: &[&Token], i: usize, ctx: &LineCtx) -> bool {
@@ -388,10 +441,21 @@ fn needs_space(toks: &[&Token], i: usize, ctx: &LineCtx) -> bool {
         if matches!(&toks[0].tok, Ident(k) if matches!(k.as_str(), "struct" | "enum" | "record" | "ref" | "impl" | "trait" | "error" | "artifact" | "using" | "test")) {
             return true;
         }
+        // the body brace of `if c {`, `while c {`, `for x in xs {`, `match v {`:
+        // a bare struct literal cannot appear in such a head, so `if k == Kind.Defer {`
+        if opens_control_body(toks, i) {
+            return true;
+        }
         if let Ident(s) = a {
             let declared = matches!(pp, Some(t) if is_kw(t, "struct") || is_kw(t, "enum") || is_kw(t, "record") || is_kw(t, "class") || is_kw(t, "trait") || is_kw(t, "impl") || is_kw(t, "error") || is_kw(t, "for") || is_kw(t, "using") || is_kw(t, "artifact"));
             let uppercase = s.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false);
-            let type_pos = matches!(pp, Some(Arrow) | Some(Colon) | Some(Bang) | Some(Question) | Some(Star));
+            // `-> http.Response {`: look back over a dotted path to the arrow
+            let mut k = i - 1;
+            while k >= 2 && matches!(toks[k - 1].tok, Dot) && matches!(toks[k - 2].tok, Ident(_)) {
+                k -= 2;
+            }
+            let before = if k >= 1 { Some(&toks[k - 1].tok) } else { None };
+            let type_pos = matches!(before, Some(Arrow) | Some(Colon) | Some(Bang) | Some(Question) | Some(Star));
             if uppercase && !declared && !type_pos && !ctx.in_enum_body && !crate::lexer::is_keyword(s) {
                 return false;
             }
@@ -419,7 +483,8 @@ fn needs_space(toks: &[&Token], i: usize, ctx: &LineCtx) -> bool {
             let head = if j > 0 { Some(&toks[j - 1].tok) } else { None };
             let before_head = if j > 1 { Some(&toks[j - 2].tok) } else { None };
             if let Some(Ident(h)) = head {
-                let in_return_type = matches!(before_head, Some(Arrow));
+                // `-> List(T) {`, `-> !List(T) {`, `-> ?Pair(T) {`: a return type, not a literal
+                let in_return_type = matches!(before_head, Some(Arrow)) || (matches!(before_head, Some(Bang) | Some(Question)) && j > 2 && matches!(toks[j - 3].tok, Arrow));
                 if h.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false) && !in_return_type {
                     return false;
                 }
@@ -443,27 +508,32 @@ fn needs_space(toks: &[&Token], i: usize, ctx: &LineCtx) -> bool {
     }
     // unary minus / address-of / pointer types
     if matches!(a, Minus | Amp | Star) {
-        let binary = matches!(pp, Some(t) if ends_operand(t));
+        // `step -2`: the word before a unary minus is a clause, not an operand
+        let binary = matches!(pp, Some(t) if ends_operand(t) && !is_kw(t, "step"));
         if !binary {
             return false;
         }
+    }
+    if is_kw(a, "step") && matches!(b, Minus) {
+        return true;
     }
     if matches!(b, Minus | Amp | Star) && !ends_operand(a) {
         // unary after an operator or opener: `x = -1`, `f(&x)`, `: *mut T`
         return !matches!(a, LParen | LBracket | DotLBrace | Colon | Arrow) || matches!(a, Colon | Arrow);
     }
     // closure parameter bars: `|[a] x: i32|`, `|x|`
+    // closure parameter bars open where no operand precedes them (`= |x|`,
+    // `catch |e|`, `f(|x| x)`) and close at the next bar; any other bar is
+    // bit-or: `a | b`
     if matches!(a, Pipe) {
-        let bars_so_far = toks[..i].iter().filter(|t| matches!(t.tok, Pipe)).count();
-        let closing = bars_so_far % 2 == 0;
-        if closing && (is_word(b) || matches!(b, LParen | Minus | Bang | At)) {
-            return true;
+        match bar_role(toks, i - 1) {
+            BarRole::Binary => return true,
+            BarRole::Opening => return false,
+            BarRole::Closing => return is_word(b) || matches!(b, LParen | Minus | Bang | At | LBrace) || (is_binary_op(b) && !matches!(b, Pipe)),
         }
-        return matches!(b, LBrace) || (is_binary_op(b) && !matches!(b, Pipe)) || false;
     }
     if matches!(b, Pipe) {
-        // `for (xs) |x|`, `catch |e|`, `let f = |x| ...` open a bar with a space; a closing bar follows its parameter directly
-        return matches!(a, RParen | Eq | Comma | LParen | FatArrow) || is_keyword_tok(a);
+        return !matches!(bar_role(toks, i), BarRole::Closing);
     }
     if is_binary_op(a) || is_binary_op(b) {
         return true;

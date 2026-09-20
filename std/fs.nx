@@ -1,0 +1,387 @@
+// std.fs: files, directories and paths, written in Nexium.
+//
+// `import std.fs` then:
+//
+//     if fs.exists("notes.txt") { ... }
+//     try fs.make_dirs("out/logs")
+//     for name in try fs.list("out") { ... }
+//     for path in try fs.walk("src") { ... }        // every file, recursively
+//     let cfg = fs.join(fs.parent(argv0), "app.toml")
+//
+// The platform calls are the `io.*` builtins (documented in the language
+// reference); this module adds paths, sorted listings, recursive create and
+// remove, and a walker. Paths are byte strings; `/` and `\` both separate
+// components on every platform, and results use `/` unless the input used `\`.
+
+// ------------------------------------------------------------------ queries
+
+/// Is there a file or directory at `path`?
+pub fn exists(path: []u8) -> bool {
+    return io.file_kind(path) != 0
+}
+
+/// Is `path` an existing regular file (anything that is not a directory)?
+pub fn is_file(path: []u8) -> bool {
+    return io.file_kind(path) == 1
+}
+
+/// Is `path` an existing directory?
+pub fn is_dir(path: []u8) -> bool {
+    return io.file_kind(path) == 2
+}
+
+/// The size of a file in bytes.
+pub fn size(path: []u8) -> !u64 {
+    return io.file_size(path)
+}
+
+/// The modification time in milliseconds since the epoch.
+pub fn modified(path: []u8) -> !i64 {
+    return io.file_modified(path)
+}
+
+// ------------------------------------------------------------------ contents
+
+/// The whole file as a String.
+pub fn read(path: []u8) -> !String {
+    return io.read_file(path)
+}
+
+/// The lines of a file, without their line endings.
+pub fn read_lines(path: []u8) -> !List(String) {
+    let text = try io.read_file(path)
+    var out = List(String).new()
+    for l in text.lines() { out.append(String.from(l)) }
+    return out
+}
+
+/// Write (replace) a file.
+pub fn write(path: []u8, data: []u8) -> !void {
+    return io.write_file(path, data)
+}
+
+/// Append to a file, creating it when missing.
+pub fn append(path: []u8, data: []u8) -> !void {
+    return io.append_file(path, data)
+}
+
+/// Copy a file's contents to a new path (the destination is replaced).
+pub fn copy(from: []u8, to: []u8) -> !void {
+    let data = try io.read_file(from)
+    return io.write_file(to, data)
+}
+
+// ------------------------------------------------------------------ directories
+
+/// The names in a directory, sorted, without `.` and `..`.
+pub fn list(path: []u8) -> !List(String) {
+    var names = try io.list_dir(path)
+    sort_names(&mut names)
+    return names
+}
+
+/// Create one directory; fine when it already exists.
+pub fn make_dir(path: []u8) -> !void {
+    return io.make_dir(path)
+}
+
+/// Create a directory and every missing parent.
+pub fn make_dirs(path: []u8) -> !void {
+    if path.len == 0 or is_dir(path) { return }
+    let p = parent(path)
+    if p.len > 0 and p.len < path.len and !is_dir(p) { try make_dirs(p) }
+    return io.make_dir(path)
+}
+
+/// Remove a file or an empty directory.
+pub fn remove(path: []u8) -> !void {
+    if is_dir(path) { return io.remove_dir(path) }
+    return io.remove_file(path)
+}
+
+/// Remove a file, or a directory with everything in it.
+pub fn remove_all(path: []u8) -> !void {
+    if is_dir(path) {
+        let names = try io.list_dir(path)
+        for n in names {
+            let child = join(path, n)
+            try remove_all(child)
+        }
+        return io.remove_dir(path)
+    }
+    if exists(path) { return io.remove_file(path) }
+}
+
+/// Rename or move a file or directory (an existing destination file is replaced).
+pub fn rename(from: []u8, to: []u8) -> !void {
+    return io.rename(from, to)
+}
+
+/// Every file under `root`, recursively, as paths joined onto `root`, sorted
+/// directory by directory. Directories themselves are not listed.
+pub fn walk(root: []u8) -> !List(String) {
+    var out = List(String).new()
+    try walk_into(root, &mut out)
+    return out
+}
+
+fn walk_into(dir: []u8, out: *mut List(String)) -> !void {
+    let names = try list(dir)
+    for n in names {
+        let child = join(dir, n)
+        if is_dir(child) {
+            try walk_into(child, out)
+        } else {
+            out.append(child)
+        }
+    }
+}
+
+/// The current working directory.
+pub fn cwd() -> !String {
+    return io.cwd()
+}
+
+/// The directory for temporary files.
+pub fn temp_dir() -> String {
+    return io.temp_dir()
+}
+
+/// A fresh path in the temporary directory, `<temp>/<prefix><number>`, that
+/// does not exist yet. The caller creates it.
+pub fn temp_path(prefix: []u8) -> String {
+    let base = io.temp_dir()
+    var n = time.now()
+    while true {
+        var candidate = join(base, prefix)
+        candidate.append(format("{}", .{n}))
+        if !exists(candidate) { return candidate }
+        n += 1
+    }
+}
+
+// ------------------------------------------------------------------ paths
+
+fn is_sep(c: u8) -> bool {
+    return c == '/' or c == '\\'
+}
+
+/// The separator a path uses: `\` when it contains one, else `/`.
+fn sep_of(path: []u8) -> u8 {
+    for c in path { if c == '\\' { return '\\' } }
+    return '/'
+}
+
+/// Does the path start at a root (`/x`, `C:\x`, `C:/x`, `\\server`)?
+pub fn is_absolute(path: []u8) -> bool {
+    if path.len == 0 { return false }
+    if is_sep(path[0]) { return true }
+    return path.len >= 3 and path[1] == ':' and is_sep(path[2])
+}
+
+/// `dir/name`; a separator is added only when needed, and an absolute `name`
+/// replaces `dir`.
+pub fn join(dir: []u8, name: []u8) -> String {
+    if dir.len == 0 or is_absolute(name) { return String.from(name) }
+    var out = String.from(dir)
+    if name.len == 0 { return out }
+    if !is_sep(dir[dir.len - 1]) { out.push_byte(sep_of(dir)) }
+    out.append(name)
+    return out
+}
+
+/// Everything before the last separator: `a/b/c.txt` -> `a/b`, `c.txt` -> ``,
+/// `/c.txt` -> `/`.
+pub fn parent(path: []u8) -> []u8 {
+    var end = path.len
+    while end > 0 and is_sep(path[end - 1]) { end -= 1 }
+    var i = end
+    while i > 0 and !is_sep(path[i - 1]) { i -= 1 }
+    if i == 0 { return path[0..0] }
+    var j = i
+    while j > 1 and is_sep(path[j - 1]) { j -= 1 }
+    if j == 1 and is_sep(path[0]) { return path[0..1] }
+    if j >= 2 and path[j - 1] == ':' { return path[0..j + 1] }
+    return path[0..j]
+}
+
+/// The last component: `a/b/c.txt` -> `c.txt`.
+pub fn base_name(path: []u8) -> []u8 {
+    var end = path.len
+    while end > 0 and is_sep(path[end - 1]) { end -= 1 }
+    var i = end
+    while i > 0 and !is_sep(path[i - 1]) { i -= 1 }
+    return path[i..end]
+}
+
+/// The extension without the dot: `a/b.tar.gz` -> `gz`, `Makefile` -> ``.
+pub fn extension(path: []u8) -> []u8 {
+    let name = base_name(path)
+    var i = name.len
+    while i > 0 {
+        i -= 1
+        if name[i] == '.' {
+            if i == 0 { return name[0..0] }
+            return name[i + 1..name.len]
+        }
+    }
+    return name[0..0]
+}
+
+/// The base name without its extension: `a/b.tar.gz` -> `b.tar`.
+pub fn stem(path: []u8) -> []u8 {
+    let name = base_name(path)
+    var i = name.len
+    while i > 0 {
+        i -= 1
+        if name[i] == '.' {
+            if i == 0 { return name }
+            return name[0..i]
+        }
+    }
+    return name
+}
+
+/// The path with its extension replaced (or added): `a/b.txt`, `md` -> `a/b.md`.
+pub fn with_extension(path: []u8, ext: []u8) -> String {
+    let e = extension(path)
+    var out = String.from(if e.len > 0 { path[0..path.len - e.len - 1] } else { path })
+    if ext.len > 0 {
+        out.push_byte('.')
+        out.append(ext)
+    }
+    return out
+}
+
+/// Collapse `.` and `..` components and repeated separators:
+/// `a/./b/../c//d` -> `a/c/d`. A leading `..` is kept.
+pub fn normalize(path: []u8) -> String {
+    let sep = sep_of(path)
+    var parts = List([]u8).new()
+    var start: usize = 0
+    var i: usize = 0
+    while i <= path.len {
+        if i == path.len or is_sep(path[i]) {
+            let part = path[start..i]
+            if part.len == 0 or part == "." {
+                // skip
+            } else if part == ".." {
+                if parts.len > 0 and parts[parts.len - 1] != ".." { _ = parts.pop() }
+                else if ! (path.len > 0 and is_sep(path[0])) { parts.append(part) }
+            } else {
+                parts.append(part)
+            }
+            start = i + 1
+        }
+        i += 1
+    }
+    var out = String.new()
+    if path.len > 0 and is_sep(path[0]) { out.push_byte(sep) }
+    for p, k in parts {
+        if k > 0 { out.push_byte(sep) }
+        out.append(p)
+    }
+    if out.len == 0 { out.push_byte('.') }
+    return out
+}
+
+// ------------------------------------------------------------------ helpers
+
+fn less(a: []u8, b: []u8) -> bool {
+    var i: usize = 0
+    while i < a.len and i < b.len {
+        if a[i] != b[i] { return a[i] < b[i] }
+        i += 1
+    }
+    return a.len < b.len
+}
+
+fn sort_names(names: *mut List(String)) {
+    var i: usize = 1
+    while i < names.len {
+        var j = i
+        while j > 0 and less(names[j], names[j - 1]) {
+            let s = names.remove(j)
+            names.insert(j - 1, s)
+            j -= 1
+        }
+        i += 1
+    }
+}
+
+// ------------------------------------------------------------------ tests
+
+test "path parts" {
+    expect_eq(parent("a/b/c.txt"), "a/b")
+    expect_eq(parent("c.txt"), "")
+    expect_eq(parent("/c.txt"), "/")
+    expect_eq(parent("a/b/"), "a")
+    expect_eq(parent("C:\\x\\y.txt"), "C:\\x")
+    expect_eq(parent("C:\\y.txt"), "C:\\")
+    expect_eq(base_name("a/b/c.txt"), "c.txt")
+    expect_eq(base_name("a/b/"), "b")
+    expect_eq(extension("a/b.tar.gz"), "gz")
+    expect_eq(extension("Makefile"), "")
+    expect_eq(extension(".bashrc"), "")
+    expect_eq(stem("a/b.tar.gz"), "b.tar")
+    expect_eq(stem(".bashrc"), ".bashrc")
+    expect_eq(with_extension("a/b.txt", "md"), "a/b.md")
+    expect_eq(with_extension("a/b", "md"), "a/b.md")
+    expect_eq(with_extension("a/b.txt", ""), "a/b")
+}
+
+test "join and absolute" {
+    expect_eq(join("a", "b"), "a/b")
+    expect_eq(join("a/", "b"), "a/b")
+    expect_eq(join("", "b"), "b")
+    expect_eq(join("a", "/b"), "/b")
+    expect_eq(join("C:\\x", "y"), "C:\\x\\y")
+    expect(is_absolute("/x"))
+    expect(is_absolute("C:\\x"))
+    expect(is_absolute("C:/x"))
+    expect(!is_absolute("x/y"))
+    expect(!is_absolute(""))
+}
+
+test "normalize" {
+    expect_eq(normalize("a/./b/../c//d"), "a/c/d")
+    expect_eq(normalize("/a/../.."), "/")
+    expect_eq(normalize("../a"), "../a")
+    expect_eq(normalize("a/.."), ".")
+    expect_eq(normalize("C:\\a\\..\\b"), "C:\\b")
+}
+
+test "files and directories" {
+    let root = temp_path("nxfs-")
+    try make_dirs(join(root, "deep/er"))
+    expect(is_dir(root))
+    expect(is_dir(join(root, "deep/er")))
+    let f = join(root, "deep/er/note.txt")
+    try write(f, "one\ntwo\n")
+    try append(f, "three\n")
+    expect(is_file(f))
+    expect(!is_dir(f))
+    expect_eq(try size(f), 14)
+    let lines = try read_lines(f)
+    expect_eq(lines.len, 3)
+    expect_eq(lines[2], "three")
+    try copy(f, join(root, "copy.txt"))
+    let names = try list(root)
+    expect_eq(names.len, 2)
+    expect_eq(names[0], "copy.txt")
+    expect_eq(names[1], "deep")
+    let files = try walk(root)
+    expect_eq(files.len, 2)
+    expect_eq(base_name(files[1]), "note.txt")
+    try rename(join(root, "copy.txt"), join(root, "moved.txt"))
+    expect(!exists(join(root, "copy.txt")))
+    expect(exists(join(root, "moved.txt")))
+    var missing = false
+    _ = size("definitely/missing") catch |e| {
+        missing = e == error.NotFound
+        0
+    }
+    expect(missing)
+    try remove_all(root)
+    expect(!exists(root))
+}

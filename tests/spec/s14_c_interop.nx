@@ -1,0 +1,15 @@
+// SPEC 14: @cImport of a vendored header: functions, variadics, typedefs, structs of scalars,
+// enums, macros; opaque structs through pointers; `unsafe` and the ffi effect; artifact link.
+const cs = @cImport("helpers/cspec.h")
+artifact link { c_sources = ["helpers/cspec.c"] }
+fn main() {
+    unsafe {
+        let p = cs.cs_swap(cs.cs_pair { .a = 1, .b = 2 })
+        let xs: [3]i32 = [10, 20, 30]
+        let o = cs.cs_opaque_new(9)
+        let got = cs.cs_opaque_get(o)
+        cs.cs_opaque_free(o)
+        println("{} {} {} {} {} {}", .{p.a, p.b, cs.cs_total(xs[..].ptr, 3), cs.cs_next(41), cs.cs_kind_value(cs.CS_TWO), got})
+        println("{} {} {} {}", .{cs.CSPEC_LIMIT, cs.CSPEC_RATIO, cs.CSPEC_TAG, cs.cs_count_args(3, 1, 2, 3)})
+    }
+}

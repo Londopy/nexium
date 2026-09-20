@@ -1,0 +1,20 @@
+// SPEC 7: matching through a pointer binds owning payloads by reference and mutates in place.
+enum Bag { Items(List(i32)), Nothing }
+fn add(b: *mut Bag, v: i32) {
+    match b.*{
+        .Items(items) => items.append(v),
+        .Nothing => { },
+    }
+}
+fn count(b: *Bag) -> usize {
+    match b.*{
+        .Items(items) => return items.len,
+        .Nothing => return 0,
+    }
+}
+fn main() {
+    var b = Bag.Items(List(i32).new())
+    add(&mut b, 1)
+    add(&mut b, 2)
+    println("{}", .{count(&b)})
+}

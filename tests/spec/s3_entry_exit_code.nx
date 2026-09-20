@@ -1,0 +1,6 @@
+// SPEC 3: `fn main() -> u8` returns the exit code.
+// EXIT: 3
+fn main() -> u8 {
+    println("bye", .{})
+    return 3
+}

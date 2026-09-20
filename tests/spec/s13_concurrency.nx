@@ -1,0 +1,43 @@
+// SPEC 13: for parallel writes through an index; threads, channels and mutexes from std.thread.
+import std.thread
+struct Range { from: i64, to: i64 }
+fn sum_range(r: *mut Range) -> i64 { var s: i64 = 0; for i in r.from..r.to { s += i }; return s }
+struct Producer { out: *mut thread.Channel(i64), n: i64 }
+fn produce(p: *mut Producer) { for i in 0..p.n { p.out.send(i) }; p.out.close() }
+struct Bumper { counter: *mut thread.Mutex(i64), times: i64 }
+fn bump(b: *mut Bumper) {
+    for _ in 0..b.times {
+        let n = b.counter.lock()
+        n.*+= 1
+        b.counter.unlock()
+    }
+}
+fn main() {
+    var squares: [16]i64 = undefined
+    let out = squares[..]
+    var inputs: [16]i64 = undefined
+    for i in 0..16 { inputs[i] = i as i64 }
+    for parallel v, i in inputs[..] { out[i] = v * v }
+    var total: i64 = 0
+    for s in squares { total += s }
+    var a = thread.spawn(Range, i64, sum_range, Range{ .from = 0, .to = 100 })
+    var b = thread.spawn(Range, i64, sum_range, Range{ .from = 100, .to = 200 })
+    let joined = a.join() + b.join()
+    var ch = thread.channel(i64)
+    var p = thread.run(Producer, produce, Producer{ .out = &mut ch, .n = 10 })
+    var received: i64 = 0
+    while true {
+        let v = ch.recv() orelse break
+        received += v
+    }
+    p.join()
+    ch.free()
+    var counter = thread.mutex(i64, 0)
+    var ts = List(thread.Worker(Bumper)).new()
+    for _ in 0..3 { ts.append(thread.run(Bumper, bump, Bumper{ .counter = &mut counter, .times = 500 })) }
+    for i in 0..ts.len { ts[i].join() }
+    let n = counter.lock().*
+    counter.unlock()
+    counter.free()
+    println("{} {} {} {}", .{total, joined, received, n})
+}

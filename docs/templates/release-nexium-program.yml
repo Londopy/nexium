@@ -58,6 +58,17 @@ jobs:
         shell: pwsh
         run: Compress-Archive -Path dist/* -DestinationPath "${{ env.NAME }}-${{ github.ref_name }}-${{ matrix.suffix }}.zip"
 
+      # If the program declares `artifact installer`, turn this on: it builds the
+      # Inno Setup installer on Windows and install.sh + tarball elsewhere, and
+      # uploads them with the archives.
+      - name: Installer
+        if: false
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then choco install innosetup --no-progress -y; fi
+          nx ship "${{ env.SOURCE }}"
+          cp nx-out/${{ env.NAME }}/*setup*.exe nx-out/${{ env.NAME }}/*.tar.gz . 2>/dev/null || true
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ env.NAME }}-${{ matrix.suffix }}

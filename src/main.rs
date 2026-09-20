@@ -9,14 +9,22 @@ mod diag;
 mod doc;
 mod effects;
 mod fmt;
+mod ide;
+mod installer;
 mod lexer;
 mod lsp;
+mod manifest;
+mod migrate;
 mod parser;
+mod repl;
 mod report;
+mod sexp;
 mod ship;
+mod ship_node;
 mod size;
 mod stdlib;
 mod tir;
+mod tirdump;
 mod types;
 
 use cgen::{BuildMode, Entry, Gen, GenOptions};
@@ -27,6 +35,9 @@ use std::path::{Path, PathBuf};
 use std::process::{exit, Command};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// The release's name, a place on a mountain (docs/release-names.md); set
+/// with the version by the release commit.
+const RELEASE_NAME: &str = "Annapurna: Camp V";
 
 fn usage() -> ! {
     eprintln!(
@@ -35,13 +46,15 @@ fn usage() -> ! {
 usage:
   nx build <file.nx> [options]     compile to an executable (or library when no main)
   nx run <file.nx> [-- args]       compile and run
-  nx test <file.nx> [filter]       run `test \"...\"` blocks
+  nx test <file.nx> [--filter NAME] [--verbose]  run `test \"...\"` blocks (also `nx test std.fs`)
   nx check <file.nx>               type-check and report effects violations only
   nx effects <file.nx>             report the inferred effects of every function
   nx audit <file.nx> [--globals]   list unsafe blocks and mutable globals
   nx refcounts <file.nx>           list every retain and release site
   nx size <file.nx>                attribute binary bytes to declarations
-  nx fmt <file.nx> [--check]       canonical formatting in place (--check: report only)
+  nx fmt <file.nx>... [--check]    canonical formatting in place (--check: report only;
+                                   --migrate-only: upgrade 0.5 syntax, keep the layout)
+  nx tir <file.nx> [--sigs]        the checked program as S-expressions (--sigs: signatures only)
   nx doc <file.nx> [-o dir]        static HTML documentation
   nx lsp                           language server over stdio (diagnostics, hover)
   nx leaks <file.nx> [-- args]     run in debug mode with allocation tracking, report leaks at exit
@@ -49,7 +62,12 @@ usage:
   nx emit-c <file.nx>              print the generated C
   nx parse <file.nx>               dump the syntax tree
   nx tokens <file.nx>              dump the token stream (start end KIND payload)
+  nx repl                          interactive session (also: `nx` with no arguments)
+  nx sexp <file.nx>                the syntax tree as S-expressions (the self-hosted parser's oracle)
   nx doctor                        show which C compiler nx will use and whether it works
+  nx init [name]                   write a nexium.toml (and a main.nx) in this directory
+  nx add <name> --git URL [--tag T] | --path DIR   add a dependency and fetch it
+  nx fetch                         clone the dependencies into nexium_modules/ and write nexium.lock
   nx version
 
 options:
@@ -161,6 +179,14 @@ fn parse_opts(args: &[String]) -> Opts {
                 i += 1;
                 o.cc = args.get(i).cloned();
             }
+            "--filter" => {
+                // `nx test file.nx --filter NAME`: the runner takes the filter as its argument
+                i += 1;
+                if let Some(f) = args.get(i) {
+                    o.rest.push(f.clone());
+                }
+            }
+            "--verbose" => o.rest.push("--verbose".into()),
             "--" => {
                 o.rest.extend(args[i + 1..].iter().cloned());
                 break;
@@ -188,31 +214,73 @@ struct Loaded {
     modules: Vec<ast::Module>,
     names: Vec<String>,
     dirs: Vec<String>,
+    /// the package each module belongs to ("" for the program's own files and std)
+    pkgs: Vec<String>,
 }
 
 /// Load the root file and every module it imports (files next to it).
+/// The directory a source file lives in, as a string; "." for a bare file name
+/// (whose `parent()` is the empty path, not `None`).
+fn dir_of(p: &Path) -> String {
+    match p.parent() {
+        Some(d) if !d.as_os_str().is_empty() => d.to_string_lossy().to_string(),
+        _ => ".".into(),
+    }
+}
+
+/// Queue the embedded std modules a module imports (`import std.x`).
+fn std_imports_of(m: &ast::Module, pending: &mut Vec<String>) {
+    for item in &m.items {
+        if let ast::Item::Import(im) = item {
+            if im.path.len() == 2 && im.path[0] == "std" && stdlib::source(&im.path[1]).is_some() {
+                let mname = im.path.join(".");
+                if !pending.contains(&mname) {
+                    pending.push(mname);
+                }
+            }
+        }
+    }
+}
+
 fn load(root: &Path) -> Result<Loaded, ()> {
     let mut sm = SourceMap::default();
     let mut modules = Vec::new();
     let mut names = Vec::new();
     let mut dirs = Vec::new();
-    let root_dir = root.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."));
+    let mut mod_pkgs: Vec<String> = Vec::new();
+    let root_dir = PathBuf::from(dir_of(root));
     let root_name = root.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "main".into());
-    let mut queue: Vec<(String, PathBuf)> = vec![(root_name, root.to_path_buf())];
+    // packages: the manifest above the root file names the dependencies
+    let pkgs: Vec<(String, PathBuf)> = match manifest::find(&root_dir) {
+        Some(mf) => match manifest::packages(&mf) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("error: {}", e);
+                return Err(());
+            }
+        },
+        None => Vec::new(),
+    };
+    // (module name, file, the package the module belongs to: name and src dir)
+    let mut queue: Vec<(String, PathBuf, Option<(String, PathBuf)>)> = vec![(root_name, root.to_path_buf(), None)];
     let mut seen: HashMap<String, ()> = HashMap::new();
     let mut had_error = false;
     let mut std_pending: Vec<String> = Vec::new();
-    while let Some((name, path)) = queue.pop() {
+    while let Some((name, path, pkg)) = queue.pop() {
         if seen.contains_key(&name) {
             continue;
         }
         seen.insert(name.clone(), ());
-        let text = match std::fs::read_to_string(&path) {
-            Ok(t) => t,
-            Err(e) => {
-                eprintln!("error: cannot read {}: {}", path.display(), e);
-                return Err(());
-            }
+        let embedded = if path.exists() { None } else { path.to_string_lossy().strip_prefix("std.").and_then(stdlib::source) };
+        let text = match embedded {
+            Some(src) => src.to_string(),
+            None => match std::fs::read_to_string(&path) {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("error: cannot read {}: {}", path.display(), e);
+                    return Err(());
+                }
+            },
         };
         let display = path.to_string_lossy().to_string();
         let file = sm.add(display, text.clone());
@@ -242,18 +310,44 @@ fn load(root: &Path) -> Result<Loaded, ()> {
                     }
                     continue;
                 }
+                // a dependency: `import foo` is its src/lib.nx, `import foo.bar` its src/bar.nx
+                if let Some((pn, src)) = pkgs.iter().find(|(n, _)| *n == im.path[0]) {
+                    let rel: PathBuf = if im.path.len() == 1 { PathBuf::from("lib") } else { im.path[1..].iter().collect() };
+                    let candidate = src.join(&rel).with_extension("nx");
+                    if candidate.exists() {
+                        queue.push((im.path.join("."), candidate, Some((pn.clone(), src.clone()))));
+                    } else {
+                        eprintln!("error: package `{}` has no module `{}` (expected {})", pn, im.path.join("."), candidate.display());
+                        had_error = true;
+                    }
+                    continue;
+                }
+                // inside a package, imports are relative to its src and named under the package
+                if let Some((pn, src)) = &pkg {
+                    let rel: PathBuf = im.path.iter().collect();
+                    let candidate = src.join(&rel).with_extension("nx");
+                    if candidate.exists() {
+                        queue.push((format!("{}.{}", pn, im.path.join(".")), candidate, Some((pn.clone(), src.clone()))));
+                    }
+                    continue;
+                }
                 let rel: PathBuf = im.path.iter().collect();
                 let candidate = root_dir.join(&rel).with_extension("nx");
                 if candidate.exists() {
-                    queue.push((im.path.join("."), candidate));
+                    queue.push((im.path.join("."), candidate, None));
                 }
             }
         }
         names.push(name);
-        dirs.push(path.parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| ".".into()));
+        dirs.push(dir_of(&path));
+        mod_pkgs.push(pkg.as_ref().map(|(n, _)| n.clone()).unwrap_or_default());
         modules.push(m);
     }
-    for mname in std_pending {
+    // std modules may import each other; new names join the end of the queue
+    let mut si = 0;
+    while si < std_pending.len() {
+        let mname = std_pending[si].clone();
+        si += 1;
         let short = mname.trim_start_matches("std.").to_string();
         let src = stdlib::source(&short).unwrap();
         let file = sm.add(format!("<std>/{}.nx", short), src.to_string());
@@ -264,14 +358,16 @@ fn load(root: &Path) -> Result<Loaded, ()> {
             eprint!("{}", sm.render(d));
             had_error = true;
         }
+        std_imports_of(&m, &mut std_pending);
         names.push(mname);
         dirs.push("std".into());
+        mod_pkgs.push(String::new());
         modules.push(m);
     }
     if had_error {
         return Err(());
     }
-    Ok(Loaded { sm, modules, names, dirs })
+    Ok(Loaded { sm, modules, names, dirs, pkgs: mod_pkgs })
 }
 
 /// `artifact link { c_sources = [...], libs = [...], include = [...] }` declared in the sources.
@@ -352,6 +448,7 @@ fn link_info(loaded: &Loaded, opts: &Opts) -> LinkInfo {
 fn check(loaded: &Loaded, opts: &Opts) -> Result<Program, ()> {
     let mut c = check::Checker::new(&loaded.sm);
     c.source_dirs = loaded.dirs.clone();
+    c.module_pkgs = loaded.pkgs.clone();
     let li = link_info(loaded, opts);
     let cc = cc_command(opts);
     let mut cc_vec = vec![cc.program.clone()];
@@ -492,8 +589,96 @@ fn cc_command(opts: &Opts) -> CcInvocation {
 }
 
 /// `nx doctor`: what this installation will use, and whether it works.
+fn cmd_init(rest: &[String]) -> i32 {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let name = rest.first().cloned().unwrap_or_else(|| cwd.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "app".into()));
+    let name: String = name.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
+    match manifest::init(&cwd, &name) {
+        Ok(files) => {
+            for f in files {
+                println!("wrote {}", f.display());
+            }
+            0
+        }
+        Err(e) => {
+            eprintln!("error: {}", e);
+            1
+        }
+    }
+}
+
+fn cmd_add(rest: &[String]) -> i32 {
+    let mut name = None;
+    let (mut git, mut tag, mut path) = (None, None, None);
+    let mut i = 0;
+    while i < rest.len() {
+        match rest[i].as_str() {
+            "--git" => {
+                i += 1;
+                git = rest.get(i).cloned();
+            }
+            "--tag" => {
+                i += 1;
+                tag = rest.get(i).cloned();
+            }
+            "--path" => {
+                i += 1;
+                path = rest.get(i).cloned();
+            }
+            other if name.is_none() && !other.starts_with("--") => name = Some(other.to_string()),
+            other => {
+                eprintln!("error: unexpected argument `{}`", other);
+                return 1;
+            }
+        }
+        i += 1;
+    }
+    let Some(name) = name else {
+        eprintln!("usage: nx add <name> --git URL [--tag TAG] | --path DIR");
+        return 1;
+    };
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let Some(mf) = manifest::find(&cwd) else {
+        eprintln!("error: no {} here or above; run `nx init` first", manifest::MANIFEST);
+        return 1;
+    };
+    let dep = manifest::Dep { name, git, tag, path };
+    if let Err(e) = manifest::add(&mf.dir.join(manifest::MANIFEST), &dep) {
+        eprintln!("error: {}", e);
+        return 1;
+    }
+    println!("added `{}` to {}", dep.name, mf.dir.join(manifest::MANIFEST).display());
+    cmd_fetch()
+}
+
+fn cmd_fetch() -> i32 {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let Some(mf) = manifest::find(&cwd) else {
+        eprintln!("error: no {} here or above; run `nx init` first", manifest::MANIFEST);
+        return 1;
+    };
+    match manifest::fetch(&mf) {
+        Ok(lines) => {
+            for l in &lines {
+                let parts: Vec<&str> = l.split('\t').collect();
+                if parts.len() >= 4 && parts[1] != "path" {
+                    println!("{} {} ({})", parts[0], parts[2], &parts[3][..parts[3].len().min(10)]);
+                } else if parts.len() >= 3 {
+                    println!("{} path {}", parts[0], parts[2]);
+                }
+            }
+            println!("wrote {}", mf.dir.join(manifest::LOCK).display());
+            0
+        }
+        Err(e) => {
+            eprintln!("error: {}", e);
+            1
+        }
+    }
+}
+
 fn cmd_doctor() -> i32 {
-    println!("nx {}", VERSION);
+    println!("nx {} ({})", VERSION, RELEASE_NAME);
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("nx"));
     println!("executable:  {}", exe.display());
     let opts = Opts {
@@ -549,10 +734,81 @@ fn cmd_doctor() -> i32 {
     0
 }
 
-fn compile_c(opts: &Opts, c_path: &Path, out: &Path, kind: &str) -> Result<(), ()> {
-    let cc = cc_command(opts);
+thread_local! {
+    /// this process's private Zig cache, removed when the command finishes
+    static ZIG_CACHE: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Remove the per-process Zig cache. Caches left behind by processes that
+/// crashed or were killed are swept once they are an hour old; a younger
+/// sibling may belong to a build running right now (`cargo test` runs many).
+fn cleanup_zig_cache() {
+    let mine = ZIG_CACHE.with(|c| c.borrow_mut().take());
+    if let Some(dir) = mine {
+        let _ = std::fs::remove_dir_all(&dir);
+        if let Some(parent) = dir.parent() {
+            let stale = std::time::Duration::from_secs(3600);
+            if let Ok(rd) = std::fs::read_dir(parent) {
+                for e in rd.flatten() {
+                    let old = e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).map(|age| age > stale).unwrap_or(false);
+                    if old {
+                        let _ = std::fs::remove_dir_all(e.path());
+                    }
+                }
+            }
+            let _ = std::fs::remove_dir(parent);
+        }
+    }
+}
+
+/// Start the C compiler. When it is Zig, its local cache goes under the
+/// output directory, one per nx process: Zig's cache is not safe against
+/// several `zig cc` processes starting at once on Windows (it fails with
+/// "failed to check cache ... file_open Unexpected"), and parallel builds
+/// (the test suite, a CI matrix on one machine) do exactly that. A cache
+/// the user set explicitly is respected.
+fn cc_process(opts: &Opts, cc: &CcInvocation) -> Command {
     let mut cmd = Command::new(&cc.program);
     cmd.args(&cc.args);
+    let is_zig = Path::new(&cc.program).file_stem().map(|s| s.to_string_lossy().to_lowercase() == "zig").unwrap_or(false);
+    if is_zig && std::env::var_os("ZIG_LOCAL_CACHE_DIR").is_none() {
+        let cache = opts.out_dir.join(".zig-cache").join(std::process::id().to_string());
+        let _ = std::fs::create_dir_all(&cache);
+        ZIG_CACHE.with(|c| *c.borrow_mut() = Some(cache.clone()));
+        cmd.env("ZIG_LOCAL_CACHE_DIR", &cache);
+    }
+    cmd
+}
+
+/// Run the C compiler. Zig's cache of its own libc and sanitizer builds is
+/// shared by every process on the machine and is not safe against several of
+/// them starting at once on Windows ("failed to check cache ... file_open
+/// Unexpected"); that failure is transient, so the build is retried a few
+/// times with a pause. The compiler's diagnostics are passed through.
+fn run_cc(cmd: &mut Command) -> std::io::Result<std::process::ExitStatus> {
+    let mut attempt = 0;
+    loop {
+        attempt += 1;
+        let out = cmd.output()?;
+        let err = String::from_utf8_lossy(&out.stderr).to_string();
+        if !out.status.success() && err.contains("failed to check cache") && attempt < 5 {
+            std::thread::sleep(std::time::Duration::from_millis(300 * attempt));
+            continue;
+        }
+        if !out.stdout.is_empty() {
+            use std::io::Write;
+            let _ = std::io::stdout().write_all(&out.stdout);
+        }
+        if !err.is_empty() {
+            eprint!("{}", err);
+        }
+        return Ok(out.status);
+    }
+}
+
+fn compile_c(opts: &Opts, c_path: &Path, out: &Path, kind: &str) -> Result<(), ()> {
+    let cc = cc_command(opts);
+    let mut cmd = cc_process(opts, &cc);
     cmd.arg("-std=gnu11");
     match opts.mode {
         BuildMode::Debug => {
@@ -577,9 +833,7 @@ fn compile_c(opts: &Opts, c_path: &Path, out: &Path, kind: &str) -> Result<(), (
     for d in opts.include_dirs.iter().chain(li.include.iter()) {
         cmd.arg(format!("-I{}", d));
     }
-    if let Some(dir) = opts.file.parent() {
-        cmd.arg(format!("-I{}", dir.display()));
-    }
+    cmd.arg(format!("-I{}", dir_of(&opts.file)));
     for src in opts.c_sources.iter().chain(li.c_sources.iter()) {
         cmd.arg(src);
     }
@@ -595,8 +849,7 @@ fn compile_c(opts: &Opts, c_path: &Path, out: &Path, kind: &str) -> Result<(), (
     }
     if kind == "object" {
         // an object of the generated file alone
-        let mut cmd2 = Command::new(&cc.program);
-        cmd2.args(&cc.args);
+        let mut cmd2 = cc_process(opts, &cc);
         cmd2.args(["-std=gnu11", "-w", "-fno-strict-aliasing", "-c"]);
         match opts.mode {
             BuildMode::Debug => {
@@ -616,11 +869,9 @@ fn compile_c(opts: &Opts, c_path: &Path, out: &Path, kind: &str) -> Result<(), (
         for d in opts.include_dirs.iter().chain(li.include.iter()) {
             cmd2.arg(format!("-I{}", d));
         }
-        if let Some(dir) = opts.file.parent() {
-            cmd2.arg(format!("-I{}", dir.display()));
-        }
+        cmd2.arg(format!("-I{}", dir_of(&opts.file)));
         cmd2.arg(c_path).arg("-o").arg(out);
-        return match cmd2.status() {
+        return match run_cc(&mut cmd2) {
             Ok(st) if st.success() => Ok(()),
             _ => {
                 eprintln!("error: C compilation failed");
@@ -644,6 +895,9 @@ fn compile_c(opts: &Opts, c_path: &Path, out: &Path, kind: &str) -> Result<(), (
     cmd.arg(c_path);
     cmd.arg("-o");
     cmd.arg(out);
+    if is_windows_target(&opts.target) {
+        cmd.arg("-lws2_32");
+    }
     if !is_windows_target(&opts.target) {
         // libm is part of libSystem on macOS; a separate -lm there makes zig skip
         // its implicit libc link on machines without an SDK. Ask for libc explicitly.
@@ -652,7 +906,7 @@ fn compile_c(opts: &Opts, c_path: &Path, out: &Path, kind: &str) -> Result<(), (
         }
         cmd.arg("-lc");
     }
-    let status = match cmd.status() {
+    let status = match run_cc(&mut cmd) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("error: cannot run the C compiler `{}`: {}\n  run `nx doctor` for options (the installers bundle Zig; or put zig on the PATH, or set NX_CC)", cc.program, e);
@@ -670,8 +924,18 @@ fn write_c(opts: &Opts, stem: &str, c: &str) -> Result<PathBuf, ()> {
     std::fs::create_dir_all(&opts.out_dir).map_err(|e| eprintln!("error: cannot create {}: {}", opts.out_dir.display(), e))?;
     let path = opts.out_dir.join(format!("{}.c", stem));
     std::fs::write(&path, c).map_err(|e| eprintln!("error: cannot write {}: {}", path.display(), e))?;
+    // the runtime header is shared by every build in the directory: leave it
+    // alone when current, and replace it atomically so a parallel build never
+    // reads a half-written copy
     let rt = opts.out_dir.join("nx_rt.h");
-    let _ = std::fs::write(&rt, cgen::RUNTIME_H);
+    let current = std::fs::read(&rt).map(|b| b == cgen::RUNTIME_H.as_bytes()).unwrap_or(false);
+    if !current {
+        let tmp = opts.out_dir.join(format!("nx_rt.h.{}.tmp", std::process::id()));
+        if std::fs::write(&tmp, cgen::RUNTIME_H).is_ok() && std::fs::rename(&tmp, &rt).is_err() {
+            let _ = std::fs::write(&rt, cgen::RUNTIME_H);
+            let _ = std::fs::remove_file(&tmp);
+        }
+    }
     Ok(path)
 }
 
@@ -684,6 +948,11 @@ fn exe_name(stem: &str, target: &Option<String>) -> String {
 }
 
 fn stem_of(p: &Path) -> String {
+    // an embedded module named on the command line (`nx doc std.fs`) keeps its full name
+    let text = p.to_string_lossy();
+    if !p.exists() && text.starts_with("std.") && stdlib::source(&text[4..]).is_some() {
+        return text.to_string();
+    }
     p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "out".into())
 }
 
@@ -895,37 +1164,7 @@ fn analyze_text(path: &str, text: &str) -> (Vec<lsp::Diagnostic>, Option<(Loaded
     all.extend(p.diags.clone());
     let mut result = None;
     if all.is_empty() {
-        let dir = Path::new(path).parent().map(|d| d.to_string_lossy().to_string()).unwrap_or_else(|| ".".into());
-        // imported modules are loaded from disk
-        let mut loaded = Loaded { sm, modules: vec![m], names: vec![Path::new(path).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "main".into())], dirs: vec![dir.clone()] };
-        for item in loaded.modules[0].items.clone() {
-            if let ast::Item::Import(im) = item {
-                if im.path[0] == "std" {
-                    if im.path.len() == 2 {
-                        if let Some(src) = stdlib::source(&im.path[1]) {
-                            let f = loaded.sm.add(format!("<std>/{}.nx", im.path[1]), src.to_string());
-                            let (tk, _) = lexer::Lexer::new(src, f).lex();
-                            let mut pp = parser::Parser::new(tk, f);
-                            loaded.modules.push(pp.parse_module());
-                            loaded.names.push(im.path.join("."));
-                            loaded.dirs.push("std".into());
-                        }
-                    }
-                    continue;
-                }
-                let rel: PathBuf = im.path.iter().collect();
-                let candidate = Path::new(&dir).join(&rel).with_extension("nx");
-                if let Ok(t) = std::fs::read_to_string(&candidate) {
-                    let f = loaded.sm.add(candidate.to_string_lossy().to_string(), t.clone());
-                    let (tk, _) = lexer::Lexer::new(&t, f).lex();
-                    let mut pp = parser::Parser::new(tk, f);
-                    let mm = pp.parse_module();
-                    loaded.modules.push(mm);
-                    loaded.names.push(im.path.join("."));
-                    loaded.dirs.push(candidate.parent().map(|d| d.to_string_lossy().to_string()).unwrap_or_else(|| ".".into()));
-                }
-            }
-        }
+        let loaded = load_for_editor(path, sm, m);
         let mut c = check::Checker::new(&loaded.sm);
         c.source_dirs = loaded.dirs.clone();
         let cc = cc_command(&opts);
@@ -947,6 +1186,80 @@ fn analyze_text(path: &str, text: &str) -> (Vec<lsp::Diagnostic>, Option<(Loaded
         return (to_lsp_diags(&all, sm_ref, path, text), result);
     }
     (to_lsp_diags(&all, &sm, path, text), None)
+}
+
+/// The root module of an editor buffer plus the modules it imports, read
+/// from disk (siblings, packages) or the embedded std, without checking.
+fn load_for_editor(path: &str, sm: SourceMap, m: ast::Module) -> Loaded {
+    let dir = dir_of(Path::new(path));
+    let pkgs: Vec<(String, PathBuf)> = manifest::find(Path::new(&dir)).and_then(|mf| manifest::packages(&mf).ok()).unwrap_or_default();
+    let mut loaded = Loaded {
+        sm,
+        modules: vec![m],
+        names: vec![Path::new(path).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "main".into())],
+        dirs: vec![dir.clone()],
+        pkgs: vec![String::new()],
+    };
+    for item in loaded.modules[0].items.clone() {
+        if let ast::Item::Import(im) = item {
+            if im.path[0] == "std" {
+                if im.path.len() == 2 {
+                    if let Some(src) = stdlib::source(&im.path[1]) {
+                        let f = loaded.sm.add(format!("<std>/{}.nx", im.path[1]), src.to_string());
+                        let (tk, _) = lexer::Lexer::new(src, f).lex();
+                        let mut pp = parser::Parser::new(tk, f);
+                        loaded.modules.push(pp.parse_module());
+                        loaded.names.push(im.path.join("."));
+                        loaded.dirs.push("std".into());
+                        loaded.pkgs.push(String::new());
+                    }
+                }
+                continue;
+            }
+            let (candidate, pkg) = match pkgs.iter().find(|(n, _)| *n == im.path[0]) {
+                Some((pn, src)) => {
+                    let rel: PathBuf = if im.path.len() == 1 { PathBuf::from("lib") } else { im.path[1..].iter().collect() };
+                    (src.join(&rel).with_extension("nx"), pn.clone())
+                }
+                None => {
+                    let rel: PathBuf = im.path.iter().collect();
+                    (Path::new(&dir).join(&rel).with_extension("nx"), String::new())
+                }
+            };
+            if let Ok(t) = std::fs::read_to_string(&candidate) {
+                let f = loaded.sm.add(candidate.to_string_lossy().to_string(), t.clone());
+                let (tk, _) = lexer::Lexer::new(&t, f).lex();
+                let mut pp = parser::Parser::new(tk, f);
+                loaded.modules.push(pp.parse_module());
+                loaded.names.push(im.path.join("."));
+                loaded.dirs.push(dir_of(&candidate));
+                loaded.pkgs.push(pkg);
+            }
+        }
+    }
+    loaded
+}
+
+/// Parse an editor buffer and its imports for the IDE features, whatever
+/// its errors; the root module is index 0.
+fn editor_modules(path: &str, text: &str) -> Loaded {
+    let mut sm = SourceMap::default();
+    let file = sm.add(path.to_string(), text.to_string());
+    let (toks, _) = lexer::Lexer::new(text, file).lex();
+    let mut p = parser::Parser::new(toks, file);
+    let m = p.parse_module();
+    load_for_editor(path, sm, m)
+}
+
+fn byte_offset(text: &str, line: usize, col: usize) -> usize {
+    let mut off = 0;
+    for (i, l) in text.split('\n').enumerate() {
+        if i == line {
+            return off + col.min(l.len());
+        }
+        off += l.len() + 1;
+    }
+    text.len()
 }
 
 /// Hover for a file that does not check: the signature as written, without effects.
@@ -993,6 +1306,96 @@ fn token_line(t: &lexer::Token, text: &str) -> String {
         format!("{} {} {}", t.span.start, t.span.end, kind)
     } else {
         format!("{} {} {} {}", t.span.start, t.span.end, kind, payload)
+    }
+}
+
+/// One line of the C compiler in use, for banners.
+pub fn compiler_summary() -> String {
+    let opts = Opts {
+        file: PathBuf::new(),
+        mode: BuildMode::Debug,
+        target: None,
+        out: None,
+        out_dir: PathBuf::from("nx-out"),
+        keep_c: false,
+        cc: None,
+        rest: vec![],
+        defines: vec![],
+        include_dirs: vec![],
+        link_libs: vec![],
+        link_paths: vec![],
+        c_sources: vec![],
+    };
+    let (cc, why) = cc_command_why(&opts);
+    let base = Path::new(&cc.program).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or(cc.program.clone());
+    if why.starts_with(&base) {
+        why.to_string()
+    } else {
+        format!("{} via {}", base, why)
+    }
+}
+
+/// Check a synthetic REPL program and run its new statements. Errors come back
+/// rendered, ready to print.
+pub fn repl_check(text: &str, start: usize, seed: Vec<(String, tir::Value)>) -> Result<tir::ReplOutcome, String> {
+    let mut sm = SourceMap::default();
+    let file = sm.add("<repl>".to_string(), text.to_string());
+    let (toks, ldiags) = lexer::Lexer::new(text, file).lex();
+    let mut p = parser::Parser::new(toks, file);
+    let m = p.parse_module();
+    let mut all: Vec<diag::Diag> = ldiags;
+    all.extend(p.diags.clone());
+    if !all.is_empty() {
+        return Err(all.iter().map(|d| sm.render(d)).collect::<String>());
+    }
+    let cwd = std::env::current_dir().map(|d| d.to_string_lossy().to_string()).unwrap_or_else(|_| ".".into());
+    let mut modules = vec![m];
+    let mut names = vec!["main".to_string()];
+    let mut dirs = vec![cwd.clone()];
+    let mut std_pending: Vec<String> = Vec::new();
+    for item in modules[0].items.clone() {
+        if let ast::Item::Import(im) = item {
+            if im.path[0] == "std" {
+                if im.path.len() == 2 && stdlib::source(&im.path[1]).is_some() && !std_pending.contains(&im.path.join(".")) {
+                    std_pending.push(im.path.join("."));
+                }
+                continue;
+            }
+            let rel: PathBuf = im.path.iter().collect();
+            let candidate = Path::new(&cwd).join(&rel).with_extension("nx");
+            if let Ok(t) = std::fs::read_to_string(&candidate) {
+                let f = sm.add(candidate.to_string_lossy().to_string(), t.clone());
+                let (tk, _) = lexer::Lexer::new(&t, f).lex();
+                let mut pp = parser::Parser::new(tk, f);
+                modules.push(pp.parse_module());
+                names.push(im.path.join("."));
+                dirs.push(dir_of(&candidate));
+            }
+        }
+    }
+    let mut si = 0;
+    while si < std_pending.len() {
+        let mname = std_pending[si].clone();
+        si += 1;
+        let short = mname.trim_start_matches("std.").to_string();
+        let src = stdlib::source(&short).unwrap();
+        let f = sm.add(format!("<std>/{}.nx", short), src.to_string());
+        let (tk, _) = lexer::Lexer::new(src, f).lex();
+        let mut pp = parser::Parser::new(tk, f);
+        let m = pp.parse_module();
+        std_imports_of(&m, &mut std_pending);
+        modules.push(m);
+        names.push(mname);
+        dirs.push("std".into());
+    }
+    let mut c = check::Checker::new(&sm);
+    c.source_dirs = dirs;
+    c.repl_mode = true;
+    c.repl_request = Some((start, seed));
+    let (res, diags) = c.check_program(&modules, &names);
+    match res {
+        Ok(prog) => Ok(prog.repl.unwrap_or_default()),
+        Err(()) => Err(diags.iter().filter(|d| d.level == diag::Level::Error).map(|d| sm.render(d)).collect::<String>()),
     }
 }
 
@@ -1047,17 +1450,37 @@ fn to_lsp_diags(diags: &[diag::Diag], sm: &SourceMap, path: &str, text: &str) ->
 fn cmd_lsp() -> i32 {
     let backend = lsp::Backend {
         diagnostics: Box::new(|path, text| analyze_text(path, text).0),
+        definition: Box::new(|path, text, line, col| {
+            let loaded = editor_modules(path, text);
+            let off = byte_offset(text, line, col);
+            let d = ide::definition(&loaded.modules, &loaded.names, text, off)?;
+            let file = loaded.sm.file(d.file)?;
+            let (sl, sc) = ide::line_col(&loaded.sm, d.file, d.span.start);
+            let (el, ec) = ide::line_col(&loaded.sm, d.file, d.span.end);
+            // the std sources have no file on disk; point at the root instead of a phantom path
+            let name = if file.name.starts_with("<std>") { None } else { Some(file.name.clone()) };
+            Some(lsp::Location { path: name?, line: sl, col: sc, end_line: el, end_col: ec })
+        }),
+        completion: Box::new(|path, text, line, col| {
+            let loaded = editor_modules(path, text);
+            let off = byte_offset(text, line, col);
+            ide::completions(&loaded.modules, &loaded.names, text, off).into_iter().map(|c| lsp::CompletionItem { label: c.label, kind: c.kind, detail: c.detail }).collect()
+        }),
+        rename: Box::new(|path, text, line, col| {
+            let loaded = editor_modules(path, text);
+            let off = byte_offset(text, line, col);
+            ide::rename_spans(&loaded.modules, text, off)
+                .into_iter()
+                .map(|sp| {
+                    let (sl, sc) = ide::line_col(&loaded.sm, 0, sp.start);
+                    let (el, ec) = ide::line_col(&loaded.sm, 0, sp.end);
+                    lsp::Location { path: path.to_string(), line: sl, col: sc, end_line: el, end_col: ec }
+                })
+                .collect()
+        }),
         hover: Box::new(|path, text, line, col| {
             let (_, result) = analyze_text(path, text);
-            // byte offset of the position
-            let mut off = 0;
-            for (i, l) in text.split('\n').enumerate() {
-                if i == line {
-                    off += col.min(l.len());
-                    break;
-                }
-                off += l.len() + 1;
-            }
+            let off = byte_offset(text, line, col);
             let (loaded, prog) = match result {
                 Some(r) => r,
                 None => return hover_from_syntax(text, off),
@@ -1093,6 +1516,8 @@ fn cmd_lsp() -> i32 {
 
 fn cmd_fmt(opts: &Opts) -> i32 {
     let check_only = opts.rest.iter().any(|a| a == "--check");
+    // `--migrate-only` upgrades the syntax and leaves the layout alone
+    let migrate_only = opts.rest.iter().any(|a| a == "--migrate-only");
     let mut files = vec![opts.file.clone()];
     files.extend(opts.rest.iter().filter(|a| !a.starts_with("--")).map(PathBuf::from));
     let mut changed = 0;
@@ -1104,14 +1529,22 @@ fn cmd_fmt(opts: &Opts) -> i32 {
                 return 1;
             }
         };
-        let formatted = match fmt::format_source(&text) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("error: {}: {}", f.display(), e);
-                return 1;
+        // the formatter also upgrades 0.5 syntax (parenthesized conditions, `|x|` loop
+        // bindings, `if (opt) |v|`) to the current one, so migrating is running `nx fmt`
+        let original = text;
+        let text = migrate::migrate(&original);
+        let formatted = if migrate_only {
+            text
+        } else {
+            match fmt::format_source(&text) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("error: {}: {}", f.display(), e);
+                    return 1;
+                }
             }
         };
-        if formatted != text {
+        if formatted != original {
             changed += 1;
             if check_only {
                 println!("would reformat {}", f.display());
@@ -1237,8 +1670,7 @@ fn cmd_size(opts: &Opts) -> i32 {
 /// Compile to an object with one section per function and datum.
 fn compile_c_sections(opts: &Opts, c_path: &Path, out: &Path) -> Result<(), ()> {
     let cc = cc_command(opts);
-    let mut cmd = Command::new(&cc.program);
-    cmd.args(&cc.args);
+    let mut cmd = cc_process(opts, &cc);
     cmd.args(["-std=gnu11", "-w", "-fno-strict-aliasing", "-ffunction-sections", "-fdata-sections", "-c"]);
     match opts.mode {
         BuildMode::Debug => cmd.arg("-O0"),
@@ -1250,7 +1682,7 @@ fn compile_c_sections(opts: &Opts, c_path: &Path, out: &Path) -> Result<(), ()> 
         cmd.arg(t);
     }
     cmd.arg(c_path).arg("-o").arg(out);
-    match cmd.status() {
+    match run_cc(&mut cmd) {
         Ok(s) if s.success() => Ok(()),
         Ok(_) => {
             eprintln!("error: C compilation failed");
@@ -1429,6 +1861,32 @@ fn audit_expr(e: &ast::Expr, out: &mut Vec<(diag::Span, usize)>) {
     }
 }
 
+fn artifact_list(a: &check::ArtifactInfo, key: &str) -> Vec<String> {
+    a.fields
+        .iter()
+        .find(|(k, _)| k == key)
+        .map(|(_, v)| match v {
+            ArtifactValue::List(items) => items
+                .iter()
+                .filter_map(|x| match x {
+                    ArtifactValue::Str(s) | ArtifactValue::Ident(s) => Some(s.clone()),
+                    _ => None,
+                })
+                .collect(),
+            ArtifactValue::Str(s) | ArtifactValue::Ident(s) => vec![s.clone()],
+            _ => vec![],
+        })
+        .unwrap_or_default()
+}
+
+fn artifact_bool(a: &check::ArtifactInfo, key: &str) -> Option<bool> {
+    a.fields.iter().find(|(k, _)| k == key).and_then(|(_, v)| match v {
+        ArtifactValue::Bool(b) => Some(*b),
+        ArtifactValue::Ident(s) => Some(s == "true"),
+        _ => None,
+    })
+}
+
 fn artifact_str(a: &check::ArtifactInfo, key: &str) -> Option<String> {
     a.fields.iter().find(|(k, _)| k == key).and_then(|(_, v)| match v {
         ArtifactValue::Str(s) | ArtifactValue::Ident(s) => Some(s.clone()),
@@ -1453,12 +1911,17 @@ fn cmd_ship(opts: &Opts) -> i32 {
     let artifacts = prog.artifacts.clone();
     let mut produced = Vec::new();
     // one library build serves cabi + python; the cli build is separate
-    let lib_arts: Vec<&check::ArtifactInfo> = artifacts.iter().filter(|a| matches!(a.kind.as_str(), "cabi" | "python" | "shared" | "rustlib")).collect();
+    let lib_arts: Vec<&check::ArtifactInfo> = artifacts.iter().filter(|a| matches!(a.kind.as_str(), "cabi" | "python" | "shared" | "rustlib" | "node")).collect();
     let cli_arts: Vec<&check::ArtifactInfo> = artifacts.iter().filter(|a| matches!(a.kind.as_str(), "cli" | "app")).collect();
+    let installer_art: Option<&check::ArtifactInfo> = artifacts.iter().find(|a| a.kind == "installer");
     for a in &artifacts {
-        if !matches!(a.kind.as_str(), "cabi" | "python" | "shared" | "cli" | "app" | "lib" | "rustlib" | "link") {
-            eprintln!("note: artifact `{}` is not produced by this version of nx (supported: cabi, python, shared, cli); skipped", a.kind);
+        if !matches!(a.kind.as_str(), "cabi" | "python" | "shared" | "cli" | "app" | "lib" | "rustlib" | "link" | "installer" | "node") {
+            eprintln!("note: artifact `{}` is not produced by this version of nx (supported: cabi, python, node, rustlib, shared, cli, installer); skipped", a.kind);
         }
+    }
+    if installer_art.is_some() && cli_arts.is_empty() {
+        eprintln!("error: `artifact installer` needs an `artifact cli {{ name = ... }}` to install");
+        return 1;
     }
     let target = opts.target.clone().unwrap_or_else(host_target);
     if !lib_arts.is_empty() {
@@ -1593,6 +2056,23 @@ fn cmd_ship(opts: &Opts) -> i32 {
                 }
             }
         }
+        if lib_arts.iter().any(|a| a.kind == "node") {
+            let npm_name = lib_arts.iter().filter(|a| a.kind == "node").filter_map(|a| artifact_str(a, "name")).next().unwrap_or_else(|| lib_name.clone());
+            let pkg_dir = dir.join("node");
+            if std::fs::create_dir_all(&pkg_dir).is_err() {
+                eprintln!("error: cannot create {}", pkg_dir.display());
+                return 1;
+            }
+            let _ = std::fs::write(pkg_dir.join("index.js"), ship_node::module(&lib_name, &version, &infos, &shared_name));
+            let _ = std::fs::write(pkg_dir.join("index.d.ts"), ship_node::typings(&infos));
+            let _ = std::fs::write(pkg_dir.join("package.json"), ship_node::package_json(&npm_name, &version, &shared_name));
+            let _ = std::fs::write(pkg_dir.join("README.md"), format!("# {}\n\nA native library built with Nexium, callable from Node.js through koffi.\n\n```sh\nnpm install\nnode -e \"const m = require('.'); console.log(Object.keys(m))\"\n```\n\nThe package holds one platform's shared library; publish one per platform or\nuse `os` and `cpu` fields to gate installs.\n", npm_name));
+            if std::fs::copy(&shared_path, pkg_dir.join(&shared_name)).is_err() {
+                eprintln!("error: cannot place the library in {}", pkg_dir.display());
+                return 1;
+            }
+            produced.push(pkg_dir.join("package.json"));
+        }
     }
     if !cli_arts.is_empty() {
         let name = cli_arts.iter().filter_map(|a| artifact_str(a, "name")).next().unwrap_or_else(|| stem.clone());
@@ -1612,9 +2092,54 @@ fn cmd_ship(opts: &Opts) -> i32 {
             c_sources: opts.c_sources.clone(),
         };
         let _ = std::fs::create_dir_all(&o.out_dir);
-        match cmd_build(&o, false) {
-            Ok(p) => produced.push(p),
+        let exe_path = match cmd_build(&o, false) {
+            Ok(p) => p,
             Err(()) => return 1,
+        };
+        produced.push(exe_path.clone());
+        if let Some(ia) = installer_art {
+            // the program's files sit next to the executable so the installer templates can list them
+            let src_dir = dir_of(&opts.file);
+            let spec = installer::Spec {
+                name: artifact_str(ia, "name").unwrap_or_else(|| name.clone()),
+                exe: exe_name(&name, &opts.target),
+                version: artifact_str(ia, "version").unwrap_or_else(|| "0.1.0".into()),
+                publisher: artifact_str(ia, "publisher").unwrap_or_default(),
+                url: artifact_str(ia, "url").unwrap_or_default(),
+                license: artifact_str(ia, "license"),
+                readme: artifact_str(ia, "readme"),
+                files: artifact_list(ia, "files"),
+                add_to_path: artifact_bool(ia, "add_to_path").unwrap_or(false),
+            };
+            let out_dir = exe_path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."));
+            for f in spec.files.iter().chain(spec.readme.iter()).chain(spec.license.iter()) {
+                let from = Path::new(&src_dir).join(f);
+                let to = out_dir.join(f);
+                if from.is_dir() {
+                    if let Err(e) = copy_dir(&from, &to) {
+                        eprintln!("error: cannot copy {}: {}", from.display(), e);
+                        return 1;
+                    }
+                } else if from.exists() {
+                    if let Some(parent) = to.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    if let Err(e) = std::fs::copy(&from, &to) {
+                        eprintln!("error: cannot copy {}: {}", from.display(), e);
+                        return 1;
+                    }
+                } else {
+                    eprintln!("error: installer file `{}` not found next to {}", f, opts.file.display());
+                    return 1;
+                }
+            }
+            match installer::produce(&spec, &exe_path, is_windows_target(&opts.target)) {
+                Ok(files) => produced.extend(files),
+                Err(e) => {
+                    eprintln!("error: {}", e);
+                    return 1;
+                }
+            }
         }
         o.keep_c = false;
     }
@@ -1623,6 +2148,20 @@ fn cmd_ship(opts: &Opts) -> i32 {
         println!("  {}", p.display());
     }
     0
+}
+
+fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let dest = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir(&entry.path(), &dest)?;
+        } else {
+            std::fs::copy(entry.path(), dest)?;
+        }
+    }
+    Ok(())
 }
 
 impl Program {
@@ -1635,7 +2174,14 @@ fn main() {
     // Deeply nested source (long else-if chains, big match arms) recurses deeply
     // in the checker and the C emitter; run on a thread with a generous stack,
     // as every compiler that walks trees recursively does.
-    let child = std::thread::Builder::new().stack_size(512 << 20).spawn(real_main).expect("spawn compiler thread");
+    let child = std::thread::Builder::new()
+        .stack_size(512 << 20)
+        .spawn(|| {
+            let code = real_main();
+            cleanup_zig_cache();
+            code
+        })
+        .expect("spawn compiler thread");
     let code = child.join().unwrap_or(101);
     exit(code);
 }
@@ -1643,16 +2189,24 @@ fn main() {
 fn real_main() -> i32 {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.is_empty() {
+        // like `python`: no arguments at a terminal opens the REPL
+        if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+            return repl::run();
+        }
         usage();
     }
     let cmd = args[0].as_str();
     let rest = &args[1..];
     let code = match cmd {
         "version" | "--version" | "-V" => {
-            println!("nx {}", VERSION);
+            println!("nx {} ({})", VERSION, RELEASE_NAME);
             0
         }
         "doctor" => cmd_doctor(),
+        "init" => cmd_init(rest),
+        "add" => cmd_add(rest),
+        "fetch" => cmd_fetch(),
+        "repl" => repl::run(),
         "tokens" => {
             let o = parse_opts(rest);
             match std::fs::read_to_string(&o.file) {
@@ -1675,6 +2229,45 @@ fn real_main() -> i32 {
                     1
                 }
             }
+        }
+        "sexp" => {
+            // the root file only, without its imports: the oracle for the self-hosted parser
+            let o = parse_opts(rest);
+            let text = match std::fs::read_to_string(&o.file) {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("error: cannot read {}: {}", o.file.display(), e);
+                    return 1;
+                }
+            };
+            let (toks, ldiags) = lexer::Lexer::new(&text, 0).lex();
+            let mut p = parser::Parser::new(toks, 0);
+            let m = p.parse_module();
+            if !ldiags.is_empty() || !p.diags.is_empty() {
+                let mut sm = SourceMap::default();
+                sm.add(o.file.to_string_lossy().to_string(), text.clone());
+                for d in ldiags.iter().chain(p.diags.iter()) {
+                    eprint!("{}", sm.render(d));
+                }
+                return 1;
+            }
+            print!("{}", sexp::module(&m, &text));
+            0
+        }
+        "tir" => {
+            // the checked program as S-expressions: the oracle for the self-hosted checker
+            let o = parse_opts(rest);
+            let sigs = rest.iter().any(|a| a == "--sigs");
+            let loaded = match load(&o.file) {
+                Ok(l) => l,
+                Err(()) => return 1,
+            };
+            let prog = match check(&loaded, &o) {
+                Ok(p) => p,
+                Err(()) => return 1,
+            };
+            print!("{}", tirdump::program(&prog, sigs));
+            0
         }
         "parse" => {
             let o = parse_opts(rest);

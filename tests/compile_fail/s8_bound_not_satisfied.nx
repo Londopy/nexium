@@ -1,0 +1,4 @@
+// EXPECT: does not implement trait `Ord`
+struct P { x: i32 }
+fn max(comptime T: type where T: Ord, a: T, b: T) -> T { return if a > b { a } else { b } }
+fn main() { _ = max(P{ .x = 1 }, P{ .x = 2 }) }

@@ -1,0 +1,114 @@
+// std.testing: conveniences for `test` blocks, written in Nexium.
+//
+// `import std.testing` then, inside a test:
+//
+//     testing.expect_approx(area, 3.14159, 0.001)
+//     testing.expect_err(i32, parse("nope"))
+//     testing.expect_contains(output, "42 items")
+//     testing.expect_lines(rendered, expected)    // reports the first differing line
+//     try testing.snapshot("report", rendered)     // compares to snapshots/report.txt
+//
+// Snapshots live in `snapshots/<name>.txt` under the current directory. A
+// missing file is written and the test passes; a mismatch fails with the
+// first differing line. Set `NX_UPDATE_SNAPSHOTS=1` to rewrite them all.
+
+import std.fs
+
+/// Are two floats within `eps` of each other?
+pub fn approx(a: f64, b: f64, eps: f64) -> bool {
+    let d = if a > b { a - b } else { b - a }
+    return d <= eps
+}
+
+/// Panics unless `a` and `b` are within `eps`.
+pub fn expect_approx(a: f64, b: f64, eps: f64) {
+    if !approx(a, b, eps) { panic(format("expected {} to be within {} of {}", .{a, eps, b})) }
+}
+
+/// Did the call fail? (Any error counts.)
+pub fn is_err(comptime T: type, own r: !T) -> bool {
+    _ = r catch { return true }
+    return false
+}
+
+/// Panics unless the result is an error.
+pub fn expect_err(comptime T: type, own r: !T) {
+    if !is_err(T, r) { panic("expected an error but the call succeeded") }
+}
+
+/// Panics unless the result is exactly `err`.
+pub fn expect_error(comptime T: type, own r: !T, err: error) {
+    _ = r catch |e| {
+        if e != err { panic(format("expected error {} but got {}", .{err, e})) }
+        return
+    }
+    panic(format("expected error {} but the call succeeded", .{err}))
+}
+
+/// Panics unless `hay` contains `needle`.
+pub fn expect_contains(hay: []u8, needle: []u8) {
+    if hay.find(needle) == null { panic(format("expected to find {} in {}", .{needle, hay})) }
+}
+
+/// Compares line by line; panics naming the first line that differs.
+pub fn expect_lines(actual: []u8, expected: []u8) {
+    let a = actual.lines()
+    let e = expected.lines()
+    var i: usize = 0
+    while i < a.len and i < e.len {
+        if a[i] != e[i] { panic(format("line {} differs:\n  expected: {}\n  actual:   {}", .{i + 1, e[i], a[i]})) }
+        i += 1
+    }
+    if a.len != e.len { panic(format("expected {} line(s) but got {}", .{e.len, a.len})) }
+}
+
+/// Compare `actual` to `<dir>/<name>.txt`; write it when missing or when
+/// NX_UPDATE_SNAPSHOTS is set.
+pub fn snapshot_in(dir: []u8, name: []u8, actual: []u8) -> !void {
+    var file = fs.join(dir, name)
+    file.append(".txt")
+    let update = os.env("NX_UPDATE_SNAPSHOTS") != null
+    if update or !fs.exists(file) {
+        try fs.make_dirs(dir)
+        try fs.write(file, actual)
+        eprintln("wrote snapshot {}", .{file})
+        return
+    }
+    let expected = try fs.read(file)
+    expect_lines(actual, expected)
+}
+
+/// `snapshot_in("snapshots", name, actual)`.
+pub fn snapshot(name: []u8, actual: []u8) -> !void {
+    return snapshot_in("snapshots", name, actual)
+}
+
+// ------------------------------------------------------------------ tests
+
+fn parse_digit(s: []u8) -> !i32 {
+    if s.len != 1 or s[0] < '0' or s[0] > '9' { return error.InvalidInput }
+    return (s[0] - '0') as i32
+}
+
+test "floats and errors" {
+    expect(approx(1.0, 1.0001, 0.001))
+    expect(!approx(1.0, 1.1, 0.001))
+    expect_approx(0.1 + 0.2, 0.3, 0.000001)
+    expect(is_err(i32, parse_digit("x")))
+    expect(!is_err(i32, parse_digit("7")))
+    expect_err(i32, parse_digit("nope"))
+    expect_error(i32, parse_digit("nope"), error.InvalidInput)
+}
+
+test "text" {
+    expect_contains("42 items found", "items")
+    expect_lines("a\nb\n", "a\nb\n")
+}
+
+test "snapshots" {
+    let dir = fs.temp_path("nxsnap-")
+    try snapshot_in(dir, "first", "one\ntwo\n")
+    expect(fs.exists(fs.join(dir, "first.txt")))
+    try snapshot_in(dir, "first", "one\ntwo\n")
+    try fs.remove_all(dir)
+}

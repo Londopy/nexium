@@ -2,25 +2,25 @@
 
 pub fn simulate(positions: []mut f64, dt: f64, steps: u32) -> f64 export(c) {
     var energy: f64 = 0.0
-    for (0..steps) |_s| {
-        for (positions) |p, i| {
+    for _s in 0..steps {
+        for p, i in positions {
             positions[i] = p + dt * math.sin(p)
         }
     }
-    for (positions) |p| { energy += p * p }
+    for p in positions { energy += p * p }
     return energy
 }
 
 pub fn dot(a: []f64, b: []f64) -> !f64 export(c) {
-    if (a.len != b.len) return error.InvalidInput
+    if a.len != b.len { return error.InvalidInput }
     var acc: f64 = 0.0
-    for (a, b) |x, y| { acc += x * y }
+    for x, y in a, b { acc += x * y }
     return acc
 }
 
 pub fn checksum(data: []u8) -> u32 export(c) {
     var h: u32 = 2166136261
-    for (data) |b| {
+    for b in data {
         h ^= b as u32
         h *%= 16777619
     }
@@ -34,3 +34,4 @@ pub fn divide(a: i64, b: i64) -> i64 export(c) {
 artifact cabi { name = "ropesim", exports = [simulate, dot, checksum, divide] }
 artifact python { name = "ropesim", version = "0.1.0" }
 artifact rustlib { name = "ropesim" }
+artifact node { name = "ropesim" }

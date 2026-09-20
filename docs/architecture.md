@@ -45,8 +45,8 @@ self-hosted lexer in `self/lexer.nx` is checked against.
 
 Recursive descent, one function per grammar rule, producing an `ast::Module`
 of items: functions, structs, enums, traits, impls, constants, globals,
-imports, tests, artifacts. Conditions are parenthesised (`if (c)`), struct
-literals are `Point{ .x = 1 }`, anonymous ones are `.{ .x = 1 }`, captures on
+imports, tests, artifacts. Conditions are bare (`if c {`; a struct literal
+there needs parentheses), struct literals are `Point{ .x = 1 }`, anonymous ones are `.{ .x = 1 }`, captures on
 closures are explicit `|[x, &mut y] a: i32|`.
 
 The parser is where the continuation rules live: a line that starts with
@@ -230,7 +230,7 @@ the compiler:
 | `nx refcounts` | every `Retain`/`Release`/`Weak`/`Upgrade` node, with its function |
 | `nx audit` | `unsafe` blocks and globals |
 | `nx doc` | doc comments, signatures, and effects, rendered to HTML |
-| `nx lsp` | diagnostics from a full check on every edit, hover from `TFunc` |
+| `nx lsp` | diagnostics from a full check on every edit, hover from `TFunc`; definition, completion and rename from the token stream and parsed modules (`src/ide.rs`), so they answer while the code has errors |
 | `nx size` | section sizes of the object file mapped back to declarations |
 | `nx fmt` | the token stream only; it never joins or splits lines |
 

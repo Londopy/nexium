@@ -1,0 +1,20 @@
+// SPEC 8.4: dyn coercion, vtable dispatch, a call through dyn acquires the permitted effects, bounded dyn types.
+trait Shape { fn area(self: *Self) -> f64 }
+struct Sq { s: f64 }
+struct Ci { r: f64 }
+impl Shape for Sq { fn area(self: *Self) -> f64 { return self.s * self.s } }
+impl Shape for Ci { fn area(self: *Self) -> f64 { return 3.0 * self.r * self.r } }
+fn total(shapes: []dyn Shape) -> f64 {
+    var t: f64 = 0.0
+    for s in shapes { t += s.area() }
+    return t
+}
+fn quiet(s: dyn Shape !allocates !blocks) -> f64 !allocates !blocks { return s.area() }
+fn main() {
+    var a = Sq{ .s = 2.0 }
+    var b = Ci{ .r = 1.0 }
+    var list = List(dyn Shape).new()
+    list.append(&a)
+    list.append(&b)
+    println("{} {}", .{total(list), quiet(&a)})
+}

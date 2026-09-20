@@ -1,0 +1,8 @@
+// EXPECT: cannot move `name` out of a loop; a loop variable is a view of the element
+fn main() {
+    var names = List(String).new()
+    names.append(String.from("a"))
+    var copy = List(String).new()
+    for name in names { copy.append(name) }
+    println("{}", .{copy.len})
+}

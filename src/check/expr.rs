@@ -116,6 +116,18 @@ impl<'a> Checker<'a> {
             }
             return e;
         }
+        // `return local` into a `?T` or `!T` wraps the local; the move is the local's
+        if let TExprKind::OptWrap(inner) | TExprKind::ErrWrap(inner) = &e.kind {
+            if matches!(inner.kind, TExprKind::Local(_)) {
+                let inner = (**inner).clone();
+                let inner = self.take_ownership(inner);
+                let (ty, span) = (e.ty, e.span);
+                return match e.kind {
+                    TExprKind::OptWrap(_) => TExpr { kind: TExprKind::OptWrap(Box::new(inner)), ty, span },
+                    _ => TExpr { kind: TExprKind::ErrWrap(Box::new(inner)), ty, span },
+                };
+            }
+        }
         match &e.kind {
             TExprKind::Local(l) => {
                 let l = *l;
@@ -125,6 +137,38 @@ impl<'a> Checker<'a> {
                     let n = local.name.clone();
                     let tn = self.type_name(t);
                     self.error_note(e.span, format!("cannot move `{}` out of a parameter; parameters are borrowed", n), None, format!("use `{}.clone()` to take an owned copy of the `{}`", n, tn));
+                } else if local.loop_item {
+                    let n = local.name.clone();
+                    let tn = self.type_name(t);
+                    self.error_note(
+                        e.span,
+                        format!("cannot move `{}` out of a loop; a loop variable is a view of the element", n),
+                        None,
+                        format!("use `{}.clone()` to take an owned copy of the `{}`", n, tn),
+                    );
+                } else {
+                    let cur = self.cur.as_mut().unwrap();
+                    cur.moved.insert(l);
+                    cur.moved_spans.insert(l, e.span);
+                }
+                e
+            }
+            // `opt.?`, `opt orelse d`, `try res` on a local move the whole local
+            TExprKind::Unwrap { expr: inner, .. } | TExprKind::OrElse { expr: inner, .. } | TExprKind::Try(inner) if matches!(inner.kind, TExprKind::Local(_)) => {
+                let l = match inner.kind {
+                    TExprKind::Local(l) => l,
+                    _ => unreachable!(),
+                };
+                let cur = self.cur.as_ref().unwrap();
+                let local = &cur.locals[l as usize];
+                if local.is_param && !local.owned {
+                    let n = local.name.clone();
+                    let tn = self.type_name(t);
+                    self.error_note(e.span, format!("cannot move the `{}` out of the parameter `{}`; parameters are borrowed", tn, n), None, "use `.clone()` to take an owned copy");
+                } else if local.loop_item {
+                    let n = local.name.clone();
+                    let tn = self.type_name(t);
+                    self.error_note(e.span, format!("cannot move the `{}` out of the loop variable `{}`; it is a view of the element", tn, n), None, "use `.clone()` to take an owned copy");
                 } else {
                     let cur = self.cur.as_mut().unwrap();
                     cur.moved.insert(l);
@@ -173,6 +217,13 @@ impl<'a> Checker<'a> {
                         return Ok(TExpr { kind: TExprKind::OptWrap(Box::new(inner_e)), ty: target, span });
                     }
                 }
+                // a literal into `!T`: the same, on the success side
+                if let TyKind::ErrUnion(_, inner) = kt {
+                    if let Ok(inner_e) = self.coerce(te.clone(), inner) {
+                        let span = inner_e.span;
+                        return Ok(TExpr { kind: TExprKind::ErrWrap(Box::new(inner_e)), ty: target, span });
+                    }
+                }
                 return Err(te);
             }
             // *String / *List(T) -> []u8 / []T: a pointer to an owning value reads as a view of it
@@ -213,7 +264,11 @@ impl<'a> Checker<'a> {
                         }
                     }
                 }
-                return Ok(TExpr { ty: target, ..te });
+                if matches!(te.kind, TExprKind::ErrVal(_)) {
+                    return Ok(TExpr { ty: target, ..te });
+                }
+                let span = te.span;
+                return Ok(TExpr { kind: TExprKind::ErrToUnion(Box::new(te)), ty: target, span });
             }
             // T -> !T
             (_, TyKind::ErrUnion(_, inner)) => {
@@ -721,7 +776,29 @@ impl<'a> Checker<'a> {
                     let tt = self.tys.type_ty();
                     return self.mk(TExprKind::TypeVal(t), tt, span);
                 }
-                if matches!(name, "List" | "Map" | "math" | "io" | "os" | "time" | "random" | "context" | "process" | "utf8" | "ascii" | "mem" | "slice" | "fmt" | "test" | "alloc" | "Ordering") {
+                if matches!(
+                    name,
+                    "List"
+                        | "Map"
+                        | "math"
+                        | "io"
+                        | "os"
+                        | "time"
+                        | "random"
+                        | "context"
+                        | "process"
+                        | "utf8"
+                        | "ascii"
+                        | "mem"
+                        | "slice"
+                        | "fmt"
+                        | "test"
+                        | "alloc"
+                        | "Ordering"
+                        | "net"
+                        | "thread"
+                        | "sync"
+                ) {
                     let t = self.tys.intern(TyKind::Namespace(name.to_string()));
                     return self.mk(TExprKind::Unit, t, span);
                 }
@@ -935,7 +1012,9 @@ impl<'a> Checker<'a> {
         let bt = self.tys.shallow(base.ty);
         if let TyKind::Array(n, _) = self.tys.kind(bt).clone() {
             if let Some((lo, hi)) = self.expr_range(index) {
-                return lo >= 0 && hi < n as i128;
+                if lo >= 0 && hi < n as i128 {
+                    return true;
+                }
             }
         }
         if let (TExprKind::Local(bl), TExprKind::Local(il)) = (&base.kind, &index.kind) {
@@ -1076,6 +1155,17 @@ impl<'a> Checker<'a> {
                 self.mk(TExprKind::Unary { op, expr: Box::new(inner), mode: ArithMode::Plain }, bt, span)
             }
             UnOp::Neg => {
+                // `-128` is one literal, not the negation of 128 (which would not fit an i8)
+                if let Expr::Lit { value: Lit::Int(v), .. } = expr {
+                    if let Some(et) = expected.map(|t| self.tys.shallow(t)) {
+                        if let Some(it) = self.tys.as_int(et) {
+                            if it.is_signed() && *v <= it.max() as u128 + 1 {
+                                let neg = (*v as i128).wrapping_neg();
+                                return self.mk(TExprKind::Int(neg), et, span);
+                            }
+                        }
+                    }
+                }
                 let inner = self.check_expr(expr, expected);
                 let t = self.tys.shallow(inner.ty);
                 if self.tys.is_float(t) {
@@ -1441,7 +1531,11 @@ impl<'a> Checker<'a> {
             let et = self.tys.intern(TyKind::ErrorSet(set));
             self.declare_local(b, et, false, span)
         });
+        let moved_before = self.moved_snapshot();
         let h = self.check_expr(handler, Some(payload));
+        if matches!(self.tys.kind(self.tys.shallow(h.ty)), TyKind::Never) {
+            self.moved_restore(&moved_before);
+        }
         let h = self.coerce_or_error(h, payload, "catch handler");
         self.pop_scope();
         self.mk(TExprKind::Catch { expr: Box::new(inner), err_local, handler: Box::new(h) }, payload, span)
@@ -1459,7 +1553,13 @@ impl<'a> Checker<'a> {
                 return self.error_expr(span);
             }
         };
+        // a default that diverges (`orelse return x`) moves nothing for the
+        // code after it, the same as a diverging `if` branch
+        let moved_before = self.moved_snapshot();
         let d = self.check_expr(default, Some(payload));
+        if matches!(self.tys.kind(self.tys.shallow(d.ty)), TyKind::Never) {
+            self.moved_restore(&moved_before);
+        }
         let d = self.coerce_or_error(d, payload, "orelse default");
         let p = self.tys.resolve(payload, false);
         self.mk(TExprKind::OrElse { expr: Box::new(inner), default: Box::new(d) }, p, span)
@@ -1470,7 +1570,11 @@ impl<'a> Checker<'a> {
         let c = self.check_expr(cond, Some(bt));
         let c = self.coerce_or_error(c, bt, "if condition");
         // guard-based range narrowing: `if (x < N)` / `if (x <= N)` / `if (x >= N)`
+        // the facts hold inside the then block only; what was known before
+        // comes back after it (a fact that outlived its block once elided a
+        // bounds check on a later index)
         let narrowing = self.guard_narrowing(&c);
+        let ranges_before = self.cur().ranges.clone();
         self.push_scope();
         for (l, r) in &narrowing {
             self.cur().ranges.insert(*l, *r);
@@ -1479,6 +1583,7 @@ impl<'a> Checker<'a> {
         let then_expected = if els.is_some() { expected } else { Some(self.tys.void()) };
         let tb = self.check_block(then, then_expected, None);
         self.pop_scope();
+        self.cur().ranges = ranges_before;
         let moved_then = self.moved_snapshot();
         let then_diverges = matches!(self.tys.kind(self.tys.shallow(tb.ty)), TyKind::Never);
         if then_diverges && els.is_none() {
@@ -1607,8 +1712,16 @@ impl<'a> Checker<'a> {
             }
         }
         if let TExprKind::Logical { and: true, lhs, rhs } = &c.kind {
+            // both sides hold: a local named twice (`x > 0 and x < 10`) gets
+            // the intersection, not whichever fact was inserted last
             out.extend(self.guard_narrowing(lhs));
-            out.extend(self.guard_narrowing(rhs));
+            for (l, (lo, hi)) in self.guard_narrowing(rhs) {
+                match out.iter_mut().find(|(k, _)| *k == l) {
+                    Some((_, r)) => *r = (r.0.max(lo), r.1.min(hi)),
+                    None => out.push((l, (lo, hi))),
+                }
+            }
+            out.retain(|(_, (lo, hi))| lo <= hi);
         }
         out
     }
@@ -2084,7 +2197,7 @@ impl<'a> Checker<'a> {
                     match a {
                         Expr::TypeVal { ty, .. } => targs.push(ty.clone()),
                         Expr::Ident { name: n, span: s } => targs.push(TypeExpr::Named { path: vec![n.clone()], args: vec![], span: *s }),
-                        Expr::Call { .. } | Expr::Field { .. } | Expr::TupleLit { .. } => match expr_to_type_expr(a) {
+                        Expr::Call { .. } | Expr::Field { .. } | Expr::MethodCall { .. } | Expr::TupleLit { .. } => match expr_to_type_expr(a) {
                             Some(te) => targs.push(te),
                             None => {
                                 self.error(a.span(), "expected a type argument");
@@ -2436,7 +2549,7 @@ impl<'a> Checker<'a> {
         let mut params = Vec::new();
         for (i, p) in c.params.iter().enumerate() {
             let lid = locals.len() as LocalId;
-            locals.push(Local { name: p.name.clone(), ty: ptys[i], mutable: false, span: p.span, is_param: true, owned: false });
+            locals.push(Local { name: p.name.clone(), ty: ptys[i], mutable: false, span: p.span, is_param: true, owned: false, loop_item: false });
             params.push(lid);
         }
         let env_tys: Vec<(TyId, bool)> = captures.iter().map(|(_, r, t)| (*t, *r)).collect();
@@ -2503,7 +2616,7 @@ impl<'a> Checker<'a> {
             let lid = ctx.locals.len() as LocalId;
             let mutable = c.captures[i].mutable;
             let lty = if *by_ref { self.tys.ptr(mutable, *ty) } else { *ty };
-            ctx.locals.push(Local { name: format!("cap_{}", name), ty: lty, mutable: mutable || !*by_ref, span: c.captures[i].span, is_param: true, owned: false });
+            ctx.locals.push(Local { name: format!("cap_{}", name), ty: lty, mutable: mutable || !*by_ref, span: c.captures[i].span, is_param: true, owned: false, loop_item: false });
             ctx.scopes[0].push((name, ScopeEntry { local: lid, auto_deref: *by_ref }));
         }
         let saved = self.cur.take();
@@ -2552,6 +2665,8 @@ pub fn is_borrowed_view(e: &TExpr) -> bool {
         TExprKind::Field { .. } | TExprKind::RefField { .. } | TExprKind::TupleField { .. } | TExprKind::Index { .. } | TExprKind::Deref(_) => true,
         TExprKind::Builtin { op: Builtin::MapGet | Builtin::ListLast, .. } => true,
         TExprKind::OrElse { expr, .. } | TExprKind::Unwrap { expr, .. } | TExprKind::Try(expr) => is_borrowed_view(expr),
+        // `return xs[i]` into a `?T` or `!T` wraps the element first; the view is still moved
+        TExprKind::OptWrap(expr) | TExprKind::ErrWrap(expr) => is_borrowed_view(expr),
         _ => false,
     }
 }
@@ -2600,6 +2715,14 @@ pub fn expr_to_type_expr(e: &Expr) -> Option<TypeExpr> {
                 *ta = targs?;
                 *s = *span;
                 return Some(t);
+            }
+            None
+        }
+        // `mod.Type(A)`: a generic type of another module reads as a method call
+        Expr::MethodCall { receiver, method, args, span } => {
+            if let Expr::Ident { name, .. } = &**receiver {
+                let targs: Option<Vec<TypeExpr>> = args.iter().map(expr_to_type_expr).collect();
+                return Some(TypeExpr::Named { path: vec![name.clone(), method.clone()], args: targs?, span: *span });
             }
             None
         }

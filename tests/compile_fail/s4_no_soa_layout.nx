@@ -1,0 +1,3 @@
+// EXPECT: `soa` is not a layout
+struct S soa { a: u8 }
+fn main() { _ = S{ .a = 1 } }

@@ -93,6 +93,7 @@ jobs:
         run: |
           pip install pillow
           python scripts/make_icon.py
+          Copy-Item assets\icon.ico dist-win\nexium.ico
           $ver = "${{ github.ref_name }}".TrimStart("v")
           $src = (Resolve-Path dist-win).Path
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$ver" "/DSourceDir=$src" installers\windows\nexium.iss
@@ -116,12 +117,14 @@ jobs:
           path: artifacts
           merge-multiple: true
       - name: Release notes and checksums
+        id: notes
         run: |
           pip install patchnotes
           python scripts/release_notes.py "${{ github.ref_name }}" artifacts notes.md
+          echo "title=$(cat title.txt)" >> "$GITHUB_OUTPUT"
           cat notes.md
       - uses: softprops/action-gh-release@v2
         with:
-          name: Nexium ${{ github.ref_name }}
+          name: ${{ steps.notes.outputs.title }}
           body_path: notes.md
           files: artifacts/*

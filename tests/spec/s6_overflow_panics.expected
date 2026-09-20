@@ -1,0 +1,2 @@
+panic: integer overflow in `+`
+  at tests/spec/s6_overflow_panics.nx:5

@@ -5,8 +5,395 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 The file is validated in CI with [patchnotes](https://pypi.org/project/patchnotes/).
+The line under each version header is the release's name, a place on a
+mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ## [Unreleased]
+
+### Removed
+
+- `layout(packed)` and `soa` on structs, and the `pool` and `stack`
+  allocation strategies, are gone from the specification (decision 88):
+  `layout(c)` and `using arena` are what the language has. The two struct
+  spellings used to be accepted and silently ignored; they are errors now.
+  Region rule R1 is the region rule; the cases it does not cover are
+  listed in SPEC 5.6, and a debug build now fills freed storage with
+  `0xDD` so a view that outlived its storage does not read the old
+  contents by luck.
+
+## [0.7.0] - 2026-09-19
+
+*Annapurna: Camp V* — the last camp, at 7,400 m; the summit push starts here: the compiler builds itself.
+
+### Added
+
+- `self/check.nx` checks closures: parameter and return types from the
+  expected function type, by-value and by-reference captures, inferred
+  return types; and records: constraint checks, compile-time decisions on
+  constant fields, `Record.new`; and trait objects: vtables, `dyn`
+  coercions, dynamic calls, effect bounds on function values.
+  `examples/generics.nx`, `examples/tests.nx`, `examples/tour.nx`,
+  `examples/records.nx`, `examples/dyn.nx` and `std/thread.nx` join the
+  body comparison; and binary patterns and construction: `examples/binary.nx`
+  and `examples/binary_sizes.nx` join too (46 sources).
+- `examples/records.nx`: compile-time, `.new` and run-time constraint checks.
+- `examples/binary_sizes.nx`: float, signed, little-endian and computed-size
+  segments, a remainder written back out.
+- `self/check.nx` evaluates at compile time: an interpreter over the typed
+  IR runs constants, globals, `comptime` expressions, `comptime test` blocks
+  and record constraints; `examples/comptime.nx` (a CRC table, primes,
+  strings and structs computed at compile time) joins the comparison (50
+  sources: every example and std module but `@cImport` users).
+- A constant slice whose elements were computed at compile time is stored
+  as a static array; only string literals could back a constant slice.
+- `self/check.nx` reports the diagnostics-only passes: declared effect
+  bounds against inferred effects, `for parallel` bodies mutating shared
+  state, mutable globals in embeddable libraries, `own` on copied types and
+  on exported or fn-value functions, moves out of map lookups, `match`
+  exhaustiveness, returned views into locals. `cargo test` runs it over
+  every compile-fail case and expects every message the Rust checker gives.
+- `self/cimport.nx`, the C header importer in Nexium, and `@cImport` in
+  `self/check.nx`: every source in the tree now matches the oracle,
+  `examples/cimport.nx` and nexium-gui included (54 sources).
+- `self/cgen.nx`, the C emitter in Nexium: byte-identical to `nx emit-c` on
+  every source in the tree (54, its own 96k-line translation unit
+  included); `cargo test` diffs them.
+- The bootstrap closes: `nx1` (the emitter in Nexium, built by the Rust
+  compiler) emits the C of itself, `zig cc` builds `nx2` from it with no
+  Rust involved, and `nx2` emits byte-identical C for itself and other
+  programs. `cargo test` performs the three stages.
+- `tests/spec`: the specification's conformance cases, one program per
+  claim SPEC.md makes with its recorded output and exit code, run by
+  `cargo test` and diffed through every self-hosting stage; sections 2 to
+  14 (artifacts and the toolchain are covered by the ship tests).
+- `self/nx.nx`, the `nx` driver in Nexium: build, run, test, check, emit-c
+  and tir over the self-hosted pipeline, invoking the C compiler as the
+  Rust driver does; the standard library is embedded in it. It builds
+  itself, and the result builds and runs programs (`cargo test` checks
+  that). Nothing past the first compiler needs `cargo`.
+
+### Fixed
+
+- `Color.Green as u8` (a unit enum cast to an integer) emitted a C cast of
+  the whole struct, which the C compiler rejected; it is the tag now.
+- `let d: i8 = -128` is accepted: a negative literal is one literal, not
+  the negation of 128 (which does not fit an i8).
+- A labeled block that ends in `break :label value` has the value's type;
+  it was `never`, and printing the value was rejected.
+- A `break` inside an `orelse` default, a call argument or any other nested
+  expression now ends a `while true`; a non-void function that ended in such
+  a loop was accepted without a return value.
+- A binary segment sized by an expression (`payload:len*8`) is in bits like a
+  constant size; the generated C and the compile-time interpreter scaled it
+  by eight again, so such patterns never matched and such constructions
+  wrote past the intended width.
+- A `!void` tail expression (a `match` whose arms print, a call) at the end
+  of a function returning `!void` is returned; it was reported as unused.
+- `%` on floats compiles: the generated C applied the integer operator to
+  doubles and the C compiler rejected it; it is `fmod` now.
+- A constant of `List`, `String`, `Map`, `ref class` or weak type (or one
+  containing them) is rejected with a hint to store a slice; it used to
+  fail in the C compiler, or worse, be freed by whoever copied it.
+- Slicing an empty slice (`text[..]`, `"".split(",")`, an empty binary
+  pattern) added an offset to a null pointer, which is undefined in C: a
+  debug build made by zig 0.14 trapped with "applying zero offset to null
+  pointer". The generated C goes through `nx_padd`, which skips the add.
+- `if t < 1000 and t > -1000 { t + 1 }`: both halves of an `and` guard
+  narrow the range; the second fact used to replace the first, so the
+  addition was not proven and a `!panics` bound on the function failed.
+- An array indexed by the index of a `for x, i in xs` over it is proven in
+  bounds; the proof was skipped for arrays.
+- `self/check.nx` kept range facts on a `var` only until its next
+  assignment was checked, so a guarded `t = t - 10` was not proven; the
+  facts now hold while the right side is checked, as in the Rust checker.
+- The generated C no longer collides with macOS's `mach` headers, which
+  define `ts_32` and friends as macros: a local named `ts` at slot 32
+  failed to compile on macOS.
+- `@cImport` retries a preprocessor run that failed without a diagnostic
+  and reports the exit code when it keeps failing, instead of an empty
+  message.
+- `self/cimport.nx` imported hexadecimal float macros (macOS's `MAXFLOAT`)
+  that the Rust importer skips, so the two disagreed on `<math.h>` there;
+  neither imports them now.
+- `self/nx.nx` links native macOS builds with the system compiler, as the
+  Rust driver does (zig 0.14 cannot link against the current Xcode SDK);
+  `cargo test` builds the bootstrap's second stage with that compiler too.
+- The tree-sitter grammar parses `x orelse return null` and the other jumps
+  after `orelse` and `catch`, and `/little-signed` segment modifiers.
+- `List(thread.Worker(Job))`: a generic type of another module takes its
+  type arguments from the caller's scope, and is accepted in expression
+  position (`List(thread.Worker(Job)).new()`). The arguments were looked
+  up in the other module ("cannot find type `Job`"), and the expression
+  form was rejected as not a type.
+
+## [0.6.1] - 2026-09-19
+
+*Annapurna: Lachenal* — patch.
+
+### Added
+
+- `nx tir`: the checked program as S-expressions, the oracle for the
+  self-hosted checker; `--sigs` prints declarations and signatures only.
+- `self/check.nx`, the checker in Nexium: module loading, declarations,
+  type interning, signatures (`cargo test` diffs `--sigs` over 41 sources),
+  and function bodies: statements, expressions, calls, builtin methods and
+  namespaces, matches and patterns, casts, coercions, ownership moves and
+  the range analysis. It produces the oracle's exact typed IR for 35
+  sources, itself among them; generics, closures, trait objects, binary
+  patterns, compile-time calls and C imports remain.
+
+### Fixed
+
+- A C compilation that fails because Zig's shared cache was being written by
+  another `nx` at the same time ("failed to check cache") is retried, so
+  parallel builds on Windows no longer fail at random.
+- The formatter spaces bit-or like the other operators (`a | b`, not
+  `a| b`) and no longer glues `-> !List(T) {`; closure bars are classified
+  per line so a bit-or inside a closure body is not taken for its closing bar.
+- A `String` built for the right side of `and`/`or` produced C that did not
+  compile (its release was emitted outside the block that declared it).
+- `i128` range bounds overflowed inside the compiler; an `i128` literal
+  beyond `i64` was emitted as undefined C for the minimum; `parse_int`
+  rejected values above 2^65.
+- A range fact from an `if` guard (`if i == 1 { ... }`) outlived its block
+  and could prove a later `xs[i]` in range, eliding its bounds check.
+- `return xs[i]` into a `?T` or `!T` moved the element without a clone, and
+  a diverging `orelse` default or `catch` handler marked its operand moved.
+- Floats print as the shortest text that reads back exactly
+  (`3.141592653589793`, not `3.1415926535897931`).
+- The tree-sitter parser is regenerated for 0.6.0 (its version is embedded).
+
+## [0.6.0] - 2026-09-19
+
+*Annapurna: Camp IV* — the syntax settled for 1.0; the parser in Nexium.
+
+### Changed
+
+- **Breaking: control flow drops its parentheses and bodies always take
+  braces** (decision 87). `if c { }`, `while c { }`, `for x, i in items { }`,
+  `for i in lo..hi step s { }`, `for parallel x in items { }`, and
+  `if let v = opt { }` replace `if (c)`, `while (c)`, `for (items) |x, i|`,
+  and `if (opt) |v|`. The one-statement forms become braced one-liners:
+  `if c { return v }`, `let m = if a > b { a } else { b }`. A struct literal
+  in a condition needs parentheses (`if (Point{ .x = 1 }) == p { }`).
+  Match-arm guards are `pat if cond =>`. `catch |e|` and closure
+  parameters are unchanged.
+- `nx fmt` migrates 0.5 sources to the new syntax as part of formatting;
+  `nx fmt --migrate-only` upgrades the syntax and leaves the layout alone.
+  The migration edits by token span, keeps comments and blank lines, and
+  is idempotent, so running it on a mixed tree is safe.
+- The formatter puts a space before the body brace of any control head
+  (`if k == Kind.Defer {`), where before an uppercase name would have been
+  glued to `{` as a struct literal.
+- The language server resolves `for` bindings and `if let` bindings to
+  their declaration.
+- The tree-sitter grammar, the VS Code and Sublime syntaxes, every example,
+  the standard library, the GUI, the self-hosting sources, and all
+  documentation (including the translations) use the new syntax.
+- Moving a `String` or `List` out of a `for` loop variable is a compile
+  error (`use x.clone()`); it silently produced a double free before. A
+  loop variable is a view of the element.
+
+### Added
+
+- `self/parser.nx`: the parser written in Nexium now parses the 0.6 syntax
+  and prints the same tree as `nx sexp` for every example, std module, GUI
+  and self-hosting source; `cargo test` diffs the two (roadmap phase 4).
+
+### Fixed
+
+- `unreachable` as the last statement of a function returning an error
+  union or struct produced C that did not compile.
+- A program whose imported module also defines `main` (as `self/lexer.nx`
+  does, for running the lexer on its own) took the wrong entry point.
+- `nx` left one Zig cache directory behind per process under
+  `nx-out/.zig-cache`; it is removed when the command finishes, and stale
+  ones are swept.
+
+## [0.5.0] - 2026-09-19
+
+*Annapurna: Camp III* — other people can build on it: packages, editors, installers.
+
+### Added
+
+- Packages: a `nexium.toml` manifest with `[dependencies]` from a git tag
+  (`{ git = "...", tag = "..." }`) or a directory (`{ path = "..." }`);
+  `import dep` loads the dependency's `src/lib.nx` and `import dep.module`
+  its `src/module.nx`; a package's own imports stay inside the package.
+  `nx init` writes a manifest, `nx add` records and fetches a dependency,
+  `nx fetch` clones every git dependency (transitively) into
+  `nexium_modules/` and writes `nexium.lock` with the resolved commits.
+  See `docs/packages.md`.
+- A tree-sitter grammar (`editors/tree-sitter-nexium`) with highlight
+  queries for Neovim, Helix and Zed; it parses every example, std module
+  and self-hosted source without an error node, and CI keeps it that way.
+- The language server gained go to definition (functions, types, constants,
+  locals, imported and package modules), completion (module members after
+  `alias.`, fields, methods, variants and errors after `.`, names in
+  scope), and rename (a local within its function, an item across the
+  file). They work from the parsed source, so they answer in files that do
+  not type-check yet.
+- `artifact installer`: `nx ship` produces an installer for a program. On
+  Windows an Inno Setup script (compiled to `<Name>-<version>-setup-x64.exe`
+  when Inno Setup 6 is installed) with license page, per-user or
+  all-users install, Start menu entry, optional PATH entry and uninstaller;
+  on Linux and macOS an `install.sh` with `--prefix` and `--uninstall` plus
+  a tarball. Listed `files` are copied next to the program.
+- `artifact node { name = "pkg" }`: `nx ship` produces an npm package for an
+  exported library: `index.js` calling the shared library through koffi
+  (no build step, no node-gyp), `index.d.ts` typings, `package.json`.
+  Slices take typed arrays, arrays or strings; error unions throw
+  `NexiumError` and panics throw `NexiumPanic` with the message.
+
+### Fixed
+
+- Parallel builds on Windows could fail inside Zig's own cache ("failed to
+  check cache ... file_open Unexpected") when several `zig cc` processes
+  started at once; each `nx` process now gives Zig its own cache under the
+  output directory unless `ZIG_LOCAL_CACHE_DIR` is set.
+
+## [0.4.0] - 2026-09-19
+
+*Annapurna: Camp II* — the language talks to the world: sockets, HTTP, threads.
+
+### Added
+
+- Sockets in the runtime: `net.connect`, `listen`, `accept`, `send`, `recv`,
+  `close`, `peer`, `local`, `resolve`, `udp_bind`, `send_to`, `recv_from`,
+  `last_peer`; blocking, with per-call timeouts, on Winsock and BSD sockets.
+  New errors `Timeout` and `ConnectionRefused`.
+- `std.net`: `TcpStream` (connect with timeout, send, recv, recv_all, peer,
+  buffered `reader()`/`writer()`), `TcpListener` (bind, accept with
+  timeout, port), `UdpSocket` (bind, send_to, recv_from), `parse_addr`,
+  `port_of`, `resolve`. `std.stream` readers and writers work over sockets.
+- `std.http`: a client (`get`, `post`, `request` with headers; HTTP/1.1,
+  Content-Length and chunked bodies, up to five redirects) and a server
+  (`Server.bind`, `serve`, `serve_one`, `Router` with exact and `/*` routes,
+  `serve_static`, `Request.param`/`header`, response helpers `text`, `html`,
+  `json`, `redirect`, `not_found`). Plain `http://`; TLS is left to
+  `@cImport`.
+- `examples/service.nx`: an HTTP service and a client in one program, the
+  phase 2 exit example; `examples/errors_more.nx` covers the fixes below.
+- Threads in the runtime (`thread.start`, `thread.join`, `thread.count`,
+  `sync.mutex_new`/`lock`/`unlock`/`mutex_free`, `sync.cond_new`/`wait`/
+  `signal`/`broadcast`/`cond_free`) and `std.thread` on top: `spawn` returns
+  a `Thread(T, R)` whose `join` yields the function's result, `run` returns
+  a `Worker(T)` for functions without one, `Channel(T)` (`send`, `recv`,
+  `try_recv`, `close`), `Mutex(T)` (`lock` returns `*mut T`, `unlock`). A
+  panic inside a thread is re-raised by `join`. Starting a thread carries
+  the `nondeterministic` and `shared_mutable` effects.
+- `own` is accepted on parameters of methods in generic `impl` blocks.
+- `process.exec(argv, stdin, cwd)` runs a program with stdin fed, a working
+  directory, and stdout/stderr captured (`process.last_stdout`,
+  `process.last_stderr`); `std.process` wraps it as `run`, `run_with`,
+  `shell` returning an `Output` with `code`, `stdout`, `stderr`.
+
+### Fixed
+
+- Free functions with the same name in two imported modules (`fs.copy` and
+  `stream.copy`) collided in the generated C.
+- Returning a caught error value (`catch |e| { return e }`) from a function
+  returning `!T` produced a bare error id instead of an error union.
+- An untyped integer literal now coerces into `!T` (`return 7` in a
+  function returning `!i32`).
+- The formatter kept the space in `-> http.Response {` (a dotted type before
+  a block is not a struct literal).
+
+## [0.3.0] - 2026-09-19
+
+*Annapurna: Camp I* — the first camp on the mountain: the tools' standard library.
+
+### Added
+
+- `std.fs`: `exists`, `is_file`, `is_dir`, `size`, `modified`, `read`,
+  `read_lines`, `write`, `append`, `copy`, `list` (sorted), `make_dir`,
+  `make_dirs`, `remove`, `remove_all`, `rename`, `walk`, `cwd`, `temp_dir`,
+  `temp_path`, and the path helpers `join`, `parent`, `base_name`, `stem`,
+  `extension`, `with_extension`, `normalize`, `is_absolute`. Under it, new
+  `io` primitives in the runtime: `append_file`, `file_kind`, `file_size`,
+  `file_modified`, `make_dir`, `remove_file`, `remove_dir`, `rename`,
+  `list_dir`, `cwd`, `temp_dir`; they also work at the REPL.
+- `std.time`: `DateTime` (`utc`, `local`, `with_offset`, `now_utc`,
+  `now_local`, `date`, `parse_iso`, `to_ms`, `weekday`, `day_of_year`,
+  `iso`, `format` with `%Y %m %d %H %M %S %3 %z %a %b %j`), `Duration`
+  (`seconds` ... `days`, `between`, `since`, `text` such as `1h 02m`),
+  `Stopwatch` on the monotonic clock, `is_leap`, `days_in_month`. Under it,
+  `time.utc_offset(ms)` in the runtime (0 at the REPL).
+- `std.regex`: a Pike VM (no backtracking, linear time) with classes,
+  `\d \w \s \b`, anchors, groups and `(?:...)`, alternation, greedy and
+  lazy repeats including `{n,m}`; `compile`, `find`, `find_at`, `find_all`,
+  `is_match`, `replace_all` with `$1` references, `split`, and `Match.group`.
+- A local that was moved out can be assigned again; the assignment
+  re-initializes it instead of being reported as a use after move.
+- `for (a..b step s) |i|` walks a range with a step; a negative step counts
+  down (the loop variable must be signed). `while (c) { } else { }` runs the
+  else block when the condition turns false, but not after a `break`.
+- `match` exhaustiveness now uses the full matrix algorithm, so tuples of
+  enums, nested optionals and enum payloads are checked precisely instead of
+  demanding a catch-all arm.
+- `nx test FILE --filter NAME` runs the tests whose names contain NAME.
+- `std.text`: UTF-8 by code point (`decode_at`, `chars`, `char_count`,
+  `char_at`, `slice`, `truncate`, `reverse`, `encode`, `is_valid`), terminal
+  `width` (wide and zero-width aware), and case mapping for ASCII, Latin-1,
+  Latin Extended-A, Greek and Cyrillic (`to_upper`, `to_lower`,
+  `eq_ignore_case`).
+- `std.testing`: `approx`, `expect_approx`, `is_err`, `expect_err`,
+  `expect_error`, `expect_contains`, `expect_lines` (names the first
+  differing line) and file snapshots (`snapshot`, `snapshot_in`;
+  `NX_UPDATE_SNAPSHOTS=1` rewrites them).
+- Embedded std modules can import each other; `error` is a type name (the
+  anonymous error set), and `own` is accepted on generic parameters.
+- `nx test` no longer runs the tests of imported std modules.
+- `std.stream`: buffered `Reader` (`open`, `stdin`, `read_line`, `read`,
+  `read_all`) and `Writer` (`open`, `append`, `stdout`, `stderr`, `write`,
+  `write_line`, `flush`, `close`) plus `copy`, over new runtime file handles
+  (`io.open`, `io.read`, `io.write`, `io.flush`, `io.close`; handles 1 to 3
+  are the standard streams).
+- `os.environ()` lists the environment; `args.env_map()` turns it into a
+  `Map(String, String)`.
+- `nx test --verbose` prints timings and the tests a filter skipped;
+  `nx doc std.fs` and `nx test std.regex` accept an embedded module by name.
+- `examples/tool.nx`: a log scanner (walk a tree, parse timestamps, filter
+  by a date window and a regex, tally by level) in 142 lines, the phase 1
+  exit example of the roadmap; runs on `examples/data/logs` by default.
+
+### Fixed
+
+- A struct, tuple or enum literal that read a local in one field and moved
+  it in a later field saw the already-zeroed value; field values are now
+  materialized in source order.
+
+## [0.2.1] - 2026-09-19
+
+*Annapurna: Herzog* — patch.
+
+### Added
+
+- `SPEC.md`, the language specification as implemented, and `ROADMAP.md`.
+- `nx repl`, and `nx` with no arguments at a terminal: an interactive session
+  on the compiler's interpreter, with bindings kept across lines, the real
+  diagnostics, I/O, and `:load`. The Windows installer adds a Start menu
+  entry that opens it, and offers to launch it when setup finishes.
+- The compile-time interpreter now evaluates `Map`, the mutating `List`,
+  `String` and slice methods (`insert`, `remove`, `sort`, `split`, `trim`,
+  `parse_int`, ...), `expect_eq`, `assert`, UTF-8 helpers and the reference
+  class operations, and pointers stay valid across calls, so `std.json` and
+  the other std modules run at the prompt. A statement the interpreter
+  cannot evaluate is reported with the position of the failing expression.
+
+### Fixed
+
+- Building a program by its bare file name (`nx run app.nx` from inside its
+  directory) dropped the C sources declared in `artifact link`: the empty
+  parent directory produced a lone `-I` that swallowed the next argument.
+- `opt.?`, `opt orelse d` and `try res` on a local holding an owning value
+  now move the local: it is no longer dropped a second time at scope end
+  (this crashed GUI programs on exit), and a later use is reported as a use
+  after move.
+
+## [0.2.0] - 2026-09-19
+
+*Annapurna: Base Camp* — where the expedition is staged: the installer, the spec, the roadmap.
 
 ### Added
 
@@ -55,6 +442,8 @@ The file is validated in CI with [patchnotes](https://pypi.org/project/patchnote
   between an `if` condition and a parenthesized body.
 
 ## [0.1.0] - 2026-09-18
+
+*Annapurna: Miristi Khola* — the gorge the 1950 expedition spent weeks finding a way through; the approach.
 
 First public release.
 
@@ -105,5 +494,13 @@ First public release.
   Korean, French, and German; the language reference and architecture tour in
   Spanish, Chinese, and Japanese.
 
-[Unreleased]: https://github.com/Londopy/nexium/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Londopy/nexium/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/Londopy/nexium/compare/v0.6.1...v0.7.0
+[0.6.1]: https://github.com/Londopy/nexium/compare/v0.6.0...v0.6.1
+[0.6.0]: https://github.com/Londopy/nexium/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/Londopy/nexium/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/Londopy/nexium/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/Londopy/nexium/compare/v0.2.1...v0.3.0
+[0.2.1]: https://github.com/Londopy/nexium/compare/v0.2.0...v0.2.1
+[0.2.0]: https://github.com/Londopy/nexium/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Londopy/nexium/releases/tag/v0.1.0

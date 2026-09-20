@@ -1,0 +1,23 @@
+// SPEC 4: the implicit coercions, and only these; tuples as field types; field defaults.
+struct Pair { a: (i32, []u8), b: i32 = 5 }
+trait Named { fn name(self: *Self) -> []u8 }
+struct Dog { n: i32 }
+impl Named for Dog { fn name(self: *Self) -> []u8 { return "dog" } }
+fn takes_opt(x: ?i64) -> i64 { return x orelse -1 }
+fn takes_err(x: !i64) -> i64 { return x catch -2 }
+fn takes_slice(s: []i32) -> usize { return s.len }
+fn takes_bytes(s: []u8) -> usize { return s.len }
+fn takes_fn(f: fn(i32) -> i32) -> i32 { return f(3) }
+fn triple(x: i32) -> i32 { return x * 3 }
+fn takes_dyn(d: dyn Named) -> []u8 { return d.name() }
+fn main() {
+    var list = List(i32).new()
+    list.append(1)
+    list.append(2)
+    var s = String.from("hey")
+    let arr: [3]i32 = [1, 2, 3]
+    let p = Pair{ .a = (1, "one") }
+    var dog = Dog{ .n = 1 }
+    println("{} {} {} {} {} {} {} {} {} {}", .{takes_opt(4), takes_err(5), takes_slice(list), takes_bytes(s), takes_bytes(&s), takes_slice(&list), takes_slice(arr), takes_fn(triple), takes_dyn(&dog), p.b})
+    println("{} {}", .{p.a.0, p.a.1})
+}

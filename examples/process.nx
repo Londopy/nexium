@@ -3,7 +3,7 @@
 
 fn main() -> !void {
     let args = os.args()
-    if (args.len > 1 and args[1] == "child") {
+    if args.len > 1 and args[1] == "child" {
         println("child says hi", .{})
         os.exit(7)
     }

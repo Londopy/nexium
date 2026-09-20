@@ -25,7 +25,7 @@ impl Shape for Square {
 
 fn total(shapes: []dyn Shape) -> f64 {
     var sum: f64 = 0.0
-    for (shapes) |s| { sum += s.area() }
+    for s in shapes { sum += s.area() }
     return sum
 }
 
@@ -39,7 +39,7 @@ fn main() {
     var shapes = List(dyn Shape).new()
     shapes.append(&mut c)
     shapes.append(&mut q)
-    for (shapes) |s| { println("{} {:.2}", .{s.name(), s.area()}) }
+    for s in shapes { println("{} {:.2}", .{s.name(), s.area()}) }
     println("total {:.2}", .{total(shapes)})
     var big: dyn Shape = &mut q
     big.scale(2.0)

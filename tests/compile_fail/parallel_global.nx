@@ -3,5 +3,5 @@ var hits: u32 = 0
 fn bump() { unsafe { hits += 1 } }
 fn main() {
     let xs = [1, 2, 3]
-    for parallel (xs[..]) |_x, _i| { bump() }
+    for parallel _x, _i in xs[..] { bump() }
 }

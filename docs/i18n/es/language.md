@@ -109,7 +109,8 @@ libera cuando la última referencia desaparece (5.1). Los ciclos fugan; usa
   caracteres, booleanos, `[]u8`, `String`, enums unitarios y tipos que
   `derive(Eq)` / `derive(Ord)`. Lógicos `and`, `or`, `!`.
 - `x |> f(a)` es `f(x, a)`.
-- `if (c) a else b` es una expresión; `if (opt) |v| { } else { }` desenvuelve.
+- `if c { a } else { b }` es una expresión; `if let v = opt { } else { }` desenvuelve.
+  Las condiciones no llevan paréntesis y los cuerpos siempre llevan llaves.
 - `match v { pat => expr, ... }` sobre enteros (literales, rangos `1..=9`),
   cadenas, booleanos, caracteres, enums (`.Variant(p)`), opcionales (`null`,
   ligadura), uniones de error (`error.Name`, ligadura), tuplas y slices de
@@ -131,12 +132,12 @@ libera cuando la última referencia desaparece (5.1). Los ciclos fugan; usa
 ## Sentencias y bucles
 
 ```
-while (cond) { }
-for (items) |x| { }               // arrays, slices, listas, cadenas, claves de mapa
-for (items) |x, i| { }            // con índice
-for (a, b) |x, y| { }             // en paralelo; las longitudes deben coincidir
-for (0..n) |i| { }
-outer: for (...) |a| { for (...) |b| { continue :outer } }
+while cond { }
+for x in items { }               // arrays, slices, listas, cadenas, claves de mapa
+for x, i in items { }            // con índice
+for x, y in a, b { }             // en paralelo; las longitudes deben coincidir
+for i in 0..n { }
+outer: for a in ... { for b in ... { continue :outer } }
 break, continue, return
 _ = expr                          // descarte explícito; los valores sin usar son errores
 ```
@@ -189,7 +190,7 @@ por función.
   `clear`, `pop`, `bytes`, `len`, más los métodos de `[]u8`.
 - `Map(K, V)` (claves: enteros, bool, char, `[]u8`, `String`): `new`, `put`,
   `get`, `contains`, `remove`, `clear`, `clone`, `keys`, `values`, `len`,
-  `m[key]`; `for (m) |k|` itera las claves.
+  `m[key]`; `for k in m` itera las claves.
 - Slices: `len`, `fill`, `reverse`, `sort`, `contains`, `index_of`,
   `copy_from`, `to_owned`, `is_empty`; `[]u8` además `starts_with`,
   `ends_with`, `find`, `trim`, `split`, `lines`, `to_string`, `parse_int(T)`,
@@ -235,7 +236,7 @@ que satisfacen esas cotas. Un trait usado como objeto solo puede mencionar
 
 ## Bucles paralelos
 
-`for parallel (items) |x, i| { ... }` ejecuta el cuerpo sobre el rango de
+`for parallel x, i in items { ... }` ejecuta el cuerpo sobre el rango de
 índices en un grupo de hilos (spec 7.2). El cuerpo no puede tener el efecto
 `shared_mutable`, no puede hacer `return` ni `break` (usa `continue`), y
 escribe resultados a través de un slice mutable indexado por `i`. Un pánico

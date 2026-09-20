@@ -1,0 +1,23 @@
+// SPEC 6.1: wrapping and saturating arithmetic, bitwise, comparisons on derived types, short-circuit.
+struct P derive(Eq, Ord) { x: i32, y: i32 }
+fn side(v: bool) -> bool { println("side", .{}); return v }
+fn main() {
+    let a: u8 = 250
+    let w = a +% 10
+    let s = a +| 10
+    let m = a *| 2
+    let d: i8 = -128
+    let n = d -| 1
+    let bits = (0b1100 & 0b1010) | (1 << 4) ^ 0b1
+    let neg = ~ (0 as u8)
+    let p = P{ .x = 1, .y = 2 }
+    let q = P{ .x = 1, .y = 3 }
+    let t = false and side(true)
+    let u = true or side(true)
+    println("{} {} {} {} {} {} {} {} {} {} {}", .{w, s, m, n, bits, neg, p == q, p < q, p != q, t, u})
+    var k: i32 = 7
+    k <<= 2
+    k %= 5
+    k +%= 2147483647
+    println("{}", .{k})
+}

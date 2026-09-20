@@ -1,0 +1,17 @@
+// SPEC 4: `as` between numbers, distinct types, char, bool and unit enums; @truncate wraps.
+enum Color { Red, Green, Blue }
+type Meters = distinct f64
+fn main() {
+    let t: bool = true
+    let n = t as i32
+    let ch = 'A'
+    let code = ch as u32
+    let back = 66 as char
+    let g = Color.Green as u8
+    let m: Meters = 2.5 as Meters
+    let raw = m as f64
+    let big: i64 = 300
+    let wrapped = @truncate(u8, big)
+    let x: u8 = 'z'
+    println("{} {} {} {} {} {} {} {}", .{n, code, back, g, raw, wrapped, x, (big as i32)})
+}

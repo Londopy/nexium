@@ -401,32 +401,8 @@ impl<'a> Checker<'a> {
                 p => flat.push(p),
             }
         }
-        let ok = match k {
-            TyKind::Bool => flat.iter().any(|p| matches!(p, TPat::Bool(true))) && flat.iter().any(|p| matches!(p, TPat::Bool(false))),
-            TyKind::Enum(d, _) => {
-                let n = self.enums[d as usize].variants.len();
-                (0..n).all(|i| flat.iter().any(|p| matches!(p, TPat::Variant { idx, args } if *idx as usize == i && args.iter().all(|a| self.pat_irrefutable(a)))))
-            }
-            TyKind::Opt(inner) => {
-                let has_null = flat.iter().any(|p| matches!(p, TPat::Null));
-                let some_pats: Vec<&TPat> = flat.iter().filter_map(|p| if let TPat::Some(q) = p { Some(&**q) } else { None }).collect();
-                let some_ok = some_pats.iter().any(|p| self.pat_irrefutable(p)) || self.sub_exhaustive(inner, &some_pats);
-                has_null && some_ok
-            }
-            TyKind::ErrUnion(set, inner) => {
-                let ok_pats: Vec<&TPat> = flat.iter().filter_map(|p| if let TPat::Ok(q) = p { Some(&**q) } else { None }).collect();
-                let ok_ok = ok_pats.iter().any(|p| self.pat_irrefutable(p)) || self.sub_exhaustive(inner, &ok_pats);
-                let errs_ok = match set {
-                    Some(s) => {
-                        let ids = self.error_sets[s as usize].ids.clone();
-                        ids.iter().all(|id| flat.iter().any(|p| matches!(p, TPat::Error(e) if e == id)))
-                    }
-                    None => false,
-                };
-                ok_ok && errs_ok
-            }
-            _ => false,
-        };
+        let rows: Vec<Vec<&TPat>> = flat.iter().map(|p| vec![*p]).collect();
+        let ok = self.rows_exhaustive(&[st], &rows);
         if !ok {
             let hint = match k {
                 TyKind::Enum(d, _) => {
@@ -448,14 +424,118 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn sub_exhaustive(&self, t: TyId, pats: &[&TPat]) -> bool {
-        match self.tys.kind(self.tys.shallow(t)).clone() {
-            TyKind::Bool => pats.iter().any(|p| matches!(p, TPat::Bool(true))) && pats.iter().any(|p| matches!(p, TPat::Bool(false))),
-            TyKind::Enum(d, _) => {
-                let n = self.enums[d as usize].variants.len();
-                (0..n).all(|i| pats.iter().any(|p| matches!(p, TPat::Variant { idx, args } if *idx as usize == i && args.iter().all(|a| self.pat_irrefutable(a)))))
-            }
-            _ => false,
+    /// Is every value of the tuple of types `tys` matched by some row? The
+    /// classic matrix algorithm: pick the first column, split on its
+    /// constructors, and recurse on the specialized rows.
+    fn rows_exhaustive(&mut self, tys: &[TyId], rows: &[Vec<&TPat>]) -> bool {
+        if tys.is_empty() {
+            return !rows.is_empty();
         }
+        // or-patterns in the first column become separate rows
+        let mut rows: Vec<Vec<&TPat>> = rows.to_vec();
+        loop {
+            let mut changed = false;
+            let mut next: Vec<Vec<&TPat>> = Vec::with_capacity(rows.len());
+            for r in &rows {
+                if let TPat::Or(alts) = r[0] {
+                    changed = true;
+                    for a in alts {
+                        let mut nr = vec![a];
+                        nr.extend_from_slice(&r[1..]);
+                        next.push(nr);
+                    }
+                } else {
+                    next.push(r.clone());
+                }
+            }
+            rows = next;
+            if !changed {
+                break;
+            }
+        }
+        let rest_tys = &tys[1..];
+        match self.constructors(tys[0]) {
+            // integers, strings, ...: only a wildcard covers them
+            None => {
+                let d: Vec<Vec<&TPat>> = rows.iter().filter(|r| pat_is_wild(r[0])).map(|r| r[1..].to_vec()).collect();
+                self.rows_exhaustive(rest_tys, &d)
+            }
+            Some(ctors) => {
+                for (c, sub_tys) in ctors {
+                    let mut spec: Vec<Vec<&TPat>> = Vec::new();
+                    for r in &rows {
+                        if pat_is_wild(r[0]) {
+                            let mut nr: Vec<&TPat> = vec![&WILD; sub_tys.len()];
+                            nr.extend_from_slice(&r[1..]);
+                            spec.push(nr);
+                        } else if let Some(subs) = pat_ctor_args(r[0], &c) {
+                            let mut nr = subs;
+                            nr.extend_from_slice(&r[1..]);
+                            spec.push(nr);
+                        }
+                    }
+                    let mut nt: Vec<TyId> = sub_tys.clone();
+                    nt.extend_from_slice(rest_tys);
+                    if !self.rows_exhaustive(&nt, &spec) {
+                        return false;
+                    }
+                }
+                true
+            }
+        }
+    }
+
+    /// The constructors of a type with their payload types, or None when
+    /// there are too many to enumerate.
+    fn constructors(&mut self, t: TyId) -> Option<Vec<(Ctor, Vec<TyId>)>> {
+        let t = self.tys.shallow(t);
+        match self.tys.kind(t).clone() {
+            TyKind::Bool => Some(vec![(Ctor::Bool(true), vec![]), (Ctor::Bool(false), vec![])]),
+            TyKind::Enum(..) => {
+                let payloads = self.enum_variant_types(t);
+                Some(payloads.into_iter().enumerate().map(|(i, p)| (Ctor::Variant(i as u32), p)).collect())
+            }
+            TyKind::Opt(inner) => Some(vec![(Ctor::Null, vec![]), (Ctor::Some, vec![inner])]),
+            TyKind::Tuple(ts) => Some(vec![(Ctor::Tuple, ts)]),
+            TyKind::ErrUnion(Some(set), inner) => {
+                let mut v = vec![(Ctor::Ok, vec![inner])];
+                for id in self.error_sets[set as usize].ids.clone() {
+                    v.push((Ctor::Err(id), vec![]));
+                }
+                Some(v)
+            }
+            _ => None,
+        }
+    }
+}
+
+const WILD: TPat = TPat::Wild;
+
+#[derive(Clone, Debug)]
+enum Ctor {
+    Bool(bool),
+    Variant(u32),
+    Null,
+    Some,
+    Ok,
+    Err(u32),
+    Tuple,
+}
+
+fn pat_is_wild(p: &TPat) -> bool {
+    matches!(p, TPat::Wild | TPat::Bind(_))
+}
+
+/// The sub-patterns of `p` when it is built with constructor `c`.
+fn pat_ctor_args<'p>(p: &'p TPat, c: &Ctor) -> Option<Vec<&'p TPat>> {
+    match (p, c) {
+        (TPat::Bool(b), Ctor::Bool(x)) if b == x => Some(vec![]),
+        (TPat::Variant { idx, args }, Ctor::Variant(i)) if idx == i => Some(args.iter().collect()),
+        (TPat::Null, Ctor::Null) => Some(vec![]),
+        (TPat::Some(inner), Ctor::Some) => Some(vec![&**inner]),
+        (TPat::Ok(inner), Ctor::Ok) => Some(vec![&**inner]),
+        (TPat::Error(e), Ctor::Err(x)) if e == x => Some(vec![]),
+        (TPat::Tuple(ps), Ctor::Tuple) => Some(ps.iter().collect()),
+        _ => None,
     }
 }

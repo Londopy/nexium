@@ -96,13 +96,19 @@ impl<'a> Walker<'a> {
             }
             TStmt::Expr(e) | TStmt::Return { value: Some(e), .. } | TStmt::Break { value: Some(e), .. } => self.expr(e),
             TStmt::Defer { body, .. } | TStmt::ErrDefer { body, .. } => self.stmt(body),
-            TStmt::While { cond, body, .. } => {
+            TStmt::While { cond, body, els, .. } => {
                 self.expr(cond);
                 self.block(body);
+                if let Some(eb) = els {
+                    self.block(eb);
+                }
             }
-            TStmt::ForRange { start, end, body, .. } => {
+            TStmt::ForRange { start, end, step, body, .. } => {
                 self.expr(start);
                 self.expr(end);
+                if let Some(st) = step {
+                    self.expr(st);
+                }
                 self.block(body);
             }
             TStmt::ForSlice { items, body, .. } => {
@@ -172,7 +178,14 @@ impl<'a> Walker<'a> {
                     self.expr(x);
                 }
             }
-            TExprKind::Deref(x) | TExprKind::Try(x) | TExprKind::OptWrap(x) | TExprKind::ErrWrap(x) | TExprKind::ArrayToSlice(x) | TExprKind::ListToSlice(x) | TExprKind::StrToSlice(x) => self.expr(x),
+            TExprKind::Deref(x)
+            | TExprKind::Try(x)
+            | TExprKind::OptWrap(x)
+            | TExprKind::ErrWrap(x)
+            | TExprKind::ErrToUnion(x)
+            | TExprKind::ArrayToSlice(x)
+            | TExprKind::ListToSlice(x)
+            | TExprKind::StrToSlice(x) => self.expr(x),
             TExprKind::AddrOf { expr, .. } | TExprKind::Unary { expr, .. } | TExprKind::Cast { expr, .. } | TExprKind::Unwrap { expr, .. } => self.expr(expr),
             TExprKind::Binary { lhs, rhs, .. } | TExprKind::Logical { lhs, rhs, .. } => {
                 self.expr(lhs);

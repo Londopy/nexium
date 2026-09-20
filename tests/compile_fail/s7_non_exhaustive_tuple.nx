@@ -1,0 +1,9 @@
+// EXPECT: not exhaustive
+enum C { R, G }
+fn f(t: (C, bool)) -> i32 {
+    match t {
+        (.R, true) => 1,
+        (.G, _) => 2,
+    }
+}
+fn main() { _ = f((C.R, false)) }

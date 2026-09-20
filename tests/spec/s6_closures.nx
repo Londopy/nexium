@@ -1,0 +1,12 @@
+// SPEC 6.4: explicit captures by copy, by reference and by mutable reference; closures coerce to fn types.
+fn apply(f: fn(i32) -> i32, x: i32) -> i32 { return f(x) }
+fn main() {
+    let k: i32 = 10
+    var count: i32 = 0
+    let add = |[k] x: i32| -> i32 { x + k }
+    let bump = |[&mut count] x: i32| -> i32 { count += x; count }
+    println("{} {}", .{apply(add, 5), apply(bump, 2)})
+    _ = bump(3)
+    let read = |[&count]| -> i32 { count }
+    println("{} {}", .{count, read()})
+}

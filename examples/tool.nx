@@ -1,0 +1,142 @@
+// tool: a log scanner, the kind of utility that used to need Python.
+//
+//     nx run examples/tool.nx -- [DIR] [-p REGEX] [--since ISO] [--until ISO]
+//                                [--ext log] [--count] [--timing]
+//
+// Walks DIR (default examples/data/logs), reads every `.log`, keeps the
+// lines whose leading timestamp falls in the window and whose text matches
+// the pattern (default `ERROR|WARN`), prints them as `file:line: text`, and
+// ends with a summary per level. With no arguments it runs on the sample
+// logs shipped with the compiler, which is what `cargo test` checks.
+
+import std.args
+import std.fs
+import std.regex
+import std.time
+
+struct Options {
+    root: String
+    pattern: String
+    ext: String
+    since: i64
+    until: i64
+    count_only: bool
+    timing: bool
+}
+
+fn parse_options() -> !Options {
+    var p = args.Parser.new(os.args())
+    let pattern = p.option("--pattern", "-p") orelse "ERROR|WARN"
+    let ext = p.option("--ext", "-e") orelse "log"
+    var since: i64 = -9223372036854775807
+    var until: i64 = 9223372036854775807
+    if let s = p.option("--since", "-s") {
+        let d = time.parse_iso(s) orelse {
+            eprintln("bad --since date: {}", .{s})
+            return error.InvalidInput
+        }
+        since = d.to_ms()
+    }
+    if let s = p.option("--until", "-u") {
+        let d = time.parse_iso(s) orelse {
+            eprintln("bad --until date: {}", .{s})
+            return error.InvalidInput
+        }
+        until = d.to_ms()
+    }
+    let count_only = p.flag("--count", "-c")
+    let timing = p.flag("--timing", "-t")
+    let rest = p.rest()
+    let root = if rest.len > 0 { rest[0] } else { "examples/data/logs" }
+    return Options{
+        .root = String.from(root),
+        .pattern = String.from(pattern),
+        .ext = String.from(ext),
+        .since = since,
+        .until = until,
+        .count_only = count_only,
+        .timing = timing,
+    }
+}
+
+/// The timestamp at the start of a log line, when it has one.
+fn line_time(line: []u8) -> ?i64 {
+    var end: usize = 0
+    while end < line.len and line[end] != ' ' { end += 1 }
+    let d = time.parse_iso(line[0..end]) orelse return null
+    return d.to_ms()
+}
+
+/// The level word after the timestamp: `ERROR`, `WARN`, `INFO`, ...
+fn line_level(line: []u8) -> []u8 {
+    var i: usize = 0
+    while i < line.len and line[i] != ' ' { i += 1 }
+    while i < line.len and line[i] == ' ' { i += 1 }
+    let start = i
+    while i < line.len and line[i] != ' ' { i += 1 }
+    return line[start..i]
+}
+
+struct Tally {
+    level: String
+    count: u32
+}
+
+fn bump(tallies: *mut List(Tally), level: []u8) {
+    for t, i in tallies {
+        if t.level == level {
+            tallies[i].count += 1
+            return
+        }
+    }
+    tallies.append(Tally{ .level = String.from(level), .count = 1 })
+}
+
+fn main() -> !void {
+    let opts = try parse_options()
+    var watch = time.Stopwatch.start()
+    let re = regex.compile(opts.pattern) catch {
+        eprintln("bad pattern: {}", .{opts.pattern})
+        return error.InvalidInput
+    }
+    if !fs.is_dir(opts.root) {
+        eprintln("not a directory: {}", .{opts.root})
+        return error.NotFound
+    }
+
+    var files_seen: u32 = 0
+    var lines_seen: u32 = 0
+    var matched: u32 = 0
+    var first: i64 = 9223372036854775807
+    var last: i64 = -9223372036854775807
+    var tallies = List(Tally).new()
+
+    let files = try fs.walk(opts.root)
+    for path in files {
+        if fs.extension(path) != opts.ext { continue }
+        files_seen += 1
+        let lines = fs.read_lines(path) catch {
+            eprintln("cannot read {}", .{path})
+            continue
+        }
+        for line, i in lines {
+            lines_seen += 1
+            let stamp = line_time(line) orelse continue
+            if stamp < opts.since or stamp > opts.until { continue }
+            if !re.is_match(line) { continue }
+            matched += 1
+            if stamp < first { first = stamp }
+            if stamp > last { last = stamp }
+            bump(&mut tallies, line_level(line))
+            if !opts.count_only { println("{}:{}: {}", .{path, i + 1, line}) }
+        }
+    }
+
+    println("{} matching line(s) in {} file(s), {} line(s) read", .{matched, files_seen, lines_seen})
+    for t in tallies { println("  {:<6} {}", .{t.level, t.count}) }
+    if matched > 0 {
+        let span = time.Duration.between(first, last)
+        println("  from {} to {} ({})", .{time.utc(first).iso(), time.utc(last).iso(), span.text()})
+    }
+    if opts.timing { eprintln("scanned in {}", .{watch.elapsed().text()}) }
+}

@@ -1,0 +1,10 @@
+2.5 mg/kg by route 1
+10.0 mg/kg by route 0
+10.0 mg/kg by route 1
+10.0 mg/kg by route 2
+10.0 mg/kg by route 3
+route 4: InvalidRecord
+route 5: InvalidRecord
+http-alt 8080
+port 22: InvalidRecord
+ssh-alt 2222

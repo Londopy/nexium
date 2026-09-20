@@ -1,0 +1,34 @@
+// Moving an owning value out of an optional with `.?` (or `orelse`, or `try`
+// on an error union) moves the whole local: the optional is not dropped
+// again afterwards.
+
+struct Box {
+    items: List(i32)
+}
+
+fn make(n: i32) -> ?Box {
+    if n < 0 { return null }
+    var l = List(i32).new()
+    for i in 0..n as usize { l.append(i as i32) }
+    return Box{ .items = l }
+}
+
+fn load(ok: bool) -> !Box {
+    if !ok { return error.NotFound }
+    return Box{ .items = List(i32).new() }
+}
+
+fn main() -> !void {
+    var b = Box{ .items = List(i32).new() }
+    let maybe = make(3)
+    if maybe == null { return }
+    b = maybe.?
+    println("unwrapped {}", .{b.items.len})
+
+    let fallback = make(2) orelse Box{ .items = List(i32).new() }
+    println("orelse {}", .{fallback.items.len})
+
+    let loaded = load(true)
+    let got = try loaded
+    println("try {}", .{got.items.len})
+}

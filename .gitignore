@@ -2,3 +2,5 @@
 /nx-out
 *.o
 *.obj
+nexium_modules/
+.zig-cache/

@@ -1,0 +1,10 @@
+// SPEC 8.1: functions in any order, recursion, a method and a free function may share a name.
+fn even(n: u32) -> bool { if n == 0 { return true }; return odd(n - 1) }
+fn odd(n: u32) -> bool { if n == 0 { return false }; return even(n - 1) }
+struct Box { v: i32 }
+impl Box { fn size(self: *Self) -> i32 { return self.v * 2 } }
+fn size(b: *Box) -> i32 { return b.v + 1 }
+fn main() {
+    let b = Box{ .v = 4 }
+    println("{} {} {} {}", .{even(10), odd(7), b.size(), size(&b)})
+}

@@ -1,0 +1,21 @@
+{
+  "name": "tree-sitter-nexium",
+  "version": "0.7.0",
+  "description": "Nexium grammar for tree-sitter",
+  "license": "MIT",
+  "author": "Londopy",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Londopy/nexium"
+  },
+  "main": "grammar.js",
+  "keywords": ["parser", "lexer", "nexium", "tree-sitter"],
+  "files": ["grammar.js", "tree-sitter.json", "queries", "src"],
+  "devDependencies": {
+    "tree-sitter-cli": "^0.27.0"
+  },
+  "scripts": {
+    "generate": "tree-sitter generate",
+    "parse-examples": "tree-sitter parse ../../examples/*.nx ../../std/*.nx --quiet --stat"
+  }
+}

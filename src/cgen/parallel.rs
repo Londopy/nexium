@@ -39,14 +39,20 @@ fn walk_stmt(s: &TStmt, used: &mut BTreeSet<LocalId>, declared: &mut BTreeSet<Lo
         }
         TStmt::Expr(e) | TStmt::Return { value: Some(e), .. } | TStmt::Break { value: Some(e), .. } => walk_expr(e, used, declared),
         TStmt::Defer { body, .. } | TStmt::ErrDefer { body, .. } => walk_stmt(body, used, declared),
-        TStmt::While { cond, body, .. } => {
+        TStmt::While { cond, body, els, .. } => {
             walk_expr(cond, used, declared);
             walk_block(body, used, declared);
+            if let Some(eb) = els {
+                walk_block(eb, used, declared);
+            }
         }
-        TStmt::ForRange { var, start, end, body, .. } => {
+        TStmt::ForRange { var, start, end, step, body, .. } => {
             declared.insert(*var);
             walk_expr(start, used, declared);
             walk_expr(end, used, declared);
+            if let Some(st) = step {
+                walk_expr(st, used, declared);
+            }
             walk_block(body, used, declared);
         }
         TStmt::ForSlice { items, index, body, .. } => {
@@ -112,6 +118,7 @@ fn walk_expr(e: &TExpr, used: &mut BTreeSet<LocalId>, declared: &mut BTreeSet<Lo
         | TExprKind::Try(x)
         | TExprKind::OptWrap(x)
         | TExprKind::ErrWrap(x)
+        | TExprKind::ErrToUnion(x)
         | TExprKind::ArrayToSlice(x)
         | TExprKind::ListToSlice(x)
         | TExprKind::StrToSlice(x)

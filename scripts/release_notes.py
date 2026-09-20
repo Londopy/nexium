@@ -6,9 +6,11 @@
 Reads the matching CHANGELOG.md section with patchnotes, lists every asset
 with its size and SHA-256, and adds install and verify instructions per
 platform. SHA256SUMS.txt is written into the artifacts directory so it is
-uploaded with the rest.
+uploaded with the rest. The release's name (the italic line under the
+version header, see docs/release-names.md) becomes the title, written to
+title.txt next to the notes for the workflow to pick up.
 """
-import hashlib, os, sys
+import hashlib, os, re, sys
 
 import patchnotes
 
@@ -21,6 +23,15 @@ rel = cl.get_version(version) or cl.latest()
 sections = {}
 for e in rel.entries:
     sections.setdefault(str(e.change_type).split(".")[-1].title(), []).append(e.text)
+
+# --- the release's name: `*Mountain: Place* — why` under the version header
+raw = open("CHANGELOG.md", encoding="utf-8").read()
+name, why = "", ""
+m = re.search(r"^## \[%s\][^\n]*\n\s*\*([^*]+)\*(?: — (.*))?$" % re.escape(version), raw, re.M)
+if m:
+    name, why = m.group(1).strip(), (m.group(2) or "").strip()
+title = f"Nexium {tag} — {name}" if name else f"Nexium {tag}"
+open(os.path.join(os.path.dirname(out_path) or ".", "title.txt"), "w", encoding="utf-8", newline="\n").write(title + "\n")
 
 # --- assets and checksums
 assets = sorted(f for f in os.listdir(art_dir) if os.path.isfile(os.path.join(art_dir, f)) and f != "SHA256SUMS.txt")
@@ -50,7 +61,9 @@ mac = find("apple-darwin.tar.gz")
 linux = find("linux-gnu.tar.gz")
 vsix = find(".vsix")
 
-out = [f"# Nexium {tag}", ""]
+out = [f"# {title}", ""]
+if name:
+    out += [f"*{name}* — {why}" if why else f"*{name}*", ""]
 for kind in ("Added", "Changed", "Fixed", "Removed", "Deprecated", "Security"):
     if kind in sections:
         out.append(f"### {kind}")

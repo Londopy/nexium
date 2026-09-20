@@ -1,0 +1,5 @@
+// EXPECT: function `outer` is declared `!allocates` but has the `allocates` effect
+// EXPECT: this call acquires `allocates`
+fn inner() -> String { return String.from("x") }
+fn outer() -> usize !allocates { return inner().len }
+fn main() { println("{}", .{outer()}) }

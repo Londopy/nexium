@@ -7,83 +7,83 @@
 /// Sum of the elements.
 pub fn sum(comptime T: type, xs: []T) -> T {
     var total: T = 0
-    for (xs) |x| { total += x }
+    for x in xs { total += x }
     return total
 }
 
 /// Smallest element, or null when empty.
 pub fn min(comptime T: type where T: Ord, xs: []T) -> ?T {
-    if (xs.len == 0) return null
+    if xs.len == 0 { return null }
     var best = xs[0]
-    for (xs) |x| { if (x < best) best = x }
+    for x in xs { if x < best { best = x } }
     return best
 }
 
 /// Largest element, or null when empty.
 pub fn max(comptime T: type where T: Ord, xs: []T) -> ?T {
-    if (xs.len == 0) return null
+    if xs.len == 0 { return null }
     var best = xs[0]
-    for (xs) |x| { if (x > best) best = x }
+    for x in xs { if x > best { best = x } }
     return best
 }
 
 /// Position of the largest element, or null when empty.
 pub fn arg_max(comptime T: type where T: Ord, xs: []T) -> ?usize {
-    if (xs.len == 0) return null
+    if xs.len == 0 { return null }
     var at: usize = 0
-    for (xs) |x, i| { if (x > xs[at]) at = i }
+    for x, i in xs { if x > xs[at] { at = i } }
     return at
 }
 
 /// True when every element satisfies `pred`.
 pub fn all(comptime T: type, xs: []T, pred: fn(T) -> bool) -> bool {
-    for (xs) |x| { if (!pred(x)) return false }
+    for x in xs { if !pred(x) { return false } }
     return true
 }
 
 /// True when some element satisfies `pred`.
 pub fn any(comptime T: type, xs: []T, pred: fn(T) -> bool) -> bool {
-    for (xs) |x| { if (pred(x)) return true }
+    for x in xs { if pred(x) { return true } }
     return false
 }
 
 /// How many elements satisfy `pred`.
 pub fn count_if(comptime T: type, xs: []T, pred: fn(T) -> bool) -> usize {
     var n: usize = 0
-    for (xs) |x| { if (pred(x)) n += 1 }
+    for x in xs { if pred(x) { n += 1 } }
     return n
 }
 
 /// The elements that satisfy `pred`, in order.
 pub fn filter(comptime T: type, xs: []T, pred: fn(T) -> bool) -> List(T) {
     var out = List(T).new()
-    for (xs) |x| { if (pred(x)) out.append(x) }
+    for x in xs { if pred(x) { out.append(x) } }
     return out
 }
 
 /// `f` applied to every element.
 pub fn map(comptime T: type, comptime U: type, xs: []T, f: fn(T) -> U) -> List(U) {
     var out = List(U).with_capacity(xs.len)
-    for (xs) |x| { out.append(f(x)) }
+    for x in xs { out.append(f(x)) }
     return out
 }
 
 /// Left fold: `f(f(f(init, x0), x1), x2)`.
 pub fn fold(comptime T: type, comptime A: type, xs: []T, init: A, f: fn(A, T) -> A) -> A {
     var acc = init
-    for (xs) |x| { acc = f(acc, x) }
+    for x in xs { acc = f(acc, x) }
     return acc
 }
 
 /// First element satisfying `pred`, or null.
 pub fn find(comptime T: type, xs: []T, pred: fn(T) -> bool) -> ?T {
-    for (xs) |x| { if (pred(x)) return x }
+    for x in xs { if pred(x) { return x } }
     return null
 }
 
 /// Position of the first element satisfying `pred`, or null.
 pub fn position(comptime T: type, xs: []T, pred: fn(T) -> bool) -> ?usize {
-    for (xs) |x, i| { if (pred(x)) return i }
+    for x, i in xs { if pred(x) { return i } }
     return null
 }
 
@@ -91,7 +91,7 @@ pub fn position(comptime T: type, xs: []T, pred: fn(T) -> bool) -> ?usize {
 pub fn reversed(comptime T: type, xs: []T) -> List(T) {
     var out = List(T).with_capacity(xs.len)
     var i = xs.len
-    while (i > 0) {
+    while i > 0 {
         i -= 1
         out.append(xs[i])
     }
@@ -101,49 +101,49 @@ pub fn reversed(comptime T: type, xs: []T) -> List(T) {
 /// Adjacent duplicates removed (sort first for global dedup).
 pub fn dedup(comptime T: type where T: Eq, xs: []T) -> List(T) {
     var out = List(T).new()
-    for (xs) |x, i| {
-        if (i == 0 or x != xs[i - 1]) out.append(x)
+    for x, i in xs {
+        if i == 0 or x != xs[i - 1] { out.append(x) }
     }
     return out
 }
 
 /// The first `n` elements (or all when shorter).
 pub fn take(comptime T: type, xs: []T, n: usize) -> []T{
-    return if (n < xs.len) xs[0..n] else xs
+    return if n < xs.len { xs[0..n] } else { xs }
 }
 
 /// Everything after the first `n` elements.
 pub fn drop(comptime T: type, xs: []T, n: usize) -> []T{
-    return if (n < xs.len) xs[n..] else xs[xs.len..]
+    return if n < xs.len { xs[n..] } else { xs[xs.len..] }
 }
 
-/// Consecutive windows of `size`, as start indices; `for (windows(xs, 3)) |i|` then `xs[i..i+3]`.
+/// Consecutive windows of `size`, as start indices; `for i in windows(xs, 3)` then `xs[i..i+3]`.
 pub fn window_starts(len: usize, size: usize) -> List(usize) {
     var out = List(usize).new()
-    if (size == 0 or size > len) return out
-    for (0..len - size + 1) |i| { out.append(i) }
+    if size == 0 or size > len { return out }
+    for i in 0..len - size + 1 { out.append(i) }
     return out
 }
 
 /// Pairs (a[i], b[i]) up to the shorter length.
 pub fn zip(comptime A: type, comptime B: type, a: []A, b: []B) -> List((A, B)) {
-    let n = if (a.len < b.len) a.len else b.len
+    let n = if a.len < b.len { a.len } else { b.len }
     var out = List((A, B)).with_capacity(n)
-    for (0..n) |i| { out.append((a[i], b[i])) }
+    for i in 0..n { out.append((a[i], b[i])) }
     return out
 }
 
 /// Elements repeated `times` times in sequence.
 pub fn repeat(comptime T: type, xs: []T, times: usize) -> List(T) {
     var out = List(T).with_capacity(xs.len * times)
-    for (0..times) |_| { for (xs) |x| { out.append(x) } }
+    for _ in 0..times { for x in xs { out.append(x) } }
     return out
 }
 
 /// True when `xs` starts with `prefix`.
 pub fn starts_with(comptime T: type where T: Eq, xs: []T, prefix: []T) -> bool {
-    if (prefix.len > xs.len) return false
-    for (prefix) |p, i| { if (xs[i] != p) return false }
+    if prefix.len > xs.len { return false }
+    for p, i in prefix { if xs[i] != p { return false } }
     return true
 }
 
