@@ -89,6 +89,28 @@ jobs:
           print("ok")
           EOF
 
+  fuzz:
+    name: fuzz
+    # mutated sources through the front end and random bytes through the
+    # binary pattern engine (tests/fuzz.nx); a crash is a failure
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: Build nx from the seed
+        run: sh bootstrap/build.sh
+      - name: Fuzz
+        run: |
+          export NX_ZIG=zig
+          nx-out/bootstrap/nx2 run tests/fuzz.nx -- --iterations 1500 --seed ${{ github.run_number }}
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: fuzz-findings
+          path: nx-out/fuzz/findings/
+
   rust:
     name: the frozen Rust crate builds
     # bootstrap/rust/ still compiles until it is deleted at 1.0

@@ -31,8 +31,8 @@ have tar || die "tar is required"
 os="$(uname -s)"
 arch="$(uname -m)"
 case "$os" in
-  Darwin) case "$arch" in arm64|aarch64) target="aarch64-apple-darwin" ;; *) die "macOS on $arch is not built yet; build from source with cargo install nexium" ;; esac ;;
-  Linux)  case "$arch" in x86_64|amd64) target="x86_64-unknown-linux-gnu" ;; *) die "Linux on $arch is not built yet; build from source with cargo install nexium" ;; esac ;;
+  Darwin) case "$arch" in arm64|aarch64) target="aarch64-apple-darwin" ;; *) die "macOS on $arch is not built yet; build from source: git clone https://github.com/Londopy/nexium && sh bootstrap/build.sh" ;; esac ;;
+  Linux)  case "$arch" in x86_64|amd64) target="x86_64-unknown-linux-gnu" ;; aarch64|arm64) target="aarch64-unknown-linux-gnu" ;; *) die "Linux on $arch is not built yet; build from source: git clone https://github.com/Londopy/nexium && sh bootstrap/build.sh" ;; esac ;;
   *) die "unsupported OS: $os (use the Windows installer from the Releases page)" ;;
 esac
 
@@ -77,12 +77,13 @@ fi
 if [ -z "$compiler" ] && [ "${NEXIUM_NO_ZIG:-}" != "1" ]; then
   case "$target" in
     x86_64-unknown-linux-gnu) zig_name="zig-x86_64-linux-$ZIG_VERSION" ;;
+    aarch64-unknown-linux-gnu) zig_name="zig-aarch64-linux-$ZIG_VERSION" ;;
     aarch64-apple-darwin) zig_name="zig-aarch64-macos-$ZIG_VERSION" ;;
   esac
   say "no C compiler found; downloading Zig $ZIG_VERSION into $HOME_DIR/zig"
   curl -fsSL "https://ziglang.org/download/$ZIG_VERSION/$zig_name.tar.xz" -o "$tmp/zig.tar.xz"
   if have python3; then
-    zsum="$(curl -fsSL https://ziglang.org/download/index.json | python3 -c 'import json,sys; d=json.load(sys.stdin)["'"$ZIG_VERSION"'"]; k=[k for k in d if k.replace("-","_") in ("x86_64_linux","aarch64_macos") and "'"$target"'".startswith(k.split("-")[0])][0]; print(d[k]["shasum"])' 2>/dev/null || true)"
+    zsum="$(curl -fsSL https://ziglang.org/download/index.json | python3 -c 'import json,sys; d=json.load(sys.stdin)["'"$ZIG_VERSION"'"]; want={"x86_64-unknown-linux-gnu":"x86_64-linux","aarch64-unknown-linux-gnu":"aarch64-linux","aarch64-apple-darwin":"aarch64-macos"}["'"$target"'"]; print(d[want]["shasum"])' 2>/dev/null || true)"
     if [ -n "$zsum" ]; then
       if have sha256sum; then zact="$(sha256sum "$tmp/zig.tar.xz" | awk '{print $1}')"; else zact="$(shasum -a 256 "$tmp/zig.tar.xz" | awk '{print $1}')"; fi
       [ "$zact" = "$zsum" ] || die "checksum mismatch for the Zig download"

@@ -58,7 +58,21 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   cases, `fmt --check` on the tree, the standard library's tests, the GUI,
   packages, `ship`, the installer, the REPL and the language server, the
   cases on several threads. `cargo test` and the Rust harness retire; CI's
-  test jobs have no Rust toolchain.
+  test jobs have no Rust toolchain. On Windows a program run through
+  `process` may be named with forward slashes.
+- The stability policy, `docs/stability.md`: what a patch, a minor and a
+  major may change from 1.0 on, the deprecation cycle, what is not
+  covered, and the C toolchain policy. `nx fix FILE...` applies the
+  deprecations the compiler can migrate mechanically; there are none yet.
+- The platform tiers, `docs/platforms.md`: tier 1 is built, tested and
+  released (x86_64 Linux and Windows, Apple Silicon); tier 2 is built and
+  released, not tested (aarch64 Linux, Windows on ARM), cross-compiled
+  from the same C in the release workflow and picked by the install
+  script on an ARM Linux; tier 3 is whatever Zig targets.
+- Fuzzing, `tests/fuzz.nx`: mutated corpus sources through the front end
+  and random bytes through the binary pattern engine (`tests/fuzz_patterns.nx`);
+  a crash, a signal or a hang is a finding, saved for the report. CI runs
+  it on every push with a fresh seed.
 - Releases ship the compiler written in Nexium: the release workflow
   builds it from the C seed on each platform with Zig alone (`cc` on
   macOS), checks the tag against `self/nx.nx`, and packages that binary

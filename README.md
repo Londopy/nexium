@@ -256,6 +256,7 @@ using arena {
 - [Language reference](docs/language.md): every construct the compiler implements.
 - [Embedding](docs/embedding.md): calling shipped libraries from Python, Rust, and C.
 - [The interactive session](docs/repl.md): `nx` at a prompt, like `python`.
+- [Stability](docs/stability.md) and [platforms](docs/platforms.md): what a version promises, the deprecation cycle, `nx fix`, the tiers.
 - [Installing](docs/install.md): the Windows installer, the macOS/Linux script, source builds, checksums, and how `nx` finds a C compiler.
 - [Packages](docs/packages.md): `nexium.toml`, `nx add`, `nx fetch`, git or path dependencies, the lock file.
 - [Standard library](docs/std.md): the modules written in Nexium (`std.strings`, `std.lists`, `std.bytes`, `std.num`, `std.json`, `std.args`, `std.fs`, `std.time`, `std.regex`, `std.text`, `std.testing`, `std.stream`, `std.net`, `std.http`, `std.thread`, `std.process`).
@@ -280,10 +281,9 @@ using arena {
 | `nx audit file.nx` | list `unsafe` blocks and mutable globals |
 | `nx ship file.nx` | produce every declared `artifact` |
 | `nx emit-c file.nx` | print the generated C |
-| `nx tokens file.nx` | dump the token stream (the self-hosted lexer's oracle) |
-| `nx sexp file.nx` | the syntax tree as S-expressions (the parser's oracle) |
-| `nx tir file.nx [--sigs]` | the checked program as S-expressions (the checker's oracle) |
+| `nx tir file.nx [--sigs]` | the checked program as S-expressions (the compiler's own tests read it) |
 | `nx fmt file.nx [--check]` | canonical formatting |
+| `nx fix file.nx` | rewrite deprecated forms the compiler can migrate (none at 1.0; see [docs/stability.md](docs/stability.md)) |
 | `nx doc file.nx` | HTML documentation with inferred effects |
 | `nx size file.nx` | attribute binary bytes to declarations |
 | `nx refcounts file.nx` | every retain and release site |

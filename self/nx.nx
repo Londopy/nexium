@@ -52,7 +52,7 @@ pub struct Opts {
 
 fn usage() {
     eprintln("usage: nx <build|run|test|check|effects|audit|refcounts|leaks|size|emit-c|tir> <file.nx> [options] [-- args]", .{})
-    eprintln("       nx fmt <file.nx>... [--check]", .{})
+    eprintln("       nx fmt <file.nx>... [--check] | nx fix <file.nx>...", .{})
     eprintln("       nx doc <file.nx> [-o <dir>]", .{})
     eprintln("       nx ship <file.nx> [--mode m] [--target t]   produce the declared artifacts", .{})
     eprintln("       nx version | nx doctor | nx lsp | nx repl", .{})
@@ -470,6 +470,28 @@ fn cmd_emit_c(o: *Opts) -> i32 {
 
 /// `nx fmt FILE...`: rewrite each file in canonical form; `--check` only
 /// reports the files that would change, and fails when there are any.
+/// `nx fix FILE...`: rewrite the deprecated forms this compiler can migrate
+/// mechanically (docs/stability.md). There are none in this version, so
+/// every file is checked for parse errors and left alone.
+fn cmd_fix(o: *Opts) -> i32 {
+    var files = List(String).new()
+    files.append(o.file.clone())
+    for a in o.rest { if !a[..].starts_with("--") { files.append(a.clone()) } }
+    for f in files {
+        let text = io.read_file(f[..]) catch {
+            eprintln("error: cannot read {}", .{f})
+            return 1
+        }
+        let parsed = parser.parse_source(text[..])
+        if parsed.errors.len > 0 {
+            for e in parsed.errors { eprintln("{}: {}", .{f, e}) }
+            return 1
+        }
+    }
+    println("nothing to migrate: {} has no deprecations ({} file(s) unchanged)", .{VERSION, files.len})
+    return 0
+}
+
 fn cmd_fmt(o: *Opts) -> i32 {
     var check_only = false
     var files = List(String).new()
@@ -1113,6 +1135,8 @@ fn main() -> u8 {
         code = cmd_emit_c(&o)
     } else if o.command == "tir" {
         code = cmd_tir(&o)
+    } else if o.command == "fix" {
+        code = cmd_fix(&o)
     } else if o.command == "fmt" {
         code = cmd_fmt(&o)
     } else if o.command == "effects" {

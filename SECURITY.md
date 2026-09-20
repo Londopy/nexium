@@ -23,7 +23,10 @@ be made to:
   `@embedFile` beyond the declared build inputs,
 
 are security issues. Compiler crashes on invalid input are bugs, not
-vulnerabilities, but are welcome as ordinary issues.
+vulnerabilities, but are welcome as ordinary issues; CI fuzzes the front end
+with mutated sources and the binary pattern engine with random bytes on
+every push (`tests/fuzz.nx`, a fresh seed each run) and keeps any finding
+as an artifact.
 
 ## Supply chain
 
@@ -33,4 +36,5 @@ Rust dependencies outside the standard library.
 
 ## Supported versions
 
-Only the latest release receives fixes while the project is pre-1.0.
+The latest minor version receives fixes; see `docs/stability.md` for what
+a version number promises.

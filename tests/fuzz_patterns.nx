@@ -1,0 +1,41 @@
+//! Every shape of binary pattern the engine supports, over whatever comes in on
+//! stdin: the fuzzer (tests/fuzz.nx) builds this once and feeds it random bytes.
+
+import std.stream
+fn classify(b: []u8) -> u32 {
+    var tags: u32 = 0
+    match b {
+        <<0x1b, '[', 'A', rest:bytes>> => { tags +%= 1 },
+        <<version:4, ihl:4, dscp:6, ecn:2, total_len:16/big, id:16, flags:3, frag_off:13, ttl:8, proto:8, checksum:16, src:32, dst:32, rest:bytes>> => { tags +%= 2 +% (version as u32) +% (frag_off as u32) },
+        <<len:16/little, payload:len*8, rest:bytes>> => { tags +%= 4 +% (payload.len as u32) },
+        <<c:8, rest:bytes>> => { tags +%= 8 +% (c as u32) },
+        _ => { tags +%= 16 },
+    }
+    match b {
+        <<a:1, bb:7, x:24/little, y:32/big, rest:bytes>> => { tags +%= 32 +% (a as u32) +% (bb as u32) +% (x as u32) +% (y as u32) },
+        <<w:64/big, rest:bytes>> => { tags +%= 64 +% ((w % 7) as u32) },
+        <<n:3, rest:bytes>> => { tags +%= 128 +% (n as u32) },
+        _ => { tags +%= 256 },
+    }
+    match b {
+        <<'N', 'X', len:8, name:len*8, kind:8, rest:bytes>> => { tags +%= 512 +% (name.len as u32) +% (kind as u32) },
+        <<k:16, rest:bytes>> if k > 1000 => { tags +%= 1024 },
+        _ => { tags +%= 2048 },
+    }
+    return tags
+}
+fn main() {
+    var r = stream.Reader.stdin()
+    let data = r.read_all() catch { String.new() }
+    var total: u64 = 0
+    var i: usize = 0
+    // every suffix and a window of every length, so short and long inputs both happen
+    while i < data.len {
+        total +%= classify(data[i..]) as u64
+        let w = if data.len - i > 40 { 40 } else { data.len - i }
+        total +%= classify(data[i..i + w]) as u64
+        i += 1
+    }
+    total +%= classify(data[..]) as u64
+    println("{} {}", .{data.len, total})
+}

@@ -58,7 +58,7 @@ def find(sub):
 win_setup = find("setup-x64.exe")
 win_zip = find("windows-msvc.zip")
 mac = find("apple-darwin.tar.gz")
-linux = find("linux-gnu.tar.gz")
+linux = find("x86_64-unknown-linux-gnu.tar.gz")
 vsix = find(".vsix")
 
 out = [f"# {title}", ""]
@@ -86,7 +86,7 @@ for f, digest, size in sums:
 out += ["", "`SHA256SUMS.txt` holds the same values. Verify a download with:", "",
         "```sh", "sha256sum -c SHA256SUMS.txt --ignore-missing      # Linux", "shasum -a 256 -c SHA256SUMS.txt --ignore-missing   # macOS", "```", "",
         "```powershell", "Get-FileHash .\\" + (win_setup or "nx.zip") + " -Algorithm SHA256   # Windows, compare with the table", "```", ""]
-out += ["## Requirements", "", "- Windows 10 or later, x64. macOS on Apple Silicon. Linux x86_64 with glibc.",
+out += ["## Requirements", "", "- Windows 10 or later, x64. macOS on Apple Silicon. Linux x86_64 with glibc. Builds for aarch64 Linux and Windows on ARM are attached too; they are tier 2 (built, not tested in CI; see docs/platforms.md).",
         "- A C compiler is needed to build programs: the Windows installer and the macOS/Linux script take care of it. Otherwise put [Zig](https://ziglang.org/download/) on your PATH, or set `NX_CC`.", ""]
 open(out_path, "w", encoding="utf-8", newline="\n").write("\n".join(out))
 print(f"wrote {out_path} and SHA256SUMS.txt for {len(sums)} assets")

@@ -832,9 +832,15 @@ NX_INLINE bool nx_run(nx_ctx* c, const nx_sl_u8* argv, size_t argc, int* code) {
 #if defined(_WIN32)
     /* build a command line CommandLineToArgvW can take apart again */
     nx_string cmd; cmd.ptr = NULL; cmd.len = 0; cmd.cap = 0; cmd.ar = NULL;
+    /* CreateProcess reads the program from the command line and wants backslashes there */
+    char prog[4096];
     for (size_t i = 0; i < argc; i++) {
         if (i) nx_str_append(c, &cmd, (const uint8_t*)" ", 1);
         nx_sl_u8 a = argv[i];
+        if (i == 0 && a.len < sizeof prog) {
+            for (size_t j = 0; j < a.len; j++) prog[j] = a.ptr[j] == '/' ? '\\' : (char)a.ptr[j];
+            a.ptr = (uint8_t*)prog;
+        }
         bool quote = a.len == 0;
         for (size_t j = 0; j < a.len && !quote; j++) quote = a.ptr[j] == ' ' || a.ptr[j] == '\t' || a.ptr[j] == '"';
         if (quote) nx_str_append(c, &cmd, (const uint8_t*)"\"", 1);
@@ -927,9 +933,15 @@ NX_INLINE bool nx_run_capture(nx_ctx* c, const nx_sl_u8* argv, size_t argc, nx_s
     if (cwd.len > 0) { if (!nx_cpath(cwd, dir, sizeof dir)) return false; cwdp = dir; }
 #if defined(_WIN32)
     nx_string cmd; cmd.ptr = NULL; cmd.len = 0; cmd.cap = 0; cmd.ar = NULL;
+    /* CreateProcess reads the program from the command line and wants backslashes there */
+    char prog[4096];
     for (size_t i = 0; i < argc; i++) {
         if (i) nx_str_append(c, &cmd, (const uint8_t*)" ", 1);
         nx_sl_u8 a = argv[i];
+        if (i == 0 && a.len < sizeof prog) {
+            for (size_t j = 0; j < a.len; j++) prog[j] = a.ptr[j] == '/' ? '\\' : (char)a.ptr[j];
+            a.ptr = (uint8_t*)prog;
+        }
         bool quote = a.len == 0;
         for (size_t j = 0; j < a.len && !quote; j++) quote = a.ptr[j] == ' ' || a.ptr[j] == '\t' || a.ptr[j] == '"';
         if (quote) nx_str_append(c, &cmd, (const uint8_t*)"\"", 1);

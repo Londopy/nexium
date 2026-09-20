@@ -44,7 +44,7 @@ jobs:
           if [ "$RUNNER_OS" = macOS ]; then export NX_CC=cc; else export NX_ZIG=zig; fi
           sh bootstrap/build.sh
           mkdir -p build
-          if [ "$RUNNER_OS" = Windows ]; then cp nx-out/bootstrap/nx2.exe build/nx.exe; else cp nx-out/bootstrap/nx2 build/nx; fi
+          if [ "$RUNNER_OS" = Windows ]; then cp nx-out/bootstrap/nx2.exe build/nx.exe; else cp nx-out/bootstrap/nx2 build/nx && strip build/nx; fi
           ./build/nx* version
 
       - name: Package (unix)
@@ -55,6 +55,28 @@ jobs:
           cp README.md LICENSE CHANGELOG.md dist/
           cp -r examples std docs dist/
           tar -C dist -czf nx-${{ github.ref_name }}-${{ matrix.target }}.tar.gz .
+
+      # ---- tier 2: aarch64 Linux and Windows on ARM, cross-compiled from the
+      # same C with Zig; built for every release, not run in CI (docs/platforms.md)
+      - name: Cross-compile for aarch64 Linux and Windows on ARM
+        if: runner.os == 'Linux'
+        run: |
+          c=nx-out/bootstrap/nx1.c
+          flags="-std=gnu11 -O2 -s -w -fno-strict-aliasing"
+          mkdir -p cross/linux cross/windows
+          zig cc $flags -target aarch64-linux-gnu -o cross/linux/nx "$c" -lm -lc
+          zig cc $flags -target aarch64-windows-gnu -o cross/windows/nx.exe "$c" -lws2_32
+          for t in linux windows; do
+            rm -rf dist-cross && mkdir -p dist-cross
+            cp cross/$t/nx* dist-cross/
+            cp README.md LICENSE CHANGELOG.md dist-cross/
+            cp -r examples std docs dist-cross/
+            if [ $t = linux ]; then
+              tar -C dist-cross -czf nx-${{ github.ref_name }}-aarch64-unknown-linux-gnu.tar.gz .
+            else
+              (cd dist-cross && zip -qr ../nx-${{ github.ref_name }}-aarch64-pc-windows-msvc.zip .)
+            fi
+          done
 
       # ---- Windows: a portable zip and a full installer with a bundled Zig
 

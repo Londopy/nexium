@@ -1,0 +1,209 @@
+//! Fuzzing, a Nexium program: mutated sources through the front end, and
+//! random bytes through the binary pattern engine. A crash is a finding; a
+//! diagnostic is not.
+//!
+//!     nx run tests/fuzz.nx -- --nx nx-out/bootstrap/nx2 --iterations 300 --seed 7
+//!
+//! Every mutant of a corpus file (`examples/`, `tests/spec/`, `std/`) goes
+//! through `nx check`; exit 0 (accepted) and exit 1 (rejected with a
+//! diagnostic) are the two right answers, anything else (a panic, a signal,
+//! a timeout) is saved under `nx-out/fuzz/findings/` and reported. Then a
+//! program full of binary patterns is built once and fed random byte
+//! strings: it must answer every one without crashing. The exit code is the
+//! number of findings, capped at 100.
+
+import std.fs
+import std.process
+import std.strings
+
+struct Env {
+    nx: String
+    windows: bool
+    dir: String
+    findings: usize
+}
+
+fn run_in(argv: [][]u8, stdin: []u8, cwd: []u8) -> process.Output {
+    return process.run_with(argv, process.Options{ .stdin = stdin, .cwd = cwd }) catch {
+        return process.Output{ .code = -1, .stdout = String.new(), .stderr = format("cannot run {}", .{argv[0]}) }
+    }
+}
+
+/// The compiler under a time limit where the platform has one (`timeout`
+/// from coreutils); a hung front end is a finding too.
+fn check(e: *Env, path: []u8) -> process.Output {
+    var argv = List([]u8).new()
+    if !e.windows { argv.append("timeout"); argv.append("30") }
+    argv.append(e.nx[..])
+    argv.append("check")
+    argv.append(path)
+    return run_in(argv[..], "", "")
+}
+
+fn note_finding(e: *mut Env, what: []u8, text: []u8, out: *process.Output) {
+    e.findings += 1
+    let dir = fs.join(e.dir[..], "findings")
+    fs.make_dirs(dir[..]) catch { }
+    let saved = format("{}/{}-{}.nx", .{dir, what, e.findings})
+    fs.write(saved[..], text) catch { }
+    var first = String.new()
+    for l in out.stderr[..].lines() { if first.len == 0 and l.trim().len > 0 { first = String.from(l) } }
+    println("FINDING {}: exit {} ({}) saved as {}", .{what, out.code, first, saved})
+}
+
+// ----- mutations ---------------------------------------------------------------
+
+const TOKENS = ["fn", "let", "var", "if", "else", "for", "while", "match", "return", "struct", "enum", "import", "comptime", "unsafe", "defer",
+    "{", "}", "(", ")", "[", "]", "<<", ">>", ",", ".", ":", "=", "==", "->", "=>", "|", "|>", "?", "!", "&", "*", "..", "..=", "\"", "'", "\\", "0x", "1e", "//", "///", "@",
+    "null", "true", "undefined", "self", "Self", "String", "List", "Map", "i32", "u8", "usize", "f64", "bool", "error", "try", "catch", "orelse", "own", "pub", "test",
+    "\n", " ", "\t", "\r", b"\x00", b"\xff", b"\xe2\x82", "{{", "}}", "{}", ".{", "%", "/", "-", "+", "1", "0", "999999999999999999999", "\"\"", "''"]
+
+fn rand_below(n: usize) -> usize {
+    if n == 0 { return 0 }
+    return random.int(0, (n - 1) as i64) as usize
+}
+
+/// One random edit of the text.
+fn mutate(src: []u8, other: []u8) -> String {
+    var out = String.new()
+    let n = src.len
+    let kind = rand_below(8)
+    if n == 0 { out.append(TOKENS[rand_below(TOKENS.len)]); return out }
+    if kind == 0 {
+        // delete a range
+        let a = rand_below(n)
+        let b = a + rand_below(if n - a < 64 { n - a } else { 64 }) + 1
+        out.append(src[0..a])
+        if b < n { out.append(src[b..]) }
+    } else if kind == 1 {
+        // duplicate a range
+        let a = rand_below(n)
+        let b = a + rand_below(if n - a < 128 { n - a } else { 128 }) + 1
+        let bb = if b > n { n } else { b }
+        out.append(src[0..bb])
+        out.append(src[a..bb])
+        out.append(src[bb..])
+    } else if kind == 2 {
+        // insert a token
+        let a = rand_below(n + 1)
+        out.append(src[0..a])
+        out.append(TOKENS[rand_below(TOKENS.len)])
+        out.append(src[a..])
+    } else if kind == 3 {
+        // replace a byte with a random printable one, or a control byte
+        let a = rand_below(n)
+        out.append(src[0..a])
+        let c = if rand_below(4) == 0 { rand_below(32) as u8 } else { (32 + rand_below(95)) as u8 }
+        out.push_byte(c)
+        out.append(src[a + 1..])
+    } else if kind == 4 {
+        // truncate
+        out.append(src[0..rand_below(n)])
+    } else if kind == 5 {
+        // swap two lines
+        var lines = List([]u8).new()
+        for l in src.lines() { lines.append(l) }
+        if lines.len < 2 { out.append(src); return out }
+        let i = rand_below(lines.len)
+        let j = rand_below(lines.len)
+        for l, k in lines {
+            if k > 0 { out.append("\n") }
+            out.append(if k == i { lines[j] } else if k == j { lines[i] } else { l })
+        }
+    } else if kind == 6 {
+        // splice: the head of this file and the tail of another
+        let a = rand_below(n)
+        let b = rand_below(other.len + 1)
+        out.append(src[0..a])
+        out.append(other[b..])
+    } else {
+        // several edits at once
+        var cur = String.from(src)
+        for k in 0..(2 + rand_below(4)) { cur = mutate(cur[..], other) }
+        return cur
+    }
+    return out
+}
+
+/// Mutated corpus files through the front end.
+fn fuzz_sources(e: *mut Env, iterations: usize) {
+    var corpus = List(String).new()
+    for dir in ["examples", "tests/spec", "std"] {
+        let names = fs.list(dir) catch { continue }
+        for nm in names { if nm[..].ends_with(".nx") { corpus.append(fs.join(dir, nm[..])) } }
+    }
+    if corpus.len == 0 { println("no corpus", .{}); return }
+    var texts = List(String).new()
+    for f in corpus { texts.append(fs.read(f[..]) catch { String.new() }) }
+    let case_path = fs.join(e.dir[..], "case.nx")
+    var accepted: usize = 0
+    var rejected: usize = 0
+    for i in 0..iterations {
+        let src = &texts[rand_below(texts.len)]
+        let other = &texts[rand_below(texts.len)]
+        let mutant = mutate(src[..], other[..])
+        fs.write(case_path[..], mutant[..]) catch { println("cannot write {}", .{case_path}); return }
+        let out = check(e, case_path[..])
+        if out.code == 0 { accepted += 1 }
+        else if out.code == 1 { rejected += 1 }
+        else { note_finding(e, "source", mutant[..], &out) }
+    }
+    println("sources: {} mutants, {} accepted, {} rejected, {} finding(s)", .{iterations, accepted, rejected, e.findings})
+}
+
+// ----- the binary pattern engine ---------------------------------------------------
+
+/// The pattern program, built once and fed random bytes.
+fn fuzz_binary(e: *mut Env, iterations: usize) {
+    let src = String.from("tests/fuzz_patterns.nx")
+    let exe = fs.join(e.dir[..], if e.windows { "patterns.exe" } else { "patterns" })
+    var build_args = List([]u8).new()
+    for a in ["build", src[..], "-o", exe[..], "--mode", "safe", "--out-dir", e.dir[..]] { build_args.append(a) }
+    build_args.insert(0, e.nx[..])
+    let b = run_in(build_args[..], "", "")
+    if b.code != 0 { println("the pattern program did not build:\n{}", .{b.stderr}); e.findings += 1; return }
+    var ok: usize = 0
+    for i in 0..iterations {
+        var data = String.new()
+        let n = rand_below(if rand_below(4) == 0 { 300 } else { 24 })
+        for k in 0..n {
+            let pick = rand_below(6)
+            if pick == 0 { data.push_byte(0x1b) } else if pick == 1 { data.push_byte(0x45) } else if pick == 2 { data.push_byte('N') } else if pick == 3 { data.push_byte(0) } else { data.push_byte(rand_below(256) as u8) }
+        }
+        var run_args = List([]u8).new()
+        run_args.append(exe[..])
+        let out = run_in(run_args[..], data[..], "")
+        if out.code != 0 { note_finding(e, "binary", data[..], &out) } else { ok += 1 }
+    }
+    println("binary: {} inputs, {} answered, {} finding(s)", .{iterations, ok, e.findings})
+}
+
+// ----- main --------------------------------------------------------------------
+
+fn main() -> u8 {
+    let args = os.args()
+    var e = Env{ .nx = String.from("nx-out/bootstrap/nx2"), .windows = os.env("COMSPEC") != null and os.env("WINDIR") != null, .dir = String.from("nx-out/fuzz"), .findings = 0 }
+    if e.windows { e.nx.append(".exe") }
+    var iterations: usize = 200
+    var seed: u64 = 1
+    var i: usize = 1
+    while i < args.len {
+        let a = args[i]
+        if a == "--nx" and i + 1 < args.len { e.nx = String.from(args[i + 1]); i += 2; continue }
+        if a == "--iterations" and i + 1 < args.len { iterations = args[i + 1].parse_int(usize) catch { 200 }; i += 2; continue }
+        if a == "--seed" and i + 1 < args.len { seed = args[i + 1].parse_int(u64) catch { 1 }; i += 2; continue }
+        eprintln("usage: nx run tests/fuzz.nx -- [--nx PATH] [--iterations N] [--seed N]", .{})
+        return 2
+    }
+    random.seed(seed)
+    // the compiler's path as the platform spells it, from anywhere
+    if !fs.is_absolute(e.nx[..]) { e.nx = fs.join((fs.cwd() catch { String.from(".") })[..], e.nx[..]) }
+    if e.windows { e.nx = strings.replace(e.nx[..], "/", "\\") }
+    if e.windows { os.set_env("NX_ZIG", "zig") } else if io.file_kind("/System/Library/CoreServices") == 2 { os.set_env("NX_CC", "cc") } else { os.set_env("NX_ZIG", "zig") }
+    fs.make_dirs(e.dir[..]) catch { }
+    println("fuzz: {} with seed {}, {} iterations per engine", .{e.nx, seed, iterations})
+    fuzz_sources(&mut e, iterations)
+    fuzz_binary(&mut e, iterations)
+    if e.findings == 0 { println("ok: no findings", .{}); return 0 }
+    return (if e.findings > 100 { 100 } else { e.findings }) as u8
+}
