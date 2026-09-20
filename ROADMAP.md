@@ -747,6 +747,45 @@ that easy: stable URLs, checksums, and no post-install step.
   --winget`, `--brew`, `--deb`, `--docker`), so a Nexium program reaches
   its users on the roads the compiler took.
 
+**The niche roads** (1.3 onward). The ones people remember:
+
+- The PowerShell line: `irm https://londopy.github.io/nexium/install.ps1 | iex`,
+  the Windows twin of `curl | sh`, which does not exist yet: it downloads
+  the portable zip or the setup, verifies the checksum, runs the setup
+  silently (`/VERYSILENT /TASKS=addtopath`) or unzips to
+  `%LocalAppData%\Programs\Nexium`, and fixes the PATH for the current
+  session too. The Chocolatey package is this script inside a `.nupkg`,
+  which is why Chocolatey installs feel like magic: `choco install` is
+  PowerShell all the way down.
+- One C file is the installer: the compiler is `bootstrap/nx.c`, so on a
+  machine with nothing but a C compiler,
+  `curl -fsSL .../bootstrap/nx.c | cc -x c - -o nx -lm -lpthread`
+  installs Nexium. No other language can be installed by compiling one
+  file; the docs should say so on the front page, and `install.sh`
+  should fall back to it when there is no download.
+- Torrents and magnets: the release workflow writes a `.torrent` per
+  release with the GitHub assets as web seeds and publishes the magnet
+  link in the notes, the way Linux distributions ship images; the
+  checksums are in the file, so a swarm cannot serve a tampered
+  binary. Also an IPFS pin of the same archives (`ipfs://`), for the
+  people who have IPFS Companion.
+- Self-installing `nx`: `nx install` from a portable copy performs the
+  setup's tasks without the setup (PATH, file association, Start menu,
+  the editor files), and `nx uninstall` reverses them; the portable zip
+  and the setup become the same thing with a choice.
+- Portable mode: a `portable` file next to `nx.exe` keeps packages, the
+  REPL history and the Zig cache beside it, so a USB stick carries the
+  whole toolchain and leaves nothing on the host.
+- MSIX with an `.appinstaller` file: a link that installs and then
+  updates itself from the release feed, no store account needed.
+- `gh release download Londopy/nexium -p 'nx-*-x86_64-unknown-linux-gnu.tar.gz'`
+  documented for the people who live in the GitHub CLI; Ansible, Chef
+  and Puppet modules that wrap the install script and pin a version, for
+  the people who install onto a hundred machines.
+- A QR code on the release page and the site's install section that
+  opens the install page on a phone, for Termux, and for the person
+  standing at someone else's laptop.
+
 **`nx topo`: the tutorial you can run** (1.4).
 
 - An interactive tutorial runner: opens a chapter, shows its program, lets
