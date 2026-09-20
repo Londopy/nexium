@@ -10,6 +10,10 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-20
+
+*Annapurna: Summit Ridge* — the last ridge, nothing left but walking up: every tool in Nexium, the shipped `nx` the Nexium one, a harness and a fuzzer in Nexium, the stability policy and the tiers.
+
 ### Added
 
 - `nx fmt` in Nexium (`self/fmt.nx`, a command of `self/nx.nx`): the
@@ -617,7 +621,8 @@ First public release.
   Korean, French, and German; the language reference and architecture tour in
   Spanish, Chinese, and Japanese.
 
-[Unreleased]: https://github.com/Londopy/nexium/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/Londopy/nexium/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/Londopy/nexium/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/Londopy/nexium/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/Londopy/nexium/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/Londopy/nexium/compare/v0.6.0...v0.6.1

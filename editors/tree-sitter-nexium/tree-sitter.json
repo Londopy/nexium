@@ -13,7 +13,7 @@
     }
   ],
   "metadata": {
-    "version": "0.8.0",
+    "version": "0.9.0",
     "license": "MIT",
     "description": "Nexium grammar for tree-sitter",
     "authors": [{ "name": "Londopy" }],

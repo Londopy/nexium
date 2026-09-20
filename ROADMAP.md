@@ -9,7 +9,7 @@ The spec's one sentence is the compass: *a language complete enough to build
 everything in, that is also the best thing to adopt for one piece of
 something else.* The second half is ahead of the first, on purpose.
 
-## Now: 0.8.0
+## Now: 0.9.0
 
 What exists and is verified on Windows, Linux, and macOS:
 
@@ -157,8 +157,11 @@ checked against the Rust compiler on identical inputs.
   moves to `bootstrap/`, kept for building the first Nexium compiler on a
   fresh machine.
 
-- Status (0.7.0): syntax settled; lexer, parser, checker, C emitter and
-  driver done and bootstrapped: `nx` written in Nexium builds itself.
+- Status (0.9.0): the compiler, every tool, the test harness and the
+  fuzzer are Nexium; releases ship the Nexium `nx` built from the C seed;
+  the stability policy and the platform tiers are written. The Rust crate
+  is frozen in `bootstrap/rust/` with nothing left in it, and leaves at
+  1.0.
 
 The rest of the climb, one release each (decision 90):
 

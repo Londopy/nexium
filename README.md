@@ -353,13 +353,13 @@ files (`bootstrap/nx.c`, the tree-sitter parser, `gui/font.bin`, lock files):
 
 | language | lines | share | what it is |
 | --- | --- | --- | --- |
-| Rust | 29,465 | 48.1% | the frozen first compiler in `bootstrap/rust/` (28,938 lines, gone at 1.0) and the test harness |
-| Nexium | 28,623 | 46.7% | the compiler (20,833 lines under `self/`), the standard library, examples, nexium-gui, the spec suite |
-| C | 2,490 | 4.1% | the runtime `nx_rt.h`, the GUI window layer, vendored test C |
-| JavaScript, TypeScript | 651 | 1.1% | the VS Code extension and the tree-sitter grammar |
+| Nexium | 33,917 | 51.8% | the compiler and its tools (25,335 lines under `self/`), the standard library, the test harness and the fuzzer, examples, nexium-gui, the spec suite |
+| Rust | 28,938 | 44.2% | the frozen first compiler in `bootstrap/rust/`, gone at 1.0 |
+| C | 2,021 | 3.1% | the runtime `nx_rt.h`, the GUI window layer, vendored test C |
+| JavaScript, TypeScript | 550 | 0.8% | the VS Code extension and the tree-sitter grammar |
 
-The Rust share is the frozen bootstrap compiler and the tools not yet
-ported; it goes to zero at 1.0.
+The Rust share is the frozen first compiler, kept until 1.0 so the port
+can be read against it; nothing runs through it.
 
 ## Layout
 

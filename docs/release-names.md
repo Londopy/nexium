@@ -88,6 +88,7 @@ ordering; the name carries the character.
 | 0.6.1 | Annapurna: Lachenal | patch (roster 2) |
 | 0.7.0 | Annapurna: Camp V | the last camp, at 7,400 m; the summit push starts here: the compiler builds itself |
 | 0.8.0 | Annapurna: the Sickle | the exposed glacier crossing below the summit: the compiler in Nexium is the compiler, and builds from its own C with no Rust |
+| 0.9.0 | Annapurna: Summit Ridge | the last ridge, nothing left but walking up: every tool in Nexium, the shipped `nx` the Nexium one, a harness and a fuzzer in Nexium, the stability policy and the tiers |
 
 ## The plan
 
@@ -97,7 +98,6 @@ fits and the pencilled one goes back in the pool.
 
 | version | name | why |
 | --- | --- | --- |
-| 0.9.0 | Annapurna: Summit Ridge | the last ridge: the tools in Nexium so the shipped `nx` is the Nexium one, the stability policy, fuzzing, the tier list |
 | 1.0.0 | Annapurna: Summit | the top of the mountain the project has been on since 0.1 |
 | 1.1.0 | Annapurna: Dutch Rib | the safer line that became the everyday route: the ergonomics the compiler wanted |
 | 1.2.0 | Annapurna: South Face | the great wall climbed by siege: the toolchain in Nexium, incremental builds, the semantic language server |
@@ -142,7 +142,7 @@ summiters lost fingers and toes on the descent.
 | Camp I to Camp V | the camps of the 1950 route; Camp V at 7,400 m was the summit-push camp | ordinary progress, each a stage higher; the last camp for the release the final push starts from (used: 0.3.0 to 0.7.0) |
 | Cauliflower Ridge | the ice ridge tried first and abandoned for the Sickle route | course change: a removed feature, a reversed decision |
 | the Sickle | the crescent glacier the summit route crosses; exposed, avalanche-prone | the last risky structural change before a major (used: 0.8.0) |
-| Summit Ridge | the final ridge; nothing left but walking up | candidate (planned: 0.9.0) |
+| Summit Ridge | the final ridge; nothing left but walking up | the last minor before a major (used: 0.9.0) |
 | Summit | 3 June 1950 | `X.0.0` (planned: 1.0.0) |
 | North Face | the 1950 route, the face the camps are on | a release that completes the original line: finishes something begun in 0.x |
 | Dutch Rib | the 1977 route on the North Face, now the usual line because it is safer than the Sickle | the release that makes the everyday path easier and safer: ergonomics (planned: 1.1.0) |
