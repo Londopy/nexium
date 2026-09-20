@@ -78,7 +78,12 @@ fn fn_sig(t: *parser.Tree, id: usize) -> String {
 fn docs_html(t: *parser.Tree, id: usize) -> String {
     let d = t.nodes[id].doc
     if d == parser.NONE or t.doc_counts[d] == 0 { return String.new() }
-    return format("<p class=\"doc\">{}</p>", .{esc(t.docs[d][..])})
+    var joined = String.new()
+    for line, i in t.docs[d][..].lines() {
+        if i > 0 { joined.append(" ") }
+        joined.append(line)
+    }
+    return format("<p class=\"doc\">{}</p>", .{esc(joined[..])})
 }
 
 /// The page for a checked program: every public item of every module.

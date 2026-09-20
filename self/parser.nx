@@ -306,7 +306,7 @@ impl Parser {
         var text = String.new()
         while true {
             if self.peek() == lexer.Kind.Doc {
-                if n > 0 { text.append(" ") }
+                if n > 0 { text.append("\n") }
                 text.append(self.toks[self.pos].text[..])
                 n += 1
                 self.bump()

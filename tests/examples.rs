@@ -221,7 +221,7 @@ fn ship_produces_library_and_header() {
         return;
     }
     let out_dir = std::env::temp_dir().join(format!("nx-ship-{}", std::process::id()));
-    let out = Command::new(nx()).arg("ship").arg(PathBuf::from("examples").join("ropesim.nx")).arg("--out-dir").arg(&out_dir).current_dir(root()).output().expect("run nx ship");
+    let out = nxs().arg("ship").arg(PathBuf::from("examples").join("ropesim.nx")).arg("--out-dir").arg(&out_dir).output().expect("run nx ship");
     assert!(out.status.success(), "ship failed: {}", String::from_utf8_lossy(&out.stderr));
     let lib = out_dir.join("ropesim");
     assert!(lib.join("ropesim.h").exists());
@@ -479,7 +479,7 @@ fn main() { println(\"hi\", .{}) }
     )
     .unwrap();
     // an installed Inno Setup would also compile the script; the script itself is what this checks
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).args(["ship", "greeter.nx"]).env("ISCC", "").current_dir(&base).output().expect("run nx ship");
+    let out = driver_cc(&mut Command::new(nx_self())).args(["ship", "greeter.nx"]).env("ISCC", "").current_dir(&base).output().expect("run nx ship");
     assert!(
         out.status.success(),
         "nx ship failed:

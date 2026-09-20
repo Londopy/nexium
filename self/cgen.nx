@@ -50,10 +50,51 @@ pub struct FnState {
     is_test: bool
 }
 
+/// A scalar that crosses the export boundary: its C type, its class (0 int,
+/// 1 f32, 2 f64, 3 bool, 4 char) and, for integers, the Nexium name.
+pub struct Scalar {
+    c: String
+    kind: u8
+    int_name: String
+}
+
+/// A field of a `layout(c)` struct at the boundary.
+pub struct ExportField {
+    name: String
+    c_name: String
+    scalar: Scalar
+}
+
+/// A parameter or return value at the boundary: kind 0 scalar, 1 slice of
+/// scalars (elem_c, scalar, mutable), 2 layout(c) struct (c_name, fields).
+pub struct ExportParam {
+    name: String
+    kind: u8
+    scalar: Scalar
+    elem_c: String
+    mutable: bool
+    c_name: String
+    fields: List(ExportField)
+}
+
+/// What `nx ship` needs to know about an exported function.
+pub struct ExportInfo {
+    name: String
+    params: List(ExportParam)
+    has_ret: bool
+    ret: ExportParam
+    /// returns an int32_t status with the value through an out-parameter
+    status: bool
+    effects: String
+    doc: List(String)
+}
+
 pub struct Gen {
     c: *mut check.Checker
     mode: u8
     entry: u8
+    /// the exported functions, in order, for the artifacts
+    exports: List(ExportInfo)
     types_out: String
     // struct/enum types with a forward declaration but no definition yet
     forward_only: List(usize)
@@ -194,7 +235,7 @@ pub fn new_gen(c: *mut check.Checker, mode: u8, entry: u8) -> Gen {
         starts.append(v)
     }
     return Gen{
-        .c = c, .mode = mode, .entry = entry,
+        .c = c, .exports = List(ExportInfo).new(), .mode = mode, .entry = entry,
         .types_out = String.new(), .forward_only = List(usize).new(), .runtime_idents = idents,
         .fwd_out = String.new(), .protos_out = String.new(), .helpers_out = String.new(), .data_out = String.new(), .funcs_out = String.new(),
         .type_names = Map(usize, String).new(), .emitted_names = Map(String, bool).new(),
@@ -3856,11 +3897,47 @@ impl Gen {
         return 3
     }
 
+    /// The scalar record of an exportable scalar type.
+    fn scalar_of(self: *mut Self, t0: usize) -> Scalar {
+        let t = self.res(t0)
+        let k = self.c.tys.kind(t)
+        if k == check.TK.Distinct { return self.scalar_of(self.c.distinct_underlying(self.c.tys.list[t].def)) }
+        var kind: u8 = 0
+        var int_name = String.new()
+        if k == check.TK.Int { int_name = self.c.tys.list[t].name.clone() }
+        else if k == check.TK.Float { kind = if self.c.tys.list[t].name == "f32" { 1 } else { 2 } }
+        else if k == check.TK.Bool { kind = 3 }
+        else if k == check.TK.Char { kind = 4 }
+        return Scalar{ .c = self.scalar_c(t0), .kind = kind, .int_name = int_name }
+    }
+
+    /// The boundary record of a parameter or return type whose kind is known.
+    fn export_param(self: *mut Self, name: []u8, t0: usize, kind: u8, elem_c: []u8, mutable: bool) -> ExportParam {
+        var ep = ExportParam{ .name = String.from(name), .kind = kind, .scalar = Scalar{ .c = String.new(), .kind = 0, .int_name = String.new() }, .elem_c = String.from(elem_c), .mutable = mutable, .c_name = String.new(), .fields = List(ExportField).new() }
+        if kind == 0 { ep.scalar = self.scalar_of(t0) }
+        else if kind == 1 {
+            let t = self.res(t0)
+            ep.scalar = self.scalar_of(self.c.tys.list[t].args[0])
+        } else if kind == 2 {
+            let t = self.res(t0)
+            let d = self.c.tys.list[t].def
+            let dm = self.c.structs[d].module
+            let ftys = self.c.struct_field_types(t)
+            ep.c_name = String.from(elem_c)
+            for f, i in self.c.structs[d].fields.clone() {
+                let fname = self.c.node(dm, f).name.clone()
+                ep.fields.append(ExportField{ .name = fname.clone(), .c_name = format("{}_{}", .{sanitize_ident(fname[..]), i}), .scalar = self.scalar_of(ftys[i]) })
+            }
+        }
+        return ep
+    }
+
     fn export_wrapper(self: *mut Self, inst: usize) -> String {
         let fname = self.c.insts[inst].name.clone()
         let ps = self.c.insts[inst].params.clone()
         var params = List(String).new()
         var args = List(String).new()
+        var info = ExportInfo{ .name = fname.clone(), .params = List(ExportParam).new(), .has_ret = false, .ret = self.export_param("", 0, 3, "", false), .status = false, .effects = String.new(), .doc = List(String).new() }
         args.append(String.from("&ctx"))
         for p in ps {
             let lname = self.c.insts[inst].locals[p].name.clone()
@@ -3869,6 +3946,7 @@ impl Gen {
             var mutable = false
             let kind = self.param_kind(lt, format("parameter `{}`", .{lname})[..], fname[..], &mut elem_c, &mut mutable)
             if kind == 3 { return String.new() }
+            info.params.append(self.export_param(lname[..], lt, kind, elem_c[..], mutable))
             if kind == 0 {
                 params.append(format("{} {}", .{self.scalar_c(lt), lname}))
                 let cn = self.cty(lt)
@@ -3897,11 +3975,24 @@ impl Gen {
                 self.errors.append(format("export `{}`: returning a slice across the boundary is not allowed (its lifetime cannot be expressed); return through a caller-provided buffer", .{fname}))
                 return String.new()
             }
+            info.ret = self.export_param("", payload, kind, elem_c[..], mutable)
+            info.has_ret = true
             ret_c = if kind == 0 { self.scalar_c(payload) } else { elem_c }
             has_ret = true
         }
         let status = is_eu or (self.c.insts[inst].effects & check.EFF_PANICS) != 0
         let effects = check.render_effects(self.c.insts[inst].effects)
+        info.status = status
+        info.effects = effects.clone()
+        // the function's /// lines
+        let fdef = self.c.insts[inst].def
+        let fm = self.c.fns[fdef].node_module
+        let fnode = self.c.fns[fdef].node
+        let d = self.c.mods[fm].parsed.tree.nodes[fnode].doc
+        if d != check.NONE and self.c.mods[fm].parsed.tree.doc_counts[d] > 0 {
+            for line in self.c.mods[fm].parsed.tree.docs[d][..].lines() { info.doc.append(String.from(line)) }
+        }
+        self.exports.append(info)
         let target = self.fn_c_name(inst)
         var out = String.new()
         let panic_id = self.err_id("Panic")

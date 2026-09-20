@@ -1,0 +1,226 @@
+// `artifact installer`: an installer for a Nexium program.
+//
+//     artifact cli { name = "taskdesk" }
+//     artifact installer { name = "TaskDesk", publisher = "Londopy", version = "1.2.0",
+//                          url = "https://example.com", license = "LICENSE", readme = "README.md",
+//                          files = ["assets", "config.toml"], add_to_path = true }
+//
+// `nx ship` writes, next to the built executable:
+// - on Windows, `<name>.iss` for Inno Setup and runs `ISCC.exe` when it is
+//   installed, producing `<name>-<version>-setup-x64.exe`: wizard, install
+//   for one user or all, Start menu entry, optional PATH entry, uninstaller;
+// - on Linux and macOS, `install.sh`, which copies the program to
+//   `~/.local/bin` (or a `--prefix`) with its files under
+//   `~/.local/share/<name>` and prints the PATH line to add, plus a
+//   `<name>-<version>-<os>.tar.gz` holding both.
+//
+// Only the values of the artifact fields feed the templates; strings are
+// escaped for the format they land in.
+
+import std.fs
+
+pub struct Spec {
+    name: String
+    exe: String
+    version: String
+    publisher: String
+    url: String
+    license: String
+    readme: String
+    files: List(String)
+    add_to_path: bool
+}
+
+fn iss_str(s: []u8) -> String {
+    var out = String.new()
+    for c in s {
+        if c == '"' { out.append("\"\"") } else { out.push_byte(c) }
+    }
+    return out
+}
+
+fn no_spaces(s: []u8) -> String {
+    var out = String.new()
+    for c in s { if c != ' ' { out.push_byte(c) } }
+    return out
+}
+
+fn slug_of(s: []u8) -> String {
+    var out = String.new()
+    for c in s { out.push_byte(if c == ' ' { '-' } else if c >= 'A' and c <= 'Z' { c + 32 } else { c }) }
+    return out
+}
+
+fn hex_upper(v: u64, width: usize) -> String {
+    let digits = "0123456789ABCDEF"
+    var out = String.new()
+    var i = width
+    while i > 0 {
+        i -= 1
+        out.push_byte(digits[((v >> ((i * 4) as u64)) & 15) as usize])
+    }
+    return out
+}
+
+/// A stable GUID-shaped id from the name, so upgrades find the previous install.
+fn app_id(name: []u8) -> String {
+    var h: u64 = 0xcbf29ce484222325
+    for b in name {
+        h ^= b as u64
+        h = h *% 0x100000001b3
+    }
+    var g: u64 = 0x9e3779b97f4a7c15
+    var i = name.len
+    while i > 0 {
+        i -= 1
+        g ^= name[i] as u64
+        g = g *% 0x100000001b3
+    }
+    // Inno reads a leading `{` as a constant; `{{` is a literal brace
+    return format("{{{{{}-{}-4{}-9{}-{}}}", .{hex_upper(h >> 32, 8), hex_upper((h >> 16) & 0xffff, 4), hex_upper(h & 0xfff, 3), hex_upper((g >> 52) & 0xfff, 3), hex_upper(g & 0xffffffffffff, 12)})
+}
+
+/// The script sits next to the program's files, so every path in it is
+/// relative to `{#SourcePath}`, the script's own directory.
+pub fn inno_script(spec: *Spec, source_dir: []u8) -> String {
+    var s = String.new()
+    s.append(format("; {} installer, written by `nx ship`\n\n", .{spec.name})[..])
+    s.append("[Setup]\n")
+    s.append(format("AppId={}\n", .{app_id(spec.name[..])})[..])
+    s.append(format("AppName={}\n", .{iss_str(spec.name[..])})[..])
+    s.append(format("AppVersion={}\n", .{iss_str(spec.version[..])})[..])
+    s.append(format("AppVerName={} {}\n", .{iss_str(spec.name[..]), iss_str(spec.version[..])})[..])
+    s.append(format("AppPublisher={}\n", .{iss_str(spec.publisher[..])})[..])
+    if spec.url.len > 0 { s.append(format("AppPublisherURL={}\nAppSupportURL={}\n", .{iss_str(spec.url[..]), iss_str(spec.url[..])})[..]) }
+    s.append(format("DefaultDirName={{autopf}}\\{}\n", .{iss_str(spec.name[..])})[..])
+    s.append(format("DefaultGroupName={}\n", .{iss_str(spec.name[..])})[..])
+    s.append("DisableProgramGroupPage=yes\n")
+    if spec.license.len > 0 { s.append(format("LicenseFile={{#SourcePath}}\\{}\n", .{iss_str(spec.license[..])})[..]) }
+    s.append("OutputDir={#SourcePath}\n")
+    s.append(format("OutputBaseFilename={}-{}-setup-x64\n", .{iss_str(no_spaces(spec.name[..])[..]), iss_str(spec.version[..])})[..])
+    s.append(format("UninstallDisplayIcon={{app}}\\{}\n", .{iss_str(spec.exe[..])})[..])
+    s.append("Compression=lzma2\nSolidCompression=yes\nWizardStyle=modern\nPrivilegesRequired=lowest\nPrivilegesRequiredOverridesAllowed=dialog\nArchitecturesAllowed=x64compatible\nArchitecturesInstallIn64BitMode=x64compatible\n")
+    if spec.add_to_path { s.append("ChangesEnvironment=yes\n") }
+    s.append("\n[Languages]\nName: \"english\"; MessagesFile: \"compiler:Default.isl\"\n\n")
+    if spec.add_to_path { s.append("[Tasks]\nName: \"addtopath\"; Description: \"Add the program to the PATH\"; GroupDescription: \"Environment:\"\n\n") }
+    s.append("[Files]\n")
+    s.append(format("Source: \"{{#SourcePath}}\\{}\"; DestDir: \"{{app}}\"; Flags: ignoreversion\n", .{iss_str(spec.exe[..])})[..])
+    if spec.readme.len > 0 { s.append(format("Source: \"{{#SourcePath}}\\{}\"; DestDir: \"{{app}}\"; Flags: ignoreversion skipifsourcedoesntexist\n", .{iss_str(spec.readme[..])})[..]) }
+    if spec.license.len > 0 { s.append(format("Source: \"{{#SourcePath}}\\{}\"; DestDir: \"{{app}}\"; Flags: ignoreversion skipifsourcedoesntexist\n", .{iss_str(spec.license[..])})[..]) }
+    for f in spec.files {
+        if fs.is_dir(fs.join(source_dir, f[..])[..]) {
+            s.append(format("Source: \"{{#SourcePath}}\\{}\\*\"; DestDir: \"{{app}}\\{}\"; Flags: recursesubdirs createallsubdirs ignoreversion skipifsourcedoesntexist\n", .{iss_str(f[..]), iss_str(f[..])})[..])
+        } else {
+            s.append(format("Source: \"{{#SourcePath}}\\{}\"; DestDir: \"{{app}}\"; Flags: ignoreversion skipifsourcedoesntexist\n", .{iss_str(f[..])})[..])
+        }
+    }
+    s.append("\n[Icons]\n")
+    s.append(format("Name: \"{{group}}\\{}\"; Filename: \"{{app}}\\{}\"; WorkingDir: \"{{app}}\"\n", .{iss_str(spec.name[..]), iss_str(spec.exe[..])})[..])
+    s.append(format("Name: \"{{group}}\\Uninstall {}\"; Filename: \"{{uninstallexe}}\"\n", .{iss_str(spec.name[..])})[..])
+    s.append("\n[Run]\n")
+    if spec.readme.len > 0 {
+        s.append(format("Filename: \"{{app}}\\{}\"; Description: \"Open the README\"; Flags: postinstall shellexec skipifsilent unchecked\n", .{iss_str(fs.base_name(spec.readme[..]))})[..])
+    }
+    if spec.add_to_path { s.append(PATH_CODE) }
+    return s
+}
+
+const PATH_CODE = "\n[Code]\nfunction EnvKey(): string;\nbegin\n  if IsAdminInstallMode then\n    Result := 'SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment'\n  else\n    Result := 'Environment';\nend;\n\nfunction EnvRoot(): Integer;\nbegin\n  if IsAdminInstallMode then\n    Result := HKEY_LOCAL_MACHINE\n  else\n    Result := HKEY_CURRENT_USER;\nend;\n\nprocedure EnvAddPath(Dir: string);\nvar\n  Paths: string;\nbegin\n  if not RegQueryStringValue(EnvRoot(), EnvKey(), 'Path', Paths) then\n    Paths := '';\n  if Pos(';' + Uppercase(Dir) + ';', ';' + Uppercase(Paths) + ';') > 0 then\n    exit;\n  if (Paths <> '') and (Paths[Length(Paths)] <> ';') then\n    Paths := Paths + ';';\n  Paths := Paths + Dir;\n  RegWriteExpandStringValue(EnvRoot(), EnvKey(), 'Path', Paths);\nend;\n\nprocedure EnvRemovePath(Dir: string);\nvar\n  Paths: string;\n  P: Integer;\nbegin\n  if not RegQueryStringValue(EnvRoot(), EnvKey(), 'Path', Paths) then\n    exit;\n  P := Pos(';' + Uppercase(Dir) + ';', ';' + Uppercase(Paths) + ';');\n  if P = 0 then\n    exit;\n  Delete(Paths, P - 1, Length(Dir) + 1);\n  RegWriteExpandStringValue(EnvRoot(), EnvKey(), 'Path', Paths);\nend;\n\nprocedure CurStepChanged(CurStep: TSetupStep);\nbegin\n  if (CurStep = ssPostInstall) and WizardIsTaskSelected('addtopath') then\n    EnvAddPath(ExpandConstant('{app}'));\nend;\n\nprocedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);\nbegin\n  if CurUninstallStep = usPostUninstall then\n    EnvRemovePath(ExpandConstant('{app}'));\nend;\n"
+
+fn sh_str(s: []u8) -> String {
+    var out = String.from("'")
+    for c in s {
+        if c == '\'' { out.append("'\\''") } else { out.push_byte(c) }
+    }
+    out.append("'")
+    return out
+}
+
+pub fn install_script(spec: *Spec) -> String {
+    var extra = String.new()
+    for f in spec.files { extra.append(format("  copy_tree {} \"$share\"\n", .{sh_str(f[..])})[..]) }
+    if spec.readme.len > 0 { extra.append(format("  copy_tree {} \"$share\"\n", .{sh_str(spec.readme[..])})[..]) }
+    if spec.license.len > 0 { extra.append(format("  copy_tree {} \"$share\"\n", .{sh_str(spec.license[..])})[..]) }
+    let slug = slug_of(spec.name[..])
+    var s = String.new()
+    s.append(format("#!/bin/sh\n# {} {} installer, written by `nx ship`.\n# Usage: ./install.sh [--prefix DIR] [--uninstall]\n#   installs {} into DIR/bin (default ~/.local) and the program's files\n#   into DIR/share/{}.\nset -e\nname={}\nexe={}\nslug={}\n", .{spec.name, spec.version, spec.exe, slug, sh_str(spec.name[..]), sh_str(spec.exe[..]), sh_str(slug[..])})[..])
+    s.append("prefix=\"$HOME/.local\"\nmode=install\nwhile [ $# -gt 0 ]; do\n  case \"$1\" in\n    --prefix) prefix=\"$2\"; shift 2 ;;\n    --uninstall) mode=uninstall; shift ;;\n    -h|--help) sed -n '2,5p' \"$0\"; exit 0 ;;\n    *) echo \"unknown option: $1\" >&2; exit 2 ;;\n  esac\ndone\nhere=$(cd \"$(dirname \"$0\")\" && pwd)\nbin=\"$prefix/bin\"\nshare=\"$prefix/share/$slug\"\nif [ \"$mode\" = uninstall ]; then\n  rm -f \"$bin/$exe\"\n  rm -rf \"$share\"\n  echo \"removed $name from $prefix\"\n  exit 0\nfi\ncopy_tree() {\n  [ -e \"$here/$1\" ] || return 0\n  mkdir -p \"$2\"\n  cp -R \"$here/$1\" \"$2/\"\n}\nmkdir -p \"$bin\" \"$share\"\ncp \"$here/$exe\" \"$bin/$exe\"\nchmod +x \"$bin/$exe\"\n")
+    s.append(extra[..])
+    s.append("echo \"installed $name $version to $bin/$exe\"\ncase \":$PATH:\" in\n  *\":$bin:\"*) ;;\n  *) echo \"add it to your PATH:  export PATH=\\\"$bin:\\$PATH\\\"\" ;;\nesac\n")
+    return s
+}
+
+/// Where Inno Setup's compiler lives, when it is installed.
+pub fn find_iscc() -> ?String {
+    if let p = os.env("ISCC") { if fs.exists(p) { return String.from(p) } }
+    let a = "C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe"
+    if fs.exists(a) { return String.from(a) }
+    let b = "C:\\Program Files\\Inno Setup 6\\ISCC.exe"
+    if fs.exists(b) { return String.from(b) }
+    if let l = os.env("LOCALAPPDATA") {
+        let p = format("{}\\Programs\\Inno Setup 6\\ISCC.exe", .{l})
+        if fs.exists(p[..]) { return p }
+    }
+    return null
+}
+
+/// Build the installer for the program at `exe_path` into its directory.
+/// Returns the files written (the script, and the setup exe or tarball when
+/// the tools to make them were found).
+pub fn produce(spec: *Spec, exe_path: []u8, windows: bool, macos: bool) -> !List(String) {
+    var dir = String.from(fs.parent(exe_path))
+    if dir.len == 0 { dir = String.from(".") }
+    var out = List(String).new()
+    if windows {
+        let iss = fs.join(dir[..], format("{}.iss", .{no_spaces(spec.name[..])})[..])
+        fs.write(iss[..], inno_script(spec, dir[..])[..]) catch {
+            eprintln("error: cannot write {}", .{iss})
+            return error.IoError
+        }
+        out.append(iss.clone())
+        if let iscc = find_iscc() {
+            var argv = List([]u8).new()
+            argv.append(iscc[..])
+            argv.append("/Q")
+            argv.append(iss[..])
+            let code = process.run(argv[..]) catch {
+                eprintln("error: cannot run {}", .{iscc})
+                return error.IoError
+            }
+            if code != 0 {
+                eprintln("error: Inno Setup failed on {}", .{iss})
+                return error.IoError
+            }
+            out.append(fs.join(dir[..], format("{}-{}-setup-x64.exe", .{no_spaces(spec.name[..]), spec.version})[..]))
+        } else {
+            eprintln("note: Inno Setup (ISCC.exe) not found; wrote {} to compile later (install Inno Setup 6 or set ISCC)", .{iss})
+        }
+    } else {
+        let sh = fs.join(dir[..], "install.sh")
+        fs.write(sh[..], install_script(spec)[..]) catch {
+            eprintln("error: cannot write {}", .{sh})
+            return error.IoError
+        }
+        var chmod = List([]u8).new()
+        chmod.append("chmod")
+        chmod.append("+x")
+        chmod.append(sh[..])
+        _ = process.run(chmod[..]) catch { 0 }
+        out.append(sh.clone())
+        let tar = fs.join(dir[..], format("{}-{}-{}.tar.gz", .{slug_of(spec.name[..]), spec.version, if macos { "macos" } else { "linux" }})[..])
+        var argv = List([]u8).new()
+        argv.append("tar")
+        argv.append("-czf")
+        argv.append(tar[..])
+        argv.append("-C")
+        argv.append(dir[..])
+        argv.append(spec.exe[..])
+        argv.append("install.sh")
+        for f in spec.files { if fs.exists(fs.join(dir[..], f[..])[..]) { argv.append(f[..]) } }
+        if spec.readme.len > 0 and fs.exists(fs.join(dir[..], spec.readme[..])[..]) { argv.append(spec.readme[..]) }
+        if spec.license.len > 0 and fs.exists(fs.join(dir[..], spec.license[..])[..]) { argv.append(spec.license[..]) }
+        let code = process.run(argv[..]) catch { -1 }
+        if code == 0 { out.append(tar) } else { eprintln("note: tar not available; wrote install.sh without the archive", .{}) }
+    }
+    return out
+}

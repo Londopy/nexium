@@ -20,6 +20,10 @@ import tools
 import size
 import doc
 import manifest
+import ship
+import ship_node
+import installer
+import std.fs
 
 const VERSION = "0.8.0"
 const RELEASE_NAME = "Annapurna: the Sickle"
@@ -48,6 +52,7 @@ fn usage() {
     eprintln("usage: nx <build|run|test|check|effects|audit|refcounts|leaks|size|emit-c|tir> <file.nx> [options] [-- args]", .{})
     eprintln("       nx fmt <file.nx>... [--check]", .{})
     eprintln("       nx doc <file.nx> [-o <dir>]", .{})
+    eprintln("       nx ship <file.nx> [--mode m] [--target t]   produce the declared artifacts", .{})
     eprintln("       nx version | nx doctor", .{})
     eprintln("       nx init [name] | nx add <name> --git URL [--tag TAG] | --path DIR | nx fetch", .{})
     eprintln("  -o <path>          output file", .{})
@@ -178,13 +183,21 @@ fn check_program(o: *Opts) -> ?check.Checker {
 
 /// The C of the program with the given entry: "" after errors.
 fn emit(c: *mut check.Checker, o: *Opts, entry: u8) -> String {
-    var g = cgen.new_gen(c, o.mode, entry)
-    g.lib_name = String.from(stem_of(o.file[..]))
+    var infos = List(cgen.ExportInfo).new()
+    return emit_with(c, o, entry, stem_of(o.file[..]), o.mode, &mut infos)
+}
+
+/// The C of the program with the given entry, library name and mode; the
+/// exported functions' boundary records come back through `infos`.
+fn emit_with(c: *mut check.Checker, o: *Opts, entry: u8, lib_name: []u8, mode: u8, infos: *mut List(cgen.ExportInfo)) -> String {
+    var g = cgen.new_gen(c, mode, entry)
+    g.lib_name = String.from(lib_name)
     let out = g.generate()
     if g.errors.len > 0 {
         for e in g.errors { eprintln("error: {}", .{e}) }
         return String.new()
     }
+    infos.*= g.exports.clone()
     return out
 }
 
@@ -264,20 +277,29 @@ fn compile_c(c: *check.Checker, o: *Opts, c_path: []u8, out: []u8, kind: []u8) -
     for d in o.include_dirs { argv.append(format("-I{}", .{d})) }
     for d in include { argv.append(format("-I{}", .{d})) }
     argv.append(format("-I{}", .{dir_of(o.file[..])}))
-    for s in c_sources { argv.append(s.clone()) }
-    for d in lib_paths { argv.append(format("-L{}", .{d})) }
-    for l in libs { argv.append(format("-l{}", .{l})) }
+    // an object of the generated file alone: no vendored C, no libraries
+    let linking = kind != "object" and kind != "sections"
+    if linking {
+        for s in c_sources { argv.append(s.clone()) }
+        for d in lib_paths { argv.append(format("-L{}", .{d})) }
+        for l in libs { argv.append(format("-l{}", .{l})) }
+    }
     if o.target.len > 0 {
         argv.append(String.from("-target"))
         argv.append(o.target.clone())
     }
     if kind == "object" or kind == "sections" { argv.append(String.from("-c")) }
+    if kind == "shared" {
+        argv.append(String.from("-shared"))
+        argv.append(String.from("-DNX_BUILD_SHARED"))
+        if !is_windows_target(o.target[..]) { argv.append(String.from("-fPIC")) }
+    }
     argv.append(String.from(c_path))
     argv.append(String.from("-o"))
     argv.append(String.from(out))
     let windows = is_windows_target(o.target[..])
-    if windows { argv.append(String.from("-lws2_32")) }
-    if !windows {
+    if windows and linking { argv.append(String.from("-lws2_32")) }
+    if !windows and linking {
         // libm is part of libSystem on macOS; a separate -lm there makes zig skip
         // its implicit libc link on machines without an SDK. Ask for libc explicitly.
         if !is_macos_target(o.target[..]) { argv.append(String.from("-lm")) }
@@ -589,6 +611,314 @@ fn cmd_fetch() -> i32 {
     return 0
 }
 
+/// The string value of an artifact field, or "".
+fn artifact_str(c: *check.Checker, m: usize, art: usize, key: []u8) -> String {
+    for f in c.node(m, art).kids.clone() {
+        let fnode = c.node(m, f)
+        if fnode.name != key { continue }
+        let v = c.node(m, fnode.x)
+        if v.k == parser.NodeKind.Lit and v.text == "str" { return v.name.clone() }
+    }
+    return String.new()
+}
+
+fn artifact_list(c: *check.Checker, m: usize, art: usize, key: []u8) -> List(String) {
+    var out = List(String).new()
+    for f in c.node(m, art).kids.clone() {
+        let fnode = c.node(m, f)
+        if fnode.name != key { continue }
+        let v = c.node(m, fnode.x)
+        if v.k == parser.NodeKind.ArrayLit {
+            for e in v.kids.clone() {
+                let en = c.node(m, e)
+                if en.k == parser.NodeKind.Lit and en.text == "str" { out.append(en.name.clone()) }
+            }
+        }
+    }
+    return out
+}
+
+fn artifact_bool(c: *check.Checker, m: usize, art: usize, key: []u8) -> bool {
+    for f in c.node(m, art).kids.clone() {
+        let fnode = c.node(m, f)
+        if fnode.name != key { continue }
+        let v = c.node(m, fnode.x)
+        if v.k == parser.NodeKind.Lit and v.text == "bool" { return v.name == "true" }
+        if v.k == parser.NodeKind.Ident { return v.name == "true" }
+    }
+    return false
+}
+
+/// The host as a target triple: `x86_64-windows`, `aarch64-macos`, `x86_64-linux`.
+fn host_target() -> String {
+    let host = if is_windows_target("") { "windows" } else if is_macos_target("") { "macos" } else { "linux" }
+    var arch = "x86_64"
+    if let a = os.env("PROCESSOR_ARCHITECTURE") { if a == "ARM64" { arch = "aarch64" } }
+    if host != "windows" {
+        var argv = List([]u8).new()
+        argv.append("uname")
+        argv.append("-m")
+        let code = process.exec(argv[..], "", "") catch { -1 }
+        if code == 0 {
+            let m = process.last_stdout()
+            if m[..].trim() == "arm64" or m[..].trim() == "aarch64" { arch = "aarch64" }
+        }
+    }
+    return format("{}-{}", .{arch, host})
+}
+
+/// Copy a directory tree.
+fn copy_dir(from: []u8, to: []u8) -> !void {
+    try fs.make_dirs(to)
+    for name in try fs.list(from) {
+        let src = fs.join(from, name[..])
+        let dst = fs.join(to, name[..])
+        if fs.is_dir(src[..]) { try copy_dir(src[..], dst[..]) } else { try fs.copy(src[..], dst[..]) }
+    }
+}
+
+/// `nx ship`: every artifact the program declares (specification 15).
+fn cmd_ship(o: *Opts) -> i32 {
+    var c = check_program(o) orelse return 1
+    // the artifacts, from the parse trees of the program's own modules
+    var arts = List(usize).new()
+    var art_mods = List(usize).new()
+    let n_mods = c.mods.len
+    for m in 0..n_mods {
+        if c.mods[m].name[..].starts_with("std.") or c.mods[m].name[..].starts_with("cimport:") { continue }
+        for it in c.mods[m].parsed.items.clone() {
+            if c.node(m, it).k == parser.NodeKind.Artifact { arts.append(it); art_mods.append(m) }
+        }
+    }
+    if arts.len == 0 {
+        eprintln("error: no `artifact` declarations found; declare e.g. `artifact cabi {{ name = \"mylib\" }}` or `artifact python {{ name = \"mylib\" }}`", .{})
+        return 1
+    }
+    let stem = stem_of(o.file[..])
+    var produced = List(String).new()
+    var lib_arts = List(usize).new()
+    var cli_arts = List(usize).new()
+    var installer_art = NONE
+    for a, i in arts {
+        let kind = c.node(art_mods[i], a).name.clone()
+        if kind == "cabi" or kind == "python" or kind == "shared" or kind == "rustlib" or kind == "node" { lib_arts.append(i) }
+        else if kind == "cli" or kind == "app" { cli_arts.append(i) }
+        else if kind == "installer" { installer_art = i }
+        else if kind != "lib" and kind != "link" {
+            eprintln("note: artifact `{}` is not produced by this version of nx (supported: cabi, python, node, rustlib, shared, cli, installer); skipped", .{kind})
+        }
+    }
+    if installer_art != NONE and cli_arts.len == 0 {
+        eprintln("error: `artifact installer` needs an `artifact cli {{ name = ... }}` to install", .{})
+        return 1
+    }
+    let target = if o.target.len > 0 { o.target.clone() } else { host_target() }
+    let windows = is_windows_target(o.target[..])
+    let macos = is_macos_target(o.target[..])
+    let ship_mode = if o.mode == cgen.MODE_DEBUG { cgen.MODE_SAFE } else { o.mode }
+    if lib_arts.len > 0 {
+        var lib_name = String.new()
+        var version = String.new()
+        var has_python = false
+        var has_node = false
+        var has_rust = false
+        var py_name = String.new()
+        var npm_name = String.new()
+        for i in lib_arts {
+            let a = arts[i]
+            let m = art_mods[i]
+            let kind = c.node(m, a).name.clone()
+            if lib_name.len == 0 { lib_name = artifact_str(&c, m, a, "name") }
+            if version.len == 0 { version = artifact_str(&c, m, a, "version") }
+            if kind == "python" { has_python = true; if py_name.len == 0 { py_name = artifact_str(&c, m, a, "name") } }
+            if kind == "node" { has_node = true; if npm_name.len == 0 { npm_name = artifact_str(&c, m, a, "name") } }
+            if kind == "rustlib" { has_rust = true }
+        }
+        if lib_name.len == 0 { lib_name = String.from(stem) }
+        if version.len == 0 { version = String.from("0.1.0") }
+        var any_export = false
+        for i in 0..c.insts.len { if c.insts[i].export_name != "-" { any_export = true } }
+        if !any_export {
+            eprintln("error: library artifacts need at least one `export(c)` function", .{})
+            return 1
+        }
+        var infos = List(cgen.ExportInfo).new()
+        let text = emit_with(&mut c, o, cgen.ENTRY_LIBRARY, lib_name[..], ship_mode, &mut infos)
+        if text.len == 0 { return 1 }
+        let dir = format("{}/{}", .{o.out_dir, lib_name})
+        fs.make_dirs(dir[..]) catch {
+            eprintln("error: cannot create {}", .{dir})
+            return 1
+        }
+        let c_path = format("{}/{}.c", .{dir, lib_name})
+        io.write_file(c_path[..], text[..]) catch {
+            eprintln("error: cannot write {}", .{c_path})
+            return 1
+        }
+        // the runtime header next to the C, as write_c does
+        let rt = format("{}/nx_rt.h", .{dir})
+        io.write_file(rt[..], cgen.RUNTIME_H) catch { }
+        let h_path = format("{}/{}.h", .{dir, lib_name})
+        io.write_file(h_path[..], ship.c_header(lib_name[..], &infos)[..]) catch { }
+        let shared_name = if windows { format("{}.dll", .{lib_name}) } else if macos { format("lib{}.dylib", .{lib_name}) } else { format("lib{}.so", .{lib_name}) }
+        let shared_path = format("{}/{}", .{dir, shared_name})
+        var lib_opts = clone_opts(o)
+        lib_opts.mode = ship_mode
+        lib_opts.keep_c = true
+        // the shared library is built in its own directory: on Windows the linker also
+        // writes an import library named <name>.lib there, which must not be confused
+        // with the static archive produced below
+        let shared_dir = format("{}/shared", .{dir})
+        fs.make_dirs(shared_dir[..]) catch { }
+        let shared_build = format("{}/{}", .{shared_dir, shared_name})
+        if !compile_c(&c, &lib_opts, c_path[..], shared_build[..], "shared") { return 1 }
+        fs.copy(shared_build[..], shared_path[..]) catch {
+            eprintln("error: cannot place {}", .{shared_path})
+            return 1
+        }
+        produced.append(shared_path.clone())
+        // static object; on Windows it targets the MSVC ABI so Rust and MSVC users can link it
+        let obj_path = format("{}/{}.{}", .{dir, lib_name, if windows { "obj" } else { "o" }})
+        if windows and o.target.len == 0 and o.cc_source != 1 and o.cc_source != 2 { lib_opts.target = String.from("x86_64-windows-msvc") }
+        if compile_c(&c, &lib_opts, c_path[..], obj_path[..], "object") {
+            let ar_path = format("{}/{}", .{dir, if windows { format("{}.lib", .{lib_name}) } else { format("lib{}.a", .{lib_name}) }})
+            io.remove_file(ar_path[..]) catch { }
+            var argv = List([]u8).new()
+            let is_zig = o.cc[0] == "zig" or o.cc[0][..].ends_with("zig") or o.cc[0][..].ends_with("zig.exe")
+            if is_zig { argv.append(o.cc[0][..]); argv.append("ar") } else { argv.append("ar") }
+            argv.append("rcs")
+            argv.append(ar_path[..])
+            argv.append(obj_path[..])
+            let code = process.run(argv[..]) catch { -1 }
+            if code == 0 { produced.append(ar_path) }
+        }
+        produced.append(h_path.clone())
+        if has_rust {
+            let ar_name = if windows { format("{}.lib", .{lib_name}) } else { format("lib{}.a", .{lib_name}) }
+            let crate_dir = format("{}/rust", .{dir})
+            fs.make_dirs(format("{}/src", .{crate_dir})[..]) catch { }
+            fs.make_dirs(format("{}/lib", .{crate_dir})[..]) catch { }
+            fs.copy(format("{}/{}", .{dir, ar_name})[..], format("{}/lib/{}", .{crate_dir, ar_name})[..]) catch { }
+            for f in ship.rust_crate(lib_name[..], version[..], &infos, ar_name[..]) {
+                let p = format("{}/{}", .{crate_dir, f.path})
+                io.write_file(p[..], f.text[..]) catch {
+                    eprintln("error: cannot write {}", .{p})
+                    return 1
+                }
+            }
+            produced.append(format("{}/Cargo.toml", .{crate_dir}))
+        }
+        if has_python {
+            if py_name.len == 0 { py_name = lib_name.clone() }
+            var pyn = String.new()
+            for ch in py_name { pyn.push_byte(if ch == '-' { '_' } else { ch }) }
+            let pkg_dir = format("{}/python/{}", .{dir, pyn})
+            fs.make_dirs(pkg_dir[..]) catch {
+                eprintln("error: cannot create {}", .{pkg_dir})
+                return 1
+            }
+            let module = ship.python_module(lib_name[..], version[..], &infos, shared_name[..])
+            io.write_file(format("{}/__init__.py", .{pkg_dir})[..], module[..]) catch { }
+            let stub = ship.python_stub(&infos)
+            io.write_file(format("{}/__init__.pyi", .{pkg_dir})[..], stub[..]) catch { }
+            io.write_file(format("{}/py.typed", .{pkg_dir})[..], "") catch { }
+            let lib_bytes = io.read_file(shared_path[..]) catch { String.new() }
+            io.write_file(format("{}/{}", .{pkg_dir, shared_name})[..], lib_bytes[..]) catch { }
+            io.write_file(format("{}/python/pyproject.toml", .{dir})[..], format("[project]\nname = \"{}\"\nversion = \"{}\"\nrequires-python = \">=3.8\"\n\n[build-system]\nrequires = [\"setuptools\"]\nbuild-backend = \"setuptools.build_meta\"\n\n[tool.setuptools]\npackages = [\"{}\"]\n\n[tool.setuptools.package-data]\n\"{}\" = [\"*.dll\", \"*.so\", \"*.dylib\", \"*.pyi\", \"py.typed\"]\n", .{pyn, version, pyn, pyn})[..]) catch { }
+            var files = List(ship.ZipEntry).new()
+            files.append(ship.ZipEntry{ .name = format("{}/__init__.py", .{pyn}), .data = module })
+            files.append(ship.ZipEntry{ .name = format("{}/__init__.pyi", .{pyn}), .data = stub })
+            files.append(ship.ZipEntry{ .name = format("{}/py.typed", .{pyn}), .data = String.new() })
+            files.append(ship.ZipEntry{ .name = format("{}/{}", .{pyn, shared_name}), .data = lib_bytes })
+            var wheel_name = String.new()
+            let wheel = ship.build_wheel(pyn[..], version[..], ship.platform_tag(target[..]), &files, format("{} (built with Nexium)", .{pyn})[..], &mut wheel_name)
+            let wheel_path = format("{}/{}", .{dir, wheel_name})
+            io.write_file(wheel_path[..], wheel[..]) catch {
+                eprintln("error: cannot write wheel: {}", .{wheel_path})
+                return 1
+            }
+            produced.append(wheel_path)
+        }
+        if has_node {
+            if npm_name.len == 0 { npm_name = lib_name.clone() }
+            let pkg_dir = format("{}/node", .{dir})
+            fs.make_dirs(pkg_dir[..]) catch {
+                eprintln("error: cannot create {}", .{pkg_dir})
+                return 1
+            }
+            io.write_file(format("{}/index.js", .{pkg_dir})[..], ship_node.module(lib_name[..], version[..], &infos, shared_name[..])[..]) catch { }
+            io.write_file(format("{}/index.d.ts", .{pkg_dir})[..], ship_node.typings(&infos)[..]) catch { }
+            let os_name = if windows { "win32" } else if macos { "darwin" } else { "linux" }
+            let cpu = if target[..].starts_with("aarch64") { "arm64" } else { "x64" }
+            io.write_file(format("{}/package.json", .{pkg_dir})[..], ship_node.package_json(npm_name[..], version[..], shared_name[..], os_name, cpu)[..]) catch { }
+            io.write_file(format("{}/README.md", .{pkg_dir})[..], format("# {}\n\nA native library built with Nexium, callable from Node.js through koffi.\n\n```sh\nnpm install\nnode -e \"const m = require('.'); console.log(Object.keys(m))\"\n```\n\nThe package holds one platform's shared library; publish one per platform or\nuse `os` and `cpu` fields to gate installs.\n", .{npm_name})[..]) catch { }
+            fs.copy(shared_path[..], format("{}/{}", .{pkg_dir, shared_name})[..]) catch {
+                eprintln("error: cannot place the library in {}", .{pkg_dir})
+                return 1
+            }
+            produced.append(format("{}/package.json", .{pkg_dir}))
+        }
+    }
+    if cli_arts.len > 0 {
+        var name = String.new()
+        for i in cli_arts { if name.len == 0 { name = artifact_str(&c, art_mods[i], arts[i], "name") } }
+        if name.len == 0 { name = String.from(stem) }
+        var co = clone_opts(o)
+        co.mode = ship_mode
+        co.out_dir = format("{}/{}", .{o.out_dir, name})
+        co.out = format("{}/{}", .{co.out_dir, exe_name(name[..], o.target[..])})
+        co.keep_c = false
+        fs.make_dirs(co.out_dir[..]) catch { }
+        var exe_path = String.new()
+        if !cmd_build(&co, false, &mut exe_path) { return 1 }
+        produced.append(exe_path.clone())
+        if installer_art != NONE {
+            let ia = arts[installer_art]
+            let im = art_mods[installer_art]
+            // the program's files sit next to the executable so the installer templates can list them
+            let src_dir = dir_of(o.file[..])
+            var iname = artifact_str(&c, im, ia, "name")
+            if iname.len == 0 { iname = name.clone() }
+            var iversion = artifact_str(&c, im, ia, "version")
+            if iversion.len == 0 { iversion = String.from("0.1.0") }
+            let spec = installer.Spec{
+                .name = iname, .exe = exe_name(name[..], o.target[..]), .version = iversion,
+                .publisher = artifact_str(&c, im, ia, "publisher"), .url = artifact_str(&c, im, ia, "url"),
+                .license = artifact_str(&c, im, ia, "license"), .readme = artifact_str(&c, im, ia, "readme"),
+                .files = artifact_list(&c, im, ia, "files"), .add_to_path = artifact_bool(&c, im, ia, "add_to_path"),
+            }
+            let out_dir = co.out_dir.clone()
+            var to_copy = spec.files.clone()
+            if spec.readme.len > 0 { to_copy.append(spec.readme.clone()) }
+            if spec.license.len > 0 { to_copy.append(spec.license.clone()) }
+            for f in to_copy {
+                let from = fs.join(src_dir, f[..])
+                let to = fs.join(out_dir[..], f[..])
+                if fs.is_dir(from[..]) {
+                    copy_dir(from[..], to[..]) catch {
+                        eprintln("error: cannot copy {}", .{from})
+                        return 1
+                    }
+                } else if fs.exists(from[..]) {
+                    fs.make_dirs(fs.parent(to[..])) catch { }
+                    fs.copy(from[..], to[..]) catch {
+                        eprintln("error: cannot copy {}", .{from})
+                        return 1
+                    }
+                } else {
+                    eprintln("error: installer file `{}` not found next to {}", .{f, o.file})
+                    return 1
+                }
+            }
+            let files = installer.produce(&spec, exe_path[..], windows, macos) catch { return 1 }
+            for f in files { produced.append(f.clone()) }
+        }
+    }
+    println("shipped {} artifact file(s) for {}:", .{produced.len, target})
+    for p in produced { println("  {}", .{p}) }
+    return 0
+}
+
 fn cmd_version() -> i32 {
     println("nx {} ({})", .{VERSION, RELEASE_NAME})
     return 0
@@ -711,6 +1041,12 @@ fn main() -> u8 {
         code = cmd_refcounts(&o)
     } else if o.command == "doc" {
         code = cmd_doc(&o)
+    } else if o.command == "ship" {
+        var so = o
+        var mode_given = false
+        for a in args { if a == "--mode" { mode_given = true } }
+        if !mode_given { so.mode = cgen.MODE_SAFE }
+        code = cmd_ship(&so)
     } else if o.command == "size" {
         var so = o
         var mode_given = false
