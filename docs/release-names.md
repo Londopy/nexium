@@ -105,7 +105,8 @@ fits and the pencilled one goes back in the pool.
 | 1.4.0 | Annapurna: the Sanctuary | the basin that holds everything and supplies every route: a standard library people stop supplementing |
 | 1.5.0 | Annapurna: East Ridge | the long traverse over several summits: one source, many platforms |
 | 1.6.0 | Annapurna: North-West Face | fast and light, no fixed ropes: the runtime release builds deserve |
-| 1.7.0 | Annapurna: Gangapurna | a summit of the same massif, climbed beside the main line: a side theme (the GUI, the registry) |
+| 1.7.0 | Annapurna: Annapurna II | the massif's second summit, joined to the main one by the long ridge: the seam, both ways (Python, Rust and more languages, in and out) |
+| 1.8.0 | Annapurna: Gangapurna | a summit of the same massif, climbed beside the main line: a side theme (the GUI, the registry) |
 | 1.x | Annapurna: Machapuchare | reserved for a release that is only deprecations: it stops short on purpose |
 | 2.0.0 | Everest: Summit | the next mountain; a major, so the first breaking changes since 1.0 |
 | 2.1.0 | Everest: Khumbu Icefall | the dangerous, unglamorous crossing right after the major: migrations, `nx fix`, the fallout |
@@ -151,7 +152,8 @@ summiters lost fingers and toes on the descent.
 | the Sanctuary | the glacial basin ringed by the Annapurna peaks; the base of every south-side route | the release that supplies everything else: the standard library (planned: 1.4.0) |
 | East Ridge | the long traverse route over the massif's summits (1984) | traverse: many platforms from one source (planned: 1.5.0) |
 | North-West Face | Messner and Kammerlander, 1985, fast and light | performance: fewer instructions, less memory, the same programs (planned: 1.6.0) |
-| Gangapurna, Annapurna South, Hiunchuli, Annapurna II, III, IV | the massif's other summits | side line: the GUI, the registry, a tool beside the compiler (Gangapurna planned: 1.7.0) |
+| Annapurna II | the massif's second summit, 7,937 m, joined to the main one by a ridge that runs the length of the range | the release that joins Nexium to other languages: interop, the seam (planned: 1.7.0) |
+| Gangapurna, Annapurna South, Hiunchuli, Annapurna III, IV | the massif's other summits | side line: the GUI, the registry, a tool beside the compiler (Gangapurna planned: 1.8.0) |
 | Machapuchare | the fishtail peak at the mouth of the Sanctuary, sacred and unclimbed by agreement | a release that stops short on purpose: deprecations only, a feature freeze |
 | Fang | the sharp neighbour of Annapurna South | hard crux: one small difficult change |
 | Descent | the retreat through the monsoon after the summit, on frostbitten feet | recovery |

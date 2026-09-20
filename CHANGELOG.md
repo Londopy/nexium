@@ -31,6 +31,15 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   C, Python and Node. Every program in it (`topo/code/`) is run by the
   harness against its recorded output, and the diagnostics it shows are
   recorded too. Writing it found the bugs below.
+- The roadmap's 1.7, the seam both ways: Python (strings, NumPy without
+  copies, dataclasses and exception classes from the Nexium types, `ref
+  class` handles, callbacks, a CPython extension wheel, Python from
+  Nexium), Rust (error sets as enums, strings and handles, `no_std`
+  crates, source crates, Rust crates from Nexium), C++, Go, Java and
+  Kotlin, C#, Ruby, Lua, Swift and the browser as `artifact` kinds, a
+  versioned ABI document, buffers that leave, `nx ship --abi-check`, and
+  `@cImport` accepting more of C. Release name Annapurna II; Gangapurna
+  moves to 1.8.
 - The roadmap's 1.2, memory safety without a garbage collector: the view
   rules V1 to V5 (returning, storing, growth, moving, arenas), `unsafe`
   for what the checker cannot prove, what stays (moves, scope-exit

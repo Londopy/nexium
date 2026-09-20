@@ -41,7 +41,10 @@ themes:
   server, `nx bench`, sanitizers.
 - **1.4**, the standard library people stop supplementing; **1.5**,
   platforms (WebAssembly, more GUI backends); **1.6**, the runtime that
-  release builds deserve.
+  release builds deserve; **1.7**, the seam both ways: what chapter 20
+  shipped to Python and Rust grows to NumPy, exceptions and handles, error
+  enums and `no_std`, more languages out, and Python and Rust called from
+  Nexium.
 
 Each release has a name from the mountain the project has been climbing,
 and the [names document](../docs/release-names.html) explains the scheme;

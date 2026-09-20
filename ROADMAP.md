@@ -413,6 +413,117 @@ proves.
 Exit: every example in release mode is within a documented factor of its
 C counterpart, and the factor does not grow between releases.
 
+### 1.7: the seam, both ways
+
+Today a Nexium library leaves the tree through `nx ship`: a C header and
+archive, a Python wheel over `ctypes`, a Rust crate with safe wrappers, an
+npm package. What crosses is what C carries: integers, floats, slices,
+`layout(c)` structs, a status code with an error name. Everything else
+stays home, and the traffic runs one way. This theme widens the seam in
+both directions, with the same rule as 1.0's spec section 15: a panic
+never crosses, no initialization call, no process-global state, and a
+symbol means the same thing from every language.
+
+**Python, deeper.**
+
+- Strings and bytes as values: `[]u8` and `String` parameters take `str`
+  and `bytes`, returns come back as `str`; `[]String` as a list of them.
+- The buffer protocol without copies: a `[]f64` parameter takes a NumPy
+  array, `memoryview` or anything contiguous by pointer, and a `[]mut f64`
+  writes through; a two-dimensional `[][]f64` view maps to a C-contiguous
+  array with its shape. Today `array.array` and `bytearray` are the
+  zero-copy cases and a sequence is copied.
+- Records, enums and optionals: `layout(c)` structs arrive as dataclasses
+  with the same fields, an `enum` as an `IntEnum`, `?T` as `None` or the
+  value, an error set as an exception class per error name
+  (`ropesim.InvalidInput`, a subclass of `NexiumError`), so `except` can
+  name the one it handles.
+- Objects: an export that returns a `ref class` hands Python an opaque
+  handle whose `__del__` releases it; the class's `impl` methods become
+  methods of the handle, so a stateful library (a parser, a simulation)
+  is a Python class.
+- Callbacks: a parameter of function type on an export becomes a Python
+  callable; the compiler emits the `CFUNCTYPE` shape and the marshalling,
+  and the call carries the `ffi` effect on the Nexium side.
+- A second wheel shape, `artifact python { mode = "extension" }`: a
+  CPython extension module against the limited API (`abi3`), one wheel
+  per platform, calls an order of magnitude cheaper than `ctypes` for
+  small functions; the `ctypes` wheel stays the default because it needs
+  no Python headers to build.
+- Python inside Nexium: `@cImport("Python.h")` works today; a `python`
+  package (registry, not `std`) wraps the C API with typed conversions,
+  `py.run`, `py.call(module, name, args)`, and the interpreter's lock as a
+  `using` block, so a Nexium tool can call a Python library without
+  shipping a wheel first.
+
+**Rust, deeper.**
+
+- Error sets as enums: `error Parse { Bad, Truncated }` becomes
+  `ropesim::ParseError { Bad, Truncated }` and the export returns
+  `Result<T, ParseError>`; `NexiumError` stays for panics and for exports
+  that widen to `!T`.
+- Strings: `&str` and `String` cross as `[]u8` and `String`; `&[u8]` as
+  `[]u8`; a returned `String` arrives owned, freed by a `Drop` that calls
+  the archive's free.
+- Objects: a `ref class` return becomes an opaque struct with `Drop`, and
+  its `impl` methods become inherent methods; `Send` is derived from the
+  absence of `shared_mutable` on every method.
+- `#![no_std]` crates when no export allocates (the runtime split so the
+  archive's allocation, file, socket and thread parts are separable, which
+  1.5's embedded targets need too), so a Nexium library can sit inside a
+  Rust firmware.
+- Source crates: the crate's `build.rs` rebuilds the archive from the
+  `.nx` sources when `nx` is on the `PATH`, so `cargo build` after a
+  change to the Nexium is enough, and the crate can be published to
+  crates.io as source.
+- Rust inside Nexium: `nx add` of a Rust crate that exposes `extern "C"`
+  functions builds it with `cargo` into a static library, runs `cbindgen`
+  for the header and binds it through `@cImport`, so a Nexium program can
+  use a Rust crate without writing the bridge by hand.
+
+**More languages out.** Each is an `artifact` kind with a wrapper in that
+language's idiom over the same C ABI, a test in CI that calls `ropesim`
+from it, and a chapter in the embedding guide:
+
+- C++: the header compiles as C++ today; add `ropesim.hpp` with RAII
+  wrappers over handles, `std::span` and `std::string_view` overloads, and
+  results that follow `std::expected`.
+- Go through cgo: a package with the header and archive and Go-typed
+  wrappers, errors as `error` values with the Nexium name.
+- Java and Kotlin through Panama (`jextract` over the header) with a
+  small hand-written layer for slices and errors; JNI only where Panama
+  is not available.
+- C# through P/Invoke: a `DllImport` wrapper and a NuGet package with the
+  native archive per runtime identifier.
+- Ruby through `fiddle`, Lua as a C module, Swift through a module map
+  over the header; Zig through `@cImport` of the header, which works today
+  and needs a page.
+- The browser: the `wasm` artifact of 1.5, with a TypeScript declaration
+  file generated from the exports.
+
+**The ABI itself.**
+
+- `docs/abi.md`, versioned: the C shape of every crossing type, the
+  status convention, who frees what, which thread may call what, and how
+  a handle is retained and released, so a wrapper can be written for a
+  language this list does not have.
+- Buffers that leave: an export may return a `String` or a `List` of a
+  crossing type; the header carries `<name>_free`, the wrappers call it,
+  and the leak detector counts what the host never freed.
+- `nx ship --abi-check`: the header and the export list are compared with
+  the previous release's and a removed or narrowed export is reported, so
+  the version number of a shipped library follows semver by construction.
+- `@cImport` grows the C it accepts: object-like macros with values,
+  function-like macros as inline functions, bitfields, variadic
+  declarations, and a `[c]` section of `nexium.toml` that vendors and
+  builds a C library (`nx add --c sqlite`) so `@cImport` finds it.
+
+Exit: `ropesim` shipped to C++, Go, Java, C#, Ruby, Lua and the browser
+and called from each in CI; the Python wheel takes a NumPy array without a
+copy and raises `ropesim.InvalidInput`; the Rust crate's error enums come
+from the Nexium error sets; an example calls a Rust crate and a Python
+library from Nexium; `--abi-check` fails on a removed export.
+
 ### 2.0 candidates: questions the spec review should settle
 
 Additions large enough to deserve a spec version of their own. Each is a
@@ -438,9 +549,10 @@ decision entry first, an implementation second, and none is promised.
   chapter one. `nx doc` renders HTML for the book and for std, and the
   docs site is built by CI from the repository.
 - `nx new <template>`: cli, service, library, gui, wasm.
-- Editors: Neovim and Helix configurations (the tree-sitter grammar and
-  the language server exist), an Emacs mode, a JetBrains plugin when the
-  language server is semantic.
+- Editors: done for Vim, Neovim, Helix, Zed, Emacs, Kate, Notepad++,
+  nano and JetBrains (through LSP4IJ) beside VS Code and Sublime Text; a
+  JetBrains plugin of its own, and Marketplace listings for Zed and
+  Neovim, when the language server is semantic (1.3).
 - The registry and `nx publish` (decision 27's last item), seeded with
   the packages that leave the tree: the HTTP client, TLS, TOML, CSV,
   SQLite through `@cImport`, a CLI parser richer than `std.args`.
