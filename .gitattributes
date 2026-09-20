@@ -5,7 +5,6 @@
 
 # generated and vendored bits should not count toward language statistics
 bootstrap/nx.c linguist-generated=true text eol=lf
-bootstrap/rust/** linguist-vendored=true
 gui/font.bin binary linguist-generated=true
 editors/tree-sitter-nexium/src/** linguist-generated=true
 *.scm text eol=lf
@@ -15,7 +14,6 @@ editors/** linguist-vendored=false
 
 # keep line endings stable across platforms
 *.nx text eol=lf
-*.rs text eol=lf
 *.h text eol=lf
 *.c text eol=lf
 *.md text eol=lf

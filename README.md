@@ -342,9 +342,8 @@ sh bootstrap/build.sh     # nx.c -> nx0; nx0 builds self/nx.nx -> nx1; nx1 rebui
 Every example, every spec case and every compile-fail case runs through the
 bootstrapped compiler, driven by a test harness that is itself a Nexium
 program (`nx run tests/run.nx`), in CI on three platforms with no Rust
-toolchain at all. The first compiler, in Rust, is
-frozen in [`bootstrap/rust/`](bootstrap/rust) with nothing left in it
-that the Nexium compiler does not do; it leaves at 1.0 (decision 90).
+toolchain at all. The first compiler, in Rust, drove the port and was
+deleted at 1.0 (decision 90).
 
 ## Languages in the repository
 
@@ -353,18 +352,17 @@ files (`bootstrap/nx.c`, the tree-sitter parser, `gui/font.bin`, lock files):
 
 | language | lines | share | what it is |
 | --- | --- | --- | --- |
-| Nexium | 33,917 | 51.8% | the compiler and its tools (25,335 lines under `self/`), the standard library, the test harness and the fuzzer, examples, nexium-gui, the spec suite |
-| Rust | 28,938 | 44.2% | the frozen first compiler in `bootstrap/rust/`, gone at 1.0 |
-| C | 2,021 | 3.1% | the runtime `nx_rt.h`, the GUI window layer, vendored test C |
-| JavaScript, TypeScript | 550 | 0.8% | the VS Code extension and the tree-sitter grammar |
+| Nexium | 33,917 | 92.9% | the compiler and its tools (25,335 lines under `self/`), the standard library, the test harness and the fuzzer, examples, nexium-gui, the spec suite |
+| C | 2,021 | 5.5% | the runtime `nx_rt.h`, the GUI window layer, vendored test C |
+| JavaScript, TypeScript | 550 | 1.5% | the VS Code extension and the tree-sitter grammar |
 
-The Rust share is the frozen first compiler, kept until 1.0 so the port
-can be read against it; nothing runs through it.
+There is no Rust left: the first compiler drove the port and was deleted at
+1.0 (decision 90).
 
 ## Layout
 
 ```
-bootstrap/      the C seed the compiler is built from, the build scripts, and rust/: the frozen first compiler
+bootstrap/      the C seed the compiler is built from, and the build scripts
 runtime/        nx_rt.h, embedded into every generated C file
 std/            the standard library in Nexium, embedded in the compiler
 self/           the compiler in Nexium, stage by stage

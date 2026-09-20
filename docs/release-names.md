@@ -71,8 +71,8 @@ ordering; the name carries the character.
 - The GitHub release title and the tag message: `Nexium v0.7.0 — Annapurna:
   Camp V` (`scripts/release_notes.py` writes the title).
 - `nx version` and `nx doctor`: `nx 0.7.0 (Annapurna: Camp V)`; the name
-  is `RELEASE_NAME` in `bootstrap/rust/src/main.rs` (in `self/nx.nx` once
-  the tools are ported), set by the release commit with the version.
+  is `RELEASE_NAME` in `self/nx.nx`, set by the release commit with the
+  version.
 
 ## Ledger
 

@@ -32,7 +32,8 @@ as an artifact.
 
 Packages cannot run build scripts (spec 17.2); compile-time evaluation is
 restricted to pure computation and declared build inputs. The compiler has no
-Rust dependencies outside the standard library.
+dependencies: a C compiler is all it needs, and it is built from a C seed
+that its own sources regenerate.
 
 ## Supported versions
 

@@ -37,7 +37,7 @@ Fixed bugs are not listed here; `CHANGELOG.md` and `git log` have them.
 ## Tools and editors
 
 - **Formatter bar classification has no unit test.** `nx fmt` tells
-  closure bars from bit-or per line (`fmt.rs`, `bar_role`); the tree-wide
+  closure bars from bit-or per line (`self/fmt.nx`, `bar_role`); the tree-wide
   `--check` in CI is the only guard. Add cases for `|x| x | 1`, `a | b`,
   `f(|x| x)`, `Task(T, R)|`.
 - **tree-sitter: a binary pattern after a braced arm parses as a shift.**

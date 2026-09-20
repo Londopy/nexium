@@ -9,7 +9,6 @@ permissions:
   contents: read
 
 env:
-  CARGO_TERM_COLOR: always
   ZIG_VERSION: "0.14.1"
 
 jobs:
@@ -109,17 +108,8 @@ jobs:
         if: failure()
         with:
           name: fuzz-findings
-          path: nx-out/fuzz/findings/
-
-  rust:
-    name: the frozen Rust crate builds
-    # bootstrap/rust/ still compiles until it is deleted at 1.0
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --locked
-      - run: cargo test --locked
+          path: nx-out/fuzzing/findings/
+          if-no-files-found: ignore
 
   editors:
     name: editor support
@@ -150,16 +140,22 @@ jobs:
 
   lint:
     name: lint
+    # every Nexium source in the tree is canonically formatted, and the
+    # compiler's own sources check clean
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: mlugg/setup-zig@v2
         with:
-          components: rustfmt, clippy
-      - name: Format
-        run: cargo fmt --all -- --check
-      - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings -A clippy::all
+          version: ${{ env.ZIG_VERSION }}
+      - name: Build nx from the seed
+        run: sh bootstrap/build.sh
+      - name: nx fmt --check on the tree
+        run: nx-out/bootstrap/nx2 fmt $(git ls-files '*.nx') --check
+      - name: nx check on the compiler, the harness and the fuzzer
+        run: |
+          export NX_ZIG=zig
+          for f in self/nx.nx tests/run.nx tests/fuzz.nx tests/fuzz_patterns.nx; do nx-out/bootstrap/nx2 check "$f"; done
 
   changelog:
     name: changelog

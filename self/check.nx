@@ -1,8 +1,8 @@
-// self/check.nx: the checker written in Nexium, stage 1 of the port
-// (roadmap phase 4). This stage loads the modules the way the Rust driver
-// does, collects every declaration, interns types, resolves the signatures
-// of non-generic functions and the types of constants and globals, and
-// prints them in the shape of `nx tir --sigs`, which `cargo test` diffs.
+// self/check.nx: the checker. It loads the modules, collects every
+// declaration, interns types, resolves signatures, checks every body into
+// the typed IR (types, effects, ownership), and holds the compile-time
+// interpreter. On its own it prints the checked program in the shape of
+// `nx tir --sigs`:
 //
 //     nx run self/check.nx examples/tour.nx [--std std]
 //

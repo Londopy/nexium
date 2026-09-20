@@ -1,7 +1,5 @@
-// The C emitter in Nexium: lowers the checked program (the typed IR that
-// `check.nx` builds) to one C translation unit, byte for byte what
-// `nx emit-c` writes. Every stage is checked against the Rust compiler on
-// the same inputs.
+// The C emitter: lowers the checked program (the typed IR that `check.nx`
+// builds) to one C translation unit, what `nx emit-c` writes.
 
 import parser
 import check

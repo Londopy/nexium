@@ -28,7 +28,7 @@ newer than it, and skips the parts of the `ship` suite whose tools (`cargo`,
 | `self/cgen.nx` | the C backend |
 | `self/nx.nx` | the `nx` driver: build, run, test, check, emit-c, tir |
 | `self/fmt.nx`, `self/doc.nx`, `self/tools.nx`, `self/size.nx`, `self/manifest.nx`, `self/ship.nx`, `self/lsp.nx`, `self/repl.nx` | the tools: formatter, docs, reports, packages, `ship`, the language server, the REPL |
-| `bootstrap/` | the C seed `nx.c`, the build scripts, and `rust/`: the frozen first compiler, deleted at 1.0 |
+| `bootstrap/` | the C seed `nx.c` and the build scripts |
 | `runtime/nx_rt.h` | the C runtime, embedded into generated code |
 | `examples/` | programs with `.expected` output, run by the tests |
 | `tests/run.nx` | the test harness |
@@ -47,13 +47,13 @@ newer than it, and skips the parts of the `ship` suite whose tools (`cargo`,
 
 ## Where the compiler is
 
-The compiler is `self/` (lexer, parser, checker, C emitter, driver),
-written in Nexium; that is where a language change goes. `bootstrap/rust/`
-is the frozen Rust compiler that builds the first `nx` on a machine that
-has none, kept at 0.7 semantics and not changed (decision 90); the tools
-still in it (`fmt`, `doc`, `lsp`, `ship`, packages, the REPL) move to
-Nexium in 0.9. A change to `self/*.nx` may implement a new feature but may
-not use it: the seed compiler that builds `self/` is a release behind.
+The compiler is `self/` (lexer, parser, checker, C emitter, driver, the
+tools), written in Nexium; that is where every change goes. A machine that
+has no `nx` builds one from `bootstrap/nx.c`, the C the compiler emits for
+itself (decision 90). A change to `self/*.nx` may implement a new feature
+but may not use it until the seed knows it: regenerate the seed in the same
+change (`nx emit-c self/nx.nx --mode safe > bootstrap/nx.c`) when `self/`
+needs a builtin or a form the seed lacks.
 
 ## Language changes
 
@@ -82,8 +82,7 @@ line under `Unreleased` in the right category (`Added`, `Changed`,
 
 ## Style
 
-- Rust: `cargo fmt` and `cargo clippy` clean.
-- Nexium examples: four-space indentation, one statement per line.
+- Nexium: `nx fmt` clean; four-space indentation, one statement per line.
 - Diagnostics name the constraint violated, the location, and where the
   constraint was declared (archived spec, section 18). A new error message
   should follow that shape.
@@ -96,8 +95,8 @@ and macOS.
 
 Every pull request has to pass, before it can merge:
 
-- the tests on the three platforms, the editor-support build, `cargo fmt`
-  and `clippy` (`ci.yml`);
+- the tests on the three platforms, the editor-support build, `nx fmt
+  --check` on the tree and `nx check` on the compiler (`ci.yml`);
 - the changelog validation, and a check that the pull request adds a line
   to `CHANGELOG.md` under `Unreleased` (label it `no changelog` when there is
   nothing to say: a typo, a CI tweak);

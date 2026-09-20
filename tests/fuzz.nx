@@ -7,7 +7,7 @@
 //! Every mutant of a corpus file (`examples/`, `tests/spec/`, `std/`) goes
 //! through `nx check`; exit 0 (accepted) and exit 1 (rejected with a
 //! diagnostic) are the two right answers, anything else (a panic, a signal,
-//! a timeout) is saved under `nx-out/fuzz/findings/` and reported. Then a
+//! a timeout) is saved under `nx-out/fuzzing/findings/` and reported. Then a
 //! program full of binary patterns is built once and fed random byte
 //! strings: it must answer every one without crashing. The exit code is the
 //! number of findings, capped at 100.
@@ -182,7 +182,7 @@ fn fuzz_binary(e: *mut Env, iterations: usize) {
 
 fn main() -> u8 {
     let args = os.args()
-    var e = Env{ .nx = String.from("nx-out/bootstrap/nx2"), .windows = os.env("COMSPEC") != null and os.env("WINDIR") != null, .dir = String.from("nx-out/fuzz"), .findings = 0 }
+    var e = Env{ .nx = String.from("nx-out/bootstrap/nx2"), .windows = os.env("COMSPEC") != null and os.env("WINDIR") != null, .dir = String.from("nx-out/fuzzing"), .findings = 0 }
     if e.windows { e.nx.append(".exe") }
     var iterations: usize = 200
     var seed: u64 = 1

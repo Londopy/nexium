@@ -157,11 +157,10 @@ checked against the Rust compiler on identical inputs.
   moves to `bootstrap/`, kept for building the first Nexium compiler on a
   fresh machine.
 
-- Status (0.9.0): the compiler, every tool, the test harness and the
+- Status (1.0.0): the compiler, every tool, the test harness and the
   fuzzer are Nexium; releases ship the Nexium `nx` built from the C seed;
-  the stability policy and the platform tiers are written. The Rust crate
-  is frozen in `bootstrap/rust/` with nothing left in it, and leaves at
-  1.0.
+  the stability policy and the platform tiers are written; the Rust crate
+  is gone.
 
 The rest of the climb, one release each (decision 90):
 
@@ -180,10 +179,10 @@ The rest of the climb, one release each (decision 90):
   `version`. The shipped `nx` becomes the Nexium one. Nothing else new:
   the stability policy, fuzzing, the tier list.
 - **1.0, Summit.** `bootstrap/rust/` is deleted. The repository is Nexium,
-  one generated C file, and the runtime header.
+  one generated C file, and the runtime header. Done.
 
 Exit: `cargo` is no longer needed to build `nx` from a release tarball
-(0.8), and no Rust is left in the repository (1.0).
+(0.8), and no Rust is left in the repository (1.0). Both reached.
 
 ## Phase 5: 1.0
 
@@ -201,14 +200,19 @@ A 1.0 means the language stops changing under people's feet.
 - Allocation strategies: `pool` and `stack` implemented or removed. Done:
   removed (decision 88).
 - Stability policy: what a minor version may change, deprecation cycle,
-  `nx fix` for mechanical migrations.
+  `nx fix` for mechanical migrations. Done (0.9): `docs/stability.md`,
+  `nx fix`.
 - Platforms: Linux aarch64 and Windows arm64 in releases; a tier list.
+  Done (0.9): `docs/platforms.md`; both cross-compiled in every release.
 - Security: a disclosure process is in `SECURITY.md` already; add fuzzing
-  of the parser and the binary pattern engine to CI.
+  of the parser and the binary pattern engine to CI. Done (0.9):
+  `tests/fuzz.nx` on every push.
 - C toolchain support: which Zig versions `nx` is tested with, in CI and
-  in the docs. CI pins 0.14.1; 0.16 differs in what its debug build traps
-  and in which Apple SDKs it links against, and 0.7.0 found bugs that only
-  one of them showed.
+  in the docs. Done (0.9): `docs/stability.md`, "The C toolchain". CI pins
+  0.14.1; 0.16 differs in what its debug build traps and in which Apple
+  SDKs it links against, and 0.7.0 found bugs that only one of them showed.
+
+Every item is done: 1.0 is the release that deletes `bootstrap/rust/`.
 
 ## Past 1.0
 

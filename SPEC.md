@@ -519,11 +519,11 @@ PATH. `nx fmt` is canonical and line-preserving. `nx doctor` reports the
 installation.
 
 The compiler emits C and embeds the runtime (`runtime/nx_rt.h`) and the
-standard library into itself. Two implementations exist and agree byte for
-byte on every source in the tree: the Rust one (29k lines) and the one in
-Nexium under `self/` (lexer, parser, checker, C emitter, driver; 18k
-lines), which builds itself. `nx tokens`, `nx sexp`, `nx tir` and `nx
-emit-c` are the oracles `cargo test` diffs the stages against.
+standard library into itself. It is written in Nexium under `self/`
+(lexer, parser, checker, C emitter, driver, the tools; 26k lines) and
+builds itself from the C it emits for itself (`bootstrap/nx.c`); the first
+compiler, in Rust, agreed with it byte for byte on every source in the tree
+before it was deleted at 1.0. `nx run tests/run.nx` is the test harness.
 
 ## 17. Status summary
 
@@ -542,5 +542,5 @@ emit-c` are the oracles `cargo test` diffs the stages against.
 | layouts `packed`, `soa`; strategies `pool`, `stack` | not part of the language (88); `layout(c)` and `arena` are |
 | threads, channels (`std.thread`); no async | done (0.4) |
 | packages (path and git dependencies), `node`, `installer` artifacts | done (0.5) |
-| self-hosting: lexer, parser, checker, C emitter, driver in Nexium | done (0.6); byte-identical to the Rust compiler on every source, and the driver builds itself |
+| self-hosting: lexer, parser, checker, C emitter, driver and every tool in Nexium | done (0.9); the compiler builds itself from its own C, and no Rust remains (1.0) |
 | conformance: `tests/spec`, one recorded program per claim | sections 2 to 14 covered; 15 and 16 by the ship tests |

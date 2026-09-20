@@ -12,7 +12,7 @@
 
 ## Checklist
 
-- [ ] `cargo test` passes locally (with `zig` installed so the examples run)
+- [ ] `nx run tests/run.nx` passes locally (with `zig` installed)
 - [ ] new behaviour has an example with recorded output, or a compile-fail case
 - [ ] `CHANGELOG.md` has a line under `Unreleased`
 - [ ] a language change names the hard constraint it serves (see `CONTRIBUTING.md`)

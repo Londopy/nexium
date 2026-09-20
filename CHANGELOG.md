@@ -10,6 +10,27 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ## [Unreleased]
 
+### Removed
+
+- The first compiler, written in Rust (`bootstrap/rust/`, `Cargo.toml`,
+  `Cargo.lock`), and with it the last Rust toolchain use in CI: the `lint`
+  job now runs `nx fmt --check` on the tree and `nx check` on the
+  compiler, the harness and the fuzzer. The repository is Nexium, one
+  generated C file, and the runtime header (decision 90). The git history
+  keeps the crate.
+
+### Changed
+
+- The architecture tour (`docs/architecture.md`) names the files under
+  `self/`; the specification's status table and the roadmap record that
+  the port is complete.
+
+### Fixed
+
+- The fuzzer wrote its cases under `nx-out/fuzz`, the path of its own
+  executable on Linux and macOS, so CI's fuzz job could not start; it
+  works under `nx-out/fuzzing`.
+
 ## [0.9.0] - 2026-09-20
 
 *Annapurna: Summit Ridge* — the last ridge, nothing left but walking up: every tool in Nexium, the shipped `nx` the Nexium one, a harness and a fuzzer in Nexium, the stability policy and the tiers.

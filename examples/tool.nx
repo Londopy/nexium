@@ -7,7 +7,7 @@
 // lines whose leading timestamp falls in the window and whose text matches
 // the pattern (default `ERROR|WARN`), prints them as `file:line: text`, and
 // ends with a summary per level. With no arguments it runs on the sample
-// logs shipped with the compiler, which is what `cargo test` checks.
+// logs shipped with the compiler, which is what the test harness checks.
 
 import std.args
 import std.fs
