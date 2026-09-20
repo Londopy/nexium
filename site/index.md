@@ -96,9 +96,11 @@ abort. [Embedding](docs/embedding.html) has the whole story.
 
 `nx build`, `run`, `test`, `check`, `fmt`, `doc`, `repl`, `lsp`, `ship`,
 `size`, `leaks`, `effects`, `audit`, `refcounts`, `doctor`: one binary, no
-dependencies beyond a C compiler. The [VS Code extension](https://github.com/Londopy/nexium/tree/main/editors/vscode)
-and a tree-sitter grammar come with the repository; the language server is
-`nx lsp`.
+dependencies beyond a C compiler. The language server is `nx lsp`, and
+the repository's [`editors/`](https://github.com/Londopy/nexium/tree/main/editors)
+has it wired into VS Code, Vim, Neovim, Helix, Zed, Emacs, Kate,
+JetBrains, Sublime Text, Notepad++ and nano ([the install guide](docs/install.html#an-editor)
+has the one-liners).
 
 ## Where things are
 

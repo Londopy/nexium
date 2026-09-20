@@ -38,7 +38,7 @@ annotation. The whole thing is:
 - uses: actions/checkout@v4
 - uses: Londopy/nexium/.github/actions/setup-nexium@main
   with:
-    version: v0.1.0          # pin the compiler
+    version: v1.0.0          # pin the compiler
 - run: nx build ${{ env.SOURCE }} --mode fast -o dist/${{ env.NAME }}
 ```
 

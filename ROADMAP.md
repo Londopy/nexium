@@ -21,23 +21,30 @@ What exists and is verified on Windows, Linux, and macOS:
   `using arena`, recursive types through `List`, matching through pointers.
 - Effects: inferred for every function, checked against negative bounds,
   `panics` discharged by proof, effects deciding the C ABI of exports.
-- Interop: `@cImport` of C headers, vendored C, `nx ship` to C, Python
-  wheels, and Rust crates.
-- Standard library in Nexium: `strings`, `lists`, `bytes`, `num`, `json`,
-  `args`, embedded in the compiler.
-- Tools: `build run test check effects audit ship emit-c tokens fmt doc size
-  refcounts leaks lsp doctor`.
+- Interop: `@cImport` of C headers, vendored C, `nx ship` to a C
+  library, a Python wheel, a Rust crate, an npm package, an installer.
+- Standard library in Nexium, sixteen modules embedded in the compiler:
+  `strings`, `lists`, `bytes`, `num`, `json`, `args`, `fs`, `time`,
+  `regex`, `text`, `testing`, `stream`, `net`, `http`, `thread`,
+  `process`.
+- Tools: `build run test check tir fix fmt effects audit refcounts doc
+  ship size leaks version doctor lsp repl`, all written in Nexium.
 - Distribution: a Windows installer with bundled Zig, a macOS/Linux install
-  script with checksum verification, a VS Code extension, a Sublime syntax,
-  a GitHub Action, and a release template for Nexium programs.
-- Self-hosting: the lexer, parser, checker, C emitter and driver in
-  Nexium, verified byte-for-byte against the Rust ones on every source;
-  the driver builds itself.
+  script with checksum verification, editor support for VS Code, Vim,
+  Neovim, Helix, Zed, Emacs, Kate, JetBrains, Sublime Text, Notepad++ and
+  nano, a GitHub Action, and a release template for Nexium programs.
+- Self-hosting: the compiler is written in Nexium and builds itself from
+  the C it emits (`bootstrap/nx.c`); no other compiler is involved.
 - nexium-gui: an immediate-mode GUI in Nexium on a 200-line C window layer.
+- Documentation: the site at londopy.github.io/nexium, built by a Nexium
+  program from the repository's Markdown, and the Topo, a 23-chapter
+  tutorial whose every program the tests run.
 
-Numbers: 29.4k lines of Rust (the compiler), 18.7k of Nexium, 190 std
-functions, 32 examples, 32 spec conformance cases and 41 compile-fail
-cases, 19 integration tests, verified on three platforms by CI.
+Numbers: 36.2k lines of Nexium (25.4k of them the compiler and its tools),
+2.0k of C (the runtime and the GUI window layer), 307 std functions,
+32 examples, 21 tutorial programs, 37 spec conformance cases and 49
+compile-fail cases, 13 harness suites, verified on three platforms by CI
+and under the sanitizers.
 
 ## Phase 1: a language you can write your tools in (0.3)
 
