@@ -71,8 +71,8 @@ ordering; the name carries the character.
 - The GitHub release title and the tag message: `Nexium v0.7.0 — Annapurna:
   Camp V` (`scripts/release_notes.py` writes the title).
 - `nx version` and `nx doctor`: `nx 0.7.0 (Annapurna: Camp V)`; the name
-  is `RELEASE_NAME` in `src/main.rs`, set by the release commit with the
-  version.
+  is `RELEASE_NAME` in `bootstrap/rust/src/main.rs` (in `self/nx.nx` once
+  the tools are ported), set by the release commit with the version.
 
 ## Ledger
 
@@ -87,6 +87,7 @@ ordering; the name carries the character.
 | 0.6.0 | Annapurna: Camp IV | the syntax settled for 1.0; the parser in Nexium |
 | 0.6.1 | Annapurna: Lachenal | patch (roster 2) |
 | 0.7.0 | Annapurna: Camp V | the last camp, at 7,400 m; the summit push starts here: the compiler builds itself |
+| 0.8.0 | Annapurna: the Sickle | the exposed glacier crossing below the summit: the compiler in Nexium is the compiler, and builds from its own C with no Rust |
 
 ## The plan
 
@@ -96,8 +97,7 @@ fits and the pencilled one goes back in the pool.
 
 | version | name | why |
 | --- | --- | --- |
-| 0.8.0 | Annapurna: the Sickle | the exposed glacier crossing below the summit: the bootstrap move, the last structural change before 1.0 |
-| 0.9.0 | Annapurna: Summit Ridge | the release candidate: nothing new, only the last steps and the stability policy |
+| 0.9.0 | Annapurna: Summit Ridge | the last ridge: the tools in Nexium so the shipped `nx` is the Nexium one, the stability policy, fuzzing, the tier list |
 | 1.0.0 | Annapurna: Summit | the top of the mountain the project has been on since 0.1 |
 | 1.1.0 | Annapurna: Dutch Rib | the safer line that became the everyday route: the ergonomics the compiler wanted |
 | 1.2.0 | Annapurna: South Face | the great wall climbed by siege: the toolchain in Nexium, incremental builds, the semantic language server |
@@ -141,7 +141,7 @@ summiters lost fingers and toes on the descent.
 | Base Camp | where the expedition was staged | the release that sets up everything else: installers, CI, docs, process (used: 0.2.0) |
 | Camp I to Camp V | the camps of the 1950 route; Camp V at 7,400 m was the summit-push camp | ordinary progress, each a stage higher; the last camp for the release the final push starts from (used: 0.3.0 to 0.7.0) |
 | Cauliflower Ridge | the ice ridge tried first and abandoned for the Sickle route | course change: a removed feature, a reversed decision |
-| the Sickle | the crescent glacier the summit route crosses; exposed, avalanche-prone | the last risky structural change before a major (planned: 0.8.0) |
+| the Sickle | the crescent glacier the summit route crosses; exposed, avalanche-prone | the last risky structural change before a major (used: 0.8.0) |
 | Summit Ridge | the final ridge; nothing left but walking up | candidate (planned: 0.9.0) |
 | Summit | 3 June 1950 | `X.0.0` (planned: 1.0.0) |
 | North Face | the 1950 route, the face the camps are on | a release that completes the original line: finishes something begun in 0.x |

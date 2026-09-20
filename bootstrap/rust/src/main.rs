@@ -37,7 +37,7 @@ use std::process::{exit, Command};
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// The release's name, a place on a mountain (docs/release-names.md); set
 /// with the version by the release commit.
-const RELEASE_NAME: &str = "Annapurna: Camp V";
+const RELEASE_NAME: &str = "Annapurna: the Sickle";
 
 fn usage() -> ! {
     eprintln!(

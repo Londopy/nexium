@@ -352,14 +352,14 @@ leaves at 1.0 (decision 90).
 ## Languages in the repository
 
 Non-blank lines of code, excluding build output, dependencies, and generated
-files (`gui/font.bin`, lock files):
+files (`bootstrap/nx.c`, the tree-sitter parser, `gui/font.bin`, lock files):
 
 | language | lines | share | what it is |
 | --- | --- | --- | --- |
-| Rust | 29,354 | 58.6% | the `nx` compiler |
-| Nexium | 18,726 | 37.4% | the standard library, examples, the self-hosted lexer, parser and checker, nexium-gui, tests |
-| C | 1,844 | 3.7% | the runtime `nx_rt.h` and the GUI window layer |
-| JavaScript, TypeScript | 159 | 0.3% | the VS Code extension |
+| Rust | 29,465 | 48.1% | the frozen first compiler in `bootstrap/rust/` (28,938 lines, gone at 1.0) and the test harness |
+| Nexium | 28,623 | 46.7% | the compiler (20,833 lines under `self/`), the standard library, examples, nexium-gui, the spec suite |
+| C | 2,490 | 4.1% | the runtime `nx_rt.h`, the GUI window layer, vendored test C |
+| JavaScript, TypeScript | 651 | 1.1% | the VS Code extension and the tree-sitter grammar |
 
 The Rust share is the frozen bootstrap compiler and the tools not yet
 ported; it goes to zero at 1.0.
