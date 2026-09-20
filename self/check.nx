@@ -544,13 +544,16 @@ fn join_words(ws: *List(String), sep: []u8) -> String {
     return out
 }
 
+/// The directory of a path; `.` for a bare file name, so that a module's
+/// directory is always somewhere to look for headers and vendored C (the
+/// frozen Rust compiler made the same choice).
 fn dir_of(path: []u8) -> []u8 {
     var i = path.len
     while i > 0 {
         if path[i - 1] == '/' or path[i - 1] == '\\' { return path[0..i - 1] }
         i -= 1
     }
-    return path[0..0]
+    return "."
 }
 
 fn stem_of(path: []u8) -> []u8 {
