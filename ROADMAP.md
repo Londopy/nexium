@@ -776,6 +776,27 @@ minors the same way as the tools above.
   for a list of numbers; `:watch expr` re-evaluates and redraws on every
   line entered. The REPL and the GUI library, fused.
 
+**Run from the editor, everywhere** (1.3). Ctrl+B runs the file, the
+variant tests it, and a diagnostic is a click away, in every editor the
+repository supports, the same way:
+
+- Sublime Text: `Nexium.sublime-build` (done: run, test, check, build,
+  effects; the `--> file:line:col` line is clickable). Vim and Neovim:
+  `:make` and the `:Nx` commands (done). Emacs: `C-c C-r` and friends
+  (done). Still to write: VS Code tasks with a problem matcher
+  (`tasks.json` shipped by the extension, so Ctrl+Shift+B works without
+  setup), a Zed `tasks.json`, Helix key bindings for `:sh nx run %`,
+  Kate's build plugin target, JetBrains external tools and Notepad++
+  NppExec scripts as files to import rather than steps to type.
+- One machine-readable diagnostic format for all of them: `nx check
+  --format short` prints `file:line:col: error: message` on one line
+  (today's two-line `error: ... / --> file:line:col` needs a two-line
+  matcher, which Sublime and Vim's `errorformat` manage and simpler
+  problem matchers do not), and `--format json` for the tools that want
+  the notes and the spans.
+- The installer's editor page (below) installs the build systems with
+  the syntaxes.
+
 **The first five minutes** (1.3, 1.5).
 
 - The installer's editor page: a checkbox per editor found on the

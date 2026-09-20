@@ -10,7 +10,7 @@
 | Emacs | `nexium-mode`: font lock, indentation, `nexium-run` and friends, Eglot and lsp-mode registration | [`emacs/`](emacs) |
 | Kate, KWrite, KDevelop, Qt Creator | KSyntaxHighlighting definition; LSP client settings for Kate | [`kate/`](kate) |
 | JetBrains IDEs | the VS Code grammar as a TextMate bundle; `nx lsp` through LSP4IJ | [`jetbrains/`](jetbrains) |
-| Sublime Text 3 and 4 | syntax definition | [`sublime/Nexium.sublime-syntax`](sublime/Nexium.sublime-syntax), copy into `Packages/User` |
+| Sublime Text 3 and 4 | syntax definition, and a build system (Ctrl+B runs; variants test, check, build, effects) | [`sublime/`](sublime): copy both files into `Packages/User` |
 | Notepad++ | User Defined Language | [`notepad-plus-plus/`](notepad-plus-plus) |
 | nano | syntax file | [`nano/`](nano) |
 | Any editor with LSP | diagnostics, hover, go to definition, completion, rename | run `nx lsp` over stdio |

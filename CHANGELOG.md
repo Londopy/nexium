@@ -10,6 +10,15 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ## [Unreleased]
 
+### Added
+
+- A Sublime Text build system, `editors/sublime/Nexium.sublime-build`:
+  Ctrl+B runs the file, the variants test, check, build and print its
+  effects, and a diagnostic's `--> file:line:col` line is clickable.
+- The roadmap's "run from the editor, everywhere": the same Ctrl+B in
+  every supported editor, a one-line `--format short` diagnostic for
+  problem matchers and `--format json` for tools.
+
 ## [1.0.2] - 2026-09-20
 
 *Annapurna: Terray* — the one who carried the frostbitten summiters down: the hotfix. The x86-64 binaries of 1.0.0 and 1.0.1 were built for the CPU of the machine that built them and crashed on any other; every build is for the architecture's baseline now, and the release refuses one that is not. With it, the fuzzer's two fixes, UTF-8 on the Windows console, and the day's documentation.

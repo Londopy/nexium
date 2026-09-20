@@ -111,7 +111,7 @@ directory of the repository has the pieces for each one:
 | Emacs | `editors/emacs/nexium-mode.el`; registers itself with Eglot and lsp-mode |
 | Kate, KWrite, KDevelop, Qt Creator | copy `editors/kate/nexium.xml` into the KSyntaxHighlighting directory |
 | JetBrains IDEs | `editors/vscode` as a TextMate bundle, `nx lsp` through LSP4IJ |
-| Sublime Text | copy `editors/sublime/Nexium.sublime-syntax` into `Packages/User` |
+| Sublime Text | copy `editors/sublime/Nexium.sublime-syntax` and `Nexium.sublime-build` into `Packages/User` (Ctrl+B runs the file) |
 | Notepad++ | copy `editors/notepad-plus-plus/nexium.udl.xml` into `%AppData%\Notepad++\userDefineLangs` |
 | nano | include `editors/nano/nexium.nanorc` from `~/.nanorc` |
 

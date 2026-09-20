@@ -1,0 +1,17 @@
+{
+    // Nexium build system for Sublime Text: Ctrl+B runs the file; the
+    // variants (Ctrl+Shift+B) test, check and build it. Install beside
+    // Nexium.sublime-syntax in Packages/User. A diagnostic's `--> file:line:col`
+    // line is clickable and F4 walks the results.
+    "shell_cmd": "nx run \"$file\"",
+    "working_dir": "$file_path",
+    "selector": "source.nexium",
+    "file_regex": "^\\s*-->\\s*(.+?):([0-9]+):([0-9]+)",
+    "syntax": "Packages/Text/Plain text.tmLanguage",
+    "variants": [
+        { "name": "Test", "shell_cmd": "nx test \"$file\"" },
+        { "name": "Check", "shell_cmd": "nx check \"$file\"" },
+        { "name": "Build", "shell_cmd": "nx build \"$file\" --mode fast" },
+        { "name": "Effects", "shell_cmd": "nx effects \"$file\"" }
+    ]
+}
