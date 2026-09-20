@@ -52,6 +52,13 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   and dev containers, wheels and npm packages that carry the binary,
   version managers and `nxup`, the extension registries, and the same
   channels as targets of the `installer` artifact for Nexium programs.
+- The roadmap's Topo as a course and the docs, more: exercises the
+  compiler grades (fill in the blank, fix the error, write it), quizzes
+  checked against `nx effects` and the recorded outputs, predict-the-
+  output cards, code blocks that run in the page once the compiler runs
+  in the browser, progress on the route map, more project chapters; std
+  reference pages from `nx doc`, an error index, a cookbook, in-depth
+  guides, a style guide, site search and docs per release.
 - The roadmap's "installer grown up": a setup mutex against two
   wizards at once, upgrade/repair/remove of an installed version, closing
   a running `nx` before files are replaced, checks for disk space, a
