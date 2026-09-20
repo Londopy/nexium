@@ -1,0 +1,69 @@
+name: Ready to merge
+
+# Labels a pull request `ready to merge` once every required check has passed
+# (the CI matrix, the pull request checks, the CLA), and removes the label
+# again when a new push restarts them or a check fails. The label is a
+# signal for the maintainer, not a merge: main is protected by the same
+# checks.
+on:
+  workflow_run:
+    workflows: [CI, Pull request, CLA]
+    types: [completed]
+  pull_request_target:
+    types: [synchronize, reopened]
+
+permissions:
+  pull-requests: write
+  checks: read
+  contents: read
+
+jobs:
+  label:
+    name: ready to merge
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const required = [
+              "test (ubuntu-latest)", "test (windows-latest)", "test (macos-latest)",
+              "editor support", "lint", "changelog",
+              "changelog has a line", "Nexium sources are formatted", "CLA",
+            ];
+            const label = "ready to merge";
+            const { owner, repo } = context.repo;
+
+            // which pull requests this event is about
+            let prs = [];
+            if (context.eventName === "pull_request_target") {
+              prs = [context.payload.pull_request];
+            } else {
+              const sha = context.payload.workflow_run.head_sha;
+              const open = await github.paginate(github.rest.pulls.list, { owner, repo, state: "open", per_page: 100 });
+              prs = open.filter(p => p.head.sha === sha);
+            }
+
+            for (const pr of prs) {
+              const has = pr.labels.some(l => l.name === label);
+              let ready = false;
+              if (context.eventName !== "pull_request_target") {
+                // the latest run of every check on the head commit
+                const runs = await github.paginate(github.rest.checks.listForRef, { owner, repo, ref: pr.head.sha, per_page: 100 });
+                const latest = new Map();
+                for (const r of runs) {
+                  const prev = latest.get(r.name);
+                  if (!prev || new Date(r.started_at) > new Date(prev.started_at)) latest.set(r.name, r);
+                }
+                const ok = c => c && c.status === "completed" && (c.conclusion === "success" || c.conclusion === "skipped");
+                const missing = required.filter(n => !ok(latest.get(n)));
+                ready = missing.length === 0;
+                core.info(`#${pr.number}: ${ready ? "all required checks passed" : "waiting on " + missing.join(", ")}`);
+              } else {
+                core.info(`#${pr.number}: new push, checks restart`);
+              }
+              if (ready && !has) {
+                await github.rest.issues.addLabels({ owner, repo, issue_number: pr.number, labels: [label] });
+              } else if (!ready && has) {
+                await github.rest.issues.removeLabel({ owner, repo, issue_number: pr.number, name: label });
+              }
+            }
