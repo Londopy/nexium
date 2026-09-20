@@ -254,6 +254,8 @@ fn resolve_link(links: *Links, from_src: []u8, from_out: []u8, target: []u8) -> 
     var path = target
     var anchor = ""
     if let h = target.find("#") { path = target[0..h]; anchor = target[h..] }
+    // a link written in the site's own terms (`../docs/language.html`) stays as it is
+    if path.ends_with(".html") { return String.from(target) }
     // resolve against the source file's directory
     let dir = fs.parent(from_src)
     let joined = fs.normalize(fs.join(dir, path)[..])
