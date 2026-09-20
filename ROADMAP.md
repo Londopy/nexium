@@ -242,6 +242,72 @@ decides the order: what the compiler and the tools in `self/` and `std/`
 needed first, what other people's programs need next. Everything here was
 found by writing Nexium, not by reading other languages' feature lists.
 
+### First: the quick wins, in order
+
+Everything below is described in a theme further down; this is the same
+work sorted by how soon it can ship. None of it changes the language, so
+each lands as a `1.0.x` patch or in 1.1 the day it is done, in roughly
+this order. The themes after this section keep their order; this is the
+queue in front of them.
+
+**Hours each.**
+
+1. The installer refuses to run twice (a setup mutex naming the one
+   already open), closes a running `nx` before replacing files, and
+   writes a log; the uninstaller the same.
+2. The one-C-file install on the front page of the docs, and
+   `install.sh` falling back to `cc bootstrap/nx.c` when there is
+   nothing to download.
+3. The release workflow writes a `.torrent` with the assets as web seeds
+   and puts the magnet link in the notes; a QR code beside it.
+4. A Homebrew tap, a Scoop bucket and the winget manifest, from the
+   archives the release already builds.
+5. `nx doctor` says when a newer release exists.
+6. The VS Code extension on Open VSX beside the Marketplace.
+7. A `packages.md`: the packages people can `nx add` from git today.
+8. An "Open REPL here" folder entry and a Windows Terminal profile from
+   the installer.
+9. `ghcr.io/londopy/nexium`: the compiler with Zig, on Alpine and Debian.
+
+**A day or two each.**
+
+10. `install.ps1`, the PowerShell one-liner, and the Chocolatey package
+    that wraps it.
+11. REPL `:undo`, `:save` and `:load`; `:effects expr`.
+12. `nx -e` and `nx -p` one-liners on the REPL's compile cache.
+13. `nx layout Type`: offsets, sizes, padding, the reordering.
+14. `expect_snapshot` in `std.testing`.
+15. `pip install nexium` and `npm install nexium`, wheels and packages
+    that carry the binary.
+16. The installer detects an installed version: upgrade, repair, remove,
+    the previous choices as defaults.
+17. `nx upgrade`, and `nxup` behind it later.
+18. Portable mode, and `nx install` from a portable copy.
+19. The effects lockfile (`nx audit --lock`) and the CI check.
+20. Panic proofs as code lenses in the language server.
+21. Colour as you type and completion in the REPL, from the server.
+
+**About a week each.**
+
+22. `nx explain f effect`: the provenance tree.
+23. The numbers page: `bench/` in four languages, on a fixed runner,
+    published.
+24. `nx test --watch` and `nx run --watch` (file watching in the
+    runtime).
+25. The ownership trace, `nx run --trace own` and the REPL's `:own`.
+26. The binary-pattern debugger, `nx bin`.
+27. `:show` and `:plot` in the REPL: the inspector and chart windows on
+    nexium-gui.
+28. The installer's editor page, and the wizard in six languages.
+29. Authenticode signing and macOS notarization in the release workflow
+    (the certificates are the slow part).
+
+Everything longer, in the order of the themes: memory safety (1.2),
+incremental builds and the semantic language server (1.3), `std.tui`
+and `nx topo` (1.4), the wasm playground (1.5), hot reload, profiling by
+effect, the visual tools (1.6), the seam (1.7), nexium-gui grown up and
+the Hut (1.8).
+
 ### 1.1: the language the compiler wanted
 
 Ergonomics the self-hosted compiler paid for by hand.

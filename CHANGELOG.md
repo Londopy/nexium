@@ -26,6 +26,9 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   ecosystem items; the *Always* section commits to the corpus growing
   with the language, the sanitizers and the fuzzer on every release, and
   a patch within a week of a fix.
+- The roadmap opens with the quick wins in order: twenty-nine items
+  sorted by how soon each can ship (hours, a day or two, about a week),
+  each landing as a patch or in 1.1 when done, ahead of the themes.
 - The roadmap's niche roads: the PowerShell one-liner (`irm | iex`),
   the one-C-file install (`curl bootstrap/nx.c | cc`), torrents with web
   seeds and magnet links, IPFS pins, `nx install` from a portable copy,
