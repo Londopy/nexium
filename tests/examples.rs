@@ -434,10 +434,10 @@ fn packages_resolve_path_dependencies() {
     write("greet/src/extra.nx", "pub fn punct() -> []u8 { return \"!\" }\n");
     write("app/nexium.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\ngreet = { path = \"../greet\" }\n");
     write("app/main.nx", "import greet\nimport greet.extra\nfn main() {\n    println(\"{}{}\", .{greet.hello(), extra.punct()})\n}\n");
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).args(["run", "main.nx"]).current_dir(base.join("app")).output().expect("run nx");
+    let out = driver_cc(&mut Command::new(nx_self())).args(["run", "main.nx"]).current_dir(base.join("app")).output().expect("run nx");
     assert!(out.status.success(), "package program failed:\n{}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello, world!");
-    let fetch = std::process::Command::new(env!("CARGO_BIN_EXE_nx")).arg("fetch").current_dir(base.join("app")).output().expect("run nx fetch");
+    let fetch = Command::new(nx_self()).arg("fetch").current_dir(base.join("app")).output().expect("run nx fetch");
     assert!(fetch.status.success(), "nx fetch failed:\n{}", String::from_utf8_lossy(&fetch.stderr));
     let lock = std::fs::read_to_string(base.join("app").join("nexium.lock")).unwrap();
     assert!(lock.contains("greet\tpath\t../greet"), "lock file: {}", lock);
