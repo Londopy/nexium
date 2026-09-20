@@ -152,7 +152,9 @@ checks as nothing to build, so a documentation pull request can merge;
 `Pages` builds and deploys the site from the Markdown. A change to a
 `.nx`, `.c`, `.h` or workflow file runs everything. `[skip ci]` in a
 commit message skips every workflow, the site's deploy included, so it is
-for the rare push that should not be published at all.
+for the rare push that should not be published at all; GitHub reads the
+marker anywhere in the message, so a message that merely mentions it
+skips too (spell it out, "the skip marker", when writing about it).
 
 ## Releasing
 
