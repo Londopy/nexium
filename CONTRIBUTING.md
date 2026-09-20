@@ -89,8 +89,10 @@ Every pull request has to pass, before it can merge:
 - `nx fmt --check` on every `.nx` file it touches;
 - the CLA check (below).
 
-The maintainer reviews every change (`.github/CODEOWNERS`); `main` only
-takes what these checks have passed.
+When every required check has passed, the pull request gets the `ready to
+merge` label (and loses it when a new push restarts the checks). The
+maintainer reviews every change (`.github/CODEOWNERS`); `main` only takes
+what these checks have passed.
 
 ## Contributor License Agreement
 
