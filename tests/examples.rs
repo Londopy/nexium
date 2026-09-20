@@ -83,10 +83,14 @@ fn nx_self() -> PathBuf {
 }
 
 /// A command for the compiler under test, run from the repository root with
-/// the host's C compiler.
+/// the host's C compiler. Each test gets its own Zig cache directory: the
+/// shared one is not safe against several `zig cc` starting at once on
+/// Windows, and the tests run in parallel.
 fn nxs() -> Command {
     let mut c = Command::new(nx_self());
     driver_cc(&mut c);
+    let test = std::thread::current().name().unwrap_or("main").replace("::", "_");
+    c.env("ZIG_LOCAL_CACHE_DIR", root().join("nx-out").join("zig-cache").join(test));
     c.current_dir(root());
     c
 }
