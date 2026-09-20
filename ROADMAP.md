@@ -508,6 +508,24 @@ nothing they had to write themselves.
   on all three and in the browser through a canvas backend.
 - Static Linux binaries (musl), FreeBSD, and the tier list extended;
   Linux aarch64 and Windows arm64 promoted to tier 1 when CI runs them.
+- 32-bit architectures: `i686` Windows and Linux, `armv7` Linux (the
+  Raspberry Pi OS that is still 32-bit, routers, older phones), `riscv32`
+  and `thumb` alongside the embedded targets below. Everything in the
+  language already has a width (`isize`/`usize` are the pointer's,
+  `@sizeOf` is per target, C's `long` is already mapped per platform),
+  so the work is in the places 64 bits were assumed: the runtime's
+  handles and sizes (`int64_t` where `intptr_t` was meant, `size_t`
+  arithmetic, `nx_time` and the file offsets staying 64-bit on purpose),
+  the binary pattern engine's 64-bit segments on a 32-bit word, the
+  compile-time interpreter evaluating `usize` at the *target's* width
+  rather than the host's, `@target().pointer_width` for std, the C
+  header import mapping `long` and `size_t` per target, the leak and
+  size reports, and the ABI document's word about `usize` at the
+  boundary. A `--target i686-linux-gnu` build of every spec case and
+  every tutorial program in CI (32-bit executables run on the 64-bit
+  runners), the compiler itself built and self-hosted as 32-bit, and
+  the tiers extended: tier 2 for `i686` and `armv7`, tier 1 when a runner
+  runs them.
 - Cross-compilation matrix in `nx ship`: every target the C toolchain
   supports, from one machine, tested in CI for the tier-1 set.
 - Embedded targets: `-Os` builds without the runtime's file, socket and

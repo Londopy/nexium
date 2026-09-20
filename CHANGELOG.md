@@ -58,6 +58,12 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   and dev containers, wheels and npm packages that carry the binary,
   version managers and `nxup`, the extension registries, and the same
   channels as targets of the `installer` artifact for Nexium programs.
+- The roadmap's 1.5 gains 32-bit architectures: `i686` Windows and
+  Linux, `armv7`, `riscv32` and `thumb`, with the list of places 64 bits
+  are assumed today (runtime handles and sizes, 64-bit binary segments
+  on a 32-bit word, the compile-time interpreter's `usize`, the C header
+  import's `long` and `size_t`), the cross-compiled test run in CI, the
+  compiler self-hosted as 32-bit, and the tiers.
 - The roadmap's Topo as a course and the docs, more: exercises the
   compiler grades (fill in the blank, fix the error, write it), quizzes
   checked against `nx effects` and the recorded outputs, predict-the-
