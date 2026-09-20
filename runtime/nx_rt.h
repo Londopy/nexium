@@ -46,7 +46,9 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 extern char** environ;
-extern char** environ;
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
 #endif
 
 #if defined(_MSC_VER) && !defined(__clang__)
@@ -1140,6 +1142,27 @@ NX_INLINE bool nx_fs_cwd(nx_ctx* c, nx_string* out) {
     nx_str_append(c, &s, (const uint8_t*)buf, n);
     *out = s;
     return true;
+}
+/* the path of the running executable; empty when the platform will not say */
+NX_INLINE nx_string nx_exe_path(nx_ctx* c) {
+    nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;
+    char buf[4096];
+    size_t n = 0;
+#if defined(_WIN32)
+    DWORD r = GetModuleFileNameA(NULL, buf, (DWORD)sizeof buf);
+    if (r == 0 || r >= sizeof buf) return s;
+    n = (size_t)r;
+#elif defined(__APPLE__)
+    uint32_t size = (uint32_t)sizeof buf;
+    if (_NSGetExecutablePath(buf, &size) != 0) return s;
+    n = strlen(buf);
+#else
+    ssize_t r = readlink("/proc/self/exe", buf, sizeof buf - 1);
+    if (r <= 0) return s;
+    n = (size_t)r;
+#endif
+    nx_str_append(c, &s, (const uint8_t*)buf, n);
+    return s;
 }
 NX_INLINE nx_string nx_fs_temp_dir(nx_ctx* c) {
     nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;

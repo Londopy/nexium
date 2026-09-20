@@ -284,6 +284,7 @@ fn bootstrap_reaches_a_fixed_point() {
     }
     let out_dir = root().join("nx-out").join("bootstrap");
     // nx_self() built nx2 from nx1's C; nx2 must emit that same C
+    let _ = nx_self();
     let c1 = std::fs::read(out_dir.join("nx1.c")).unwrap();
     let again = nxs().args(["emit-c", "self/nx.nx", "--mode", "safe"]).output().unwrap();
     assert!(again.status.success(), "nx2 could not emit self/nx.nx:\n{}", String::from_utf8_lossy(&again.stderr));

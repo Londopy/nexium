@@ -119,6 +119,10 @@ fn parse_opts(args: [][]u8) -> ?Opts {
         o.cc.append(String.from(z))
         o.cc.append(String.from("cc"))
         o.cc_source = 3
+    } else if let z = bundled_zig() {
+        o.cc.append(z)
+        o.cc.append(String.from("cc"))
+        o.cc_source = 5
     } else if is_macos_target(o.target[..]) and o.target.len == 0 {
         // zig 0.14 cannot link against the current Xcode SDK; the system
         // compiler can (the Rust driver makes the same choice)
@@ -129,6 +133,20 @@ fn parse_opts(args: [][]u8) -> ?Opts {
         o.cc.append(String.from("cc"))
     }
     return o
+}
+
+/// A Zig installed next to `nx`: `<dir>/zig/zig` (the Windows installer) or
+/// `<dir>/../zig/zig` (`~/.nexium/bin/nx` with `~/.nexium/zig`).
+fn bundled_zig() -> ?String {
+    let exe = os.exe_path()
+    if exe.len == 0 { return null }
+    let dir = dir_of(exe[..])
+    let name = if is_windows_target("") { "zig.exe" } else { "zig" }
+    let here = format("{}/zig/{}", .{dir, name})
+    if io.file_kind(here[..]) == 1 { return here }
+    let above = format("{}/../zig/{}", .{dir, name})
+    if io.file_kind(above[..]) == 1 { return above }
+    return null
 }
 
 fn is_windows_target(target: []u8) -> bool {
@@ -966,8 +984,8 @@ fn cmd_version() -> i32 {
 /// `nx doctor`: the installation as this binary sees it.
 fn cmd_doctor(o: *Opts) -> i32 {
     println("nx {} ({})", .{VERSION, RELEASE_NAME})
-    let args = os.args()
-    let exe = absolute(args[0])
+    var exe = os.exe_path()
+    if exe.len == 0 { let args = os.args(); exe = absolute(args[0]) }
     println("executable:  {}", .{exe})
     var shown = String.new()
     for a, i in o.cc { if i > 0 { shown.append(" ") }; shown.append(a[..]) }
@@ -1037,6 +1055,7 @@ fn cc_why(o: *Opts) -> []u8 {
     if o.cc_source == 2 { return "NX_CC" }
     if o.cc_source == 3 { return "NX_ZIG" }
     if o.cc_source == 4 { return "system compiler (macOS)" }
+    if o.cc_source == 5 { return "bundled with nx" }
     return "zig on PATH"
 }
 

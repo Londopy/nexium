@@ -76,7 +76,7 @@ if win_setup:
     out += [f"**Windows**: run [`{win_setup}`]({win_setup}). It installs `nx`, a bundled Zig toolchain (the C compiler `nx` uses), the standard library, examples, docs, and the VS Code extension, and can add `nx` to your PATH. No other install is needed. A portable zip without the installer is `{win_zip}`.", ""]
 out += ["**macOS and Linux**:", "", "```sh", "curl -fsSL https://raw.githubusercontent.com/Londopy/nexium/main/installers/install.sh | sh", "```", "",
         f"This downloads `{mac}` or `{linux}`, verifies it against `SHA256SUMS.txt`, installs to `~/.nexium/bin`, downloads Zig on Linux when no C compiler is present (macOS uses the Xcode command line tools), and adds the directory to your PATH. Set `NEXIUM_VERSION={tag}` to pin this release.", "",
-        "**From source** (Rust 1.75+): `cargo install nexium`", "",
+        "**From source**: `sh bootstrap/build.sh` with a C compiler (Zig, or `cc` on macOS) builds the compiler from its C seed; no Rust is needed.", "",
         f"**VS Code**: install `{vsix}` with *Extensions: Install from VSIX...*, or let the Windows installer do it." if vsix else "", ""]
 out += ["Then, in a new console:", "", "```", "nx doctor", "nx run examples/hello.nx", "```", ""]
 

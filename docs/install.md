@@ -54,9 +54,12 @@ the three lines the script added.
 
 ## From source
 
-With Rust 1.75 or newer: `cargo install nexium`, or
-`cargo install --git https://github.com/Londopy/nexium`. You provide the C
-compiler: Zig on the PATH, or `NX_CC`.
+Nothing but a C compiler is needed: `sh bootstrap/build.sh` (or
+`.\bootstrap\build.ps1`) builds `nx0` from the C seed the compiler emits
+for itself, `nx0` builds the compiler from `self/`, and the result rebuilds
+itself to the same C; `nx-out/bootstrap/nx2` is the compiler. `CC` names
+the C compiler for the build (default `zig cc`, `cc` on macOS); `NX_CC` or
+`NX_ZIG` names the one `nx` itself runs. See `bootstrap/README.md`.
 
 ## In CI
 

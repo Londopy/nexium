@@ -253,10 +253,11 @@ the inferred set per function.
   `sync.signal(cv)`, `sync.broadcast(cv)`, `sync.cond_free(cv)`. Starting a
   thread carries `nondeterministic` and `shared_mutable`; joining, locking
   and waiting `block`. Not available at the REPL.
-- `os.args() -> [][]u8`, `os.env(name) -> ?[]u8`, `os.set_env(name, value)`
-  (for this process and the ones it starts; an empty value removes the
-  variable), `os.environ() -> List(String)` (every `NAME=value`),
-  `os.exit(code)`,
+- `os.args() -> [][]u8`, `os.exe_path() -> String` (the running
+  executable; empty when the platform will not say), `os.env(name) ->
+  ?[]u8`, `os.set_env(name, value)` (for this process and the ones it
+  starts; an empty value removes the variable), `os.environ() ->
+  List(String)` (every `NAME=value`), `os.exit(code)`,
   `process.run(argv: [][]u8) -> !i32` (spawns, waits, returns the exit code;
   `error.IoError` when the program cannot be started), `process.exec(argv,
   stdin, cwd) -> !i32` (the same with stdin fed from `stdin`, run in `cwd`

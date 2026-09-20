@@ -44,12 +44,19 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   console, touch files, the clock and randomness (`check.nx` `repl_mode`,
   `run_repl`, values rendered by their types). `nx` alone at a terminal
   opens it. The last tool leaves the Rust crate.
-- `io.is_terminal(h)` and `os.set_env(name, value)`. The driver gives
+- `io.is_terminal(h)`, `os.set_env(name, value)` and `os.exe_path()`; with
+  the last, `nx` finds a Zig bundled next to it (`<dir>/zig/zig` or
+  `<dir>/../zig/zig`), as the Rust driver did. The driver gives
   each build its own Zig cache under the output directory when
   `ZIG_LOCAL_CACHE_DIR` is not set, as the Rust driver did, since Zig's
   cache is not safe against several `zig cc` starting at once on Windows.
 - The seed `bootstrap/nx.c` is regenerated when `self/` needs a builtin
   the seed lacks, not only at a release.
+- Releases ship the compiler written in Nexium: the release workflow
+  builds it from the C seed on each platform with Zig alone (`cc` on
+  macOS), checks the tag against `self/nx.nx`, and packages that binary
+  in the archives and the Windows installer. Building from source is
+  `sh bootstrap/build.sh`; no Rust is needed.
 
 ### Fixed
 

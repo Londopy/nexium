@@ -3499,6 +3499,7 @@ impl Gen {
             return t
         }
         if name == "FsTempDir" { return String.from("nx_fs_temp_dir(c)") }
+        if name == "ExePath" { return String.from("nx_exe_path(c)") }
         if name == "FileOpen" {
             let p = self.simple(args[0])
             let md = self.simple(args[1])

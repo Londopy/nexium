@@ -115,18 +115,14 @@ Then, in a new console, `nx doctor` shows what will be used. All the details,
 including verifying checksums and every environment variable, are in
 [docs/install.md](docs/install.md).
 
-Or build from source with Rust 1.75 or newer (you provide the C compiler:
-Zig on the PATH, or `NX_CC`):
+Or build from source with nothing but a C compiler (Zig on the PATH, or
+`CC`), which builds the compiler written in Nexium from its C seed:
 
 ```bash
-cargo install nexium
+git clone https://github.com/Londopy/nexium && cd nexium && sh bootstrap/build.sh
 ```
 
-```bash
-cargo install --git https://github.com/Londopy/nexium
-```
-
-Then:
+The result is `nx-out/bootstrap/nx2` (`build.ps1` on Windows). Then:
 
 ```bash
 nx run examples/hello.nx

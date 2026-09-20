@@ -26,34 +26,37 @@ jobs:
             target: x86_64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: mlugg/setup-zig@v2
         with:
-          targets: ${{ matrix.target }}
+          version: ${{ env.ZIG_VERSION }}
 
-      - name: Check the tag matches Cargo.toml
+      - name: Check the tag matches the compiler's version
         shell: bash
         run: |
-          v=$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)"/\1/')
-          [ "v$v" = "${{ github.ref_name }}" ] || { echo "tag ${{ github.ref_name }} does not match Cargo.toml version $v"; exit 1; }
+          v=$(grep -m1 '^const VERSION' self/nx.nx | sed 's/.*"\(.*\)"/\1/')
+          [ "v$v" = "${{ github.ref_name }}" ] || { echo "tag ${{ github.ref_name }} does not match self/nx.nx VERSION $v"; exit 1; }
 
-      - name: Build
-        run: cargo build --release --locked --target ${{ matrix.target }}
+      # the compiler written in Nexium, built from the C seed with no Rust:
+      # nx0 from bootstrap/nx.c, nx1 from self/, nx2 from nx1's own C
+      - name: Build nx from the seed
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then export NX_CC=cc; else export NX_ZIG=zig; fi
+          sh bootstrap/build.sh
+          mkdir -p build
+          if [ "$RUNNER_OS" = Windows ]; then cp nx-out/bootstrap/nx2.exe build/nx.exe; else cp nx-out/bootstrap/nx2 build/nx; fi
+          ./build/nx* version
 
       - name: Package (unix)
         if: runner.os != 'Windows'
         run: |
           mkdir -p dist
-          cp target/${{ matrix.target }}/release/nx dist/
+          cp build/nx dist/
           cp README.md LICENSE CHANGELOG.md dist/
           cp -r examples std docs dist/
           tar -C dist -czf nx-${{ github.ref_name }}-${{ matrix.target }}.tar.gz .
 
       # ---- Windows: a portable zip and a full installer with a bundled Zig
-      - name: Install Zig (bundled into the installer)
-        if: runner.os == 'Windows'
-        uses: mlugg/setup-zig@v2
-        with:
-          version: ${{ env.ZIG_VERSION }}
 
       - name: Install Node (for the VS Code extension)
         if: runner.os == 'Windows'
@@ -66,7 +69,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist-win, dist-win\editors | Out-Null
-          Copy-Item target/${{ matrix.target }}/release/nx.exe dist-win/
+          Copy-Item build/nx.exe dist-win/
           Copy-Item README.md, LICENSE, CHANGELOG.md dist-win/
           Copy-Item -Recurse examples, std, docs dist-win/
           # the Zig toolchain: the directory that holds zig.exe and lib/
@@ -83,7 +86,7 @@ jobs:
           Copy-Item dist-win/editors/nexium.vsix nexium-${{ github.ref_name }}.vsix
           # portable zip: compiler and docs only (no Zig; see the installer for that)
           New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item target/${{ matrix.target }}/release/nx.exe, README.md, LICENSE, CHANGELOG.md dist/
+          Copy-Item build/nx.exe, README.md, LICENSE, CHANGELOG.md dist/
           Copy-Item -Recurse examples, std, docs dist/
           Compress-Archive -Path dist/* -DestinationPath nx-${{ github.ref_name }}-${{ matrix.target }}.zip
 
