@@ -1,0 +1,36 @@
+// SPEC 7: literals, ranges, variants with payloads (positional for struct variants too), null/binding, error/binding, tuples, or-patterns, guards.
+enum Shape { Circle(f64), Rect { w: f64, h: f64 }, Empty }
+error E { A, B }
+fn classify(n: i32) -> []u8 {
+    match n {
+        -1 => "minus one",
+        0 => "zero",
+        1..=9 => "digit",
+        10 | 20 => "tens",
+        x if x < 0 => "negative",
+        _ => "big",
+    }
+}
+fn area(s: Shape) -> f64 {
+    match s {
+        .Circle(r) => 3.0 * r * r,
+        .Rect(w, h) => w * h,
+        .Empty => 0.0,
+    }
+}
+fn opt(o: ?i32) -> i32 { match o { null => -1, v => v } }
+fn res(r: E!i32) -> i32 {
+    match r {
+        error.A => -1,
+        error.B => -2,
+        v => v,
+    }
+}
+fn pair(t: (bool, i32)) -> i32 { match t { (true, v) => v, (false, _) => 0 } }
+fn main() {
+    println("{} {} {} {} {} {}", .{classify(-1), classify(0), classify(5), classify(20), classify(-7), classify(99)})
+    println("{} {} {}", .{area(Shape.Circle(1.0)), area(Shape.Rect{ .w = 2.0, .h = 3.0 }), area(Shape.Empty)})
+    println("{} {} {} {} {} {}", .{opt(null), opt(4), res(error.A), res(error.B), res(7), pair((true, 3)) + pair((false, 3))})
+    match 'q' { 'a' => println("a", .{}), 'q' => println("q", .{}), _ => println("other", .{}) }
+    match "hi" { "hi" => println("hello", .{}), _ => println("?", .{}) }
+}

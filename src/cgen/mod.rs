@@ -61,6 +61,10 @@ pub struct Gen {
     pub p: Program,
     pub opts: GenOptions,
     pub types_out: String,
+    /// struct/enum types that have a name and a forward declaration but no definition yet
+    pub forward_only: HashSet<TyId>,
+    /// every `nx_*` identifier the runtime header defines; user functions avoid them
+    pub runtime_idents: HashSet<String>,
     pub fwd_out: String,
     pub protos_out: String,
     pub helpers_out: String,
@@ -79,6 +83,8 @@ pub struct Gen {
     pub body: Vec<String>,
     pub sm_names: Vec<String>,
     pub str_lits: HashMap<Vec<u8>, String>,
+    /// static arrays behind constant slices
+    pub hoisted_arrays: usize,
     pub errors: Vec<String>,
     pub line_starts: Vec<Vec<u32>>,
     pub thunks_by_key: HashMap<String, String>,
@@ -112,6 +118,25 @@ impl Gen {
             p,
             opts,
             types_out: String::new(),
+            forward_only: HashSet::new(),
+            runtime_idents: {
+                let mut set = HashSet::new();
+                let bytes = RUNTIME_H.as_bytes();
+                let mut i = 0;
+                while i < bytes.len() {
+                    if bytes[i..].starts_with(b"nx_") && (i == 0 || !(bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_')) {
+                        let mut j = i;
+                        while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
+                            j += 1;
+                        }
+                        set.insert(String::from_utf8_lossy(&bytes[i..j]).to_string());
+                        i = j;
+                    } else {
+                        i += 1;
+                    }
+                }
+                set
+            },
             fwd_out: String::new(),
             protos_out: String::new(),
             helpers_out: String::new(),
@@ -130,6 +155,7 @@ impl Gen {
             body: Vec::new(),
             sm_names: Vec::new(),
             str_lits: HashMap::new(),
+            hoisted_arrays: 0,
             errors: Vec::new(),
             line_starts: Vec::new(),
             thunks_by_key: HashMap::new(),
@@ -187,10 +213,12 @@ impl Gen {
             TyKind::Char => "char".into(),
             TyKind::Void | TyKind::Never => "void".into(),
             TyKind::Struct(d, args) | TyKind::Enum(d, args) => {
-                let base = match self.p.tys.kind(t) {
-                    TyKind::Struct(..) => self.p.structs[d as usize].name.clone(),
-                    _ => self.p.enums[d as usize].name.clone(),
+                let (base, module) = match self.p.tys.kind(t) {
+                    TyKind::Struct(..) => (self.p.structs[d as usize].name.clone(), self.p.structs[d as usize].module),
+                    _ => (self.p.enums[d as usize].name.clone(), self.p.enums[d as usize].module),
                 };
+                // two modules may each define a `Parser`: types outside the root module carry it
+                let base = if module == 0 { base } else { format!("m{}_{}", module, base) };
                 if args.is_empty() {
                     base
                 } else {
@@ -229,7 +257,9 @@ impl Gen {
     pub fn cty(&mut self, t: TyId) -> String {
         let t = self.res(t);
         if let Some(n) = self.type_names.get(&t) {
-            return n.clone();
+            if !self.forward_only.contains(&t) {
+                return n.clone();
+            }
         }
         let name = match self.p.tys.kind(t).clone() {
             TyKind::Int(i) => i.c_name().to_string(),
@@ -365,6 +395,12 @@ impl Gen {
                     }
                     let _ = writeln!(self.types_out, "struct {n}_obj {{ size_t rc; size_t weak;{f} }};", n = name, f = fields);
                 } else {
+                    self.forward_only.remove(&t);
+                    // a field may hold a List of this very struct: declare the name first
+                    let decl = format!("typedef struct {n} {n};", n = name);
+                    if !self.fwd_out.contains(&decl) {
+                        let _ = writeln!(self.fwd_out, "{}", decl);
+                    }
                     let ftys = self.p.struct_field_tys.get(&t).cloned().unwrap_or_default();
                     let mut fields = String::new();
                     for (i, (f, &ft)) in def.fields.iter().zip(ftys.iter()).enumerate() {
@@ -383,6 +419,12 @@ impl Gen {
                 let m = self.mangle(t);
                 let name = format!("nx_{}", m);
                 self.type_names.insert(t, name.clone());
+                self.forward_only.remove(&t);
+                // a variant may hold a List of this very enum: declare the name first
+                let decl = format!("typedef struct {n} {n};", n = name);
+                if !self.fwd_out.contains(&decl) {
+                    let _ = writeln!(self.fwd_out, "{}", decl);
+                }
                 let vtys = self.p.enum_variant_tys.get(&t).cloned().unwrap_or_default();
                 let mut union = String::new();
                 let mut any = false;
@@ -413,8 +455,45 @@ impl Gen {
     }
 
     /// C type used as a pointer target (structs may be incomplete when only pointed to).
+    /// The C name of a type reached through a pointer: a struct or enum needs
+    /// only its forward declaration here, and is defined later (see
+    /// `define_forwarded`), which is what allows recursive types.
     fn cty_ptr_target(&mut self, e: TyId) -> String {
-        self.cty(e)
+        let e = self.res(e);
+        match self.p.tys.kind(e).clone() {
+            TyKind::Struct(d, _) if self.p.structs[d as usize].kind != StructKind::RefClass && self.p.structs[d as usize].c_name.is_none() => self.forward_name(e),
+            TyKind::Enum(..) => self.forward_name(e),
+            _ => self.cty(e),
+        }
+    }
+
+    fn forward_name(&mut self, t: TyId) -> String {
+        if let Some(n) = self.type_names.get(&t) {
+            return n.clone();
+        }
+        let m = self.mangle(t);
+        let name = format!("nx_{}", m);
+        self.type_names.insert(t, name.clone());
+        let decl = format!("typedef struct {n} {n};", n = name);
+        if !self.fwd_out.contains(&decl) {
+            let _ = writeln!(self.fwd_out, "{}", decl);
+        }
+        self.forward_only.insert(t);
+        name
+    }
+
+    /// Define every type that so far only has a forward declaration.
+    pub fn define_forwarded(&mut self) {
+        loop {
+            let next = self.forward_only.iter().next().cloned();
+            match next {
+                Some(t) => {
+                    self.forward_only.remove(&t);
+                    let _ = self.cty(t);
+                }
+                None => break,
+            }
+        }
     }
 
     pub fn needs_drop(&mut self, t: TyId) -> bool {
@@ -742,6 +821,9 @@ impl Gen {
         let f = &self.p.funcs[inst as usize];
         if f.is_extern {
             f.name.clone()
+        } else if self.runtime_idents.contains(&f.mangled) {
+            // `fn string(...)` would become `nx_string`, the runtime's String type
+            format!("{}_fn", f.mangled)
         } else {
             f.mangled.clone()
         }
@@ -995,6 +1077,7 @@ impl Gen {
         out.push_str("\n/* ---- types ---- */\n");
         {
             let mut seen: HashSet<&str> = HashSet::new();
+            self.define_forwarded();
             for line in self.types_out.lines() {
                 if seen.insert(line) {
                     out.push_str(line);
@@ -1040,6 +1123,21 @@ impl Gen {
             (Value::Str(s), TyKind::Slice(..)) => {
                 let lit = self.string_literal(s);
                 format!("{{ (uint8_t*){}, {} }}", lit, s.len())
+            }
+            (Value::Array(a) | Value::List(a), TyKind::Slice(_, e)) => {
+                // the elements live in a static array of their own
+                let ecn = self.cty(e);
+                if a.is_empty() {
+                    return Some(format!("{{ ({}*)0, 0 }}", ecn));
+                }
+                let mut parts = Vec::new();
+                for x in a {
+                    parts.push(self.static_init(x, e)?);
+                }
+                let name = format!("nx_arr_{}", self.hoisted_arrays);
+                self.hoisted_arrays += 1;
+                let _ = writeln!(self.data_out, "static const {} {}[{}] = {{ {} }};", ecn, name, a.len(), parts.join(", "));
+                format!("{{ ({}*){}, {} }}", ecn, name, a.len())
             }
             (Value::Array(a), TyKind::Array(_, e)) => {
                 let mut parts = Vec::new();
@@ -1143,9 +1241,12 @@ pub fn int_literal(v: i128, it: IntTy) -> String {
             } else if v > i64::MIN as i128 && v <= i64::MAX as i128 {
                 format!("((nx_i128){}LL)", v)
             } else {
-                let hi = (v >> 64) as i64;
-                let lo = v as u64;
-                format!("(((nx_i128){}LL << 64) | (nx_u128){}ULL)", hi, lo)
+                // assembled unsigned so the minimum's high word never shifts a
+                // negative value (undefined in C); the cast keeps the bit pattern
+                let bits = v as u128;
+                let hi = (bits >> 64) as u64;
+                let lo = bits as u64;
+                format!("((nx_i128)(((nx_u128){}ULL << 64) | (nx_u128){}ULL))", hi, lo)
             }
         }
         IntTy::U128 => {

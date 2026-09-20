@@ -5,6 +5,9 @@
 
 # generated and vendored bits should not count toward language statistics
 gui/font.bin binary linguist-generated=true
+editors/tree-sitter-nexium/src/** linguist-generated=true
+*.scm text eol=lf
+*.js text eol=lf
 assets/*.svg linguist-vendored=true
 editors/** linguist-vendored=false
 
@@ -17,3 +20,7 @@ editors/** linguist-vendored=false
 *.yml text eol=lf
 *.json text eol=lf
 *.expected text eol=lf
+*.log text eol=lf
+*.html text eol=lf
+# embedded by tests/spec/s12_comptime.nx: its byte length is recorded
+tests/spec/helpers/*.txt text eol=lf

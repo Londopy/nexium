@@ -1,0 +1,7 @@
+// SPEC 6.1: checked arithmetic traps on overflow with a defined panic.
+// EXIT: 101
+fn main() {
+    var a: u8 = 200
+    a += 100
+    println("{}", .{a})
+}

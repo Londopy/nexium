@@ -1,0 +1,618 @@
+// std.http: an HTTP/1.1 client and a small server, written in Nexium over
+// std.net and std.stream.
+//
+// `import std.http` then:
+//
+//     let r = try http.get("http://example.com/")
+//     println("{} {}", .{r.status, r.body.len})
+//     if let ct = r.header("content-type") { ... }
+//
+//     fn hello(req: *http.Request) -> http.Response {
+//         return http.text(200, "hello from Nexium")
+//     }
+//     var router = http.Router.new()
+//     router.get("/", hello)
+//     var server = try http.Server.bind("127.0.0.1", 8080)
+//     try server.serve(&router)                  // forever, one request at a time
+//
+// The client speaks HTTP/1.1 with `Connection: close`, reads bodies by
+// Content-Length, chunked encoding, or until close, and follows up to five
+// redirects. Plain `http://` only; TLS needs a C library through `@cImport`.
+// The server handles one connection at a time, which is what a tool, a
+// local dashboard or a test needs; threads come later in the roadmap.
+
+import std.net
+import std.stream
+import std.fs
+
+const MAX_REDIRECTS: usize = 5
+const MAX_HEADER_LINES: usize = 200
+
+pub struct Header {
+    name: String
+    value: String
+}
+
+fn header_value(headers: *List(Header), name: []u8) -> ?[]u8 {
+    for i in 0..headers.len {
+        if headers[i].name.eq_ignore_case(name) { return headers[i].value }
+    }
+    return null
+}
+
+fn find_header(headers: *List(Header), name: []u8) -> ?usize {
+    for h, i in headers {
+        if h.name.eq_ignore_case(name) { return i }
+    }
+    return null
+}
+
+// ------------------------------------------------------------------ URLs
+
+pub struct Url {
+    scheme: String
+    host: String
+    port: u16
+    /// path with the query, e.g. `/a/b?x=1`; never empty
+    path: String
+}
+
+/// Parse `http://host[:port][/path]`; null for anything else.
+pub fn parse_url(s: []u8) -> ?Url {
+    var rest = s
+    var scheme = "http"
+    if rest.starts_with("http://") {
+        rest = rest[7..rest.len]
+    } else if rest.starts_with("https://") {
+        scheme = "https"
+        rest = rest[8..rest.len]
+    } else {
+        return null
+    }
+    var end: usize = 0
+    while end < rest.len and rest[end] != '/' and rest[end] != '?' { end += 1 }
+    let hostport = rest[0..end]
+    var path = rest[end..rest.len]
+    var host = hostport
+    var port: u16 = if scheme == "https" { 443 } else { 80 }
+    if let a = net.parse_addr(hostport) {
+        host = a.host
+        port = a.port
+    }
+    if host.len == 0 { return null }
+    var p = String.new()
+    if path.len == 0 or path[0] == '?' { p.append("/") }
+    p.append(path)
+    return Url{ .scheme = String.from(scheme), .host = String.from(host), .port = port, .path = p }
+}
+
+// ------------------------------------------------------------------ responses
+
+pub struct Response {
+    status: u16
+    reason: String
+    headers: List(Header)
+    body: String
+}
+
+impl Response {
+    /// A header value, case-insensitive; null when absent.
+    pub fn header(self: *Self, name: []u8) -> ?[]u8 {
+        return header_value(&self.headers, name)
+    }
+
+    /// Add or replace a header (builder style).
+    pub fn with_header(self: *mut Self, name: []u8, value: []u8) {
+        if let i = find_header(&self.headers, name) {
+            self.headers[i].value = String.from(value)
+            return
+        }
+        self.headers.append(Header{ .name = String.from(name), .value = String.from(value) })
+    }
+
+    pub fn ok(self: *Self) -> bool {
+        return self.status >= 200 and self.status < 300
+    }
+}
+
+/// The standard reason phrase for a status.
+pub fn reason_for(status: u16) -> []u8 {
+    if status == 200 { return "OK" }
+    if status == 201 { return "Created" }
+    if status == 204 { return "No Content" }
+    if status == 301 { return "Moved Permanently" }
+    if status == 302 { return "Found" }
+    if status == 304 { return "Not Modified" }
+    if status == 400 { return "Bad Request" }
+    if status == 401 { return "Unauthorized" }
+    if status == 403 { return "Forbidden" }
+    if status == 404 { return "Not Found" }
+    if status == 405 { return "Method Not Allowed" }
+    if status == 500 { return "Internal Server Error" }
+    return "Unknown"
+}
+
+/// A response with a body and a content type.
+pub fn respond(status: u16, content_type: []u8, body: []u8) -> Response {
+    var headers = List(Header).new()
+    headers.append(Header{ .name = String.from("Content-Type"), .value = String.from(content_type) })
+    return Response{ .status = status, .reason = String.from(reason_for(status)), .headers = headers, .body = String.from(body) }
+}
+
+pub fn text(status: u16, body: []u8) -> Response {
+    return respond(status, "text/plain; charset=utf-8", body)
+}
+
+pub fn html(status: u16, body: []u8) -> Response {
+    return respond(status, "text/html; charset=utf-8", body)
+}
+
+pub fn json(status: u16, body: []u8) -> Response {
+    return respond(status, "application/json", body)
+}
+
+pub fn not_found() -> Response {
+    return text(404, "not found\n")
+}
+
+/// A redirect to `location`.
+pub fn redirect(location: []u8) -> Response {
+    var r = text(302, "")
+    r.with_header("Location", location)
+    return r
+}
+
+/// The content type for a file name, by extension.
+pub fn content_type_for(path: []u8) -> []u8 {
+    let ext = fs.extension(path)
+    if ext == "html" or ext == "htm" { return "text/html; charset=utf-8" }
+    if ext == "css" { return "text/css" }
+    if ext == "js" { return "text/javascript" }
+    if ext == "json" { return "application/json" }
+    if ext == "txt" or ext == "md" or ext == "nx" { return "text/plain; charset=utf-8" }
+    if ext == "png" { return "image/png" }
+    if ext == "jpg" or ext == "jpeg" { return "image/jpeg" }
+    if ext == "gif" { return "image/gif" }
+    if ext == "svg" { return "image/svg+xml" }
+    if ext == "ico" { return "image/x-icon" }
+    if ext == "pdf" { return "application/pdf" }
+    return "application/octet-stream"
+}
+
+// ------------------------------------------------------------------ wire format
+
+fn parse_status(line: []u8) -> ?(u16, []u8) {
+    // HTTP/1.1 200 OK
+    if !line.starts_with("HTTP/") { return null }
+    var i: usize = 0
+    while i < line.len and line[i] != ' ' { i += 1 }
+    if i + 4 > line.len { return null }
+    let status = line[i + 1..i + 4].parse_int(u16) catch return null
+    var reason = line[0..0]
+    if i + 5 <= line.len { reason = line[i + 5..line.len] }
+    return (status, reason)
+}
+
+fn read_headers(r: *mut stream.Reader) -> !List(Header) {
+    var headers = List(Header).new()
+    var n: usize = 0
+    while true {
+        let line = (try r.read_line()) orelse break
+        if line.len == 0 { break }
+        n += 1
+        if n > MAX_HEADER_LINES { return error.InvalidInput }
+        var c: usize = 0
+        while c < line.len and line[c] != ':' { c += 1 }
+        if c == line.len { return error.InvalidInput }
+        headers.append(Header{ .name = String.from(line[0..c]), .value = String.from(line[c + 1..line.len].trim()) })
+    }
+    return headers
+}
+
+fn hex_value(s: []u8) -> ?usize {
+    var v: usize = 0
+    var any = false
+    for c in s {
+        var d: usize = 0
+        if c >= '0' and c <= '9' { d = (c - '0') as usize }
+        else if c >= 'a' and c <= 'f' { d = (c - 'a' + 10) as usize }
+        else if c >= 'A' and c <= 'F' { d = (c - 'A' + 10) as usize }
+        else if c == ';' or c == ' ' { break }
+        else { return null }
+        v = v * 16 + d
+        any = true
+    }
+    return if any { v } else { null }
+}
+
+fn read_exact(r: *mut stream.Reader, n: usize) -> !String {
+    var out = String.with_capacity(n)
+    while out.len < n {
+        let chunk = try r.read(n - out.len)
+        if chunk.len == 0 { return error.Truncated }
+        out.append(chunk)
+    }
+    return out
+}
+
+fn read_body(r: *mut stream.Reader, headers: *List(Header), allow_until_close: bool) -> !String {
+    if let te = header_value(headers, "transfer-encoding") {
+        if te.eq_ignore_case("chunked") {
+            var body = String.new()
+            while true {
+                let size_line = (try r.read_line()) orelse return error.Truncated
+                let size = hex_value(size_line) orelse return error.InvalidInput
+                if size == 0 {
+                    // trailers, then the blank line
+                    while true {
+                        let t = (try r.read_line()) orelse break
+                        if t.len == 0 { break }
+                    }
+                    break
+                }
+                body.append(try read_exact(r, size))
+                _ = try r.read_line()
+            }
+            return body
+        }
+    }
+    if let cl = header_value(headers, "content-length") {
+        let n = cl.parse_int(usize) catch return error.InvalidInput
+        return read_exact(r, n)
+    }
+    if allow_until_close { return r.read_all() }
+    return String.new()
+}
+
+/// Read a full response from a reader over the connection.
+pub fn read_response(r: *mut stream.Reader) -> !Response {
+    let line = (try r.read_line()) orelse return error.Truncated
+    let st = parse_status(line) orelse return error.InvalidInput
+    let headers = try read_headers(r)
+    let body = if st.0 == 204 or st.0 == 304 { String.new() } else { try read_body(r, &headers, true) }
+    return Response{ .status = st.0, .reason = String.from(st.1), .headers = headers, .body = body }
+}
+
+/// Write a request; `headers` may add or override the defaults.
+pub fn send_request(w: *mut stream.Writer, method: []u8, url: *Url, headers: *List(Header), body: []u8) -> !void {
+    try w.write(method)
+    try w.write(" ")
+    try w.write(url.path)
+    try w.write(" HTTP/1.1\r\nHost: ")
+    try w.write(url.host)
+    if url.port != 80 { try w.write(format(":{}", .{url.port})) }
+    try w.write("\r\n")
+    if header_value(headers, "user-agent") == null { try w.write("User-Agent: nexium-http/0.3\r\n") }
+    if header_value(headers, "accept") == null { try w.write("Accept: */*\r\n") }
+    try w.write("Connection: close\r\n")
+    if body.len > 0 or method == "POST" or method == "PUT" { try w.write(format("Content-Length: {}\r\n", .{body.len})) }
+    for h in headers {
+        try w.write(h.name)
+        try w.write(": ")
+        try w.write(h.value)
+        try w.write("\r\n")
+    }
+    try w.write("\r\n")
+    try w.write(body)
+    return w.flush()
+}
+
+// ------------------------------------------------------------------ client
+
+fn one_request(method: []u8, url: *Url, headers: *List(Header), body: []u8, timeout_ms: i64) -> !Response {
+    var conn = try net.TcpStream.connect_timeout(url.host, url.port, timeout_ms)
+    conn.set_timeout(timeout_ms)
+    var w = conn.writer()
+    send_request(&mut w, method, url, headers, body) catch |e| {
+        conn.close()
+        return e
+    }
+    var r = conn.reader()
+    let resp = read_response(&mut r)
+    conn.close()
+    return resp
+}
+
+/// Perform a request, following redirects. `error.InvalidInput` for a URL
+/// this client cannot speak (including `https://`).
+pub fn request(method: []u8, url_text: []u8, headers: *List(Header), body: []u8) -> !Response {
+    var url = parse_url(url_text) orelse return error.InvalidInput
+    if url.scheme != "http" { return error.InvalidInput }
+    var hops: usize = 0
+    while true {
+        let resp = try one_request(method, &url, headers, body, 15000)
+        let is_redirect = resp.status == 301 or resp.status == 302 or resp.status == 303 or resp.status == 307 or resp.status == 308
+        if !is_redirect or hops >= MAX_REDIRECTS { return resp }
+        let loc = resp.header("location") orelse return resp
+        hops += 1
+        if loc.starts_with("http://") or loc.starts_with("https://") {
+            url = parse_url(loc) orelse return error.InvalidInput
+            if url.scheme != "http" { return error.InvalidInput }
+        } else {
+            url.path = String.from(loc)
+        }
+    }
+}
+
+pub fn get(url: []u8) -> !Response {
+    let none = List(Header).new()
+    return request("GET", url, &none, "")
+}
+
+pub fn post(url: []u8, content_type: []u8, body: []u8) -> !Response {
+    var headers = List(Header).new()
+    headers.append(Header{ .name = String.from("Content-Type"), .value = String.from(content_type) })
+    return request("POST", url, &headers, body)
+}
+
+// ------------------------------------------------------------------ server
+
+pub struct Request {
+    method: String
+    /// the path without the query
+    path: String
+    /// the query string after `?`, without it
+    query: String
+    headers: List(Header)
+    body: String
+    peer: String
+}
+
+impl Request {
+    pub fn header(self: *Self, name: []u8) -> ?[]u8 {
+        return header_value(&self.headers, name)
+    }
+
+    /// The value of a query parameter (`?a=1&b=2`), not decoded.
+    pub fn param(self: *Self, name: []u8) -> ?[]u8 {
+        for pair in self.query.split("&") {
+            var eq: usize = 0
+            while eq < pair.len and pair[eq] != '=' { eq += 1 }
+            if pair[0..eq] == name { return if eq < pair.len { pair[eq + 1..pair.len] } else { pair[0..0] } }
+        }
+        return null
+    }
+}
+
+/// Read a request from a reader over the connection; null when the
+/// connection was closed before a request line.
+pub fn read_request(r: *mut stream.Reader, peer: []u8) -> !?Request {
+    let line = (try r.read_line()) orelse return null
+    // GET /path?query HTTP/1.1
+    var a: usize = 0
+    while a < line.len and line[a] != ' ' { a += 1 }
+    if a == line.len { return error.InvalidInput }
+    var b = a + 1
+    while b < line.len and line[b] != ' ' { b += 1 }
+    let target = line[a + 1..b]
+    var q: usize = 0
+    while q < target.len and target[q] != '?' { q += 1 }
+    let headers = try read_headers(r)
+    let body = try read_body(r, &headers, false)
+    return Request{
+        .method = String.from(line[0..a]),
+        .path = String.from(target[0..q]),
+        .query = String.from(if q < target.len { target[q + 1..target.len] } else { target[0..0] }),
+        .headers = headers,
+        .body = body,
+        .peer = String.from(peer),
+    }
+}
+
+/// Write a response with `Content-Length` and `Connection: close`.
+pub fn write_response(w: *mut stream.Writer, resp: *Response) -> !void {
+    try w.write(format("HTTP/1.1 {} ", .{resp.status}))
+    try w.write(resp.reason)
+    try w.write("\r\n")
+    for h in resp.headers {
+        try w.write(h.name)
+        try w.write(": ")
+        try w.write(h.value)
+        try w.write("\r\n")
+    }
+    try w.write(format("Content-Length: {}\r\nConnection: close\r\n\r\n", .{resp.body.len}))
+    try w.write(resp.body)
+    return w.flush()
+}
+
+pub struct Route {
+    method: String
+    path: String
+    handler: fn(*Request) -> Response
+}
+
+/// Matches requests by method and exact path; a path ending in `/*`
+/// matches any request under that prefix.
+pub struct Router {
+    routes: List(Route)
+    static_root: ?String
+}
+
+impl Router {
+    pub fn new() -> Router {
+        return Router{ .routes = List(Route).new(), .static_root = null }
+    }
+
+    pub fn route(self: *mut Self, method: []u8, path: []u8, handler: fn(*Request) -> Response) {
+        self.routes.append(Route{ .method = String.from(method), .path = String.from(path), .handler = handler })
+    }
+
+    pub fn get(self: *mut Self, path: []u8, handler: fn(*Request) -> Response) {
+        self.route("GET", path, handler)
+    }
+
+    pub fn post(self: *mut Self, path: []u8, handler: fn(*Request) -> Response) {
+        self.route("POST", path, handler)
+    }
+
+    /// Serve files under `root` for paths no route claims.
+    pub fn serve_static(self: *mut Self, root: []u8) {
+        self.static_root = String.from(root)
+    }
+
+    /// The response for a request.
+    pub fn handle(self: *Self, req: *Request) -> Response {
+        for r in self.routes {
+            if r.method != req.method { continue }
+            let hit = if r.path.ends_with("/*") { req.path.starts_with(r.path[0..r.path.len - 1]) } else { r.path == req.path }
+            if hit {
+                let h = r.handler
+                return h(req)
+            }
+        }
+        if let root = self.static_root {
+            if req.method == "GET" { return static_file(root, req.path) }
+        }
+        return not_found()
+    }
+}
+
+/// A file under `root` for a request path, refusing `..`; `index.html` for
+/// directories.
+pub fn static_file(root: []u8, path: []u8) -> Response {
+    if path.find("..") != null { return text(403, "forbidden\n") }
+    var file = fs.join(root, if path.len > 0 and path[0] == '/' { path[1..path.len] } else { path })
+    if fs.is_dir(file) { file = fs.join(file, "index.html") }
+    if !fs.is_file(file) { return not_found() }
+    let data = fs.read(file) catch return text(500, "cannot read file\n")
+    return respond(200, content_type_for(file), data)
+}
+
+pub struct Server {
+    listener: net.TcpListener
+}
+
+impl Server {
+    pub fn bind(host: []u8, port: u16) -> !Server {
+        return Server{ .listener = try net.TcpListener.bind(host, port) }
+    }
+
+    pub fn port(self: *Self) -> !u16 {
+        return self.listener.port()
+    }
+
+    /// Accept one connection, answer one request, close. `error.Timeout`
+    /// when nobody connects within `timeout_ms` (0 waits forever).
+    pub fn serve_one(self: *Self, router: *Router, timeout_ms: i64) -> !void {
+        var conn = try self.listener.accept_timeout(timeout_ms)
+        conn.set_timeout(10000)
+        let peer = conn.peer() catch String.from("?")
+        var r = conn.reader()
+        var bad = false
+        let maybe = read_request(&mut r, peer) catch |_| {
+            bad = true
+            null
+        }
+        var resp = text(400, "bad request\n")
+        if !bad {
+            if let req = maybe {
+                resp = router.handle(&req)
+            } else {
+                conn.close()
+                return
+            }
+        }
+        var w = conn.writer()
+        write_response(&mut w, &resp) catch { }
+        conn.close()
+    }
+
+    /// Serve forever, one request at a time.
+    pub fn serve(self: *Self, router: *Router) -> !void {
+        while true {
+            self.serve_one(router, 0) catch |e| {
+                if e != error.Timeout { return e }
+            }
+        }
+    }
+
+    pub fn close(self: *mut Self) {
+        self.listener.close()
+    }
+}
+
+// ------------------------------------------------------------------ tests
+
+fn hello(req: *Request) -> Response {
+    var body = String.from("hello ")
+    body.append(req.param("name") orelse "world")
+    return text(200, body)
+}
+
+fn echo(req: *Request) -> Response {
+    return respond(201, "application/octet-stream", req.body)
+}
+
+test "urls" {
+    let u = parse_url("http://example.com/a/b?x=1").?
+    expect_eq(u.host, "example.com")
+    expect_eq(u.port, 80)
+    expect_eq(u.path, "/a/b?x=1")
+    let p = parse_url("http://localhost:8080").?
+    expect_eq(p.port, 8080)
+    expect_eq(p.path, "/")
+    expect(parse_url("ftp://x") == null)
+    expect_eq(parse_url("https://h/").?.port, 443)
+    expect_eq(content_type_for("a/b.css"), "text/css")
+    expect_eq(hex_value("1A;ext").?, 26)
+}
+
+test "request and response over loopback" {
+    var router = Router.new()
+    router.get("/hello", hello)
+    router.post("/echo", echo)
+    var server = try Server.bind("127.0.0.1", 0)
+    let port = try server.port()
+    var url = parse_url(format("http://127.0.0.1:{}/hello?name=nx", .{port})).?
+
+    // the client sends first; the request fits the socket buffer, so the
+    // single-threaded server can then accept and answer it
+    var c = try net.TcpStream.connect_timeout("127.0.0.1", port, 5000)
+    c.set_timeout(5000)
+    var w = c.writer()
+    let none = List(Header).new()
+    try send_request(&mut w, "GET", &url, &none, "")
+    try server.serve_one(&router, 5000)
+    var r = c.reader()
+    let resp = try read_response(&mut r)
+    expect_eq(resp.status, 200)
+    expect_eq(resp.body, "hello nx")
+    expect_eq(resp.header("content-type").?, "text/plain; charset=utf-8")
+    c.close()
+
+    var c2 = try net.TcpStream.connect_timeout("127.0.0.1", port, 5000)
+    c2.set_timeout(5000)
+    var w2 = c2.writer()
+    url.path = String.from("/echo")
+    try send_request(&mut w2, "POST", &url, &none, "payload bytes")
+    try server.serve_one(&router, 5000)
+    var r2 = c2.reader()
+    let resp2 = try read_response(&mut r2)
+    expect_eq(resp2.status, 201)
+    expect_eq(resp2.body, "payload bytes")
+    c2.close()
+
+    var c3 = try net.TcpStream.connect_timeout("127.0.0.1", port, 5000)
+    c3.set_timeout(5000)
+    try c3.send("GET /missing HTTP/1.1\r\nHost: x\r\n\r\n")
+    try server.serve_one(&router, 5000)
+    var r3 = c3.reader()
+    expect_eq((try read_response(&mut r3)).status, 404)
+    c3.close()
+    server.close()
+}
+
+test "chunked bodies" {
+    // a canned response fed through a file-backed reader
+    let path = fs.temp_path("nxhttp-")
+    try fs.write(path, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nX-Test: yes\r\n\r\n5\r\nhello\r\n6;ext=1\r\n world\r\n0\r\n\r\n")
+    var r = try stream.Reader.open(path)
+    let resp = try read_response(&mut r)
+    r.close()
+    try fs.remove(path)
+    expect_eq(resp.status, 200)
+    expect_eq(resp.reason, "OK")
+    expect_eq(resp.body, "hello world")
+    expect_eq(resp.header("x-test").?, "yes")
+    expect(resp.ok())
+}

@@ -1,0 +1,2 @@
+// EXPECT: unknown allocation strategy `pool`
+fn main() { using pool { let x = List(i32).new(); _ = x } }

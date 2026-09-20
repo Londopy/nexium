@@ -1,0 +1,3 @@
+// EXPECT: compile time
+const TEXT = comptime { io.read_file("x.txt") catch "" }
+fn main() { println("{}", .{TEXT}) }

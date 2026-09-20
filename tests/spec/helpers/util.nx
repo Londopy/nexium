@@ -1,0 +1,7 @@
+// A module imported by the section 11 cases: only `pub` items are visible.
+pub struct Point { x: i32, y: i32 }
+pub const ORIGIN = Point{ .x = 0, .y = 0 }
+pub fn dist2(a: Point, b: Point) -> i32 { return sq(a.x - b.x) + sq(a.y - b.y) }
+fn sq(v: i32) -> i32 { return v * v }
+pub fn secret_len() -> usize { return SECRET.len }
+const SECRET = "hidden"

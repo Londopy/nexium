@@ -66,14 +66,36 @@ fn run_pp(opts: &ImportOptions, source: &str, extra: &[&str]) -> Result<String, 
         cmd.arg(format!("-I{}", d));
     }
     cmd.arg(&path);
-    let out = cmd.output().map_err(|e| format!("cannot run the C compiler: {}", e))?;
+    // a failure without a diagnostic is the compiler itself giving up (zig's
+    // shared cache refuses concurrent runs now and then): try again
+    let mut out = cmd.output().map_err(|e| format!("cannot run the C compiler: {}", e))?;
+    let mut attempt = 0;
+    while !out.status.success() && attempt < 5 && !String::from_utf8_lossy(&out.stderr).contains("error:") {
+        attempt += 1;
+        std::thread::sleep(std::time::Duration::from_millis(50 * attempt));
+        out = cmd.output().map_err(|e| format!("cannot run the C compiler: {}", e))?;
+    }
     let _ = std::fs::remove_file(&path);
     if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr);
-        let first = err.lines().find(|l| l.contains("error")).unwrap_or("").trim().to_string();
-        return Err(format!("the C preprocessor failed: {}", first));
+        return Err(format!("the C preprocessor failed: {}", pp_failure(&out)));
     }
     Ok(String::from_utf8_lossy(&out.stdout).to_string())
+}
+
+/// What a failed preprocessor run said: its first `error` line, else its
+/// first line, else the exit status.
+fn pp_failure(out: &std::process::Output) -> String {
+    let err = String::from_utf8_lossy(&out.stderr);
+    if let Some(l) = err.lines().find(|l| l.contains("error")) {
+        return l.trim().to_string();
+    }
+    if let Some(l) = err.lines().find(|l| !l.trim().is_empty()) {
+        return l.trim().to_string();
+    }
+    match out.status.code() {
+        Some(c) => format!("exit code {}", c),
+        None => "killed by a signal".to_string(),
+    }
 }
 
 pub fn import(header: &str, opts: &ImportOptions, span: Span) -> Result<CImport, String> {
@@ -363,21 +385,17 @@ impl CParser {
                         _ => Ok(Vec::new()), // opaque struct: usable through pointers
                     },
                 };
-                match fields {
-                    Ok(f) => {
-                        if seen.insert(name.clone()) {
-                            ci.structs.push((name.clone(), name.clone(), f));
-                        }
-                        let te = TypeExpr::named(&name, self.span);
-                        self.typedefs.insert(name.clone(), Ok(te.clone()));
-                        if let Some(t) = tag {
-                            self.typedefs.insert(format!("struct {}", t), Ok(te));
-                        }
-                    }
-                    Err(why) => {
-                        self.typedefs.insert(name.clone(), Err(why.clone()));
-                        ci.unsupported.insert(name, why);
-                    }
+                // fields we cannot translate make the struct opaque (usable through
+                // pointers, like a forward declaration), not unusable: Apple's FILE
+                // holds function pointers and every stdio function takes FILE*
+                let f = fields.unwrap_or_default();
+                if seen.insert(name.clone()) {
+                    ci.structs.push((name.clone(), name.clone(), f));
+                }
+                let te = TypeExpr::named(&name, self.span);
+                self.typedefs.insert(name.clone(), Ok(te.clone()));
+                if let Some(t) = tag {
+                    self.typedefs.insert(format!("struct {}", t), Ok(te));
                 }
                 return Some(());
             }
@@ -415,18 +433,12 @@ impl CParser {
                     return Some(());
                 }
                 let tag = tag.clone();
-                match self.struct_fields(b) {
-                    Ok(f) => {
-                        if seen.insert(tag.clone()) {
-                            ci.structs.push((tag.clone(), format!("struct {}", tag), f));
-                        }
-                        self.typedefs.insert(format!("struct {}", tag), Ok(TypeExpr::named(&tag, self.span)));
-                    }
-                    Err(why) => {
-                        self.typedefs.insert(format!("struct {}", tag), Err(why.clone()));
-                        ci.unsupported.insert(tag, why);
-                    }
+                // untranslatable fields: opaque, see the typedef case above
+                let f = self.struct_fields(b).unwrap_or_default();
+                if seen.insert(tag.clone()) {
+                    ci.structs.push((tag.clone(), format!("struct {}", tag), f));
                 }
+                self.typedefs.insert(format!("struct {}", tag), Ok(TypeExpr::named(&tag, self.span)));
             }
             return Some(());
         }

@@ -25,7 +25,7 @@ impl<'a> Checker<'a> {
         true
     }
 
-    fn arg(&mut self, e: &Expr, ty: TyId, what: &str) -> TExpr {
+    pub fn arg(&mut self, e: &Expr, ty: TyId, what: &str) -> TExpr {
         let te = self.check_expr(e, Some(ty));
         self.coerce_or_error(te, ty, what)
     }
@@ -531,8 +531,133 @@ impl<'a> Checker<'a> {
                     let o = self.tys.opt(string);
                     self.builtin(Builtin::ReadLine, vec![], vec![], o, span)
                 }
+                "append_file" => {
+                    if !self.check_args_n(args, 2, "io.append_file", span) {
+                        return self.error_expr(span);
+                    }
+                    let p = self.arg(&args[0], bytes, "path");
+                    let d = self.arg(&args[1], bytes, "data");
+                    self.add_effect(Effects::BLOCKS, span, "file I/O blocks");
+                    let r = self.tys.err_union(None, void);
+                    self.builtin(Builtin::AppendFile, vec![p, d], vec![], r, span)
+                }
+                "file_kind" => {
+                    if !self.check_args_n(args, 1, "io.file_kind", span) {
+                        return self.error_expr(span);
+                    }
+                    let p = self.arg(&args[0], bytes, "path");
+                    self.add_effect(Effects::BLOCKS, span, "file I/O blocks");
+                    let t = self.tys.int(IntTy::I32);
+                    self.builtin(Builtin::FsKind, vec![p], vec![], t, span)
+                }
+                "file_size" | "file_modified" => {
+                    if !self.check_args_n(args, 1, &format!("io.{}", name), span) {
+                        return self.error_expr(span);
+                    }
+                    let p = self.arg(&args[0], bytes, "path");
+                    self.add_effect(Effects::BLOCKS, span, "file I/O blocks");
+                    let (op, t) = if name == "file_size" { (Builtin::FsSize, self.tys.int(IntTy::U64)) } else { (Builtin::FsModified, self.tys.int(IntTy::I64)) };
+                    let r = self.tys.err_union(None, t);
+                    self.builtin(op, vec![p], vec![], r, span)
+                }
+                "make_dir" | "remove_file" | "remove_dir" => {
+                    if !self.check_args_n(args, 1, &format!("io.{}", name), span) {
+                        return self.error_expr(span);
+                    }
+                    let p = self.arg(&args[0], bytes, "path");
+                    self.add_effect(Effects::BLOCKS, span, "file I/O blocks");
+                    let op = match name {
+                        "make_dir" => Builtin::FsMkdir,
+                        "remove_file" => Builtin::FsRemoveFile,
+                        _ => Builtin::FsRemoveDir,
+                    };
+                    let r = self.tys.err_union(None, void);
+                    self.builtin(op, vec![p], vec![], r, span)
+                }
+                "rename" => {
+                    if !self.check_args_n(args, 2, "io.rename", span) {
+                        return self.error_expr(span);
+                    }
+                    let a = self.arg(&args[0], bytes, "path");
+                    let b = self.arg(&args[1], bytes, "new path");
+                    self.add_effect(Effects::BLOCKS, span, "file I/O blocks");
+                    let r = self.tys.err_union(None, void);
+                    self.builtin(Builtin::FsRename, vec![a, b], vec![], r, span)
+                }
+                "list_dir" => {
+                    if !self.check_args_n(args, 1, "io.list_dir", span) {
+                        return self.error_expr(span);
+                    }
+                    let p = self.arg(&args[0], bytes, "path");
+                    self.add_effect(Effects::BLOCKS, span, "file I/O blocks");
+                    self.add_effect(Effects::ALLOCATES, span, "listing a directory allocates the names");
+                    let l = self.tys.list(string);
+                    let r = self.tys.err_union(None, l);
+                    self.builtin(Builtin::FsListDir, vec![p], vec![], r, span)
+                }
+                "cwd" => {
+                    if !self.check_args_n(args, 0, "io.cwd", span) {
+                        return self.error_expr(span);
+                    }
+                    self.add_effect(Effects::ALLOCATES, span, "the working directory is copied into a String");
+                    let r = self.tys.err_union(None, string);
+                    self.builtin(Builtin::FsCwd, vec![], vec![], r, span)
+                }
+                "temp_dir" => {
+                    if !self.check_args_n(args, 0, "io.temp_dir", span) {
+                        return self.error_expr(span);
+                    }
+                    self.add_effect(Effects::ALLOCATES, span, "the directory name is copied into a String");
+                    self.builtin(Builtin::FsTempDir, vec![], vec![], string, span)
+                }
+                "open" => {
+                    if !self.check_args_n(args, 2, "io.open", span) {
+                        return self.error_expr(span);
+                    }
+                    let p = self.arg(&args[0], bytes, "path");
+                    let md = self.arg(&args[1], bytes, "mode");
+                    self.add_effect(Effects::BLOCKS, span, "file I/O blocks");
+                    let i64t = self.tys.int(IntTy::I64);
+                    let r = self.tys.err_union(None, i64t);
+                    self.builtin(Builtin::FileOpen, vec![p, md], vec![], r, span)
+                }
+                "read" => {
+                    if !self.check_args_n(args, 2, "io.read", span) {
+                        return self.error_expr(span);
+                    }
+                    let i64t = self.tys.int(IntTy::I64);
+                    let usizet = self.tys.usize();
+                    let h = self.arg(&args[0], i64t, "handle");
+                    let n = self.arg(&args[1], usizet, "byte count");
+                    self.add_effect(Effects::BLOCKS, span, "file I/O blocks");
+                    self.add_effect(Effects::ALLOCATES, span, "reading allocates the chunk");
+                    let r = self.tys.err_union(None, string);
+                    self.builtin(Builtin::FileRead, vec![h, n], vec![], r, span)
+                }
+                "write" => {
+                    if !self.check_args_n(args, 2, "io.write", span) {
+                        return self.error_expr(span);
+                    }
+                    let i64t = self.tys.int(IntTy::I64);
+                    let h = self.arg(&args[0], i64t, "handle");
+                    let d = self.arg(&args[1], bytes, "data");
+                    self.add_effect(Effects::BLOCKS, span, "file I/O blocks");
+                    let r = self.tys.err_union(None, void);
+                    self.builtin(Builtin::FileWrite, vec![h, d], vec![], r, span)
+                }
+                "flush" | "close" => {
+                    if !self.check_args_n(args, 1, &format!("io.{}", name), span) {
+                        return self.error_expr(span);
+                    }
+                    let i64t = self.tys.int(IntTy::I64);
+                    let h = self.arg(&args[0], i64t, "handle");
+                    self.add_effect(Effects::BLOCKS, span, "file I/O blocks");
+                    let r = self.tys.err_union(None, void);
+                    let op = if name == "flush" { Builtin::FileFlush } else { Builtin::FileClose };
+                    self.builtin(op, vec![h], vec![], r, span)
+                }
                 _ => {
-                    self.error(span, format!("`io` has no function `{}`; available: read_file, write_file, read_line", name));
+                    self.error(span, format!("`io` has no function `{}`; available: read_file, write_file, append_file, read_line, file_kind, file_size, file_modified, make_dir, remove_file, remove_dir, rename, list_dir, cwd, temp_dir, open, read, write, flush, close", name));
                     self.error_expr(span)
                 }
             },
@@ -543,6 +668,15 @@ impl<'a> Checker<'a> {
                     }
                     let t = self.tys.slice(false, bytes);
                     self.builtin(Builtin::Args, vec![], vec![], t, span)
+                }
+                "environ" => {
+                    if !self.check_args_n(args, 0, "os.environ", span) {
+                        return self.error_expr(span);
+                    }
+                    self.add_effect(Effects::NONDETERMINISTIC, span, "the environment varies across runs");
+                    self.add_effect(Effects::ALLOCATES, span, "the environment is copied into Strings");
+                    let l = self.tys.list(string);
+                    self.builtin(Builtin::Environ, vec![], vec![], l, span)
                 }
                 "env" => {
                     if !self.check_args_n(args, 1, "os.env", span) {
@@ -562,6 +696,30 @@ impl<'a> Checker<'a> {
                     let never = self.tys.never();
                     self.builtin(Builtin::Exit, vec![c], vec![], never, span)
                 }
+                "exec" => {
+                    // process.exec(argv, stdin, cwd) -> !i32, with the output kept for last_stdout/last_stderr
+                    if !self.check_args_n(args, 3, "process.exec", span) {
+                        return self.error_expr(span);
+                    }
+                    let argv_t = self.tys.slice(false, bytes);
+                    let argv = self.arg(&args[0], argv_t, "command and arguments");
+                    let input = self.arg(&args[1], bytes, "stdin");
+                    let cwd = self.arg(&args[2], bytes, "working directory (empty = inherit)");
+                    self.add_effect(Effects::BLOCKS, span, "running a process waits for it to finish");
+                    self.add_effect(Effects::NONDETERMINISTIC, span, "a child process can do anything");
+                    self.add_effect(Effects::ALLOCATES, span, "the output is captured into Strings");
+                    let i32t = self.tys.int(IntTy::I32);
+                    let r = self.tys.err_union(None, i32t);
+                    self.builtin(Builtin::Exec, vec![argv, input, cwd], vec![], r, span)
+                }
+                "last_stdout" | "last_stderr" => {
+                    if !self.check_args_n(args, 0, &format!("process.{}", name), span) {
+                        return self.error_expr(span);
+                    }
+                    let string = self.tys.string();
+                    let op = if name == "last_stdout" { Builtin::LastStdout } else { Builtin::LastStderr };
+                    self.builtin(op, vec![], vec![], string, span)
+                }
                 "run" => {
                     if !self.check_args_n(args, 1, "process.run", span) {
                         return self.error_expr(span);
@@ -579,6 +737,212 @@ impl<'a> Checker<'a> {
                     self.error_expr(span)
                 }
             },
+            "net" => {
+                let i64t = self.tys.int(IntTy::I64);
+                let u16t = self.tys.int(IntTy::U16);
+                let usizet = self.tys.usize();
+                let string = self.tys.string();
+                let void = self.tys.void();
+                let u8t = self.tys.int(IntTy::U8);
+                let bytes = self.tys.slice(false, u8t);
+                self.add_effect(Effects::BLOCKS, span, "network I/O blocks");
+                match name {
+                    "connect" => {
+                        if !self.check_args_n(args, 3, "net.connect", span) {
+                            return self.error_expr(span);
+                        }
+                        let h = self.arg(&args[0], bytes, "host");
+                        let p = self.arg(&args[1], u16t, "port");
+                        let to = self.arg(&args[2], i64t, "timeout in ms (0 = none)");
+                        let r = self.tys.err_union(None, i64t);
+                        self.builtin(Builtin::NetConnect, vec![h, p, to], vec![], r, span)
+                    }
+                    "listen" | "udp_bind" => {
+                        if !self.check_args_n(args, 2, &format!("net.{}", name), span) {
+                            return self.error_expr(span);
+                        }
+                        let h = self.arg(&args[0], bytes, "host");
+                        let p = self.arg(&args[1], u16t, "port");
+                        let r = self.tys.err_union(None, i64t);
+                        let op = if name == "listen" { Builtin::NetListen } else { Builtin::NetUdpBind };
+                        self.builtin(op, vec![h, p], vec![], r, span)
+                    }
+                    "accept" => {
+                        if !self.check_args_n(args, 2, "net.accept", span) {
+                            return self.error_expr(span);
+                        }
+                        let l = self.arg(&args[0], i64t, "listener");
+                        let to = self.arg(&args[1], i64t, "timeout in ms (0 = none)");
+                        let r = self.tys.err_union(None, i64t);
+                        self.builtin(Builtin::NetAccept, vec![l, to], vec![], r, span)
+                    }
+                    "send" => {
+                        if !self.check_args_n(args, 2, "net.send", span) {
+                            return self.error_expr(span);
+                        }
+                        let s = self.arg(&args[0], i64t, "socket");
+                        let d = self.arg(&args[1], bytes, "data");
+                        let r = self.tys.err_union(None, void);
+                        self.builtin(Builtin::NetSend, vec![s, d], vec![], r, span)
+                    }
+                    "recv" | "recv_from" => {
+                        if !self.check_args_n(args, 3, &format!("net.{}", name), span) {
+                            return self.error_expr(span);
+                        }
+                        let s = self.arg(&args[0], i64t, "socket");
+                        let n = self.arg(&args[1], usizet, "byte count");
+                        let to = self.arg(&args[2], i64t, "timeout in ms (0 = none)");
+                        self.add_effect(Effects::ALLOCATES, span, "receiving allocates the chunk");
+                        let r = self.tys.err_union(None, string);
+                        let op = if name == "recv" { Builtin::NetRecv } else { Builtin::NetRecvFrom };
+                        self.builtin(op, vec![s, n, to], vec![], r, span)
+                    }
+                    "close" => {
+                        if !self.check_args_n(args, 1, "net.close", span) {
+                            return self.error_expr(span);
+                        }
+                        let s = self.arg(&args[0], i64t, "socket");
+                        let r = self.tys.err_union(None, void);
+                        self.builtin(Builtin::NetClose, vec![s], vec![], r, span)
+                    }
+                    "peer" | "local" => {
+                        if !self.check_args_n(args, 1, &format!("net.{}", name), span) {
+                            return self.error_expr(span);
+                        }
+                        let s = self.arg(&args[0], i64t, "socket");
+                        self.add_effect(Effects::ALLOCATES, span, "the address is copied into a String");
+                        let r = self.tys.err_union(None, string);
+                        let op = if name == "peer" { Builtin::NetPeer } else { Builtin::NetLocal };
+                        self.builtin(op, vec![s], vec![], r, span)
+                    }
+                    "resolve" => {
+                        if !self.check_args_n(args, 1, "net.resolve", span) {
+                            return self.error_expr(span);
+                        }
+                        let h = self.arg(&args[0], bytes, "host");
+                        self.add_effect(Effects::ALLOCATES, span, "addresses are copied into Strings");
+                        let l = self.tys.list(string);
+                        let r = self.tys.err_union(None, l);
+                        self.builtin(Builtin::NetResolve, vec![h], vec![], r, span)
+                    }
+                    "send_to" => {
+                        if !self.check_args_n(args, 4, "net.send_to", span) {
+                            return self.error_expr(span);
+                        }
+                        let s = self.arg(&args[0], i64t, "socket");
+                        let h = self.arg(&args[1], bytes, "host");
+                        let p = self.arg(&args[2], u16t, "port");
+                        let d = self.arg(&args[3], bytes, "data");
+                        let r = self.tys.err_union(None, void);
+                        self.builtin(Builtin::NetSendTo, vec![s, h, p, d], vec![], r, span)
+                    }
+                    "last_peer" => {
+                        if !self.check_args_n(args, 0, "net.last_peer", span) {
+                            return self.error_expr(span);
+                        }
+                        self.add_effect(Effects::ALLOCATES, span, "the address is copied into a String");
+                        self.builtin(Builtin::NetLastPeer, vec![], vec![], string, span)
+                    }
+                    _ => {
+                        self.error(
+                            span,
+                            format!("`net` has no function `{}`; available: connect, listen, accept, send, recv, close, peer, local, resolve, udp_bind, send_to, recv_from, last_peer", name),
+                        );
+                        self.error_expr(span)
+                    }
+                }
+            }
+            "thread" => match name {
+                "start" => {
+                    // thread.start(f: fn(*mut X) -> void, arg: *mut X) -> i64
+                    if !self.check_args_n(args, 2, "thread.start", span) {
+                        return self.error_expr(span);
+                    }
+                    let f = self.check_expr(&args[0], None);
+                    let ft = self.tys.shallow(f.ty);
+                    let param = match self.tys.kind(ft).clone() {
+                        TyKind::Fn(ps, r, _) if ps.len() == 1 && matches!(self.tys.kind(self.tys.shallow(ps[0])), TyKind::Ptr(..)) && matches!(self.tys.kind(self.tys.shallow(r)), TyKind::Void) => {
+                            ps[0]
+                        }
+                        _ => {
+                            self.error(args[0].span(), "thread.start takes a function value `fn(*mut T) -> void` (a closure without captures or a named function)");
+                            return self.error_expr(span);
+                        }
+                    };
+                    let p = self.arg(&args[1], param, "argument");
+                    self.add_effect(Effects::NONDETERMINISTIC, span, "threads interleave");
+                    self.add_effect(Effects::SHARED_MUTABLE, span, "a thread shares memory with its spawner");
+                    let i64t = self.tys.int(IntTy::I64);
+                    self.builtin(Builtin::ThreadStart, vec![f, p], vec![], i64t, span)
+                }
+                "join" => {
+                    if !self.check_args_n(args, 1, "thread.join", span) {
+                        return self.error_expr(span);
+                    }
+                    let i64t = self.tys.int(IntTy::I64);
+                    let h = self.arg(&args[0], i64t, "thread handle");
+                    self.add_effect(Effects::BLOCKS, span, "joining waits for the thread");
+                    self.add_effect(Effects::PANICS, span, "a panic in the thread is re-raised by join");
+                    self.builtin(Builtin::ThreadJoin, vec![h], vec![], void, span)
+                }
+                "count" => {
+                    if !self.check_args_n(args, 0, "thread.count", span) {
+                        return self.error_expr(span);
+                    }
+                    let usizet = self.tys.usize();
+                    self.builtin(Builtin::ThreadCount, vec![], vec![], usizet, span)
+                }
+                _ => {
+                    self.error(span, format!("`thread` has no function `{}`; available: start, join, count (see std.thread)", name));
+                    self.error_expr(span)
+                }
+            },
+            "sync" => {
+                let i64t = self.tys.int(IntTy::I64);
+                match name {
+                    "mutex_new" | "cond_new" => {
+                        if !self.check_args_n(args, 0, &format!("sync.{}", name), span) {
+                            return self.error_expr(span);
+                        }
+                        self.add_effect(Effects::ALLOCATES, span, "a lock is allocated");
+                        let op = if name == "mutex_new" { Builtin::MutexNew } else { Builtin::CondNew };
+                        self.builtin(op, vec![], vec![], i64t, span)
+                    }
+                    "lock" | "unlock" | "mutex_free" | "signal" | "broadcast" | "cond_free" => {
+                        if !self.check_args_n(args, 1, &format!("sync.{}", name), span) {
+                            return self.error_expr(span);
+                        }
+                        let h = self.arg(&args[0], i64t, "handle");
+                        let op = match name {
+                            "lock" => {
+                                self.add_effect(Effects::BLOCKS, span, "locking waits for the holder");
+                                Builtin::MutexLock
+                            }
+                            "unlock" => Builtin::MutexUnlock,
+                            "mutex_free" => Builtin::MutexFree,
+                            "signal" => Builtin::CondSignal,
+                            "broadcast" => Builtin::CondBroadcast,
+                            _ => Builtin::CondFree,
+                        };
+                        self.add_effect(Effects::SHARED_MUTABLE, span, "locks guard shared memory");
+                        self.builtin(op, vec![h], vec![], void, span)
+                    }
+                    "wait" => {
+                        if !self.check_args_n(args, 2, "sync.wait", span) {
+                            return self.error_expr(span);
+                        }
+                        let cv = self.arg(&args[0], i64t, "condition variable");
+                        let mu = self.arg(&args[1], i64t, "locked mutex");
+                        self.add_effect(Effects::BLOCKS, span, "waiting blocks until signalled");
+                        self.add_effect(Effects::SHARED_MUTABLE, span, "locks guard shared memory");
+                        self.builtin(Builtin::CondWait, vec![cv, mu], vec![], void, span)
+                    }
+                    _ => {
+                        self.error(span, format!("`sync` has no function `{}`; available: mutex_new, lock, unlock, mutex_free, cond_new, wait, signal, broadcast, cond_free (see std.thread)", name));
+                        self.error_expr(span)
+                    }
+                }
+            }
             "time" => match name {
                 "now" => {
                     if !self.check_args_n(args, 0, "time.now", span) {
@@ -602,8 +966,16 @@ impl<'a> Checker<'a> {
                     self.add_effect(Effects::BLOCKS, span, "sleeping blocks");
                     self.builtin(Builtin::Sleep, vec![ms], vec![], void, span)
                 }
+                "utc_offset" => {
+                    if !self.check_args_n(args, 1, "time.utc_offset", span) {
+                        return self.error_expr(span);
+                    }
+                    let ms = self.arg(&args[0], i64t, "milliseconds since the epoch");
+                    self.add_effect(Effects::NONDETERMINISTIC, span, "the local time zone varies across machines");
+                    self.builtin(Builtin::TimeUtcOffset, vec![ms], vec![], i64t, span)
+                }
                 _ => {
-                    self.error(span, format!("`time` has no function `{}`; available: now, monotonic, sleep", name));
+                    self.error(span, format!("`time` has no function `{}`; available: now, monotonic, sleep, utc_offset", name));
                     self.error_expr(span)
                 }
             },
@@ -708,6 +1080,10 @@ impl<'a> Checker<'a> {
                     let def = self.fns[fid as usize].clone();
                     if def.is_generic {
                         self.error(span, format!("`{}` is generic; call it directly", name));
+                        return self.error_expr(span);
+                    }
+                    if def.decl.params.iter().any(|p| p.owned) {
+                        self.error(span, format!("`{}` takes `own` parameters and cannot be used as a function value; call it directly", name));
                         return self.error_expr(span);
                     }
                     let inst = self.instantiate(fid, vec![], span);
@@ -1238,6 +1614,16 @@ impl<'a> Checker<'a> {
                         let c = self.arg(&args[0], ct, "character");
                         self.add_effect(Effects::ALLOCATES, span, "appending to a String may grow it");
                         self.builtin(Builtin::StringAppendChar, vec![recv, c], vec![], void, span)
+                    }
+                    "push_byte" => {
+                        if !self.check_args_n(args, 1, "push_byte", span) {
+                            return Some(self.error_expr(span));
+                        }
+                        self.require_mut_recv(&recv, "push_byte", span);
+                        let u8t = self.tys.int(IntTy::U8);
+                        let b = self.arg(&args[0], u8t, "byte");
+                        self.add_effect(Effects::ALLOCATES, span, "appending to a String may grow it");
+                        self.builtin(Builtin::StringPushByte, vec![recv, b], vec![], void, span)
                     }
                     "clone" | "to_string" => {
                         if !self.check_args_n(args, 0, method, span) {

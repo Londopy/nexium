@@ -1,0 +1,89 @@
+// std.process: run programs and capture what they print, written in Nexium
+// over the `process.*` primitives.
+//
+// `import std.process` then:
+//
+//     let out = try process.run(["git", "status", "--short"])
+//     if out.ok() { print("{}", .{out.stdout}) }
+//
+//     let r = try process.run_with(["sort"], process.Options{ .stdin = "b\na\n", .cwd = "" })
+//     let sh = try process.shell("echo hi")          // cmd /C on Windows, sh -c elsewhere
+//
+// The child inherits the environment. `error.IoError` when the program
+// cannot be started; a non-zero exit is reported in `code`, not as an
+// error. Output is read after stdin is fully written, so a program that
+// produces more than a megabyte of output before reading its input can
+// stall; feed such programs through files.
+
+/// What a finished program left behind.
+pub struct Output {
+    code: i32
+    stdout: String
+    stderr: String
+}
+
+impl Output {
+    pub fn ok(self: *Self) -> bool {
+        return self.code == 0
+    }
+
+    /// stdout without a trailing newline.
+    pub fn text(self: *Self) -> []u8 {
+        return self.stdout.trim()
+    }
+}
+
+/// How to run: text for stdin and a working directory (empty = inherit).
+pub struct Options {
+    stdin: []u8
+    cwd: []u8
+}
+
+pub fn run_with(argv: [][]u8, opts: Options) -> !Output {
+    let code = try process.exec(argv, opts.stdin, opts.cwd)
+    return Output{ .code = code, .stdout = process.last_stdout(), .stderr = process.last_stderr() }
+}
+
+/// Run and capture, inheriting the working directory, with no stdin.
+pub fn run(argv: [][]u8) -> !Output {
+    return run_with(argv, Options{ .stdin = "", .cwd = "" })
+}
+
+/// Run a command line through the platform shell.
+pub fn shell(command: []u8) -> !Output {
+    if os.env("COMSPEC") != null and os.env("WINDIR") != null {
+        let argv = ["cmd", "/C", command]
+        return run(argv[..])
+    }
+    let argv = ["sh", "-c", command]
+    return run(argv[..])
+}
+
+// ------------------------------------------------------------------ tests
+
+test "capture, stdin and a missing program" {
+    let echoed = try shell("echo hello")
+    expect(echoed.ok())
+    expect_eq(echoed.text(), "hello")
+
+    // `sort` exists on every platform; Windows ends lines with CRLF
+    let sort_cmd = ["sort"]
+    let sorted = try run_with(sort_cmd[..], Options{ .stdin = "pear\napple\n", .cwd = "" })
+    expect(sorted.ok())
+    let lines = sorted.stdout.lines()
+    expect(lines.len >= 2)
+    expect(lines[0].starts_with("apple"))
+    expect(lines[1].starts_with("pear"))
+
+    // a program that cannot start: an error on Windows, exit 127 from the fork on POSIX
+    let nope = ["definitely-not-a-program-nx"]
+    let missing = run(nope[..]) catch |e| {
+        expect(e == error.IoError)
+        Output{ .code = 127, .stdout = String.new(), .stderr = String.new() }
+    }
+    expect_eq(missing.code, 127)
+
+    // a working directory that exists
+    let there = try run_with(sort_cmd[..], Options{ .stdin = "x\n", .cwd = io.temp_dir() })
+    expect(there.ok())
+}

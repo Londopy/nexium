@@ -12,13 +12,13 @@ fn main() {
     var ui = nexium_gui.Ui.open(@cstr("hello"), 400, 200).?
     var clicks: i32 = 0
     var dark = true
-    while (ui.begin_frame()) {
+    while ui.begin_frame() {
         ui.heading("nexium-gui")
-        if (ui.button("click me")) clicks += 1
+        if ui.button("click me") { clicks += 1 }
         ui.same_line()
         ui.label(format("{} clicks", .{clicks}))
-        if (ui.checkbox("dark theme", &mut dark)) {
-            ui.set_theme(if (dark) nexium_gui.dark_theme() else nexium_gui.light_theme())
+        if ui.checkbox("dark theme", &mut dark) {
+            ui.set_theme(if dark { nexium_gui.dark_theme() } else { nexium_gui.light_theme() })
         }
         ui.end_frame()
     }
@@ -93,8 +93,8 @@ pub fn button(self: *mut Self, text: []u8) -> bool {
     let y = self.last_y
     let clicked = self.interact(id, x, y, w, h)
     var fill = self.theme.panel
-    if (self.hot == id) fill = self.theme.hover
-    if (self.active == id) fill = self.theme.active
+    if self.hot == id { fill = self.theme.hover }
+    if self.active == id { fill = self.theme.active }
     self.canvas.fill_rounded(x, y, w, h, fill)
     self.canvas.rect(x, y, w, h, self.theme.border)
     self.canvas.text(x + self.pad, y + (h - font_h()) / 2, text, self.theme.text)

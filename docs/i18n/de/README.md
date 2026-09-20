@@ -40,7 +40,7 @@ Python-Wheel, ein Rust-Crate oder ein Kommandozeilenwerkzeug macht.
 ```
 fn checksum(data: []u8) -> u32 export(c) {
     var h: u32 = 2166136261
-    for (data) |b| {
+    for b in data {
         h ^= b as u32
         h *%= 16777619
     }
@@ -138,17 +138,17 @@ fn area(s: Shape) -> f64 {
 error ParseError { Empty, NotANumber }
 
 fn parse_num(text: []u8) -> ParseError!i64 {
-    if (text.len == 0) return error.Empty
+    if text.len == 0 { return error.Empty }
     var total: i64 = 0
-    for (text) |c| {
-        if (c < '0' or c > '9') return error.NotANumber
+    for c in text {
+        if c < '0' or c > '9' { return error.NotANumber }
         total = total * 10 + (c - '0') as i64
     }
     return total
 }
 
 fn max(comptime T: type where T: Ord, a: T, b: T) -> T {
-    return if (a > b) a else b
+    return if a > b { a } else { b }
 }
 
 fn main() -> !void {
@@ -158,9 +158,9 @@ fn main() -> !void {
         -1
     }
     var xs = List(i32).new()
-    for (0..10) |i| { xs.append((i * i) as i32) }
+    for i in 0..10 { xs.append((i * i) as i32) }
     let found = outer: {
-        for (xs) |x, i| { if (x > 30) break :outer i as i64 }
+        for x, i in xs { if x > 30 { break :outer i as i64 } }
         -1
     }
     println("{} {} {} {} {}", .{n, bad, max(3, 9), xs.len, found})
@@ -228,7 +228,7 @@ Wahrheit über das Speicherlayout, und Fremdaufrufe tragen den Effekt `ffi`.
 <summary><b>Parallele Schleifen und Arenen</b></summary>
 
 ```
-for parallel (positions) |p, i| {
+for parallel p, i in positions {
     out[i] = integrate(p)          // hier ist shared_mutable verboten
 }
 
@@ -295,8 +295,8 @@ denselben Eingaben geprüft:
 | Stufe | Datei | Orakel | Stand |
 | --- | --- | --- | --- |
 | Lexer | [`self/lexer.nx`](../../../self/lexer.nx) | `nx tokens` | ✅ identisch bei jedem Beispiel und bei sich selbst |
-| Parser | | `nx parse` | als Nächstes |
-| Prüfer | | `nx check`, die Compile-Fail-Suite | |
+| Parser | [`self/parser.nx`](../../../self/parser.nx) | `nx sexp` | ✅ identisch bei allen 46 Quellen |
+| Prüfer | [`self/check.nx`](../../../self/check.nx) | `nx tir` | 🚧 Deklarationen und Signaturen identisch (`--sigs`, 41 Quellen); Rümpfe in Arbeit |
 | C-Emitter | | `nx emit-c` | |
 
 `cargo test` baut `self/lexer.nx` mit dem Rust-Compiler und vergleicht die

@@ -196,6 +196,8 @@ pub struct FnCtx {
     pub callees: Vec<(InstId, Span)>,
     pub moved: HashSet<LocalId>,
     pub moved_spans: HashMap<LocalId, Span>,
+    /// inside a `match p.*`: bind owning payloads as `*T` / `*mut T` (the pointer's mutability)
+    pub pat_by_ref: Option<bool>,
     pub generics: HashMap<String, TyId>,
     pub self_ty: Option<TyId>,
     pub unsafe_depth: u32,
@@ -224,6 +226,7 @@ impl FnCtx {
             callees: Vec::new(),
             moved: HashSet::new(),
             moved_spans: HashMap::new(),
+            pat_by_ref: None,
             generics: HashMap::new(),
             self_ty: None,
             unsafe_depth: 0,
@@ -251,6 +254,8 @@ impl FnCtx {
 }
 
 pub struct Program {
+    /// set by `nx repl`: the outcome of running the new statements
+    pub repl: Option<crate::tir::ReplOutcome>,
     pub funcs: Vec<TFunc>,
     pub structs: Vec<StructDef>,
     pub enums: Vec<EnumDef>,
@@ -291,6 +296,8 @@ pub struct Checker<'a> {
     pub error_sets: Vec<ErrorSetDef>,
     pub items: HashMap<(u32, String), ItemRef>,
     pub module_names: Vec<String>,
+    /// the package each module belongs to, "" outside packages (set by the loader)
+    pub module_pkgs: Vec<String>,
     pub module_imports: HashMap<(u32, String), (u32, Option<String>)>,
     pub error_names: Vec<String>,
     pub error_ids: HashMap<String, u32>,
@@ -322,6 +329,11 @@ pub struct Checker<'a> {
     pub cimport_opts: Option<crate::cimport::ImportOptions>,
     pub cimport_headers: Vec<(String, bool)>,
     pub cimport_unsupported: HashMap<(u32, String), String>,
+    /// `nx repl`: unused values in `main` are shown instead of rejected, and the
+    /// interpreter may perform I/O
+    pub repl_mode: bool,
+    /// `nx repl`: run `main`'s statements from this index with these seed bindings
+    pub repl_request: Option<(usize, Vec<(String, Value)>)>,
     pub record_new_mode: bool,
 }
 
@@ -342,6 +354,7 @@ impl<'a> Checker<'a> {
             error_sets: Vec::new(),
             items: HashMap::new(),
             module_names: Vec::new(),
+            module_pkgs: Vec::new(),
             module_imports: HashMap::new(),
             error_names: Vec::new(),
             error_ids: HashMap::new(),
@@ -370,6 +383,8 @@ impl<'a> Checker<'a> {
             cimport_opts: None,
             cimport_headers: Vec::new(),
             cimport_unsupported: HashMap::new(),
+            repl_mode: false,
+            repl_request: None,
             record_new_mode: false,
         }
     }
@@ -440,7 +455,7 @@ impl<'a> Checker<'a> {
             }
         }
         // reserve a few well-known errors so ids are stable
-        for e in ["OutOfMemory", "Panic", "InvalidRecord", "Truncated", "Overflow", "InvalidUtf8", "NotFound", "IoError", "InvalidInput", "BufferTooSmall"] {
+        for e in ["OutOfMemory", "Panic", "InvalidRecord", "Truncated", "Overflow", "InvalidUtf8", "NotFound", "IoError", "InvalidInput", "BufferTooSmall", "Timeout", "ConnectionRefused"] {
             self.error_id(e);
         }
     }
@@ -502,7 +517,7 @@ impl<'a> Checker<'a> {
             let decl = FnDecl {
                 attrs: attrs.clone(),
                 name: f.name.clone(),
-                params: f.params.iter().map(|(n, t)| Param { name: n.clone(), ty: t.clone(), comptime: false, span }).collect(),
+                params: f.params.iter().map(|(n, t)| Param { name: n.clone(), ty: t.clone(), comptime: false, owned: false, span }).collect(),
                 ret: Some(f.ret.clone()),
                 effects: vec![],
                 wheres: vec![],
@@ -672,7 +687,11 @@ impl<'a> Checker<'a> {
             }
             Item::Import(im) => {
                 let target = im.path.join(".");
-                let target_mod = self.module_names.iter().position(|n| *n == target || n.ends_with(&format!("/{}", target.replace('.', "/"))) || *n == target.replace('.', "/"));
+                // inside package `foo`, `import util` is the module named `foo.util`
+                let scoped = self.module_pkgs.get(module as usize).filter(|p| !p.is_empty()).map(|p| format!("{}.{}", p, target));
+                let target_mod = scoped
+                    .and_then(|s| self.module_names.iter().position(|n| *n == s))
+                    .or_else(|| self.module_names.iter().position(|n| *n == target || n.ends_with(&format!("/{}", target.replace('.', "/"))) || *n == target.replace('.', "/")));
                 match target_mod {
                     Some(mid) => {
                         let mid = mid as u32;
@@ -688,10 +707,15 @@ impl<'a> Checker<'a> {
                     None => {
                         // std modules are builtin namespaces
                         let last = im.path.last().unwrap().clone();
-                        if im.path[0] == "std" || matches!(last.as_str(), "math" | "io" | "os" | "time" | "random" | "fmt" | "utf8" | "ascii" | "mem" | "slice" | "process" | "test" | "alloc") {
+                        if im.path[0] == "std"
+                            || matches!(last.as_str(), "math" | "io" | "os" | "time" | "random" | "fmt" | "utf8" | "ascii" | "mem" | "slice" | "process" | "test" | "alloc" | "net" | "thread" | "sync")
+                        {
                             // nothing to do; namespaces resolve by name
                         } else {
-                            self.error(im.span, format!("cannot find module `{}`; expected a file `{}.nx` next to this one", target, target.replace('.', "/")));
+                            self.error(
+                                im.span,
+                                format!("cannot find module `{}`; expected a file `{}.nx` next to this one, or a dependency `{}` in nexium.toml", target, target.replace('.', "/"), im.path[0]),
+                            );
                         }
                     }
                 }
@@ -992,7 +1016,9 @@ impl<'a> Checker<'a> {
                 _ => {}
             }
         }
-        // module-qualified `mod.Type`
+        // module-qualified `mod.Type`; the type arguments are still the
+        // caller's: `List(thread.Worker(Job))` names the caller's `Job`
+        let caller = module;
         let (module, name) = if path.len() == 2 {
             match self.lookup_item(module, &path[0]) {
                 Some(ItemRef::Module(m)) => (m, &path[1]),
@@ -1021,7 +1047,7 @@ impl<'a> Checker<'a> {
                     self.error(span, format!("`{}` expects {} type argument(s) but {} were given", dn, n_params, args.len()));
                     return self.tys.void();
                 }
-                let targs: Vec<TyId> = args.iter().map(|a| self.resolve_type(a, generics, self_ty, module)).collect();
+                let targs: Vec<TyId> = args.iter().map(|a| self.resolve_type(a, generics, self_ty, caller)).collect();
                 let t = self.tys.intern(TyKind::Struct(id, targs));
                 self.note_used(t);
                 t
@@ -1034,7 +1060,7 @@ impl<'a> Checker<'a> {
                     self.error(span, format!("`{}` expects {} type argument(s) but {} were given", dn, n_params, args.len()));
                     return self.tys.void();
                 }
-                let targs: Vec<TyId> = args.iter().map(|a| self.resolve_type(a, generics, self_ty, module)).collect();
+                let targs: Vec<TyId> = args.iter().map(|a| self.resolve_type(a, generics, self_ty, caller)).collect();
                 let t = self.tys.intern(TyKind::Enum(id, targs));
                 self.note_used(t);
                 t
@@ -1100,6 +1126,7 @@ impl<'a> Checker<'a> {
             "char" => self.tys.char(),
             "void" => self.tys.void(),
             "never" => self.tys.never(),
+            "error" => self.tys.intern(TyKind::ErrorSet(None)),
             "type" => self.tys.type_ty(),
             "anytype" => self.tys.fresh_infer(),
             _ => return None,
@@ -1469,7 +1496,12 @@ impl<'a> Checker<'a> {
             }
             let ty = self.resolve_type(&p.ty, &generics, self_ty, def.module);
             let lid = locals.len() as LocalId;
-            locals.push(Local { name: p.name.clone(), ty, mutable: false, span: p.span, is_param: true });
+            // in a generic function the instantiation decides whether `own` matters
+            if p.owned && !self.needs_drop(ty) && generics.is_empty() {
+                let tn = self.type_name(ty);
+                self.error(p.span, format!("`own` applies to owning types (`List`, `String`, `Map`, or structs holding them); `{}` is copied anyway", tn));
+            }
+            locals.push(Local { name: p.name.clone(), ty, mutable: p.owned, span: p.span, is_param: true, owned: p.owned, loop_item: false });
             params.push(lid);
         }
         let ret = match &def.decl.ret {
@@ -1501,7 +1533,12 @@ impl<'a> Checker<'a> {
         } else if def.decl.name.starts_with("test:") {
             format!("nx_test_{}", id)
         } else if targs.is_empty() && def.impl_id.is_none() {
-            format!("nx_{}", sanitize(&base_name))
+            // `fs.copy` and `stream.copy` must not both become `nx_copy`
+            if def.module == 0 || def.decl.export.is_some() {
+                format!("nx_{}", sanitize(&base_name))
+            } else {
+                format!("nx_m{}_{}", def.module, sanitize(&base_name))
+            }
         } else {
             format!("nx_{}_{}", sanitize(&base_name), id)
         };
@@ -1543,8 +1580,14 @@ impl<'a> Checker<'a> {
             if !targs.is_empty() {
                 self.error(span, "generic functions cannot be exported");
             }
+            if def.decl.params.iter().any(|p| p.owned) {
+                self.error(span, "exported functions cannot take `own` parameters; the host language cannot hand over ownership");
+            }
         }
-        if is_test && !test_comptime {
+        // an imported std module's tests belong to the compiler's own suite,
+        // not to every program that imports it
+        let from_std = self.module_names.get(def.module as usize).map(|n| n.starts_with("std.")).unwrap_or(false);
+        if is_test && !test_comptime && !(from_std && def.module != 0) {
             self.tests.push(id);
         }
         // store generics for the body check
@@ -1598,7 +1641,9 @@ impl<'a> Checker<'a> {
                 continue;
             }
             let id = self.instantiate(fid as FnDefId, vec![], def.decl.span);
-            if def.decl.name == "main" {
+            // the entry point is the root module's `main`; an imported module may
+            // carry its own for when it is run as a program
+            if def.decl.name == "main" && def.module == 0 {
                 self.main = Some(id);
             }
         }
@@ -1636,10 +1681,15 @@ impl<'a> Checker<'a> {
         self.check_effect_bounds();
         self.check_embedded_constraints();
 
+        let repl = match self.repl_request.take() {
+            Some((start, seed)) if !self.has_errors() => Some(crate::comptime::run_repl(&mut self, start, seed)),
+            _ => None,
+        };
         if self.has_errors() {
             return (Err(()), self.diags);
         }
         let prog = Program {
+            repl,
             funcs: self.funcs,
             structs: self.structs,
             enums: self.enums,
@@ -1721,6 +1771,20 @@ impl<'a> Checker<'a> {
         };
         let te = self.finalize_expr(te);
         let ty = self.tys.resolve(te.ty, true);
+        if let Some(bad) = self.heap_owning_part(ty, &mut Vec::new()) {
+            let tn = self.type_name(ty);
+            let bn = self.type_name(bad);
+            let hint = match self.tys.kind(bad).clone() {
+                TyKind::List(e) => format!("; store a slice (`[]{}`) instead", self.type_name(e)),
+                TyKind::Str => "; store a `[]u8` instead".to_string(),
+                _ => String::new(),
+            };
+            if bad == ty {
+                self.error(te.span, format!("a constant cannot own heap data (`{}`){}", tn, hint));
+            } else {
+                self.error(te.span, format!("a constant cannot own heap data: `{}` contains a `{}`{}", tn, bn, hint));
+            }
+        }
         // evaluate at compile time
         let te = match crate::comptime::eval_const_expr(self, &te) {
             Some(v) => TExpr { kind: TExprKind::Value(v), ty, span: te.span },
@@ -1733,6 +1797,38 @@ impl<'a> Checker<'a> {
         self.consts[id as usize].in_progress = false;
         self.consts[id as usize].resolved = Some((ty, te.clone()));
         Some((ty, te))
+    }
+
+    /// The first part of `t` that owns heap memory (`List`, `String`, `Map`,
+    /// a `ref class`, a weak reference), or None when `t` is a plain value
+    /// type that can live in static data.
+    pub fn heap_owning_part(&mut self, t: TyId, seen: &mut Vec<TyId>) -> Option<TyId> {
+        let t = self.tys.resolve(t, true);
+        if seen.contains(&t) {
+            return None;
+        }
+        seen.push(t);
+        match self.tys.kind(t).clone() {
+            TyKind::List(_) | TyKind::Str | TyKind::Map(..) | TyKind::Weak(_) => Some(t),
+            TyKind::Struct(d, _) => {
+                if self.structs[d as usize].kind == StructKind::RefClass {
+                    return Some(t);
+                }
+                let ftys = self.struct_field_types(t);
+                ftys.into_iter().find_map(|f| self.heap_owning_part(f, seen))
+            }
+            TyKind::Enum(..) => {
+                let vtys = self.enum_variant_types(t);
+                vtys.into_iter().flatten().find_map(|f| self.heap_owning_part(f, seen))
+            }
+            TyKind::Tuple(ts) => ts.into_iter().find_map(|f| self.heap_owning_part(f, seen)),
+            TyKind::Array(_, e) | TyKind::Slice(_, e) | TyKind::Opt(e) | TyKind::ErrUnion(_, e) => self.heap_owning_part(e, seen),
+            TyKind::Distinct(d) => {
+                let u = self.distinct_underlying[&d];
+                self.heap_owning_part(u, seen)
+            }
+            _ => None,
+        }
     }
 
     fn resolve_global(&mut self, id: DefId) {
@@ -1844,8 +1940,14 @@ impl<'a> Checker<'a> {
         if let Some(tail) = tb.tail.take() {
             let tail = *tail;
             let tt = self.tys.resolve(tail.ty, false);
+            let tail_is_err_void = matches!(self.tys.kind(tt), TyKind::ErrUnion(_, e) if matches!(self.tys.kind(self.tys.shallow(*e)), TyKind::Void));
             if is_void_ret && matches!(self.tys.kind(tt), TyKind::Void | TyKind::Never) {
                 tb.stmts.push(TStmt::Expr(tail));
+            } else if is_void_ret && tail_is_err_void && matches!(self.tys.kind(ret_r), TyKind::ErrUnion(..)) {
+                // a `!void` tail in a `!void` function is returned, errors and all
+                let sp = tail.span;
+                let v = self.coerce_or_error(tail, ret, "return value");
+                tb.stmts.push(TStmt::Return { value: Some(v), span: sp });
             } else if is_void_ret {
                 // discard-with-value: unused value
                 let tn = self.type_name(tt);
@@ -1896,14 +1998,10 @@ impl<'a> Checker<'a> {
                 _ => false,
             }
         }
+        // every nested expression and block: a `break` hides in an `orelse`
+        // default, a call argument, a match arm as readily as in an `if`
         fn walk_expr(e: &TExpr, depth: u32) -> bool {
-            match &e.kind {
-                TExprKind::If { then, els, .. } => walk_block(then, depth) || els.as_ref().map(|b| walk_block(b, depth)).unwrap_or(false),
-                TExprKind::IfCapture { then, els, .. } => walk_block(then, depth) || els.as_ref().map(|b| walk_block(b, depth)).unwrap_or(false),
-                TExprKind::Block(b) => walk_block(b, depth),
-                TExprKind::Match { arms, .. } => arms.iter().any(|a| walk_expr(&a.body, depth)),
-                _ => false,
-            }
+            e.blocks().iter().any(|b| walk_block(b, depth)) || e.children().iter().any(|c| walk_expr(c, depth))
         }
         match s {
             TStmt::While { body, .. } => walk_block(body, 0),
@@ -1911,17 +2009,12 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// An expression's type already says whether it diverges: a block whose
+    /// statements escape is `never`, unless the escape is a `break` to its own
+    /// label, which makes the block a value instead.
     pub fn expr_diverges(&self, e: &TExpr) -> bool {
         let t = self.tys.shallow(e.ty);
-        if matches!(self.tys.kind(t), TyKind::Never) {
-            return true;
-        }
-        match &e.kind {
-            TExprKind::Block(b) => self.block_diverges(b),
-            TExprKind::If { then, els: Some(els), .. } => self.block_diverges(then) && self.block_diverges(els),
-            TExprKind::Match { arms, .. } => !arms.is_empty() && arms.iter().all(|a| self.expr_diverges(&a.body)),
-            _ => false,
-        }
+        matches!(self.tys.kind(t), TyKind::Never)
     }
 
     /// Does the type satisfy a trait bound?  Primitive types satisfy the builtin

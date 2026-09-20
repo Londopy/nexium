@@ -1,0 +1,256 @@
+// std.num: integer utilities, written in Nexium.
+//
+// `import std.num` then `num.gcd(12, 18)`, `num.clamp(x, 0, 10)`, ...
+// The `math` namespace (sqrt, sin, pow on floats, ...) is a compiler builtin;
+// this module covers what is naturally integer work.
+
+/// Greatest common divisor (Euclid); gcd(0, 0) is 0.
+pub fn gcd(a: u64, b: u64) -> u64 {
+    var x = a
+    var y = b
+    while y != 0 {
+        let t = x % y
+        x = y
+        y = t
+    }
+    return x
+}
+
+/// Least common multiple; lcm(0, n) is 0.
+pub fn lcm(a: u64, b: u64) -> u64 {
+    if a == 0 or b == 0 { return 0 }
+    return a / gcd(a, b) * b
+}
+
+/// `x` limited to `lo..=hi`.
+pub fn clamp(x: i64, lo: i64, hi: i64) -> i64 {
+    if x < lo { return lo }
+    if x > hi { return hi }
+    return x
+}
+
+/// |a - b| without overflow on the way.
+pub fn abs_diff(a: i64, b: i64) -> u64 {
+    return if a > b { (a - b) as u64 } else { (b - a) as u64 }
+}
+
+/// `base` to the `exp`, by squaring; null on overflow.
+pub fn pow(base: u64, exp: u32) -> ?u64 {
+    var result: u64 = 1
+    var b = base
+    var e = exp
+    while e > 0 {
+        if e & 1 == 1 {
+            result = result.checked_mul(b) orelse return null
+        }
+        e >>= 1
+        if e > 0 {
+            b = b.checked_mul(b) orelse return null
+        }
+    }
+    return result
+}
+
+/// Integer square root: the largest `r` with `r * r <= n`.
+pub fn isqrt(n: u64) -> u64 {
+    if n < 2 { return n }
+    var lo: u64 = 1
+    var hi: u64 = 4294967295
+    while lo < hi {
+        let mid = lo + (hi - lo + 1) / 2
+        if mid <= n / mid { lo = mid }
+        else { hi = mid - 1 }
+    }
+    return lo
+}
+
+/// Trial division; fine for the sizes people type by hand.
+pub fn is_prime(n: u64) -> bool {
+    if n < 2 { return false }
+    if n % 2 == 0 { return n == 2 }
+    var d: u64 = 3
+    while d <= isqrt(n) {
+        if n % d == 0 { return false }
+        d += 2
+    }
+    return true
+}
+
+/// The prime factors of `n` with multiplicity, ascending.
+pub fn factors(n: u64) -> List(u64) {
+    var out = List(u64).new()
+    var m = n
+    var d: u64 = 2
+    while d * d <= m {
+        while m % d == 0 {
+            out.append(d)
+            m /= d
+        }
+        d += 1
+    }
+    if m > 1 { out.append(m) }
+    return out
+}
+
+/// Decimal digits of `n`, most significant first.
+pub fn digits(n: u64) -> List(u8) {
+    var out = List(u8).new()
+    if n == 0 {
+        out.append(0)
+        return out
+    }
+    var m = n
+    while m > 0 {
+        out.append((m % 10) as u8)
+        m /= 10
+    }
+    var i: usize = 0
+    var j = out.len - 1
+    while i < j {
+        let t = out[i]
+        out[i] = out[j]
+        out[j] = t
+        i += 1
+        j -= 1
+    }
+    return out
+}
+
+/// Sum of the decimal digits.
+pub fn digit_sum(n: u64) -> u64 {
+    var s: u64 = 0
+    var m = n
+    while m > 0 {
+        s += m % 10
+        m /= 10
+    }
+    return s
+}
+
+/// `n` in base 2..36, upper-case digits.
+pub fn to_base(n: u64, base: u64) -> String {
+    let symbols = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    if n == 0 { return String.from("0") }
+    var tmp = List(u8).new()
+    var m = n
+    while m > 0 {
+        tmp.append(symbols[(m % base) as usize])
+        m /= base
+    }
+    var out = String.with_capacity(tmp.len)
+    var i = tmp.len
+    while i > 0 {
+        i -= 1
+        out.push_byte(tmp[i])
+    }
+    return out
+}
+
+/// Parse in base 2..36 (either case); null on an invalid digit or overflow.
+pub fn from_base(text: []u8, base: u64) -> ?u64 {
+    if text.len == 0 { return null }
+    var v: u64 = 0
+    for c in text {
+        var d: u64 = 0
+        if c >= '0' and c <= '9' { d = (c - '0') as u64 }
+        else if c >= 'a' and c <= 'z' { d = (c - 'a') as u64 + 10 }
+        else if c >= 'A' and c <= 'Z' { d = (c - 'A') as u64 + 10 }
+        else { return null }
+        if d >= base { return null }
+        v = v.checked_mul(base) orelse return null
+        v = v.checked_add(d) orelse return null
+    }
+    return v
+}
+
+/// Round up to a multiple of `m` (m > 0).
+pub fn round_up(n: u64, m: u64) -> u64 {
+    return (n + m - 1) / m * m
+}
+
+/// True for 1, 2, 4, 8, ...
+pub fn is_power_of_two(n: u64) -> bool {
+    return n != 0 and (n & (n - 1)) == 0
+}
+
+/// The smallest power of two >= n (n <= 2^63).
+pub fn next_power_of_two(n: u64) -> u64 {
+    var p: u64 = 1
+    while p < n { p <<= 1 }
+    return p
+}
+
+/// Number of set bits.
+pub fn popcount(n: u64) -> u32 {
+    var c: u32 = 0
+    var m = n
+    while m != 0 {
+        m &= m - 1
+        c += 1
+    }
+    return c
+}
+
+test "gcd lcm" {
+    expect_eq(gcd(12, 18), 6)
+    expect_eq(gcd(0, 5), 5)
+    expect_eq(gcd(0, 0), 0)
+    expect_eq(lcm(4, 6), 12)
+    expect_eq(lcm(0, 6), 0)
+}
+
+test "clamp abs_diff pow" {
+    expect_eq(clamp(15, 0, 10), 10)
+    expect_eq(clamp(-3, 0, 10), 0)
+    expect_eq(clamp(5, 0, 10), 5)
+    expect_eq(abs_diff(3, 10), 7)
+    expect_eq(abs_diff(10, 3), 7)
+    expect_eq(pow(2, 10) orelse 0, 1024)
+    expect_eq(pow(7, 0) orelse 0, 1)
+    expect(pow(2, 64) == null)
+    expect_eq(pow(3, 5) orelse 0, 243)
+}
+
+test "primes and roots" {
+    expect_eq(isqrt(0), 0)
+    expect_eq(isqrt(15), 3)
+    expect_eq(isqrt(16), 4)
+    expect_eq(isqrt(1000000), 1000)
+    expect(is_prime(2))
+    expect(is_prime(97))
+    expect(!is_prime(1))
+    expect(!is_prime(91))
+    let f = factors(360)
+    expect_eq(f.len, 6)
+    expect_eq(f[0], 2)
+    expect_eq(f[5], 5)
+    expect_eq(factors(97).len, 1)
+}
+
+test "digits and bases" {
+    let d = digits(1230)
+    expect_eq(d.len, 4)
+    expect_eq(d[0], 1)
+    expect_eq(d[3], 0)
+    expect_eq(digits(0).len, 1)
+    expect_eq(digit_sum(1230), 6)
+    expect_eq(to_base(255, 16), "FF")
+    expect_eq(to_base(5, 2), "101")
+    expect_eq(to_base(0, 7), "0")
+    expect_eq(from_base("ff", 16) orelse 0, 255)
+    expect_eq(from_base("101", 2) orelse 0, 5)
+    expect(from_base("12", 2) == null)
+    expect(from_base("", 10) == null)
+}
+
+test "bits" {
+    expect_eq(round_up(13, 8), 16)
+    expect_eq(round_up(16, 8), 16)
+    expect(is_power_of_two(64))
+    expect(!is_power_of_two(0))
+    expect(!is_power_of_two(6))
+    expect_eq(next_power_of_two(100), 128)
+    expect_eq(next_power_of_two(1), 1)
+    expect_eq(popcount(255), 8)
+    expect_eq(popcount(0), 0)
+}

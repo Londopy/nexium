@@ -59,6 +59,20 @@ jobs:
           printf 'fn main() { assert_eq!(ropesim::checksum(b"hello"), 1335831723); assert!(ropesim::divide(1, 0).is_err()); println!("rust ok"); }\n' > nx-out/rusttest/src/main.rs
           (cd nx-out/rusttest && cargo run -q)
 
+      - name: Build the Windows installer (preview, no bundled Zig)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist-win | Out-Null
+          Copy-Item target/debug/nx.exe, README.md, LICENSE, CHANGELOG.md dist-win/
+          Copy-Item -Recurse examples, std, docs dist-win/
+          pip install pillow
+          python scripts/make_icon.py
+          Copy-Item assets\icon.ico dist-win\nexium.ico
+          $src = (Resolve-Path dist-win).Path
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=0.0.0" "/DSourceDir=$src" installers\windows\nexium.iss
+          Get-ChildItem installers\windows\Output
+
       - name: Call the shipped library from Python
         shell: bash
         run: |
@@ -95,6 +109,14 @@ jobs:
           python3 -c "import json; json.load(open('editors/vscode/syntaxes/nexium.tmLanguage.json')); json.load(open('editors/vscode/package.json')); json.load(open('editors/vscode/language-configuration.json'))"
           pip install pyyaml
           python3 -c "import yaml; yaml.safe_load(open('editors/sublime/Nexium.sublime-syntax')); yaml.safe_load(open('.github/actions/setup-nexium/action.yml')); yaml.safe_load(open('docs/templates/release-nexium-program.yml'))"
+      - name: tree-sitter grammar is current and parses every source
+        working-directory: editors/tree-sitter-nexium
+        run: |
+          npx --yes tree-sitter-cli@0.27 generate
+          git diff --exit-code -- src/grammar.json src/node-types.json src/parser.c || (echo "run tree-sitter generate and commit src/"; exit 1)
+          npx --yes tree-sitter-cli@0.27 parse ../../examples/*.nx ../../std/*.nx ../../gui/*.nx ../../self/*.nx --quiet --stat | tee parse.txt
+          grep -q "failed parses: 0;" parse.txt
+          npx --yes tree-sitter-cli@0.27 query queries/highlights.scm ../../examples/tour.nx > /dev/null
 
   lint:
     name: lint

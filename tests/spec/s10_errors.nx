@@ -1,0 +1,17 @@
+// SPEC 10: error sets, the global set, @errorName, Record.new versus a literal.
+error Parse { Empty, Bad }
+record Age { years: u8 where value < 150 }
+fn parse(s: []u8) -> Parse!u8 {
+    if s.len == 0 { return error.Empty }
+    return s.parse_int(u8) catch { return error.Bad }
+}
+fn any() -> !void { return error.Custom }
+fn main() {
+    println("{} {} {}", .{parse("42") catch 0, parse("") catch 0, parse("x") catch 0})
+    let e = parse("") catch |err| { println("{} {}", .{err, @errorName(err)}); 0 }
+    _ = e
+    any() catch |err| println("global {}", .{err})
+    let ok = Age.new(.{ .years = 30 }) catch { Age{ .years = 0 } }
+    let bad = Age.new(.{ .years = 200 }) catch |err| { println("rejected {}", .{err}); Age{ .years = 1 } }
+    println("{} {}", .{ok.years, bad.years})
+}

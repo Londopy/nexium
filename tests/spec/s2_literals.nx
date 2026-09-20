@@ -1,0 +1,14 @@
+// SPEC 2: integer, float, raw, bytes, char and string literals with escapes.
+fn main() {
+    let a = 0x_FF
+    let b = 0o17
+    let c = 0b1010_1010
+    let d = 1_000_000
+    let e = 1.5e3
+    let f = 0x1p4
+    let r = r"a\nb"
+    let bs = b"\xff\x00"
+    let ch = 'é'
+    let s = "tab\tq\"\u{41}\x41"
+    println("{} {} {} {} {} {} {} {} {} {}", .{a, b, c, d, e, f, r, bs.len, ch as u32, s})
+}

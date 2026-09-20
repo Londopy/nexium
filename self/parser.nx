@@ -1,0 +1,3074 @@
+// The Nexium parser, in Nexium. Second piece of the self-hosted compiler.
+//
+// Usage: parser <file.nx>
+// Prints the syntax tree in exactly the format of `nx sexp`, so the two can
+// be diffed over every source file. Errors go to stderr and the exit code
+// is 1.
+//
+// The tree lives in an id arena: every node is an entry in one of the
+// `List`s of `Tree`, and children refer to each other by index. That keeps
+// the whole tree in flat storage the language handles well, with no
+// recursive enums and no pointers to keep alive.
+
+import lexer
+
+// ---------------------------------------------------------------- the arena
+
+// Every node kind, in every arena. `k` picks the meaning of the fields.
+pub struct Node {
+    k: NodeKind
+    start: usize
+    end: usize
+    // names and flags
+    name: String
+    text: String
+    flag: bool
+    flag2: bool
+    // integer payloads: an id, a count, a literal value
+    a: usize
+    b: usize
+    // child lists: ids into the arena
+    kids: List(usize)
+    kids2: List(usize)
+    // optional single children (NONE when absent)
+    x: usize
+    y: usize
+    z: usize
+    // string lists: names, derives, modifiers
+    words: List(String)
+}
+
+pub enum NodeKind {
+    // items
+    Fn, Struct, Enum, Trait, Impl, Const, Global, TypeAlias, ErrorSet, Import, Test, Artifact,
+    Param, Field, Variant, Where, Assoc, ArtField, Effect,
+    // types
+    TName, TArray, TSlice, TPtr, TOpt, TErr, TFn, TTuple, TWeak, TDyn, TInfer,
+    // block and statements
+    Block, Let, Assign, ExprStmt, Return, Break, Continue, Defer, ErrDefer, While, For, Unsafe, Discard, Using,
+    // expressions
+    Lit, Ident, FieldE, ImplicitVariant, Index, SliceE, Call, MethodCall, Unary, Binary, Pipe, Try, Catch,
+    OrElse, Unwrap, Deref, If, IfCapture, Match, Arm, StructLit, Init, ArrayLit, TupleLit, Closure, Capture,
+    Range, Cast, Null, Undefined, Unreachable, ErrorLit, Builtin, BinConstruct, Seg, Comptime, TypeVal, UnsafeE,
+    // patterns
+    PWild, PBind, PLit, PVariant, PError, PNull, PRange, POr, PBinary, PTuple,
+}
+
+pub const NONE: usize = 0xFFFFFFFFFFFFFFFF
+
+pub struct Tree {
+    nodes: List(Node)
+}
+
+fn blank(k: NodeKind, start: usize, end: usize) -> Node {
+    return Node{
+        .k = k, .start = start, .end = end, .name = String.new(), .text = String.new(),
+        .flag = false, .flag2 = false, .a = 0, .b = 0,
+        .kids = List(usize).new(), .kids2 = List(usize).new(),
+        .x = NONE, .y = NONE, .z = NONE, .words = List(String).new(),
+    }
+}
+
+impl Tree {
+    fn add(self: *mut Self, own n: Node) -> usize {
+        self.nodes.append(n)
+        return self.nodes.len - 1
+    }
+}
+
+// ---------------------------------------------------------------- the parser
+
+pub struct Parser {
+    toks: List(lexer.Token)
+    pos: usize
+    tree: Tree
+    errors: List(String)
+    no_struct_lit: bool
+}
+
+const EFFECT_NAMES = ["allocates", "refcounts", "blocks", "shared_mutable", "nondeterministic", "panics", "ffi", "unbounded_stack"]
+const PRIMITIVE_TYPES = ["i8", "i16", "i32", "i64", "i128", "u8", "u16", "u32", "u64", "u128", "isize", "usize", "f32", "f64", "bool", "char", "void", "never", "type", "anytype"]
+
+fn is_effect(s: []u8) -> bool {
+    for e in EFFECT_NAMES { if e == s { return true } }
+    return false
+}
+
+fn is_primitive(s: []u8) -> bool {
+    for p in PRIMITIVE_TYPES { if p == s { return true } }
+    return false
+}
+
+fn is_upper(c: u8) -> bool {
+    return c >= 'A' and c <= 'Z'
+}
+
+fn describe(t: *lexer.Token) -> String {
+    let k = t.kind
+    if k == lexer.Kind.Ident { return format("`{}`", .{t.text}) }
+    if k == lexer.Kind.Int { return format("integer `{}`", .{t.text}) }
+    if k == lexer.Kind.Float { return format("float `{}`", .{t.text}) }
+    if k == lexer.Kind.Str { return String.from("string literal") }
+    if k == lexer.Kind.Bytes { return String.from("byte string literal") }
+    if k == lexer.Kind.Char { return String.from("character literal") }
+    if k == lexer.Kind.Doc { return String.from("doc comment") }
+    if k == lexer.Kind.Newline { return String.from("newline") }
+    if k == lexer.Kind.Eof { return String.from("end of file") }
+    return format("`{}`", .{punct_text(k)})
+}
+
+fn punct_text(k: lexer.Kind) -> []u8 {
+    return match k {
+        .LParen => "(", .RParen => ")", .LBrace => "{", .RBrace => "}", .LBracket => "[", .RBracket => "]",
+        .Comma => ",", .Colon => ":", .Semi => ";", .Dot => ".", .DotStar => ".*", .DotQuestion => ".?",
+        .DotDot => "..", .DotLBrace => ".{", .Arrow => "->", .FatArrow => "=>", .Question => "?", .Bang => "!",
+        .Tilde => "~", .At => "@", .Pipe => "|", .PipeGt => "|>", .Hash => "#", .Dollar => "$",
+        .Plus => "+", .Minus => "-", .Star => "*", .Slash => "/", .Percent => "%",
+        .PlusPct => "+%", .MinusPct => "-%", .StarPct => "*%", .PlusPipe => "+|", .MinusPipe => "-|", .StarPipe => "*|",
+        .Amp => "&", .Caret => "^", .Eq => "=", .EqEq => "==", .Ne => "!=", .Lt => "<", .Le => "<=", .Gt => ">", .Ge => ">=",
+        .PlusEq => "+=", .MinusEq => "-=", .StarEq => "*=", .SlashEq => "/=", .PercentEq => "%=", .AmpEq => "&=",
+        .PipeEq => "|=", .CaretEq => "^=", .ShlEq => "<<=", .ShrEq => ">>=", .PlusPctEq => "+%=", .MinusPctEq => "-%=",
+        .StarPctEq => "*%=", .LtLt => "<<", .GtGt => ">>",
+        _ => "?",
+    }
+}
+
+// decode the lexer's hex payload of a string or byte literal
+fn unhex(text: []u8) -> String {
+    var out = String.with_capacity(text.len / 2)
+    var i: usize = 0
+    while i + 1 < text.len {
+        out.push_byte(hex_digit(text[i]) * 16 + hex_digit(text[i + 1]))
+        i += 2
+    }
+    return out
+}
+
+fn hex_digit(c: u8) -> u8 {
+    if c >= '0' and c <= '9' { return c - '0' }
+    if c >= 'a' and c <= 'f' { return c - 'a' + 10 }
+    return c - 'A' + 10
+}
+
+impl Parser {
+    // ----- token helpers -------------------------------------------------
+
+    fn peek(self: *Self) -> lexer.Kind {
+        return self.toks[self.pos].kind
+    }
+    fn peek_at(self: *Self, n: usize) -> lexer.Kind {
+        var i = self.pos + n
+        if i >= self.toks.len { i = self.toks.len - 1 }
+        return self.toks[i].kind
+    }
+    fn text_at(self: *Self, n: usize) -> []u8 {
+        var i = self.pos + n
+        if i >= self.toks.len { i = self.toks.len - 1 }
+        return self.toks[i].text
+    }
+    fn text(self: *Self) -> []u8 {
+        return self.toks[self.pos].text
+    }
+    fn start(self: *Self) -> usize {
+        return self.toks[self.pos].start
+    }
+    fn prev_end(self: *Self) -> usize {
+        let i = if self.pos == 0 { 0 } else { self.pos - 1 }
+        return self.toks[i].end
+    }
+    fn prev_start(self: *Self) -> usize {
+        let i = if self.pos == 0 { 0 } else { self.pos - 1 }
+        return self.toks[i].start
+    }
+    fn bump(self: *mut Self) {
+        if self.pos < self.toks.len - 1 { self.pos += 1 }
+    }
+    fn at(self: *Self, k: lexer.Kind) -> bool {
+        return self.peek() == k
+    }
+    fn at_ident(self: *Self, s: []u8) -> bool {
+        return self.peek() == lexer.Kind.Ident and self.text() == s
+    }
+    fn ident_at(self: *Self, n: usize, s: []u8) -> bool {
+        return self.peek_at(n) == lexer.Kind.Ident and self.text_at(n) == s
+    }
+    fn eat(self: *mut Self, k: lexer.Kind) -> bool {
+        if self.at(k) {
+            self.bump()
+            return true
+        }
+        return false
+    }
+    fn eat_ident(self: *mut Self, s: []u8) -> bool {
+        if self.at_ident(s) {
+            self.bump()
+            return true
+        }
+        return false
+    }
+    fn skip_newlines(self: *mut Self) {
+        while self.at(lexer.Kind.Newline) or self.at(lexer.Kind.Semi) { self.bump() }
+    }
+    fn fail(self: *mut Self, at: usize, msg: []u8) -> error {
+        self.errors.append(format("error at {}: {}", .{at, msg}))
+        return error.InvalidInput
+    }
+    fn expect(self: *mut Self, k: lexer.Kind) -> !void {
+        if self.at(k) {
+            self.bump()
+            return
+        }
+        let got = describe(&self.toks[self.pos])
+        return self.fail(self.start(), format("expected `{}` but found {}", .{punct_text(k), got}))
+    }
+    fn expect_ident(self: *mut Self) -> !String {
+        if self.peek() == lexer.Kind.Ident and !lexer.is_keyword(self.text()) {
+            let s = String.from(self.text())
+            self.bump()
+            return s
+        }
+        let got = describe(&self.toks[self.pos])
+        return self.fail(self.start(), format("expected an identifier but found {}", .{got}))
+    }
+    fn expect_kw(self: *mut Self, kw: []u8) -> !usize {
+        if self.at_ident(kw) {
+            let s = self.start()
+            self.bump()
+            return s
+        }
+        let got = describe(&self.toks[self.pos])
+        return self.fail(self.start(), format("expected `{}` but found {}", .{kw, got}))
+    }
+    fn at_item_start(self: *Self) -> bool {
+        if self.peek() == lexer.Kind.Doc { return true }
+        if self.peek() != lexer.Kind.Ident { return false }
+        let s = self.text()
+        return s == "fn" or s == "pub" or s == "struct" or s == "enum" or s == "record" or s == "ref" or s == "trait"
+            or s == "impl" or s == "const" or s == "var" or s == "type" or s == "import" or s == "test"
+            or s == "artifact" or s == "error" or s == "extern" or s == "comptime"
+    }
+    fn recover_item(self: *mut Self) {
+        while true {
+            let k = self.peek()
+            if k == lexer.Kind.Eof { return }
+            if k == lexer.Kind.Newline {
+                self.bump()
+                if self.at_item_start() { return }
+            } else {
+                self.bump()
+            }
+        }
+    }
+    fn recover_stmt(self: *mut Self) {
+        var depth: i32 = 0
+        while true {
+            let k = self.peek()
+            if k == lexer.Kind.Eof { return }
+            if k == lexer.Kind.Newline and depth <= 0 { return }
+            if k == lexer.Kind.LBrace or k == lexer.Kind.DotLBrace {
+                depth += 1
+                self.bump()
+            } else if k == lexer.Kind.RBrace {
+                if depth <= 0 { return }
+                depth -= 1
+                self.bump()
+            } else {
+                self.bump()
+            }
+        }
+    }
+
+    // ----- module ---------------------------------------------------------
+
+    pub fn parse_module(self: *mut Self) -> List(usize) {
+        var items = List(usize).new()
+        while true {
+            self.skip_newlines()
+            if self.at(lexer.Kind.Eof) { break }
+            let item = self.parse_item() catch {
+                self.recover_item()
+                continue
+            }
+            items.append(item)
+        }
+        return items
+    }
+
+    fn parse_docs(self: *mut Self) -> usize {
+        var n: usize = 0
+        while true {
+            if self.peek() == lexer.Kind.Doc {
+                n += 1
+                self.bump()
+            } else if self.peek() == lexer.Kind.Newline and n > 0 {
+                self.bump()
+            } else {
+                break
+            }
+        }
+        return n
+    }
+
+    fn parse_item(self: *mut Self) -> !usize {
+        let docs = self.parse_docs()
+        let start = self.start()
+        let is_pub = self.eat_ident("pub")
+        if self.peek() != lexer.Kind.Ident {
+            let got = describe(&self.toks[self.pos])
+            return self.fail(self.start(), format("expected a declaration but found {}", .{got}))
+        }
+        let s = self.text()
+        var item: usize = NONE
+        if s == "fn" {
+            item = try self.parse_fn(is_pub, docs, false)
+        } else if s == "extern" {
+            self.bump()
+            item = try self.parse_fn(is_pub, docs, true)
+        } else if s == "struct" {
+            // a struct's span starts at its keyword (after `pub`); a ref class's at the item
+            let kstart = self.start()
+            self.bump()
+            item = try self.parse_struct_body(is_pub, docs, "struct", kstart)
+        } else if s == "record" {
+            let kstart = self.start()
+            self.bump()
+            item = try self.parse_struct_body(is_pub, docs, "record", kstart)
+        } else if s == "ref" {
+            self.bump()
+            _ = try self.expect_kw("class")
+            item = try self.parse_struct_body(is_pub, docs, "ref", start)
+        } else if s == "enum" {
+            item = try self.parse_enum(is_pub, docs)
+        } else if s == "trait" {
+            item = try self.parse_trait(is_pub, docs)
+        } else if s == "impl" {
+            item = try self.parse_impl()
+        } else if s == "const" {
+            item = try self.parse_const(is_pub, docs)
+        } else if s == "var" {
+            item = try self.parse_global(is_pub, docs)
+        } else if s == "type" {
+            item = try self.parse_type_alias(is_pub, docs)
+        } else if s == "error" {
+            item = try self.parse_error_set(is_pub, docs)
+        } else if s == "import" {
+            item = try self.parse_import()
+        } else if s == "test" {
+            item = try self.parse_test(false)
+        } else if s == "comptime" and self.ident_at(1, "test") {
+            self.bump()
+            item = try self.parse_test(true)
+        } else if s == "artifact" {
+            item = try self.parse_artifact()
+        } else {
+            return self.fail(self.start(), format("expected a declaration but found `{}`", .{s}))
+        }
+        if ! (self.at(lexer.Kind.Newline) or self.at(lexer.Kind.Eof) or self.at(lexer.Kind.RBrace)) {
+            let got = describe(&self.toks[self.pos])
+            return self.fail(self.start(), format("expected a newline after declaration but found {}", .{got}))
+        }
+        return item
+    }
+
+    fn parse_type_params(self: *mut Self) -> !List(String) {
+        var out = List(String).new()
+        if self.at(lexer.Kind.LParen) {
+            self.bump()
+            while true {
+                if self.at(lexer.Kind.RParen) { break }
+                out.append(try self.expect_ident())
+                if !self.eat(lexer.Kind.Comma) { break }
+            }
+            try self.expect(lexer.Kind.RParen)
+        }
+        return out
+    }
+
+    // effects are recorded as `!name` / `name` words
+    fn parse_effect_bounds(self: *mut Self) -> List(String) {
+        var out = List(String).new()
+        while true {
+            if self.at(lexer.Kind.Bang) {
+                if self.peek_at(1) == lexer.Kind.Ident and is_effect(self.text_at(1)) {
+                    self.bump()
+                    var w = String.from("!")
+                    w.append(self.text())
+                    self.bump()
+                    out.append(w)
+                    continue
+                }
+                break
+            }
+            if self.peek() == lexer.Kind.Ident and is_effect(self.text()) {
+                out.append(String.from(self.text()))
+                self.bump()
+                continue
+            }
+            break
+        }
+        return out
+    }
+
+    fn parse_where_bounds(self: *mut Self, param: []u8, start: usize, end: usize) -> !usize {
+        let p = try self.expect_ident()
+        if p != param {
+            return self.fail(self.prev_start(), format("where clause names `{}` but the parameter is `{}`", .{p, param}))
+        }
+        try self.expect(lexer.Kind.Colon)
+        var n = blank(NodeKind.Where, start, end)
+        n.name = String.from(param)
+        while true {
+            if self.at(lexer.Kind.Bang) {
+                self.bump()
+                var w = String.from("!")
+                w.append(try self.expect_ident())
+                n.words.append(w)
+            } else {
+                n.kids2.append(0)
+                n.text.append(try self.expect_ident())
+                n.text.append(" ")
+            }
+            if !self.eat(lexer.Kind.Plus) { break }
+        }
+        return self.tree.add(n)
+    }
+
+    fn parse_params(self: *mut Self, wheres: *mut List(usize)) -> !List(usize) {
+        try self.expect(lexer.Kind.LParen)
+        var params = List(usize).new()
+        while true {
+            if self.at(lexer.Kind.RParen) { break }
+            let start = self.start()
+            let is_comptime = self.eat_ident("comptime")
+            var owned = false
+            if self.at_ident("own") and self.peek_at(1) == lexer.Kind.Ident {
+                self.bump()
+                owned = true
+            }
+            let nstart = self.start()
+            let name = try self.expect_ident()
+            let nend = self.prev_end()
+            if owned and name == "self" {
+                return self.fail(nstart, "`self` cannot be an owned parameter; receivers are borrowed (`*Self` or `*mut Self`)")
+            }
+            try self.expect(lexer.Kind.Colon)
+            let ty = try self.parse_type()
+            if self.eat_ident("where") {
+                let w = try self.parse_where_bounds(name, nstart, nend)
+                wheres.append(w)
+            }
+            var n = blank(NodeKind.Param, start, self.prev_end())
+            n.name = name
+            n.flag = is_comptime
+            n.flag2 = owned
+            n.x = ty
+            params.append(self.tree.add(n))
+            if !self.eat(lexer.Kind.Comma) { break }
+        }
+        try self.expect(lexer.Kind.RParen)
+        return params
+    }
+
+    fn parse_fn(self: *mut Self, is_pub: bool, docs: usize, extern_c: bool) -> !usize {
+        let start = try self.expect_kw("fn")
+        let name = try self.expect_ident()
+        var wheres = List(usize).new()
+        let params = try self.parse_params(&mut wheres)
+        var ret: usize = NONE
+        if self.eat(lexer.Kind.Arrow) { ret = try self.parse_type() }
+        let effects = self.parse_effect_bounds()
+        while self.eat_ident("where") {
+            // the clause's span is the `where` keyword's
+            let sp = self.prev_start()
+            let spe = self.prev_end()
+            let pname = if self.peek() == lexer.Kind.Ident { String.from(self.text()) } else { String.new() }
+            let w = try self.parse_where_bounds(pname, sp, spe)
+            wheres.append(w)
+        }
+        var export_name = String.from("-")
+        if self.eat_ident("export") {
+            try self.expect(lexer.Kind.LParen)
+            export_name = try self.expect_ident()
+            try self.expect(lexer.Kind.RParen)
+        }
+        var body: usize = NONE
+        if self.at(lexer.Kind.LBrace) { body = try self.parse_block(String.new()) }
+        var n = blank(NodeKind.Fn, start, self.prev_end())
+        n.name = name
+        n.text = export_name
+        n.flag = is_pub
+        n.flag2 = extern_c
+        n.a = docs
+        n.kids = params
+        n.kids2 = wheres
+        n.words = effects
+        n.x = ret
+        n.y = body
+        return self.tree.add(n)
+    }
+
+    fn parse_derives(self: *mut Self, out: *mut List(String)) -> !void {
+        try self.expect(lexer.Kind.LParen)
+        while true {
+            if self.at(lexer.Kind.RParen) { break }
+            out.append(try self.expect_ident())
+            if !self.eat(lexer.Kind.Comma) { break }
+        }
+        try self.expect(lexer.Kind.RParen)
+    }
+
+    fn parse_struct_body(self: *mut Self, is_pub: bool, docs: usize, kind: []u8, start: usize) -> !usize {
+        let name = try self.expect_ident()
+        let type_params = try self.parse_type_params()
+        var layout = String.from("default")
+        var derives = List(String).new()
+        while true {
+            if self.eat_ident("layout") {
+                try self.expect(lexer.Kind.LParen)
+                let lstart = self.start()
+                let l = try self.expect_ident()
+                if l == "c" { layout = String.from("c") }
+                // `packed` and `soa` were planned once and are not part of the language (decision 88)
+                else if l == "packed" or l == "soa" { return self.fail(lstart, format("`{}` is not a layout; `layout(c)` is the only layout, and the default is the compiler's", .{l})) }
+                else { return self.fail(lstart, format("unknown layout `{}`; expected `c`", .{l})) }
+                try self.expect(lexer.Kind.RParen)
+            } else if self.eat_ident("derive") {
+                try self.parse_derives(&mut derives)
+            } else if self.at_ident("soa") {
+                return self.fail(self.start(), "`soa` is not a layout; a structure of arrays is written as separate lists (decision 88)")
+            } else {
+                break
+            }
+        }
+        let fields = try self.parse_fields()
+        var n = blank(NodeKind.Struct, start, self.prev_end())
+        n.name = name
+        n.text = String.from(kind)
+        n.flag = is_pub
+        n.a = docs
+        n.kids = fields
+        n.kids2 = List(usize).new()
+        n.words = type_params
+        // derives after a separator entry so the printer can split them
+        for d in derives { n.words.append(String.from("+")); n.words.append(d.clone()) }
+        var lay = blank(NodeKind.Ident, start, start)
+        lay.name = layout
+        n.x = self.tree.add(lay)
+        return self.tree.add(n)
+    }
+
+    fn parse_fields(self: *mut Self) -> !List(usize) {
+        try self.expect(lexer.Kind.LBrace)
+        var fields = List(usize).new()
+        while true {
+            self.skip_newlines()
+            let docs = self.parse_docs()
+            self.skip_newlines()
+            if self.at(lexer.Kind.RBrace) { break }
+            let start = self.start()
+            let name = try self.expect_ident()
+            try self.expect(lexer.Kind.Colon)
+            let ty = try self.parse_type()
+            var dflt: usize = NONE
+            if self.eat(lexer.Kind.Eq) { dflt = try self.parse_expr() }
+            var constraint: usize = NONE
+            if self.eat_ident("where") { constraint = try self.parse_expr() }
+            var n = blank(NodeKind.Field, start, self.prev_end())
+            n.name = name
+            n.a = docs
+            n.x = ty
+            n.y = dflt
+            n.z = constraint
+            fields.append(self.tree.add(n))
+            if ! (self.eat(lexer.Kind.Comma) or self.at(lexer.Kind.Newline) or self.at(lexer.Kind.RBrace)) {
+                let got = describe(&self.toks[self.pos])
+                return self.fail(self.start(), format("expected `,` or newline after field but found {}", .{got}))
+            }
+        }
+        try self.expect(lexer.Kind.RBrace)
+        return fields
+    }
+
+    fn parse_enum(self: *mut Self, is_pub: bool, docs: usize) -> !usize {
+        let start = try self.expect_kw("enum")
+        let name = try self.expect_ident()
+        let type_params = try self.parse_type_params()
+        var derives = List(String).new()
+        if self.eat_ident("derive") { try self.parse_derives(&mut derives) }
+        try self.expect(lexer.Kind.LBrace)
+        var variants = List(usize).new()
+        while true {
+            self.skip_newlines()
+            _ = self.parse_docs()
+            self.skip_newlines()
+            if self.at(lexer.Kind.RBrace) { break }
+            let vstart = self.start()
+            let vname = try self.expect_ident()
+            var v = blank(NodeKind.Variant, vstart, vstart)
+            v.name = vname
+            if self.at(lexer.Kind.LParen) {
+                self.bump()
+                v.text = String.from("tuple")
+                while true {
+                    if self.at(lexer.Kind.RParen) { break }
+                    v.kids.append(try self.parse_type())
+                    if !self.eat(lexer.Kind.Comma) { break }
+                }
+                try self.expect(lexer.Kind.RParen)
+            } else if self.at(lexer.Kind.LBrace) {
+                v.text = String.from("struct")
+                v.kids = try self.parse_fields()
+            } else {
+                v.text = String.from("unit")
+            }
+            v.end = self.prev_end()
+            variants.append(self.tree.add(v))
+            if ! (self.eat(lexer.Kind.Comma) or self.at(lexer.Kind.Newline) or self.at(lexer.Kind.RBrace)) {
+                let got = describe(&self.toks[self.pos])
+                return self.fail(self.start(), format("expected `,` or newline after enum variant but found {}", .{got}))
+            }
+        }
+        try self.expect(lexer.Kind.RBrace)
+        var n = blank(NodeKind.Enum, start, self.prev_end())
+        n.name = name
+        n.flag = is_pub
+        n.a = docs
+        n.kids = variants
+        n.words = type_params
+        for d in derives { n.words.append(String.from("+")); n.words.append(d.clone()) }
+        return self.tree.add(n)
+    }
+
+    fn parse_trait(self: *mut Self, is_pub: bool, docs: usize) -> !usize {
+        let start = try self.expect_kw("trait")
+        let name = try self.expect_ident()
+        try self.expect(lexer.Kind.LBrace)
+        var assoc = List(String).new()
+        var methods = List(usize).new()
+        while true {
+            self.skip_newlines()
+            let mdocs = self.parse_docs()
+            self.skip_newlines()
+            if self.at(lexer.Kind.RBrace) { break }
+            if self.eat_ident("type") {
+                assoc.append(try self.expect_ident())
+            } else {
+                methods.append(try self.parse_fn(true, mdocs, false))
+            }
+            if ! (self.at(lexer.Kind.Newline) or self.at(lexer.Kind.RBrace)) {
+                return self.fail(self.start(), "expected a newline after trait member")
+            }
+        }
+        try self.expect(lexer.Kind.RBrace)
+        var n = blank(NodeKind.Trait, start, self.prev_end())
+        n.name = name
+        n.flag = is_pub
+        n.a = docs
+        n.kids = methods
+        n.words = assoc
+        return self.tree.add(n)
+    }
+
+    fn parse_impl(self: *mut Self) -> !usize {
+        let start = try self.expect_kw("impl")
+        let type_params = try self.parse_type_params()
+        let first = try self.parse_type()
+        var trait_name = String.from("-")
+        var target = first
+        if self.eat_ident("for") {
+            let f = &self.tree.nodes[first]
+            if f.k == NodeKind.TName and f.kids.len == 0 and f.words.len == 1 {
+                trait_name = String.from(f.words[0])
+            } else {
+                return self.fail(f.start, "expected a trait name before `for`")
+            }
+            target = try self.parse_type()
+        }
+        try self.expect(lexer.Kind.LBrace)
+        var assoc = List(usize).new()
+        var methods = List(usize).new()
+        while true {
+            self.skip_newlines()
+            let mdocs = self.parse_docs()
+            self.skip_newlines()
+            if self.at(lexer.Kind.RBrace) { break }
+            let is_pub = self.eat_ident("pub")
+            if self.eat_ident("type") {
+                let astart = self.start()
+                let aname = try self.expect_ident()
+                try self.expect(lexer.Kind.Eq)
+                let t = try self.parse_type()
+                var a = blank(NodeKind.Assoc, astart, self.prev_end())
+                a.name = aname
+                a.x = t
+                assoc.append(self.tree.add(a))
+            } else {
+                methods.append(try self.parse_fn(is_pub, mdocs, false))
+            }
+            if ! (self.at(lexer.Kind.Newline) or self.at(lexer.Kind.RBrace)) {
+                return self.fail(self.start(), "expected a newline after impl member")
+            }
+        }
+        try self.expect(lexer.Kind.RBrace)
+        var n = blank(NodeKind.Impl, start, self.prev_end())
+        n.name = trait_name
+        n.x = target
+        n.kids = methods
+        n.kids2 = assoc
+        n.words = type_params
+        return self.tree.add(n)
+    }
+
+    fn parse_const(self: *mut Self, is_pub: bool, docs: usize) -> !usize {
+        let start = try self.expect_kw("const")
+        let name = try self.expect_ident()
+        var ty: usize = NONE
+        if self.eat(lexer.Kind.Colon) { ty = try self.parse_type() }
+        try self.expect(lexer.Kind.Eq)
+        let value = try self.parse_expr()
+        var n = blank(NodeKind.Const, start, self.prev_end())
+        n.name = name
+        n.flag = is_pub
+        n.a = docs
+        n.x = ty
+        n.y = value
+        return self.tree.add(n)
+    }
+
+    fn parse_global(self: *mut Self, is_pub: bool, docs: usize) -> !usize {
+        let start = try self.expect_kw("var")
+        let name = try self.expect_ident()
+        try self.expect(lexer.Kind.Colon)
+        let ty = try self.parse_type()
+        var align = String.from("-")
+        if self.eat_ident("align") {
+            try self.expect(lexer.Kind.LParen)
+            if self.peek() == lexer.Kind.Int {
+                align = String.from(self.text())
+                self.bump()
+            } else {
+                self.bump()
+                return self.fail(self.prev_start(), "expected an integer alignment")
+            }
+            try self.expect(lexer.Kind.RParen)
+        }
+        try self.expect(lexer.Kind.Eq)
+        var value: usize = NONE
+        if !self.eat_ident("undefined") { value = try self.parse_expr() }
+        var n = blank(NodeKind.Global, start, self.prev_end())
+        n.name = name
+        n.text = align
+        n.flag = is_pub
+        n.a = docs
+        n.x = ty
+        n.y = value
+        return self.tree.add(n)
+    }
+
+    fn parse_type_alias(self: *mut Self, is_pub: bool, docs: usize) -> !usize {
+        let start = try self.expect_kw("type")
+        let name = try self.expect_ident()
+        try self.expect(lexer.Kind.Eq)
+        let is_distinct = self.eat_ident("distinct")
+        let ty = try self.parse_type()
+        var n = blank(NodeKind.TypeAlias, start, self.prev_end())
+        n.name = name
+        n.flag = is_pub
+        n.flag2 = is_distinct
+        n.a = docs
+        n.x = ty
+        return self.tree.add(n)
+    }
+
+    fn parse_error_set(self: *mut Self, is_pub: bool, docs: usize) -> !usize {
+        let start = try self.expect_kw("error")
+        let name = try self.expect_ident()
+        try self.expect(lexer.Kind.LBrace)
+        var names = List(String).new()
+        while true {
+            self.skip_newlines()
+            if self.at(lexer.Kind.RBrace) { break }
+            names.append(try self.expect_ident())
+            if ! (self.eat(lexer.Kind.Comma) or self.at(lexer.Kind.Newline) or self.at(lexer.Kind.RBrace)) {
+                return self.fail(self.start(), "expected `,` or newline in error set")
+            }
+        }
+        try self.expect(lexer.Kind.RBrace)
+        var n = blank(NodeKind.ErrorSet, start, self.prev_end())
+        n.name = name
+        n.flag = is_pub
+        n.a = docs
+        n.words = names
+        return self.tree.add(n)
+    }
+
+    fn parse_import(self: *mut Self) -> !usize {
+        let start = try self.expect_kw("import")
+        var path = List(String).new()
+        var names = List(String).new()
+        var has_names = false
+        path.append(try self.expect_ident())
+        while self.eat(lexer.Kind.Dot) {
+            if self.at(lexer.Kind.LBrace) {
+                self.bump()
+                has_names = true
+                while true {
+                    self.skip_newlines()
+                    if self.at(lexer.Kind.RBrace) { break }
+                    names.append(try self.expect_ident())
+                    if !self.eat(lexer.Kind.Comma) { break }
+                }
+                self.skip_newlines()
+                try self.expect(lexer.Kind.RBrace)
+                break
+            }
+            path.append(try self.expect_ident())
+        }
+        var alias = String.from("-")
+        if self.eat_ident("as") { alias = try self.expect_ident() }
+        var n = blank(NodeKind.Import, start, self.prev_end())
+        n.name = alias
+        n.flag = has_names
+        n.words = path
+        for nm in names { n.words.append(String.from("+")); n.words.append(nm.clone()) }
+        return self.tree.add(n)
+    }
+
+    fn parse_test(self: *mut Self, is_comptime: bool) -> !usize {
+        let start = try self.expect_kw("test")
+        if self.peek() != lexer.Kind.Str {
+            self.bump()
+            return self.fail(self.prev_start(), "expected a string naming the test")
+        }
+        let name = unhex(self.text())
+        self.bump()
+        let body = try self.parse_block(String.new())
+        var n = blank(NodeKind.Test, start, self.prev_end())
+        n.name = name
+        n.flag = is_comptime
+        n.x = body
+        return self.tree.add(n)
+    }
+
+    fn parse_artifact(self: *mut Self) -> !usize {
+        let start = try self.expect_kw("artifact")
+        let kind = try self.expect_ident()
+        try self.expect(lexer.Kind.LBrace)
+        var fields = List(usize).new()
+        while true {
+            self.skip_newlines()
+            if self.at(lexer.Kind.RBrace) { break }
+            let kstart = self.start()
+            let k = try self.expect_ident()
+            let kend = self.prev_end()
+            try self.expect(lexer.Kind.Eq)
+            let v = try self.parse_expr()
+            var f = blank(NodeKind.ArtField, kstart, kend)
+            f.name = k
+            f.x = v
+            fields.append(self.tree.add(f))
+            if ! (self.eat(lexer.Kind.Comma) or self.at(lexer.Kind.Newline) or self.at(lexer.Kind.RBrace)) {
+                return self.fail(self.start(), "expected `,` or newline in artifact declaration")
+            }
+        }
+        try self.expect(lexer.Kind.RBrace)
+        var n = blank(NodeKind.Artifact, start, self.prev_end())
+        n.name = kind
+        n.kids = fields
+        return self.tree.add(n)
+    }
+
+    // ----- types ----------------------------------------------------------
+
+    fn type_starts(self: *Self, n: usize) -> bool {
+        let k = self.peek_at(n)
+        return k == lexer.Kind.Ident or k == lexer.Kind.LBracket or k == lexer.Kind.Star or k == lexer.Kind.Question or k == lexer.Kind.LParen
+    }
+
+    fn parse_type(self: *mut Self) -> !usize {
+        let start = self.start()
+        let k = self.peek()
+        var t: usize = NONE
+        if k == lexer.Kind.LBracket {
+            self.bump()
+            if self.eat(lexer.Kind.RBracket) {
+                let mutable = self.eat_ident("mut")
+                let elem = try self.parse_type()
+                var n = blank(NodeKind.TSlice, start, self.prev_end())
+                n.flag = mutable
+                n.x = elem
+                t = self.tree.add(n)
+            } else {
+                var len: usize = NONE
+                if self.at_ident("_") {
+                    var id = blank(NodeKind.Ident, self.start(), self.toks[self.pos].end)
+                    id.name = String.from("_")
+                    self.bump()
+                    len = self.tree.add(id)
+                } else {
+                    len = try self.parse_expr()
+                }
+                try self.expect(lexer.Kind.RBracket)
+                let elem = try self.parse_type()
+                var n = blank(NodeKind.TArray, start, self.prev_end())
+                n.x = len
+                n.y = elem
+                t = self.tree.add(n)
+            }
+        } else if k == lexer.Kind.Star {
+            self.bump()
+            let mutable = self.eat_ident("mut")
+            let elem = try self.parse_type()
+            var n = blank(NodeKind.TPtr, start, self.prev_end())
+            n.flag = mutable
+            n.x = elem
+            t = self.tree.add(n)
+        } else if k == lexer.Kind.Question {
+            self.bump()
+            let elem = try self.parse_type()
+            var n = blank(NodeKind.TOpt, start, self.prev_end())
+            n.x = elem
+            t = self.tree.add(n)
+        } else if k == lexer.Kind.Bang {
+            self.bump()
+            let elem = try self.parse_type()
+            var n = blank(NodeKind.TErr, start, self.prev_end())
+            n.y = elem
+            t = self.tree.add(n)
+        } else if k == lexer.Kind.LParen {
+            self.bump()
+            var n = blank(NodeKind.TTuple, start, start)
+            while true {
+                if self.at(lexer.Kind.RParen) { break }
+                n.kids.append(try self.parse_type())
+                if !self.eat(lexer.Kind.Comma) { break }
+            }
+            try self.expect(lexer.Kind.RParen)
+            n.end = self.prev_end()
+            t = self.tree.add(n)
+        } else if k == lexer.Kind.Ident {
+            let s = self.text()
+            if s == "fn" {
+                self.bump()
+                try self.expect(lexer.Kind.LParen)
+                var n = blank(NodeKind.TFn, start, start)
+                while true {
+                    if self.at(lexer.Kind.RParen) { break }
+                    if self.peek() == lexer.Kind.Ident and self.peek_at(1) == lexer.Kind.Colon {
+                        self.bump()
+                        self.bump()
+                    }
+                    n.kids.append(try self.parse_type())
+                    if !self.eat(lexer.Kind.Comma) { break }
+                }
+                try self.expect(lexer.Kind.RParen)
+                if self.eat(lexer.Kind.Arrow) {
+                    n.x = try self.parse_type()
+                } else {
+                    var v = blank(NodeKind.TName, self.prev_start(), self.prev_end())
+                    v.words.append(String.from("void"))
+                    n.x = self.tree.add(v)
+                }
+                n.words = self.parse_effect_bounds()
+                n.end = self.prev_end()
+                t = self.tree.add(n)
+            } else if s == "weak" {
+                self.bump()
+                let elem = try self.parse_type()
+                var n = blank(NodeKind.TWeak, start, self.prev_end())
+                n.x = elem
+                t = self.tree.add(n)
+            } else if s == "dyn" {
+                self.bump()
+                let tn = try self.expect_ident()
+                var n = blank(NodeKind.TDyn, start, start)
+                n.name = tn
+                n.words = self.parse_effect_bounds()
+                n.end = self.prev_end()
+                t = self.tree.add(n)
+            } else if s == "_" {
+                self.bump()
+                t = self.tree.add(blank(NodeKind.TInfer, start, self.prev_end()))
+            } else if lexer.is_keyword(s) and s != "type" and s != "error" {
+                return self.fail(start, format("expected a type but found keyword `{}`", .{s}))
+            } else {
+                var n = blank(NodeKind.TName, start, start)
+                n.words.append(String.from(s))
+                let head_primitive = is_primitive(s)
+                self.bump()
+                while self.at(lexer.Kind.Dot) and self.peek_at(1) == lexer.Kind.Ident {
+                    self.bump()
+                    n.words.append(try self.expect_ident())
+                }
+                if self.at(lexer.Kind.LParen) and !head_primitive {
+                    self.bump()
+                    while true {
+                        if self.at(lexer.Kind.RParen) { break }
+                        n.kids.append(try self.parse_type_or_const_arg())
+                        if !self.eat(lexer.Kind.Comma) { break }
+                    }
+                    try self.expect(lexer.Kind.RParen)
+                }
+                n.end = self.prev_end()
+                t = self.tree.add(n)
+            }
+        } else {
+            let got = describe(&self.toks[self.pos])
+            return self.fail(start, format("expected a type but found {}", .{got}))
+        }
+        // `Set!T`
+        if self.at(lexer.Kind.Bang) {
+            let is_eff = self.peek_at(1) == lexer.Kind.Ident and is_effect(self.text_at(1))
+            if !is_eff and self.type_starts(1) and self.tree.nodes[t].k == NodeKind.TName {
+                self.bump()
+                let elem = try self.parse_type()
+                var n = blank(NodeKind.TErr, start, self.prev_end())
+                n.x = t
+                n.y = elem
+                return self.tree.add(n)
+            }
+        }
+        return t
+    }
+
+    fn parse_type_or_const_arg(self: *mut Self) -> !usize {
+        if self.peek() == lexer.Kind.Int {
+            var n = blank(NodeKind.TName, self.start(), self.toks[self.pos].end)
+            var w = String.from("#")
+            w.append(self.text())
+            n.words.append(w)
+            self.bump()
+            return self.tree.add(n)
+        }
+        return self.parse_type()
+    }
+
+    // ----- statements -----------------------------------------------------
+
+    fn parse_block(self: *mut Self, own label: String) -> !usize {
+        let start = self.start()
+        try self.expect(lexer.Kind.LBrace)
+        let saved = self.no_struct_lit
+        self.no_struct_lit = false
+        var n = blank(NodeKind.Block, start, start)
+        n.name = label
+        while true {
+            self.skip_newlines()
+            if self.at(lexer.Kind.RBrace) { break }
+            if self.at(lexer.Kind.Eof) {
+                self.no_struct_lit = saved
+                return self.fail(start, "unterminated block")
+            }
+            let stmt = self.parse_stmt() catch {
+                self.recover_stmt()
+                continue
+            }
+            var k: usize = 0
+            while self.peek_at(k) == lexer.Kind.Newline or self.peek_at(k) == lexer.Kind.Semi { k += 1 }
+            if self.peek_at(k) == lexer.Kind.RBrace {
+                for _ in 0..k { self.bump() }
+            }
+            if self.at(lexer.Kind.RBrace) {
+                if self.tree.nodes[stmt].k == NodeKind.ExprStmt {
+                    n.x = self.tree.nodes[stmt].x
+                } else {
+                    n.kids.append(stmt)
+                }
+                break
+            }
+            if ! (self.at(lexer.Kind.Newline) or self.at(lexer.Kind.Semi)) {
+                let got = describe(&self.toks[self.pos])
+                self.errors.append(format("error at {}: expected a newline after statement but found {}", .{self.start(), got}))
+                self.recover_stmt()
+            }
+            n.kids.append(stmt)
+        }
+        let before = self.pos
+        try self.expect(lexer.Kind.RBrace)
+        _ = before
+        self.no_struct_lit = saved
+        n.end = self.prev_end()
+        return self.tree.add(n)
+    }
+
+    fn expr_stmt(self: *mut Self, e: usize) -> usize {
+        var n = blank(NodeKind.ExprStmt, self.tree.nodes[e].start, self.tree.nodes[e].end)
+        n.x = e
+        return self.tree.add(n)
+    }
+
+    fn parse_stmt(self: *mut Self) -> !usize {
+        let start = self.start()
+        if self.peek() == lexer.Kind.Ident and self.peek_at(1) == lexer.Kind.Colon and !lexer.is_keyword(self.text()) {
+            let l = String.from(self.text())
+            if self.ident_at(2, "for") or self.ident_at(2, "while") {
+                self.bump()
+                self.bump()
+                return self.parse_loop_stmt(l, start)
+            }
+            if self.peek_at(2) == lexer.Kind.LBrace {
+                self.bump()
+                self.bump()
+                let b = try self.parse_block(l)
+                return self.expr_stmt(b)
+            }
+        }
+        if self.peek() == lexer.Kind.Ident {
+            let s = self.text()
+            if s == "let" or s == "var" {
+                let mutable = s == "var"
+                self.bump()
+                let name = try self.expect_ident()
+                var ty: usize = NONE
+                if self.eat(lexer.Kind.Colon) { ty = try self.parse_type() }
+                var init: usize = NONE
+                if self.eat(lexer.Kind.Eq) { init = try self.parse_expr() }
+                var n = blank(NodeKind.Let, start, self.prev_end())
+                n.name = name
+                n.flag = mutable
+                n.x = ty
+                n.y = init
+                return self.tree.add(n)
+            }
+            if s == "const" {
+                self.bump()
+                let name = try self.expect_ident()
+                var ty: usize = NONE
+                if self.eat(lexer.Kind.Colon) { ty = try self.parse_type() }
+                try self.expect(lexer.Kind.Eq)
+                let init = try self.parse_expr()
+                var n = blank(NodeKind.Let, start, self.prev_end())
+                n.name = name
+                n.x = ty
+                n.y = init
+                return self.tree.add(n)
+            }
+            if s == "return" {
+                self.bump()
+                var n = blank(NodeKind.Return, start, start)
+                if ! (self.at(lexer.Kind.Newline) or self.at(lexer.Kind.RBrace) or self.at(lexer.Kind.Semi)) { n.x = try self.parse_expr() }
+                n.end = self.prev_end()
+                return self.tree.add(n)
+            }
+            if s == "break" {
+                self.bump()
+                var n = blank(NodeKind.Break, start, start)
+                n.name = String.from("-")
+                if self.at(lexer.Kind.Colon) {
+                    self.bump()
+                    n.name = try self.expect_ident()
+                }
+                if ! (self.at(lexer.Kind.Newline) or self.at(lexer.Kind.RBrace) or self.at(lexer.Kind.Semi)) { n.x = try self.parse_expr() }
+                n.end = self.prev_end()
+                return self.tree.add(n)
+            }
+            if s == "continue" {
+                self.bump()
+                var n = blank(NodeKind.Continue, start, start)
+                n.name = String.from("-")
+                if self.at(lexer.Kind.Colon) {
+                    self.bump()
+                    n.name = try self.expect_ident()
+                }
+                n.end = self.prev_end()
+                return self.tree.add(n)
+            }
+            if s == "using" {
+                self.bump()
+                let sstart = self.start()
+                let strategy = try self.expect_ident()
+                if strategy != "arena" { return self.fail(sstart, format("unknown allocation strategy `{}`; available: arena", .{strategy})) }
+                let body = try self.parse_block(String.new())
+                var n = blank(NodeKind.Using, start, self.prev_end())
+                n.name = strategy
+                n.x = body
+                return self.tree.add(n)
+            }
+            if s == "defer" or s == "errdefer" {
+                self.bump()
+                let body = try self.parse_stmt()
+                var n = blank(if s == "defer" { NodeKind.Defer } else { NodeKind.ErrDefer }, start, self.prev_end())
+                n.x = body
+                return self.tree.add(n)
+            }
+            if s == "while" or s == "for" { return self.parse_loop_stmt(String.from("-"), start) }
+            if s == "unsafe" and self.peek_at(1) == lexer.Kind.LBrace {
+                self.bump()
+                let body = try self.parse_block(String.new())
+                var n = blank(NodeKind.Unsafe, start, self.prev_end())
+                n.x = body
+                return self.tree.add(n)
+            }
+            if s == "_" and self.peek_at(1) == lexer.Kind.Eq {
+                self.bump()
+                self.bump()
+                let value = try self.parse_expr()
+                var n = blank(NodeKind.Discard, start, self.prev_end())
+                n.x = value
+                return self.tree.add(n)
+            }
+        }
+        return self.parse_expr_or_assign(start)
+    }
+
+    fn assign_op(self: *Self) -> ?[]u8 {
+        return match self.peek() {
+            .Eq => "=", .PlusEq => "+", .MinusEq => "-", .StarEq => "*", .SlashEq => "/", .PercentEq => "%",
+            .AmpEq => "&", .PipeEq => "|", .CaretEq => "^", .ShlEq => "<<", .ShrEq => ">>",
+            .PlusPctEq => "+%", .MinusPctEq => "-%", .StarPctEq => "*%",
+            _ => null,
+        }
+    }
+
+    fn parse_expr_or_assign(self: *mut Self, start: usize) -> !usize {
+        let e = try self.parse_expr()
+        if let op = self.assign_op() {
+            self.bump()
+            self.skip_newlines()
+            let value = try self.parse_expr()
+            var n = blank(NodeKind.Assign, start, self.prev_end())
+            n.name = String.from(op)
+            n.x = e
+            n.y = value
+            return self.tree.add(n)
+        }
+        return self.expr_stmt(e)
+    }
+
+    fn parse_loop_stmt(self: *mut Self, own label: String, start: usize) -> !usize {
+        let kw = String.from(self.text())
+        self.bump()
+        if kw == "while" {
+            let cond = try self.parse_expr_no_struct()
+            let body = try self.parse_body("the `while` condition")
+            var n = blank(NodeKind.While, start, start)
+            n.name = label
+            n.x = cond
+            n.y = body
+            if self.eat_ident("else") { n.z = try self.parse_body("`else`") }
+            n.end = self.prev_end()
+            return self.tree.add(n)
+        }
+        // for [parallel] x, i in items { }   /   for i in lo..hi [step s] { }
+        let is_parallel = self.eat_ident("parallel")
+        var n = blank(NodeKind.For, start, start)
+        n.name = label
+        n.flag2 = is_parallel
+        while true {
+            n.words.append(try self.expect_ident())
+            if !self.eat(lexer.Kind.Comma) { break }
+        }
+        if !self.at_ident("in") {
+            let got = describe(&self.toks[self.pos])
+            return self.fail(self.start(), format("expected `in` after the loop variable(s) but found {}", .{got}))
+        }
+        self.bump()
+        let first = try self.parse_expr_no_struct()
+        if self.eat(lexer.Kind.DotDot) {
+            n.flag = true
+            n.x = first
+            n.y = try self.parse_expr_no_struct()
+            if self.eat_ident("step") { n.z = try self.parse_expr_no_struct() }
+        } else {
+            n.kids2.append(first)
+            while self.eat(lexer.Kind.Comma) { n.kids2.append(try self.parse_expr_no_struct()) }
+        }
+        let body = try self.parse_body("the `for` header")
+        n.a = body
+        n.end = self.prev_end()
+        return self.tree.add(n)
+    }
+
+    /// A block after a control-flow header; the braces are required.
+    fn parse_body(self: *mut Self, after: []u8) -> !usize {
+        if self.at(lexer.Kind.LBrace) { return self.parse_block(String.new()) }
+        let got = describe(&self.toks[self.pos])
+        return self.fail(self.start(), format("expected `{{` after {} but found {}; bodies always take braces (`if c {{ return v }}`)", .{after, got}))
+    }
+
+    // ----- expressions ----------------------------------------------------
+
+    fn parse_expr(self: *mut Self) -> !usize {
+        return self.parse_pipe()
+    }
+
+    fn parse_expr_no_struct(self: *mut Self) -> !usize {
+        let saved = self.no_struct_lit
+        self.no_struct_lit = true
+        let r = self.parse_expr() catch |e| {
+            self.no_struct_lit = saved
+            return e
+        }
+        self.no_struct_lit = saved
+        return r
+    }
+
+    fn continuation(self: *mut Self, pipe_ok: bool) {
+        if self.at(lexer.Kind.Newline) {
+            let next = self.peek_at(1)
+            var cont = pipe_ok and next == lexer.Kind.PipeGt
+            if next == lexer.Kind.Ident {
+                let t = self.text_at(1)
+                if t == "catch" or t == "orelse" or t == "and" or t == "or" { cont = true }
+            }
+            if cont { self.bump() }
+        }
+    }
+
+    fn span_of(self: *Self, id: usize) -> usize {
+        return self.tree.nodes[id].start
+    }
+    fn end_of(self: *Self, id: usize) -> usize {
+        return self.tree.nodes[id].end
+    }
+
+    fn binary(self: *mut Self, op: []u8, lhs: usize, rhs: usize) -> usize {
+        var n = blank(NodeKind.Binary, self.span_of(lhs), self.end_of(rhs))
+        n.name = String.from(op)
+        n.x = lhs
+        n.y = rhs
+        return self.tree.add(n)
+    }
+
+    fn parse_pipe(self: *mut Self) -> !usize {
+        var lhs = try self.parse_catch()
+        while true {
+            self.continuation(true)
+            if self.at(lexer.Kind.PipeGt) {
+                self.bump()
+                self.skip_newlines()
+                let rhs = try self.parse_catch()
+                var n = blank(NodeKind.Pipe, self.span_of(lhs), self.end_of(rhs))
+                n.x = lhs
+                n.y = rhs
+                lhs = self.tree.add(n)
+            } else {
+                break
+            }
+        }
+        return lhs
+    }
+
+    fn parse_catch(self: *mut Self) -> !usize {
+        var e = try self.parse_or()
+        while true {
+            self.continuation(false)
+            if self.at_ident("catch") {
+                self.bump()
+                var binding = String.from("-")
+                if self.eat(lexer.Kind.Pipe) {
+                    binding = try self.expect_ident()
+                    try self.expect(lexer.Kind.Pipe)
+                }
+                let handler = try self.parse_or_or_jump()
+                var n = blank(NodeKind.Catch, self.span_of(e), self.end_of(handler))
+                n.name = binding
+                n.x = e
+                n.y = handler
+                e = self.tree.add(n)
+            } else if self.at_ident("orelse") {
+                self.bump()
+                let dflt = try self.parse_or_or_jump()
+                var n = blank(NodeKind.OrElse, self.span_of(e), self.end_of(dflt))
+                n.x = e
+                n.y = dflt
+                e = self.tree.add(n)
+            } else {
+                break
+            }
+        }
+        return e
+    }
+
+    fn parse_or(self: *mut Self) -> !usize {
+        var lhs = try self.parse_and()
+        while true {
+            self.continuation(false)
+            if self.at_ident("or") {
+                self.bump()
+                self.skip_newlines()
+                let rhs = try self.parse_and()
+                lhs = self.binary("or", lhs, rhs)
+            } else {
+                break
+            }
+        }
+        return lhs
+    }
+
+    fn parse_and(self: *mut Self) -> !usize {
+        var lhs = try self.parse_cmp()
+        while true {
+            self.continuation(false)
+            if self.at_ident("and") {
+                self.bump()
+                self.skip_newlines()
+                let rhs = try self.parse_cmp()
+                lhs = self.binary("and", lhs, rhs)
+            } else {
+                break
+            }
+        }
+        return lhs
+    }
+
+    fn cmp_op(self: *Self) -> ?[]u8 {
+        return match self.peek() {
+            .EqEq => "==", .Ne => "!=", .Lt => "<", .Le => "<=", .Gt => ">", .Ge => ">=",
+            _ => null,
+        }
+    }
+
+    fn parse_cmp(self: *mut Self) -> !usize {
+        let lhs = try self.parse_bitor()
+        let op = self.cmp_op() orelse return lhs
+        self.bump()
+        self.skip_newlines()
+        let rhs = try self.parse_bitor()
+        let e = self.binary(op, lhs, rhs)
+        if self.cmp_op() != null { return self.fail(self.start(), "comparison operators cannot be chained; use `and`") }
+        return e
+    }
+
+    fn level_op(self: *Self, level: u8) -> ?[]u8 {
+        let k = self.peek()
+        if level == 0 { if k == lexer.Kind.Pipe { return "|" } }
+        else if level == 1 { if k == lexer.Kind.Caret { return "^" } }
+        else if level == 2 { if k == lexer.Kind.Amp { return "&" } }
+        else if level == 3 {
+            if k == lexer.Kind.LtLt { return "<<" }
+            if k == lexer.Kind.GtGt { return ">>" }
+        } else if level == 4 {
+            if k == lexer.Kind.Plus { return "+" }
+            if k == lexer.Kind.Minus { return "-" }
+            if k == lexer.Kind.PlusPct { return "+%" }
+            if k == lexer.Kind.MinusPct { return "-%" }
+            if k == lexer.Kind.PlusPipe { return "+|" }
+            if k == lexer.Kind.MinusPipe { return "-|" }
+        } else {
+            if k == lexer.Kind.Star { return "*" }
+            if k == lexer.Kind.Slash { return "/" }
+            if k == lexer.Kind.Percent { return "%" }
+            if k == lexer.Kind.StarPct { return "*%" }
+            if k == lexer.Kind.StarPipe { return "*|" }
+        }
+        return null
+    }
+
+    // levels 0..5: bitor, bitxor, bitand, shift, additive, multiplicative
+    fn parse_level(self: *mut Self, level: u8) -> !usize {
+        var lhs = if level == 5 { try self.parse_cast() } else { try self.parse_level(level + 1) }
+        while true {
+            let op = self.level_op(level) orelse break
+            self.bump()
+            self.skip_newlines()
+            let rhs = if level == 5 { try self.parse_cast() } else { try self.parse_level(level + 1) }
+            lhs = self.binary(op, lhs, rhs)
+        }
+        return lhs
+    }
+
+    fn parse_bitor(self: *mut Self) -> !usize {
+        return self.parse_level(0)
+    }
+
+    fn parse_cast(self: *mut Self) -> !usize {
+        var e = try self.parse_unary()
+        while self.at_ident("as") {
+            self.bump()
+            let ty = try self.parse_type()
+            var n = blank(NodeKind.Cast, self.span_of(e), self.end_of(ty))
+            n.x = e
+            n.y = ty
+            e = self.tree.add(n)
+        }
+        return e
+    }
+
+    fn unary_node(self: *mut Self, op: []u8, start: usize, e: usize) -> usize {
+        var n = blank(NodeKind.Unary, start, self.end_of(e))
+        n.name = String.from(op)
+        n.x = e
+        return self.tree.add(n)
+    }
+
+    fn parse_unary(self: *mut Self) -> !usize {
+        let start = self.start()
+        let k = self.peek()
+        if k == lexer.Kind.Amp {
+            self.bump()
+            let mutable = self.eat_ident("mut")
+            let e = try self.parse_unary()
+            return self.unary_node(if mutable { "&mut" } else { "&" }, start, e)
+        }
+        if k == lexer.Kind.Ident and self.text() == "try" {
+            self.bump()
+            let e = try self.parse_unary()
+            var n = blank(NodeKind.Try, start, self.end_of(e))
+            n.x = e
+            return self.tree.add(n)
+        }
+        if k == lexer.Kind.Ident and self.text() == "comptime" {
+            self.bump()
+            let e = try self.parse_unary()
+            var n = blank(NodeKind.Comptime, start, self.end_of(e))
+            n.x = e
+            return self.tree.add(n)
+        }
+        var op: []u8 = ""
+        if k == lexer.Kind.Minus { op = "-" }
+        else if k == lexer.Kind.Bang { op = "!" }
+        else if k == lexer.Kind.Tilde { op = "~" }
+        if op.len > 0 {
+            self.bump()
+            let e = try self.parse_unary()
+            // fold negative float literals, as the reference parser does
+            if op == "-" and self.tree.nodes[e].k == NodeKind.Lit and self.tree.nodes[e].text == "float" {
+                var n = blank(NodeKind.Lit, start, self.end_of(e))
+                n.text = String.from("float")
+                n.name = String.from("-")
+                n.name.append(self.tree.nodes[e].name)
+                return self.tree.add(n)
+            }
+            return self.unary_node(op, start, e)
+        }
+        return self.parse_postfix()
+    }
+
+    fn parse_args(self: *mut Self) -> !List(usize) {
+        try self.expect(lexer.Kind.LParen)
+        let saved = self.no_struct_lit
+        self.no_struct_lit = false
+        let r = self.parse_args_inner() catch |e| {
+            self.no_struct_lit = saved
+            return e
+        }
+        self.no_struct_lit = saved
+        return r
+    }
+
+    fn parse_args_inner(self: *mut Self) -> !List(usize) {
+        var args = List(usize).new()
+        while true {
+            if self.at(lexer.Kind.RParen) { break }
+            args.append(try self.parse_arg())
+            if !self.eat(lexer.Kind.Comma) { break }
+        }
+        try self.expect(lexer.Kind.RParen)
+        return args
+    }
+
+    fn ident_or_type_start(self: *Self, n: usize) -> bool {
+        let k = self.peek_at(n)
+        return k == lexer.Kind.Ident or k == lexer.Kind.LBracket or k == lexer.Kind.Star or k == lexer.Kind.Question
+    }
+
+    fn parse_arg(self: *mut Self) -> !usize {
+        let start = self.start()
+        let k = self.peek()
+        var is_type = false
+        if k == lexer.Kind.LBracket {
+            is_type = (self.peek_at(1) == lexer.Kind.RBracket and self.ident_or_type_start(2))
+                or (self.peek_at(1) == lexer.Kind.Int and self.peek_at(2) == lexer.Kind.RBracket and self.ident_or_type_start(3))
+        } else if k == lexer.Kind.Star or k == lexer.Kind.Question {
+            is_type = true
+        } else if k == lexer.Kind.Ident {
+            let s = self.text()
+            is_type = (s == "fn" and self.peek_at(1) == lexer.Kind.LParen) or s == "weak" or s == "dyn"
+        }
+        if is_type {
+            let ty = try self.parse_type()
+            var n = blank(NodeKind.TypeVal, start, self.prev_end())
+            n.x = ty
+            return self.tree.add(n)
+        }
+        return self.parse_expr()
+    }
+
+    fn parse_postfix(self: *mut Self) -> !usize {
+        var e = try self.parse_primary()
+        while true {
+            if self.at(lexer.Kind.Newline) and self.peek_at(1) == lexer.Kind.Dot and self.peek_at(2) == lexer.Kind.Ident {
+                self.bump()
+            }
+            let k = self.peek()
+            if k == lexer.Kind.LParen {
+                let args = try self.parse_args()
+                var n = blank(NodeKind.Call, self.span_of(e), self.prev_end())
+                n.x = e
+                n.kids = args
+                e = self.tree.add(n)
+            } else if k == lexer.Kind.LBracket {
+                self.bump()
+                if self.at(lexer.Kind.DotDot) {
+                    self.bump()
+                    var n = blank(NodeKind.SliceE, self.span_of(e), 0)
+                    n.x = e
+                    if !self.at(lexer.Kind.RBracket) { n.z = try self.parse_expr() }
+                    try self.expect(lexer.Kind.RBracket)
+                    n.end = self.prev_end()
+                    e = self.tree.add(n)
+                    continue
+                }
+                let idx = try self.parse_expr()
+                if self.eat(lexer.Kind.DotDot) {
+                    var n = blank(NodeKind.SliceE, self.span_of(e), 0)
+                    n.x = e
+                    n.y = idx
+                    if !self.at(lexer.Kind.RBracket) { n.z = try self.parse_expr() }
+                    try self.expect(lexer.Kind.RBracket)
+                    n.end = self.prev_end()
+                    e = self.tree.add(n)
+                } else {
+                    try self.expect(lexer.Kind.RBracket)
+                    var n = blank(NodeKind.Index, self.span_of(e), self.prev_end())
+                    n.x = e
+                    n.y = idx
+                    e = self.tree.add(n)
+                }
+            } else if k == lexer.Kind.Dot {
+                self.bump()
+                if self.peek() == lexer.Kind.Ident {
+                    let name = String.from(self.text())
+                    self.bump()
+                    if self.at(lexer.Kind.LParen) {
+                        let args = try self.parse_args()
+                        var n = blank(NodeKind.MethodCall, self.span_of(e), self.prev_end())
+                        n.name = name
+                        n.x = e
+                        n.kids = args
+                        e = self.tree.add(n)
+                    } else {
+                        var n = blank(NodeKind.FieldE, self.span_of(e), self.prev_end())
+                        n.name = name
+                        n.x = e
+                        e = self.tree.add(n)
+                    }
+                } else if self.peek() == lexer.Kind.Int {
+                    let name = String.from(self.text())
+                    self.bump()
+                    var n = blank(NodeKind.FieldE, self.span_of(e), self.prev_end())
+                    n.name = name
+                    n.x = e
+                    e = self.tree.add(n)
+                } else {
+                    let got = describe(&self.toks[self.pos])
+                    return self.fail(self.start(), format("expected a field name after `.` but found {}", .{got}))
+                }
+            } else if k == lexer.Kind.DotStar {
+                self.bump()
+                var n = blank(NodeKind.Deref, self.span_of(e), self.prev_end())
+                n.x = e
+                e = self.tree.add(n)
+            } else if k == lexer.Kind.DotQuestion {
+                self.bump()
+                var n = blank(NodeKind.Unwrap, self.span_of(e), self.prev_end())
+                n.x = e
+                e = self.tree.add(n)
+            } else if k == lexer.Kind.LBrace and !self.no_struct_lit and self.is_type_path(e) {
+                let ty = try self.expr_to_type(e)
+                let fields = try self.parse_struct_lit_fields()
+                var n = blank(NodeKind.StructLit, self.span_of(e), self.prev_end())
+                n.x = ty
+                n.kids = fields
+                e = self.tree.add(n)
+            } else {
+                break
+            }
+        }
+        return e
+    }
+
+    fn is_type_path(self: *Self, e: usize) -> bool {
+        let n = &self.tree.nodes[e]
+        if n.k == NodeKind.Ident { return n.name.len > 0 and is_upper(n.name[0]) }
+        if n.k == NodeKind.FieldE { return self.is_path(n.x) }
+        if n.k == NodeKind.Call {
+            if !self.is_type_path(n.x) { return false }
+            for a in n.kids {
+                let ak = self.tree.nodes[a].k
+                if ak != NodeKind.TypeVal and ak != NodeKind.Ident { return false }
+            }
+            return true
+        }
+        return false
+    }
+
+    fn is_path(self: *Self, e: usize) -> bool {
+        let n = &self.tree.nodes[e]
+        if n.k == NodeKind.Ident { return true }
+        if n.k == NodeKind.FieldE { return self.is_path(n.x) }
+        return false
+    }
+
+    fn expr_to_type(self: *mut Self, e: usize) -> !usize {
+        let k = self.tree.nodes[e].k
+        if k == NodeKind.Ident {
+            var t = blank(NodeKind.TName, self.span_of(e), self.end_of(e))
+            t.words.append(String.from(self.tree.nodes[e].name))
+            return self.tree.add(t)
+        }
+        if k == NodeKind.FieldE {
+            let base = try self.expr_to_type(self.tree.nodes[e].x)
+            self.tree.nodes[base].words.append(String.from(self.tree.nodes[e].name))
+            self.tree.nodes[base].start = self.span_of(e)
+            self.tree.nodes[base].end = self.end_of(e)
+            return base
+        }
+        if k == NodeKind.Call {
+            let callee = self.tree.nodes[e].x
+            let base = try self.expr_to_type(callee)
+            var targs = List(usize).new()
+            for a in self.tree.nodes[e].kids { targs.append(try self.expr_to_type(a)) }
+            self.tree.nodes[base].kids = targs
+            self.tree.nodes[base].start = self.span_of(e)
+            self.tree.nodes[base].end = self.end_of(e)
+            return base
+        }
+        if k == NodeKind.TypeVal { return self.tree.nodes[e].x }
+        return self.fail(self.span_of(e), "expected a type")
+    }
+
+    fn parse_struct_lit_fields(self: *mut Self) -> !List(usize) {
+        try self.expect(lexer.Kind.LBrace)
+        var fields = List(usize).new()
+        while true {
+            self.skip_newlines()
+            if self.at(lexer.Kind.RBrace) { break }
+            let start = self.start()
+            try self.expect(lexer.Kind.Dot)
+            let name = try self.expect_ident()
+            try self.expect(lexer.Kind.Eq)
+            self.skip_newlines()
+            let value = try self.parse_expr()
+            var n = blank(NodeKind.Init, start, self.prev_end())
+            n.name = name
+            n.x = value
+            fields.append(self.tree.add(n))
+            self.skip_newlines()
+            if !self.eat(lexer.Kind.Comma) { break }
+        }
+        self.skip_newlines()
+        try self.expect(lexer.Kind.RBrace)
+        return fields
+    }
+
+    fn lit(self: *mut Self, kind: []u8, own value: String, start: usize, end: usize) -> usize {
+        var n = blank(NodeKind.Lit, start, end)
+        n.text = String.from(kind)
+        n.name = value
+        return self.tree.add(n)
+    }
+
+    fn simple(self: *mut Self, k: NodeKind, start: usize, end: usize) -> usize {
+        return self.tree.add(blank(k, start, end))
+    }
+
+    fn parse_primary(self: *mut Self) -> !usize {
+        let start = self.start()
+        let tend = self.toks[self.pos].end
+        let k = self.peek()
+        if k == lexer.Kind.Int {
+            let v = String.from(self.text())
+            self.bump()
+            return self.lit("int", v, start, tend)
+        }
+        if k == lexer.Kind.Float {
+            var v = String.new()
+            for b in self.text() { if b != '_' { v.push_byte(b) } }
+            self.bump()
+            return self.lit("float", v, start, tend)
+        }
+        if k == lexer.Kind.Str {
+            let v = unhex(self.text())
+            self.bump()
+            return self.lit("str", v, start, tend)
+        }
+        if k == lexer.Kind.Bytes {
+            let v = unhex(self.text())
+            self.bump()
+            return self.lit("bytes", v, start, tend)
+        }
+        if k == lexer.Kind.Char {
+            let v = String.from(self.text())
+            self.bump()
+            return self.lit("char", v, start, tend)
+        }
+        if k == lexer.Kind.LParen or k == lexer.Kind.LBracket {
+            // inside parentheses or brackets a struct literal is unambiguous again
+            let saved = self.no_struct_lit
+            self.no_struct_lit = false
+            let r = self.parse_grouped(start) catch |e| {
+                self.no_struct_lit = saved
+                return e
+            }
+            self.no_struct_lit = saved
+            return r
+        }
+        return self.parse_primary_rest(start, tend, k)
+    }
+
+    /// `( ... )` and `[ ... ]` primaries.
+    fn parse_grouped(self: *mut Self, start: usize) -> !usize {
+        let k = self.peek()
+        if k == lexer.Kind.LParen {
+            self.bump()
+            if self.at(lexer.Kind.RParen) {
+                self.bump()
+                return self.simple(NodeKind.TupleLit, start, self.prev_end())
+            }
+            let first = try self.parse_expr()
+            if self.eat(lexer.Kind.Comma) {
+                var n = blank(NodeKind.TupleLit, start, start)
+                n.kids.append(first)
+                while true {
+                    if self.at(lexer.Kind.RParen) { break }
+                    n.kids.append(try self.parse_expr())
+                    if !self.eat(lexer.Kind.Comma) { break }
+                }
+                try self.expect(lexer.Kind.RParen)
+                n.end = self.prev_end()
+                return self.tree.add(n)
+            }
+            try self.expect(lexer.Kind.RParen)
+            return first
+        }
+        if k == lexer.Kind.LBracket {
+            self.bump()
+            if self.at(lexer.Kind.RBracket) {
+                let next_kw = self.peek_at(1) == lexer.Kind.Ident and lexer.is_keyword(self.text_at(1))
+                if self.ident_or_type_start(1) and !next_kw {
+                    self.pos -= 1
+                    let ty = try self.parse_type()
+                    var n = blank(NodeKind.TypeVal, start, self.prev_end())
+                    n.x = ty
+                    return self.tree.add(n)
+                }
+                self.bump()
+                return self.simple(NodeKind.ArrayLit, start, self.prev_end())
+            }
+            var elems = List(usize).new()
+            while true {
+                self.skip_newlines()
+                if self.at(lexer.Kind.RBracket) { break }
+                elems.append(try self.parse_expr())
+                self.skip_newlines()
+                if !self.eat(lexer.Kind.Comma) { break }
+            }
+            self.skip_newlines()
+            try self.expect(lexer.Kind.RBracket)
+            if elems.len == 1 and self.ident_or_type_start(0) and !self.at_ident("as") and !self.at_ident("and")
+                and !self.at_ident("or") and !self.at_ident("catch") and !self.at_ident("orelse") and !self.at_ident("into") {
+                let elem = try self.parse_type()
+                var arr = blank(NodeKind.TArray, start, self.prev_end())
+                arr.x = elems[0]
+                arr.y = elem
+                let tid = self.tree.add(arr)
+                var n = blank(NodeKind.TypeVal, start, self.prev_end())
+                n.x = tid
+                return self.tree.add(n)
+            }
+            var n = blank(NodeKind.ArrayLit, start, self.prev_end())
+            n.kids = elems
+            return self.tree.add(n)
+        }
+        unreachable
+    }
+
+    fn parse_primary_rest(self: *mut Self, start: usize, tend: usize, k: lexer.Kind) -> !usize {
+        if k == lexer.Kind.DotLBrace {
+            self.bump()
+            self.skip_newlines()
+            if self.at(lexer.Kind.Dot) and self.peek_at(1) == lexer.Kind.Ident and self.peek_at(2) == lexer.Kind.Eq {
+                var n = blank(NodeKind.StructLit, start, start)
+                while true {
+                    self.skip_newlines()
+                    if self.at(lexer.Kind.RBrace) { break }
+                    let fstart = self.start()
+                    try self.expect(lexer.Kind.Dot)
+                    let name = try self.expect_ident()
+                    try self.expect(lexer.Kind.Eq)
+                    self.skip_newlines()
+                    let value = try self.parse_expr()
+                    var f = blank(NodeKind.Init, fstart, self.prev_end())
+                    f.name = name
+                    f.x = value
+                    n.kids.append(self.tree.add(f))
+                    self.skip_newlines()
+                    if !self.eat(lexer.Kind.Comma) { break }
+                }
+                self.skip_newlines()
+                try self.expect(lexer.Kind.RBrace)
+                n.end = self.prev_end()
+                return self.tree.add(n)
+            }
+            var n = blank(NodeKind.TupleLit, start, start)
+            while true {
+                self.skip_newlines()
+                if self.at(lexer.Kind.RBrace) { break }
+                n.kids.append(try self.parse_expr())
+                self.skip_newlines()
+                if !self.eat(lexer.Kind.Comma) { break }
+            }
+            self.skip_newlines()
+            try self.expect(lexer.Kind.RBrace)
+            n.end = self.prev_end()
+            return self.tree.add(n)
+        }
+        if k == lexer.Kind.Dot {
+            self.bump()
+            let name = try self.expect_ident()
+            var n = blank(NodeKind.ImplicitVariant, start, start)
+            n.name = name
+            if self.at(lexer.Kind.LParen) { n.kids = try self.parse_args() }
+            n.end = self.prev_end()
+            return self.tree.add(n)
+        }
+        if k == lexer.Kind.LBrace { return self.parse_block(String.new()) }
+        if k == lexer.Kind.Pipe { return self.parse_closure() }
+        if k == lexer.Kind.At {
+            self.bump()
+            let name = try self.expect_ident()
+            let args = try self.parse_args()
+            var n = blank(NodeKind.Builtin, start, self.prev_end())
+            n.name = name
+            n.kids = args
+            return self.tree.add(n)
+        }
+        if k == lexer.Kind.LtLt {
+            let segs = try self.parse_bin_segments()
+            _ = try self.expect_kw("into")
+            let target = try self.parse_unary()
+            var n = blank(NodeKind.BinConstruct, start, self.prev_end())
+            n.kids = segs
+            n.x = target
+            return self.tree.add(n)
+        }
+        if k == lexer.Kind.Star or k == lexer.Kind.Question {
+            let ty = try self.parse_type()
+            var n = blank(NodeKind.TypeVal, start, self.prev_end())
+            n.x = ty
+            return self.tree.add(n)
+        }
+        if k == lexer.Kind.Ident {
+            let s = self.text()
+            if s == "true" or s == "false" {
+                self.bump()
+                return self.lit("bool", String.from(s), start, tend)
+            }
+            if s == "null" {
+                self.bump()
+                return self.simple(NodeKind.Null, start, tend)
+            }
+            if s == "undefined" {
+                self.bump()
+                return self.simple(NodeKind.Undefined, start, tend)
+            }
+            if s == "unreachable" {
+                self.bump()
+                return self.simple(NodeKind.Unreachable, start, tend)
+            }
+            if s == "if" { return self.parse_if() }
+            if s == "match" { return self.parse_match() }
+            if s == "unsafe" {
+                self.bump()
+                let body = try self.parse_block(String.new())
+                var n = blank(NodeKind.UnsafeE, start, self.prev_end())
+                n.x = body
+                return self.tree.add(n)
+            }
+            if s == "error" {
+                self.bump()
+                try self.expect(lexer.Kind.Dot)
+                let name = try self.expect_ident()
+                var n = blank(NodeKind.ErrorLit, start, self.prev_end())
+                n.name = name
+                return self.tree.add(n)
+            }
+            if (s == "fn" and self.peek_at(1) == lexer.Kind.LParen) or s == "weak" or s == "dyn" {
+                let ty = try self.parse_type()
+                var n = blank(NodeKind.TypeVal, start, self.prev_end())
+                n.x = ty
+                return self.tree.add(n)
+            }
+            if is_primitive(s) {
+                self.bump()
+                var t = blank(NodeKind.TName, start, tend)
+                t.words.append(String.from(s))
+                let tid = self.tree.add(t)
+                var n = blank(NodeKind.TypeVal, start, tend)
+                n.x = tid
+                return self.tree.add(n)
+            }
+            if lexer.is_keyword(s) { return self.fail(start, format("unexpected keyword `{}` in expression", .{s})) }
+            if self.peek_at(1) == lexer.Kind.Colon and self.peek_at(2) == lexer.Kind.LBrace {
+                let l = String.from(s)
+                self.bump()
+                self.bump()
+                return self.parse_block(l)
+            }
+            var n = blank(NodeKind.Ident, start, tend)
+            n.name = String.from(s)
+            self.bump()
+            return self.tree.add(n)
+        }
+        let got = describe(&self.toks[self.pos])
+        return self.fail(start, format("expected an expression but found {}", .{got}))
+    }
+
+    fn parse_closure(self: *mut Self) -> !usize {
+        let start = self.start()
+        try self.expect(lexer.Kind.Pipe)
+        var n = blank(NodeKind.Closure, start, start)
+        if self.eat(lexer.Kind.LBracket) {
+            while true {
+                if self.at(lexer.Kind.RBracket) { break }
+                let cstart = self.start()
+                let by_ref = self.eat(lexer.Kind.Amp)
+                let mutable = by_ref and self.eat_ident("mut")
+                let name = try self.expect_ident()
+                var c = blank(NodeKind.Capture, cstart, self.prev_end())
+                c.name = name
+                c.flag = by_ref
+                c.flag2 = mutable
+                n.kids2.append(self.tree.add(c))
+                if !self.eat(lexer.Kind.Comma) { break }
+            }
+            try self.expect(lexer.Kind.RBracket)
+        }
+        while true {
+            if self.at(lexer.Kind.Pipe) { break }
+            let pstart = self.start()
+            let name = try self.expect_ident()
+            var ty: usize = NONE
+            if self.eat(lexer.Kind.Colon) {
+                ty = try self.parse_type()
+            } else {
+                ty = self.simple(NodeKind.TInfer, pstart, pstart)
+                self.tree.nodes[ty].end = pstart
+            }
+            var p = blank(NodeKind.Param, pstart, self.prev_end())
+            p.name = name
+            p.x = ty
+            n.kids.append(self.tree.add(p))
+            if !self.eat(lexer.Kind.Comma) { break }
+        }
+        try self.expect(lexer.Kind.Pipe)
+        if self.eat(lexer.Kind.Arrow) { n.y = try self.parse_type() }
+        if self.at(lexer.Kind.LBrace) {
+            n.x = try self.parse_block(String.new())
+        } else {
+            n.x = try self.parse_expr()
+        }
+        n.end = self.prev_end()
+        return self.tree.add(n)
+    }
+
+    fn wrap_stmt(self: *mut Self, stmt: usize, start: usize) -> usize {
+        var b = blank(NodeKind.Block, start, self.prev_end())
+        b.name = String.new()
+        b.kids.append(stmt)
+        return self.tree.add(b)
+    }
+
+    fn parse_or_or_jump(self: *mut Self) -> !usize {
+        if self.at_ident("return") or self.at_ident("break") or self.at_ident("continue") {
+            let start = self.start()
+            let stmt = try self.parse_stmt()
+            return self.wrap_stmt(stmt, start)
+        }
+        return self.parse_or()
+    }
+
+    fn parse_expr_or_jump(self: *mut Self) -> !usize {
+        let start = self.start()
+        let stmt = try self.parse_stmt()
+        if self.tree.nodes[stmt].k == NodeKind.ExprStmt { return self.tree.nodes[stmt].x }
+        return self.wrap_stmt(stmt, start)
+    }
+
+    /// `if c { } else if d { } else { }` and `if let v = opt { } else { }`.
+    fn parse_if(self: *mut Self) -> !usize {
+        let start = try self.expect_kw("if")
+        var binding = String.from("-")
+        var has_binding = false
+        if self.eat_ident("let") {
+            binding = try self.expect_ident()
+            has_binding = true
+            try self.expect(lexer.Kind.Eq)
+        }
+        let cond = try self.parse_expr_no_struct()
+        if self.at(lexer.Kind.Pipe) and self.peek_at(1) == lexer.Kind.Ident and self.peek_at(2) == lexer.Kind.Pipe {
+            return self.fail(self.start(), "`if (opt) |v|` is now written `if let v = opt { ... }`")
+        }
+        let then = try self.parse_body("the `if` condition")
+        var els: usize = NONE
+        if self.at_ident("else") or (self.at(lexer.Kind.Newline) and self.ident_at(1, "else")) {
+            self.skip_newlines()
+            self.bump()
+            if self.at_ident("if") {
+                els = try self.parse_if()
+            } else {
+                els = try self.parse_body("`else`")
+            }
+        }
+        var n = blank(if has_binding { NodeKind.IfCapture } else { NodeKind.If }, start, self.prev_end())
+        n.name = binding
+        n.x = cond
+        n.y = then
+        n.z = els
+        return self.tree.add(n)
+    }
+
+    fn parse_match(self: *mut Self) -> !usize {
+        let start = try self.expect_kw("match")
+        let scrutinee = try self.parse_expr_no_struct()
+        try self.expect(lexer.Kind.LBrace)
+        var n = blank(NodeKind.Match, start, start)
+        n.x = scrutinee
+        while true {
+            self.skip_newlines()
+            if self.at(lexer.Kind.RBrace) { break }
+            let astart = self.start()
+            let pat = try self.parse_pattern()
+            var guard: usize = NONE
+            if self.eat_ident("if") { guard = try self.parse_expr() }
+            try self.expect(lexer.Kind.FatArrow)
+            self.skip_newlines()
+            var body: usize = NONE
+            if self.at(lexer.Kind.LBrace) {
+                body = try self.parse_block(String.new())
+            } else {
+                body = try self.parse_expr_or_jump()
+            }
+            var a = blank(NodeKind.Arm, astart, self.prev_end())
+            a.x = pat
+            a.y = guard
+            a.z = body
+            n.kids.append(self.tree.add(a))
+            if ! (self.eat(lexer.Kind.Comma) or self.at(lexer.Kind.Newline) or self.at(lexer.Kind.RBrace)) {
+                let got = describe(&self.toks[self.pos])
+                return self.fail(self.start(), format("expected `,` or newline after match arm but found {}", .{got}))
+            }
+        }
+        try self.expect(lexer.Kind.RBrace)
+        n.end = self.prev_end()
+        return self.tree.add(n)
+    }
+
+    // ----- patterns -------------------------------------------------------
+
+    fn parse_pattern(self: *mut Self) -> !usize {
+        let first = try self.parse_pattern_atom()
+        if self.at(lexer.Kind.Pipe) {
+            var n = blank(NodeKind.POr, self.span_of(first), 0)
+            n.kids.append(first)
+            while self.eat(lexer.Kind.Pipe) { n.kids.append(try self.parse_pattern_atom()) }
+            n.end = self.end_of(n.kids[n.kids.len - 1])
+            return self.tree.add(n)
+        }
+        return first
+    }
+
+    fn parse_pattern_atom(self: *mut Self) -> !usize {
+        let start = self.start()
+        let tend = self.toks[self.pos].end
+        let k = self.peek()
+        if k == lexer.Kind.Int or k == lexer.Kind.Float or k == lexer.Kind.Str or k == lexer.Kind.Bytes or k == lexer.Kind.Char or k == lexer.Kind.Minus {
+            let negative = self.eat(lexer.Kind.Minus)
+            let lk = self.peek()
+            let lend = self.toks[self.pos].end
+            var kind: []u8 = ""
+            var value = String.new()
+            if lk == lexer.Kind.Int { kind = "int"; value = String.from(self.text()) }
+            else if lk == lexer.Kind.Float { kind = "float"; for b in self.text() { if b != '_' { value.push_byte(b) } } }
+            else if lk == lexer.Kind.Str { kind = "str"; value = unhex(self.text()) }
+            else if lk == lexer.Kind.Bytes { kind = "bytes"; value = unhex(self.text()) }
+            else if lk == lexer.Kind.Char { kind = "char"; value = String.from(self.text()) }
+            else {
+                self.bump()
+                return self.fail(start, "expected a literal pattern")
+            }
+            self.bump()
+            if self.at(lexer.Kind.DotDot) {
+                self.bump()
+                let inclusive = self.eat(lexer.Kind.Eq)
+                // the low bound is a literal whose span is the pattern start (the reference parser
+                // reuses the start token's span, so a negative sign does not widen it)
+                var lo = self.lit(kind, value, start, lend - (if negative { 0 } else { 0 }))
+                self.tree.nodes[lo].end = if negative { start + 1 } else { lend }
+                if negative {
+                    var u = blank(NodeKind.Unary, start, start + 1)
+                    u.name = String.from("-")
+                    u.x = lo
+                    lo = self.tree.add(u)
+                }
+                let hi = try self.parse_unary()
+                var n = blank(NodeKind.PRange, start, self.prev_end())
+                n.flag = inclusive
+                n.x = lo
+                n.y = hi
+                return self.tree.add(n)
+            }
+            var n = blank(NodeKind.PLit, start, self.prev_end())
+            n.text = String.from(kind)
+            n.name = value
+            n.flag = negative
+            return self.tree.add(n)
+        }
+        if k == lexer.Kind.LtLt {
+            let segs = try self.parse_bin_segments()
+            var n = blank(NodeKind.PBinary, start, self.prev_end())
+            n.kids = segs
+            return self.tree.add(n)
+        }
+        if k == lexer.Kind.LParen {
+            self.bump()
+            var n = blank(NodeKind.PTuple, start, start)
+            while true {
+                if self.at(lexer.Kind.RParen) { break }
+                n.kids.append(try self.parse_pattern())
+                if !self.eat(lexer.Kind.Comma) { break }
+            }
+            try self.expect(lexer.Kind.RParen)
+            n.end = self.prev_end()
+            return self.tree.add(n)
+        }
+        if k == lexer.Kind.Dot {
+            self.bump()
+            let name = try self.expect_ident()
+            var n = blank(NodeKind.PVariant, start, start)
+            n.words.append(name)
+            n.kids = try self.parse_pattern_args()
+            n.end = self.prev_end()
+            return self.tree.add(n)
+        }
+        if k == lexer.Kind.Ident {
+            let s = self.text()
+            if s == "_" or s == "else" {
+                self.bump()
+                return self.simple(NodeKind.PWild, start, tend)
+            }
+            if s == "null" {
+                self.bump()
+                return self.simple(NodeKind.PNull, start, tend)
+            }
+            if s == "true" or s == "false" {
+                self.bump()
+                var n = blank(NodeKind.PLit, start, tend)
+                n.text = String.from("bool")
+                n.name = String.from(s)
+                return self.tree.add(n)
+            }
+            if s == "error" {
+                self.bump()
+                try self.expect(lexer.Kind.Dot)
+                let name = try self.expect_ident()
+                var n = blank(NodeKind.PError, start, self.prev_end())
+                n.name = name
+                return self.tree.add(n)
+            }
+            if lexer.is_keyword(s) { return self.fail(start, format("unexpected keyword `{}` in pattern", .{s})) }
+            let name = String.from(s)
+            self.bump()
+            if self.at(lexer.Kind.Dot) {
+                var n = blank(NodeKind.PVariant, start, start)
+                n.words.append(name)
+                while self.eat(lexer.Kind.Dot) { n.words.append(try self.expect_ident()) }
+                n.kids = try self.parse_pattern_args()
+                n.end = self.prev_end()
+                return self.tree.add(n)
+            }
+            if self.at(lexer.Kind.LParen) {
+                var n = blank(NodeKind.PVariant, start, start)
+                n.words.append(name)
+                n.kids = try self.parse_pattern_args()
+                n.end = self.prev_end()
+                return self.tree.add(n)
+            }
+            var n = blank(NodeKind.PBind, start, tend)
+            n.name = name
+            return self.tree.add(n)
+        }
+        let got = describe(&self.toks[self.pos])
+        return self.fail(start, format("expected a pattern but found {}", .{got}))
+    }
+
+    fn parse_pattern_args(self: *mut Self) -> !List(usize) {
+        var args = List(usize).new()
+        if self.at(lexer.Kind.LParen) {
+            self.bump()
+            while true {
+                if self.at(lexer.Kind.RParen) { break }
+                args.append(try self.parse_pattern())
+                if !self.eat(lexer.Kind.Comma) { break }
+            }
+            try self.expect(lexer.Kind.RParen)
+        }
+        return args
+    }
+
+    // ----- binary patterns ------------------------------------------------
+
+    fn parse_bin_size(self: *mut Self) -> !usize {
+        var lhs = try self.parse_unary()
+        while self.at(lexer.Kind.Star) {
+            self.bump()
+            let rhs = try self.parse_unary()
+            lhs = self.binary("*", lhs, rhs)
+        }
+        return lhs
+    }
+
+    fn parse_bin_segments(self: *mut Self) -> !List(usize) {
+        try self.expect(lexer.Kind.LtLt)
+        var segs = List(usize).new()
+        while true {
+            self.skip_newlines()
+            if self.at(lexer.Kind.GtGt) { break }
+            let start = self.start()
+            var seg = blank(NodeKind.Seg, start, start)
+            // text: bind | rest | expr
+            let next = self.peek_at(1)
+            if self.peek() == lexer.Kind.Ident and !lexer.is_keyword(self.text()) and next != lexer.Kind.LParen and next != lexer.Kind.Dot and next != lexer.Kind.LBracket {
+                seg.text = String.from("bind")
+                seg.name = String.from(self.text())
+                self.bump()
+            } else {
+                seg.text = String.from("expr")
+                seg.x = try self.parse_bin_size()
+            }
+            if self.eat(lexer.Kind.Colon) {
+                if self.at_ident("bytes") {
+                    self.bump()
+                    if seg.text != "bind" { return self.fail(start, "`bytes` requires a binding name") }
+                    seg.text = String.from("rest")
+                } else {
+                    seg.y = try self.parse_bin_size()
+                }
+            }
+            if self.eat(lexer.Kind.Slash) {
+                while true {
+                    let mstart = self.start()
+                    let m = try self.expect_ident()
+                    if ! (m == "big" or m == "little" or m == "native" or m == "signed" or m == "unsigned" or m == "float" or m == "utf8" or m == "bytes") {
+                        return self.fail(mstart, format("unknown binary segment modifier `{}`", .{m}))
+                    }
+                    if m == "bytes" {
+                        if seg.text == "bind" { seg.text = String.from("rest") }
+                    } else {
+                        seg.words.append(m)
+                    }
+                    if !self.eat(lexer.Kind.Minus) { break }
+                }
+            }
+            seg.end = self.prev_end()
+            segs.append(self.tree.add(seg))
+            self.skip_newlines()
+            if !self.eat(lexer.Kind.Comma) { break }
+        }
+        self.skip_newlines()
+        try self.expect(lexer.Kind.GtGt)
+        return segs
+    }
+}
+
+// ---------------------------------------------------------------- printing
+
+struct Printer {
+    tree: *Tree
+    out: String
+    depth: usize
+}
+
+fn quote(bytes: []u8) -> String {
+    var s = String.from("\"")
+    for b in bytes {
+        if b == '"' { s.append("\\\"") }
+        else if b == '\\' { s.append("\\\\") }
+        else if b >= 0x20 and b <= 0x7e { s.push_byte(b) }
+        else {
+            s.append("\\x")
+            let hex = "0123456789abcdef"
+            s.push_byte(hex[(b >> 4) as usize])
+            s.push_byte(hex[(b & 15) as usize])
+        }
+    }
+    s.append("\"")
+    return s
+}
+
+fn yes_no(id: usize) -> []u8 {
+    return if id == NONE { "no" } else { "yes" }
+}
+
+fn bool_text(b: bool) -> []u8 {
+    return if b { "true" } else { "false" }
+}
+
+impl Printer {
+    fn line(self: *mut Self, s: []u8) {
+        for _ in 0..self.depth { self.out.append("  ") }
+        self.out.append(s)
+        self.out.append("\n")
+    }
+    fn open(self: *mut Self, s: []u8) {
+        self.line(s)
+        self.depth += 1
+    }
+    fn close(self: *mut Self) {
+        self.depth -= 1
+        self.line(")")
+    }
+    fn sp(self: *Self, id: usize) -> String {
+        let n = &self.tree.nodes[id]
+        return format("@{}:{}", .{n.start, n.end})
+    }
+    fn words(self: *mut Self, head: []u8, ws: []String) {
+        var s = String.from("(")
+        s.append(head)
+        s.append(" ")
+        for w, i in ws {
+            if i > 0 { s.append(" ") }
+            s.append(w)
+        }
+        s.append(")")
+        self.line(s)
+    }
+    // struct/enum words hold type params, then "+" separated derives
+    fn split_words(self: *mut Self, ws: []String, first: []u8, second: []u8) {
+        var a = List(String).new()
+        var b = List(String).new()
+        var in_second = false
+        for w in ws {
+            if w == "+" { in_second = true; continue }
+            if in_second { b.append(String.from(w)) } else { a.append(String.from(w)) }
+        }
+        self.words(first, a[..])
+        self.words(second, b[..])
+    }
+    fn attrs(self: *mut Self, id: usize) {
+        let n = &self.tree.nodes[id]
+        self.line(format("(attrs pub={} docs={})", .{bool_text(n.flag), n.a}))
+    }
+    fn effects(self: *mut Self, ws: []String) {
+        self.words("effects", ws)
+    }
+
+    fn item(self: *mut Self, id: usize) {
+        let k = self.tree.nodes[id].k
+        if k == NodeKind.Fn { self.fn_decl(id); return }
+        let sp = self.sp(id)
+        if k == NodeKind.Struct {
+            let n = &self.tree.nodes[id]
+            let layout = self.tree.nodes[n.x].name[..]
+            self.open(format("({} {} name={} layout={}", .{n.text, sp, n.name, layout}))
+            self.attrs(id)
+            self.split_words(n.words[..], "tparams", "derives")
+            self.open("(fields")
+            for f in n.kids { self.field(f) }
+            self.close()
+            self.close()
+        } else if k == NodeKind.Enum {
+            let n = &self.tree.nodes[id]
+            self.open(format("(enum {} name={}", .{sp, n.name}))
+            self.attrs(id)
+            self.split_words(n.words[..], "tparams", "derives")
+            self.open("(variants")
+            for v in n.kids {
+                let vn = &self.tree.nodes[v]
+                if vn.text == "unit" {
+                    self.line(format("(variant {} name={} unit)", .{self.sp(v), vn.name}))
+                } else {
+                    self.open(format("(variant {} name={} {}", .{self.sp(v), vn.name, vn.text}))
+                    for c in vn.kids { if vn.text == "tuple" { self.ty(c) } else { self.field(c) } }
+                    self.close()
+                }
+            }
+            self.close()
+            self.close()
+        } else if k == NodeKind.Trait {
+            let n = &self.tree.nodes[id]
+            self.open(format("(trait {} name={}", .{sp, n.name}))
+            self.attrs(id)
+            self.words("assoc", n.words[..])
+            for m in n.kids { self.fn_decl(m) }
+            self.close()
+        } else if k == NodeKind.Impl {
+            let n = &self.tree.nodes[id]
+            self.open(format("(impl {} trait={}", .{sp, n.name}))
+            self.words("tparams", n.words[..])
+            self.ty(n.x)
+            for a in n.kids2 {
+                self.open(format("(assoc name={}", .{self.tree.nodes[a].name}))
+                self.ty(self.tree.nodes[a].x)
+                self.close()
+            }
+            for m in n.kids { self.fn_decl(m) }
+            self.close()
+        } else if k == NodeKind.Const {
+            let n = &self.tree.nodes[id]
+            self.open(format("(const {} name={}", .{sp, n.name}))
+            self.attrs(id)
+            if n.x == NONE { self.line("(notype)") } else { self.ty(n.x) }
+            self.expr(n.y)
+            self.close()
+        } else if k == NodeKind.Global {
+            let n = &self.tree.nodes[id]
+            self.open(format("(global {} name={} align={}", .{sp, n.name, n.text}))
+            self.attrs(id)
+            self.ty(n.x)
+            if n.y == NONE { self.line("(undefined)") } else { self.expr(n.y) }
+            self.close()
+        } else if k == NodeKind.TypeAlias {
+            let n = &self.tree.nodes[id]
+            self.open(format("(type {} name={} distinct={}", .{sp, n.name, bool_text(n.flag2)}))
+            self.attrs(id)
+            self.ty(n.x)
+            self.close()
+        } else if k == NodeKind.ErrorSet {
+            let n = &self.tree.nodes[id]
+            self.open(format("(error {} name={}", .{sp, n.name}))
+            self.attrs(id)
+            self.words("names", n.words[..])
+            self.close()
+        } else if k == NodeKind.Import {
+            let n = &self.tree.nodes[id]
+            var path = String.new()
+            var names = String.new()
+            var in_names = false
+            var pi: usize = 0
+            var ni: usize = 0
+            for w in n.words {
+                if w == "+" { in_names = true; continue }
+                if in_names {
+                    if ni > 0 { names.append(",") }
+                    names.append(w)
+                    ni += 1
+                } else {
+                    if pi > 0 { path.append(".") }
+                    path.append(w)
+                    pi += 1
+                }
+            }
+            let names_text = if n.flag { names.clone() } else { String.from("-") }
+            self.line(format("(import {} path={} alias={} names={})", .{sp, path, n.name, names_text}))
+        } else if k == NodeKind.Test {
+            let n = &self.tree.nodes[id]
+            self.open(format("(test {} name={} comptime={}", .{sp, quote(n.name), bool_text(n.flag)}))
+            self.block(n.x)
+            self.close()
+        } else if k == NodeKind.Artifact {
+            let n = &self.tree.nodes[id]
+            self.open(format("(artifact {} kind={}", .{sp, n.name}))
+            for f in n.kids {
+                let fnode = &self.tree.nodes[f]
+                self.open(format("(field {} name={}", .{self.sp(f), fnode.name}))
+                self.expr(fnode.x)
+                self.close()
+            }
+            self.close()
+        }
+    }
+
+    fn fn_decl(self: *mut Self, id: usize) {
+        let n = &self.tree.nodes[id]
+        self.open(format("(fn {} name={} export={} extern={} variadic=false body={}", .{self.sp(id), n.name, n.text, bool_text(n.flag2), yes_no(n.y)}))
+        self.attrs(id)
+        self.open("(params")
+        for p in n.kids { self.param(p) }
+        self.close()
+        if n.x == NONE { self.line("(noret)") } else { self.ty(n.x) }
+        self.effects(n.words[..])
+        for w in n.kids2 {
+            let wn = &self.tree.nodes[w]
+            self.open(format("(where {} param={}", .{self.sp(w), wn.name}))
+            self.line(format("(bounds {})", .{wn.text.trim()}))
+            self.effects(wn.words[..])
+            self.close()
+        }
+        if n.y != NONE { self.block(n.y) }
+        self.close()
+    }
+
+    fn param(self: *mut Self, id: usize) {
+        let n = &self.tree.nodes[id]
+        self.open(format("(param {} name={} comptime={} own={}", .{self.sp(id), n.name, bool_text(n.flag), bool_text(n.flag2)}))
+        self.ty(n.x)
+        self.close()
+    }
+
+    fn field(self: *mut Self, id: usize) {
+        let n = &self.tree.nodes[id]
+        self.open(format("(field {} name={} docs={}", .{self.sp(id), n.name, n.a}))
+        self.ty(n.x)
+        if n.y != NONE {
+            self.open("(default")
+            self.expr(n.y)
+            self.close()
+        }
+        if n.z != NONE {
+            self.open("(where")
+            self.expr(n.z)
+            self.close()
+        }
+        self.close()
+    }
+
+    fn ty(self: *mut Self, id: usize) {
+        let n = &self.tree.nodes[id]
+        let k = n.k
+        let sp = self.sp(id)
+        if k == NodeKind.TName {
+            var path = String.new()
+            for w, i in n.words {
+                if i > 0 { path.append(".") }
+                path.append(w)
+            }
+            if n.kids.len == 0 {
+                self.line(format("(tname {} path={})", .{sp, path}))
+            } else {
+                self.open(format("(tname {} path={}", .{sp, path}))
+                for a in n.kids { self.ty(a) }
+                self.close()
+            }
+        } else if k == NodeKind.TArray {
+            self.open(format("(tarray {}", .{sp}))
+            self.expr(n.x)
+            self.ty(n.y)
+            self.close()
+        } else if k == NodeKind.TSlice {
+            self.open(format("(tslice {} mut={}", .{sp, bool_text(n.flag)}))
+            self.ty(n.x)
+            self.close()
+        } else if k == NodeKind.TPtr {
+            self.open(format("(tptr {} mut={}", .{sp, bool_text(n.flag)}))
+            self.ty(n.x)
+            self.close()
+        } else if k == NodeKind.TOpt {
+            self.open(format("(topt {}", .{sp}))
+            self.ty(n.x)
+            self.close()
+        } else if k == NodeKind.TErr {
+            self.open(format("(terr {} set={}", .{sp, yes_no(n.x)}))
+            if n.x != NONE { self.ty(n.x) }
+            self.ty(n.y)
+            self.close()
+        } else if k == NodeKind.TFn {
+            self.open(format("(tfn {}", .{sp}))
+            self.open("(params")
+            for p in n.kids { self.ty(p) }
+            self.close()
+            self.ty(n.x)
+            self.effects(n.words[..])
+            self.close()
+        } else if k == NodeKind.TTuple {
+            self.open(format("(ttuple {}", .{sp}))
+            for e in n.kids { self.ty(e) }
+            self.close()
+        } else if k == NodeKind.TWeak {
+            self.open(format("(tweak {}", .{sp}))
+            self.ty(n.x)
+            self.close()
+        } else if k == NodeKind.TDyn {
+            self.open(format("(tdyn {} trait={}", .{sp, n.name}))
+            self.effects(n.words[..])
+            self.close()
+        } else if k == NodeKind.TInfer {
+            self.line(format("(tinfer {})", .{sp}))
+        }
+    }
+
+    fn block(self: *mut Self, id: usize) {
+        let n = &self.tree.nodes[id]
+        let label = if n.name.len == 0 { "-" } else { n.name[..] }
+        self.open(format("(block {} label={}", .{self.sp(id), label}))
+        for s in n.kids { self.stmt(s) }
+        if n.x != NONE {
+            self.open("(tail")
+            self.expr(n.x)
+            self.close()
+        }
+        self.close()
+    }
+
+    fn stmt(self: *mut Self, id: usize) {
+        let n = &self.tree.nodes[id]
+        let k = n.k
+        let sp = self.sp(id)
+        if k == NodeKind.Let {
+            self.open(format("(let {} name={} mut={}", .{sp, n.name, bool_text(n.flag)}))
+            if n.x == NONE { self.line("(notype)") } else { self.ty(n.x) }
+            if n.y == NONE { self.line("(noinit)") } else { self.expr(n.y) }
+            self.close()
+        } else if k == NodeKind.Assign {
+            self.open(format("(assign {} op={}", .{sp, n.name}))
+            self.expr(n.x)
+            self.expr(n.y)
+            self.close()
+        } else if k == NodeKind.ExprStmt {
+            self.open("(expr")
+            self.expr(n.x)
+            self.close()
+        } else if k == NodeKind.Return {
+            self.open(format("(return {}", .{sp}))
+            if n.x != NONE { self.expr(n.x) }
+            self.close()
+        } else if k == NodeKind.Break {
+            self.open(format("(break {} label={}", .{sp, n.name}))
+            if n.x != NONE { self.expr(n.x) }
+            self.close()
+        } else if k == NodeKind.Continue {
+            self.line(format("(continue {} label={})", .{sp, n.name}))
+        } else if k == NodeKind.Defer or k == NodeKind.ErrDefer {
+            self.open(format("({} {}", .{if k == NodeKind.Defer { "defer" } else { "errdefer" }, sp}))
+            self.stmt(n.x)
+            self.close()
+        } else if k == NodeKind.While {
+            self.open(format("(while {} label={}", .{sp, n.name}))
+            self.expr(n.x)
+            self.block(n.y)
+            if n.z != NONE {
+                self.open("(else")
+                self.block(n.z)
+                self.close()
+            }
+            self.close()
+        } else if k == NodeKind.For {
+            self.open(format("(for {} label={} parallel={}", .{sp, n.name, bool_text(n.flag2)}))
+            self.words("bindings", n.words[..])
+            if n.flag {
+                self.open("(range")
+                self.expr(n.x)
+                self.expr(n.y)
+                if n.z != NONE {
+                    self.open("(step")
+                    self.expr(n.z)
+                    self.close()
+                }
+                self.close()
+            } else {
+                self.open("(items")
+                for i in n.kids2 { self.expr(i) }
+                self.close()
+            }
+            self.block(n.a)
+            self.close()
+        } else if k == NodeKind.Unsafe {
+            self.open(format("(unsafe {}", .{sp}))
+            self.block(n.x)
+            self.close()
+        } else if k == NodeKind.Discard {
+            self.open(format("(discard {}", .{sp}))
+            self.expr(n.x)
+            self.close()
+        } else if k == NodeKind.Using {
+            self.open(format("(using {} strategy={}", .{sp, n.name}))
+            self.block(n.x)
+            self.close()
+        }
+    }
+
+    fn lit_text(self: *Self, id: usize) -> String {
+        let n = &self.tree.nodes[id]
+        if n.text == "str" or n.text == "bytes" { return format("{} {}", .{n.text, quote(n.name)}) }
+        return format("{} {}", .{n.text, n.name})
+    }
+
+    fn segments(self: *mut Self, segs: []usize) {
+        for s in segs {
+            let n = &self.tree.nodes[s]
+            var mods = String.new()
+            for m, i in n.words {
+                if i > 0 { mods.append(",") }
+                mods.append(m)
+            }
+            let mods_text = if mods.len == 0 { "-" } else { mods[..] }
+            let size = yes_no(n.y)
+            if n.text == "bind" {
+                self.open(format("(seg {} bind={} mods={} size={}", .{self.sp(s), n.name, mods_text, size}))
+            } else if n.text == "rest" {
+                self.open(format("(seg {} rest={} mods={} size={}", .{self.sp(s), n.name, mods_text, size}))
+            } else {
+                self.open(format("(seg {} expr mods={} size={}", .{self.sp(s), mods_text, size}))
+                self.expr(n.x)
+            }
+            if n.y != NONE {
+                self.open("(size")
+                self.expr(n.y)
+                self.close()
+            }
+            self.close()
+        }
+    }
+
+    fn expr(self: *mut Self, id: usize) {
+        let n = &self.tree.nodes[id]
+        let k = n.k
+        let sp = self.sp(id)
+        if k == NodeKind.Lit {
+            self.line(format("(lit {} {})", .{sp, self.lit_text(id)}))
+        } else if k == NodeKind.Ident {
+            self.line(format("(ident {} name={})", .{sp, n.name}))
+        } else if k == NodeKind.FieldE {
+            self.open(format("(field {} name={}", .{sp, n.name}))
+            self.expr(n.x)
+            self.close()
+        } else if k == NodeKind.ImplicitVariant {
+            self.open(format("(variant {} name={}", .{sp, n.name}))
+            for a in n.kids { self.expr(a) }
+            self.close()
+        } else if k == NodeKind.Index {
+            self.open(format("(index {}", .{sp}))
+            self.expr(n.x)
+            self.expr(n.y)
+            self.close()
+        } else if k == NodeKind.SliceE {
+            self.open(format("(slice {} start={} end={}", .{sp, yes_no(n.y), yes_no(n.z)}))
+            self.expr(n.x)
+            if n.y != NONE { self.expr(n.y) }
+            if n.z != NONE { self.expr(n.z) }
+            self.close()
+        } else if k == NodeKind.Call {
+            self.open(format("(call {}", .{sp}))
+            self.expr(n.x)
+            self.open("(args")
+            for a in n.kids { self.expr(a) }
+            self.close()
+            self.close()
+        } else if k == NodeKind.MethodCall {
+            self.open(format("(mcall {} name={}", .{sp, n.name}))
+            self.expr(n.x)
+            self.open("(args")
+            for a in n.kids { self.expr(a) }
+            self.close()
+            self.close()
+        } else if k == NodeKind.Unary {
+            self.open(format("(unary {} op={}", .{sp, n.name}))
+            self.expr(n.x)
+            self.close()
+        } else if k == NodeKind.Binary {
+            self.open(format("(binary {} op={}", .{sp, n.name}))
+            self.expr(n.x)
+            self.expr(n.y)
+            self.close()
+        } else if k == NodeKind.Pipe {
+            self.open(format("(pipe {}", .{sp}))
+            self.expr(n.x)
+            self.expr(n.y)
+            self.close()
+        } else if k == NodeKind.Try {
+            self.open(format("(try {}", .{sp}))
+            self.expr(n.x)
+            self.close()
+        } else if k == NodeKind.Catch {
+            self.open(format("(catch {} bind={}", .{sp, n.name}))
+            self.expr(n.x)
+            self.expr(n.y)
+            self.close()
+        } else if k == NodeKind.OrElse {
+            self.open(format("(orelse {}", .{sp}))
+            self.expr(n.x)
+            self.expr(n.y)
+            self.close()
+        } else if k == NodeKind.Unwrap {
+            self.open(format("(unwrap {}", .{sp}))
+            self.expr(n.x)
+            self.close()
+        } else if k == NodeKind.Deref {
+            self.open(format("(deref {}", .{sp}))
+            self.expr(n.x)
+            self.close()
+        } else if k == NodeKind.If {
+            self.open(format("(if {} else={}", .{sp, yes_no(n.z)}))
+            self.expr(n.x)
+            self.block(n.y)
+            if n.z != NONE { self.expr(n.z) }
+            self.close()
+        } else if k == NodeKind.IfCapture {
+            self.open(format("(ifcap {} bind={} else={}", .{sp, n.name, yes_no(n.z)}))
+            self.expr(n.x)
+            self.block(n.y)
+            if n.z != NONE { self.expr(n.z) }
+            self.close()
+        } else if k == NodeKind.Match {
+            self.open(format("(match {}", .{sp}))
+            self.expr(n.x)
+            for a in n.kids {
+                let an = &self.tree.nodes[a]
+                self.open(format("(arm {} guard={}", .{self.sp(a), yes_no(an.y)}))
+                self.pattern(an.x)
+                if an.y != NONE { self.expr(an.y) }
+                self.expr(an.z)
+                self.close()
+            }
+            self.close()
+        } else if k == NodeKind.Block {
+            self.block(id)
+        } else if k == NodeKind.StructLit {
+            self.open(format("(structlit {} type={}", .{sp, yes_no(n.x)}))
+            if n.x != NONE { self.ty(n.x) }
+            for f in n.kids {
+                let fnode = &self.tree.nodes[f]
+                self.open(format("(init {} name={}", .{self.sp(f), fnode.name}))
+                self.expr(fnode.x)
+                self.close()
+            }
+            self.close()
+        } else if k == NodeKind.ArrayLit {
+            self.open(format("(array {}", .{sp}))
+            for x in n.kids { self.expr(x) }
+            self.close()
+        } else if k == NodeKind.TupleLit {
+            self.open(format("(tuple {}", .{sp}))
+            for x in n.kids { self.expr(x) }
+            self.close()
+        } else if k == NodeKind.Closure {
+            self.open(format("(closure {} ret={}", .{sp, yes_no(n.y)}))
+            self.open("(captures")
+            for c in n.kids2 {
+                let cn = &self.tree.nodes[c]
+                self.line(format("(capture {} name={} ref={} mut={})", .{self.sp(c), cn.name, bool_text(cn.flag), bool_text(cn.flag2)}))
+            }
+            self.close()
+            self.open("(params")
+            for p in n.kids { self.param(p) }
+            self.close()
+            if n.y != NONE { self.ty(n.y) }
+            self.expr(n.x)
+            self.close()
+        } else if k == NodeKind.Range {
+            self.open(format("(range {}", .{sp}))
+            self.expr(n.x)
+            self.expr(n.y)
+            self.close()
+        } else if k == NodeKind.Cast {
+            self.open(format("(cast {}", .{sp}))
+            self.expr(n.x)
+            self.ty(n.y)
+            self.close()
+        } else if k == NodeKind.Null {
+            self.line(format("(null {})", .{sp}))
+        } else if k == NodeKind.Undefined {
+            self.line(format("(undefined {})", .{sp}))
+        } else if k == NodeKind.Unreachable {
+            self.line(format("(unreachable {})", .{sp}))
+        } else if k == NodeKind.ErrorLit {
+            self.line(format("(errorlit {} name={})", .{sp, n.name}))
+        } else if k == NodeKind.Builtin {
+            self.open(format("(builtin {} name={}", .{sp, n.name}))
+            for a in n.kids { self.expr(a) }
+            self.close()
+        } else if k == NodeKind.BinConstruct {
+            self.open(format("(binbuild {}", .{sp}))
+            self.segments(n.kids[..])
+            self.open("(into")
+            self.expr(n.x)
+            self.close()
+            self.close()
+        } else if k == NodeKind.Comptime {
+            self.open(format("(comptime {}", .{sp}))
+            self.expr(n.x)
+            self.close()
+        } else if k == NodeKind.TypeVal {
+            self.open(format("(typeval {}", .{sp}))
+            self.ty(n.x)
+            self.close()
+        } else if k == NodeKind.UnsafeE {
+            self.open(format("(unsafe {}", .{sp}))
+            self.block(n.x)
+            self.close()
+        }
+    }
+
+    fn pattern(self: *mut Self, id: usize) {
+        let n = &self.tree.nodes[id]
+        let k = n.k
+        let sp = self.sp(id)
+        if k == NodeKind.PWild {
+            self.line(format("(pwild {})", .{sp}))
+        } else if k == NodeKind.PBind {
+            self.line(format("(pbind {} name={})", .{sp, n.name}))
+        } else if k == NodeKind.PLit {
+            self.line(format("(plit {} neg={} {})", .{sp, bool_text(n.flag), self.lit_text(id)}))
+        } else if k == NodeKind.PVariant {
+            var path = String.new()
+            for w, i in n.words {
+                if i > 0 { path.append(".") }
+                path.append(w)
+            }
+            self.open(format("(pvariant {} path={}", .{sp, path}))
+            for a in n.kids { self.pattern(a) }
+            self.close()
+        } else if k == NodeKind.PError {
+            self.line(format("(perror {} name={})", .{sp, n.name}))
+        } else if k == NodeKind.PNull {
+            self.line(format("(pnull {})", .{sp}))
+        } else if k == NodeKind.PRange {
+            self.open(format("(prange {} inclusive={}", .{sp, bool_text(n.flag)}))
+            self.expr(n.x)
+            self.expr(n.y)
+            self.close()
+        } else if k == NodeKind.POr {
+            self.open(format("(por {}", .{sp}))
+            for a in n.kids { self.pattern(a) }
+            self.close()
+        } else if k == NodeKind.PBinary {
+            self.open(format("(pbinary {}", .{sp}))
+            self.segments(n.kids[..])
+            self.close()
+        } else if k == NodeKind.PTuple {
+            self.open(format("(ptuple {}", .{sp}))
+            for e in n.kids { self.pattern(e) }
+            self.close()
+        }
+    }
+}
+
+/// A parsed file: the arena, its top-level items, and any errors, for the
+/// checker (`self/check.nx`) to walk.
+pub struct Parsed {
+    tree: Tree
+    items: List(usize)
+    errors: List(String)
+}
+
+pub fn parse_source(src: []u8) -> Parsed {
+    var lx = lexer.new_lexer(src)
+    lx.lex()
+    var errors = List(String).new()
+    for e in lx.errors { errors.append(String.from(e)) }
+    var p = Parser{ .toks = lx.toks.clone(), .pos = 0, .tree = Tree{ .nodes = List(Node).new() }, .errors = List(String).new(), .no_struct_lit = false }
+    let items = p.parse_module()
+    for e in p.errors { errors.append(String.from(e)) }
+    return Parsed{ .tree = Tree{ .nodes = p.tree.nodes.clone() }, .items = items, .errors = errors }
+}
+
+/// Parse `src` and print the tree; errors are returned as text.
+pub fn parse_and_print(src: []u8) -> (String, List(String)) {
+    var lx = lexer.new_lexer(src)
+    lx.lex()
+    var errors = List(String).new()
+    for e in lx.errors { errors.append(String.from(e)) }
+    var p = Parser{ .toks = lx.toks.clone(), .pos = 0, .tree = Tree{ .nodes = List(Node).new() }, .errors = List(String).new(), .no_struct_lit = false }
+    let items = p.parse_module()
+    for e in p.errors { errors.append(String.from(e)) }
+    var pr = Printer{ .tree = &p.tree, .out = String.new(), .depth = 0 }
+    pr.open("(module")
+    for it in items { pr.item(it) }
+    pr.close()
+    return (pr.out.clone(), errors)
+}
+
+fn main() -> !void {
+    let args = os.args()
+    if args.len < 2 {
+        eprintln("usage: parser <file.nx>", .{})
+        os.exit(2)
+    }
+    let text = try io.read_file(args[1])
+    let result = parse_and_print(text)
+    print("{}", .{result.0})
+    for e in result.1 { eprintln("{}", .{e}) }
+    if result.1.len > 0 { os.exit(1) }
+}

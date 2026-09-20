@@ -1,0 +1,11 @@
+// EXPECT: use of `maybe` after it was moved
+struct Box { items: List(i32) }
+fn make() -> ?Box { return Box{ .items = List(i32).new() } }
+fn main() {
+    let maybe = make()
+    if maybe == null { return }
+    let b = maybe.?
+    let again = maybe.?
+    _ = b
+    _ = again
+}

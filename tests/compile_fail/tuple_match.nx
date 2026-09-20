@@ -1,0 +1,15 @@
+// EXPECT: `match` is not exhaustive
+// EXPECT: a range step cannot be zero
+enum A { X, Y }
+enum B { P, Q }
+fn f(a: A, b: B) -> i32 {
+    return match (a, b) {
+        (.X, .P) => 1,
+        (.X, .Q) => 2,
+        (.Y, .P) => 3,
+    }
+}
+fn main() {
+    _ = f(A.X, B.P)
+    for i in 0..3 step 0 { _ = i }
+}

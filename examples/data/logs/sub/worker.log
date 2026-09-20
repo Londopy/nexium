@@ -1,0 +1,6 @@
+2026-09-18T22:30:00 INFO  worker 3 picked job 8812
+2026-09-18T22:30:41 ERROR worker 3: job 8812 failed: timeout after 40s
+2026-09-18T22:30:42 INFO  worker 3 retrying job 8812
+2026-09-19T02:05:55 WARN  worker 1 queue depth 250
+this line has no timestamp and is skipped
+2026-09-19T02:06:10 INFO  worker 1 queue drained

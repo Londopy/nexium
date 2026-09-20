@@ -1,0 +1,12 @@
+// EXPECT: a constant cannot own heap data (`List(i64)`); store a slice (`[]i64`) instead
+fn make() -> List(i64) {
+    var xs = List(i64).new()
+    xs.append(1)
+    return xs
+}
+
+const XS: List(i64) = comptime make()
+
+fn main() {
+    println("{}", .{XS.len})
+}

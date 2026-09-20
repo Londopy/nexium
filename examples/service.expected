@@ -1,0 +1,5 @@
+GET /health -> 200 {"ok":true}
+GET /greet -> 200 hello, Nexium
+POST /echo -> 200 round trip (text/plain)
+GET /index.html -> 200 241 bytes of text/html; charset=utf-8
+GET /nothing-here -> 404

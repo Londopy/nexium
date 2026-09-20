@@ -1,0 +1,2 @@
+panic: record constraint violated
+  at tests/spec/s10_record_runtime_panic.nx:7

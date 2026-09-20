@@ -288,7 +288,7 @@
         },
         {
           "name": "keyword.other.nexium",
-          "match": "\\b(fn|let|var|const|struct|enum|record|ref|class|trait|impl|pub|import|comptime|unsafe|error|type|distinct|where|into|artifact|test|export|as|in|dyn|weak|extern|derive|layout)\\b"
+          "match": "\\b(fn|let|var|const|struct|enum|record|ref|class|trait|impl|pub|import|comptime|unsafe|error|type|distinct|where|into|artifact|test|export|as|in|dyn|weak|extern|derive|layout|own)\\b"
         },
         {
           "name": "keyword.operator.logical.nexium",

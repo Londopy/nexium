@@ -5,8 +5,8 @@ fn check(n: i32) -> AppError!i32 {
     defer println("defer: {}", .{log})
     errdefer println("errdefer ran for {}", .{n})
     log.append("start")
-    if (n > 100) return error.TooBig
-    if (n % 2 == 1) return error.Odd
+    if n > 100 { return error.TooBig }
+    if n % 2 == 1 { return error.Odd }
     log.append(" ok")
     return n / 2
 }
@@ -42,18 +42,18 @@ fn main() -> !void {
     // loops
     var i: u32 = 0
     var acc: u32 = 0
-    while (i < 10) {
+    while i < 10 {
         i += 1
-        if (i % 2 == 0) continue
-        if (i > 7) break
+        if i % 2 == 0 { continue }
+        if i > 7 { break }
         acc += i
     }
     println("acc {}", .{acc})
     var pairs: u32 = 0
-    outer: for (0..5) |a| {
-        for (0..5) |b| {
-            if (b > a) continue :outer
-            if (a == 4) break :outer
+    outer: for a in 0..5 {
+        for b in 0..5 {
+            if b > a { continue :outer }
+            if a == 4 { break :outer }
             pairs += 1
         }
     }
@@ -88,9 +88,9 @@ fn main() -> !void {
         -1
     }
     println("bad {}", .{bad})
-    for ("line one\nline two\n".lines()) |line, k| { println("{}: {}", .{k, line}) }
+    for line, k in "line one\nline two\n".lines() { println("{}: {}", .{k, line}) }
     var s = String.new()
-    for ("abc") |c| { s.append_char((c as char).to_upper()) }
+    for c in "abc" { s.append_char((c as char).to_upper()) }
     println("upper {} eq {}", .{s, s == "ABC"})
     println("checked {} {}", .{(200 as u8).checked_add(100) == null, (2 as u8).checked_add(3) orelse 0})
 

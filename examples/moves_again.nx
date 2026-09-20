@@ -1,0 +1,32 @@
+// Two ownership corners: a literal that reads a local in one field and moves
+// it in a later one sees the value before the move, and a local that was
+// moved out can be assigned again (it is re-initialized, not read).
+
+struct Match {
+    start: usize
+    end: usize
+    caps: List(usize)
+}
+
+fn make(own caps: List(usize)) -> Match {
+    return Match{ .start = caps[0], .end = caps[1], .caps = caps }
+}
+
+fn main() {
+    var caps = List(usize).new()
+    caps.append(3)
+    caps.append(7)
+    let m = make(caps)
+    println("{}..{} with {} caps", .{m.start, m.end, m.caps.len})
+
+    var a = List(i32).new()
+    a.append(1)
+    var b = List(i32).new()
+    b.append(2)
+    b.append(3)
+    // swap by moving: after `let tmp = a`, `a` is empty until assigned again
+    let tmp = a
+    a = b
+    b = tmp
+    println("a has {} and b has {}", .{a.len, b.len})
+}

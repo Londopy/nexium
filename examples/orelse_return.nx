@@ -1,0 +1,14 @@
+fn pick(xs: List(i32), flag: ?i32) -> List(i32) {
+    var out = List(i32).new()
+    let v = flag orelse return out
+    out.append(v)
+    for x in xs { out.append(x) }
+    return out
+}
+fn main() {
+    var xs = List(i32).new()
+    xs.append(4)
+    let a = pick(xs.clone(), null)
+    let b = pick(xs, 7)
+    println("{} {}", .{a.len, b.len})
+}

@@ -260,10 +260,59 @@ pub struct HoverInfo {
     pub text: String,
 }
 
+/// A place in a file, 0-based.
+pub struct Location {
+    pub path: String,
+    pub line: usize,
+    pub col: usize,
+    pub end_line: usize,
+    pub end_col: usize,
+}
+
+pub struct CompletionItem {
+    pub label: String,
+    pub kind: u32,
+    pub detail: String,
+}
+
 /// Callbacks into the compiler, so this module stays free of compiler types.
 pub struct Backend {
     pub diagnostics: Box<dyn Fn(&str, &str) -> Vec<Diagnostic>>,
     pub hover: Box<dyn Fn(&str, &str, usize, usize) -> Option<HoverInfo>>,
+    pub definition: Box<dyn Fn(&str, &str, usize, usize) -> Option<Location>>,
+    pub completion: Box<dyn Fn(&str, &str, usize, usize) -> Vec<CompletionItem>>,
+    /// every span to rewrite for a rename at the position, in the file itself
+    pub rename: Box<dyn Fn(&str, &str, usize, usize) -> Vec<Location>>,
+}
+
+fn path_to_uri(p: &str) -> String {
+    let mut s = p.replace('\\', "/");
+    if !s.starts_with('/') {
+        s.insert(0, '/');
+    }
+    let mut out = String::from("file://");
+    for ch in s.chars() {
+        match ch {
+            ' ' => out.push_str("%20"),
+            ':' => out.push_str("%3A"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+fn range(l: &Location) -> Json {
+    obj(vec![
+        ("start", obj(vec![("line", Json::Num(l.line as f64)), ("character", Json::Num(l.col as f64))])),
+        ("end", obj(vec![("line", Json::Num(l.end_line as f64)), ("character", Json::Num(l.end_col as f64))])),
+    ])
+}
+
+fn position(params: &Json) -> (String, usize, usize) {
+    let uri = params.get("textDocument").and_then(|t| t.get("uri")).and_then(|u| u.as_str()).unwrap_or("").to_string();
+    let line = params.get("position").and_then(|p| p.get("line")).and_then(|l| l.as_f64()).unwrap_or(0.0) as usize;
+    let col = params.get("position").and_then(|p| p.get("character")).and_then(|l| l.as_f64()).unwrap_or(0.0) as usize;
+    (uri, line, col)
 }
 
 fn read_message(stdin: &mut impl BufRead) -> Option<String> {
@@ -339,7 +388,13 @@ pub fn run(backend: Backend) {
                 let result = obj(vec![
                     (
                         "capabilities",
-                        obj(vec![("textDocumentSync", obj(vec![("openClose", Json::Bool(true)), ("change", Json::Num(1.0)), ("save", Json::Bool(true))])), ("hoverProvider", Json::Bool(true))]),
+                        obj(vec![
+                            ("textDocumentSync", obj(vec![("openClose", Json::Bool(true)), ("change", Json::Num(1.0)), ("save", Json::Bool(true))])),
+                            ("hoverProvider", Json::Bool(true)),
+                            ("definitionProvider", Json::Bool(true)),
+                            ("completionProvider", obj(vec![("triggerCharacters", Json::Arr(vec![Json::Str(".".into())]))])),
+                            ("renameProvider", obj(vec![("prepareProvider", Json::Bool(true))])),
+                        ]),
                     ),
                     ("serverInfo", obj(vec![("name", Json::Str("nx".into())), ("version", Json::Str(env!("CARGO_PKG_VERSION").into()))])),
                 ]);
@@ -405,10 +460,60 @@ pub fn run(backend: Backend) {
                     ]),
                 );
             }
+            "textDocument/definition" => {
+                let (uri, line, col) = position(&params);
+                let result = match docs.get(&uri) {
+                    Some(text) => match (backend.definition)(&uri_to_path(&uri), text, line, col) {
+                        Some(loc) => obj(vec![("uri", Json::Str(path_to_uri(&loc.path))), ("range", range(&loc))]),
+                        None => Json::Null,
+                    },
+                    None => Json::Null,
+                };
+                send(&mut out, &obj(vec![("jsonrpc", Json::Str("2.0".into())), ("id", id.unwrap_or(Json::Null)), ("result", result)]));
+            }
+            "textDocument/completion" => {
+                let (uri, line, col) = position(&params);
+                let items: Vec<Json> = match docs.get(&uri) {
+                    Some(text) => (backend.completion)(&uri_to_path(&uri), text, line, col)
+                        .into_iter()
+                        .map(|c| obj(vec![("label", Json::Str(c.label)), ("kind", Json::Num(c.kind as f64)), ("detail", Json::Str(c.detail))]))
+                        .collect(),
+                    None => vec![],
+                };
+                send(&mut out, &obj(vec![("jsonrpc", Json::Str("2.0".into())), ("id", id.unwrap_or(Json::Null)), ("result", Json::Arr(items))]));
+            }
+            "textDocument/prepareRename" => {
+                let (uri, line, col) = position(&params);
+                let result = match docs.get(&uri) {
+                    Some(text) => {
+                        let spans = (backend.rename)(&uri_to_path(&uri), text, line, col);
+                        match spans.iter().find(|s| s.line == line && s.col <= col && col <= s.end_col) {
+                            Some(s) => range(s),
+                            None => Json::Null,
+                        }
+                    }
+                    None => Json::Null,
+                };
+                send(&mut out, &obj(vec![("jsonrpc", Json::Str("2.0".into())), ("id", id.unwrap_or(Json::Null)), ("result", result)]));
+            }
+            "textDocument/rename" => {
+                let (uri, line, col) = position(&params);
+                let new_name = params.get("newName").and_then(|n| n.as_str()).unwrap_or("").to_string();
+                let result = match docs.get(&uri) {
+                    Some(text) => {
+                        let edits: Vec<Json> = (backend.rename)(&uri_to_path(&uri), text, line, col).iter().map(|s| obj(vec![("range", range(s)), ("newText", Json::Str(new_name.clone()))])).collect();
+                        if edits.is_empty() {
+                            Json::Null
+                        } else {
+                            obj(vec![("changes", obj(vec![(uri.as_str(), Json::Arr(edits))]))])
+                        }
+                    }
+                    None => Json::Null,
+                };
+                send(&mut out, &obj(vec![("jsonrpc", Json::Str("2.0".into())), ("id", id.unwrap_or(Json::Null)), ("result", result)]));
+            }
             "textDocument/hover" => {
-                let uri = params.get("textDocument").and_then(|t| t.get("uri")).and_then(|u| u.as_str()).unwrap_or("").to_string();
-                let line = params.get("position").and_then(|p| p.get("line")).and_then(|l| l.as_f64()).unwrap_or(0.0) as usize;
-                let col = params.get("position").and_then(|p| p.get("character")).and_then(|l| l.as_f64()).unwrap_or(0.0) as usize;
+                let (uri, line, col) = position(&params);
                 let result = match docs.get(&uri) {
                     Some(text) => match (backend.hover)(&uri_to_path(&uri), text, line, col) {
                         Some(h) => obj(vec![("contents", obj(vec![("kind", Json::Str("markdown".into())), ("value", Json::Str(h.text))]))]),

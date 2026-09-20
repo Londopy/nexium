@@ -8,7 +8,7 @@ function, ship it, call it from the project you already have.
 ```
 pub fn checksum(data: []u8) -> u32 export(c) {
     var h: u32 = 2166136261
-    for (data) |b| {
+    for b in data {
         h ^= b as u32
         h *%= 16777619
     }
@@ -16,9 +16,9 @@ pub fn checksum(data: []u8) -> u32 export(c) {
 }
 
 pub fn dot(a: []f64, b: []f64) -> !f64 export(c) {
-    if (a.len != b.len) return error.InvalidInput
+    if a.len != b.len { return error.InvalidInput }
     var acc: f64 = 0.0
-    for (a, b) |x, y| { acc += x * y }
+    for x, y in a, b { acc += x * y }
     return acc
 }
 

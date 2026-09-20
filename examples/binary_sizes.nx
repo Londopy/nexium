@@ -1,0 +1,27 @@
+// More binary segments: floats, signed and little-endian integers, sized
+// byte slices, a bound name and a remainder written back out.
+fn round_trip(x: f64, n: i16) -> !void {
+    var buf: [32]u8 = undefined
+    let tail = "tail"
+    let written = try <<x:64/float, n:16/little-signed, 7:8, "hi", tail:bytes>> into buf[..]
+    println("{} bytes", .{written.len})
+    match written {
+        <<y:64/float, m:16/little-signed, k:8, greeting:16, rest:bytes>> => {
+            println("{} {} {} {} {}", .{y, m, k, greeting, rest})
+        }
+        _ => { println("no match", .{}) }
+    }
+}
+
+fn sized(buf: []u8) -> ?[]u8 {
+    match buf {
+        <<n:8, body:n*8, _rest:bytes>> => body,
+        _ => null,
+    }
+}
+
+fn main() -> !void {
+    try round_trip(1.5, -2)
+    if let b = sized("\x03abcdef") { println("body {}", .{b}) }
+    if let b = sized("\x09ab") { println("body {}", .{b}) } else { println("short", .{}) }
+}

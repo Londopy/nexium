@@ -1,0 +1,19 @@
+// SPEC 5.2: a value moved in one branch is still available in the others; a diverging branch moves nothing after it.
+fn consume(own s: String) -> usize { return s.len }
+fn pick(flag: bool) -> usize {
+    let s = String.from("abc")
+    if flag {
+        return consume(s)
+    }
+    // s was moved only on the returning path
+    return s.len + 10
+}
+fn main() {
+    let t = String.from("xy")
+    var n: usize = 0
+    match t.len {
+        2 => { n = consume(t) }
+        _ => { n = t.len + 100 }
+    }
+    println("{} {} {}", .{pick(true), pick(false), n})
+}

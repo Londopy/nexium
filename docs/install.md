@@ -1,0 +1,95 @@
+# Installing Nexium
+
+Every way to get `nx` onto a machine, what each one sets up, and how `nx`
+finds its C compiler.
+
+## Windows: the installer
+
+Download `nexium-<version>-setup-x64.exe` from the
+[Releases](https://github.com/Londopy/nexium/releases) page and run it. The
+wizard offers:
+
+- **For me or for all users.** Per-user needs no administrator rights and
+  installs under `%LocalAppData%\Programs\Nexium`; all-users installs under
+  `Program Files`.
+- **Components**: the compiler (always), the bundled Zig toolchain
+  (recommended; it is the C compiler and linker `nx` uses), the standard
+  library sources and examples, the documentation, and the VS Code
+  extension file.
+- **Tasks**: add `nx` to the PATH (checked by default), register the `.nx`
+  file type with an icon and a "Run with Nexium" context entry, and install
+  the VS Code extension if `code` is on the PATH.
+- **Finish**: launch the interactive session, open the README, or open a
+  console that runs `nx doctor`.
+- **Start menu**: "Nexium <version> (64-bit)" opens the interactive session,
+  so typing `nx` in the Windows search bar works like typing `python`.
+
+Nothing else is required. Uninstall from Settings; it removes the files and
+the PATH entry, and leaves programs you compiled alone.
+
+Silent install for scripts: `nexium-<version>-setup-x64.exe /VERYSILENT /TASKS=addtopath`.
+
+A portable `nx-<version>-x86_64-pc-windows-msvc.zip` has the same files
+without the installer or Zig; put its folder on the PATH and have Zig on the
+PATH yourself.
+
+## macOS and Linux: the install script
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Londopy/nexium/main/installers/install.sh | sh
+```
+
+It downloads the release for your platform, verifies the archive against the
+release's `SHA256SUMS.txt`, installs `nx` to `~/.nexium/bin` with the
+examples, standard library sources, and docs under `~/.nexium/share`, and
+adds the bin directory to your PATH in `~/.profile`, `~/.bashrc`, and
+`~/.zshrc`. On macOS the system compiler from the Xcode command line tools is
+used (`xcode-select --install` if missing). On Linux, when no compiler is
+found, it downloads Zig into `~/.nexium/zig`.
+
+Variables: `NEXIUM_VERSION=v0.1.0` pins a release, `NEXIUM_HOME` changes the
+directory, `NEXIUM_NO_MODIFY_PATH=1` leaves shell files alone,
+`NEXIUM_NO_ZIG=1` never downloads Zig. Uninstall by deleting `~/.nexium` and
+the three lines the script added.
+
+## From source
+
+With Rust 1.75 or newer: `cargo install nexium`, or
+`cargo install --git https://github.com/Londopy/nexium`. You provide the C
+compiler: Zig on the PATH, or `NX_CC`.
+
+## In CI
+
+The `Londopy/nexium/.github/actions/setup-nexium` action installs `nx` and Zig
+on a GitHub runner; see [releasing-your-program.md](releasing-your-program.md).
+
+## How `nx` finds a C compiler
+
+In order, the first that applies wins:
+
+1. `--cc <compiler>` on the command line.
+2. `NX_CC` in the environment, for example `NX_CC=gcc` or `NX_CC="clang -fuse-ld=lld"`.
+3. `NX_ZIG=/path/to/zig`.
+4. A Zig next to `nx`: `<nx directory>/zig/zig` (the Windows installer) or
+   `<nx directory>/../zig/zig` (`~/.nexium`).
+5. On macOS, for native builds, the system `cc`.
+6. `zig` on the PATH.
+
+`nx doctor` prints which one is in effect and whether it runs. Cross-compiling
+(`--target`) always uses Zig, since that is what makes it possible.
+
+## Verifying downloads
+
+Every release ships `SHA256SUMS.txt` and lists the same values on the release
+page.
+
+```sh
+sha256sum -c SHA256SUMS.txt --ignore-missing      # Linux
+shasum -a 256 -c SHA256SUMS.txt --ignore-missing   # macOS
+```
+
+```powershell
+Get-FileHash .\nexium-0.1.0-setup-x64.exe -Algorithm SHA256
+```
+
+The install script verifies automatically and refuses a mismatch.

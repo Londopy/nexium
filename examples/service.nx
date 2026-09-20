@@ -1,0 +1,82 @@
+// service: a small HTTP service and a client that talks to it, in one
+// program. The phase 2 exit example of the roadmap.
+//
+//     nx run examples/service.nx            // self-test on a free port
+//     nx run examples/service.nx -- 8080    // serve until killed
+//
+// Routes: GET /health, GET /greet?name=..., POST /echo, and the static
+// files under examples/data/www for everything else.
+
+import std.http
+import std.net
+
+fn health(req: *http.Request) -> http.Response {
+    return http.json(200, "{\"ok\":true}")
+}
+
+fn greet(req: *http.Request) -> http.Response {
+    var body = String.from("hello, ")
+    body.append(req.param("name") orelse "stranger")
+    body.append("\n")
+    return http.text(200, body)
+}
+
+fn echo(req: *http.Request) -> http.Response {
+    let ct = req.header("content-type") orelse "application/octet-stream"
+    return http.respond(200, ct, req.body)
+}
+
+fn router() -> http.Router {
+    var r = http.Router.new()
+    r.get("/health", health)
+    r.get("/greet", greet)
+    r.post("/echo", echo)
+    r.serve_static("examples/data/www")
+    return r
+}
+
+/// One round trip against a single-threaded server in the same program:
+/// send the request first (it fits the socket buffer), let the server take
+/// it, then read the reply.
+fn round_trip(server: *http.Server, routes: *http.Router, port: u16, method: []u8, path: []u8, body: []u8) -> !http.Response {
+    var url = http.parse_url(format("http://127.0.0.1:{}{}", .{port, path})).?
+    var conn = try net.TcpStream.connect_timeout("127.0.0.1", port, 5000)
+    conn.set_timeout(5000)
+    var w = conn.writer()
+    var headers = List(http.Header).new()
+    if body.len > 0 { headers.append(http.Header{ .name = String.from("Content-Type"), .value = String.from("text/plain") }) }
+    try http.send_request(&mut w, method, &url, &headers, body)
+    try server.serve_one(routes, 5000)
+    var r = conn.reader()
+    let resp = try http.read_response(&mut r)
+    conn.close()
+    return resp
+}
+
+fn main() -> !void {
+    let args = os.args()
+    var routes = router()
+    if args.len > 1 {
+        let port = try args[1].parse_int(u16)
+        var server = try http.Server.bind("0.0.0.0", port)
+        println("serving on http://127.0.0.1:{}/", .{port})
+        return server.serve(&routes)
+    }
+
+    var server = try http.Server.bind("127.0.0.1", 0)
+    let port = try server.port()
+    let h = try round_trip(&server, &routes, port, "GET", "/health", "")
+    println("GET /health -> {} {}", .{h.status, h.body})
+    let g = try round_trip(&server, &routes, port, "GET", "/greet?name=Nexium", "")
+    print("GET /greet -> {} {}", .{g.status, g.body})
+    let e = round_trip(&server, &routes, port, "POST", "/echo", "round trip") catch |err| {
+        println("echo failed: {}", .{err})
+        return err
+    }
+    println("POST /echo -> {} {} ({})", .{e.status, e.body, e.header("content-type").?})
+    let s = try round_trip(&server, &routes, port, "GET", "/index.html", "")
+    println("GET /index.html -> {} {} bytes of {}", .{s.status, s.body.len, s.header("content-type").?})
+    let m = try round_trip(&server, &routes, port, "GET", "/nothing-here", "")
+    println("GET /nothing-here -> {}", .{m.status})
+    server.close()
+}

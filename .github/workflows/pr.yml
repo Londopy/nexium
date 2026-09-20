@@ -1,0 +1,51 @@
+name: Pull request
+
+# Checks that only make sense on a pull request: the changelog has a line for
+# it, and every Nexium source it touches is formatted. CI (ci.yml) runs the
+# tests on the same event.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  changelog-line:
+    name: changelog has a line
+    runs-on: ubuntu-latest
+    if: "!contains(github.event.pull_request.labels.*.name, 'no changelog')"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: The pull request touches CHANGELOG.md under Unreleased (label `no changelog` to skip)
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          if git diff --name-only "$base"...HEAD | grep -qx "CHANGELOG.md"; then
+            git diff "$base"...HEAD -- CHANGELOG.md | grep -q '^+- ' && exit 0
+            echo "CHANGELOG.md changed but no entry line was added"; exit 1
+          fi
+          echo "CHANGELOG.md was not changed; add a line under Unreleased, or label the pull request 'no changelog'"; exit 1
+
+  nexium-fmt:
+    name: Nexium sources are formatted
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build nx
+        run: cargo build
+      - name: nx fmt --check on every .nx file the pull request touches
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          bad=0
+          for f in $(git diff --name-only "$base"...HEAD | grep '\.nx$'); do
+            [ -f "$f" ] || continue
+            if ! ./target/debug/nx fmt "$f" --check > /dev/null 2>&1; then
+              echo "not formatted: $f (run: nx fmt $f)"; bad=1
+            fi
+          done
+          exit $bad

@@ -1,0 +1,8 @@
+// SPEC 3: a panic prints its location and exits with 101.
+// EXIT: 101
+fn main() {
+    let xs = [1, 2, 3]
+    var i: usize = 3
+    i += 0
+    println("{}", .{xs[i]})
+}

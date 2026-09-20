@@ -1,0 +1,32 @@
+// The standard library written in Nexium: `import std.<module>` loads a module
+// that is embedded in the compiler. Nothing to install, nothing to link.
+
+import std.strings
+import std.lists
+import std.bytes
+import std.num
+
+fn is_odd(x: i32) -> bool { return x % 2 == 1 }
+fn square(x: i32) -> i32 { return x * x }
+
+fn main() {
+    // strings
+    let words = strings.split_whitespace("  the quick   brown fox ")
+    println("{}", .{strings.join(words, "-")})
+    println("[{}] [{}]", .{strings.pad_left("7", 4, '0'), strings.center("mid", 9, '*')})
+    println("{} {}", .{strings.to_upper("loud"), strings.replace("a.b.c", ".", "/")})
+
+    // lists
+    let xs = [1, 2, 3, 4, 5, 6]
+    let odds = lists.filter(i32, xs[..], is_odd)
+    let squares = lists.map(i32, i32, odds, square)
+    println("odds {} squares {} sum {} max {}", .{odds.len, squares[2], lists.sum(i32, squares), lists.max(i32, xs[..]) orelse 0})
+
+    // bytes
+    println("{} {} {x}", .{bytes.hex("Nx"), bytes.base64("nexium"), bytes.crc32("nexium")})
+    let decoded = bytes.unbase64("bmV4aXVt") catch |e| String.from(@errorName(e))
+    println("{}", .{decoded})
+
+    // num
+    println("gcd {} lcm {} pow {} prime {} {}", .{num.gcd(84, 36), num.lcm(4, 6), num.pow(2, 20) orelse 0, num.is_prime(97), num.to_base(255, 2)})
+}

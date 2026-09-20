@@ -1,0 +1,6 @@
+// EXPECT: cannot be used as a function value
+fn f(own s: String) -> usize { return s.len }
+fn main() {
+    let g = f
+    _ = g(String.from("a"))
+}

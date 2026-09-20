@@ -1,0 +1,5 @@
+// EXPECT: requires an `unsafe` block
+var counter: u32 = 0
+fn main() {
+    counter += 1
+}

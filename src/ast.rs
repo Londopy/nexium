@@ -44,6 +44,8 @@ pub struct Param {
     pub name: String,
     pub ty: TypeExpr,
     pub comptime: bool,
+    /// `own name: T`: the callee takes ownership (the argument is moved)
+    pub owned: bool,
     pub span: Span,
 }
 
@@ -85,7 +87,6 @@ pub enum StructKind {
 pub enum Layout {
     Default,
     C,
-    Packed,
 }
 
 #[derive(Clone, Debug)]
@@ -344,6 +345,8 @@ pub enum Stmt {
     While {
         cond: Expr,
         body: Block,
+        /// runs when the condition turns false (not after a `break`)
+        els: Option<Block>,
         label: Option<String>,
         span: Span,
     },
@@ -373,7 +376,7 @@ pub enum Stmt {
 
 #[derive(Clone, Debug)]
 pub enum ForIter {
-    Range { start: Expr, end: Expr },
+    Range { start: Expr, end: Expr, step: Option<Expr> },
     Items(Vec<Expr>), // parallel iteration when more than one
 }
 

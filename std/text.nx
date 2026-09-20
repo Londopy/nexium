@@ -1,0 +1,333 @@
+// std.text: UTF-8 text by code point, written in Nexium.
+//
+// `import std.text` then:
+//
+//     let n = text.char_count("héllo")            // 5, not 6
+//     for cp in text.chars("héllo") { ... }        // code points as u32
+//     let w = text.width("日本語")                   // 6 columns on a terminal
+//     let s = text.to_upper("straße")               // "STRASSE" is not attempted: "STRAßE"
+//     let t = text.truncate("héllo wörld", 5)       // "héllo", never mid-character
+//     let ok = text.is_valid("...")
+//
+// Strings are bytes; this module reads them as UTF-8, tolerating bad input
+// (an invalid byte decodes as U+FFFD and advances one byte). Case mapping
+// covers ASCII, Latin-1, Latin Extended-A, Greek and Cyrillic, which is what
+// is cheap to do without tables. `width` follows the usual terminal
+// convention: East Asian wide and fullwidth forms take two columns,
+// combining marks and zero-width characters take none.
+
+pub const REPLACEMENT: u32 = 0xFFFD
+
+/// A decoded code point and the number of bytes it took.
+pub struct Decoded {
+    cp: u32
+    len: usize
+}
+
+/// Decode the code point starting at byte `i`. Invalid input yields
+/// U+FFFD with length 1 so callers always make progress.
+pub fn decode_at(s: []u8, i: usize) -> Decoded {
+    if i >= s.len { return Decoded{ .cp = REPLACEMENT, .len = 0 } }
+    let b0 = s[i]
+    if b0 < 0x80 { return Decoded{ .cp = b0 as u32, .len = 1 } }
+    var need: usize = 0
+    var cp: u32 = 0
+    var min: u32 = 0
+    if b0 >= 0xC2 and b0 <= 0xDF {
+        need = 1
+        cp = (b0 & 0x1F) as u32
+        min = 0x80
+    } else if b0 >= 0xE0 and b0 <= 0xEF {
+        need = 2
+        cp = (b0 & 0x0F) as u32
+        min = 0x800
+    } else if b0 >= 0xF0 and b0 <= 0xF4 {
+        need = 3
+        cp = (b0 & 0x07) as u32
+        min = 0x10000
+    } else {
+        return Decoded{ .cp = REPLACEMENT, .len = 1 }
+    }
+    var k: usize = 1
+    while k <= need {
+        if i + k >= s.len { return Decoded{ .cp = REPLACEMENT, .len = 1 } }
+        let b = s[i + k]
+        if b < 0x80 or b > 0xBF { return Decoded{ .cp = REPLACEMENT, .len = 1 } }
+        cp = (cp << 6) | ((b & 0x3F) as u32)
+        k += 1
+    }
+    if cp < min or cp > 0x10FFFF or (cp >= 0xD800 and cp <= 0xDFFF) { return Decoded{ .cp = REPLACEMENT, .len = 1 } }
+    return Decoded{ .cp = cp, .len = need + 1 }
+}
+
+/// Append a code point as UTF-8.
+pub fn push(out: *mut String, cp: u32) {
+    if cp < 0x80 {
+        out.push_byte(cp as u8)
+    } else if cp < 0x800 {
+        out.push_byte((0xC0 | (cp >> 6)) as u8)
+        out.push_byte((0x80 | (cp & 0x3F)) as u8)
+    } else if cp < 0x10000 {
+        out.push_byte((0xE0 | (cp >> 12)) as u8)
+        out.push_byte((0x80 | ((cp >> 6) & 0x3F)) as u8)
+        out.push_byte((0x80 | (cp & 0x3F)) as u8)
+    } else {
+        out.push_byte((0xF0 | (cp >> 18)) as u8)
+        out.push_byte((0x80 | ((cp >> 12) & 0x3F)) as u8)
+        out.push_byte((0x80 | ((cp >> 6) & 0x3F)) as u8)
+        out.push_byte((0x80 | (cp & 0x3F)) as u8)
+    }
+}
+
+/// A code point as a String.
+pub fn encode(cp: u32) -> String {
+    var out = String.new()
+    push(&mut out, cp)
+    return out
+}
+
+/// Is the text well-formed UTF-8?
+pub fn is_valid(s: []u8) -> bool {
+    var i: usize = 0
+    while i < s.len {
+        let d = decode_at(s, i)
+        if d.cp == REPLACEMENT and (d.len == 1 and s[i] != 0xEF) { return false }
+        i += d.len
+    }
+    return true
+}
+
+/// All code points.
+pub fn chars(s: []u8) -> List(u32) {
+    var out = List(u32).new()
+    var i: usize = 0
+    while i < s.len {
+        let d = decode_at(s, i)
+        out.append(d.cp)
+        i += d.len
+    }
+    return out
+}
+
+/// The number of code points.
+pub fn char_count(s: []u8) -> usize {
+    var n: usize = 0
+    var i: usize = 0
+    while i < s.len {
+        i += decode_at(s, i).len
+        n += 1
+    }
+    return n
+}
+
+/// The byte offset of the `n`th code point (or `s.len` when past the end).
+pub fn byte_offset(s: []u8, n: usize) -> usize {
+    var i: usize = 0
+    var k: usize = 0
+    while i < s.len and k < n {
+        i += decode_at(s, i).len
+        k += 1
+    }
+    return i
+}
+
+/// The `n`th code point, or null.
+pub fn char_at(s: []u8, n: usize) -> ?u32 {
+    let i = byte_offset(s, n)
+    if i >= s.len { return null }
+    return decode_at(s, i).cp
+}
+
+/// Code points `from` (inclusive) to `to` (exclusive), as a slice of `s`.
+pub fn slice(s: []u8, from: usize, to: usize) -> []u8 {
+    let a = byte_offset(s, from)
+    let b = byte_offset(s, to)
+    if b < a { return s[a..a] }
+    return s[a..b]
+}
+
+/// The first `n` code points; never cuts a character in half.
+pub fn truncate(s: []u8, n: usize) -> []u8 {
+    return s[0..byte_offset(s, n)]
+}
+
+/// The code points in reverse order.
+pub fn reverse(s: []u8) -> String {
+    let cps = chars(s)
+    var out = String.with_capacity(s.len)
+    var i = cps.len
+    while i > 0 {
+        i -= 1
+        push(&mut out, cps[i])
+    }
+    return out
+}
+
+// ------------------------------------------------------------------ width
+
+fn in_range(cp: u32, lo: u32, hi: u32) -> bool {
+    return cp >= lo and cp <= hi
+}
+
+/// Does the code point take no columns (combining marks, zero-width, controls)?
+pub fn is_zero_width(cp: u32) -> bool {
+    if cp == 0 or cp == 0x200B or cp == 0x200C or cp == 0x200D or cp == 0xFEFF { return true }
+    if cp < 0x20 or in_range(cp, 0x7F, 0x9F) { return true }
+    return in_range(cp, 0x0300, 0x036F) or in_range(cp, 0x0483, 0x0489) or in_range(cp, 0x0591, 0x05BD)
+        or in_range(cp, 0x0610, 0x061A) or in_range(cp, 0x064B, 0x065F) or in_range(cp, 0x0E31, 0x0E3A)
+        or in_range(cp, 0x1AB0, 0x1AFF) or in_range(cp, 0x1DC0, 0x1DFF) or in_range(cp, 0x20D0, 0x20FF)
+        or in_range(cp, 0xFE00, 0xFE0F) or in_range(cp, 0xFE20, 0xFE2F) or in_range(cp, 0xE0100, 0xE01EF)
+}
+
+/// Does the code point take two columns (East Asian wide and fullwidth)?
+pub fn is_wide(cp: u32) -> bool {
+    return in_range(cp, 0x1100, 0x115F) or in_range(cp, 0x2E80, 0x303E) or in_range(cp, 0x3041, 0x33FF)
+        or in_range(cp, 0x3400, 0x4DBF) or in_range(cp, 0x4E00, 0x9FFF) or in_range(cp, 0xA000, 0xA4CF)
+        or in_range(cp, 0xAC00, 0xD7A3) or in_range(cp, 0xF900, 0xFAFF) or in_range(cp, 0xFE30, 0xFE4F)
+        or in_range(cp, 0xFF00, 0xFF60) or in_range(cp, 0xFFE0, 0xFFE6) or in_range(cp, 0x1F300, 0x1F64F)
+        or in_range(cp, 0x1F900, 0x1F9FF) or in_range(cp, 0x20000, 0x2FFFD) or in_range(cp, 0x30000, 0x3FFFD)
+}
+
+/// Columns a code point takes on a terminal: 0, 1 or 2.
+pub fn char_width(cp: u32) -> usize {
+    if is_zero_width(cp) { return 0 }
+    if is_wide(cp) { return 2 }
+    return 1
+}
+
+/// Columns the text takes on a terminal.
+pub fn width(s: []u8) -> usize {
+    var w: usize = 0
+    var i: usize = 0
+    while i < s.len {
+        let d = decode_at(s, i)
+        w += char_width(d.cp)
+        i += d.len
+    }
+    return w
+}
+
+/// Pad on the right to `columns` terminal columns (by width, not bytes).
+pub fn pad_right(s: []u8, columns: usize) -> String {
+    var out = String.from(s)
+    var w = width(s)
+    while w < columns {
+        out.push_byte(' ')
+        w += 1
+    }
+    return out
+}
+
+// ------------------------------------------------------------------ case
+
+/// Upper-case a code point where the mapping is a fixed offset: ASCII,
+/// Latin-1, Latin Extended-A (pairs), Greek, Cyrillic.
+pub fn upper_char(cp: u32) -> u32 {
+    if in_range(cp, 'a' as u32, 'z' as u32) { return cp - 32 }
+    if cp < 0x80 { return cp }
+    if in_range(cp, 0xE0, 0xFE) and cp != 0xF7 { return cp - 32 }
+    if cp == 0xFF { return 0x178 }
+    if in_range(cp, 0x100, 0x137) or in_range(cp, 0x14A, 0x177) { return if cp % 2 == 1 { cp - 1 } else { cp } }
+    if in_range(cp, 0x139, 0x148) or in_range(cp, 0x179, 0x17E) { return if cp % 2 == 0 { cp - 1 } else { cp } }
+    if in_range(cp, 0x3B1, 0x3C9) and cp != 0x3C2 { return cp - 32 }
+    if cp == 0x3C2 { return 0x3A3 }
+    if in_range(cp, 0x430, 0x44F) { return cp - 32 }
+    if in_range(cp, 0x450, 0x45F) { return cp - 80 }
+    return cp
+}
+
+/// Lower-case a code point; the inverse of `upper_char`.
+pub fn lower_char(cp: u32) -> u32 {
+    if in_range(cp, 'A' as u32, 'Z' as u32) { return cp + 32 }
+    if cp < 0x80 { return cp }
+    if in_range(cp, 0xC0, 0xDE) and cp != 0xD7 { return cp + 32 }
+    if cp == 0x178 { return 0xFF }
+    if in_range(cp, 0x100, 0x137) or in_range(cp, 0x14A, 0x177) { return if cp % 2 == 0 { cp + 1 } else { cp } }
+    if in_range(cp, 0x139, 0x148) or in_range(cp, 0x179, 0x17E) { return if cp % 2 == 1 { cp + 1 } else { cp } }
+    if in_range(cp, 0x391, 0x3A9) { return cp + 32 }
+    if in_range(cp, 0x410, 0x42F) { return cp + 32 }
+    if in_range(cp, 0x400, 0x40F) { return cp + 80 }
+    return cp
+}
+
+fn map_chars(s: []u8, upper: bool) -> String {
+    var out = String.with_capacity(s.len)
+    var i: usize = 0
+    while i < s.len {
+        let d = decode_at(s, i)
+        push(&mut out, if upper { upper_char(d.cp) } else { lower_char(d.cp) })
+        i += d.len
+    }
+    return out
+}
+
+pub fn to_upper(s: []u8) -> String {
+    return map_chars(s, true)
+}
+
+pub fn to_lower(s: []u8) -> String {
+    return map_chars(s, false)
+}
+
+/// Compare ignoring case, using the same mapping as `to_lower`.
+pub fn eq_ignore_case(a: []u8, b: []u8) -> bool {
+    var i: usize = 0
+    var j: usize = 0
+    while i < a.len and j < b.len {
+        let x = decode_at(a, i)
+        let y = decode_at(b, j)
+        if lower_char(x.cp) != lower_char(y.cp) { return false }
+        i += x.len
+        j += y.len
+    }
+    return i == a.len and j == b.len
+}
+
+// ------------------------------------------------------------------ tests
+
+test "decode and encode" {
+    expect_eq(char_count("héllo"), 5)
+    expect_eq(char_count("日本語"), 3)
+    expect_eq(chars("aé日😀").len, 4)
+    expect_eq(chars("aé日😀")[3], 0x1F600)
+    expect_eq(encode(0xE9), "é")
+    expect_eq(encode(0x65E5), "日")
+    expect_eq(encode(0x1F600), "😀")
+    expect(is_valid("héllo 日本"))
+    expect(!is_valid(b"\xff\xfe"))
+    expect(!is_valid(b"\xe6\x97"))
+    let bad = decode_at(b"\xff", 0)
+    expect_eq(bad.cp, REPLACEMENT)
+    expect_eq(bad.len, 1)
+    expect_eq(char_at("héllo", 1).?, 0xE9)
+    expect(char_at("hé", 2) == null)
+    expect_eq(slice("héllo wörld", 6, 11), "wörld")
+    expect_eq(truncate("héllo wörld", 5), "héllo")
+    expect_eq(reverse("héllo"), "olléh")
+    expect_eq(byte_offset("héllo", 2), 3)
+}
+
+test "width" {
+    expect_eq(width("hello"), 5)
+    expect_eq(width("日本語"), 6)
+    expect_eq(width("e\u{301}"), 1)
+    expect_eq(width("a\u{200B}b"), 2)
+    expect_eq(char_width(0x1F600), 2)
+    expect_eq(pad_right("日本", 6), "日本  ")
+}
+
+test "case" {
+    expect_eq(to_upper("héllo wörld"), "HÉLLO WÖRLD")
+    expect_eq(to_lower("ÀÉÎÕÜ"), "àéîõü")
+    expect_eq(to_upper("straße"), "STRAßE")
+    expect_eq(to_upper("αβγ"), "ΑΒΓ")
+    expect_eq(to_lower("ΑΒΓΣ"), "αβγσ")
+    expect_eq(to_upper("привет"), "ПРИВЕТ")
+    expect_eq(to_lower("ПРИВЕТ ЁЖ"), "привет ёж")
+    expect_eq(to_upper("łódź"), "ŁÓDŹ")
+    expect_eq(to_lower("ŁÓDŹ"), "łódź")
+    expect(eq_ignore_case("Héllo", "hÉLLO"))
+    expect(!eq_ignore_case("Héllo", "hello"))
+    expect_eq(upper_char('a' as u32), 'A' as u32)
+    expect_eq(lower_char(0x3A3), 0x3C3)
+}

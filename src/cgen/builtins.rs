@@ -3,6 +3,11 @@
 use super::*;
 
 impl Gen {
+    /// The error id for a socket result code `_r` (1 not found, 2 refused, 3 timeout, other io).
+    fn net_errs(&self) -> String {
+        format!("(_r == 1 ? {}u : _r == 2 ? {}u : _r == 3 ? {}u : {}u)", self.err_id("NotFound"), self.err_id("ConnectionRefused"), self.err_id("Timeout"), self.err_id("IoError"))
+    }
+
     fn err_id(&self, name: &str) -> usize {
         self.p.error_names.iter().position(|n| n == name).map(|i| i + 1).unwrap_or(0)
     }
@@ -484,6 +489,12 @@ impl Gen {
                 self.line(format!("nx_str_append_char(c, &({}), {});", l, ch));
                 "0".into()
             }
+            Builtin::StringPushByte => {
+                let b = self.simple(&args[1]);
+                let l = self.place(&args[0]);
+                self.line(format!("{{ uint8_t _b = (uint8_t)({}); nx_str_append(c, &({}), &_b, 1); }}", b, l));
+                "0".into()
+            }
             Builtin::StringClear => {
                 let l = self.place(&args[0]);
                 self.line(format!("({}).len = 0;", l));
@@ -683,7 +694,7 @@ impl Gen {
                 let t = self.tmp();
                 self.line(format!("{} {} = {{0}}; {}.ar = c->arena;", cn, t, t));
                 let sep = if op == Builtin::SliceSplit { self.simple(&args[1]) } else { "nx_lit(\"\\n\", 1)".to_string() };
-                self.line(format!("{{ size_t _s = 0; for (;;) {{ nx_sl_u8 _rest = {{ {}.ptr + _s, {}.len - _s }}; size_t _i; bool _f = {}.len && nx_sl_find(_rest, {}, &_i); nx_sl_u8 _piece = {{ _rest.ptr, _f ? _i : _rest.len }};", a, a, sep, sep));
+                self.line(format!("{{ size_t _s = 0; for (;;) {{ nx_sl_u8 _rest = {{ nx_padd({}.ptr, _s), {}.len - _s }}; size_t _i; bool _f = {}.len && nx_sl_find(_rest, {}, &_i); nx_sl_u8 _piece = {{ _rest.ptr, _f ? _i : _rest.len }};", a, a, sep, sep));
                 if op == Builtin::SliceLines {
                     self.line("  if (_piece.len && _piece.ptr[_piece.len - 1] == '\\r') _piece.len--;");
                     self.line(format!("  if (!_f && _piece.len == 0 && {}.len) break;", a));
@@ -875,12 +886,201 @@ impl Gen {
                 self.line(format!("{} {}; {{ nx_string _s; if (nx_read_file(c, {}, &_s)) {{ {}.err = 0; {}.val = _s; }} else {}.err = {}u; }}", cn, t, p, t, t, t, io));
                 t
             }
-            Builtin::WriteFile => {
+            Builtin::WriteFile | Builtin::AppendFile => {
                 let p = self.simple(&args[0]);
                 let d = self.simple(&args[1]);
                 let cn = self.cty(e.ty);
                 let io = self.err_id("IoError");
-                format!("(({}){{ .err = nx_write_file({}, {}) ? 0 : {}u }})", cn, p, d, io)
+                let f = if op == Builtin::WriteFile { "nx_write_file" } else { "nx_append_file" };
+                format!("(({}){{ .err = {}({}, {}) ? 0 : {}u }})", cn, f, p, d, io)
+            }
+            Builtin::FsKind => {
+                let p = self.simple(&args[0]);
+                format!("nx_fs_kind({})", p)
+            }
+            Builtin::FsSize | Builtin::FsModified => {
+                let p = self.simple(&args[0]);
+                let cn = self.cty(e.ty);
+                let t = self.tmp();
+                let (nf, io) = (self.err_id("NotFound"), self.err_id("IoError"));
+                let pick = if op == Builtin::FsSize { "(uint64_t)_sz" } else { "_mt" };
+                self.line(format!(
+                    "{} {}; {{ int64_t _sz = 0, _mt = 0; int32_t _r = nx_fs_stat({}, &_sz, &_mt); if (_r == 0) {{ {}.err = 0; {}.val = {}; }} else {}.err = _r == 1 ? {}u : {}u; }}",
+                    cn, t, p, t, t, pick, t, nf, io
+                ));
+                t
+            }
+            Builtin::FsMkdir | Builtin::FsRemoveFile | Builtin::FsRemoveDir => {
+                let p = self.simple(&args[0]);
+                let cn = self.cty(e.ty);
+                let t = self.tmp();
+                let (nf, io) = (self.err_id("NotFound"), self.err_id("IoError"));
+                let f = match op {
+                    Builtin::FsMkdir => "nx_fs_mkdir",
+                    Builtin::FsRemoveFile => "nx_fs_remove_file",
+                    _ => "nx_fs_remove_dir",
+                };
+                self.line(format!("{} {}; {{ int32_t _r = {}({}); {}.err = _r == 0 ? 0 : _r == 1 ? {}u : {}u; }}", cn, t, f, p, t, nf, io));
+                t
+            }
+            Builtin::FsRename => {
+                let a = self.simple(&args[0]);
+                let b = self.simple(&args[1]);
+                let cn = self.cty(e.ty);
+                let t = self.tmp();
+                let (nf, io) = (self.err_id("NotFound"), self.err_id("IoError"));
+                self.line(format!("{} {}; {{ int32_t _r = nx_fs_rename({}, {}); {}.err = _r == 0 ? 0 : _r == 1 ? {}u : {}u; }}", cn, t, a, b, t, nf, io));
+                t
+            }
+            Builtin::FsListDir => {
+                let p = self.simple(&args[0]);
+                let cn = self.cty(e.ty);
+                let t = self.tmp();
+                let (nf, io) = (self.err_id("NotFound"), self.err_id("IoError"));
+                self.line(format!(
+                    "{} {}; {{ nx_rawlist _l; int32_t _r = nx_fs_list_dir(c, {}, &_l); if (_r == 0) {{ {}.err = 0; memcpy(&{}.val, &_l, sizeof _l); }} else {}.err = _r == 1 ? {}u : {}u; }}",
+                    cn, t, p, t, t, t, nf, io
+                ));
+                t
+            }
+            Builtin::FsCwd => {
+                let cn = self.cty(e.ty);
+                let t = self.tmp();
+                let io = self.err_id("IoError");
+                self.line(format!("{} {}; {{ nx_string _s; if (nx_fs_cwd(c, &_s)) {{ {}.err = 0; {}.val = _s; }} else {}.err = {}u; }}", cn, t, t, t, t, io));
+                t
+            }
+            Builtin::FsTempDir => "nx_fs_temp_dir(c)".into(),
+            Builtin::FileOpen => {
+                let p = self.simple(&args[0]);
+                let md = self.simple(&args[1]);
+                let cn = self.cty(e.ty);
+                let t = self.tmp();
+                let (nf, io) = (self.err_id("NotFound"), self.err_id("IoError"));
+                self.line(format!("{} {}; {{ int64_t _h = nx_file_open({}, {}); if (_h >= 0) {{ {}.err = 0; {}.val = _h; }} else {}.err = _h == -1 ? {}u : {}u; }}", cn, t, p, md, t, t, t, nf, io));
+                t
+            }
+            Builtin::FileRead => {
+                let h = self.simple(&args[0]);
+                let n = self.simple(&args[1]);
+                let cn = self.cty(e.ty);
+                let t = self.tmp();
+                let io = self.err_id("IoError");
+                self.line(format!("{} {}; {{ nx_string _s; if (nx_file_read(c, {}, {}, &_s)) {{ {}.err = 0; {}.val = _s; }} else {}.err = {}u; }}", cn, t, h, n, t, t, t, io));
+                t
+            }
+            Builtin::FileWrite => {
+                let h = self.simple(&args[0]);
+                let d = self.simple(&args[1]);
+                let cn = self.cty(e.ty);
+                let io = self.err_id("IoError");
+                format!("(({}){{ .err = nx_file_write({}, {}) ? 0 : {}u }})", cn, h, d, io)
+            }
+            Builtin::FileFlush | Builtin::FileClose => {
+                let h = self.simple(&args[0]);
+                let cn = self.cty(e.ty);
+                let io = self.err_id("IoError");
+                let f = if op == Builtin::FileFlush { "nx_file_flush" } else { "nx_file_close" };
+                format!("(({}){{ .err = {}({}) ? 0 : {}u }})", cn, f, h, io)
+            }
+            Builtin::NetConnect | Builtin::NetListen | Builtin::NetAccept | Builtin::NetUdpBind => {
+                let a: Vec<String> = args.iter().map(|x| self.simple(x)).collect();
+                let cn = self.cty(e.ty);
+                let t = self.tmp();
+                let f = match op {
+                    Builtin::NetConnect => "nx_tcp_connect",
+                    Builtin::NetListen => "nx_tcp_listen",
+                    Builtin::NetAccept => "nx_tcp_accept",
+                    _ => "nx_udp_bind",
+                };
+                let errs = self.net_errs();
+                self.line(format!("{} {}; {{ int64_t _h = 0; int32_t _r = {}({}, &_h); if (_r == 0) {{ {}.err = 0; {}.val = _h; }} else {}.err = {}; }}", cn, t, f, a.join(", "), t, t, t, errs));
+                t
+            }
+            Builtin::NetSend | Builtin::NetClose | Builtin::NetSendTo => {
+                let a: Vec<String> = args.iter().map(|x| self.simple(x)).collect();
+                let cn = self.cty(e.ty);
+                let t = self.tmp();
+                let f = match op {
+                    Builtin::NetSend => "nx_net_send",
+                    Builtin::NetClose => "nx_net_close",
+                    _ => "nx_udp_send_to",
+                };
+                let errs = self.net_errs();
+                self.line(format!("{} {}; {{ int32_t _r = {}({}); {}.err = _r == 0 ? 0 : {}; }}", cn, t, f, a.join(", "), t, errs));
+                t
+            }
+            Builtin::NetRecv | Builtin::NetRecvFrom => {
+                let a: Vec<String> = args.iter().map(|x| self.simple(x)).collect();
+                let cn = self.cty(e.ty);
+                let t = self.tmp();
+                let f = if op == Builtin::NetRecv { "nx_net_recv" } else { "nx_udp_recv_from" };
+                let errs = self.net_errs();
+                self.line(format!("{} {}; {{ nx_string _s; int32_t _r = {}(c, {}, &_s); if (_r == 0) {{ {}.err = 0; {}.val = _s; }} else {}.err = {}; }}", cn, t, f, a.join(", "), t, t, t, errs));
+                t
+            }
+            Builtin::NetPeer | Builtin::NetLocal => {
+                let s = self.simple(&args[0]);
+                let cn = self.cty(e.ty);
+                let t = self.tmp();
+                let local = if op == Builtin::NetLocal { "true" } else { "false" };
+                let errs = self.net_errs();
+                self.line(format!(
+                    "{} {}; {{ nx_string _s; int32_t _r = nx_net_name(c, {}, {}, &_s); if (_r == 0) {{ {}.err = 0; {}.val = _s; }} else {}.err = {}; }}",
+                    cn, t, s, local, t, t, t, errs
+                ));
+                t
+            }
+            Builtin::NetResolve => {
+                let h = self.simple(&args[0]);
+                let cn = self.cty(e.ty);
+                let t = self.tmp();
+                let errs = self.net_errs();
+                self.line(format!(
+                    "{} {}; {{ nx_rawlist _l; int32_t _r = nx_net_resolve(c, {}, &_l); if (_r == 0) {{ {}.err = 0; memcpy(&{}.val, &_l, sizeof _l); }} else {}.err = {}; }}",
+                    cn, t, h, t, t, t, errs
+                ));
+                t
+            }
+            Builtin::NetLastPeer => "nx_net_last_peer(c)".into(),
+            Builtin::ThreadStart => {
+                let f = self.simple(&args[0]);
+                let p = self.simple(&args[1]);
+                format!("nx_thread_start(c, (void*){}.fn, {}.env, (void*)({}))", f, f, p)
+            }
+            Builtin::ThreadJoin => {
+                let h = self.simple(&args[0]);
+                let loc = self.loc(e.span);
+                self.line(format!("nx_thread_join({}, {});", h, loc));
+                "0".into()
+            }
+            Builtin::ThreadCount => "nx_hw_threads()".into(),
+            Builtin::MutexNew => "nx_mutex_new()".into(),
+            Builtin::CondNew => "nx_cond_new()".into(),
+            Builtin::MutexLock | Builtin::MutexUnlock | Builtin::MutexFree | Builtin::CondSignal | Builtin::CondBroadcast | Builtin::CondFree => {
+                let h = self.simple(&args[0]);
+                let f = match op {
+                    Builtin::MutexLock => "nx_mutex_lock",
+                    Builtin::MutexUnlock => "nx_mutex_unlock",
+                    Builtin::MutexFree => "nx_mutex_free",
+                    Builtin::CondSignal => "nx_cond_signal",
+                    Builtin::CondBroadcast => "nx_cond_broadcast",
+                    _ => "nx_cond_free",
+                };
+                self.line(format!("{}({});", f, h));
+                "0".into()
+            }
+            Builtin::CondWait => {
+                let cv = self.simple(&args[0]);
+                let mu = self.simple(&args[1]);
+                self.line(format!("nx_cond_wait({}, {});", cv, mu));
+                "0".into()
+            }
+            Builtin::Environ => {
+                let cn = self.cty(e.ty);
+                let t = self.tmp();
+                self.line(format!("{} {}; {{ nx_rawlist _l; nx_environ(c, &_l); memcpy(&{}, &_l, sizeof _l); }}", cn, t, t));
+                t
             }
             Builtin::ReadLine => {
                 let cn = self.cty(e.ty);
@@ -914,7 +1114,26 @@ impl Gen {
                 self.line(format!("{} {}; {{ int _code = 0; if (nx_run(c, {}.ptr, {}.len, &_code)) {{ {}.err = 0; {}.val = _code; }} else {}.err = {}u; }}", cn, t, argv, argv, t, t, t, io));
                 t
             }
+            Builtin::Exec => {
+                let argv = self.simple(&args[0]);
+                let input = self.simple(&args[1]);
+                let cwd = self.simple(&args[2]);
+                let cn = self.cty(e.ty);
+                let t = self.tmp();
+                let io = self.err_id("IoError");
+                self.line(format!(
+                    "{} {}; {{ int _code = 0; if (nx_run_capture(c, {}.ptr, {}.len, {}, {}, &_code)) {{ {}.err = 0; {}.val = _code; }} else {}.err = {}u; }}",
+                    cn, t, argv, argv, input, cwd, t, t, t, io
+                ));
+                t
+            }
+            Builtin::LastStdout => "nx_last_stdout(c)".into(),
+            Builtin::LastStderr => "nx_last_stderr(c)".into(),
             Builtin::TimeNow => "nx_time_now_ms()".into(),
+            Builtin::TimeUtcOffset => {
+                let v = self.simple(&args[0]);
+                format!("nx_time_utc_offset_min({})", v)
+            }
             Builtin::TimeMonotonic => "nx_time_monotonic_ns()".into(),
             Builtin::Sleep => {
                 let v = self.simple(&args[0]);

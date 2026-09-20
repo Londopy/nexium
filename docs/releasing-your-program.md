@@ -43,7 +43,9 @@ annotation. The whole thing is:
 ```
 
 `setup-nexium` downloads the matching `nx` binary from Nexium's Releases and
-puts it and Zig on `PATH`. Pinning `version` keeps your builds reproducible;
+puts it and Zig on `PATH`. On the macOS runner `nx` uses the system compiler
+for native builds, since zig 0.14 cannot link against the newest Xcode SDKs;
+zig is still what cross-compiles. Pinning `version` keeps your builds reproducible;
 `latest` is the default.
 
 ## Installers, when you want them
@@ -64,13 +66,50 @@ binary into an installer:
 Each job is a few lines and is annotated in the template. Turn one on by
 setting its `if:` to `true`.
 
+## An installer for your program
+
+Declare it next to the `cli` artifact and `nx ship` produces one:
+
+```nexium
+artifact cli { name = "taskdesk" }
+artifact installer {
+    name = "TaskDesk", publisher = "Londopy", version = "1.2.0",
+    url = "https://example.com/taskdesk",
+    license = "LICENSE", readme = "README.md",
+    files = ["assets", "config.toml"],   // copied next to the program
+    add_to_path = true,
+}
+```
+
+- On Windows, `nx ship` writes `nx-out/taskdesk/TaskDesk.iss` and, when
+  [Inno Setup 6](https://jrsoftware.org/isinfo.php) is installed (or the
+  `ISCC` environment variable points at `ISCC.exe`),
+  `TaskDesk-1.2.0-setup-x64.exe`: a wizard with license page, install for
+  one user or all, Start menu entry, an optional PATH entry, and an
+  uninstaller. The app id derives from the name, so a newer setup upgrades
+  in place. Silent install: `setup.exe /VERYSILENT /CURRENTUSER`.
+- On Linux and macOS, it writes `install.sh` (`--prefix DIR`, default
+  `~/.local`; `--uninstall`) and `taskdesk-1.2.0-<os>.tar.gz` holding the
+  program, the script and the listed files.
+
+In the release template, the Windows job installs Inno Setup with
+`choco install innosetup` before `nx ship`, and every job uploads
+`nx-out/<name>/`.
+
 ## Shipping a library instead
 
-If the program declares `artifact cabi`, `artifact python`, or
-`artifact rustlib`, replace the build step with `nx ship` and upload the
-`nx-out/<name>/` directory. The Python wheel is platform specific, so build it
-on each runner; the C header and the Rust crate source are the same
-everywhere.
+If the program declares `artifact cabi`, `artifact python`, `artifact node`
+or `artifact rustlib`, replace the build step with `nx ship` and upload the
+`nx-out/<name>/` directory. The Python wheel and the npm package are
+platform specific, so build them on each runner; the C header and the Rust
+crate source are the same everywhere.
+
+The npm package (`nx-out/<name>/node/`) is plain JavaScript over the shared
+library through [koffi](https://koffi.dev), with `index.d.ts` typings: no
+build step for the consumer, and `npm publish` from that directory ships
+it. Its `os` and `cpu` fields name the platform it was built on; publish
+one package per platform under a scoped name, or merge the shared libraries
+of every platform into one package and pick by `process.platform`.
 
 ## Checklist before the first tag
 

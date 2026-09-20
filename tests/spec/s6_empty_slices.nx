@@ -1,0 +1,17 @@
+// SPEC 6.1: an empty slice has no storage; slicing, splitting, trimming and matching it are defined.
+fn main() {
+    let e: []u8 = ""
+    let f = e[..]
+    let g = e[0..0]
+    var parts = List([]u8).new()
+    for p in e.split(",") { parts.append(p) }
+    let t = e.trim()
+    var n: usize = 0
+    match e {
+        <<rest:bytes>> => { n = rest.len },
+        _ => { n = 99 },
+    }
+    var xs = List(i32).new()
+    let ys = xs[..]
+    println("{} {} {} {} {} {} {} {}", .{f.len, g.len, parts.len, t.len, n, ys.len, e.ends_with(""), e.starts_with("")})
+}

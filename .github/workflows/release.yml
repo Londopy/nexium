@@ -7,6 +7,9 @@ on:
 permissions:
   contents: write
 
+env:
+  ZIG_VERSION: "0.14.1"
+
 jobs:
   build:
     name: build (${{ matrix.target }})
@@ -17,66 +20,95 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            archive: tar.gz
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            archive: zip
           - os: macos-latest
             target: aarch64-apple-darwin
-            archive: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+
       - name: Check the tag matches Cargo.toml
         shell: bash
         run: |
           v=$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)"/\1/')
           [ "v$v" = "${{ github.ref_name }}" ] || { echo "tag ${{ github.ref_name }} does not match Cargo.toml version $v"; exit 1; }
+
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }}
+
       - name: Package (unix)
-        if: matrix.archive == 'tar.gz'
+        if: runner.os != 'Windows'
         run: |
           mkdir -p dist
           cp target/${{ matrix.target }}/release/nx dist/
           cp README.md LICENSE CHANGELOG.md dist/
+          cp -r examples std docs dist/
           tar -C dist -czf nx-${{ github.ref_name }}-${{ matrix.target }}.tar.gz .
-      - name: Package (windows)
-        if: matrix.archive == 'zip'
+
+      # ---- Windows: a portable zip and a full installer with a bundled Zig
+      - name: Install Zig (bundled into the installer)
+        if: runner.os == 'Windows'
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Install Node (for the VS Code extension)
+        if: runner.os == 'Windows'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Stage the Windows distribution
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          New-Item -ItemType Directory -Force dist-win, dist-win\editors | Out-Null
+          Copy-Item target/${{ matrix.target }}/release/nx.exe dist-win/
+          Copy-Item README.md, LICENSE, CHANGELOG.md dist-win/
+          Copy-Item -Recurse examples, std, docs dist-win/
+          # the Zig toolchain: the directory that holds zig.exe and lib/
+          $zigExe = (zig env | ConvertFrom-Json).zig_exe
+          $zigDir = Split-Path $zigExe
+          Copy-Item -Recurse $zigDir dist-win\zig
+          if (-not (Test-Path dist-win\zig\zig.exe)) { throw "bundled zig missing" }
+          # the VS Code extension
+          Push-Location editors/vscode
+          npm ci
+          npm run compile
+          npx @vscode/vsce package -o ../../dist-win/editors/nexium.vsix
+          Pop-Location
+          Copy-Item dist-win/editors/nexium.vsix nexium-${{ github.ref_name }}.vsix
+          # portable zip: compiler and docs only (no Zig; see the installer for that)
           New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item target/${{ matrix.target }}/release/nx.exe dist/
-          Copy-Item README.md, LICENSE, CHANGELOG.md dist/
+          Copy-Item target/${{ matrix.target }}/release/nx.exe, README.md, LICENSE, CHANGELOG.md dist/
+          Copy-Item -Recurse examples, std, docs dist/
           Compress-Archive -Path dist/* -DestinationPath nx-${{ github.ref_name }}-${{ matrix.target }}.zip
+
+      - name: Build the installer (Inno Setup)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          pip install pillow
+          python scripts/make_icon.py
+          Copy-Item assets\icon.ico dist-win\nexium.ico
+          $ver = "${{ github.ref_name }}".TrimStart("v")
+          $src = (Resolve-Path dist-win).Path
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$ver" "/DSourceDir=$src" installers\windows\nexium.iss
+          Copy-Item installers\windows\Output\nexium-$ver-setup-x64.exe .
+
       - uses: actions/upload-artifact@v4
         with:
           name: nx-${{ matrix.target }}
-          path: nx-${{ github.ref_name }}-*
-
-  vscode:
-    name: vscode extension
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-      - name: Package .vsix
-        working-directory: editors/vscode
-        run: |
-          npm ci
-          npm run compile
-          npx @vscode/vsce package -o nexium-${{ github.ref_name }}.vsix
-      - uses: actions/upload-artifact@v4
-        with:
-          name: nexium-vscode
-          path: editors/vscode/nexium-*.vsix
+          path: |
+            nx-${{ github.ref_name }}-*
+            nexium-*-setup-x64.exe
+            nexium-${{ github.ref_name }}.vsix
 
   release:
-    needs: [build, vscode]
+    needs: [build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -84,26 +116,15 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
-      - name: Extract release notes with patchnotes
+      - name: Release notes and checksums
+        id: notes
         run: |
           pip install patchnotes
-          python - <<'EOF'
-          import patchnotes
-          cl = patchnotes.parse_file("CHANGELOG.md")
-          tag = "${{ github.ref_name }}".lstrip("v")
-          rel = cl.get_version(tag) or cl.latest()
-          out = []
-          by_type = {}
-          for e in rel.entries:
-              by_type.setdefault(str(e.change_type).split(".")[-1].title(), []).append(e.text)
-          for kind, items in by_type.items():
-              out.append(f"### {kind}\n")
-              out.extend(f"- {t}" for t in items)
-              out.append("")
-          out.append("Requires [Zig](https://ziglang.org/download/) on PATH as the C compiler.")
-          open("notes.md", "w").write("\n".join(out))
-          EOF
+          python scripts/release_notes.py "${{ github.ref_name }}" artifacts notes.md
+          echo "title=$(cat title.txt)" >> "$GITHUB_OUTPUT"
+          cat notes.md
       - uses: softprops/action-gh-release@v2
         with:
+          name: ${{ steps.notes.outputs.title }}
           body_path: notes.md
           files: artifacts/*

@@ -7,9 +7,11 @@ to `nexium-spec.txt` (the design) and, where marked "archived", to
 ## Files and modules
 
 A file is a module. `import foo.bar` loads `foo/bar.nx` next to the root file;
-its `pub` items are reached as `bar.item`. `import std.math` (or any std
-module) is accepted but not required: the builtin namespaces `math`, `io`,
-`os`, `time`, `random`, and `mem` are always in scope.
+its `pub` items are reached as `bar.item`. `import std.strings` (and
+`std.lists`, `std.bytes`, `std.num`) loads a module of the standard library,
+which is written in Nexium and embedded in the compiler; see
+[`std.md`](std.md). The builtin namespaces `math`, `io`, `os`, `time`,
+`random`, `mem`, and `process` are always in scope and need no import.
 
 ## Lexical structure (archived 4)
 
@@ -63,9 +65,10 @@ default (`verbose: u8 = 0`).
 | `*T`, `*mut T` | pointer to one value (`&x`, `&mut x`, `p.*`) |
 | `?T` | optional; `null` is the empty value |
 | `!T`, `Set!T` | error union |
+| `error` | any error value (the anonymous error set) |
 | `List(T)`, `String`, `Map(K, V)` | owning collections (values, section 5.3) |
 | `fn(A, B) -> R !effects` | function value (closures and functions coerce to it) |
-| `(A, B)` | tuple; fields `.0`, `.1` |
+| `(A, B)` | tuple; fields `.0`, `.1`; also allowed as a type argument, `List((A, B))` |
 | `weak T` | weak reference to a `ref class` |
 
 Integer literals take the type the context asks for and default to `i64`;
@@ -82,8 +85,24 @@ integers, `bool` to integer, a unit enum to integer. `@truncate(T, x)` wraps.
 (archived 5.10): a `let` holding `*mut T` still mutates through it.
 
 Collections own a heap buffer (5.3). `let b = a` moves `a`; using `a`
-afterwards is a compile error; `a.clone()` copies. Parameters are borrowed:
-a function receiving a `List` reads it; to mutate, take `*mut List(T)`.
+afterwards is a compile error; `a.clone()` copies. Moves are tracked per
+branch: a value moved in one `if` branch or `match` arm is still available in
+the others, and counts as moved after the construct. Parameters are borrowed:
+a function receiving a `List` reads it; to mutate, take `*mut List(T)`. To
+take ownership, mark the parameter `own`:
+
+```
+fn token(kind: u8, own text: String) -> Token {
+    return Token{ .kind = kind, .text = text }     // moved in, moved on: no clone
+}
+let t = token(1, name)                             // `name` is moved; using it again is an error
+```
+
+An `own` parameter is mutable, is dropped when the function returns unless it
+was moved on, and only makes sense for owning types. Receivers cannot be
+`own`, exported functions cannot take `own` parameters, and a function with
+one cannot be used as a function value (its type would not say who owns the
+argument).
 `List(T)` and `String` coerce to `[]T` / `[]u8` when passed where a slice is
 expected. Moving out of a field or element is an error. Owned values are
 released when their scope ends; that is the only automatic action at scope
@@ -100,7 +119,9 @@ edges (`@weak(x)` or `x.weak()`, then `w.upgrade()`).
   `== != < <= > >=` on numbers, chars, bools, `[]u8`, `String`, unit enums,
   and types that `derive(Eq)` / `derive(Ord)`. Logical `and`, `or`, `!`.
 - `x |> f(a)` is `f(x, a)`.
-- `if (c) a else b` is an expression; `if (opt) |v| { } else { }` unwraps.
+- `if c { a } else { b }` is an expression; `if let v = opt { } else { }`
+  unwraps. Conditions take no parentheses and bodies always take braces, so
+  a one-liner is `if c { return v }`; `else` may start the next line.
 - `match v { pat => expr, ... }` on integers (literals, ranges `1..=9`),
   strings, bools, chars, enums (`.Variant(p)`), optionals (`null`, binding),
   error unions (`error.Name`, binding), tuples, and byte slices (binary
@@ -108,7 +129,10 @@ edges (`@weak(x)` or `x.weak()`, then `w.upgrade()`).
 - Blocks are expressions whose value is the final expression. A labeled block
   yields through `break :label value`.
 - `try e` propagates an error; `e catch |err| handler`; `opt orelse default`;
-  `opt.?` unwraps (panics on null).
+  `opt.?` unwraps (panics on null). The right-hand side of `orelse` and
+  `catch` may be a jump: `let v = opt orelse return null`,
+  `let v = r catch |e| return -1`.
+- An integer or float literal coerces into `?T`: `f(1)` where `f(x: ?i32)`.
 - `defer stmt` runs at scope exit, `errdefer stmt` only when the scope exits
   through an error; both in reverse order of registration.
 - Closures: `|[captures] params| -> R { body }`. Captures are explicit:
@@ -121,12 +145,14 @@ edges (`@weak(x)` or `x.weak()`, then `w.upgrade()`).
 ## Statements and loops
 
 ```
-while (cond) { }
-for (items) |x| { }               // arrays, slices, lists, strings, map keys
-for (items) |x, i| { }            // with index
-for (a, b) |x, y| { }             // lockstep; lengths must match
-for (0..n) |i| { }
-outer: for (...) |a| { for (...) |b| { continue :outer } }
+while cond { }
+for x in items { }               // arrays, slices, lists, strings, map keys
+for x, i in items { }            // with index
+for x, y in a, b { }             // lockstep; lengths must match
+for i in 0..10 step 2 { }        // 0 2 4 6 8; `for i in 10..0 step -1` counts down (signed)
+while cond { } else { }          // the else runs when cond turns false, not after a break
+for i in 0..n { }
+outer: for a in ... { for b in ... { continue :outer } }
 break, continue, return
 _ = expr                          // explicit discard; unused values are errors
 ```
@@ -173,11 +199,12 @@ the inferred set per function.
 - `List(T)`: `new`, `with_capacity`, `from`, `append`, `pop`, `clear`, `clone`,
   `last`, `first`, `insert`, `remove`, `swap_remove`, `extend`, `reserve`,
   `items`, `is_empty`, `len`, plus slice methods.
-- `String`: `new`, `from`, `with_capacity`, `append`, `append_char`, `clone`,
-  `clear`, `pop`, `bytes`, `len`, plus `[]u8` methods.
+- `String`: `new`, `from`, `with_capacity`, `append`, `append_char` (a code
+  point, UTF-8 encoded), `push_byte` (one raw byte), `clone`, `clear`, `pop`,
+  `bytes`, `len`, plus `[]u8` methods.
 - `Map(K, V)` (keys: integers, bool, char, `[]u8`, `String`): `new`, `put`,
   `get`, `contains`, `remove`, `clear`, `clone`, `keys`, `values`, `len`,
-  `m[key]`; `for (m) |k|` iterates keys.
+  `m[key]`; `for k in m` iterates keys.
 - Slices: `len`, `fill`, `reverse`, `sort`, `contains`, `index_of`,
   `copy_from`, `to_owned`, `is_empty`; `[]u8` also `starts_with`,
   `ends_with`, `find`, `trim`, `split`, `lines`, `to_string`, `parse_int(T)`,
@@ -189,11 +216,51 @@ the inferred set per function.
 - `math`: `PI E TAU INF NAN`, `sqrt abs floor ceil round sin cos tan exp log
   log2 min max pow atan2 clamp`.
 - `io.read_file(path) -> !String`, `io.write_file(path, bytes) -> !void`,
-  `io.read_line() -> ?String`.
-- `os.args() -> [][]u8`, `os.env(name) -> ?[]u8`, `os.exit(code)`,
+  `io.append_file(path, bytes) -> !void`, `io.read_line() -> ?String`.
+- File system primitives (`std.fs` wraps them with paths and walking):
+  `io.file_kind(path) -> i32` (0 missing, 1 file, 2 directory),
+  `io.file_size(path) -> !u64`, `io.file_modified(path) -> !i64` (ms),
+  `io.make_dir(path) -> !void`, `io.remove_file(path) -> !void`,
+  `io.remove_dir(path) -> !void` (empty), `io.rename(from, to) -> !void`,
+  `io.list_dir(path) -> !List(String)`, `io.cwd() -> !String`,
+  `io.temp_dir() -> String`. Failures are `error.NotFound` or
+  `error.IoError`.
+- File handles (`std.stream` wraps them with buffering): `io.open(path,
+  mode) -> !i64` (mode `r`, `w`, `a`), `io.read(h, n) -> !String` (up to
+  `n` bytes; empty at end of input), `io.write(h, bytes) -> !void`,
+  `io.flush(h) -> !void`, `io.close(h) -> !void`. Handles 1, 2 and 3 are
+  stdin, stdout and stderr. Not available at the REPL.
+- Sockets (`std.net` and `std.http` build on these; every call `blocks`):
+  `net.connect(host, port, timeout_ms) -> !i64`, `net.listen(host, port) ->
+  !i64`, `net.accept(listener, timeout_ms) -> !i64`, `net.send(sock, bytes)
+  -> !void`, `net.recv(sock, n, timeout_ms) -> !String` (empty when the
+  peer closed), `net.close(sock)`, `net.peer(sock)` / `net.local(sock) ->
+  !String` (`ip:port`), `net.resolve(host) -> !List(String)`,
+  `net.udp_bind(host, port) -> !i64`, `net.send_to(sock, host, port,
+  bytes)`, `net.recv_from(sock, n, timeout_ms) -> !String` with
+  `net.last_peer()` naming the sender. A timeout of 0 waits forever.
+  Errors: `NotFound` (name lookup), `ConnectionRefused`, `Timeout`,
+  `IoError`. Not available at the REPL.
+- Threads (`std.thread` builds `Thread`, `Channel` and `Mutex` on these):
+  `thread.start(f: fn(*mut T) -> void, arg: *mut T) -> i64` runs `f(arg)` on
+  a new thread with its own context, `thread.join(h)` waits for it and
+  re-raises its panic, `thread.count() -> usize` is the hardware thread
+  count. `sync.mutex_new() -> i64`, `sync.lock(m)`, `sync.unlock(m)`,
+  `sync.mutex_free(m)`, `sync.cond_new() -> i64`, `sync.wait(cv, m)`,
+  `sync.signal(cv)`, `sync.broadcast(cv)`, `sync.cond_free(cv)`. Starting a
+  thread carries `nondeterministic` and `shared_mutable`; joining, locking
+  and waiting `block`. Not available at the REPL.
+- `os.args() -> [][]u8`, `os.env(name) -> ?[]u8`, `os.environ() ->
+  List(String)` (every `NAME=value`), `os.exit(code)`,
   `process.run(argv: [][]u8) -> !i32` (spawns, waits, returns the exit code;
-  `error.IoError` when the program cannot be started).
+  `error.IoError` when the program cannot be started), `process.exec(argv,
+  stdin, cwd) -> !i32` (the same with stdin fed from `stdin`, run in `cwd`
+  when non-empty, and stdout/stderr captured) followed by
+  `process.last_stdout()` / `process.last_stderr() -> String`; `std.process`
+  wraps these.
 - `time.now() -> i64` (ms since the epoch), `time.monotonic() -> u64` (ns),
+  `time.utc_offset(ms) -> i64` (minutes east of UTC of local time at that
+  instant; `std.time` builds dates on these),
   `time.sleep(ms)`.
 - `random.int(lo, hi)`, `random.float()`, `random.seed(n)`.
 - `mem.copy(dst, src)`.
@@ -211,6 +278,25 @@ creates a new one.
 prints `error: Name` and exits with 1; a panic prints its location and exits
 with 101. `test "name" { }` blocks run with `nx test`.
 
+## Recursive types and matching through pointers
+
+A `List` may hold the type being defined, so trees and JSON values are plain
+enums: `enum Json { Null, Arr(List(Json)), Obj(List(Member)) }`. Matching
+through a pointer binds owning payloads by reference:
+
+```
+fn push(v: *mut Json, own item: Json) {
+    match v.* {
+        .Arr(items) => items.append(item),   // items: *mut List(Json), aliases the payload
+        _ => {},
+    }
+}
+```
+
+With `v: *Json` the binding is `*List(Json)`. Scalars (`.Num(n)`) are copied.
+A `*String` or `*List(T)` coerces to `[]u8` or `[]T` where a slice is
+expected.
+
 ## Trait objects
 
 `dyn Trait` is a fat pointer made from `*T` or `*mut T` where `T` implements
@@ -222,7 +308,7 @@ may mention `Self` only in receiver position.
 
 ## Parallel loops
 
-`for parallel (items) |x, i| { ... }` runs the body over the index range on a
+`for parallel x, i in items { ... }` runs the body over the index range on a
 thread pool (spec 7.2). The body may not have the `shared_mutable` effect,
 may not `return` or `break` (use `continue`), and writes results through a
 mutable slice indexed by `i`. A panic in a worker is re-raised in the caller
@@ -254,8 +340,11 @@ unsafe {
 `@cImport` runs the C preprocessor and imports functions, typedefs, structs,
 enums, and literal macros. `const T*` becomes `*T`, other pointers `*mut T`,
 `void*` becomes `*mut u8`. Foreign calls need `unsafe` and carry the `ffi`
-effect. Declarations that cannot be translated (unions, bit-fields, function
-pointers, function-like macros) are named in the error when used.
+effect. A struct whose fields cannot be translated (function pointers,
+bit-fields, nested definitions) is imported as an opaque type, usable through
+pointers like a forward declaration; that is how `FILE` works on every libc.
+Declarations that cannot be translated at all (unions, function-pointer
+typedefs, function-like macros) are named in the error when used.
 
 ## Compile-time tests
 
@@ -270,6 +359,6 @@ stored into an outer variable is not tracked.
 
 ## Not implemented yet
 
-`soa` and `packed` layouts, `node` and `installer` artifacts, `nx publish`
-and the registry, `pool`/`stack` allocation strategies, and region checking
-beyond rule R1.
+`nx publish` and the registry. `soa` and `packed` layouts, `pool` and
+`stack` allocation strategies, and region rules beyond R1 are not part of
+the language (decision 88); the compiler rejects the spellings.

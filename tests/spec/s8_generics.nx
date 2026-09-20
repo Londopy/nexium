@@ -1,0 +1,13 @@
+// SPEC 8.2: type parameters inferred or explicit, bounds, generic structs and impls, one instance per argument set.
+fn max(comptime T: type where T: Ord, a: T, b: T) -> T { return if a > b { a } else { b } }
+fn describe(comptime T: type, x: T) -> []u8 { return @typeName(T) }
+struct Pair(T) { a: T, b: T }
+impl(T) Pair(T) {
+    fn first(self: *Self) -> T { return self.a }
+    fn swap(self: *Self) -> Pair(T) { return Pair(T){ .a = self.b, .b = self.a } }
+}
+fn main() {
+    let p = Pair(i32){ .a = 1, .b = 2 }
+    let q = Pair([]u8){ .a = "x", .b = "y" }
+    println("{} {} {} {} {} {}", .{max(3, 9), max(i32, 4, 2), max("a", "b"), describe(f64, 1.5), p.swap().first(), q.swap().first()})
+}

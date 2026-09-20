@@ -1,0 +1,16 @@
+{
+  "name": "nexium",
+  "tags": [
+    1,
+    2,
+    {
+      "deep": [
+        true,
+        null
+      ]
+    },
+    3
+  ]
+}
+2 nexium
+true 3 1

@@ -325,7 +325,12 @@ impl Parser {
             }
             let start = self.span();
             let comptime = self.eat_ident("comptime");
+            // `own` is a modifier only when a parameter name follows it
+            let owned = self.at_ident("own") && matches!(self.peek_at(1), Tok::Ident(_)) && self.eat_ident("own");
             let (name, nsp) = self.expect_ident()?;
+            if owned && name == "self" {
+                return self.error(nsp, "`self` cannot be an owned parameter; receivers are borrowed (`*Self` or `*mut Self`)");
+            }
             self.expect(&Tok::Colon)?;
             let ty = self.parse_type()?;
             if self.eat_ident("where") {
@@ -333,7 +338,7 @@ impl Parser {
                 wheres.push(w);
             }
             let span = start.to(self.prev_span());
-            params.push(Param { name, ty, comptime, span });
+            params.push(Param { name, ty, comptime, owned, span });
             if !self.eat(&Tok::Comma) {
                 break;
             }
@@ -386,8 +391,9 @@ impl Parser {
                 let (l, lsp) = self.expect_ident()?;
                 layout = match l.as_str() {
                     "c" => Layout::C,
-                    "packed" => Layout::Packed,
-                    _ => return self.error(lsp, format!("unknown layout `{}`; expected `c` or `packed`", l)),
+                    // `packed` and `soa` were planned once and are not part of the language (decision 88)
+                    "packed" | "soa" => return self.error(lsp, format!("`{}` is not a layout; `layout(c)` is the only layout, and the default is the compiler's", l)),
+                    _ => return self.error(lsp, format!("unknown layout `{}`; expected `c`", l)),
                 };
                 self.expect(&Tok::RParen)?;
             } else if self.eat_ident("derive") {
@@ -403,8 +409,9 @@ impl Parser {
                     }
                 }
                 self.expect(&Tok::RParen)?;
-            } else if self.eat_ident("soa") {
-                // accepted and ignored in this implementation
+            } else if self.at_ident("soa") {
+                let sp = self.span();
+                return self.error(sp, "`soa` is not a layout; a structure of arrays is written as separate lists (decision 88)");
             } else {
                 break;
             }
@@ -1052,28 +1059,13 @@ impl Parser {
             _ => unreachable!(),
         };
         if kw_name == "while" {
-            self.expect(&Tok::LParen)?;
-            let cond = self.parse_expr()?;
-            self.expect(&Tok::RParen)?;
-            let body = self.parse_block(None)?;
-            return Ok(Stmt::While { cond, body, label, span: start.to(self.prev_span()) });
+            let cond = self.parse_expr_no_struct()?;
+            let body = self.parse_body("the `while` condition")?;
+            let els = if self.eat_ident("else") { Some(self.parse_body("`else`")?) } else { None };
+            return Ok(Stmt::While { cond, body, els, label, span: start.to(self.prev_span()) });
         }
-        // for
+        // for [parallel] x, i in items { }   /   for i in lo..hi [step s] { }
         let parallel = self.eat_ident("parallel");
-        self.expect(&Tok::LParen)?;
-        let first = self.parse_expr()?;
-        let iter = if self.eat(&Tok::DotDot) {
-            let end = self.parse_expr()?;
-            ForIter::Range { start: first, end }
-        } else {
-            let mut items = vec![first];
-            while self.eat(&Tok::Comma) {
-                items.push(self.parse_expr()?);
-            }
-            ForIter::Items(items)
-        };
-        self.expect(&Tok::RParen)?;
-        self.expect(&Tok::Pipe)?;
         let mut bindings = Vec::new();
         loop {
             let (n, _) = self.expect_ident()?;
@@ -1082,8 +1074,25 @@ impl Parser {
                 break;
             }
         }
-        self.expect(&Tok::Pipe)?;
-        let body = self.parse_block(None)?;
+        if !self.at_ident("in") {
+            let sp = self.span();
+            let got = self.peek().describe();
+            return self.error(sp, format!("expected `in` after the loop variable(s) but found {}", got));
+        }
+        self.bump();
+        let first = self.parse_expr_no_struct()?;
+        let iter = if self.eat(&Tok::DotDot) {
+            let end = self.parse_expr_no_struct()?;
+            let step = if self.eat_ident("step") { Some(self.parse_expr_no_struct()?) } else { None };
+            ForIter::Range { start: first, end, step }
+        } else {
+            let mut items = vec![first];
+            while self.eat(&Tok::Comma) {
+                items.push(self.parse_expr_no_struct()?);
+            }
+            ForIter::Items(items)
+        };
+        let body = self.parse_body("the `for` header")?;
         Ok(Stmt::For { iter, bindings, body, label, parallel, span: start.to(self.prev_span()) })
     }
 
@@ -1145,12 +1154,12 @@ impl Parser {
                 } else {
                     None
                 };
-                let handler = self.parse_or()?;
+                let handler = self.parse_or_or_jump()?;
                 let span = e.span().to(handler.span());
                 e = Expr::Catch { expr: Box::new(e), binding, handler: Box::new(handler), span };
             } else if self.at_ident("orelse") {
                 self.bump();
-                let default = self.parse_or()?;
+                let default = self.parse_or_or_jump()?;
                 let span = e.span().to(default.span());
                 e = Expr::OrElse { expr: Box::new(e), default: Box::new(default), span };
             } else {
@@ -1316,6 +1325,14 @@ impl Parser {
 
     fn parse_args(&mut self) -> PResult<Vec<Expr>> {
         self.expect(&Tok::LParen)?;
+        let saved = self.no_struct_lit;
+        self.no_struct_lit = false;
+        let r = self.parse_args_inner();
+        self.no_struct_lit = saved;
+        r
+    }
+
+    fn parse_args_inner(&mut self) -> PResult<Vec<Expr>> {
         let mut args = Vec::new();
         loop {
             if self.at(&Tok::RParen) {
@@ -1512,23 +1529,23 @@ impl Parser {
         match self.peek().clone() {
             Tok::Int(v) => {
                 self.bump();
-                Ok(Expr::Lit { value: Lit::Int(v), span: start })
+                return Ok(Expr::Lit { value: Lit::Int(v), span: start });
             }
             Tok::Float(v) => {
                 self.bump();
-                Ok(Expr::Lit { value: Lit::Float(v), span: start })
+                return Ok(Expr::Lit { value: Lit::Float(v), span: start });
             }
             Tok::Str(s) => {
                 self.bump();
-                Ok(Expr::Lit { value: Lit::Str(s), span: start })
+                return Ok(Expr::Lit { value: Lit::Str(s), span: start });
             }
             Tok::Bytes(s) => {
                 self.bump();
-                Ok(Expr::Lit { value: Lit::Bytes(s), span: start })
+                return Ok(Expr::Lit { value: Lit::Bytes(s), span: start });
             }
             Tok::Char(c) => {
                 self.bump();
-                Ok(Expr::Lit { value: Lit::Char(c), span: start })
+                return Ok(Expr::Lit { value: Lit::Char(c), span: start });
             }
             Tok::LParen => {
                 self.bump();
@@ -1536,6 +1553,28 @@ impl Parser {
                     self.bump();
                     return Ok(Expr::TupleLit { elems: vec![], span: start.to(self.prev_span()) });
                 }
+                // inside parentheses a struct literal is unambiguous again
+                let saved = self.no_struct_lit;
+                self.no_struct_lit = false;
+                let r = self.parse_paren_rest(start);
+                self.no_struct_lit = saved;
+                return r;
+            }
+            Tok::LBracket => {
+                let saved = self.no_struct_lit;
+                self.no_struct_lit = false;
+                let r = self.parse_bracket_rest(start);
+                self.no_struct_lit = saved;
+                return r;
+            }
+            _ => {}
+        }
+        self.parse_primary_rest(start)
+    }
+
+    fn parse_paren_rest(&mut self, start: Span) -> PResult<Expr> {
+        {
+            {
                 let first = self.parse_expr()?;
                 if self.eat(&Tok::Comma) {
                     let mut elems = vec![first];
@@ -1554,7 +1593,12 @@ impl Parser {
                 self.expect(&Tok::RParen)?;
                 Ok(first)
             }
-            Tok::LBracket => {
+        }
+    }
+
+    fn parse_bracket_rest(&mut self, start: Span) -> PResult<Expr> {
+        {
+            {
                 self.bump();
                 // `[]T` slice type in expression position, or `[]` the empty array literal
                 if self.at(&Tok::RBracket) {
@@ -1597,6 +1641,11 @@ impl Parser {
                 }
                 Ok(Expr::ArrayLit { elems, span: start.to(self.prev_span()) })
             }
+        }
+    }
+
+    fn parse_primary_rest(&mut self, start: Span) -> PResult<Expr> {
+        match self.peek().clone() {
             Tok::DotLBrace => {
                 self.bump();
                 self.skip_newlines();
@@ -1763,7 +1812,7 @@ impl Parser {
             let pstart = self.span();
             let (name, _) = self.expect_ident()?;
             let ty = if self.eat(&Tok::Colon) { self.parse_type()? } else { TypeExpr::Infer { span: pstart } };
-            params.push(Param { name, ty, comptime: false, span: pstart.to(self.prev_span()) });
+            params.push(Param { name, ty, comptime: false, owned: false, span: pstart.to(self.prev_span()) });
             if !self.eat(&Tok::Comma) {
                 break;
             }
@@ -1776,6 +1825,18 @@ impl Parser {
     }
 
     /// An expression, or a `return`/`break`/`continue` statement wrapped as a block expression.
+    /// An `orelse` / `catch` right-hand side: an `or`-level expression, or a
+    /// jump (`return`, `break`, `continue`) wrapped as a diverging block.
+    fn parse_or_or_jump(&mut self) -> PResult<Expr> {
+        if matches!(self.peek(), Tok::Ident(s) if s == "return" || s == "break" || s == "continue") {
+            let start = self.span();
+            let stmt = self.parse_stmt()?;
+            let sp = start.to(self.prev_span());
+            return Ok(Expr::Block(Block { stmts: vec![stmt], tail: None, label: None, span: sp }));
+        }
+        self.parse_or()
+    }
+
     fn parse_expr_or_jump(&mut self) -> PResult<Expr> {
         let start = self.span();
         let stmt = self.parse_stmt()?;
@@ -1788,39 +1849,40 @@ impl Parser {
         }
     }
 
+    /// A block after a control-flow header; the braces are required.
+    fn parse_body(&mut self, after: &str) -> PResult<Block> {
+        if self.at(&Tok::LBrace) {
+            return self.parse_block(None);
+        }
+        let sp = self.span();
+        let got = self.peek().describe();
+        self.error(sp, format!("expected `{{` after {} but found {}; bodies always take braces (`if c {{ return v }}`)", after, got))
+    }
+
+    /// `if c { } else if d { } else { }` and `if let v = opt { } else { }`.
     fn parse_if(&mut self) -> PResult<Expr> {
         let start = self.expect_kw("if")?;
-        self.expect(&Tok::LParen)?;
-        let cond = self.parse_expr()?;
-        self.expect(&Tok::RParen)?;
-        let binding = if self.eat(&Tok::Pipe) {
+        let binding = if self.eat_ident("let") {
             let (n, _) = self.expect_ident()?;
-            self.expect(&Tok::Pipe)?;
+            self.expect(&Tok::Eq)?;
             Some(n)
         } else {
             None
         };
-        let then = if self.at(&Tok::LBrace) {
-            self.parse_block(None)?
-        } else {
-            // single-expression form: `if (c) a else b`, or `if (c) break :outer v`
-            let e = self.parse_expr_or_jump()?;
-            let sp = e.span();
-            match e {
-                Expr::Block(b) => b,
-                e => Block { stmts: vec![], tail: Some(Box::new(e)), label: None, span: sp },
-            }
-        };
+        let cond = self.parse_expr_no_struct()?;
+        if self.at(&Tok::Pipe) && matches!(self.peek_at(1), Tok::Ident(_)) && self.peek_at(2) == &Tok::Pipe {
+            let sp = self.span();
+            return self.error(sp, "`if (opt) |v|` is now written `if let v = opt { ... }`");
+        }
+        let then = self.parse_body("the `if` condition")?;
         // allow `else` on the next line
         let els = if self.at_ident("else") || (self.at(&Tok::Newline) && matches!(self.peek_at(1), Tok::Ident(s) if s == "else")) {
             self.skip_newlines();
             self.bump();
             if self.at_ident("if") {
                 Some(Box::new(self.parse_if()?))
-            } else if self.at(&Tok::LBrace) {
-                Some(Box::new(Expr::Block(self.parse_block(None)?)))
             } else {
-                Some(Box::new(self.parse_expr()?))
+                Some(Box::new(Expr::Block(self.parse_body("`else`")?)))
             }
         } else {
             None

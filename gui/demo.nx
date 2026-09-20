@@ -8,9 +8,9 @@ fn main() -> !void {
     let args = os.args()
     let shot = args.len > 2 and args[1] == "--shot"
     var ui = nexium_gui.Ui.headless(640, 440)
-    if (!shot) {
+    if !shot {
         let maybe = nexium_gui.Ui.open(@cstr("nexium-gui"), 640, 440)
-        if (maybe == null) {
+        if maybe == null {
             eprintln("could not open a window", .{})
             os.exit(1)
         }
@@ -24,8 +24,8 @@ fn main() -> !void {
     var name = String.from("Londopy")
     var show_bars = true
 
-    while (ui.begin_frame()) {
-        if (shot) {
+    while ui.begin_frame() {
+        if shot {
             ui.input.mouse_x = 40
             ui.input.mouse_y = 80
             ui.time = 1.25
@@ -34,14 +34,14 @@ fn main() -> !void {
         ui.dim_label("an immediate-mode GUI written in Nexium, drawn pixel by pixel")
         ui.space(4)
 
-        if (ui.button("click me")) clicks += 1
+        if ui.button("click me") { clicks += 1 }
         ui.same_line()
-        if (ui.button("reset")) clicks = 0
+        if ui.button("reset") { clicks = 0 }
         ui.same_line()
         ui.label(format("clicked {} times", .{clicks}))
 
-        if (ui.checkbox("dark theme", &mut dark)) {
-            ui.set_theme(if (dark) nexium_gui.dark_theme() else nexium_gui.light_theme())
+        if ui.checkbox("dark theme", &mut dark) {
+            ui.set_theme(if dark { nexium_gui.dark_theme() } else { nexium_gui.light_theme() })
         }
         ui.same_line()
         _ = ui.checkbox("animate", &mut show_bars)
@@ -60,10 +60,10 @@ fn main() -> !void {
         let bottom = ui.canvas.h - ui.margin
         let color = nexium_gui.hue_color(hue)
         ui.canvas.fill_rounded(ui.margin, top, ui.canvas.w - 2 * ui.margin, bottom - top, ui.theme.panel)
-        if (show_bars) {
+        if show_bars {
             let n: i32 = 24
             let bw = (ui.canvas.w - 2 * ui.margin - 8) / n
-            for (0..n) |i| {
+            for i in 0..n {
                 let phase = ui.time as f32 * speed + i as f32 * 0.35
                 let s = math.sin(phase as f64) as f32
                 let hgt = ((bottom - top - 16) as f32 *(0.5 + 0.45 * s)) as i32
@@ -72,10 +72,10 @@ fn main() -> !void {
                 ui.canvas.fill_rect(x, bottom - 8 - hgt, bw - 3, hgt, c)
             }
         }
-        let fps = if (ui.dt > 0.0) 1.0 / ui.dt else 0.0
+        let fps = if ui.dt > 0.0 { 1.0 / ui.dt } else { 0.0 }
         ui.canvas.text(ui.canvas.w - 90, ui.canvas.h - 20, format("{:.0} fps", .{fps}), ui.theme.dim)
         ui.end_frame()
-        if (shot) {
+        if shot {
             try ui.canvas.save_ppm(args[2])
             println("wrote {}", .{args[2]})
             return

@@ -1,0 +1,6 @@
+// SPEC 3: an error from `main` prints `error: Name` and exits with 1.
+// EXIT: 1
+fn main() -> !void {
+    println("before", .{})
+    return error.NotFound
+}

@@ -1,0 +1,95 @@
+// Compile-time evaluation: the interpreter runs plain Nexium over the
+// typed IR. Constants may call functions; `comptime test` blocks run
+// while the program is checked.
+
+struct Point { x: i64, y: i64 }
+
+enum Shape { Dot, Line(i64), Box(Point, Point) }
+
+fn area(s: Shape) -> i64 {
+    match s {
+        .Dot => 0,
+        .Line(n) => n,
+        .Box(a, b) => (b.x - a.x) *(b.y - a.y),
+    }
+}
+
+fn primes(n: usize) -> List(u32) {
+    var out = List(u32).new()
+    var k: u32 = 2
+    while out.len < n {
+        var is_prime = true
+        for p in out { if k % p == 0 { is_prime = false; break } }
+        if is_prime { out.append(k) }
+        k += 1
+    }
+    return out
+}
+
+fn crc_table() -> [256]u32 {
+    var t: [256]u32 = undefined
+    for i in 0..256 {
+        var c = i as u32
+        for _j in 0..8 {
+            c = if c & 1 != 0 { 0xEDB88320 ^ (c >> 1) } else { c >> 1 }
+        }
+        t[i] = c
+    }
+    return t
+}
+
+fn crc32(data: []u8) -> u32 {
+    var c: u32 = 0xFFFFFFFF
+    for b in data { c = CRC[((c ^ (b as u32)) & 0xFF) as usize] ^ (c >> 8) }
+    return c ^ 0xFFFFFFFF
+}
+
+fn greeting(name: []u8) -> String {
+    var s = String.from("hello, ")
+    s.append(name)
+    s.push_byte('!')
+    return s
+}
+
+fn parse_pair(text: []u8) -> !Point {
+    let parts = text.split(",")
+    if parts.len != 2 { return error.InvalidInput }
+    let x = try parts[0].trim().parse_int(i64)
+    let y = try parts[1].trim().parse_int(i64)
+    return Point{ .x = x, .y = y }
+}
+
+const CRC: [256]u32 = comptime crc_table()
+const AREA: i64 = comptime area(Shape.Box(Point{ .x = 1, .y = 1 }, Point{ .x = 4, .y = 5 }))
+const PRIMES: []u32 = comptime primes(10)[..]
+const HELLO: []u8 = comptime greeting("world")[..]
+const ORIGIN: Point = comptime parse_pair("3, 4") catch Point{ .x = 0, .y = 0 }
+const CHECK: u32 = comptime crc32("123456789")
+
+comptime test "interpreter" {
+    expect(area(Shape.Line(7)) == 7)
+    expect(PRIMES[9] == 29)
+    expect(HELLO.len == 13)
+    expect(ORIGIN.x + ORIGIN.y == 7)
+    expect(CHECK == 0xCBF43926)
+    var m = Map([]u8, i64).new()
+    m.put("a", 1)
+    m.put("b", 2)
+    m.put("a", 3)
+    expect((m.get("a") orelse 0) == 3)
+    expect(m.len == 2)
+    let bad = parse_pair("x") catch |e| {
+        expect(e == error.InvalidInput)
+        Point{ .x = -1, .y = -1 }
+    }
+    expect(bad.x == -1)
+}
+
+fn main() {
+    println("area {}", .{AREA})
+    println("primes {} .. {}", .{PRIMES[0], PRIMES[PRIMES.len - 1]})
+    println("{}", .{HELLO})
+    println("origin {} {}", .{ORIGIN.x, ORIGIN.y})
+    println("crc {x}", .{CHECK})
+    println("crc of 'abc' {x}", .{crc32("abc")})
+}

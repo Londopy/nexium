@@ -1,0 +1,26 @@
+// SPEC 4: recursive types through List, Map and ref class.
+enum Json { Null, Num(f64), Arr(List(Json)) }
+struct Tree { kids: Map(u8, Tree), v: i32 }
+ref class Node { next: ?Node, v: i32 }
+fn depth(j: *Json) -> i32 {
+    match j.*{
+        .Arr(items) => {
+            var best: i32 = 0
+            for it in items { let d = depth(&it); if d > best { best = d } }
+            return best + 1
+        }
+        _ => return 0,
+    }
+}
+fn main() {
+    var inner = List(Json).new()
+    inner.append(Json.Num(1.0))
+    var outer = List(Json).new()
+    outer.append(Json.Arr(inner))
+    let j = Json.Arr(outer)
+    var t = Tree{ .kids = Map(u8, Tree).new(), .v = 1 }
+    t.kids.put(1, Tree{ .kids = Map(u8, Tree).new(), .v = 2 })
+    let n2 = Node{ .next = null, .v = 2 }
+    let n1 = Node{ .next = n2, .v = 1 }
+    println("{} {} {}", .{depth(&j), t.kids.len, (n1.next.?).v})
+}

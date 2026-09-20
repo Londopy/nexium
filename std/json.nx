@@ -1,0 +1,528 @@
+// std.json: a JSON parser and serializer, written in Nexium.
+//
+// `import std.json` then `json.parse(text)`, `json.stringify(&value)`.
+// Values are the `Json` enum below; arrays and objects own their children.
+// Numbers are f64 (JSON has one number type); integers up to 2^53 round trip.
+
+pub struct Member {
+    key: String
+    value: Json
+}
+
+pub enum Json {
+    Null,
+    Bool(bool),
+    Num(f64),
+    Str(String),
+    Arr(List(Json)),
+    Obj(List(Member)),
+}
+
+// ---------------------------------------------------------------- building
+
+pub fn null_value() -> Json { return Json.Null }
+pub fn boolean(b: bool) -> Json { return Json.Bool(b) }
+pub fn number(n: f64) -> Json { return Json.Num(n) }
+pub fn string(s: []u8) -> Json { return Json.Str(String.from(s)) }
+pub fn array() -> Json { return Json.Arr(List(Json).new()) }
+pub fn object() -> Json { return Json.Obj(List(Member).new()) }
+
+/// Append to an array; does nothing when `v` is not an array.
+pub fn push(v: *mut Json, own item: Json) {
+    match v.*{
+        .Arr(items) => items.append(item),
+        _ => { },
+    }
+}
+
+/// Set a key on an object (replacing an existing one); does nothing otherwise.
+pub fn set(v: *mut Json, key: []u8, own value: Json) {
+    match v.*{
+        .Obj(members) => {
+            for m, i in members {
+                if m.key == key {
+                    members[i] = Member{ .key = String.from(key), .value = value }
+                    return
+                }
+            }
+            members.append(Member{ .key = String.from(key), .value = value })
+        },
+        _ => { },
+    }
+}
+
+// ---------------------------------------------------------------- reading
+
+/// The member `key` of an object, or null.
+pub fn get(v: *Json, key: []u8) -> ?*Json {
+    match v.*{
+        .Obj(members) => {
+            for m, i in members {
+                if m.key == key { return &members[i].value }
+            }
+            return null
+        },
+        _ => return null,
+    }
+}
+
+/// The member `key` of an object, mutable, or null.
+pub fn get_mut(v: *mut Json, key: []u8) -> ?*mut Json{
+    match v.*{
+        .Obj(members) => {
+            for m, i in members {
+                if m.key == key { return &mut members[i].value }
+            }
+            return null
+        },
+        _ => return null,
+    }
+}
+
+/// Element `i` of an array, mutable, or null.
+pub fn at_mut(v: *mut Json, i: usize) -> ?*mut Json{
+    match v.*{
+        .Arr(items) => {
+            if i < items.len { return &mut items[i] }
+            return null
+        },
+        _ => return null,
+    }
+}
+
+/// Element `i` of an array, or null.
+pub fn at(v: *Json, i: usize) -> ?*Json {
+    match v.*{
+        .Arr(items) => {
+            if i < items.len { return &items[i] }
+            return null
+        },
+        _ => return null,
+    }
+}
+
+/// Number of elements or members; 0 for scalars.
+pub fn len(v: *Json) -> usize {
+    match v.*{
+        .Arr(items) => items.len,
+        .Obj(members) => members.len,
+        _ => 0,
+    }
+}
+
+pub fn is_null(v: *Json) -> bool {
+    match v.*{
+        .Null => true,
+        _ => false,
+    }
+}
+
+pub fn as_bool(v: *Json) -> ?bool {
+    match v.*{
+        .Bool(b) => b,
+        _ => null,
+    }
+}
+
+pub fn as_num(v: *Json) -> ?f64 {
+    match v.*{
+        .Num(n) => n,
+        _ => null,
+    }
+}
+
+pub fn as_str(v: *Json) -> ?[]u8 {
+    match v.*{
+        .Str(s) => s.as_slice(),
+        _ => null,
+    }
+}
+
+/// Keys of an object in order; empty for anything else.
+pub fn keys(v: *Json) -> List([]u8) {
+    var out = List([]u8).new()
+    match v.*{
+        .Obj(members) => { for m in members { out.append(m.key.as_slice()) } },
+        _ => { },
+    }
+    return out
+}
+
+// ---------------------------------------------------------------- parsing
+
+struct Parser {
+    src: []u8
+    pos: usize
+}
+
+fn is_ws(c: u8) -> bool { return c == ' ' or c == '\t' or c == '\n' or c == '\r' }
+
+impl Parser {
+    fn peek(self: *Self) -> u8 {
+        return if self.pos < self.src.len { self.src[self.pos] } else { 0 }
+    }
+
+    fn skip_ws(self: *mut Self) {
+        while self.pos < self.src.len and is_ws(self.src[self.pos]) { self.pos += 1 }
+    }
+
+    fn expect_word(self: *mut Self, word: []u8) -> !void {
+        if self.pos + word.len > self.src.len { return error.InvalidInput }
+        if self.src[self.pos..self.pos + word.len] != word { return error.InvalidInput }
+        self.pos += word.len
+    }
+
+    fn hex4(self: *mut Self) -> !u32 {
+        if self.pos + 4 > self.src.len { return error.InvalidInput }
+        var v: u32 = 0
+        for _ in 0..4 {
+            let c = self.src[self.pos]
+            var d: u32 = 0
+            if c >= '0' and c <= '9' { d = (c - '0') as u32 }
+            else if c >= 'a' and c <= 'f' { d = (c - 'a') as u32 + 10 }
+            else if c >= 'A' and c <= 'F' { d = (c - 'A') as u32 + 10 }
+            else { return error.InvalidInput }
+            v = v * 16 + d
+            self.pos += 1
+        }
+        return v
+    }
+
+    fn push_utf8(out: *mut String, cp: u32) {
+        if cp < 0x80 {
+            out.push_byte(cp as u8)
+        } else if cp < 0x800 {
+            out.push_byte((0xC0 | (cp >> 6)) as u8)
+            out.push_byte((0x80 | (cp & 0x3F)) as u8)
+        } else if cp < 0x10000 {
+            out.push_byte((0xE0 | (cp >> 12)) as u8)
+            out.push_byte((0x80 | ((cp >> 6) & 0x3F)) as u8)
+            out.push_byte((0x80 | (cp & 0x3F)) as u8)
+        } else {
+            out.push_byte((0xF0 | (cp >> 18)) as u8)
+            out.push_byte((0x80 | ((cp >> 12) & 0x3F)) as u8)
+            out.push_byte((0x80 | ((cp >> 6) & 0x3F)) as u8)
+            out.push_byte((0x80 | (cp & 0x3F)) as u8)
+        }
+    }
+
+    fn parse_string(self: *mut Self) -> !String {
+        // at the opening quote
+        self.pos += 1
+        var out = String.new()
+        while true {
+            if self.pos >= self.src.len { return error.InvalidInput }
+            let c = self.src[self.pos]
+            self.pos += 1
+            if c == '"' { break }
+            if c == '\\' {
+                if self.pos >= self.src.len { return error.InvalidInput }
+                let e = self.src[self.pos]
+                self.pos += 1
+                if e == '"' { out.push_byte('"') }
+                else if e == '\\' { out.push_byte('\\') }
+                else if e == '/' { out.push_byte('/') }
+                else if e == 'b' { out.push_byte(8) }
+                else if e == 'f' { out.push_byte(12) }
+                else if e == 'n' { out.push_byte('\n') }
+                else if e == 'r' { out.push_byte('\r') }
+                else if e == 't' { out.push_byte('\t') }
+                else if e == 'u' {
+                    var cp = try self.hex4()
+                    if cp >= 0xD800 and cp <= 0xDBFF {
+                        // surrogate pair: \uD83D\uDE00
+                        try self.expect_word("\\u")
+                        let lo = try self.hex4()
+                        if lo < 0xDC00 or lo > 0xDFFF { return error.InvalidInput }
+                        cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00)
+                    }
+                    Parser.push_utf8(&mut out, cp)
+                } else {
+                    return error.InvalidInput
+                }
+            } else if c < 0x20 {
+                return error.InvalidInput
+            } else {
+                out.push_byte(c)
+            }
+        }
+        return out
+    }
+
+    fn parse_number(self: *mut Self) -> !f64 {
+        let start = self.pos
+        if self.peek() == '-' { self.pos += 1 }
+        if ! (self.peek() >= '0' and self.peek() <= '9') { return error.InvalidInput }
+        while self.peek() >= '0' and self.peek() <= '9' { self.pos += 1 }
+        if self.peek() == '.' {
+            self.pos += 1
+            if ! (self.peek() >= '0' and self.peek() <= '9') { return error.InvalidInput }
+            while self.peek() >= '0' and self.peek() <= '9' { self.pos += 1 }
+        }
+        if self.peek() == 'e' or self.peek() == 'E' {
+            self.pos += 1
+            if self.peek() == '+' or self.peek() == '-' { self.pos += 1 }
+            if ! (self.peek() >= '0' and self.peek() <= '9') { return error.InvalidInput }
+            while self.peek() >= '0' and self.peek() <= '9' { self.pos += 1 }
+        }
+        let n = self.src[start..self.pos].parse_float() catch |e| return error.InvalidInput
+        return n
+    }
+
+    fn parse_value(self: *mut Self, depth: u32) -> !Json {
+        if depth > 256 { return error.InvalidInput }
+        self.skip_ws()
+        let c = self.peek()
+        if c == '{' {
+            self.pos += 1
+            var members = List(Member).new()
+            self.skip_ws()
+            if self.peek() == '}' {
+                self.pos += 1
+                return Json.Obj(members)
+            }
+            while true {
+                self.skip_ws()
+                if self.peek() != '"' { return error.InvalidInput }
+                let key = try self.parse_string()
+                self.skip_ws()
+                if self.peek() != ':' { return error.InvalidInput }
+                self.pos += 1
+                let value = try self.parse_value(depth + 1)
+                members.append(Member{ .key = key, .value = value })
+                self.skip_ws()
+                let d = self.peek()
+                self.pos += 1
+                if d == '}' { break }
+                if d != ',' { return error.InvalidInput }
+            }
+            return Json.Obj(members)
+        }
+        if c == '[' {
+            self.pos += 1
+            var items = List(Json).new()
+            self.skip_ws()
+            if self.peek() == ']' {
+                self.pos += 1
+                return Json.Arr(items)
+            }
+            while true {
+                let v = try self.parse_value(depth + 1)
+                items.append(v)
+                self.skip_ws()
+                let d = self.peek()
+                self.pos += 1
+                if d == ']' { break }
+                if d != ',' { return error.InvalidInput }
+            }
+            return Json.Arr(items)
+        }
+        if c == '"' {
+            let s = try self.parse_string()
+            return Json.Str(s)
+        }
+        if c == 't' {
+            try self.expect_word("true")
+            return Json.Bool(true)
+        }
+        if c == 'f' {
+            try self.expect_word("false")
+            return Json.Bool(false)
+        }
+        if c == 'n' {
+            try self.expect_word("null")
+            return Json.Null
+        }
+        if c == '-' or (c >= '0' and c <= '9') {
+            let n = try self.parse_number()
+            return Json.Num(n)
+        }
+        return error.InvalidInput
+    }
+}
+
+/// Parse a JSON document. Trailing whitespace is allowed, anything else is an error.
+pub fn parse(text: []u8) -> !Json {
+    var p = Parser{ .src = text, .pos = 0 }
+    let v = try p.parse_value(0)
+    p.skip_ws()
+    if p.pos != text.len { return error.InvalidInput }
+    return v
+}
+
+// ---------------------------------------------------------------- writing
+
+fn write_string(out: *mut String, s: []u8) {
+    out.push_byte('"')
+    for c in s {
+        if c == '"' { out.append("\\\"") }
+        else if c == '\\' { out.append("\\\\") }
+        else if c == '\n' { out.append("\\n") }
+        else if c == '\r' { out.append("\\r") }
+        else if c == '\t' { out.append("\\t") }
+        else if c == 8 { out.append("\\b") }
+        else if c == 12 { out.append("\\f") }
+        else if c < 0x20 {
+            out.append("\\u00")
+            let hex = "0123456789abcdef"
+            out.push_byte(hex[(c >> 4) as usize])
+            out.push_byte(hex[(c & 15) as usize])
+        } else {
+            out.push_byte(c)
+        }
+    }
+    out.push_byte('"')
+}
+
+fn write_number(out: *mut String, n: f64) {
+    // integers print without a fraction; everything else with enough digits to round trip
+    if n == math.floor(n) and math.abs(n) < 9007199254740992.0 {
+        out.append(format("{}", .{n as i64}))
+    } else {
+        out.append(format("{}", .{n}))
+    }
+}
+
+fn write_value(out: *mut String, v: *Json, indent: usize, level: usize) {
+    match v.*{
+        .Null => out.append("null"),
+        .Bool(b) => out.append(if b { "true" } else { "false" }),
+        .Num(n) => write_number(out, n),
+        .Str(s) => write_string(out, s),
+        .Arr(items) => {
+            if items.len == 0 {
+                out.append("[]")
+                return
+            }
+            out.push_byte('[')
+            for it, i in items {
+                if i > 0 { out.push_byte(',') }
+                newline(out, indent, level + 1)
+                write_value(out, &it, indent, level + 1)
+            }
+            newline(out, indent, level)
+            out.push_byte(']')
+        },
+        .Obj(members) => {
+            if members.len == 0 {
+                out.append("{}")
+                return
+            }
+            out.push_byte('{')
+            for m, i in members {
+                if i > 0 { out.push_byte(',') }
+                newline(out, indent, level + 1)
+                write_string(out, m.key)
+                out.push_byte(':')
+                if indent > 0 { out.push_byte(' ') }
+                write_value(out, &m.value, indent, level + 1)
+            }
+            newline(out, indent, level)
+            out.push_byte('}')
+        },
+    }
+}
+
+fn newline(out: *mut String, indent: usize, level: usize) {
+    if indent == 0 { return }
+    out.push_byte('\n')
+    for _ in 0..indent * level { out.push_byte(' ') }
+}
+
+/// Compact text: no whitespace.
+pub fn stringify(v: *Json) -> String {
+    var out = String.new()
+    write_value(&mut out, v, 0, 0)
+    return out
+}
+
+/// Indented text, `indent` spaces per level.
+pub fn pretty(v: *Json, indent: usize) -> String {
+    var out = String.new()
+    write_value(&mut out, v, indent, 0)
+    return out
+}
+
+// ---------------------------------------------------------------- tests
+
+test "scalars" {
+    let t = try parse(" true ")
+    expect_eq(as_bool(&t) orelse false, true)
+    let n = try parse("-12.5e1")
+    expect_eq(as_num(&n) orelse 0.0, -125.0)
+    let s = try parse("\"a\\\"b\\n\\u0041\\u00e9\\ud83d\\ude00\"")
+    expect_eq(as_str(&s) orelse "", "a\"b\nAé😀")
+    let z = try parse("null")
+    expect(is_null(&z))
+    expect_eq(stringify(&t), "true")
+    expect_eq(stringify(&n), "-125")
+    expect_eq(stringify(&s), "\"a\\\"b\\nAé😀\"")
+}
+
+test "arrays and objects" {
+    let doc = try parse("{\"name\": \"nexium\", \"tags\": [\"lang\", 2, false, null], \"nested\": {\"k\": [ ]}}")
+    expect_eq(len(&doc), 3)
+    expect_eq(as_str(get(&doc, "name") orelse &doc) orelse "", "nexium")
+    let tags = get(&doc, "tags") orelse &doc
+    expect_eq(len(tags), 4)
+    expect_eq(as_num(at(tags, 1) orelse tags) orelse 0.0, 2.0)
+    expect(get(&doc, "missing") == null)
+    expect(at(tags, 9) == null)
+    let ks = keys(&doc)
+    expect_eq(ks.len, 3)
+    expect_eq(ks[2], "nested")
+    expect_eq(stringify(&doc), "{\"name\":\"nexium\",\"tags\":[\"lang\",2,false,null],\"nested\":{\"k\":[]}}")
+}
+
+test "pretty printing" {
+    let doc = try parse("{\"a\":[1,{\"b\":true}],\"c\":{}}")
+    expect_eq(pretty(&doc, 2), "{\n  \"a\": [\n    1,\n    {\n      \"b\": true\n    }\n  ],\n  \"c\": {}\n}")
+}
+
+test "mutable access" {
+    var doc = try parse("{\"a\": [1], \"b\": {}}")
+    push(get_mut(&mut doc, "a") orelse &mut doc, number(2))
+    set(get_mut(&mut doc, "b") orelse &mut doc, "c", boolean(true))
+    if let first = at_mut(get_mut(&mut doc, "a") orelse &mut doc, 0) {
+        first.*= string("one")
+    }
+    expect_eq(stringify(&doc), "{\"a\":[\"one\",2],\"b\":{\"c\":true}}")
+}
+
+test "building" {
+    var root = object()
+    set(&mut root, "n", number(3.25))
+    set(&mut root, "s", string("x"))
+    var arr = array()
+    push(&mut arr, boolean(true))
+    push(&mut arr, null_value())
+    set(&mut root, "arr", arr)
+    set(&mut root, "n", number(4))
+    expect_eq(stringify(&root), "{\"n\":4,\"s\":\"x\",\"arr\":[true,null]}")
+}
+
+fn fails(text: []u8) -> bool {
+    let r = parse(text) catch |e| return true
+    _ = r
+    return false
+}
+
+test "errors" {
+    expect(fails(""))
+    expect(fails("{"))
+    expect(fails("[1,]"))
+    expect(fails("{\"a\" 1}"))
+    expect(fails("tru"))
+    expect(fails("01x"))
+    expect(fails("\"unterminated"))
+    expect(fails("\"bad \\q escape\""))
+    expect(fails("1 2"))
+    expect(!fails(" [ ] "))
+}
+
+test "round trip" {
+    let text = "[0,1.5,-2,1e21,\"\\u0001\",{\"k\":[[],{}]}]"
+    let v = try parse(text)
+    let again = try parse(stringify(&v))
+    expect_eq(stringify(&again), stringify(&v))
+}

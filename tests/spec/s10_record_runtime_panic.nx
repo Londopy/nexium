@@ -1,0 +1,9 @@
+// SPEC 10: a record literal with a runtime value panics on violation.
+// EXIT: 101
+record Age { years: u8 where value < 150 }
+fn main() {
+    var y: u8 = 100
+    y += 100
+    let a = Age{ .years = y }
+    println("{}", .{a.years})
+}

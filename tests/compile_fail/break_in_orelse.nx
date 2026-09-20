@@ -1,0 +1,14 @@
+// EXPECT: function must return a value of type `i64` on every path
+// A `break` inside an `orelse` default ends the loop, so the function can
+// fall off its end without a value.
+fn first(xs: List(?i64)) -> i64 {
+    var i: usize = 0
+    while true {
+        let v = xs[i] orelse break
+        return v
+    }
+}
+
+fn main() {
+    println("{}", .{first(List(?i64).new())})
+}

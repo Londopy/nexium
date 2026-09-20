@@ -1,0 +1,18 @@
+// SPEC 5.1, 5.2: let/var, shallow mutability through *mut, releases in reverse order with defers.
+struct Loud { name: []u8 }
+fn make(name: []u8) -> Loud { return Loud{ .name = name } }
+fn main() {
+    var x: i32 = 1
+    let p: *mut i32 = &mut x
+    p.*= 5
+    println("{}", .{x})
+    {
+        let a = String.from("a")
+        defer println("defer 1 {}", .{a})
+        let b = String.from("b")
+        defer println("defer 2 {}", .{b})
+        println("body", .{})
+    }
+    _ = make("discarded")
+    println("end", .{})
+}

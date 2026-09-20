@@ -95,7 +95,8 @@ artifact cabi { name = "lib", exports = [f] }
   适用于数值、字符、布尔、`[]u8`、`String`、单元枚举，以及 `derive(Eq)` /
   `derive(Ord)` 的类型。逻辑 `and`、`or`、`!`。
 - `x |> f(a)` 即 `f(x, a)`。
-- `if (c) a else b` 是表达式；`if (opt) |v| { } else { }` 解包。
+- `if c { a } else { b }` 是表达式；`if let v = opt { } else { }` 解包。
+  条件不加括号，主体总是带花括号。
 - `match v { pat => expr, ... }` 可匹配整数（字面量、范围 `1..=9`）、字符
   串、布尔、字符、枚举（`.Variant(p)`）、可选值（`null`、绑定）、错误联合
   （`error.Name`、绑定）、元组，以及字节切片（二进制模式）。枚举和布尔的
@@ -115,12 +116,12 @@ artifact cabi { name = "lib", exports = [f] }
 ## 语句与循环
 
 ```
-while (cond) { }
-for (items) |x| { }               // 数组、切片、列表、字符串、映射的键
-for (items) |x, i| { }            // 带索引
-for (a, b) |x, y| { }             // 同步遍历；长度必须一致
-for (0..n) |i| { }
-outer: for (...) |a| { for (...) |b| { continue :outer } }
+while cond { }
+for x in items { }               // 数组、切片、列表、字符串、映射的键
+for x, i in items { }            // 带索引
+for x, y in a, b { }             // 同步遍历；长度必须一致
+for i in 0..n { }
+outer: for a in ... { for b in ... { continue :outer } }
 break, continue, return
 _ = expr                          // 显式丢弃；未使用的值是错误
 ```
@@ -168,7 +169,7 @@ let written = try <<4:4, 5:4, 0:8, 1500:16/big, "ab">> into buf[..]
   `clear`、`pop`、`bytes`、`len`，以及 `[]u8` 的方法。
 - `Map(K, V)`（键：整数、bool、char、`[]u8`、`String`）：`new`、`put`、
   `get`、`contains`、`remove`、`clear`、`clone`、`keys`、`values`、`len`、
-  `m[key]`；`for (m) |k|` 遍历键。
+  `m[key]`；`for k in m` 遍历键。
 - 切片：`len`、`fill`、`reverse`、`sort`、`contains`、`index_of`、
   `copy_from`、`to_owned`、`is_empty`；`[]u8` 还有 `starts_with`、
   `ends_with`、`find`、`trim`、`split`、`lines`、`to_string`、`parse_int(T)`、
@@ -212,7 +213,7 @@ vtable 分派，并获得对象类型允许的全部效应；`dyn Shape !allocat
 
 ## 并行循环
 
-`for parallel (items) |x, i| { ... }` 在线程池上对索引范围运行循环体（规范
+`for parallel x, i in items { ... }` 在线程池上对索引范围运行循环体（规范
 7.2）。循环体不能有 `shared_mutable` 效应，不能 `return` 或 `break`（用
 `continue`），并通过以 `i` 索引的可变切片写出结果。工作线程中的 panic 会在
 所有工作线程结束后在调用方重新抛出。该循环带有 `blocks` 效应（它会等待）。

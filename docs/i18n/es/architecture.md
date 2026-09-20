@@ -50,7 +50,7 @@ contra el que se comprueba el lexer autoalojado de `self/lexer.nx`.
 Descenso recursivo, una función por regla gramatical, que produce un
 `ast::Module` de elementos: funciones, structs, enums, traits, impls,
 constantes, globales, imports, pruebas, artefactos. Las condiciones van entre
-paréntesis (`if (c)`), los literales de struct son `Point{ .x = 1 }`, los
+sin paréntesis (`if c {`), los literales de struct son `Point{ .x = 1 }`, los
 anónimos `.{ .x = 1 }`, y las capturas de las clausuras son explícitas
 `|[x, &mut y] a: i32|`.
 

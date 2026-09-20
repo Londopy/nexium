@@ -1,0 +1,22 @@
+// SPEC 5.3: parameters are borrowed; `own` takes the value, may mutate it, move it on, or drop it.
+fn total(xs: *List(i32)) -> i32 {
+    var t: i32 = 0
+    for x in xs { t += x }
+    return t
+}
+fn push(xs: *mut List(i32), v: i32) { xs.append(v) }
+fn keep(own xs: List(i32)) -> List(i32) {
+    xs.append(99)
+    return xs
+}
+fn drop_it(own s: String) { println("dropping {}", .{s}) }
+fn main() {
+    var xs = List(i32).new()
+    push(&mut xs, 1)
+    push(&mut xs, 2)
+    println("{}", .{total(&xs)})
+    let ys = keep(xs)
+    println("{} {}", .{ys.len, ys[2]})
+    drop_it(String.from("s"))
+    println("after", .{})
+}

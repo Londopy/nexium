@@ -1,0 +1,501 @@
+// std.time: dates, durations and timers, written in Nexium.
+//
+// `import std.time` then:
+//
+//     let now = time.now_utc()                    // a DateTime
+//     println("{}", .{now.iso()})                 // 2026-09-19T04:15:14.123Z
+//     println("{}", .{now.format("%Y-%m-%d %H:%M")})
+//     let local = time.now_local()                // with the machine's UTC offset
+//     let d = time.Duration.minutes(90)
+//     println("{}", .{d.text()})                  // 1h 30m
+//     var sw = time.Stopwatch.start()
+//     ... work ...
+//     println("took {}", .{sw.elapsed().text()})
+//
+// Instants are milliseconds since 1970-01-01T00:00:00Z (`time.now()`), as
+// `i64`; negative values are before the epoch. Calendar arithmetic is the
+// proleptic Gregorian calendar; the only platform call is the local UTC
+// offset, and only `now_local` and `local` use it.
+
+// ------------------------------------------------------------------ calendar
+
+/// A broken-down instant. `offset_min` is the UTC offset the fields are
+/// expressed in (0 for UTC); `to_ms()` accounts for it.
+pub struct DateTime {
+    year: i32
+    month: u8
+    day: u8
+    hour: u8
+    minute: u8
+    second: u8
+    millis: u16
+    offset_min: i32
+}
+
+pub fn is_leap(year: i32) -> bool {
+    return (year % 4 == 0 and year % 100 != 0) or year % 400 == 0
+}
+
+pub fn days_in_month(year: i32, month: u8) -> u8 {
+    if month == 2 { return if is_leap(year) { 29 } else { 28 } }
+    if month == 4 or month == 6 or month == 9 or month == 11 { return 30 }
+    return 31
+}
+
+fn floor_div(a: i64, b: i64) -> i64 {
+    var q = a / b
+    if (a % b != 0) and ((a < 0) != (b < 0)) { q -= 1 }
+    return q
+}
+
+fn floor_mod(a: i64, b: i64) -> i64 {
+    return a - floor_div(a, b) * b
+}
+
+/// Days since 1970-01-01 of a civil date (Howard Hinnant's algorithm).
+fn days_from_civil(y0: i32, m: u8, d: u8) -> i64 {
+    var y = y0 as i64
+    if m <= 2 { y -= 1 }
+    let era = floor_div(y, 400)
+    let yoe = y - era * 400
+    let mp = if m > 2 { (m as i64) - 3 } else { (m as i64) + 9 }
+    let doy = (153 * mp + 2) / 5 + (d as i64) - 1
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+    return era * 146097 + doe - 719468
+}
+
+/// The civil date of a day count since 1970-01-01.
+fn civil_from_days(z0: i64) -> (i32, u8, u8) {
+    let z = z0 + 719468
+    let era = floor_div(z, 146097)
+    let doe = z - era * 146097
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+    let y = yoe + era * 400
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+    let mp = (5 * doy + 2) / 153
+    let d = doy - (153 * mp + 2) / 5 + 1
+    let m = if mp < 10 { mp + 3 } else { mp - 9 }
+    let year = if m <= 2 { y + 1 } else { y }
+    return (year as i32, m as u8, d as u8)
+}
+
+/// Break an instant down in UTC.
+pub fn utc(ms: i64) -> DateTime {
+    return with_offset(ms, 0)
+}
+
+/// Break an instant down in the machine's local time zone.
+pub fn local(ms: i64) -> DateTime {
+    return with_offset(ms, time.utc_offset(ms) as i32)
+}
+
+/// Break an instant down at a fixed offset in minutes east of UTC.
+pub fn with_offset(ms: i64, offset_min: i32) -> DateTime {
+    let shifted = ms + (offset_min as i64) * 60000
+    let days = floor_div(shifted, 86400000)
+    let rem = floor_mod(shifted, 86400000)
+    let ymd = civil_from_days(days)
+    return DateTime{
+        .year = ymd.0,
+        .month = ymd.1,
+        .day = ymd.2,
+        .hour = (rem / 3600000) as u8,
+        .minute = ((rem / 60000) % 60) as u8,
+        .second = ((rem / 1000) % 60) as u8,
+        .millis = (rem % 1000) as u16,
+        .offset_min = offset_min,
+    }
+}
+
+/// The current instant, in UTC.
+pub fn now_utc() -> DateTime {
+    return utc(time.now())
+}
+
+/// The current instant, in local time.
+pub fn now_local() -> DateTime {
+    return local(time.now())
+}
+
+/// A date at midnight UTC; `null` when the fields do not name a real day.
+pub fn date(year: i32, month: u8, day: u8) -> ?DateTime {
+    if month < 1 or month > 12 or day < 1 or day > days_in_month(year, month) { return null }
+    return DateTime{ .year = year, .month = month, .day = day, .hour = 0, .minute = 0, .second = 0, .millis = 0, .offset_min = 0 }
+}
+
+fn pad(out: *mut String, v: i64, width: usize) {
+    var n = if v < 0 { -v } else { v }
+    var digits: usize = 1
+    var t = n
+    while t >= 10 {
+        t /= 10
+        digits += 1
+    }
+    if v < 0 { out.push_byte('-') }
+    while digits < width {
+        out.push_byte('0')
+        digits += 1
+    }
+    out.append(format("{}", .{n}))
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+impl DateTime {
+    /// Milliseconds since the epoch (the offset is subtracted back out).
+    pub fn to_ms(self: *Self) -> i64 {
+        let days = days_from_civil(self.year, self.month, self.day)
+        let local_ms = days * 86400000 + (self.hour as i64) * 3600000 + (self.minute as i64) * 60000 + (self.second as i64) * 1000 + (self.millis as i64)
+        return local_ms - (self.offset_min as i64) * 60000
+    }
+
+    /// The same instant expressed in UTC.
+    pub fn to_utc(self: *Self) -> DateTime {
+        return utc(self.to_ms())
+    }
+
+    /// Day of the week, 0 = Monday ... 6 = Sunday.
+    pub fn weekday(self: *Self) -> u8 {
+        let days = days_from_civil(self.year, self.month, self.day)
+        return floor_mod(days + 3, 7) as u8
+    }
+
+    /// Day of the year, 1-based.
+    pub fn day_of_year(self: *Self) -> u16 {
+        var n: u16 = self.day as u16
+        var m: u8 = 1
+        while m < self.month {
+            n += days_in_month(self.year, m) as u16
+            m += 1
+        }
+        return n
+    }
+
+    /// `YYYY-MM-DD`.
+    pub fn date_text(self: *Self) -> String {
+        var out = String.new()
+        pad(&mut out, self.year as i64, 4)
+        out.push_byte('-')
+        pad(&mut out, self.month as i64, 2)
+        out.push_byte('-')
+        pad(&mut out, self.day as i64, 2)
+        return out
+    }
+
+    /// `HH:MM:SS`.
+    pub fn time_text(self: *Self) -> String {
+        var out = String.new()
+        pad(&mut out, self.hour as i64, 2)
+        out.push_byte(':')
+        pad(&mut out, self.minute as i64, 2)
+        out.push_byte(':')
+        pad(&mut out, self.second as i64, 2)
+        return out
+    }
+
+    /// The offset as `Z`, or `+HH:MM` / `-HH:MM`.
+    pub fn offset_text(self: *Self) -> String {
+        var out = String.new()
+        if self.offset_min == 0 {
+            out.push_byte('Z')
+            return out
+        }
+        let o = self.offset_min as i64
+        out.push_byte(if o < 0 { '-' } else { '+' })
+        let a = if o < 0 { -o } else { o }
+        pad(&mut out, a / 60, 2)
+        out.push_byte(':')
+        pad(&mut out, a % 60, 2)
+        return out
+    }
+
+    /// ISO 8601 / RFC 3339: `2026-09-19T04:15:14.123Z`, `...+02:00`.
+    pub fn iso(self: *Self) -> String {
+        var out = self.date_text()
+        out.push_byte('T')
+        out.append(self.time_text())
+        if self.millis != 0 {
+            out.push_byte('.')
+            pad(&mut out, self.millis as i64, 3)
+        }
+        out.append(self.offset_text())
+        return out
+    }
+
+    /// strftime-style formatting: `%Y %m %d %H %M %S %3` (millis) `%z` (offset)
+    /// `%a %b` (short day and month names) `%j` (day of year) `%%`.
+    /// Unknown letters are copied through.
+    pub fn format(self: *Self, spec: []u8) -> String {
+        var out = String.new()
+        var i: usize = 0
+        while i < spec.len {
+            let c = spec[i]
+            if c != '%' or i + 1 >= spec.len {
+                out.push_byte(c)
+                i += 1
+                continue
+            }
+            let f = spec[i + 1]
+            i += 2
+            if f == 'Y' { pad(&mut out, self.year as i64, 4) }
+            else if f == 'm' { pad(&mut out, self.month as i64, 2) }
+            else if f == 'd' { pad(&mut out, self.day as i64, 2) }
+            else if f == 'H' { pad(&mut out, self.hour as i64, 2) }
+            else if f == 'M' { pad(&mut out, self.minute as i64, 2) }
+            else if f == 'S' { pad(&mut out, self.second as i64, 2) }
+            else if f == '3' { pad(&mut out, self.millis as i64, 3) }
+            else if f == 'j' { pad(&mut out, self.day_of_year() as i64, 3) }
+            else if f == 'z' { out.append(self.offset_text()) }
+            else if f == 'a' { out.append(DAYS[self.weekday() as usize]) }
+            else if f == 'b' { out.append(MONTHS[(self.month - 1) as usize]) }
+            else if f == '%' { out.push_byte('%') }
+            else {
+                out.push_byte('%')
+                out.push_byte(f)
+            }
+        }
+        return out
+    }
+}
+
+fn digits(s: []u8, start: usize, n: usize) -> ?i64 {
+    if start + n > s.len { return null }
+    var v: i64 = 0
+    for i in start..start + n {
+        let c = s[i]
+        if c < '0' or c > '9' { return null }
+        v = v * 10 + ((c - '0') as i64)
+    }
+    return v
+}
+
+/// Parse `YYYY-MM-DD`, optionally followed by `THH:MM[:SS[.mmm]]` and an
+/// offset `Z` / `+HH:MM` / `-HH:MM`. Missing parts are zero; `null` when the
+/// text is not a date.
+pub fn parse_iso(s: []u8) -> ?DateTime {
+    let year = digits(s, 0, 4) orelse return null
+    if s.len < 10 or s[4] != '-' or s[7] != '-' { return null }
+    let month = digits(s, 5, 2) orelse return null
+    let day = digits(s, 8, 2) orelse return null
+    var dt = date(year as i32, month as u8, day as u8) orelse return null
+    var i: usize = 10
+    if i < s.len and (s[i] == 'T' or s[i] == ' ') {
+        let hour = digits(s, i + 1, 2) orelse return null
+        if i + 3 >= s.len or s[i + 3] != ':' { return null }
+        let minute = digits(s, i + 4, 2) orelse return null
+        if hour > 23 or minute > 59 { return null }
+        dt.hour = hour as u8
+        dt.minute = minute as u8
+        i += 6
+        if i < s.len and s[i] == ':' {
+            let second = digits(s, i + 1, 2) orelse return null
+            if second > 60 { return null }
+            dt.second = second as u8
+            i += 3
+            if i < s.len and s[i] == '.' {
+                var n: usize = 0
+                var ms: i64 = 0
+                while i + 1 + n < s.len and s[i + 1 + n] >= '0' and s[i + 1 + n] <= '9' {
+                    if n < 3 { ms = ms * 10 + ((s[i + 1 + n] - '0') as i64) }
+                    n += 1
+                }
+                if n == 0 { return null }
+                while n < 3 {
+                    ms *= 10
+                    n += 1
+                }
+                dt.millis = ms as u16
+                i += 1 + n
+            }
+        }
+    }
+    if i < s.len {
+        let c = s[i]
+        if c == 'Z' {
+            i += 1
+        } else if c == '+' or c == '-' {
+            let oh = digits(s, i + 1, 2) orelse return null
+            if i + 3 >= s.len or s[i + 3] != ':' { return null }
+            let om = digits(s, i + 4, 2) orelse return null
+            var off = (oh * 60 + om) as i32
+            if c == '-' { off = -off }
+            dt.offset_min = off
+            i += 6
+        }
+    }
+    if i != s.len { return null }
+    return dt
+}
+
+// ------------------------------------------------------------------ durations
+
+/// A span of time in milliseconds; negative means "before".
+pub struct Duration {
+    ms: i64
+}
+
+impl Duration {
+    pub fn millis(n: i64) -> Duration { return Duration{ .ms = n } }
+    pub fn seconds(n: i64) -> Duration { return Duration{ .ms = n * 1000 } }
+    pub fn minutes(n: i64) -> Duration { return Duration{ .ms = n * 60000 } }
+    pub fn hours(n: i64) -> Duration { return Duration{ .ms = n * 3600000 } }
+    pub fn days(n: i64) -> Duration { return Duration{ .ms = n * 86400000 } }
+
+    /// The span from `a` to `b` (instants in ms).
+    pub fn between(a: i64, b: i64) -> Duration { return Duration{ .ms = b - a } }
+
+    /// The span from an instant to now.
+    pub fn since(ms: i64) -> Duration { return Duration{ .ms = time.now() - ms } }
+
+    pub fn total_seconds(self: *Self) -> f64 { return (self.ms as f64) / 1000.0 }
+    pub fn total_minutes(self: *Self) -> f64 { return (self.ms as f64) / 60000.0 }
+    pub fn total_hours(self: *Self) -> f64 { return (self.ms as f64) / 3600000.0 }
+
+    pub fn plus(self: *Self, other: Duration) -> Duration { return Duration{ .ms = self.ms + other.ms } }
+    pub fn minus(self: *Self, other: Duration) -> Duration { return Duration{ .ms = self.ms - other.ms } }
+
+    /// Human text: `250ms`, `3.5s`, `2m 05s`, `1h 02m`, `3d 04h`.
+    pub fn text(self: *Self) -> String {
+        var out = String.new()
+        var ms = self.ms
+        if ms < 0 {
+            out.push_byte('-')
+            ms = -ms
+        }
+        if ms < 1000 {
+            out.append(format("{}ms", .{ms}))
+            return out
+        }
+        if ms < 60000 {
+            let tenths = (ms + 50) / 100
+            out.append(format("{}.{}s", .{tenths / 10, tenths % 10}))
+            return out
+        }
+        let secs = ms / 1000
+        if secs < 3600 {
+            out.append(format("{}m ", .{secs / 60}))
+            pad(&mut out, secs % 60, 2)
+            out.push_byte('s')
+            return out
+        }
+        let mins = secs / 60
+        if mins < 1440 {
+            out.append(format("{}h ", .{mins / 60}))
+            pad(&mut out, mins % 60, 2)
+            out.push_byte('m')
+            return out
+        }
+        let hours = mins / 60
+        out.append(format("{}d ", .{hours / 24}))
+        pad(&mut out, hours % 24, 2)
+        out.push_byte('h')
+        return out
+    }
+}
+
+/// `instant + duration`.
+pub fn add(ms: i64, d: Duration) -> i64 {
+    return ms + d.ms
+}
+
+// ------------------------------------------------------------------ timers
+
+/// Measures elapsed time on the monotonic clock.
+pub struct Stopwatch {
+    start_ns: u64
+}
+
+impl Stopwatch {
+    pub fn start() -> Stopwatch {
+        return Stopwatch{ .start_ns = time.monotonic() }
+    }
+
+    /// Elapsed time in milliseconds, fractional.
+    pub fn elapsed_ms(self: *Self) -> f64 {
+        return ((time.monotonic() - self.start_ns) as f64) / 1000000.0
+    }
+
+    /// Elapsed time as a Duration (whole milliseconds).
+    pub fn elapsed(self: *Self) -> Duration {
+        return Duration{ .ms = ((time.monotonic() - self.start_ns) / 1000000) as i64 }
+    }
+
+    /// Restart and return what had elapsed.
+    pub fn lap(self: *mut Self) -> Duration {
+        let d = self.elapsed()
+        self.start_ns = time.monotonic()
+        return d
+    }
+}
+
+// ------------------------------------------------------------------ tests
+
+test "epoch and round trips" {
+    let e = utc(0)
+    expect_eq(e.year, 1970)
+    expect_eq(e.month, 1)
+    expect_eq(e.day, 1)
+    expect_eq(e.weekday(), 3)
+    expect_eq(e.iso(), "1970-01-01T00:00:00Z")
+    let t = utc(1789791314123)
+    expect_eq(t.iso(), "2026-09-19T04:15:14.123Z")
+    expect_eq(t.weekday(), 5)
+    expect_eq(t.day_of_year(), 262)
+    expect_eq(t.to_ms(), 1789791314123)
+    let b = utc(-1)
+    expect_eq(b.iso(), "1969-12-31T23:59:59.999Z")
+    expect_eq(b.to_ms(), -1)
+    let leap = utc(1709208000000)
+    expect_eq(leap.date_text(), "2024-02-29")
+    expect_eq(leap.to_ms(), 1709208000000)
+    let old = utc(-11676096000000)
+    expect_eq(old.date_text(), "1600-01-01")
+    expect_eq(old.to_ms(), -11676096000000)
+    expect(is_leap(2000))
+    expect(!is_leap(1900))
+    expect_eq(days_in_month(2024, 2), 29)
+}
+
+test "offsets and formatting" {
+    let t = with_offset(1789791314123, 120)
+    expect_eq(t.hour, 6)
+    expect_eq(t.iso(), "2026-09-19T06:15:14.123+02:00")
+    expect_eq(t.to_ms(), 1789791314123)
+    expect_eq(t.to_utc().hour, 4)
+    let m = with_offset(1789791314123, -330)
+    expect_eq(m.offset_text(), "-05:30")
+    expect_eq(t.format("%Y-%m-%d %H:%M:%S.%3 %a %b %j %z 100%%"), "2026-09-19 06:15:14.123 Sat Sep 262 +02:00 100%")
+    expect_eq(t.time_text(), "06:15:14")
+}
+
+test "parsing" {
+    let a = parse_iso("2026-09-19T04:15:14.123Z").?
+    expect_eq(a.to_ms(), 1789791314123)
+    let b = parse_iso("2026-09-19 06:15:14+02:00").?
+    expect_eq(b.to_ms(), 1789791314123 - 123)
+    let c = parse_iso("2024-02-29").?
+    expect_eq(c.date_text(), "2024-02-29")
+    expect(parse_iso("2023-02-29") == null)
+    expect(parse_iso("2024-13-01") == null)
+    expect(parse_iso("nope") == null)
+    expect(parse_iso("2024-02-29T25:00") == null)
+    let d = parse_iso("2024-02-29T12:30").?
+    expect_eq(d.time_text(), "12:30:00")
+}
+
+test "durations" {
+    expect_eq(Duration.millis(250).text(), "250ms")
+    expect_eq(Duration.millis(3500).text(), "3.5s")
+    expect_eq(Duration.seconds(125).text(), "2m 05s")
+    expect_eq(Duration.minutes(62).text(), "1h 02m")
+    expect_eq(Duration.hours(76).text(), "3d 04h")
+    expect_eq(Duration.millis(-1500).text(), "-1.5s")
+    expect_eq(Duration.between(1000, 4000).ms, 3000)
+    expect_eq(Duration.minutes(1).plus(Duration.seconds(30)).ms, 90000)
+    expect_eq(add(1000, Duration.seconds(2)), 3000)
+    var sw = Stopwatch.start()
+    let d = sw.lap()
+    expect(d.ms >= 0)
+    expect(sw.elapsed_ms() >= 0.0)
+}

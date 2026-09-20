@@ -40,7 +40,7 @@ tool.
 ```
 fn checksum(data: []u8) -> u32 export(c) {
     var h: u32 = 2166136261
-    for (data) |b| {
+    for b in data {
         h ^= b as u32
         h *%= 16777619
     }
@@ -95,15 +95,28 @@ boundary rather than aborting the host process.
 
 ## Install
 
-The only runtime requirement is [Zig](https://ziglang.org/download/) on your
-`PATH`, used as the C compiler (`zig cc` also cross-compiles; `--cc clang`
-works too).
+**Windows**: download and run the installer from the
+[Releases](https://github.com/Londopy/nexium/releases) page. It installs
+`nx`, a bundled Zig toolchain (the C compiler `nx` uses), the standard
+library, examples, docs, and the VS Code extension, and adds `nx` to your
+PATH. Nothing else to install.
 
-Prebuilt `nx` binaries for Windows, Linux, and macOS are on the
-[Releases](https://github.com/Londopy/nexium/releases) page. Unpack and put
-`nx` on your `PATH`.
+**macOS and Linux**:
 
-Or build from source with Rust 1.75 or newer:
+```bash
+curl -fsSL https://raw.githubusercontent.com/Londopy/nexium/main/installers/install.sh | sh
+```
+
+It verifies the download against the release checksums, installs to
+`~/.nexium`, sets up a C compiler (the Xcode tools on macOS; Zig is downloaded
+on Linux when nothing is found), and adds `nx` to your PATH.
+
+Then, in a new console, `nx doctor` shows what will be used. All the details,
+including verifying checksums and every environment variable, are in
+[docs/install.md](docs/install.md).
+
+Or build from source with Rust 1.75 or newer (you provide the C compiler:
+Zig on the PATH, or `NX_CC`):
 
 ```bash
 cargo install nexium
@@ -137,17 +150,17 @@ fn area(s: Shape) -> f64 {
 error ParseError { Empty, NotANumber }
 
 fn parse_num(text: []u8) -> ParseError!i64 {
-    if (text.len == 0) return error.Empty
+    if text.len == 0 { return error.Empty }
     var total: i64 = 0
-    for (text) |c| {
-        if (c < '0' or c > '9') return error.NotANumber
+    for c in text {
+        if c < '0' or c > '9' { return error.NotANumber }
         total = total * 10 + (c - '0') as i64
     }
     return total
 }
 
 fn max(comptime T: type where T: Ord, a: T, b: T) -> T {
-    return if (a > b) a else b
+    return if a > b { a } else { b }
 }
 
 fn main() -> !void {
@@ -157,9 +170,9 @@ fn main() -> !void {
         -1
     }
     var xs = List(i32).new()
-    for (0..10) |i| { xs.append((i * i) as i32) }
+    for i in 0..10 { xs.append((i * i) as i32) }
     let found = outer: {
-        for (xs) |x, i| { if (x > 30) break :outer i as i64 }
+        for x, i in xs { if x > 30 { break :outer i as i64 } }
         -1
     }
     println("{} {} {} {} {}", .{n, bad, max(3, 9), xs.len, found})
@@ -227,7 +240,7 @@ for layout, and foreign calls carry the `ffi` effect.
 <summary><b>Parallel loops and arenas</b></summary>
 
 ```
-for parallel (positions) |p, i| {
+for parallel p, i in positions {
     out[i] = integrate(p)          // no shared_mutable allowed in here
 }
 
@@ -241,14 +254,23 @@ using arena {
 
 **Documentation**
 
+- [Specification](SPEC.md): the language as implemented, with planned parts marked.
+- [Roadmap](ROADMAP.md): phases, exit criteria, and what is not planned.
 - [How Nexium works](docs/architecture.md): the pipeline from source to binary, effects inference, ownership, the runtime, and shipping.
 - [Language reference](docs/language.md): every construct the compiler implements.
 - [Embedding](docs/embedding.md): calling shipped libraries from Python, Rust, and C.
+- [The interactive session](docs/repl.md): `nx` at a prompt, like `python`.
+- [Installing](docs/install.md): the Windows installer, the macOS/Linux script, source builds, checksums, and how `nx` finds a C compiler.
+- [Packages](docs/packages.md): `nexium.toml`, `nx add`, `nx fetch`, git or path dependencies, the lock file.
+- [Standard library](docs/std.md): the modules written in Nexium (`std.strings`, `std.lists`, `std.bytes`, `std.num`, `std.json`, `std.args`, `std.fs`, `std.time`, `std.regex`, `std.text`, `std.testing`, `std.stream`, `std.net`, `std.http`, `std.thread`, `std.process`).
 - [nexium-gui](docs/gui.md): the immediate-mode GUI library and how to write a widget.
 - [Releasing your program](docs/releasing-your-program.md): binaries for three platforms from a tag, installers optional.
 - [Editor support](editors): VS Code extension, Sublime syntax, LSP.
+- [Linguist](linguist): the ready-to-apply pull request that will make GitHub recognize `.nx` once the usage bar is met.
 - [Translations](docs/i18n): this README in six languages; the language reference and the architecture tour in Spanish, Chinese, and Japanese.
+- [Release names](docs/release-names.md): every release is a place on a mountain; the scheme, the ledger, and the names still to use.
 - [Decisions](DECISIONS.md): every call made where the specification was open.
+- [Known issues](KNOWN_ISSUES.md): open bugs, gaps and limitations, with repros.
 
 ## Commands
 
@@ -262,13 +284,17 @@ using arena {
 | `nx audit file.nx` | list `unsafe` blocks and mutable globals |
 | `nx ship file.nx` | produce every declared `artifact` |
 | `nx emit-c file.nx` | print the generated C |
-| `nx tokens file.nx` | dump the token stream (the self-hosting oracle) |
+| `nx tokens file.nx` | dump the token stream (the self-hosted lexer's oracle) |
+| `nx sexp file.nx` | the syntax tree as S-expressions (the parser's oracle) |
+| `nx tir file.nx [--sigs]` | the checked program as S-expressions (the checker's oracle) |
 | `nx fmt file.nx [--check]` | canonical formatting |
 | `nx doc file.nx` | HTML documentation with inferred effects |
 | `nx size file.nx` | attribute binary bytes to declarations |
 | `nx refcounts file.nx` | every retain and release site |
 | `nx leaks file.nx` | run with allocation tracking and report leaks |
 | `nx lsp` | language server over stdio |
+| `nx doctor` | which C compiler will be used, and whether the installation works |
+| `nx repl`, or just `nx` | an interactive session: type code, see values, keep bindings |
 
 Options: `--mode debug|safe|fast|small`, `--target x86_64-linux-gnu` (any
 target `zig cc` knows), `--out-dir`, `--keep-c`, `--cc`, and for C interop
@@ -285,6 +311,19 @@ covers only returned views. [`DECISIONS.md`](DECISIONS.md) lists every call
 made where the specification was open, for review, and item 27 lists what is
 left.
 
+## Release names
+
+A major version is a mountain, in the order the fourteen 8000-metre peaks
+were first climbed; the versions under it are the climb: camps, routes and
+faces for minor versions, the first-ascent expedition's members for
+patches, `Summit` for `X.0.0`. The 0.x line is the approach and the camps
+of Annapurna, the first 8000er climbed (1950), so 1.0.0 is
+`Annapurna: Summit`; 0.7.0, where the compiler started building itself, is
+`Annapurna: Camp V`, the last camp before the summit push. The name is in
+the changelog, the release title and `nx version`;
+[docs/release-names.md](docs/release-names.md) has the rule, the ledger,
+and the mountains still to climb.
+
 ## Self-hosting
 
 The compiler is Rust today. The Nexium version of it grows under
@@ -293,13 +332,15 @@ on the same inputs:
 
 | stage | file | oracle | status |
 | --- | --- | --- | --- |
-| lexer | [`self/lexer.nx`](self/lexer.nx) | `nx tokens` | ✅ matches on every example and on itself |
-| parser | | `nx parse` | next |
-| checker | | `nx check`, the compile-fail suite | |
-| C emitter | | `nx emit-c` | |
+| lexer | [`self/lexer.nx`](self/lexer.nx) | `nx tokens` | ✅ identical on every source |
+| parser | [`self/parser.nx`](self/parser.nx) | `nx sexp` | ✅ identical on all 46 sources |
+| checker | [`self/check.nx`](self/check.nx) | `nx tir` | ✅ the full typed IR is identical on every source (54: examples, std, GUI, the self-hosting files), and every compile-fail case is rejected with the same messages |
+| C emitter | [`self/cgen.nx`](self/cgen.nx) | `nx emit-c` | ✅ byte-identical C on every source, its own included |
+| driver | [`self/nx.nx`](self/nx.nx) | `nx build/run/test` | ✅ builds itself; the result builds and runs programs |
 
-`cargo test` builds `self/lexer.nx` with the Rust compiler and diffs its output
-against the oracle.
+`cargo test` builds each stage with the Rust compiler and diffs its output
+against the oracle over every example, std module, GUI and self-hosting
+source.
 
 ## Languages in the repository
 
@@ -308,10 +349,10 @@ files (`gui/font.bin`, lock files):
 
 | language | lines | share | what it is |
 | --- | --- | --- | --- |
-| Rust | 22,393 | 86.9% | the `nx` compiler |
-| Nexium | 2,111 | 8.2% | examples, the self-hosted lexer, nexium-gui, tests |
-| C | 1,108 | 4.3% | the runtime `nx_rt.h` and the GUI window layer |
-| JavaScript, TypeScript | 159 | 0.6% | the VS Code extension |
+| Rust | 29,354 | 58.6% | the `nx` compiler |
+| Nexium | 18,726 | 37.4% | the standard library, examples, the self-hosted lexer, parser and checker, nexium-gui, tests |
+| C | 1,844 | 3.7% | the runtime `nx_rt.h` and the GUI window layer |
+| JavaScript, TypeScript | 159 | 0.3% | the VS Code extension |
 
 The Nexium share grows with every self-hosting stage; the Rust share is the
 bootstrap compiler and will one day be zero.
@@ -321,23 +362,27 @@ bootstrap compiler and will one day be zero.
 ```
 src/            the compiler (lexer, parser, checker, comptime, C backend, driver)
 runtime/        nx_rt.h, embedded into every generated C file
+std/            the standard library in Nexium, embedded in the compiler
 self/           the compiler in Nexium, stage by stage
 gui/            nexium-gui: immediate-mode GUI in Nexium, demo, and the C platform layer
 editors/        VS Code extension and Sublime Text syntax
 examples/       programs with recorded output, run by `cargo test`
-tests/          integration tests and compile-fail cases
+tests/          integration tests, the spec conformance suite (tests/spec) and compile-fail cases
 docs/           how it works, language reference, embedding guide, i18n/ translations
 assets/         logo and banner
 nexium-spec.txt          the design
 nexium-systems-spec.txt  the archived systems language; sections 4 to 9 are the syntax reference
 DECISIONS.md    decisions made where the specification was open
+KNOWN_ISSUES.md open bugs and limitations; fixes move to the changelog
 ```
 
 ## Contributing
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md). Bugs and proposals go through GitHub
 issues; a language change must name the hard constraint in section 3 of the
-specification that it serves.
+specification that it serves. Pull requests pass the tests on three
+platforms, the formatters, a changelog check and the [Contributor License
+Agreement](CLA.md) before they merge; you keep your copyright.
 
 ## License
 

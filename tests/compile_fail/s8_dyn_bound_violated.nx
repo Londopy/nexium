@@ -1,0 +1,9 @@
+// EXPECT: has the `allocates` effect, but the function type it is used as forbids it
+trait Namer { fn name(self: *Self) -> String }
+struct X { n: []u8 }
+impl Namer for X { fn name(self: *Self) -> String { return String.from(self.n) } }
+fn main() {
+    var x = X{ .n = "x" }
+    let d: dyn Namer !allocates = &x
+    _ = d.name()
+}
