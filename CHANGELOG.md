@@ -10,6 +10,14 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ## [Unreleased]
 
+### Fixed
+
+- A function checked on demand while a constant was evaluated at compile
+  time could name a global before its type was resolved, and the checker
+  crashed on the unresolved type (found by the fuzzer on its second run in
+  CI). A global's type now resolves on first use; the program gets the
+  diagnostic for the compile-time global access instead.
+
 ## [1.0.0] - 2026-09-20
 
 *Annapurna: Summit* — the top of the mountain the project has been on since 0.1: the language stops changing under people's feet, the compiler is written in itself, and nothing but Nexium, one C file and a runtime header is left.

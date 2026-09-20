@@ -1,0 +1,10 @@
+// EXPECT: cannot be evaluated at compile time
+// a function checked on demand while a constant is evaluated names a global
+// that resolve_globals has not reached yet; the checker used to crash
+fn bump() -> u64 {
+    unsafe { counter = counter + 1 }
+    return 1
+}
+var counter: u64 = 0
+const FIRST: u64 = comptime bump()
+fn main() { println("{}", .{FIRST}) }

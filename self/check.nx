@@ -1726,15 +1726,25 @@ impl Checker {
         return NONE
     }
 
+    /// A global's declared type, resolved on first use: a function checked
+    /// on demand while a constant is evaluated may name a global before
+    /// `resolve_globals` reaches it.
+    fn global_type(self: *mut Self, i: usize) -> usize {
+        if self.globals[i].ty == NONE {
+            let m = self.globals[i].module
+            let ty_node = self.node(m, self.globals[i].node).x
+            self.globals[i].ty = self.resolve_type(m, ty_node, NONE)
+        }
+        return self.globals[i].ty
+    }
+
     fn resolve_globals(self: *mut Self) {
         let n = self.globals.len
         for i in 0..n {
             let m = self.globals[i].module
             let node = self.globals[i].node
-            let ty_node = self.node(m, node).x
             let value_node = self.node(m, node).y
-            let ty = self.resolve_type(m, ty_node, NONE)
-            self.globals[i].ty = ty
+            let ty = self.global_type(i)
             if value_node != NONE {
                 let gname = self.globals[i].name.clone()
                 let v = self.tys.void()
@@ -4091,7 +4101,7 @@ impl Checker {
                 return te
             }
             if item.kind == ItemKind.Global {
-                let ty = self.globals[item.id].ty
+                let ty = self.global_type(item.id)
                 if self.ctx().unsafe_depth == 0 and !self.ctx().is_comptime {
                     self.fail_here(start, format("access to mutable global `{}` requires an `unsafe` block", .{name})[..])
                 }
