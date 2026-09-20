@@ -561,6 +561,26 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     reference and the ledger, with the pools of names per mountain. The
     0.x releases were named retroactively. The name fits the release; the
     release is never shaped to fit a name.
+90. **The compiler in Nexium is the compiler; the Rust one is a frozen
+    seed until 1.0, then gone.** From 0.8, a language change is made in
+    `self/` and nowhere else. The Rust crate keeps 0.7 semantics, moves to
+    `bootstrap/rust/`, stays buildable and in CI (it is still the binary
+    users run until the tools are ported in 0.9), and is deleted at 1.0.
+    The seed a fresh machine builds from is the C the Nexium compiler
+    emits for itself, `bootstrap/nx.c`, regenerated at each release by the
+    previous release's compiler: any C compiler builds `nx0` from it,
+    `nx0` builds `self/nx.nx`, and the result must rebuild itself to the
+    same C. The oracle comparisons that drove the port (`nx tokens`,
+    `sexp`, `tir`, `emit-c` diffed between the two compilers) retire with
+    it; the fixed point, the examples, the spec suite, the compile-fail
+    cases and fuzzing are the independent check, and they are written
+    once. Reasons: two implementations meant every fix twice (0.7's last
+    day mirrored five) and a class of bugs that were only disagreements
+    between them; a compiler in the language is the proof of the language
+    people look for, and the largest program that exercises it; and after
+    the port, a contributor needs to know Nexium, not Nexium and Rust. The
+    constraint this adds: `self/*.nx` may implement a feature but may not
+    use it until the next release's seed understands it.
 
 ## Compiler selection
 

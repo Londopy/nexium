@@ -41,6 +41,16 @@ still passes on a machine without it, but you will want it installed.
 - A program that must be rejected: add `tests/compile_fail/<name>.nx` with one
   or more `// EXPECT: <substring of the diagnostic>` lines at the top.
 
+## Where the compiler is
+
+The compiler is `self/` (lexer, parser, checker, C emitter, driver),
+written in Nexium; that is where a language change goes. `bootstrap/rust/`
+is the frozen Rust compiler that builds the first `nx` on a machine that
+has none, kept at 0.7 semantics and not changed (decision 90); the tools
+still in it (`fmt`, `doc`, `lsp`, `ship`, packages, the REPL) move to
+Nexium in 0.9. A change to `self/*.nx` may implement a new feature but may
+not use it: the seed compiler that builds `self/` is a release behind.
+
 ## Language changes
 
 The specification is the authority. A proposal to change the language must

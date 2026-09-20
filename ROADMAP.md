@@ -158,12 +158,29 @@ checked against the Rust compiler on identical inputs.
   fresh machine.
 
 - Status (0.7.0): syntax settled; lexer, parser, checker, C emitter and
-  driver done and bootstrapped: `nx` written in Nexium builds itself. Left
-  for the exit: moving the Rust compiler to `bootstrap/` and building the
-  release tarball's `nx` from the shipped C. Porting the other tools (fmt,
-  doc, lsp, ship, packages) is not required for 1.0; see past 1.0.
+  driver done and bootstrapped: `nx` written in Nexium builds itself.
 
-Exit: `cargo` is no longer needed to build `nx` from a release tarball.
+The rest of the climb, one release each (decision 90):
+
+- **0.8, the Sickle.** The compiler in Nexium is *the* compiler: language
+  changes land in `self/` and only there. The Rust crate is frozen at 0.7
+  semantics and moves to `bootstrap/rust/`; it still builds, and is still
+  the binary users run, because the tools are in it. The seed for a fresh
+  machine is the C the Nexium compiler emits for itself, checked in as
+  `bootstrap/nx.c`: a C compiler builds `nx0`, `nx0` builds `self/nx.nx`,
+  the result builds itself, and the two agree. CI does this without
+  `cargo`. The language suites (examples, spec, compile-fail) run through
+  the Nexium-built `nx`; the oracle diffs that scaffolded the port
+  retire. First change made in one compiler only: `unbounded_stack`.
+- **0.9, Summit Ridge.** The tools in Nexium: `fmt`, `doc`, `lsp`, `ship`,
+  packages, the REPL, the migrator, the installer generator, `doctor`,
+  `version`. The shipped `nx` becomes the Nexium one. Nothing else new:
+  the stability policy, fuzzing, the tier list.
+- **1.0, Summit.** `bootstrap/rust/` is deleted. The repository is Nexium,
+  one generated C file, and the runtime header.
+
+Exit: `cargo` is no longer needed to build `nx` from a release tarball
+(0.8), and no Rust is left in the repository (1.0).
 
 ## Phase 5: 1.0
 
