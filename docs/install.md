@@ -47,7 +47,7 @@ adds the bin directory to your PATH in `~/.profile`, `~/.bashrc`, and
 used (`xcode-select --install` if missing). On Linux, when no compiler is
 found, it downloads Zig into `~/.nexium/zig`.
 
-Variables: `NEXIUM_VERSION=v1.0.0` pins a release, `NEXIUM_HOME` changes the
+Variables: `NEXIUM_VERSION=v1.0.1` pins a release, `NEXIUM_HOME` changes the
 directory, `NEXIUM_NO_MODIFY_PATH=1` leaves shell files alone,
 `NEXIUM_NO_ZIG=1` never downloads Zig. Uninstall by deleting `~/.nexium` and
 the three lines the script added.
@@ -116,7 +116,7 @@ shasum -a 256 -c SHA256SUMS.txt --ignore-missing   # macOS
 ```
 
 ```powershell
-Get-FileHash .\nexium-1.0.0-setup-x64.exe -Algorithm SHA256
+Get-FileHash .\nexium-1.0.1-setup-x64.exe -Algorithm SHA256
 ```
 
 The install script verifies automatically and refuses a mismatch.
