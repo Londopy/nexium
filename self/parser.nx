@@ -528,12 +528,14 @@ impl Parser {
                 let lstart = self.start()
                 let l = try self.expect_ident()
                 if l == "c" { layout = String.from("c") }
-                else if l == "packed" { layout = String.from("packed") }
-                else { return self.fail(lstart, format("unknown layout `{}`; expected `c` or `packed`", .{l})) }
+                // `packed` and `soa` were planned once and are not part of the language (decision 88)
+                else if l == "packed" or l == "soa" { return self.fail(lstart, format("`{}` is not a layout; `layout(c)` is the only layout, and the default is the compiler's", .{l})) }
+                else { return self.fail(lstart, format("unknown layout `{}`; expected `c`", .{l})) }
                 try self.expect(lexer.Kind.RParen)
             } else if self.eat_ident("derive") {
                 try self.parse_derives(&mut derives)
-            } else if self.eat_ident("soa") {
+            } else if self.at_ident("soa") {
+                return self.fail(self.start(), "`soa` is not a layout; a structure of arrays is written as separate lists (decision 88)")
             } else {
                 break
             }

@@ -109,7 +109,6 @@ fn item(o: &mut Out, it: &Item) {
             let layout = match s.layout {
                 Layout::Default => "default",
                 Layout::C => "c",
-                Layout::Packed => "packed",
             };
             o.open(&format!("({} {} name={} layout={}", kind, sp(s.span), s.name, layout));
             attrs(o, &s.attrs);

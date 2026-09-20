@@ -391,8 +391,9 @@ impl Parser {
                 let (l, lsp) = self.expect_ident()?;
                 layout = match l.as_str() {
                     "c" => Layout::C,
-                    "packed" => Layout::Packed,
-                    _ => return self.error(lsp, format!("unknown layout `{}`; expected `c` or `packed`", l)),
+                    // `packed` and `soa` were planned once and are not part of the language (decision 88)
+                    "packed" | "soa" => return self.error(lsp, format!("`{}` is not a layout; `layout(c)` is the only layout, and the default is the compiler's", l)),
+                    _ => return self.error(lsp, format!("unknown layout `{}`; expected `c`", l)),
                 };
                 self.expect(&Tok::RParen)?;
             } else if self.eat_ident("derive") {
@@ -408,8 +409,9 @@ impl Parser {
                     }
                 }
                 self.expect(&Tok::RParen)?;
-            } else if self.eat_ident("soa") {
-                // accepted and ignored in this implementation
+            } else if self.at_ident("soa") {
+                let sp = self.span();
+                return self.error(sp, "`soa` is not a layout; a structure of arrays is written as separate lists (decision 88)");
             } else {
                 break;
             }

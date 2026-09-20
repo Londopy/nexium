@@ -207,7 +207,6 @@ pub fn program(p: &Program, sigs_only: bool) -> String {
         let layout = match s.layout {
             Layout::Default => "default",
             Layout::C => "c",
-            Layout::Packed => "packed",
         };
         o.open(&format!(
             "(struct {} {} {} kind={} layout={} module={} pub={} tparams=({}) derives=({})",

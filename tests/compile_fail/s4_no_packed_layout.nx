@@ -1,0 +1,3 @@
+// EXPECT: `packed` is not a layout
+struct P layout(packed) { a: u8, b: u32 }
+fn main() { _ = P{ .a = 1, .b = 2 } }

@@ -87,7 +87,6 @@ pub enum StructKind {
 pub enum Layout {
     Default,
     C,
-    Packed,
 }
 
 #[derive(Clone, Debug)]
