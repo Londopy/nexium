@@ -242,6 +242,36 @@ decides the order: what the compiler and the tools in `self/` and `std/`
 needed first, what other people's programs need next. Everything here was
 found by writing Nexium, not by reading other languages' feature lists.
 
+### Before anything: the open bugs, and 1.0.2
+
+`KNOWN_ISSUES.md` is this roadmap's page zero: every open bug lives there
+with a reproduction and the fix it needs, a fix removes the entry, adds a
+`Fixed` line and a regression test, and the next patch release ships it.
+Nothing below is started while a known bug that a user can hit sits
+there. The entries an outside review of 1.0.1 added, in the order they
+will be fixed, all for 1.0.2:
+
+1. A contained panic leaks what the call acquired: the export wrapper's
+   `longjmp` skips every drop between the panic and the boundary. The
+   fix is a per-call tracker in the runtime that releases live
+   allocations, open files, sockets and held locks on the panic path; it
+   is also the first half of 1.2's "a panic releases what it owned".
+2. `nexium.lock` is written and never read, so the lockfile pins nothing:
+   `nx fetch` honours it, `nx update` is what re-resolves.
+3. The Python wrapper takes a list for a `[]mut T` parameter and drops
+   the writes: mutable slices accept only writable, contiguous,
+   matching buffers.
+4. Effect notes point at the function rather than the recorded witness,
+   so "exact line" is not yet true.
+
+With them, the words the same review found wrong: `SECURITY.md` says
+"memory-safe" in one sentence and lists safe-code use-after-free cases in
+the next; until 1.2 the claim is "deterministically memory-managed
+without a garbage collector, memory safety complete in 1.2", everywhere.
+The README says "language-stable, early ecosystem" near the top. And for
+discovery: "Nexium language" in every title and package (`nexium-lang` on
+PyPI and npm, since `nexium` is taken there by unrelated projects).
+
 ### First: the quick wins, in order
 
 Everything below is described in a theme further down; this is the same
@@ -417,6 +447,11 @@ luck.
 
 ### 1.3: the toolchain grown up
 
+- First, `self/check.nx` split by responsibility (declarations, types,
+  ownership and moves, effects, patterns, generics, the compile-time
+  interpreter, diagnostics), even while every module still compiles into
+  one unit: twelve thousand lines in one file is the ceiling the rest of
+  this theme would otherwise hit.
 - Incremental builds: one C file per module, compiled separately and
   cached by content hash, so a one-line change does not recompile a
   100k-line translation unit; parallel checking of independent modules.

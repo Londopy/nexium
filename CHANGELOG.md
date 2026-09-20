@@ -26,6 +26,13 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   ecosystem items; the *Always* section commits to the corpus growing
   with the language, the sanitizers and the fuzzer on every release, and
   a patch within a week of a fix.
+- The roadmap's page zero: `KNOWN_ISSUES.md` is where every open bug
+  waits with its fix, no theme starts over a bug a user can hit, and
+  the four an outside review of 1.0.1 found (a contained panic leaks
+  what it acquired, `nexium.lock` is never read, the Python wrapper
+  drops writes through a list, effect notes miss their witness) are the
+  1.0.2 patch, with the wording fixes for `SECURITY.md`, the README and
+  the package names; 1.3 begins by splitting `check.nx`.
 - The roadmap opens with the quick wins in order: twenty-nine items
   sorted by how soon each can ship (hours, a day or two, about a week),
   each landing as a patch or in 1.1 when done, ahead of the themes.
