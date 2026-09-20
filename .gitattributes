@@ -26,3 +26,4 @@ editors/** linguist-vendored=false
 *.html text eol=lf
 # embedded by tests/spec/s12_comptime.nx: its byte length is recorded
 tests/spec/helpers/*.txt text eol=lf
+*.sh text eol=lf
