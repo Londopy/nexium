@@ -422,8 +422,14 @@ carries it must give it a stack sized for the input.
 `panics` is not added when the compiler can prove the operation cannot
 fail: indexing with the loop index of a `for` over the same slice, indexing
 with a compile-time-known index into a known length, arithmetic whose
-operand ranges (from types, literals, and dominating `if` guards) fit the
-result type. Everything else contributes `panics`.
+operand ranges (from types, literals, and dominating guards) fit the
+result type, `x / y` after `y != 0`, `x.?` after `x != null`, `s[i]` after
+`i < s.len`, and `s[i]` or `s[a..b]` after `s.len >= n` keeps them within
+`n`. A guard proves its facts in the branch where it holds: the `then`
+of an `if`, the body of a `while` at the top of every pass, and, negated,
+the `else` of either. A fact about a `var` ends when the variable is
+assigned, borrowed mutably, or a loop that may change it begins; facts
+about a `let` hold for its scope. Everything else contributes `panics`.
 
 ### 9.2 Effects and the export ABI
 

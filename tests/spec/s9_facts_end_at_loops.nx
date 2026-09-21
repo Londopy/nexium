@@ -1,0 +1,14 @@
+// SPEC 9.1: a guard's fact about a `var` ends where a loop may change it:
+// `i < 3` does not carry into the loop that increments `i`, so `xs[i]` keeps
+// its bounds check and panics on the fourth pass instead of reading past
+// the array (1.0.3 elided the check).
+fn main() {
+    let xs = [1, 2, 3]
+    var i: usize = 0
+    if i < 3 {
+        while i < 6 {
+            _ = xs[i]
+            i += 1
+        }
+    }
+}

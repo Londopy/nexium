@@ -1,0 +1,2 @@
+panic: index 3 out of bounds for length 3
+  at tests/spec/s9_facts_end_at_loops.nx:10

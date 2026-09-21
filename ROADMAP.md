@@ -401,7 +401,8 @@ Ergonomics the self-hosted compiler paid for by hand.
   `match`. (Done, decision 95.)
 - Range facts through `while` conditions and `else` branches (KNOWN_ISSUES),
   and proofs for `x / y` after `y != 0`, `.?` after `x != null`, and slice
-  bounds after `if s.len >= n`, so fewer functions carry `panics`.
+  bounds after `if s.len >= n`, so fewer functions carry `panics`. (Done,
+  decision 96.)
 - Format width from a value (`{:>w}`) and named placeholders with an
   anonymous literal (`format("{x}", .{ .x = 1 })`).
 - Intrinsics still missing from a systems language: `@bitCast`, `@min`,

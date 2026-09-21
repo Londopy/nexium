@@ -642,3 +642,16 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     which makes `[]` plus `[x, rest..]` total without a `_`. `whole @
     pattern` binds the value (owned when the value is) while its parts
     match as views of it, so nothing is dropped twice.
+96. **A guard proves its facts where it holds, and a fact about a `var`
+    ends where the variable may change.** Facts flow into the `then` of an
+    `if`, the body of a `while` (they hold at the top of every pass) and,
+    negated, into the `else` of either; `and` proves both sides, `!` flips,
+    `or` proves nothing certain. Beyond ranges, a guard proves `!= 0`,
+    `!= null`, a slice's least length and an index below a slice's length,
+    which discharge division, `.?`, indexing and slicing. A fact about a
+    mutable local is dropped at an assignment, at a mutable borrow, and at
+    the entry of any loop (every `var` at once: the loop may change any of
+    them on any pass, and the check runs once), which is the conservative
+    side of a bug 1.0.3 shipped with, a guard fact surviving into a loop
+    that changed the variable. Lengths are tracked for slices only, whose
+    length cannot change.

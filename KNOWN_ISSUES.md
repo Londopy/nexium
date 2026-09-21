@@ -10,11 +10,6 @@ Fixed bugs are not listed here; `CHANGELOG.md` and `git log` have them.
 
 ## Compiler
 
-- **Range facts stop at `if` guards.** A `while c < n { }` body and an
-  `else` branch get no range facts from their conditions, so arithmetic
-  and indexing there carry checks that a guard would have discharged. The
-  `if` case is handled (and scoped to its block since 0.6.0). An
-  optimization gap, not a soundness problem.
 
 ## Self-hosting
 
@@ -25,6 +20,12 @@ Fixed bugs are not listed here; `CHANGELOG.md` and `git log` have them.
 
 ## Tools and editors
 
+- **`nx fmt` writes `x.?}` and `x.*{`.** The no-space-after rule for `.?`
+  and `.*` (member access follows them) also applies before a closing or
+  opening brace, so `{ return o.? }` becomes `{ return o.?}` and
+  `match p.* {` becomes `match p.*{`. Cosmetic; the tree is formatted that
+  way. Fix: treat a brace after `.?` / `.*` like any other token, and
+  reformat the tree in the same commit.
 - **Formatter bar classification has no unit test.** `nx fmt` tells
   closure bars from bit-or per line (`self/fmt.nx`, `bar_role`); the tree-wide
   `--check` in CI is the only guard. Add cases for `|x| x | 1`, `a | b`,

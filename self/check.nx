@@ -775,6 +775,12 @@ pub struct FnCtx {
     callee_spans: List(usize)
     moved: Map(usize, usize)
     ranges: Map(usize, Range)
+    // facts from guards beyond ranges: locals proven `!= 0`, optionals proven
+    // `!= null`, slices with a proven least length (`lo`); all dropped when the
+    // local is assigned, borrowed mutably, or a loop that may change it begins
+    nonzero: List(usize)
+    nonnull: List(usize)
+    min_len: Map(usize, Range)
     // loop index variables known to be in range for a local slice
     index_of: Map(usize, usize)
     in_defer: bool
@@ -792,7 +798,7 @@ fn new_ctx(ret: usize, module: usize, name: []u8) -> FnCtx {
         .ret = ret, .module = module, .fn_name = String.from(name), .locals = List(Local).new(),
         .scope_names = List(String).new(), .scope_locals = List(usize).new(), .scope_deref = List(bool).new(), .scope_marks = List(usize).new(),
         .labels = List(LabelInfo).new(), .next_label = 0, .own_effects = 0, .witnesses = List(Witness).new(),
-        .callees = List(usize).new(), .callee_spans = List(usize).new(), .moved = Map(usize, usize).new(), .ranges = Map(usize, Range).new(),
+        .callees = List(usize).new(), .callee_spans = List(usize).new(), .moved = Map(usize, usize).new(), .ranges = Map(usize, Range).new(), .nonzero = List(usize).new(), .nonnull = List(usize).new(), .min_len = Map(usize, Range).new(),
         .index_of = Map(usize, usize).new(), .in_defer = false, .loop_depth = 0, .unsafe_depth = 0, .is_comptime = false, .in_parallel = 0, .self_ty = NONE, .pat_by_ref = NONE,
     }
 }
@@ -3083,7 +3089,7 @@ impl Checker {
                 let l = self.lookup_local(tn.name[..])
                 if l != NONE and self.ctx().moved.contains(l) {
                     _ = self.ctx().moved.remove(l)
-                    _ = self.ctx().ranges.remove(l)
+                    self.forget_local(l)
                 }
             }
         }
@@ -3112,7 +3118,7 @@ impl Checker {
             if self.tir.nodes[t].k == TKind.Local {
                 let l = self.tir.nodes[t].a
                 _ = self.ctx().moved.remove(l)
-                _ = self.ctx().ranges.remove(l)
+                self.forget_local(l)
             }
             st_set_name(&mut self.tir, st, "=")
             self.tir.nodes[st].kids.append(t)
@@ -3124,7 +3130,7 @@ impl Checker {
         if self.tir.nodes[be].k != TKind.Binary { return NONE }
         let mode = self.tir.nodes[be].name.clone()
         let v = self.tir.nodes[be].kids[1]
-        if self.tir.nodes[t].k == TKind.Local { _ = self.ctx().ranges.remove(self.tir.nodes[t].a) }
+        if self.tir.nodes[t].k == TKind.Local { self.forget_local(self.tir.nodes[t].a) }
         st_set_name(&mut self.tir, st, format("{}= {}", .{bop, mode})[..])
         self.tir.nodes[st].kids.append(t)
         self.tir.nodes[st].kids.append(v)
@@ -3301,8 +3307,15 @@ impl Checker {
         c = self.coerce_or_error(c, bt, "while condition")
         let lid = self.new_label(label[..], label.len > 0, true, NONE)
         self.ctx().loop_depth += 1
+        // a loop may change any `var`: their facts end here; the condition's
+        // own facts hold at the top of every pass
+        self.forget_var_facts()
+        let saved = self.facts_save()
+        let body_facts = self.guard_facts(c, false)
+        self.apply_facts(&body_facts)
         let v = self.tys.void()
         let tb = self.check_block(body_node, v, NONE, NONE)
+        self.facts_restore(&saved)
         self.ctx().loop_depth -= 1
         _ = self.ctx().labels.pop()
         let st = self.stmt_node(TKind.SWhile, start, end)
@@ -3310,7 +3323,12 @@ impl Checker {
         self.tir.nodes[st].kids.append(c)
         self.tir.nodes[st].kids.append(tb)
         if els_node != NONE {
+            // the else runs when the condition turned false
+            let saved_else = self.facts_save()
+            let else_facts = self.guard_facts(c, true)
+            self.apply_facts(&else_facts)
             let eb = self.check_block(els_node, v, NONE, NONE)
+            self.facts_restore(&saved_else)
             self.tir.nodes[st].kids.append(eb)
         }
         return st
@@ -3380,6 +3398,7 @@ impl Checker {
             }
             let lid = self.new_label(label[..], label.len > 0, true, NONE)
             self.ctx().loop_depth += 1
+            self.forget_var_facts()
             let vt = self.tys.void()
             let tb = self.check_block(body_node, vt, NONE, NONE)
             self.ctx().loop_depth -= 1
@@ -3963,6 +3982,10 @@ impl Checker {
                 let n = self.tys.list[at].n as i128
                 return Range{ .lo = n, .hi = n }
             }
+            // a slice with a proven least length
+            if self.tir.nodes[arg].k == TKind.Local {
+                if let m = self.ctx().min_len.get(self.tir.nodes[arg].a) { return Range{ .lo = m.lo, .hi = 170141183460469231731687303715884105727 } }
+            }
             return Range{ .lo = 0, .hi = 170141183460469231731687303715884105727 }
         }
         return self.type_range(self.tir.nodes[e].ty)
@@ -4115,9 +4138,12 @@ impl Checker {
             let inner = self.check_expr(inner_node, NONE)
             let t = self.tys.shallow(self.tir.nodes[inner].ty)
             if self.tys.kind(t) == TK.Opt {
-                self.add_effect(EFF_PANICS, start, "`.?` panics when the optional is null")
+                // proven by a dominating `x != null`
+                let proven = self.tir.nodes[inner].k == TKind.Local and has_local(&self.ctx().nonnull, self.tir.nodes[inner].a)
+                if !proven { self.add_effect(EFF_PANICS, start, "`.?` panics when the optional is null") }
                 let r = self.mk(TKind.Unwrap, self.tys.list[t].args[0], start, end)
                 self.tir.nodes[r].kids.append(inner)
+                self.tir.nodes[r].flag = proven
                 return r
             }
             self.fail_here(start, format("`.?` requires an optional but found `{}`", .{self.ty_name(t)})[..])
@@ -4400,6 +4426,8 @@ impl Checker {
             let r = self.mk(TKind.AddrOf, pt, start, end)
             self.tir.nodes[r].flag = mutable
             self.tir.nodes[r].kids.append(inner)
+            // whoever holds `&mut x` may change it: its facts end here
+            if mutable and self.tir.nodes[inner].k == TKind.Local { self.forget_local(self.tir.nodes[inner].a) }
             return r
         }
         if op == "!" {
@@ -4563,6 +4591,7 @@ impl Checker {
             if op == "/" or op == "%" {
                 div_ok = false
                 if let rr = self.expr_range(r) { div_ok = rr.lo > 0 or rr.hi < 0 }
+                if !div_ok and self.tir.nodes[r].k == TKind.Local and has_local(&self.ctx().nonzero, self.tir.nodes[r].a) { div_ok = true }
             }
             proven = fits and div_ok
             if !proven {
@@ -5364,16 +5393,16 @@ impl Checker {
         let bt = self.tys.bool_ty()
         var c = self.check_expr(cond_node, bt)
         c = self.coerce_or_error(c, bt, "if condition")
-        let narrowing = self.guard_narrowing(c)
-        let ranges_before = self.ctx().ranges.clone()
+        let then_facts = self.guard_facts(c, false)
+        let saved = self.facts_save()
         self.push_scope()
-        for nr in narrowing { self.ctx().ranges.put(nr.local, Range{ .lo = nr.lo, .hi = nr.hi }) }
+        self.apply_facts(&then_facts)
         let moved_before = self.moved_snapshot()
         let v = self.tys.void()
         let then_expected = if els_node != NONE { expected } else { v }
         let tb = self.check_block(then_node, then_expected, NONE, NONE)
         self.pop_scope()
-        self.ctx().ranges = ranges_before
+        self.facts_restore(&saved)
         let moved_then = self.moved_snapshot()
         let then_ty = self.tir.nodes[tb].ty
         let then_diverges = self.tys.kind(self.tys.shallow(then_ty)) == TK.Never
@@ -5390,6 +5419,10 @@ impl Checker {
         }
         self.moved_restore(&moved_before)
         let hint = if then_diverges { expected } else { then_ty }
+        // the else branch knows the condition failed
+        let else_facts = self.guard_facts(c, true)
+        let saved_else = self.facts_save()
+        self.apply_facts(&else_facts)
         var eb = NONE
         let ek = self.node(m, els_node).k
         if ek == parser.NodeKind.Block {
@@ -5399,6 +5432,7 @@ impl Checker {
             eb = self.mk(TKind.Block, self.tir.nodes[te].ty, self.tir.nodes[te].start, self.tir.nodes[te].end)
             self.tir.nodes[eb].a = te
         }
+        self.facts_restore(&saved_else)
         let else_diverges = self.tys.kind(self.tys.shallow(self.tir.nodes[eb].ty)) == TK.Never
         let moved_else = self.moved_snapshot()
         self.moved_restore(&moved_before)
@@ -5491,38 +5525,74 @@ impl Checker {
     }
 
     /// Range facts from a boolean guard on a local: `x < N`, `x <= N`, `x >= N`, `x > N`.
-    fn guard_narrowing(self: *mut Self, c: usize) -> List(Narrowing) {
-        var out = List(Narrowing).new()
-        if self.tir.nodes[c].k == TKind.Logical and self.tir.nodes[c].flag {
-            // both sides hold: a local named twice (`x > 0 and x < 10`) gets
-            // the intersection, not whichever fact was inserted last
-            let l = self.guard_narrowing(self.tir.nodes[c].kids[0])
-            let r = self.guard_narrowing(self.tir.nodes[c].kids[1])
-            for x in l { out.append(Narrowing{ .local = x.local, .lo = x.lo, .hi = x.hi }) }
-            for x in r {
-                var found = false
-                for j in 0..out.len {
-                    if out[j].local == x.local {
-                        out[j].lo = max128(out[j].lo, x.lo)
-                        out[j].hi = min128(out[j].hi, x.hi)
-                        found = true
-                    }
-                }
-                if !found { out.append(Narrowing{ .local = x.local, .lo = x.lo, .hi = x.hi }) }
+    /// What a condition proves in the branch where it is true (or, with
+    /// `negate`, false): ranges of locals (`x < n`, `x == n`, `x != n` at an
+    /// end of the range), locals `!= 0`, optionals `!= null`, a slice's least
+    /// length (`s.len >= n`) and an index below a slice's length (`i < s.len`).
+    /// `a and b` proves both; `!(a or b)` is `!a and !b`; `a or b` proves
+    /// nothing certain about either side; `!c` flips.
+    fn guard_facts(self: *mut Self, c: usize, negate: bool) -> Facts {
+        var out = Facts{ .ranges = List(Narrowing).new(), .nonzero = List(usize).new(), .nonnull = List(usize).new(), .min_len = List(Narrowing).new(), .below = List((usize, usize)).new() }
+        let k = self.tir.nodes[c].k
+        let kids = self.tir.nodes[c].kids.clone()
+        if k == TKind.Unary and self.tir.nodes[c].text == "!" { return self.guard_facts(kids[0], !negate) }
+        if k == TKind.Logical {
+            let is_and = self.tir.nodes[c].flag
+            if is_and != negate {
+                let l = self.guard_facts(kids[0], negate)
+                let r = self.guard_facts(kids[1], negate)
+                return facts_both(&l, &r)
             }
-            var kept = List(Narrowing).new()
-            for x in out { if x.lo <= x.hi { kept.append(Narrowing{ .local = x.local, .lo = x.lo, .hi = x.hi }) } }
-            return kept
+            return out
         }
-        if self.tir.nodes[c].k != TKind.Binary { return out }
-        let op = self.tir.nodes[c].text.clone()
-        let lhs = self.tir.nodes[c].kids[0]
-        let rhs = self.tir.nodes[c].kids[1]
-        if self.tir.nodes[lhs].k != TKind.Local { return out }
+        if k != TKind.Binary { return out }
+        var op = self.tir.nodes[c].text.clone()
+        if negate { op = flip_cmp(op[..]) }
+        var lhs = kids[0]
+        var rhs = kids[1]
+        // `null` on either side
+        if self.tir.nodes[rhs].k == TKind.OptNull or self.tir.nodes[lhs].k == TKind.OptNull {
+            let other = if self.tir.nodes[rhs].k == TKind.OptNull { lhs } else { rhs }
+            if op == "!=" and self.tir.nodes[other].k == TKind.Local { out.nonnull.append(self.tir.nodes[other].a) }
+            return out
+        }
+        // the local (or the length) on the left
+        if self.tir.nodes[lhs].k != TKind.Local and !self.is_slice_len(lhs) {
+            if self.tir.nodes[rhs].k != TKind.Local and !self.is_slice_len(rhs) { return out }
+            let t = lhs
+            lhs = rhs
+            rhs = t
+            op = mirror_cmp(op[..])
+        }
+        // `i < s.len`: an index below a slice's length
+        if self.tir.nodes[lhs].k == TKind.Local and self.is_slice_len(rhs) and op == "<" {
+            let ls = self.tir.nodes[self.tir.nodes[rhs].kids[0]].a
+            var pair = (self.tir.nodes[lhs].a, ls)
+            out.below.append(pair)
+            return out
+        }
         let rr = self.expr_range(rhs) orelse return out
+        // `s.len >= n`: a least length
+        if self.is_slice_len(lhs) {
+            let sl = self.tir.nodes[self.tir.nodes[lhs].kids[0]].a
+            var least: i128 = 0
+            if op == ">=" or op == "==" { least = rr.lo } else if op == ">" { least = rr.lo + 1 }
+            if least > 0 { out.min_len.append(Narrowing{ .local = sl, .lo = least, .hi = least }) }
+            return out
+        }
+        if self.tir.nodes[lhs].k != TKind.Local { return out }
+        let l = self.tir.nodes[lhs].a
         var cur = Range{ .lo = -85070591730234615865843651857942052864, .hi = 85070591730234615865843651857942052863 }
         if let lr = self.expr_range(lhs) { cur = lr }
-        let l = self.tir.nodes[lhs].a
+        if op == "!=" {
+            if rr.lo == 0 and rr.hi == 0 { out.nonzero.append(l) }
+            if rr.lo == rr.hi {
+                // `x != lo` or `x != hi` at an end of the known range shortens it
+                if cur.lo == rr.lo and cur.lo < cur.hi { out.ranges.append(Narrowing{ .local = l, .lo = cur.lo + 1, .hi = cur.hi }) }
+                else if cur.hi == rr.hi and cur.lo < cur.hi { out.ranges.append(Narrowing{ .local = l, .lo = cur.lo, .hi = cur.hi - 1 }) }
+            }
+            return out
+        }
         var nr = Narrowing{ .local = l, .lo = cur.lo, .hi = cur.hi }
         var known = true
         if op == "<" { nr.hi = min128(cur.hi, rr.hi - 1) }
@@ -5531,8 +5601,61 @@ impl Checker {
         else if op == ">=" { nr.lo = max128(cur.lo, rr.lo) }
         else if op == "==" { nr.lo = max128(cur.lo, rr.lo); nr.hi = min128(cur.hi, rr.hi) }
         else { known = false }
-        if known and nr.lo <= nr.hi { out.append(nr) }
+        if known and nr.lo <= nr.hi { out.ranges.append(nr) }
         return out
+    }
+
+    /// `s.len` of a slice-typed local (a slice's length never changes).
+    fn is_slice_len(self: *mut Self, e: usize) -> bool {
+        if self.tir.nodes[e].k != TKind.Builtin or self.tir.nodes[e].name != "Len" { return false }
+        let arg = self.tir.nodes[e].kids[0]
+        if self.tir.nodes[arg].k != TKind.Local { return false }
+        return self.tys.kind(self.tys.shallow(self.tir.nodes[arg].ty)) == TK.Slice
+    }
+
+    fn apply_facts(self: *mut Self, f: *Facts) {
+        for nr in f.ranges { self.ctx().ranges.put(nr.local, Range{ .lo = nr.lo, .hi = nr.hi }) }
+        for l in f.nonzero { if !has_local(&self.ctx().nonzero, l) { self.ctx().nonzero.append(l) } }
+        for l in f.nonnull { if !has_local(&self.ctx().nonnull, l) { self.ctx().nonnull.append(l) } }
+        for m in f.min_len {
+            var least = m.lo
+            if let cur = self.ctx().min_len.get(m.local) { if cur.lo > least { least = cur.lo } }
+            self.ctx().min_len.put(m.local, Range{ .lo = least, .hi = least })
+        }
+        for (i, s) in f.below { self.ctx().index_of.put(i, s) }
+    }
+
+    fn facts_save(self: *mut Self) -> FactState {
+        return FactState{ .ranges = self.ctx().ranges.clone(), .nonzero = self.ctx().nonzero.clone(), .nonnull = self.ctx().nonnull.clone(), .min_len = self.ctx().min_len.clone(), .index_of = self.ctx().index_of.clone() }
+    }
+
+    fn facts_restore(self: *mut Self, s: *FactState) {
+        self.ctx().ranges = s.ranges.clone()
+        self.ctx().nonzero = s.nonzero.clone()
+        self.ctx().nonnull = s.nonnull.clone()
+        self.ctx().min_len = s.min_len.clone()
+        self.ctx().index_of = s.index_of.clone()
+    }
+
+    /// The local changed: nothing proven about it holds any more.
+    fn forget_local(self: *mut Self, l: usize) {
+        _ = self.ctx().ranges.remove(l)
+        _ = self.ctx().min_len.remove(l)
+        _ = self.ctx().index_of.remove(l)
+        drop_local(&mut self.ctx().nonzero, l)
+        drop_local(&mut self.ctx().nonnull, l)
+    }
+
+    /// A loop may change any `var` on any pass: what was proven about one
+    /// before the loop does not hold inside it, nor after.
+    fn forget_var_facts(self: *mut Self) {
+        var ks = List(usize).new()
+        for k in self.ctx().ranges { ks.append(k) }
+        for k in self.ctx().min_len { ks.append(k) }
+        for k in self.ctx().index_of { ks.append(k) }
+        for k in self.ctx().nonzero { ks.append(k) }
+        for k in self.ctx().nonnull { ks.append(k) }
+        for l in ks { if self.ctx().locals[l].mutable { self.forget_local(l) } }
     }
 
     fn check_cast(self: *mut Self, e: usize) -> usize {
@@ -5620,6 +5743,95 @@ pub struct Narrowing {
     local: usize
     lo: i128
     hi: i128
+}
+
+/// What a guard proves: ranges, `!= 0`, `!= null`, least slice lengths, and
+/// indices below a slice's length.
+pub struct Facts {
+    ranges: List(Narrowing)
+    nonzero: List(usize)
+    nonnull: List(usize)
+    min_len: List(Narrowing)
+    below: List((usize, usize))
+}
+
+/// The facts of a function context, saved before a branch and restored after.
+pub struct FactState {
+    ranges: Map(usize, Range)
+    nonzero: List(usize)
+    nonnull: List(usize)
+    min_len: Map(usize, Range)
+    index_of: Map(usize, usize)
+}
+
+/// Both hold: ranges intersect, the rest unite.
+fn facts_both(l: *Facts, r: *Facts) -> Facts {
+    var out = Facts{ .ranges = List(Narrowing).new(), .nonzero = List(usize).new(), .nonnull = List(usize).new(), .min_len = List(Narrowing).new(), .below = List((usize, usize)).new() }
+    for x in l.ranges { out.ranges.append(Narrowing{ .local = x.local, .lo = x.lo, .hi = x.hi }) }
+    for x in r.ranges {
+        var found = false
+        for j in 0..out.ranges.len {
+            if out.ranges[j].local == x.local {
+                out.ranges[j].lo = max128(out.ranges[j].lo, x.lo)
+                out.ranges[j].hi = min128(out.ranges[j].hi, x.hi)
+                found = true
+            }
+        }
+        if !found { out.ranges.append(Narrowing{ .local = x.local, .lo = x.lo, .hi = x.hi }) }
+    }
+    var kept = List(Narrowing).new()
+    for x in out.ranges { if x.lo <= x.hi { kept.append(Narrowing{ .local = x.local, .lo = x.lo, .hi = x.hi }) } }
+    out.ranges = kept
+    for v in l.nonzero { out.nonzero.append(v) }
+    for v in r.nonzero { if !has_local(&out.nonzero, v) { out.nonzero.append(v) } }
+    for v in l.nonnull { out.nonnull.append(v) }
+    for v in r.nonnull { if !has_local(&out.nonnull, v) { out.nonnull.append(v) } }
+    for x in l.min_len { out.min_len.append(Narrowing{ .local = x.local, .lo = x.lo, .hi = x.hi }) }
+    for x in r.min_len {
+        var found = false
+        for j in 0..out.min_len.len {
+            if out.min_len[j].local == x.local {
+                if x.lo > out.min_len[j].lo { out.min_len[j].lo = x.lo; out.min_len[j].hi = x.lo }
+                found = true
+            }
+        }
+        if !found { out.min_len.append(Narrowing{ .local = x.local, .lo = x.lo, .hi = x.hi }) }
+    }
+    for p in l.below { out.below.append(p) }
+    for p in r.below { out.below.append(p) }
+    return out
+}
+
+fn has_local(xs: *List(usize), v: usize) -> bool {
+    for x in xs.*{ if x == v { return true } }
+    return false
+}
+
+fn drop_local(xs: *mut List(usize), v: usize) {
+    var i: usize = 0
+    while i < xs.len {
+        if xs[i] == v { _ = xs.remove(i) } else { i += 1 }
+    }
+}
+
+/// The comparison that holds when this one does not.
+fn flip_cmp(op: []u8) -> String {
+    if op == "<" { return String.from(">=") }
+    if op == ">=" { return String.from("<") }
+    if op == "<=" { return String.from(">") }
+    if op == ">" { return String.from("<=") }
+    if op == "==" { return String.from("!=") }
+    if op == "!=" { return String.from("==") }
+    return String.from(op)
+}
+
+/// The comparison with its sides swapped.
+fn mirror_cmp(op: []u8) -> String {
+    if op == "<" { return String.from(">") }
+    if op == ">" { return String.from("<") }
+    if op == "<=" { return String.from(">=") }
+    if op == ">=" { return String.from("<=") }
+    return String.from(op)
 }
 
 fn min128(a: i128, b: i128) -> i128 { return if a < b { a } else { b } }
@@ -6531,6 +6743,12 @@ impl Checker {
             let il = self.tir.nodes[index].a
             if let sl = self.ctx().index_of.get(il) { if sl == bl { return true } }
         }
+        // a slice with a proven least length and an index below it
+        if self.tir.nodes[base].k == TKind.Local {
+            if let m = self.ctx().min_len.get(self.tir.nodes[base].a) {
+                if let r = self.expr_range(index) { if r.lo >= 0 and r.hi < m.lo { return true } }
+            }
+        }
         return false
     }
 
@@ -6577,8 +6795,34 @@ impl Checker {
             self.tir.nodes[r].flag2 = true
             self.tir.nodes[r].kids.append(x)
         }
-        self.add_effect(EFF_PANICS, start, "slicing checks its bounds and panics when they are out of range")
+        if !self.slice_op_proven(r) { self.add_effect(EFF_PANICS, start, "slicing checks its bounds and panics when they are out of range") }
         return r
+    }
+
+    /// `s[a..b]` cannot fail when it has no bounds, or when `s` is a slice with
+    /// a proven least length that `b` (and `a`) stay within, `a` below `b`.
+    fn slice_op_proven(self: *mut Self, r: usize) -> bool {
+        let has_start = self.tir.nodes[r].flag
+        let has_end = self.tir.nodes[r].flag2
+        if !has_start and !has_end { return true }
+        let kids = self.tir.nodes[r].kids.clone()
+        if self.tir.nodes[kids[0]].k != TKind.Local { return false }
+        let m = self.ctx().min_len.get(self.tir.nodes[kids[0]].a) orelse return false
+        var limit = m.lo
+        var idx: usize = 1
+        var start_hi: i128 = 0
+        if has_start {
+            let sr = self.expr_range(kids[idx]) orelse return false
+            if sr.lo < 0 { return false }
+            start_hi = sr.hi
+            idx += 1
+        }
+        if has_end {
+            let er = self.expr_range(kids[idx]) orelse return false
+            if er.hi > m.lo { return false }
+            limit = er.lo
+        }
+        return start_hi <= limit
     }
 
     fn check_struct_lit(self: *mut Self, e: usize, expected: usize) -> usize {
@@ -7103,6 +7347,7 @@ impl Checker {
         let payload = self.tys.list[ct].args[0]
         let lid = self.new_label(label, label.len > 0, true, NONE)
         self.ctx().loop_depth += 1
+        self.forget_var_facts()
         self.push_scope()
         let local = self.declare_local(binding, payload, false, start, end)
         let v = self.tys.void()
@@ -7277,6 +7522,7 @@ impl Checker {
         }
         let lid = self.new_label(label[..], label.len > 0, true, NONE)
         self.ctx().loop_depth += 1
+        self.forget_var_facts()
         let v = self.tys.void()
         // a parallel body must not touch shared mutable state
         let w_before = self.ctx().witnesses.len

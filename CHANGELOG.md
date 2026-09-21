@@ -46,9 +46,22 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   exhaustive by length (`[]` with `[x, rest..]` needs no `_`); and
   `whole @ pattern`, the value under a name while its parts match
   (decision 95). Spec case `s7_slice_patterns`; the fifth item of 1.1.
+- Guard facts flow into the body of a `while` (at the top of every pass)
+  and, negated, into the `else` of an `if` or a `while`; a guard also
+  proves `y != 0` for `x / y`, `x != null` for `x.?`, `i < s.len` for
+  `s[i]`, and `s.len >= n` for indexing and slicing within `n`, so fewer
+  functions carry `panics` (decision 96). Closes the `KNOWN_ISSUES.md`
+  entry on range facts. Spec case `s9_guard_proofs`; the sixth item of
+  1.1.
 
 ### Fixed
 
+- A guard's fact about a `var` survived into a loop that changed the
+  variable (`if i < 3 { while i < 6 { xs[i]; i += 1 } }` elided the bounds
+  check on `xs[i]` and read past the array, with `nx effects` reporting no
+  `panics`), since 0.6.0. Facts about mutable locals now end at an
+  assignment, at a mutable borrow, and at the entry of any loop. Spec case
+  `s9_facts_end_at_loops`.
 - `place.?`, `place orelse d` and `try place` used where nothing takes the
   value (a print argument, a `.len`) dropped the payload twice: once as the
   read's temporary and once with the place. The read is now a view of the

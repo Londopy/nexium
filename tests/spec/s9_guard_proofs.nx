@@ -1,0 +1,60 @@
+// SPEC 9.1: guards prove what they test where they hold. `y != 0` proves a
+// division, `x != null` an unwrap, `s.len >= n` indexing and slicing within
+// n, `i < s.len` an index; the else branch knows the negation; a while body
+// knows its condition at the top of every pass. Each function's `!panics`
+// bound is the assertion: the file compiles only if every proof holds.
+fn half(x: u32, y: u32) -> u32 !panics {
+    if y != 0 { return x / y }
+    return 0
+}
+
+fn first(s: []u8) -> u8 !panics {
+    if s.len >= 2 { return s[1] }
+    return 0
+}
+
+fn tail(s: []u8) -> []u8 !panics {
+    if s.len >= 1 { return s[1..] }
+    return s
+}
+
+fn pick(xs: []u32, i: usize) -> u32 !panics {
+    if i < xs.len { return xs[i] }
+    return 0
+}
+
+fn get(o: ?i32) -> i32 !panics {
+    if o != null { return o.?}
+    return -1
+}
+
+fn clamp(x: u32) -> u32 !panics {
+    if x < 10 { return x } else { return x - 10 }
+}
+
+fn count_down(n: u32) -> u32 !panics {
+    var i = n
+    var acc: u32 = 0
+    while i > 0 {
+        acc = acc +| i
+        i -= 1
+    }
+    return acc
+}
+
+fn both(x: u32, y: u32) -> u32 !panics {
+    if ! (y == 0 or x > 100) { return (x + 1) / y }
+    return 0
+}
+
+fn main() {
+    println("{} {}", .{half(9, 3), half(9, 0)})
+    println("{} {}", .{first("ab"), first("a")})
+    println("{} {}", .{tail("abc"), tail("")})
+    let xs = [5, 6, 7]
+    println("{} {}", .{pick(xs[..], 2), pick(xs[..], 3)})
+    println("{} {}", .{get(4), get(null)})
+    println("{} {}", .{clamp(3), clamp(13)})
+    println("{}", .{count_down(4)})
+    println("{} {}", .{both(9, 4), both(200, 4)})
+}
