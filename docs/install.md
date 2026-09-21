@@ -25,6 +25,12 @@ wizard offers:
   is on the PATH.
 - **Finish**: launch the interactive session, open the README, or open a
   console that runs `nx doctor`.
+- **Already installed?** The page after the welcome then says which
+  version is in which directory and offers the upgrade (a repair when it is
+  the same version, a replacement when the installed one is newer), with
+  the directory, components and tasks of the last install as the defaults,
+  or the removal of the installed version, which runs its uninstaller and
+  exits.
 - **Start menu**: "Nexium <version> (64-bit)" opens the interactive session,
   so typing `nx` in the Windows search bar works like typing `python`.
 

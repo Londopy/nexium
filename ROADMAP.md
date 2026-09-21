@@ -343,7 +343,8 @@ queue in front of them.
     release attaches them and uploads when `PYPI_TOKEN` and `NPM_TOKEN`
     are set.)
 16. The installer detects an installed version: upgrade, repair, remove,
-    the previous choices as defaults.
+    the previous choices as defaults. (Done in the compiler's installer;
+    the ones `nx ship` writes keep Inno's own upgrade-in-place.)
 17. `nx upgrade`, and `nxup` behind it later.
 18. Portable mode, and `nx install` from a portable copy.
 19. The effects lockfile (`nx audit --lock`) and the CI check.

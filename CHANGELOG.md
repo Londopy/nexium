@@ -18,6 +18,12 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   before replacing its files (Restart Manager; it is not started again),
   and keep a log of the run as `install.log` next to the program. The
   uninstaller takes `/LOG="path"` for a log of its own.
+- The Windows installer detects an installed Nexium: the page after the
+  welcome names its version and directory and offers the upgrade (a
+  repair when it is the same version, a replacement when the installed
+  one is newer), with the previous directory, components and tasks as
+  the defaults, or the removal of the installed version, which runs its
+  uninstaller and exits.
 - `pip install nexium-lang` and `npm install -g nexium-lang`: every
   release carries the compiler as a wheel per platform (the binary under
   `nexium_lang/bin/`, a console script `nx`) and as npm packages

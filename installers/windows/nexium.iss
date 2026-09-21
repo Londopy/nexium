@@ -62,6 +62,14 @@ ArchitecturesInstallIn64BitMode=x64compatible
 ChangesEnvironment=yes
 ChangesAssociations=yes
 MinVersion=10.0
+; an install over an install: the previous directory, type, components,
+; tasks, language and privileges are the defaults (the page after the
+; welcome, under [Code], offers the upgrade, the repair or the removal)
+UsePreviousAppDir=yes
+UsePreviousSetupType=yes
+UsePreviousTasks=yes
+UsePreviousLanguage=yes
+UsePreviousPrivileges=yes
 ; one installer at a time: Setup and Uninstall refuse to start while another
 ; holds this mutex, and say so (the message is under [Messages])
 SetupMutex=NexiumSetupMutex
@@ -157,6 +165,113 @@ Type: files; Name: "{commonappdata}\Microsoft\Windows Terminal\Fragments\Nexium\
 Type: dirifempty; Name: "{commonappdata}\Microsoft\Windows Terminal\Fragments\Nexium"
 
 [Code]
+// ---- an installed version: when Nexium is already here, the page after the
+// welcome says which version and where, and offers the upgrade (a reinstall
+// when it is the same version, a replacement when it is newer) with the
+// previous choices as defaults, or to remove it and exit.
+
+procedure ExitProcess(Code: Integer); external 'ExitProcess@kernel32.dll stdcall';
+
+var
+  InstalledPage: TInputOptionWizardPage;
+  InstalledVersion, InstalledDir, UninstallCmd: string;
+
+function UninstallKey(): string;
+begin
+  Result := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{B7E4C2F1-7A5D-4B7E-9D1C-3E2A9F0C5E11}_is1';
+end;
+
+function FindInstalled(): Boolean;
+var
+  Root: Integer;
+begin
+  Result := False;
+  Root := HKEY_CURRENT_USER;
+  if not RegQueryStringValue(Root, UninstallKey(), 'DisplayVersion', InstalledVersion) then
+  begin
+    Root := HKEY_LOCAL_MACHINE;
+    if not RegQueryStringValue(Root, UninstallKey(), 'DisplayVersion', InstalledVersion) then
+      exit;
+  end;
+  RegQueryStringValue(Root, UninstallKey(), 'InstallLocation', InstalledDir);
+  RegQueryStringValue(Root, UninstallKey(), 'UninstallString', UninstallCmd);
+  Result := UninstallCmd <> '';
+end;
+
+// the numeric part of a dotted version, one component at a time
+function VersionPart(var S: string): Integer;
+var
+  P: Integer;
+begin
+  P := Pos('.', S);
+  if P = 0 then
+  begin
+    Result := StrToIntDef(S, 0);
+    S := '';
+  end else begin
+    Result := StrToIntDef(Copy(S, 1, P - 1), 0);
+    Delete(S, 1, P);
+  end;
+end;
+
+// negative when A is older than B, zero when equal, positive when newer
+function CompareVersions(A, B: string): Integer;
+var
+  I, X, Y: Integer;
+begin
+  Result := 0;
+  for I := 1 to 3 do
+  begin
+    X := VersionPart(A);
+    Y := VersionPart(B);
+    if X <> Y then
+    begin
+      Result := X - Y;
+      exit;
+    end;
+  end;
+end;
+
+function UpgradeCaption(): string;
+var
+  C: Integer;
+begin
+  C := CompareVersions('{#AppVersion}', InstalledVersion);
+  if C > 0 then
+    Result := 'Upgrade to {#AppVersion} (your choices from the last install are the defaults)'
+  else if C = 0 then
+    Result := 'Reinstall {#AppVersion} (a repair: every file is written again)'
+  else
+    Result := 'Replace it with {#AppVersion}, an older version';
+end;
+
+procedure OfferInstalledPage();
+begin
+  if not FindInstalled() then
+    exit;
+  InstalledPage := CreateInputOptionPage(wpWelcome, 'Nexium is already installed',
+    'Version ' + InstalledVersion + ' is in ' + InstalledDir,
+    'This setup is version {#AppVersion}. What would you like to do?', True, False);
+  InstalledPage.Add(UpgradeCaption());
+  InstalledPage.Add('Remove the installed version and exit');
+  InstalledPage.Values[0] := True;
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+var
+  Code: Integer;
+begin
+  Result := True;
+  if (InstalledPage <> nil) and (CurPageID = InstalledPage.ID) and InstalledPage.Values[1] then
+  begin
+    if Exec(RemoveQuotes(UninstallCmd), '', '', SW_SHOW, ewWaitUntilTerminated, Code) then
+      MsgBox('Nexium ' + InstalledVersion + ' was removed. Run this setup again to install {#AppVersion}.', mbInformation, MB_OK)
+    else
+      MsgBox('The uninstaller could not be started: ' + SysErrorMessage(Code), mbError, MB_OK);
+    ExitProcess(0);
+  end;
+end;
+
 // ---- "More from Londopy": a page after the tasks presenting the publisher's
 // other projects, each with a button that opens its GitHub page and one that
 // opens its latest release. Nothing is downloaded by the installer itself.
@@ -224,6 +339,7 @@ procedure InitializeWizard();
 var
   Intro: TNewStaticText;
 begin
+  OfferInstalledPage();
   MorePage := CreateCustomPage(wpSelectTasks, 'More from Londopy',
     'Other free tools by the author of Nexium. Nothing here is installed unless you download it yourself.');
   Intro := TNewStaticText.Create(MorePage);
