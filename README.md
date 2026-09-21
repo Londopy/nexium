@@ -22,7 +22,7 @@
 </p>
 
 <p align="center">
-  <b>A language complete enough to build everything in, that is also the best thing to adopt for one piece of something else.</b>
+  <b>Nexium is a language complete enough to build everything in, that is also the best thing to adopt for one piece of something else.</b>
 </p>
 
 <p align="center">

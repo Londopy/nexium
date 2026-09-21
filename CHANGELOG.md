@@ -12,6 +12,12 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Changed
 
+- `SECURITY.md` states the promise precisely: deterministically
+  memory-managed without a garbage collector, memory safety complete in
+  1.2 when the view rules land, and a host is not left holding what a
+  panicked export call acquired. Page titles say "Nexium language"
+  (decision 91: `nexium-lang` for the language's own packages on
+  registries where `nexium` is taken).
 - `nx doctor` compiles and runs a one-line program before it says
   "everything works": the checker, the C emitter, the C compiler, the
   linker and the executable all have to answer. 1.0.1's doctor reported a

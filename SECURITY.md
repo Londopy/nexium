@@ -12,18 +12,23 @@ should hear back within a week.
 
 ## What counts
 
-Nexium promises no undefined behavior in safe code (spec section 12) and that a
-panic never crosses an export boundary (S3). Reports that safe Nexium code can
-be made to:
+Nexium is deterministically memory-managed without a garbage collector;
+memory safety is complete in 1.2, when the view rules land. Until then a
+view can outlive its storage in code without `unsafe` (`SPEC.md` 5.6 and
+5.7 leave that to the programmer), and that is the one known gap in the
+list below. Outside it, the specification promises no undefined behavior
+in safe code (section 12) and that a panic never crosses an export
+boundary (S3). Reports that safe Nexium code can be made to:
 
 - read or write out of bounds,
-- use memory after it was released, or double free,
-- abort a host process that called an exported function,
+- use memory after it was released, or double free, other than through a
+  view that outlived its storage,
+- abort a host process that called an exported function, or leave it
+  holding what a panicked call acquired,
 - execute arbitrary code during compilation through `comptime` or
   `@embedFile` beyond the declared build inputs,
 
-are security issues; the view cases `SPEC.md` 5.6 and 5.7 leave to the
-programmer are the known gap, closed by the roadmap's 1.2. Compiler crashes on invalid input are bugs, not
+are security issues. Compiler crashes on invalid input are bugs, not
 vulnerabilities, but are welcome as ordinary issues; CI fuzzes the front end
 with mutated sources and the binary pattern engine with random bytes on
 every push (`tests/fuzz.nx`, a fresh seed each run) and keeps any finding

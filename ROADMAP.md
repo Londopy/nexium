@@ -249,29 +249,32 @@ with a reproduction and the fix it needs, a fix removes the entry, adds a
 `Fixed` line and a regression test, and the next patch release ships it.
 Nothing below is started while a known bug that a user can hit sits
 there. (1.0.2 was the hotfix for the release binaries, which were built
-for the runner's CPU.) The entries an outside review of 1.0.1 added, in
-the order they will be fixed, all for 1.0.3:
+for the runner's CPU.) The four entries an outside review of 1.0.1
+added are fixed on `main` and wait for 1.0.3:
 
-1. A contained panic leaks what the call acquired: the export wrapper's
-   `longjmp` skips every drop between the panic and the boundary. The
-   fix is a per-call tracker in the runtime that releases live
-   allocations, open files, sockets and held locks on the panic path; it
-   is also the first half of 1.2's "a panic releases what it owned".
-2. `nexium.lock` is written and never read, so the lockfile pins nothing:
-   `nx fetch` honours it, `nx update` is what re-resolves.
-3. The Python wrapper takes a list for a `[]mut T` parameter and drops
+1. A contained panic leaked what the call acquired: the export wrapper's
+   `longjmp` skipped every drop between the panic and the boundary. A
+   per-call tracker in the runtime now releases live allocations, open
+   files, sockets and held locks on the panic path; it is also the
+   first half of 1.2's "a panic releases what it owned".
+2. `nexium.lock` was written and never read, so the lockfile pinned
+   nothing: `nx fetch` honours it, `nx update` is what re-resolves.
+3. The Python wrapper took a list for a `[]mut T` parameter and dropped
    the writes: mutable slices accept only writable, contiguous,
    matching buffers.
-4. Effect notes point at the function rather than the recorded witness,
-   so "exact line" is not yet true.
+4. Effect notes pointed at the function rather than the recorded
+   witness; they point at the witness, and the compile-fail cases pin
+   the line and column.
 
-With them, the words the same review found wrong: `SECURITY.md` says
-"memory-safe" in one sentence and lists safe-code use-after-free cases in
-the next; until 1.2 the claim is "deterministically memory-managed
-without a garbage collector, memory safety complete in 1.2", everywhere.
-The README says "language-stable, early ecosystem" near the top. And for
-discovery: "Nexium language" in every title and package (`nexium-lang` on
-PyPI and npm, since `nexium` is taken there by unrelated projects).
+With them, the words the same review found wrong, also done:
+`SECURITY.md` said "memory-safe" in one sentence and listed safe-code
+use-after-free cases in the next; until 1.2 the claim is
+"deterministically memory-managed without a garbage collector, memory
+safety complete in 1.2", everywhere. The README says "language-stable,
+early ecosystem" near the top. And for discovery: "Nexium language" in
+every page title, and `nexium-lang` for the language's own packages on
+PyPI and npm when they come, since `nexium` is taken there by unrelated
+projects (decision 91).
 
 ### First: the quick wins, in order
 

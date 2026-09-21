@@ -1,6 +1,6 @@
 <div class="hero">
 <img src="assets/banner.svg" alt="Nexium" style="max-width: 640px; width: 100%">
-<p class="tag">A language complete enough to build everything in, that is also the best thing to adopt for one piece of something else.</p>
+<p class="tag">Nexium is a language complete enough to build everything in, that is also the best thing to adopt for one piece of something else.</p>
 </div>
 
 Nexium compiles to native code through C, has automatic reference counting

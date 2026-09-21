@@ -814,7 +814,8 @@ fn main() -> u8 {
         var headings = List(Heading).new()
         let body = render_markdown(texts[pi][..], &links, &p, &mut title, &mut headings)
         var html = String.with_capacity(body.len + 8192)
-        let full_title = if p.section[..] == "index" { String.from("Nexium: a language that compiles to C and ships everywhere") } else { format("{} · Nexium", .{p.title}) }
+        // "Nexium language" in every title: a search has other things called Nexium to get past
+        let full_title = if p.section[..] == "index" { String.from("The Nexium language: compiles to C, ships everywhere") } else { format("{} · Nexium language", .{p.title}) }
         page_head(&mut html, full_title[..], root, first_paragraph(body[..])[..])
         sidebar(&mut html, &pages, pi, root)
         html.append("<main>\n")

@@ -600,3 +600,7 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
 30. CI runs on Windows, Linux, and macOS: `cargo test` builds the compiler,
     runs every example against its recorded output, and checks the
     compile-fail cases. Zig is installed in CI to provide the C compiler.
+91. Names for discovery: page titles and metadata say "Nexium language",
+    since a search has other things called Nexium to get past; the
+    compiler stays `nx`. Where a registry already has an unrelated
+    `nexium` (PyPI, npm), the language's own packages are `nexium-lang`.
