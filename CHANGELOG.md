@@ -10,6 +10,10 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-09-20
+
+*Annapurna: Schatz* — the one who found the summit party in the crevasse the morning after: the long-hidden bugs, and then the roads in. An outside review of 1.0.1 read the code and found five bugs that had been there since their features shipped: a contained panic leaked what the call acquired, the lockfile pinned nothing, the Python wrapper dropped writes to a mutable slice, effect notes pointed at the function instead of the line, and `SECURITY.md` promised more than the specification did. All five are fixed here, the compile-time interpreter is freed from its 32-call limit, and the roadmap's quick wins that followed are in too: every way to install (a one-liner on each platform, pip and npm, Homebrew, Scoop, winget and Chocolatey, Docker, torrents), `nx upgrade`, `nx install`, `nx layout`, `nx explain`, the effects lockfile, code lenses with the panic proof, the REPL's line editor and one-liners, watch mode, the numbers page, and the first package from outside the tree.
+
 ### Added
 
 - The Windows installers, the compiler's own and the ones `nx ship`
@@ -153,6 +157,39 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   `NEXIUM_FROM_SOURCE=1` asks for it; the one-C-file install is on the
   front page of the docs and in `docs/install.md`.
 
+
+- `artifact cli { stack = "1G" }`: `main` runs on a thread reserving that
+  much stack (`"64K"`, `"256M"`, `"1G"` or a byte count), so a recursion
+  deeper than the platform's default completes; the reservation is address
+  space, committed as the program reaches it, and a 32-bit process caps it
+  at 256 MB. The compiler declares a gigabyte for itself, and compile-time
+  evaluation may now nest 1000 calls (it stopped at 32 since the fuzzer
+  found the unbounded case; each nested call costs about 165 KiB of the
+  compiler's stack). A spec case recurses 300,000 deep at run time and 300
+  deep at compile time.
+- A Sublime Text build system, `editors/sublime/Nexium.sublime-build`:
+  Ctrl+B runs the file, the variants test, check, build and print its
+  effects, and a diagnostic's `--> file:line:col` line is clickable.
+- The roadmap's "run from the editor, everywhere": the same Ctrl+B in
+  every supported editor, a one-line `--format short` diagnostic for
+  problem matchers and `--format json` for tools.
+
+### Changed
+
+- `SECURITY.md` states the promise precisely: deterministically
+  memory-managed without a garbage collector, memory safety complete in
+  1.2 when the view rules land, and a host is not left holding what a
+  panicked export call acquired. Page titles say "Nexium language"
+  (decision 91: `nexium-lang` for the language's own packages on
+  registries where `nexium` is taken).
+- `nx doctor` compiles and runs a one-line program before it says
+  "everything works": the checker, the C emitter, the C compiler, the
+  linker and the executable all have to answer. 1.0.1's doctor reported a
+  working installation on a machine where the compiler could not compile
+  a line, because it had only asked the C compiler for its version. An
+  illegal instruction from the probe is named as such, with the fix. The
+  harness runs the check.
+
 ### Fixed
 
 - `nx doctor` and `nx upgrade` send `GITHUB_TOKEN` (or `GH_TOKEN`) to
@@ -172,44 +209,6 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   for glibc before 2.34. CI builds hello with zig removed from the PATH.
 - The install script no longer stops with `line: parameter not set` at
   the end when `NEXIUM_NO_MODIFY_PATH=1` is set.
-
-## [1.0.3] - 2026-09-20
-
-*Annapurna: Schatz* — the one who found the summit party in the crevasse the morning after: the long-hidden bugs. An outside review of 1.0.1 read the code and found five that had been there since their features shipped: a contained panic leaked what the call acquired, the lockfile pinned nothing, the Python wrapper dropped writes to a mutable slice, effect notes pointed at the function instead of the line, and `SECURITY.md` promised more than the specification did. All five are fixed here, and with them the compile-time interpreter is freed from its 32-call limit, `nx doctor` proves a program runs, and `nx update` exists.
-
-### Changed
-
-- `SECURITY.md` states the promise precisely: deterministically
-  memory-managed without a garbage collector, memory safety complete in
-  1.2 when the view rules land, and a host is not left holding what a
-  panicked export call acquired. Page titles say "Nexium language"
-  (decision 91: `nexium-lang` for the language's own packages on
-  registries where `nexium` is taken).
-- `nx doctor` compiles and runs a one-line program before it says
-  "everything works": the checker, the C emitter, the C compiler, the
-  linker and the executable all have to answer. 1.0.1's doctor reported a
-  working installation on a machine where the compiler could not compile
-  a line, because it had only asked the C compiler for its version. An
-  illegal instruction from the probe is named as such, with the fix. The
-  harness runs the check.
-
-### Added
-
-- `artifact cli { stack = "1G" }`: `main` runs on a thread reserving that
-  much stack (`"64K"`, `"256M"`, `"1G"` or a byte count), so a recursion
-  deeper than the platform's default completes; the reservation is address
-  space, committed as the program reaches it, and a 32-bit process caps it
-  at 256 MB. The compiler declares a gigabyte for itself, and compile-time
-  evaluation may now nest 1000 calls (it stopped at 32 since the fuzzer
-  found the unbounded case; each nested call costs about 165 KiB of the
-  compiler's stack). A spec case recurses 300,000 deep at run time and 300
-  deep at compile time.
-- A Sublime Text build system, `editors/sublime/Nexium.sublime-build`:
-  Ctrl+B runs the file, the variants test, check, build and print its
-  effects, and a diagnostic's `--> file:line:col` line is clickable.
-- The roadmap's "run from the editor, everywhere": the same Ctrl+B in
-  every supported editor, a one-line `--format short` diagnostic for
-  problem matchers and `--format json` for tools.
 
 ## [1.0.2] - 2026-09-20
 

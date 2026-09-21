@@ -10,7 +10,10 @@ and each release has a name from [release-names.md](release-names.md).
 
 - A **patch** (1.0.1) fixes bugs. It changes no program's meaning except
   where the old meaning was a bug listed in `KNOWN_ISSUES.md` or the
-  changelog's `Fixed` section.
+  changelog's `Fixed` section. It may also add what changes no meaning
+  (a tool, a command, a builtin, a field of an `artifact` block, a way to
+  install), as 1.0.1 to 1.0.3 did: the line between a patch and a minor
+  is meaning, not size.
 - A **minor** (1.1.0) adds. Everything that was accepted is still accepted
   and means the same; what was rejected may become accepted.
 - A **major** (2.0.0) may remove what a minor deprecated, after the cycle
