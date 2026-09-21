@@ -329,7 +329,8 @@ queue in front of them.
     that wraps it. (Done; the package wraps the installer with its
     checksum, as Chocolatey's moderation asks, and the push needs the
     maintainer's `CHOCO_API_KEY`.)
-11. REPL `:undo`, `:save` and `:load`; `:effects expr`.
+11. REPL `:undo`, `:save` and `:load`; `:effects expr`. (Done; `:load`
+    was there already.)
 12. `nx -e` and `nx -p` one-liners on the REPL's compile cache.
 13. `nx layout Type`: offsets, sizes, padding, the reordering.
 14. `expect_snapshot` in `std.testing`.

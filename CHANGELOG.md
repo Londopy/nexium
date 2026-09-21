@@ -18,6 +18,11 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   before replacing its files (Restart Manager; it is not started again),
   and keep a log of the run as `install.log` next to the program. The
   uninstaller takes `/LOG="path"` for a log of its own.
+- The REPL has `:undo` (the last line taken back, bindings and all),
+  `:save FILE` (the session as a program `nx run` runs; values printed at
+  the prompt become `_ = ...`) and `:effects EXPR` (the effects of an
+  expression, checked in a function of its own with the kept bindings as
+  parameters). `:load FILE` was there already.
 - `installers/install.ps1`, the Windows one-liner:
   `irm https://raw.githubusercontent.com/Londopy/nexium/main/installers/install.ps1 | iex`
   downloads the portable build for the machine, verifies it against the

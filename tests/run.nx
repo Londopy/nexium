@@ -559,7 +559,7 @@ fn suite_installer(e: *Env, failures: *mut List(String)) {
 
 /// The REPL evaluates lines, keeps bindings, accepts items, reports errors, and prints.
 fn suite_repl(e: *Env, failures: *mut List(String)) {
-    let script = "let x = 2\nx * 21\nfn sq(n: i32) -> i32 { return n * n }\nsq(x)\nprintln(\"hi {}\", .{x})\nimport std.strings\nstrings.to_upper(\"ok\")\nlet s = String.from(\"a\")\ns\nundefined_name\nvar xs = List(i32).new()\nxs.append(7)\nxs\n:quit\n"
+    let script = "let x = 2\nx * 21\nfn sq(n: i32) -> i32 { return n * n }\nsq(x)\nprintln(\"hi {}\", .{x})\nimport std.strings\nstrings.to_upper(\"ok\")\nlet s = String.from(\"a\")\ns\nundefined_name\nvar xs = List(i32).new()\nxs.append(7)\nxs\n:effects xs.append(8)\n:effects x\nlet y = 5\n:undo\n:vars\n:save nx-out/repl-session.nx\n:quit\n"
     let repl_args = ["repl"]
     let out = nx_in(e, repl_args[..], script, e.root[..])
     if out.code != 0 { failures.append(format("repl: exited with {}:\n{}", .{out.code, out.stderr})); return }
@@ -567,7 +567,20 @@ fn suite_repl(e: *Env, failures: *mut List(String)) {
         if out.stdout[..].find(want) == null { failures.append(format("repl: missing `{}` in:\n{}", .{want, out.stdout})) }
     }
     if out.stderr[..].find("undefined_name") == null { failures.append(format("repl: the error for an unknown name was not reported:\n{}", .{out.stderr})) }
-    println("repl: a session", .{})
+    // :effects names the effects of an expression with the bindings in scope
+    for want in ["effects: allocates", "effects: none"] {
+        if out.stdout[..].find(want) == null { failures.append(format("repl: missing `{}` in:\n{}", .{want, out.stdout})) }
+    }
+    // :undo takes the binding back; :vars after it does not list y
+    if out.stdout[..].find("undone: let y = 5") == null or out.stdout[..].find("y: i64") != null {
+        failures.append(format("repl: :undo did not take `let y = 5` back:\n{}", .{out.stdout}))
+    }
+    // :save writes a program with the items and the statements
+    let saved = fs.read(fs.join(e.root[..], "nx-out/repl-session.nx")[..]) catch { String.new() }
+    if saved[..].find("fn sq(n: i32)") == null or saved[..].find("fn main() -> !void") == null or saved[..].find("_ = x * 21") == null {
+        failures.append(format("repl: :save did not write the session:\n{}", .{saved}))
+    }
+    println("repl: a session, :effects, :undo and :save", .{})
 }
 
 fn frame(body: []u8) -> String {

@@ -2764,8 +2764,9 @@ impl Checker {
     }
 
     fn check_unused(self: *mut Self, te: usize) {
-        // the REPL prints the value of a trailing expression
-        if self.repl_mode and self.ctx().fn_name == "main" { return }
+        // the REPL prints the value of a trailing expression, and `:effects`
+        // checks an expression for its effects alone
+        if self.repl_mode and (self.ctx().fn_name == "main" or self.ctx().fn_name == "__nx_effects") { return }
         let t = self.tys.shallow(self.tir.nodes[te].ty)
         let k = self.tys.kind(t)
         if k == TK.Void or k == TK.Never { return }
@@ -8671,6 +8672,8 @@ pub struct ReplOutcome {
     names: List(String)
     values: List(CV)
     shown: List(String)
+    // the type of each kept binding, "" when no `let` declared it
+    types: List(String)
     printed_ty: String
     printed_val: String
     has_printed: bool
@@ -8976,7 +8979,7 @@ impl Checker {
     pub fn run_repl(self: *mut Self, start: usize, names: *List(String), vals: *List(CV)) -> ReplOutcome {
         var out = ReplOutcome{
             .names = List(String).new(), .values = List(CV).new(), .shown = List(String).new(),
-            .printed_ty = String.new(), .printed_val = String.new(), .has_printed = false, .panic = String.new(), .has_panic = false,
+            .types = List(String).new(), .printed_ty = String.new(), .printed_val = String.new(), .has_printed = false, .panic = String.new(), .has_panic = false,
         }
         let inst = self.main_inst
         if inst == NONE { return out }
@@ -9063,9 +9066,11 @@ impl Checker {
             }
             if l == NONE {
                 out.shown.append(cv_format(&out.values[j]))
+                out.types.append(String.new())
             } else {
                 let lt = self.tys.resolve(self.insts[inst].locals[l].ty, true)
                 out.shown.append(format("{}: {}", .{self.ty_name(lt), self.render_typed(&out.values[j], lt)}))
+                out.types.append(self.ty_name(lt))
             }
         }
         if has_last {

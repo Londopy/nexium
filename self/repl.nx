@@ -14,14 +14,31 @@ const ITEM_KEYWORDS = ["fn", "pub", "struct", "enum", "record", "ref", "trait", 
 struct Session {
     items: List(String)
     stmts: List(String)
-    // the kept bindings, by name, and the same rendered with their types
+    // the kept bindings, by name, the same rendered with their types, and
+    // the types alone (for `:effects`, which passes them as parameters)
     names: List(String)
     values: List(check.CV)
     shown: List(String)
+    types: List(String)
+    // what each accepted input was, for `:undo`: 0 an item, 1 a statement
+    kinds: List(u8)
+    // whether each statement printed a value at the prompt, for `:save`
+    printed: List(bool)
+    // the bindings before each statement, for `:undo`
+    hist_names: List(List(String))
+    hist_values: List(List(check.CV))
+    hist_shown: List(List(String))
+    hist_types: List(List(String))
 }
 
 fn new_session() -> Session {
-    return Session{ .items = List(String).new(), .stmts = List(String).new(), .names = List(String).new(), .values = List(check.CV).new(), .shown = List(String).new() }
+    return Session{
+        .items = List(String).new(), .stmts = List(String).new(),
+        .names = List(String).new(), .values = List(check.CV).new(), .shown = List(String).new(), .types = List(String).new(),
+        .kinds = List(u8).new(), .printed = List(bool).new(),
+        .hist_names = List(List(String)).new(), .hist_values = List(List(check.CV)).new(),
+        .hist_shown = List(List(String)).new(), .hist_types = List(List(String)).new(),
+    }
 }
 
 /// The synthetic program: the items, then `main` holding the statements.
@@ -35,6 +52,57 @@ fn source(s: *Session, extra_item: []u8, extra_stmt: []u8) -> String {
     if extra_stmt.len > 0 { out.append(extra_stmt); out.append("\n") }
     out.append("    return\n}\n")
     return out
+}
+
+/// The program `:save` writes: the items and the statements, runnable with
+/// `nx run`. A value printed at the prompt is an unused value in a program,
+/// so those statements are kept as `_ = ...`.
+fn saved_program(s: *Session) -> String {
+    var out = String.new()
+    out.append("// a session saved by nx repl; `nx run` runs it. Values printed at the\n// prompt are discarded here (`_ = ...`): wrap one in println to see it.\n")
+    for it in s.items { out.append(it[..]); out.append("\n") }
+    out.append("\nfn main() -> !void {\n")
+    for st, i in s.stmts {
+        if i < s.printed.len and s.printed[i] {
+            out.append(format("    _ = {}\n", .{st})[..])
+        } else {
+            out.append(format("    {}\n", .{st})[..])
+        }
+    }
+    out.append("    return\n}\n")
+    return out
+}
+
+/// The program `:effects` checks: the expression inside a function of its
+/// own, with the kept bindings it names as owned parameters (rebound as
+/// `var` so it may mutate them), so the function's effects are the expression's.
+fn effects_source(s: *Session, expr: []u8) -> String {
+    var lx = lexer.new_lexer(expr)
+    lx.lex()
+    var params = String.new()
+    var binds = String.new()
+    for n, i in s.names {
+        if i >= s.types.len or s.types[i].len == 0 { continue }
+        var used = false
+        for t in lx.toks { if t.kind == lexer.Kind.Ident and t.text[..] == n[..] { used = true } }
+        if !used { continue }
+        if params.len > 0 { params.append(", ") }
+        // a heap value is moved into the function (`own`); a scalar is copied
+        if is_scalar(s.types[i][..]) {
+            params.append(format("{}_p: {}", .{n, s.types[i]})[..])
+        } else {
+            params.append(format("own {}_p: {}", .{n, s.types[i]})[..])
+        }
+        binds.append(format("    var {} = {}_p\n", .{n, n})[..])
+    }
+    let item = format("fn __nx_effects({}) -> !void {{\n{}    {}\n    return\n}}", .{params, binds, expr})
+    return source(s, item[..], "")
+}
+
+/// A type a parameter takes by copy, which `own` may not qualify.
+fn is_scalar(t: []u8) -> bool {
+    for k in ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "isize", "usize", "f32", "f64", "bool"] { if t == k { return true } }
+    return false
 }
 
 /// Is the text a complete input? Unbalanced brackets or an unterminated
@@ -74,12 +142,15 @@ fn help() {
     println("  :help          this text            :quit, :q      exit", .{})
     println("  :vars          the kept bindings    :items         the declared items", .{})
     println("  :load FILE     add a file's items    :reset         start over", .{})
+    println("  :undo          take back the last line, bindings and all", .{})
+    println("  :save FILE     write the session as a program nx run runs", .{})
+    println("  :effects EXPR  the effects of an expression, with the bindings in scope", .{})
     println("Not available at the prompt: @cImport, for parallel, using arena, artifacts.", .{})
 }
 
-/// Check the synthetic program and run its new statements. Null after
+/// Check the synthetic program: the checker after a clean check, null after
 /// errors, which have been printed.
-fn repl_check(text: []u8, start: usize, s: *Session, std_dir: []u8, cc: *List(String)) -> ?check.ReplOutcome {
+fn repl_checker(text: []u8, std_dir: []u8, cc: *List(String)) -> ?check.Checker {
     let mods = check.load_with_text("<repl>", text, std_dir) catch { return null }
     var c = check.new_checker(mods)
     c.cc = cc.clone()
@@ -92,6 +163,13 @@ fn repl_check(text: []u8, start: usize, s: *Session, std_dir: []u8, cc: *List(St
         for e in c.errors { if e[..].starts_with("  note:") { eprintln("{}", .{e}) } else { eprintln("error: {}", .{e}) } }
         return null
     }
+    return c
+}
+
+/// Check the synthetic program and run its new statements. Null after
+/// errors, which have been printed.
+fn repl_check(text: []u8, start: usize, s: *Session, std_dir: []u8, cc: *List(String)) -> ?check.ReplOutcome {
+    var c = repl_checker(text, std_dir, cc) orelse return null
     return c.run_repl(start, &s.names, &s.values)
 }
 
@@ -150,8 +228,54 @@ pub fn run(version: []u8, compiler: []u8, host: []u8, std_dir: []u8, cc: *List(S
                     let src = source(&session, text[..], "")
                     if repl_check(src[..], session.stmts.len, &session, std_dir, cc) != null {
                         session.items.append(text)
+                        session.kinds.append(0)
                         println("loaded", .{})
                     }
+                } else if word == "undo" {
+                    let kind = session.kinds.pop() orelse {
+                        println("nothing to undo", .{})
+                        continue
+                    }
+                    if kind == 0 {
+                        let it = session.items.pop() orelse String.new()
+                        println("undone: {}", .{first_line(it[..])})
+                    } else {
+                        let st = session.stmts.pop() orelse String.new()
+                        _ = session.printed.pop()
+                        session.names = session.hist_names.pop() orelse List(String).new()
+                        session.values = session.hist_values.pop() orelse List(check.CV).new()
+                        session.shown = session.hist_shown.pop() orelse List(String).new()
+                        session.types = session.hist_types.pop() orelse List(String).new()
+                        println("undone: {}", .{first_line(st[..])})
+                    }
+                } else if word == "save" {
+                    let path = rest.trim()
+                    if path.len == 0 {
+                        println("usage: :save FILE", .{})
+                        continue
+                    }
+                    let text = saved_program(&session)
+                    io.write_file(path, text[..]) catch {
+                        eprintln("cannot write: {}", .{path})
+                        continue
+                    }
+                    println("saved {} item(s) and {} statement(s) to {}; nx run {} runs it", .{session.items.len, session.stmts.len, path, path})
+                } else if word == "effects" {
+                    let expr = rest.trim()
+                    if expr.len == 0 {
+                        println("usage: :effects EXPRESSION", .{})
+                        continue
+                    }
+                    let src = effects_source(&session, expr)
+                    var c = repl_checker(src[..], std_dir, cc) orelse continue
+                    var found = false
+                    for i in 0..c.insts.len {
+                        if c.insts[i].name[..] != "__nx_effects" { continue }
+                        found = true
+                        let e = check.render_effects(c.insts[i].effects)
+                        println("effects: {}", .{if e.len == 0 { "none" } else { e[..] }})
+                    }
+                    if !found { println("effects: (not determined)", .{}) }
                 } else {
                     println("unknown command :{}; try :help", .{word})
                 }
@@ -166,7 +290,10 @@ pub fn run(version: []u8, compiler: []u8, host: []u8, std_dir: []u8, cc: *List(S
         pending = String.new()
         if is_item(input[..]) {
             let src = source(&session, input[..], "")
-            if repl_check(src[..], session.stmts.len, &session, std_dir, cc) != null { session.items.append(input) }
+            if repl_check(src[..], session.stmts.len, &session, std_dir, cc) != null {
+                session.items.append(input)
+                session.kinds.append(0)
+            }
             continue
         }
         let src = source(&session, "", input[..])
@@ -175,19 +302,31 @@ pub fn run(version: []u8, compiler: []u8, host: []u8, std_dir: []u8, cc: *List(S
             eprintln("panic: {}", .{out.panic})
             continue
         }
+        // the bindings before this statement, for `:undo`
+        session.hist_names.append(session.names.clone())
+        var before = List(check.CV).new()
+        for i in 0..session.values.len { before.append(check.cv_clone(&session.values[i])) }
+        session.hist_values.append(before)
+        session.hist_shown.append(session.shown.clone())
+        session.hist_types.append(session.types.clone())
         session.stmts.append(input)
+        session.kinds.append(1)
+        session.printed.append(out.has_printed)
         var names = List(String).new()
         var values = List(check.CV).new()
         var shown = List(String).new()
+        var types = List(String).new()
         for n, i in out.names {
             if !check.cv_keepable(&out.values[i]) { continue }
             names.append(n.clone())
             values.append(check.cv_clone(&out.values[i]))
             shown.append(out.shown[i].clone())
+            types.append(if i < out.types.len { out.types[i].clone() } else { String.new() })
         }
         session.names = names
         session.values = values
         session.shown = shown
+        session.types = types
         if out.has_printed { println("{}: {}", .{out.printed_ty, out.printed_val}) }
     }
     return 0

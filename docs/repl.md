@@ -40,6 +40,9 @@ bindings persist. Lines with unclosed brackets continue on the next prompt.
 | `:vars` | the kept bindings and their values |
 | `:items` | the declared items |
 | `:load FILE` | add the items of a file to the session |
+| `:undo` | take back the last line; the bindings return to what they were |
+| `:save FILE` | write the session as a program `nx run` runs (values printed at the prompt become `_ = ...`) |
+| `:effects EXPR` | the effects of an expression, with the kept bindings in scope: `:effects io.read_file("x")` |
 | `:reset` | start over |
 
 ## Limits
