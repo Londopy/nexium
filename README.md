@@ -387,17 +387,21 @@ files (`bootstrap/nx.c`, the tree-sitter parser, `gui/font.bin`, lock files):
 
 | language | lines | share | what it is |
 | --- | --- | --- | --- |
-| Nexium | 36,193 | 91.0% | the compiler and its tools (25,400 lines under `self/`), the standard library, the test harness and the fuzzer, examples, the tutorial's programs, nexium-gui, the site generator, the spec suite |
-| C | 2,021 | 5.1% | the runtime `nx_rt.h`, the GUI window layer, vendored test C |
-| editor files | 1,014 | 2.5% | tree-sitter queries, Emacs Lisp, Vim script, Lua for Neovim, and the 25 lines of Rust that Zed requires of an extension |
-| JavaScript, TypeScript | 550 | 1.4% | the VS Code extension and the tree-sitter grammar |
+| Nexium | 38,374 | 85.4% | the compiler and its tools (27,100 lines under `self/`), the standard library, the test harness and the fuzzer, the examples, the tutorial's programs, the GUI, the site generator, four benchmarks |
+| C | 2,925 | 6.5% | the runtime `nx_rt.h`, the GUI window layer, vendored test C, a benchmark |
+| Python | 1,063 | 2.4% | the release scripts (notes, package manifests, wheels and npm packages, the std docs), the benchmark runner, a benchmark |
+| editor files | 1,028 | 2.3% | tree-sitter queries, Emacs Lisp, Vim script, Lua for Neovim, and the 25 lines of Rust that Zed requires of an extension |
+| JavaScript, TypeScript | 550 | 1.2% | the VS Code extension and the tree-sitter grammar |
+| Inno Setup, shell, PowerShell | 777 | 1.7% | the Windows installer script, `install.sh`, `install.ps1`, the Chocolatey scripts |
+| Rust, Go, Ruby | 236 | 0.5% | one benchmark each in Rust and Go, and the Homebrew formula |
 
 There is no Rust in the compiler: the first compiler drove the port and
-was deleted at 1.0 (decision 90); the Rust that remains is the glue of the
-Zed extension, which Zed compiles to WebAssembly. Zig is not in the table
-because there is no Zig source in the tree: `zig cc` is the C compiler `nx`
-runs (bundled by the Windows installer, downloaded by the install script),
-the same way a C compiler is used and not written.
+was deleted at 1.0 (decision 90). The Rust that remains is the glue of the
+Zed extension, which Zed compiles to WebAssembly, and one benchmark
+program written to be measured against, beside its Go twin. Zig is not in
+the table because there is no Zig source in the tree: `zig cc` is the C
+compiler `nx` runs (bundled by the Windows installer, downloaded by the
+install script), the same way a C compiler is used and not written.
 
 ## Layout
 
@@ -413,7 +417,12 @@ topo/           the tutorial: chapters, and the programs they show (run by the t
 site/           the documentation site generator, a Nexium program
 tests/          the harness (run.nx), the spec conformance suite (tests/spec) and compile-fail cases
 docs/           how it works, language reference, embedding guide, i18n/ translations
-assets/         logo and banner
+bench/          four programs in five languages behind the numbers page
+installers/     the Windows installer script, install.sh and install.ps1, the winget and Chocolatey manifests
+docker/         the compiler images for ghcr.io (Debian and Alpine)
+Formula/, bucket/  this repository as a Homebrew tap and a Scoop bucket (written at each release)
+scripts/        release notes, package manifests, wheels and npm packages, the std docs
+assets/         logo, banner and the social preview
 nexium-spec.txt          the design
 nexium-systems-spec.txt  the archived systems language; sections 4 to 9 are the syntax reference
 DECISIONS.md    decisions made where the specification was open
