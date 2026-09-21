@@ -280,6 +280,15 @@ fn suite_examples(e: *Env, failures: *mut List(String)) {
     } else if d.stdout[..].find("latest release:") == null {
         failures.append(format("examples: nx doctor did not report the latest release:\n{}", .{d.stdout}))
     }
+    // nx explain: the tree from main down to the overflow check in twice
+    let ex_src = fs.join(e.root[..], "nx-out/cases/explain.nx")
+    fs.write(ex_src[..], "fn twice(x: i32) -> i32 { return x * 2 }\nfn main() { println(\"{}\", .{twice(3)}) }\n") catch { }
+    let ex = nx(e, ["explain", ex_src[..], "main", "panics"][..])
+    if ex.code != 0 or ex.stdout[..].find("calls twice at") == null or ex.stdout[..].find("arithmetic may overflow") == null {
+        failures.append(format("examples: nx explain (exit {}):\n{}{}", .{ex.code, ex.stdout, ex.stderr}))
+    }
+    let exn = nx(e, ["explain", ex_src[..], "twice", "blocks"][..])
+    if exn.code != 0 or exn.stdout[..].find("does not blocks") == null { failures.append(format("examples: nx explain on an effect a function lacks:\n{}{}", .{exn.stdout, exn.stderr})) }
     // the effects lockfile: the shipped example's is committed and must match;
     // a function that starts printing gains `blocks`, and --check says so
     let lk = nx(e, ["audit", "examples/ropesim.nx", "--check"][..])

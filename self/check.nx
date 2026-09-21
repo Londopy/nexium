@@ -239,7 +239,7 @@ pub fn int_max(name: []u8) -> i128 {
     return ((1 as i128) << int_bits(name)) - 1
 }
 
-fn effect_bit(name: []u8) -> u64 {
+pub fn effect_bit(name: []u8) -> u64 {
     for e, i in EFFECT_NAMES { if e == name { return (1 as u64) << (i as u64) } }
     return 0
 }

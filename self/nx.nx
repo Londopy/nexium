@@ -62,6 +62,7 @@ pub struct Opts {
 
 fn usage() {
     eprintln("usage: nx <build|run|test|check|effects|audit|refcounts|leaks|size|layout|emit-c|tir> <file.nx> [options] [-- args]", .{})
+    eprintln("       nx explain <file.nx> <function> <effect>     why the function has the effect, as a tree", .{})
     eprintln("       nx fmt <file.nx>... [--check] | nx fix <file.nx>...", .{})
     eprintln("       nx doc <file.nx> [-o <dir>]", .{})
     eprintln("       nx ship <file.nx> [--mode m] [--target t]   produce the declared artifacts", .{})
@@ -1768,6 +1769,14 @@ fn main() -> u8 {
         code = cmd_ship(&so)
     } else if o.command == "layout" {
         code = cmd_layout(&o)
+    } else if o.command == "explain" {
+        if o.rest.len != 2 {
+            eprintln("usage: nx explain <file.nx> <function> <effect>", .{})
+            code = 2
+        } else {
+            var c = check_program(&o) orelse return 1
+            code = if tools.explain(&mut c, o.rest[0][..], o.rest[1][..]) { 0 } else { 1 }
+        }
     } else if o.command == "size" {
         var so = o
         var mode_given = false

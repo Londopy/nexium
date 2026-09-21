@@ -302,6 +302,7 @@ using arena {
 | `nx test file.nx [filter]` | run the `test "..."` blocks |
 | `nx check file.nx` | type-check and report effect violations |
 | `nx effects file.nx` | print the inferred effects of every function |
+| `nx explain file.nx f effect` | why `f` has the effect: the calls that carry it in, down to the primitive, as a tree |
 | `nx audit file.nx` | list `unsafe` blocks and mutable globals; `--lock` writes the effects lockfile, `--check` fails on a gained effect |
 | `nx ship file.nx` | produce every declared `artifact` |
 | `nx emit-c file.nx` | print the generated C |

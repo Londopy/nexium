@@ -360,7 +360,7 @@ queue in front of them.
 
 **About a week each.**
 
-22. `nx explain f effect`: the provenance tree.
+22. `nx explain f effect`: the provenance tree. (Done.)
 23. The numbers page: `bench/` in four languages, on a fixed runner,
     published.
 24. `nx test --watch` and `nx run --watch` (file watching in the
@@ -720,9 +720,9 @@ changes the language.
 
 **Answers from the effect system.**
 
-- `nx explain f allocates` (1.3): the provenance of an effect, the call
-  chain from `f` down to the primitive that brings it in, as a tree.
-  Today the diagnostic shows the first hop.
+- `nx explain f allocates` (1.3, done on the way): the provenance of an
+  effect, the call chain from `f` down to the primitive that brings it
+  in, as a tree.
 - An effects lockfile (1.3, done on the way): `nx audit --lock` writes
   each function's effects to `file.effects.lock`; a change that adds an
   effect (a function starts allocating, can now panic) fails `nx audit

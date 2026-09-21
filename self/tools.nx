@@ -31,6 +31,98 @@ pub fn effects(c: *mut check.Checker) {
     for r, i in rows { println("{}\n    at {}", .{r, locs[i]}) }
 }
 
+/// `nx explain FILE f effect`: why `f` has the effect, as a tree. Each
+/// function is printed with the reason the checker recorded for it (the
+/// witness: an allocation, an overflow check, an explicit panic), then the
+/// calls that carry the effect in, each followed by the callee's own tree,
+/// down to the primitive that brings it. A cycle or a depth past twelve
+/// stops with a note.
+pub fn explain(c: *mut check.Checker, fname: []u8, effect: []u8) -> bool {
+    let bit = check.effect_bit(effect)
+    if bit == 0 {
+        eprintln("error: `{}` is not an effect (they are: {})", .{effect, check.render_effects(0xFFFFFFFFFFFFFFFF)})
+        return false
+    }
+    var found = false
+    let n = c.insts.len
+    for i in 0..n {
+        if c.insts[i].name[..] != fname or c.insts[i].body == parser.NONE or c.insts[i].is_closure or c.insts[i].is_test { continue }
+        let mname = c.mods[c.insts[i].module].name.clone()
+        if mname[..].starts_with("std.") or mname[..].starts_with("cimport:") { continue }
+        found = true
+        if (c.insts[i].effects & bit) == 0 {
+            println("{}  does not {}", .{signature_of(c, i), effect})
+            continue
+        }
+        var seen = List(usize).new()
+        explain_inst(c, i, bit, 0, &mut seen)
+    }
+    if !found { eprintln("error: no function named `{}` in the program", .{fname}) }
+    return found
+}
+
+fn signature_of(c: *mut check.Checker, i: usize) -> String {
+    var params = String.new()
+    let ps = c.insts[i].params.clone()
+    for p, pi in ps {
+        if pi > 0 { params.append(", ") }
+        let l = &c.insts[i].locals[p]
+        params.append(format("{}: {}", .{l.name, c.ty_name(l.ty)})[..])
+    }
+    return format("fn {}({}) -> {}", .{c.insts[i].name, params, c.ty_name(c.insts[i].ret)})
+}
+
+fn indent(depth: usize) -> String {
+    var s = String.new()
+    for _ in 0..depth { s.append("  ") }
+    return s
+}
+
+fn explain_inst(c: *mut check.Checker, inst: usize, bit: u64, depth: usize, seen: *mut List(usize)) {
+    let pad = indent(depth)
+    println("{}{}  {}", .{pad, signature_of(c, inst), check.render_effects(c.insts[inst].effects & bit)})
+    for s in seen { if s == inst { println("{}  (seen above)", .{pad}); return } }
+    seen.append(inst)
+    if depth > 12 {
+        println("{}  ... (deeper than twelve calls)", .{pad})
+        return
+    }
+    // the reason recorded here, when the effect enters in this body
+    let why = c.witness_why(inst, bit)
+    if why.len > 0 {
+        let at = c.witness_at(inst, bit)
+        println("{}  {} at {}", .{pad, why, c.location(c.insts[inst].module, at)})
+    }
+    // the calls that carry it in
+    var callees = List(usize).new()
+    var sites = List(usize).new()
+    explain_walk(c, c.insts[inst].body, bit, &mut callees, &mut sites)
+    for callee, k in callees {
+        println("{}  calls {} at {}", .{pad, c.insts[callee].name, c.location(c.insts[inst].module, sites[k])})
+        explain_inst(c, callee, bit, depth + 2, seen)
+    }
+    if why.len == 0 and callees.len == 0 {
+        println("{}  (the effect is declared or comes through a value; no call carries it)", .{pad})
+    }
+}
+
+fn explain_walk(c: *mut check.Checker, e: usize, bit: u64, callees: *mut List(usize), sites: *mut List(usize)) {
+    if e == parser.NONE { return }
+    let k = c.tir.nodes[e].k
+    if k == check.TKind.Call {
+        let callee = c.tir.nodes[e].a
+        if callee != parser.NONE and callee < c.insts.len and (c.insts[callee].effects & bit) != 0 {
+            var dup = false
+            for x in callees { if x == callee { dup = true } }
+            if !dup {
+                callees.append(callee)
+                sites.append(c.tir.nodes[e].start)
+            }
+        }
+    }
+    for kid in c.tir.nodes[e].kids.clone() { explain_walk(c, kid, bit, callees, sites) }
+}
+
 /// The effects lockfile: one line per function of the program's own modules
 /// and its packages (never the standard library or an imported header),
 /// `signature<TAB>effects`, sorted, with `-` for none. Semver for behaviour:

@@ -18,6 +18,11 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   before replacing its files (Restart Manager; it is not started again),
   and keep a log of the run as `install.log` next to the program. The
   uninstaller takes `/LOG="path"` for a log of its own.
+- `nx explain FILE f effect` prints why `f` has an effect as a tree: the
+  reason the checker recorded in each function (an allocation, an
+  overflow check, an explicit panic, with its position) and the calls
+  that carry the effect in, each with the callee's own tree, down to the
+  primitive that brings it.
 - The REPL has a line editor at a terminal: the line colours as you
   type, Tab completes from the language server's completion at the
   cursor, the arrows and Home/End move, Up/Down walk the history, the

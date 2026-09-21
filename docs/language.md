@@ -195,7 +195,10 @@ file.nx --check` fails when a function gained an effect the lock does not
 name (semver for behaviour: a dependency that starts allocating or
 blocking fails the build until the lock is regenerated on purpose). `nx
 effects file.nx` prints
-the inferred set per function.
+the inferred set per function. `nx explain file.nx f effect` prints why `f` has an effect as a tree: the
+reason recorded in each function (an allocation, an overflow check, an
+explicit panic) and the calls that carry it in, down to the primitive that
+brings it.
 
 ## Standard library (builtins)
 
