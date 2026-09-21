@@ -65,6 +65,7 @@ fn usage() {
     eprintln("       nx doc <file.nx> [-o <dir>]", .{})
     eprintln("       nx ship <file.nx> [--mode m] [--target t]   produce the declared artifacts", .{})
     eprintln("       nx version | nx doctor | nx lsp | nx repl", .{})
+    eprintln("       nx -e CODE | nx -p EXPR                    run a line as at the prompt; -p prints the value", .{})
     eprintln("       nx init [name] | nx add <name> --git URL [--tag TAG] | --path DIR | nx fetch | nx update [name...]", .{})
     eprintln("  -o <path>          output file", .{})
     eprintln("  --out-dir <dir>    where C and binaries go (default nx-out)", .{})
@@ -1388,6 +1389,8 @@ fn main() -> u8 {
         code = 0
     } else if o.command == "repl" {
         code = repl.run(VERSION, compiler_summary(&o)[..], host_os()[..], o.std_dir[..], &o.cc)
+    } else if o.command == "-e" or o.command == "-p" {
+        code = repl.eval(o.file[..], o.command == "-p", o.std_dir[..], &o.cc)
     } else {
         usage()
         return 2

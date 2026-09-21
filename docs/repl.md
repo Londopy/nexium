@@ -45,6 +45,22 @@ bindings persist. Lines with unclosed brackets continue on the next prompt.
 | `:effects EXPR` | the effects of an expression, with the kept bindings in scope: `:effects io.read_file("x")` |
 | `:reset` | start over |
 
+## One-liners: `nx -e` and `nx -p`
+
+```sh
+nx -p "2 * 21"                                   # 42
+nx -e 'println("{}", .{strings.to_upper("hi")})'   # after a line: import std.strings
+nx -e "fn f() -> i32 { return 7 }
+println(\"{}\", .{f()})"
+```
+
+`nx -e CODE` runs the lines of `CODE` as the prompt would, one after
+another, items and statements alike, and prints nothing but what the code
+prints; `nx -p EXPR` prints the value of the last expression on its own,
+the way a shell expects. The interpreter runs them, so nothing is
+compiled; the exit code is 1 when a line does not check or the value is
+missing.
+
 ## Limits
 
 The interpreter covers the language but not the platform: `@cImport`

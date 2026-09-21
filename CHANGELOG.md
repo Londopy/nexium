@@ -18,6 +18,9 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   before replacing its files (Restart Manager; it is not started again),
   and keep a log of the run as `install.log` next to the program. The
   uninstaller takes `/LOG="path"` for a log of its own.
+- `nx -e CODE` runs lines as the prompt would and `nx -p EXPR` prints
+  the value of an expression on its own; the interpreter runs them, so
+  nothing is compiled.
 - The REPL has `:undo` (the last line taken back, bindings and all),
   `:save FILE` (the session as a program `nx run` runs; values printed at
   the prompt become `_ = ...`) and `:effects EXPR` (the effects of an

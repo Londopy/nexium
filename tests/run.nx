@@ -580,7 +580,14 @@ fn suite_repl(e: *Env, failures: *mut List(String)) {
     if saved[..].find("fn sq(n: i32)") == null or saved[..].find("fn main() -> !void") == null or saved[..].find("_ = x * 21") == null {
         failures.append(format("repl: :save did not write the session:\n{}", .{saved}))
     }
-    println("repl: a session, :effects, :undo and :save", .{})
+    // nx -p prints a value, nx -e runs lines
+    let p = nx(e, ["-p", "2 * 21"][..])
+    if p.code != 0 or p.text() != "42" { failures.append(format("repl: nx -p answered `{}` (exit {}):\n{}", .{p.text(), p.code, p.stderr})) }
+    let ev = nx(e, ["-e", "fn f() -> i32 { return 7 }\nprintln(\"f is {}\", .{f()})"][..])
+    if ev.code != 0 or ev.text() != "f is 7" { failures.append(format("repl: nx -e answered `{}` (exit {}):\n{}", .{ev.text(), ev.code, ev.stderr})) }
+    let bad = nx(e, ["-p", "no_such_name"][..])
+    if bad.code == 0 { failures.append(String.from("repl: nx -p of an unknown name did not fail")) }
+    println("repl: a session, :effects, :undo and :save; nx -e and nx -p", .{})
 }
 
 fn frame(body: []u8) -> String {

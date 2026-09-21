@@ -331,7 +331,9 @@ queue in front of them.
     maintainer's `CHOCO_API_KEY`.)
 11. REPL `:undo`, `:save` and `:load`; `:effects expr`. (Done; `:load`
     was there already.)
-12. `nx -e` and `nx -p` one-liners on the REPL's compile cache.
+12. `nx -e` and `nx -p` one-liners on the REPL's compile cache. (Done,
+    on the interpreter: nothing is compiled, so there is no cache to
+    keep.)
 13. `nx layout Type`: offsets, sizes, padding, the reordering.
 14. `expect_snapshot` in `std.testing`.
 15. `pip install nexium` and `npm install nexium`, wheels and packages

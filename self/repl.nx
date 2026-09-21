@@ -179,6 +179,98 @@ fn first_line(text: []u8) -> []u8 {
     return text
 }
 
+/// What accepting one input came to: whether it was accepted, and the value
+/// an expression statement printed, if any.
+struct Accepted {
+    ok: bool
+    printed: bool
+    value: String
+}
+
+/// Accept one complete input, an item or a statement: check it, run it,
+/// keep the bindings and the history. With `echo`, an expression's type and
+/// value are printed the way the prompt does.
+fn accept(s: *mut Session, own input: String, std_dir: []u8, cc: *List(String), echo: bool) -> Accepted {
+    var res = Accepted{ .ok = false, .printed = false, .value = String.new() }
+    if is_item(input[..]) {
+        let src = source(s, input[..], "")
+        if repl_check(src[..], s.stmts.len, s, std_dir, cc) != null {
+            s.items.append(input)
+            s.kinds.append(0)
+            res.ok = true
+        }
+        return res
+    }
+    let src = source(s, "", input[..])
+    let out = repl_check(src[..], s.stmts.len, s, std_dir, cc) orelse return res
+    if out.has_panic {
+        eprintln("panic: {}", .{out.panic})
+        return res
+    }
+    // the bindings before this statement, for `:undo`
+    s.hist_names.append(s.names.clone())
+    var before = List(check.CV).new()
+    for i in 0..s.values.len { before.append(check.cv_clone(&s.values[i])) }
+    s.hist_values.append(before)
+    s.hist_shown.append(s.shown.clone())
+    s.hist_types.append(s.types.clone())
+    s.stmts.append(input)
+    s.kinds.append(1)
+    s.printed.append(out.has_printed)
+    var names = List(String).new()
+    var values = List(check.CV).new()
+    var shown = List(String).new()
+    var types = List(String).new()
+    for n, i in out.names {
+        if !check.cv_keepable(&out.values[i]) { continue }
+        names.append(n.clone())
+        values.append(check.cv_clone(&out.values[i]))
+        shown.append(out.shown[i].clone())
+        types.append(if i < out.types.len { out.types[i].clone() } else { String.new() })
+    }
+    s.names = names
+    s.values = values
+    s.shown = shown
+    s.types = types
+    if out.has_printed and echo { println("{}: {}", .{out.printed_ty, out.printed_val}) }
+    res.ok = true
+    res.printed = out.has_printed
+    res.value = out.printed_val.clone()
+    return res
+}
+
+/// `nx -e CODE` and `nx -p EXPR`: the lines of `code` go through a session
+/// as at the prompt, without the prompt; with `print_last`, the value of the
+/// last expression is printed on its own, the way a shell expects. The
+/// interpreter runs them, so nothing is compiled. The exit code.
+pub fn eval(code: []u8, print_last: bool, std_dir: []u8, cc: *List(String)) -> i32 {
+    var session = new_session()
+    var pending = String.new()
+    var last = Accepted{ .ok = true, .printed = false, .value = String.new() }
+    for line in code.lines() {
+        if pending.len > 0 { pending.append("\n") }
+        pending.append(line)
+        if pending[..].trim().len == 0 { pending = String.new(); continue }
+        if !complete(pending[..]) { continue }
+        let input = pending.clone()
+        pending = String.new()
+        last = accept(&mut session, input, std_dir, cc, false)
+        if !last.ok { return 1 }
+    }
+    if pending.len > 0 {
+        eprintln("error: the input ends inside brackets or a string", .{})
+        return 1
+    }
+    if print_last {
+        if !last.printed {
+            eprintln("error: the last line is not an expression with a value; nx -e runs code without printing", .{})
+            return 1
+        }
+        println("{}", .{last.value})
+    }
+    return 0
+}
+
 /// Run the session until the input ends or the user quits; the exit code.
 pub fn run(version: []u8, compiler: []u8, host: []u8, std_dir: []u8, cc: *List(String)) -> i32 {
     let interactive = io.is_terminal(1)
@@ -288,46 +380,7 @@ pub fn run(version: []u8, compiler: []u8, host: []u8, std_dir: []u8, cc: *List(S
         if !complete(pending[..]) { continue }
         let input = pending.clone()
         pending = String.new()
-        if is_item(input[..]) {
-            let src = source(&session, input[..], "")
-            if repl_check(src[..], session.stmts.len, &session, std_dir, cc) != null {
-                session.items.append(input)
-                session.kinds.append(0)
-            }
-            continue
-        }
-        let src = source(&session, "", input[..])
-        let out = repl_check(src[..], session.stmts.len, &session, std_dir, cc) orelse continue
-        if out.has_panic {
-            eprintln("panic: {}", .{out.panic})
-            continue
-        }
-        // the bindings before this statement, for `:undo`
-        session.hist_names.append(session.names.clone())
-        var before = List(check.CV).new()
-        for i in 0..session.values.len { before.append(check.cv_clone(&session.values[i])) }
-        session.hist_values.append(before)
-        session.hist_shown.append(session.shown.clone())
-        session.hist_types.append(session.types.clone())
-        session.stmts.append(input)
-        session.kinds.append(1)
-        session.printed.append(out.has_printed)
-        var names = List(String).new()
-        var values = List(check.CV).new()
-        var shown = List(String).new()
-        var types = List(String).new()
-        for n, i in out.names {
-            if !check.cv_keepable(&out.values[i]) { continue }
-            names.append(n.clone())
-            values.append(check.cv_clone(&out.values[i]))
-            shown.append(out.shown[i].clone())
-            types.append(if i < out.types.len { out.types[i].clone() } else { String.new() })
-        }
-        session.names = names
-        session.values = values
-        session.shown = shown
-        session.types = types
-        if out.has_printed { println("{}: {}", .{out.printed_ty, out.printed_val}) }
+        _ = accept(&mut session, input, std_dir, cc, true)
     }
     return 0
 }
