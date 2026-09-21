@@ -9,10 +9,19 @@ platform. SHA256SUMS.txt is written into the artifacts directory so it is
 uploaded with the rest. The release's name (the italic line under the
 version header, see docs/release-names.md) becomes the title, written to
 title.txt next to the notes for the workflow to pick up.
+
+Every asset also gets a `.torrent` (one file each, the GitHub download as
+its web seed, BEP 19) and a magnet link with the same web seed; a QR code
+of each magnet link is written as a PNG when `segno` is installed. They are
+uploaded with the rest and listed in a section of their own.
 """
-import hashlib, os, re, sys
+import hashlib, os, re, sys, time, urllib.parse
 
 import patchnotes
+try:
+    import segno
+except ImportError:
+    segno = None
 
 tag, art_dir, out_path = sys.argv[1], sys.argv[2], sys.argv[3]
 version = tag.lstrip("v")
@@ -35,6 +44,59 @@ if m:
     name, why = m.group(1).strip(), (m.group(2) or "").strip()
 title = f"Nexium {tag} — {name}" if name else f"Nexium {tag}"
 open(os.path.join(os.path.dirname(out_path) or ".", "title.txt"), "w", encoding="utf-8", newline="\n").write(title + "\n")
+
+# --- torrents: one per asset, the GitHub download as its web seed, so a
+# client fetches from GitHub when no peer has the file and from peers when
+# they do; the magnet link carries the web seed too (`ws=`)
+PIECE = 1 << 20
+
+def bencode(x):
+    if isinstance(x, bool):
+        raise TypeError("no booleans in bencoding")
+    if isinstance(x, int):
+        return b"i%de" % x
+    if isinstance(x, str):
+        x = x.encode()
+    if isinstance(x, bytes):
+        return b"%d:" % len(x) + x
+    if isinstance(x, list):
+        return b"l" + b"".join(bencode(i) for i in x) + b"e"
+    if isinstance(x, dict):
+        return b"d" + b"".join(bencode(k) + bencode(x[k]) for k in sorted(x)) + b"e"
+    raise TypeError(type(x))
+
+def torrent_for(path, name, url):
+    """The bencoded torrent, its info hash and the file size."""
+    pieces, size = [], 0
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(PIECE), b""):
+            pieces.append(hashlib.sha1(chunk).digest())
+            size += len(chunk)
+    info = {"name": name, "length": size, "piece length": PIECE, "pieces": b"".join(pieces)}
+    infohash = hashlib.sha1(bencode(info)).hexdigest()
+    meta = {"info": info, "url-list": [url], "creation date": int(time.time()),
+            "created by": "scripts/release_notes.py", "comment": f"Nexium {tag}: {url} is the web seed"}
+    return bencode(meta), infohash, size
+
+def is_primary(f):
+    return f != "SHA256SUMS.txt" and not f.endswith(".torrent") and not f.endswith(".png")
+
+torrents = []   # (asset, torrent file, magnet, qr file or None)
+for f in sorted(os.listdir(art_dir)):
+    if not os.path.isfile(os.path.join(art_dir, f)) or not is_primary(f):
+        continue
+    url = f"{download}/{f}"
+    data, infohash, size = torrent_for(os.path.join(art_dir, f), f, url)
+    tfile = f + ".torrent"
+    with open(os.path.join(art_dir, tfile), "wb") as fh:
+        fh.write(data)
+    magnet = (f"magnet:?xt=urn:btih:{infohash}&dn={urllib.parse.quote(f)}&xl={size}"
+              f"&ws={urllib.parse.quote(url, safe='')}")
+    qr = None
+    if segno is not None:
+        qr = f + ".magnet.png"
+        segno.make(magnet, error="m").save(os.path.join(art_dir, qr), scale=3, border=2)
+    torrents.append((f, tfile, magnet, qr))
 
 # --- assets and checksums
 assets = sorted(f for f in os.listdir(art_dir) if os.path.isfile(os.path.join(art_dir, f)) and f != "SHA256SUMS.txt")
@@ -85,11 +147,24 @@ out += ["Then, in a new console:", "", "```", "nx doctor", "nx run examples/hell
 
 out += ["## Files", "", "| file | size | SHA-256 |", "| --- | --- | --- |"]
 for f, digest, size in sums:
-    out.append(f"| [`{f}`]({download}/{f}) | {human(size)} | `{digest}` |")
+    if is_primary(f):
+        out.append(f"| [`{f}`]({download}/{f}) | {human(size)} | `{digest}` |")
 out += ["", "`SHA256SUMS.txt` holds the same values. Verify a download with:", "",
         "```sh", "sha256sum -c SHA256SUMS.txt --ignore-missing      # Linux", "shasum -a 256 -c SHA256SUMS.txt --ignore-missing   # macOS", "```", "",
         "```powershell", "Get-FileHash .\\" + (win_setup or "nx.zip") + " -Algorithm SHA256   # Windows, compare with the table", "```", ""]
+if torrents:
+    out += ["## Torrents", "",
+            "Every file above is also a `.torrent`, with its GitHub download as the web seed: a BitTorrent client fetches it from GitHub when no peer has it, and from peers when they do. The magnet links carry the same web seed; scan the code or copy the link below.", "",
+            "| file | torrent | QR of the magnet link |", "| --- | --- | --- |"]
+    for f, tfile, magnet, qr in torrents:
+        cell = f'<img src="{download}/{qr}" width="88" alt="QR code of the magnet link for {f}">' if qr else ""
+        out.append(f"| `{f}` | [`{tfile}`]({download}/{tfile}) | {cell} |")
+    out += ["", "<details><summary>Magnet links</summary>", "", "```"]
+    for f, tfile, magnet, qr in torrents:
+        out += [f"# {f}", magnet, ""]
+    out += ["```", "", "</details>", ""]
+
 out += ["## Requirements", "", "- Windows 10 or later, x64. macOS on Apple Silicon. Linux x86_64 with glibc. Builds for aarch64 Linux and Windows on ARM are attached too; they are tier 2 (built, not tested in CI; see docs/platforms.md).",
         "- A C compiler is needed to build programs: the Windows installer and the macOS/Linux script take care of it. Otherwise put [Zig](https://ziglang.org/download/) on your PATH, or set `NX_CC`.", ""]
 open(out_path, "w", encoding="utf-8", newline="\n").write("\n".join(out))
-print(f"wrote {out_path} and SHA256SUMS.txt for {len(sums)} assets")
+print(f"wrote {out_path} and SHA256SUMS.txt for {len(sums)} assets, {len(torrents)} torrents" + ("" if segno else " (no segno: no QR codes)"))

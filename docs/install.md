@@ -150,6 +150,16 @@ directory of the repository has the pieces for each one:
 
 Each directory has a README with the details.
 
+## Torrents
+
+Every file of a release is also attached as a `.torrent`, one file each,
+with its GitHub download as the web seed: a BitTorrent client fetches it
+from GitHub when no peer has it and from peers when they do, so a release
+stays reachable through a client when a direct download is slow or
+blocked. The release notes list the magnet links (they carry the same web
+seed) with a QR code of each, for a phone or a machine without a browser
+on the page.
+
 ## Verifying downloads
 
 Every release ships `SHA256SUMS.txt` and lists the same values on the release

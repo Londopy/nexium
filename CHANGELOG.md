@@ -18,6 +18,9 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   before replacing its files (Restart Manager; it is not started again),
   and keep a log of the run as `install.log` next to the program. The
   uninstaller takes `/LOG="path"` for a log of its own.
+- Releases attach a `.torrent` for every file, with its GitHub download
+  as the web seed, and the notes list the magnet links with a QR code of
+  each (`scripts/release_notes.py`; the release job installs `segno`).
 - The install script builds `nx` from the one C file, `bootstrap/nx.c`,
   with the C compiler on the machine when no release is built for it (an
   x86-64 Mac, a BSD, a RISC-V board), when the download fails, or when

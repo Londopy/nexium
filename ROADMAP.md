@@ -302,7 +302,8 @@ queue in front of them.
    `install.sh` falling back to `cc bootstrap/nx.c` when there is
    nothing to download. (Done; `NEXIUM_FROM_SOURCE=1` asks for it.)
 3. The release workflow writes a `.torrent` with the assets as web seeds
-   and puts the magnet link in the notes; a QR code beside it.
+   and puts the magnet link in the notes; a QR code beside it. (Done:
+   one torrent per file, from 1.0.4 on.)
 4. A Homebrew tap, a Scoop bucket and the winget manifest, from the
    archives the release already builds.
 5. `nx doctor` says when a newer release exists.

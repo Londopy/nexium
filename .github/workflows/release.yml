@@ -165,7 +165,7 @@ jobs:
       - name: Release notes and checksums
         id: notes
         run: |
-          pip install patchnotes
+          pip install patchnotes segno
           python scripts/release_notes.py "${{ github.ref_name }}" artifacts notes.md
           echo "title=$(cat title.txt)" >> "$GITHUB_OUTPUT"
           cat notes.md
