@@ -292,7 +292,10 @@ fn suite_examples(e: *Env, failures: *mut List(String)) {
     // stays set for the rest of the run so no later case asks the network
     let cache = fs.join(e.root[..], "nx-out/harness/update-check")
     let stamp = time.now() / 1000
-    fs.write(cache[..], format("checked {}\nnoticed 0\nlatest 99.0.0\n", .{stamp})[..]) catch { }
+    fs.make_dirs(fs.join(e.root[..], "nx-out/harness")[..]) catch { }
+    fs.write(cache[..], format("checked {}\nnoticed 0\nlatest 99.0.0\n", .{stamp})[..]) catch {
+        failures.append(format("examples: could not write the update cache {}", .{cache}))
+    }
     os.set_env("NX_UPDATE_CACHE", cache[..])
     let n1 = nx(e, ["run", "examples/hello.nx", "--out-dir", "nx-out/harness/notice"][..])
     if n1.stderr[..].find("nx 99.0.0 is available") == null {
