@@ -269,6 +269,22 @@ NX_INLINE nx_sl_u8 nx_host_arch(void) {
     return nx_lit("unknown", 7);
 #endif
 }
+/* the operating system this program runs on, and the pointer width in bits:
+   `@target()` is (os, arch, bits), a constant of the C build */
+NX_INLINE nx_sl_u8 nx_host_os(void) {
+#if defined(_WIN32)
+    return nx_lit("windows", 7);
+#elif defined(__APPLE__)
+    return nx_lit("macos", 5);
+#elif defined(__linux__)
+    return nx_lit("linux", 5);
+#elif defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+    return nx_lit("bsd", 3);
+#else
+    return nx_lit("unknown", 7);
+#endif
+}
+#define NX_PTR_BITS ((uint32_t)(sizeof(void*) * 8))
 /* UTF-8 on the Windows console for the program's life (the console's own code
    page shows `é` as two symbols); the previous page comes back at exit */
 #if defined(_WIN32)

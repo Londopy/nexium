@@ -407,7 +407,7 @@ Ergonomics the self-hosted compiler paid for by hand.
   anonymous literal (`format("{x}", .{ .x = 1 })`). (Done, decision 97.)
 - Intrinsics still missing from a systems language: `@bitCast`, `@min`,
   `@max`, `@alignOf`, `@target()` (os, arch, pointer width) for compile-time
-  `if` in std.
+  `if` in std. (Done, decision 98.)
 - `unbounded_stack`: the spec says reserved. Either a recursion-depth
   proof (a function is bounded when every recursive call is on a strictly
   smaller argument) or removal, the way decision 88 settled the others.

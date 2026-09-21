@@ -3975,6 +3975,15 @@ impl Checker {
             }
             return r
         }
+        // `@min(a, b)` / `@max(a, b)`: the smaller (larger) of the ends
+        if k == TKind.Builtin and (self.tir.nodes[e].name == "MathMin" or self.tir.nodes[e].name == "MathMax") and self.tir.nodes[e].kids.len == 2 {
+            if let a = self.expr_range(self.tir.nodes[e].kids[0]) {
+                if let b = self.expr_range(self.tir.nodes[e].kids[1]) {
+                    if self.tir.nodes[e].name == "MathMin" { return Range{ .lo = min128(a.lo, b.lo), .hi = min128(a.hi, b.hi) } }
+                    return Range{ .lo = max128(a.lo, b.lo), .hi = max128(a.hi, b.hi) }
+                }
+            }
+        }
         if k == TKind.Builtin and self.tir.nodes[e].name == "Len" {
             let arg = self.tir.nodes[e].kids[0]
             let at = self.tys.shallow(self.tir.nodes[arg].ty)
@@ -11383,6 +11392,16 @@ impl Checker {
             let i = cv_as_int(&vs[0]) orelse return null
             return cv_int(wrap_to(i, bits, signed))
         }
+        if name == "BitCast" {
+            // integers reinterpret at compile time; a float's bits are the C build's
+            var bits: u32 = 64
+            var signed = true
+            if !self.it_bits_of(self.tir.nodes[e].ty, &mut bits, &mut signed) { return null }
+            if vs[0].kind != VK_INT and vs[0].kind != VK_CHAR and vs[0].kind != VK_BOOL { return null }
+            let i = cv_as_int(&vs[0]) orelse return null
+            return cv_int(wrap_to(i, bits, signed))
+        }
+        if name == "Target" { return null }
         if name == "ErrorName" {
             if vs[0].kind != VK_ERR { return null }
             return cv_str(self.error_names[(vs[0].ival - 1) as usize][..])
@@ -12891,6 +12910,70 @@ impl Checker {
             }
             let u = self.tys.usize_ty()
             return self.int_node(self.size_of(t) as i128, u, start, end)
+        }
+        if name == "alignOf" {
+            if !self.args_n(args[..], 1, "@alignOf", start) { return self.error_expr(start, end) }
+            let te = self.check_expr(args[0], NONE)
+            var t = self.tir.nodes[te].ty
+            if self.tir.nodes[te].k == TKind.TypeVal { t = self.tir.nodes[te].a }
+            t = self.tys.resolve(t, true)
+            let u = self.tys.usize_ty()
+            return self.int_node(self.align_of(t) as i128, u, start, end)
+        }
+        if name == "min" or name == "max" {
+            let label = if name == "min" { "@min" } else { "@max" }
+            if !self.args_n(args[..], 2, label, start) { return self.error_expr(start, end) }
+            var a = self.check_expr(args[0], NONE)
+            a = self.finalize_expr(a)
+            let t = self.tys.resolve(self.tir.nodes[a].ty, true)
+            let k = self.tys.kind(t)
+            if k != TK.Int and k != TK.Float {
+                self.fail_here(start, format("{} compares numbers but found `{}`", .{label, self.ty_name(t)})[..])
+                return self.error_expr(start, end)
+            }
+            let b2 = self.arg(args[1], t, "operand")
+            let b = self.bnode(if name == "min" { "MathMin" } else { "MathMax" }, a, t, t, start, end)
+            self.tir.nodes[b].kids.append(b2)
+            return b
+        }
+        if name == "bitCast" {
+            if !self.args_n(args[..], 2, "@bitCast", start) { return self.error_expr(start, end) }
+            let te = self.check_expr(args[0], NONE)
+            if self.tir.nodes[te].k != TKind.TypeVal {
+                self.fail_here(start, "the first argument of @bitCast is the target type")
+                return self.error_expr(start, end)
+            }
+            let t = self.tys.resolve(self.tir.nodes[te].a, true)
+            var v = self.check_expr(args[1], NONE)
+            v = self.finalize_expr(v)
+            let vt = self.tys.resolve(self.tir.nodes[v].ty, true)
+            let tk = self.tys.kind(t)
+            let vk = self.tys.kind(vt)
+            let scalar_to = tk == TK.Int or tk == TK.Float or tk == TK.Bool or tk == TK.Char
+            let scalar_from = vk == TK.Int or vk == TK.Float or vk == TK.Bool or vk == TK.Char
+            if !scalar_to or !scalar_from {
+                self.fail_here(start, format("@bitCast reinterprets one scalar as another (integers, floats, chars, bools) but found `{}` to `{}`", .{self.ty_name(vt), self.ty_name(t)})[..])
+                return self.error_expr(start, end)
+            }
+            if self.size_of(t) != self.size_of(vt) {
+                self.fail_here(start, format("@bitCast needs equal sizes: `{}` is {} byte(s), `{}` is {}", .{self.ty_name(vt), self.size_of(vt), self.ty_name(t), self.size_of(t)})[..])
+                return self.error_expr(start, end)
+            }
+            self.tir.nodes[v].ty = vt
+            let b = self.builtin_node("BitCast", t, start, end)
+            self.tir.nodes[b].kids.append(v)
+            self.tir.nodes[b].kids2.append(t)
+            self.tir.nodes[b].kids2.append(vt)
+            return b
+        }
+        if name == "target" {
+            if !self.args_n(args[..], 0, "@target", start) { return self.error_expr(start, end) }
+            var parts = List(usize).new()
+            parts.append(bytes)
+            parts.append(bytes)
+            parts.append(self.tys.int("u32"))
+            let tt = self.tys.tuple(parts)
+            return self.builtin_node("Target", tt, start, end)
         }
         if name == "truncate" {
             if !self.args_n(args[..], 2, "@truncate", start) { return self.error_expr(start, end) }

@@ -1,0 +1,6 @@
+// EXPECT: @bitCast needs equal sizes
+fn main() {
+    let x: u16 = 7
+    let y = @bitCast(u32, x)
+    println("{}", .{y})
+}

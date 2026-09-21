@@ -58,6 +58,11 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   width from an integer argument, `{v:>w}` with `.w = 8` (decision 97).
   Format arguments are now evaluated once each, in order, before the
   first write. Spec case `s6_formatting` grew; the seventh item of 1.1.
+- Intrinsics `@alignOf(T)`, `@bitCast(T, x)` (scalars of one size,
+  through `memcpy`), `@min(a, b)` and `@max(a, b)` (which carry the range
+  of their operands, so `@min(i, n - 1)` proves an index), and
+  `@target()`, the `(os, arch, pointer_bits)` of the C build (decision
+  98). Spec case `s12_intrinsics`; the eighth item of 1.1.
 
 ### Fixed
 

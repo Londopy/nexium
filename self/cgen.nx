@@ -1026,6 +1026,21 @@ impl Gen {
         return name
     }
 
+    /// `@bitCast(T, x)`: the bytes of one scalar as another, through memcpy.
+    fn bitcast_fn(self: *mut Self, to0: usize, from0: usize) -> String {
+        let to = self.res(to0)
+        let from = self.res(from0)
+        let key = format("bitcast:{}:{}", .{to, from})
+        if let n = self.thunks_by_key.get(key[..]) { return n.clone() }
+        let name = format("nx_bitcast_{}_{}", .{self.mangle(to), self.mangle(from)})
+        self.thunks_by_key.put(key, name.clone())
+        let tn = self.cty(to)
+        let fnm = self.cty(from)
+        self.protos_out.append(format("static {} {}({} v);\n", .{tn, name, fnm})[..])
+        self.helpers_out.append(format("static {} {}({} v) {{ {} r; memcpy(&r, &v, sizeof r); return r; }}\n", .{tn, name, fnm, tn})[..])
+        return name
+    }
+
     /// Copy a value into a new owner: clone glue for resource types, plain copy otherwise.
     fn copy_value(self: *mut Self, v: []u8, t: usize) -> String {
         if self.needs_drop(t) {
@@ -3514,6 +3529,15 @@ impl Gen {
             let t = self.tmp()
             self.line(format("{} {}; {{ {} _r; {}.has = !__builtin_{}_overflow({}, {}, &_r); {}.val = _r; }}", .{cn, t, en, t, f, av, bv, t})[..])
             return t
+        }
+        if name == "BitCast" {
+            let v = self.simple(args[0])
+            let f = self.bitcast_fn(ety, tys[1])
+            return format("{}({})", .{f, v})
+        }
+        if name == "Target" {
+            let cn = self.cty(ety)
+            return format("(({}){{ .f0 = nx_host_os(), .f1 = nx_host_arch(), .f2 = NX_PTR_BITS }})", .{cn})
         }
         if name == "Truncate" {
             let v = self.simple(args[0])

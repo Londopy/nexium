@@ -1,0 +1,19 @@
+// SPEC 12: @min and @max over two numbers of one type (with the range of
+// their operands), @alignOf, @bitCast between scalars of one size, and
+// @target(), the (os, arch, pointer_bits) of the build.
+fn main() {
+    println("{} {} {} {}", .{@min(3, 9), @max(3, 9), @min(2.5, 1.25), @max(-1, -2)})
+    println("{} {} {}", .{@alignOf(u8), @alignOf(u64), @alignOf(f64)})
+    let m: i32 = -1
+    let bits: u32 = @bitCast(u32, m)
+    println("{}", .{bits})
+    let one: u64 = 4607182418800017408
+    println("{} {}", .{@bitCast(f64, one) * 2.0 == 2.0, @bitCast(u64, 1.5)})
+    let (os, arch, width) = @target()
+    println("{} {} {}", .{os.len > 0, arch.len > 0, width == 64 or width == 32})
+    let xs = [10, 20, 30, 40]
+    var i: usize = 9
+    i += 1
+    // the range of @min proves the index
+    println("{}", .{xs[@min(i, 3)]})
+}

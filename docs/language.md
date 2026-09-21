@@ -303,9 +303,11 @@ brings it.
   `time.sleep(ms)`.
 - `random.int(lo, hi)`, `random.float()`, `random.seed(n)`.
 - `mem.copy(dst, src)`.
-- `@typeName(T)`, `@sizeOf(T)`, `@truncate(T, x)`, `@errorName(e)`,
-  `@embedFile(path)`, `@weak(x)`, `@refCount(x)`, `@cImport(header)`,
-  `@cstr(literal)`.
+- `@typeName(T)`, `@sizeOf(T)`, `@alignOf(T)`, `@truncate(T, x)`,
+  `@bitCast(T, x)` (same size, scalars), `@min(a, b)`, `@max(a, b)`,
+  `@errorName(e)`, `@embedFile(path)`, `@weak(x)`, `@refCount(x)`,
+  `@cImport(header)`, `@cstr(literal)`, `@target()` (`(os, arch, bits)`,
+  a constant of the C build).
 
 Predefined errors: `OutOfMemory Panic InvalidRecord Truncated Overflow
 InvalidUtf8 NotFound IoError InvalidInput BufferTooSmall`. Any `error.Name`

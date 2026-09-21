@@ -664,3 +664,14 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     and the interpreter, which evaluate each argument once, in order,
     before the first write, so an argument written twice is computed
     once.
+98. **`@target()` is a constant of the C build, not of the compile-time
+    interpreter.** The seed and every emitted program are one C file for
+    every platform, so the operating system, the architecture and the
+    pointer width are decided when the C compiles: `@target()` is a
+    tuple built from `nx_host_os()`, `nx_host_arch()` and `sizeof(void*)`,
+    an `if` on it compiles both branches and the C compiler folds the
+    dead one, and `comptime` cannot evaluate it. `@bitCast` reinterprets
+    scalars of one size through `memcpy` (no pointers, no aggregates);
+    `@min` and `@max` are the `min`/`max` methods as intrinsics that
+    also carry the range of their operands, so `@min(i, n - 1)` proves an
+    index; `@alignOf` reads the layout the checker already computes.

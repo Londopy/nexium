@@ -490,8 +490,15 @@ clocks, randomness, foreign calls, globals. A step budget and a call-depth
 limit (32 nested calls in 1.0; see `KNOWN_ISSUES.md`) turn a runaway
 evaluation into a compile error. `const` initializers, `@embedFile`, record
 checks on literals, and `comptime test` blocks run here. Intrinsics:
-`@typeName(T) @sizeOf(T) @truncate(T, x) @errorName(e) @embedFile(path)
-@weak(x) @refCount(x) @cImport(header) @cstr(literal)`.
+`@typeName(T) @sizeOf(T) @alignOf(T) @truncate(T, x) @bitCast(T, x)
+@min(a, b) @max(a, b) @errorName(e) @embedFile(path) @weak(x)
+@refCount(x) @cImport(header) @cstr(literal) @target()`. `@bitCast`
+reinterprets the bytes of one scalar as another of the same size;
+`@min` and `@max` take two numbers of one type and carry the range of
+their operands; `@target()` is `(os, arch, pointer_bits)` (`"windows"`,
+`"macos"`, `"linux"`, `"bsd"`; `"x86_64"`, `"aarch64"`, ...; 64 or 32),
+a constant of the C build for `if` in platform code, not a value of the
+compile-time interpreter.
 
 ## 13. Concurrency
 
