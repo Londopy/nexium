@@ -119,6 +119,8 @@ on Linux when nothing is found), and adds `nx` to your PATH.
 **Windows, from PowerShell**: `irm https://raw.githubusercontent.com/Londopy/nexium/main/installers/install.ps1 | iex`
 (the portable build, verified, on the PATH; no wizard).
 
+**pip or npm**: `pip install nexium-lang` or `npm install -g nexium-lang` (the binary, per platform; a C compiler as usual).
+
 **Docker**: `docker run --rm -v "$PWD":/work ghcr.io/londopy/nexium run hello.nx`
 (Debian; `:alpine` too; amd64 and arm64).
 

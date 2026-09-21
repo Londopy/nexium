@@ -18,6 +18,13 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   before replacing its files (Restart Manager; it is not started again),
   and keep a log of the run as `install.log` next to the program. The
   uninstaller takes `/LOG="path"` for a log of its own.
+- `pip install nexium-lang` and `npm install -g nexium-lang`: every
+  release carries the compiler as a wheel per platform (the binary under
+  `nexium_lang/bin/`, a console script `nx`) and as npm packages
+  (`nexium-lang` with `bin/nx.js`, `@nexium-lang/<os>-<cpu>` as optional
+  dependencies holding the binaries), built by `scripts/pypi_npm.py` from
+  the release archives, attached to the release, and uploaded to PyPI and
+  npm when the `PYPI_TOKEN` and `NPM_TOKEN` secrets are set.
 - `std.testing` has `expect_snapshot(name, actual)` and
   `expect_snapshot_in(dir, name, actual)`: `snapshot` in the `expect_`
   form, so a mismatch fails the test naming the file, the first differing

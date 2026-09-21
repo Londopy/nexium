@@ -338,7 +338,10 @@ queue in front of them.
     `nx layout FILE [Type...]`.)
 14. `expect_snapshot` in `std.testing`. (Done, beside `snapshot`.)
 15. `pip install nexium` and `npm install nexium`, wheels and packages
-    that carry the binary.
+    that carry the binary. (Done as `nexium-lang`, decision 91:
+    `scripts/pypi_npm.py` builds them from the release archives, the
+    release attaches them and uploads when `PYPI_TOKEN` and `NPM_TOKEN`
+    are set.)
 16. The installer detects an installed version: upgrade, repair, remove,
     the previous choices as defaults.
 17. `nx upgrade`, and `nxup` behind it later.

@@ -91,6 +91,27 @@ directory, `NEXIUM_NO_MODIFY_PATH=1` leaves shell files alone,
 the one C file even when a release exists. Uninstall by deleting `~/.nexium`
 and the three lines the script added.
 
+## pip and npm
+
+Every release carries the compiler as a wheel and as an npm package, both
+named `nexium-lang` (`nexium` is taken on both registries by unrelated
+projects); the release workflow uploads them when its tokens are set, and
+the files are attached to the release either way.
+
+```sh
+pip install nexium-lang        # nx on the PATH of the environment
+npm install -g nexium-lang     # nx from npm; the platform package is an optional dependency
+npx nexium-lang version        # or without installing
+```
+
+The wheel is per platform (Windows x64 and ARM64, macOS on Apple Silicon,
+Linux x86-64 and aarch64, glibc) and holds the binary under
+`nexium_lang/bin/`; the console script `nx` hands over to it. The npm
+package is the shape esbuild uses: `nexium-lang` has `bin/nx.js`, which
+runs the binary from `@nexium-lang/<os>-<cpu>`, the one optional
+dependency npm installs for the machine. Neither carries Zig: `nx` needs a
+C compiler as usual (`nx doctor` says what it found).
+
 ## Homebrew, Scoop and winget
 
 The repository is its own Homebrew tap and Scoop bucket; the release
