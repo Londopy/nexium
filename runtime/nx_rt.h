@@ -115,11 +115,18 @@ typedef struct nx_ctx {
 } nx_ctx;
 
 /* ------------------------------------------------------------------ panics */
+struct nx_tracker;
 typedef struct nx_boundary {
     jmp_buf jb;
     char msg[256];
     char loc[128];
+    /* the resources of the export call this boundary belongs to, or NULL */
+    struct nx_tracker* track;
 } nx_boundary;
+/* files (kind 0), sockets (1) and held locks (2) register with the boundary's
+   tracker as they are acquired and released; defined with the tracker below */
+static void nx_track_handle(int kind, int64_t h, bool acquire);
+static void nx_ctx_untrack(nx_ctx* c);
 
 static NX_THREAD_LOCAL nx_boundary* nx_tls_boundary = NULL;
 static NX_THREAD_LOCAL char nx_tls_last_panic[256];
@@ -276,8 +283,8 @@ NX_INLINE void nx_console_utf8(void) {
 /* the tracking allocator needs the context as its state; installed by entry points */
 NX_INLINE void nx_ctx_track_self(nx_ctx* c) {
 #ifdef NX_LEAK_CHECK
-    c->alloc.state = c;
-    c->base.state = c;
+    if (c->alloc.alloc == nx_malloc_alloc) c->alloc.state = c;
+    if (c->base.alloc == nx_malloc_alloc) c->base.state = c;
 #else
     NX_UNUSED(c);
 #endif
@@ -380,6 +387,7 @@ typedef struct nx_par_task { nx_ctx ctx; nx_par_fn f; void* env; size_t begin; s
 
 NX_INLINE void nx_par_run(nx_par_task* t) {
     nx_boundary b;
+    b.track = NULL;
     nx_boundary* prev = nx_tls_boundary;
     nx_tls_boundary = &b;
     if (setjmp(b.jb)) {
@@ -1274,7 +1282,7 @@ NX_INLINE int64_t nx_file_open(nx_sl_u8 path, nx_sl_u8 mode) {
     FILE* f = fopen(p, m);
     if (!f) return errno == ENOENT ? -1 : -2;
     for (int i = 0; i < NX_MAX_FILES; i++) {
-        if (!nx_files[i]) { nx_files[i] = f; return i + 4; }
+        if (!nx_files[i]) { nx_files[i] = f; nx_track_handle(0, i + 4, true); return i + 4; }
     }
     fclose(f);
     return -2;
@@ -1332,6 +1340,7 @@ NX_INLINE bool nx_file_close(int64_t h) {
     FILE* f = nx_fh(h);
     if (!f) return false;
     nx_files[h - 4] = NULL;
+    nx_track_handle(0, h, false);
     return fclose(f) == 0;
 }
 /* set a variable in this process's environment (and its children's); an
@@ -1491,7 +1500,7 @@ NX_INLINE int32_t nx_tcp_connect(nx_sl_u8 host, uint16_t port, int64_t timeout_m
         if (ok) {
             int one = 1;
             setsockopt(s, IPPROTO_TCP, TCP_NODELAY, (const char*)&one, sizeof one);
-            *out = (int64_t)s;
+            *out = (int64_t)s; nx_track_handle(1, *out, true);
             freeaddrinfo(res);
             return 0;
         }
@@ -1510,7 +1519,7 @@ NX_INLINE int32_t nx_tcp_listen(nx_sl_u8 host, uint16_t port, int64_t* out) {
         int one = 1;
         setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (const char*)&one, sizeof one);
         if (bind(s, ai->ai_addr, (int)ai->ai_addrlen) == 0 && listen(s, 64) == 0) {
-            *out = (int64_t)s;
+            *out = (int64_t)s; nx_track_handle(1, *out, true);
             freeaddrinfo(res);
             return 0;
         }
@@ -1527,7 +1536,7 @@ NX_INLINE int32_t nx_tcp_accept(int64_t l, int64_t timeout_ms, int64_t* out) {
     if (s == NX_BAD_SOCK) return nx_net_code();
     int one = 1;
     setsockopt(s, IPPROTO_TCP, TCP_NODELAY, (const char*)&one, sizeof one);
-    *out = (int64_t)s;
+    *out = (int64_t)s; nx_track_handle(1, *out, true);
     return 0;
 }
 NX_INLINE int32_t nx_net_send(int64_t h, nx_sl_u8 data) {
@@ -1553,6 +1562,7 @@ NX_INLINE int32_t nx_net_recv(nx_ctx* c, int64_t h, size_t n, int64_t timeout_ms
     return 0;
 }
 NX_INLINE int32_t nx_net_close(int64_t h) {
+    nx_track_handle(1, h, false);
     return nx_closesock((nx_sock)h) == 0 ? 0 : 4;
 }
 NX_INLINE void nx_net_format_addr(struct sockaddr* sa, socklen_t len, char* buf, size_t cap) {
@@ -1600,7 +1610,7 @@ NX_INLINE int32_t nx_udp_bind(nx_sl_u8 host, uint16_t port, int64_t* out) {
         nx_sock s = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
         if (s == NX_BAD_SOCK) continue;
         if (bind(s, ai->ai_addr, (int)ai->ai_addrlen) == 0) {
-            *out = (int64_t)s;
+            *out = (int64_t)s; nx_track_handle(1, *out, true);
             freeaddrinfo(res);
             return 0;
         }
@@ -1659,6 +1669,7 @@ typedef struct nx_thread_task {
 } nx_thread_task;
 static void nx_thread_run(nx_thread_task* t) {
     nx_boundary b;
+    b.track = NULL;
     nx_boundary* prev = nx_tls_boundary;
     nx_tls_boundary = &b;
     if (setjmp(b.jb)) {
@@ -1679,6 +1690,7 @@ NX_INLINE int64_t nx_thread_start(nx_ctx* c, void* fnp, void* env, void* arg) {
     nx_thread_task* t = (nx_thread_task*)malloc(sizeof *t);
     if (!t) nx_panic("out of memory starting a thread", "thread.start");
     t->ctx = *c;
+    nx_ctx_untrack(&t->ctx);
     t->ctx.live_allocs = 0; t->ctx.live_bytes = 0; t->ctx.total_allocs = 0; t->ctx.peak_bytes = 0;
     nx_ctx_track_self(&t->ctx);
     t->ctx.rng ^= (uint64_t)(uintptr_t)t * 0x9E3779B97F4A7C15ULL;
@@ -1712,8 +1724,8 @@ NX_INLINE void nx_thread_join(int64_t h, const char* loc) {
 /* mutexes and condition variables, as heap handles */
 #if defined(_WIN32)
 NX_INLINE int64_t nx_mutex_new(void) { CRITICAL_SECTION* m = (CRITICAL_SECTION*)malloc(sizeof *m); InitializeCriticalSection(m); return (int64_t)(intptr_t)m; }
-NX_INLINE void nx_mutex_lock(int64_t m) { EnterCriticalSection((CRITICAL_SECTION*)(intptr_t)m); }
-NX_INLINE void nx_mutex_unlock(int64_t m) { LeaveCriticalSection((CRITICAL_SECTION*)(intptr_t)m); }
+NX_INLINE void nx_mutex_lock_raw(int64_t m) { EnterCriticalSection((CRITICAL_SECTION*)(intptr_t)m); }
+NX_INLINE void nx_mutex_unlock_raw(int64_t m) { LeaveCriticalSection((CRITICAL_SECTION*)(intptr_t)m); }
 NX_INLINE void nx_mutex_free(int64_t m) { DeleteCriticalSection((CRITICAL_SECTION*)(intptr_t)m); free((void*)(intptr_t)m); }
 NX_INLINE int64_t nx_cond_new(void) { CONDITION_VARIABLE* cv = (CONDITION_VARIABLE*)malloc(sizeof *cv); InitializeConditionVariable(cv); return (int64_t)(intptr_t)cv; }
 NX_INLINE void nx_cond_wait(int64_t cv, int64_t m) { SleepConditionVariableCS((CONDITION_VARIABLE*)(intptr_t)cv, (CRITICAL_SECTION*)(intptr_t)m, INFINITE); }
@@ -1722,8 +1734,8 @@ NX_INLINE void nx_cond_broadcast(int64_t cv) { WakeAllConditionVariable((CONDITI
 NX_INLINE void nx_cond_free(int64_t cv) { free((void*)(intptr_t)cv); }
 #else
 NX_INLINE int64_t nx_mutex_new(void) { pthread_mutex_t* m = (pthread_mutex_t*)malloc(sizeof *m); pthread_mutex_init(m, NULL); return (int64_t)(intptr_t)m; }
-NX_INLINE void nx_mutex_lock(int64_t m) { pthread_mutex_lock((pthread_mutex_t*)(intptr_t)m); }
-NX_INLINE void nx_mutex_unlock(int64_t m) { pthread_mutex_unlock((pthread_mutex_t*)(intptr_t)m); }
+NX_INLINE void nx_mutex_lock_raw(int64_t m) { pthread_mutex_lock((pthread_mutex_t*)(intptr_t)m); }
+NX_INLINE void nx_mutex_unlock_raw(int64_t m) { pthread_mutex_unlock((pthread_mutex_t*)(intptr_t)m); }
 NX_INLINE void nx_mutex_free(int64_t m) { pthread_mutex_destroy((pthread_mutex_t*)(intptr_t)m); free((void*)(intptr_t)m); }
 NX_INLINE int64_t nx_cond_new(void) { pthread_cond_t* cv = (pthread_cond_t*)malloc(sizeof *cv); pthread_cond_init(cv, NULL); return (int64_t)(intptr_t)cv; }
 NX_INLINE void nx_cond_wait(int64_t cv, int64_t m) { pthread_cond_wait((pthread_cond_t*)(intptr_t)cv, (pthread_mutex_t*)(intptr_t)m); }
@@ -1731,6 +1743,10 @@ NX_INLINE void nx_cond_signal(int64_t cv) { pthread_cond_signal((pthread_cond_t*
 NX_INLINE void nx_cond_broadcast(int64_t cv) { pthread_cond_broadcast((pthread_cond_t*)(intptr_t)cv); }
 NX_INLINE void nx_cond_free(int64_t cv) { pthread_cond_destroy((pthread_cond_t*)(intptr_t)cv); free((void*)(intptr_t)cv); }
 #endif
+/* a lock taken inside an export call registers with the call's tracker (the
+   tracker's own lock uses the raw pair, which registers nothing) */
+NX_INLINE void nx_mutex_lock(int64_t m) { nx_mutex_lock_raw(m); nx_track_handle(2, m, true); }
+NX_INLINE void nx_mutex_unlock(int64_t m) { nx_track_handle(2, m, false); nx_mutex_unlock_raw(m); }
 
 NX_INLINE bool nx_read_line(nx_ctx* c, nx_string* out) {
     nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;
@@ -1802,3 +1818,112 @@ NX_INT_OPS(u128, nx_u128, nx_u128, 0, (~(nx_u128)0))
 #undef cs_64
 
 #endif /* NX_RT_H */
+
+/* ------------------------------------------- what an export call acquired */
+/* S3 promises that a panic never crosses an export boundary; this is the
+ * other half: a panic caught at the boundary releases everything the call
+ * acquired, so a call that keeps failing does not grow. The wrapper of every
+ * export installs a tracker for the call's context: its allocator records
+ * every live allocation (arena chunks included, since arenas allocate from the
+ * base allocator), and the file, socket and lock functions register their
+ * handles through the thread's boundary. A `for parallel` body copies the
+ * context to other threads, so the tables are behind a lock. On the panic
+ * path the wrapper releases every entry; on the normal path only the tables
+ * go, since the code released what it owned. Threads and parallel tasks that
+ * panic on their own keep leaking what they allocated: what a thread allocates
+ * can escape through `shared_mutable`, and freeing it would be worse.
+ * Exports cannot return heap values or reach globals (S1, S2), so nothing
+ * allocated during a panicked call is reachable afterwards. */
+typedef struct nx_tracker {
+    nx_alloc parent;
+    void** slots; size_t cap; size_t used; size_t live;
+    int64_t* files; size_t nfiles; size_t files_cap;
+    int64_t* socks; size_t nsocks; size_t socks_cap;
+    int64_t* locks; size_t nlocks; size_t locks_cap;
+    int64_t mutex;
+} nx_tracker;
+#define NX_TR_DEAD ((void*)(uintptr_t)1)
+static size_t nx_tr_hash(void* p) { uintptr_t x = (uintptr_t)p; x ^= x >> 17; x *= (uintptr_t)0x9E3779B97F4A7C15ULL; x ^= x >> 29; return (size_t)x; }
+static void nx_tr_rebuild(nx_tracker* t, size_t ncap) {
+    void** ns = (void**)calloc(ncap, sizeof(void*));
+    if (!ns) return;
+    for (size_t i = 0; i < t->cap; i++) {
+        void* p = t->slots[i];
+        if (!p || p == NX_TR_DEAD) continue;
+        size_t j = nx_tr_hash(p) & (ncap - 1);
+        while (ns[j]) j = (j + 1) & (ncap - 1);
+        ns[j] = p;
+    }
+    free(t->slots);
+    t->slots = ns; t->cap = ncap; t->used = t->live;
+}
+static void nx_tr_add(nx_tracker* t, void* p) {
+    if (!p) return;
+    nx_mutex_lock_raw(t->mutex);
+    if ((t->used + 1) * 2 > t->cap) nx_tr_rebuild(t, t->cap == 0 ? 256 : (t->live * 4 > t->cap ? t->cap * 2 : t->cap));
+    if (t->cap) {
+        size_t mask = t->cap - 1, j = nx_tr_hash(p) & mask;
+        while (t->slots[j] && t->slots[j] != NX_TR_DEAD) j = (j + 1) & mask;
+        if (!t->slots[j]) t->used++;
+        t->slots[j] = p; t->live++;
+    }
+    nx_mutex_unlock_raw(t->mutex);
+}
+static void nx_tr_remove(nx_tracker* t, void* p) {
+    if (!p || !t->cap) return;
+    nx_mutex_lock_raw(t->mutex);
+    size_t mask = t->cap - 1, j = nx_tr_hash(p) & mask;
+    while (t->slots[j]) {
+        if (t->slots[j] == p) { t->slots[j] = NX_TR_DEAD; t->live--; break; }
+        j = (j + 1) & mask;
+    }
+    nx_mutex_unlock_raw(t->mutex);
+}
+static void* nx_tr_alloc(void* st, size_t size, size_t align) { nx_tracker* t = (nx_tracker*)st; void* p = t->parent.alloc(t->parent.state, size, align); nx_tr_add(t, p); return p; }
+static void* nx_tr_realloc(void* st, void* p, size_t old_size, size_t new_size, size_t align) { nx_tracker* t = (nx_tracker*)st; nx_tr_remove(t, p); void* q = t->parent.realloc(t->parent.state, p, old_size, new_size, align); nx_tr_add(t, q); return q; }
+static void nx_tr_free(void* st, void* p, size_t size) { nx_tracker* t = (nx_tracker*)st; nx_tr_remove(t, p); t->parent.free(t->parent.state, p, size); }
+static void nx_tr_list_set(int64_t** xs, size_t* n, size_t* cap, int64_t h, bool acquire) {
+    if (acquire) {
+        if (*n == *cap) { size_t nc = *cap ? *cap * 2 : 8; int64_t* g = (int64_t*)realloc(*xs, nc * sizeof(int64_t)); if (!g) return; *xs = g; *cap = nc; }
+        (*xs)[(*n)++] = h;
+    } else {
+        for (size_t i = *n; i-- > 0;) { if ((*xs)[i] == h) { (*xs)[i] = (*xs)[*n - 1]; (*n)--; return; } }
+    }
+}
+static void nx_track_handle(int kind, int64_t h, bool acquire) {
+    nx_boundary* b = nx_tls_boundary;
+    if (!b || !b->track) return;
+    nx_tracker* t = b->track;
+    nx_mutex_lock_raw(t->mutex);
+    if (kind == 0) nx_tr_list_set(&t->files, &t->nfiles, &t->files_cap, h, acquire);
+    else if (kind == 1) nx_tr_list_set(&t->socks, &t->nsocks, &t->socks_cap, h, acquire);
+    else nx_tr_list_set(&t->locks, &t->nlocks, &t->locks_cap, h, acquire);
+    nx_mutex_unlock_raw(t->mutex);
+}
+/* a thread started inside an export call may outlive the call, and what it
+   allocates can escape through `shared_mutable`: it allocates untracked */
+static void nx_ctx_untrack(nx_ctx* c) {
+    if (c->alloc.alloc == nx_tr_alloc) c->alloc = ((nx_tracker*)c->alloc.state)->parent;
+    if (c->base.alloc == nx_tr_alloc) c->base = ((nx_tracker*)c->base.state)->parent;
+}
+NX_INLINE void nx_export_enter(nx_ctx* c, nx_boundary* b, nx_tracker* t) {
+    memset(t, 0, sizeof *t);
+    t->parent = c->alloc;
+    t->mutex = nx_mutex_new();
+    c->alloc.alloc = nx_tr_alloc; c->alloc.realloc = nx_tr_realloc; c->alloc.free = nx_tr_free; c->alloc.state = t;
+    c->base = c->alloc;
+    b->track = t;
+}
+NX_INLINE void nx_export_leave(nx_ctx* c, nx_boundary* b, nx_tracker* t, bool panicked) {
+    b->track = NULL; /* the releases below must not register themselves */
+    if (panicked) {
+        for (size_t i = t->nlocks; i-- > 0;) nx_mutex_unlock_raw(t->locks[i]);
+        for (size_t i = 0; i < t->nsocks; i++) nx_closesock((nx_sock)t->socks[i]);
+        for (size_t i = 0; i < t->nfiles; i++) nx_file_close(t->files[i]);
+        for (size_t i = 0; i < t->cap; i++) { void* p = t->slots[i]; if (p && p != NX_TR_DEAD) t->parent.free(t->parent.state, p, 0); }
+    }
+    free(t->slots); free(t->files); free(t->socks); free(t->locks);
+    nx_mutex_free(t->mutex);
+    c->alloc = t->parent;
+    c->base = t->parent;
+}

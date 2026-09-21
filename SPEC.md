@@ -492,7 +492,9 @@ export boundary.
 ## 15. Artifacts and the ABI
 
 `artifact cabi { name = "lib", exports = [...] }` produces a shared library,
-a static archive, and a C header. `artifact python { name = "pkg" }`
+a static archive, and a C header. A panic inside an exported call is caught
+at the boundary, reported as a status, and releases what the call acquired
+(allocations, open files, sockets, held locks) before the status returns. `artifact python { name = "pkg" }`
 produces a ctypes-based package and a wheel. `artifact rustlib { name =
 "crate" }` produces a Cargo crate with `extern "C"` declarations, `#[repr(C)]`
 structs, and safe wrappers returning `Result<T, NexiumError>`. `artifact

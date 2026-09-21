@@ -397,8 +397,25 @@ fn suite_ship(e: *Env, failures: *mut List(String)) {
     } else {
         println("ship: npm not found; the node package is not run", .{})
     }
+    // a panic caught at the export boundary releases what the call acquired:
+    // 200 calls that open a file and panic, then an open that must succeed
+    // (the runtime has 64 file slots; before the tracker they were all leaked)
+    let bdir = fs.join(e.root[..], "nx-out/ship-test/boundary-out")
+    let bship = nx(e, ["ship", "tests/ship/boundary.nx", "--out-dir", bdir[..]][..])
+    if bship.code != 0 { failures.append(format("ship: the boundary library failed to ship:\n{}", .{bship.stderr})); return }
+    let blib = fs.join(bdir[..], "boundary")
+    // the generated C is linked in directly: every emitted function is static
+    // and the runtime is inlined, so the two programs share nothing but the exports
+    let host = "const lib = @cImport(\"boundary.h\")\nartifact link { c_sources = [\"boundary.c\"] }\nfn main() {\n    let path: []u8 = \"boundary.h\"\n    var panics: i64 = 0\n    for _ in 0..200 {\n        var out: i64 = 0\n        let code = unsafe { lib.open_then_panic(path.ptr, path.len, 0, &mut out) }\n        if code != 0 { panics += 1 }\n    }\n    var ok: i64 = 0\n    let code = unsafe { lib.can_open(path.ptr, path.len, &mut ok) }\n    println(\"{} {} {}\", .{panics, code, ok})\n}\n"
+    fs.write(fs.join(blib[..], "boundary_host.nx")[..], host) catch { failures.append(String.from("ship: cannot write the boundary host")); return }
+    let bhost = nx_in(e, ["run", "boundary_host.nx"][..], "", blib[..])
+    if bhost.code != 0 {
+        failures.append(format("ship: the boundary host failed:\n{}{}", .{bhost.stdout, bhost.stderr}))
+    } else if bhost.text() != "200 0 1" {
+        failures.append(format("ship: after 200 panicking calls the boundary answered `{}` (want `200 0 true`: every panic reported, the file slots released)", .{bhost.text()}))
+    }
     fs.remove_all(out_dir[..]) catch { }
-    println("ship: the library artifacts", .{})
+    println("ship: the library artifacts, and the export boundary releasing what a panic left", .{})
 }
 
 /// The GUI's headless tests and the offscreen demo; then a build from

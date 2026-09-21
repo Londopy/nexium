@@ -4026,17 +4026,19 @@ impl Gen {
             if has_ret { all.append(format("{}* out", .{ret_c})) }
             let alljoined = if all.len == 0 { String.from("void") } else { join_strings(&all, ", ") }
             out.append(format("NX_EXPORT int32_t {}({}) {{\n", .{fname, alljoined})[..])
-            out.append("  nx_ctx ctx = nx_default_ctx(0, NULL);\n  nx_boundary _nxb; nx_boundary* prev = nx_tls_boundary; nx_tls_boundary = &_nxb;\n")
-            out.append(format("  if (setjmp(_nxb.jb)) {{ nx_tls_boundary = prev; return {}; }}\n", .{panic_id})[..])
+            // the call's context gets a tracker: a panic caught here releases what
+            // the call acquired before the status goes back (see nx_export_leave)
+            out.append("  nx_ctx ctx = nx_default_ctx(0, NULL);\n  nx_boundary _nxb; nx_boundary* prev = nx_tls_boundary; nx_tls_boundary = &_nxb;\n  nx_tracker _nxt; nx_export_enter(&ctx, &_nxb, &_nxt);\n")
+            out.append(format("  if (setjmp(_nxb.jb)) {{ nx_export_leave(&ctx, &_nxb, &_nxt, true); nx_tls_boundary = prev; return {}; }}\n", .{panic_id})[..])
             if is_eu {
                 let rcn = self.cty(ret_t)
-                out.append(format("  {} r = {}({});\n  nx_tls_boundary = prev;\n  if (r.err) return (int32_t)r.err;\n", .{rcn, target, join_strings(&args, ", ")})[..])
+                out.append(format("  {} r = {}({});\n  nx_export_leave(&ctx, &_nxb, &_nxt, false); nx_tls_boundary = prev;\n  if (r.err) return (int32_t)r.err;\n", .{rcn, target, join_strings(&args, ", ")})[..])
                 if has_ret { out.append("  if (out) *out = r.val;\n") }
             } else if has_ret {
                 let rcn = self.cty(ret_t)
-                out.append(format("  {} r = {}({});\n  nx_tls_boundary = prev;\n  if (out) *out = r;\n", .{rcn, target, join_strings(&args, ", ")})[..])
+                out.append(format("  {} r = {}({});\n  nx_export_leave(&ctx, &_nxb, &_nxt, false); nx_tls_boundary = prev;\n  if (out) *out = r;\n", .{rcn, target, join_strings(&args, ", ")})[..])
             } else {
-                out.append(format("  {}({});\n  nx_tls_boundary = prev;\n", .{target, join_strings(&args, ", ")})[..])
+                out.append(format("  {}({});\n  nx_export_leave(&ctx, &_nxb, &_nxt, false); nx_tls_boundary = prev;\n", .{target, join_strings(&args, ", ")})[..])
             }
             out.append("  return 0;\n}\n")
         }
@@ -4550,7 +4552,7 @@ impl Gen {
         let target = self.fn_c_name(main)
         let ret_t = self.res(self.c.insts[main].ret)
         var out = String.new()
-        out.append("int main(int argc, char** argv) {\n  nx_console_utf8();\n  nx_ctx ctx = nx_default_ctx(argc, argv);\n  nx_ctx_track_self(&ctx);\n  nx_boundary b; nx_tls_boundary = &b;\n  if (setjmp(b.jb)) { fflush(stdout); fprintf(stderr, \"panic: %s\\n  at %s\\n\", b.msg, b.loc); return 101; }\n")
+        out.append("int main(int argc, char** argv) {\n  nx_console_utf8();\n  nx_ctx ctx = nx_default_ctx(argc, argv);\n  nx_ctx_track_self(&ctx);\n  nx_boundary b; b.track = NULL; nx_tls_boundary = &b;\n  if (setjmp(b.jb)) { fflush(stdout); fprintf(stderr, \"panic: %s\\n  at %s\\n\", b.msg, b.loc); return 101; }\n")
         if self.c.insts[main].params.len > 0 { self.errors.append(String.from("`main` takes no parameters; read arguments with `os.args()`")) }
         let rk = self.c.tys.kind(ret_t)
         if rk == check.TK.Void {
@@ -4570,7 +4572,7 @@ impl Gen {
 
     fn test_runner(self: *mut Self) -> String {
         var out = String.new()
-        out.append("int main(int argc, char** argv) {\n  nx_console_utf8();\n  nx_ctx ctx = nx_default_ctx(argc, argv);\n  const char* filter = NULL; int verbose = 0;\n  for (int ai = 1; ai < argc; ai++) { if (strcmp(argv[ai], \"--verbose\") == 0) verbose = 1; else filter = argv[ai]; }\n  int passed = 0, failed = 0, skipped = 0;\n  nx_boundary b; uint64_t t0 = 0;\n")
+        out.append("int main(int argc, char** argv) {\n  nx_console_utf8();\n  nx_ctx ctx = nx_default_ctx(argc, argv);\n  const char* filter = NULL; int verbose = 0;\n  for (int ai = 1; ai < argc; ai++) { if (strcmp(argv[ai], \"--verbose\") == 0) verbose = 1; else filter = argv[ai]; }\n  int passed = 0, failed = 0, skipped = 0;\n  nx_boundary b; b.track = NULL; uint64_t t0 = 0;\n")
         for t in self.c.tests.clone() {
             let full = self.c.insts[t].name.clone()
             let name = full[5..]

@@ -75,7 +75,11 @@ const char* ropesim_last_panic(void);
   an error code. `ropesim_error_name(code)` gives the error's name. A Nexium
   panic inside the call is caught at the boundary and reported as the code
   named `"Panic"`; `ropesim_last_panic()` returns the message and location
-  for the current thread.
+  for the current thread. Before the status returns, the boundary releases
+  everything the call acquired (allocations, open files, sockets, held
+  locks), so a call that keeps panicking does not grow the host. What a
+  thread started inside the call acquired is the exception: a thread's
+  allocations can escape through `shared_mutable`, so they are left alone.
 - No initialization is required (S1); each call builds its context on the
   stack. No process-global state is created (S2): the compiler rejects an
   export that reaches a mutable global when an embeddable artifact is

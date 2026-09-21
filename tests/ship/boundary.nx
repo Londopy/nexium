@@ -1,0 +1,20 @@
+//! A library whose export acquires things and then panics. The export
+//! boundary must release what a panicked call acquired (a file handle, a
+//! megabyte of string): the harness calls `open_then_panic` more times than
+//! the runtime has file slots, then `can_open` must still succeed.
+pub fn open_then_panic(path: []u8, zero: i64) -> !i64 export(c) {
+    let f = try io.open(path, "r")
+    var held = String.with_capacity(1048576)
+    held.append("x")
+    let n = 100 / zero
+    try io.close(f)
+    return n + (held.len as i64)
+}
+
+pub fn can_open(path: []u8) -> !i64 export(c) {
+    let f = try io.open(path, "r")
+    try io.close(f)
+    return 1
+}
+
+artifact cabi { name = "boundary", exports = [open_then_panic, can_open] }

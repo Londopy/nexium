@@ -35,6 +35,19 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Fixed
 
+- A panic caught at an export boundary releases what the call acquired.
+  The wrapper's `longjmp` skipped every drop between the panic and the
+  boundary, so a library call that built a string and divided by zero
+  leaked the string, and one that opened a file leaked the handle, on
+  every call. Each export call now runs with a tracker: its allocator
+  records live allocations (arena chunks included), and file, socket and
+  lock handles register as they are acquired; the panic path releases them
+  all before the status goes back. Threads started inside the call keep
+  what they allocated, since it can escape through `shared_mutable`. The
+  harness ships a library whose export opens a file and panics, calls it
+  200 times (the runtime has 64 file slots) and checks the next open
+  succeeds. The first half of the roadmap's 1.2, "a panic releases what
+  it owned".
 - `fs.remove_all` removes read-only files on Windows (every object in a
   git checkout is one), where `remove` refused them and a directory tree
   was left half deleted.

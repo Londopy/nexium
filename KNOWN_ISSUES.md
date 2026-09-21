@@ -10,30 +10,6 @@ Fixed bugs are not listed here; `CHANGELOG.md` and `git log` have them.
 
 ## Compiler
 
-- **A contained panic leaks what the call acquired.** An export's wrapper
-  (`self/cgen.nx`, the `NX_EXPORT` shape) sets a boundary and `nx_panic`
-  longjmps to it, so every drop between the panic and the boundary is
-  skipped: a `String` of 1 MiB built and then divided by zero leaks 1 MiB
-  per call, and a file opened before the panic keeps its slot in the
-  runtime's table (64 of them). The host survives, as S3 promises, but a
-  request handler that keeps failing grows without bound. Reproduce:
-  ship a function that allocates and panics, call it 100 times from
-  Python, watch RSS. Planned fix, in the runtime: every export call gets
-  a tracker; the call's allocator wraps the default one and records live
-  allocations in a hash set (a spinlock, since a `for parallel` body
-  copies the context to other threads), `nx_file_open`, socket opens and
-  mutex locks register with the boundary in the same way, and the
-  `setjmp` branch releases everything still registered before returning
-  the panic status (a normal return only frees the table). Exports
-  cannot return heap values or reach globals (S1, S2), so nothing
-  allocated during a panicked call is reachable afterwards; thread and
-  parallel boundaries keep leaking on a panic, since what a thread
-  allocates can escape through `shared_mutable`. Regression test: a
-  shipped library whose export opens a file and panics, called more times
-  than the file table holds, then an open that must succeed; and the CI
-  Python step measuring peak RSS over 100 panicking calls. The same
-  mechanism is the first half of the roadmap's 1.2 (a panic releases
-  what it owned), and until it lands `docs/embedding.md` says so.
 - **Compile-time recursion is limited to 32 nested calls.** The
   compile-time interpreter recurses on the compiler's own stack, and each
   nested call costs about 165 KiB of it (the interpreter's large functions
