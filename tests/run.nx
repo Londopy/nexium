@@ -409,7 +409,7 @@ fn suite_fmt(e: *Env, failures: *mut List(String)) {
     var args = List([]u8).new()
     args.append("fmt")
     var files = List(String).new()
-    for dir in ["examples", "std", "gui", "self", "tests/spec", "tests/compile_fail", "tests", "topo/code", "site"] { for f in tree_files(dir) { files.append(f.clone()) } }
+    for dir in ["examples", "std", "gui", "self", "tests/spec", "tests/compile_fail", "tests", "topo/code", "site", "bench"] { for f in tree_files(dir) { files.append(f.clone()) } }
     for f in files { args.append(f[..]) }
     args.append("--check")
     let out = nx(e, args[..])

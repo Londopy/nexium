@@ -1,0 +1,21 @@
+// primes below the limit, the sieve of Eratosthenes on a list of flags
+const LIMIT: usize = 10000000
+
+fn main() {
+    var composite = List(bool).with_capacity(LIMIT)
+    for _ in 0..LIMIT { composite.append(false) }
+    var count: usize = 0
+    var i: usize = 2
+    while i < LIMIT {
+        if !composite[i] {
+            count += 1
+            var j = i * i
+            while j < LIMIT {
+                composite[j] = true
+                j += i
+            }
+        }
+        i += 1
+    }
+    println("{}", .{count})
+}

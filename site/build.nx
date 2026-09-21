@@ -46,6 +46,7 @@ fn plan() -> List(Page) {
     let docs = [
         ("docs/install.md", "install"), ("docs/language.md", "language"), ("docs/std.md", "std"), ("docs/repl.md", "repl"),
         ("docs/packages.md", "packages"), ("docs/discord.md", "discord"), ("docs/gui.md", "gui"), ("docs/embedding.md", "embedding"),
+        ("docs/numbers.md", "numbers"),
         ("docs/releasing-your-program.md", "releasing-your-program"), ("docs/architecture.md", "architecture"),
         ("docs/stability.md", "stability"), ("docs/platforms.md", "platforms"), ("docs/release-names.md", "release-names"),
     ]

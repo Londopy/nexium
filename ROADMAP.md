@@ -362,7 +362,9 @@ queue in front of them.
 
 22. `nx explain f effect`: the provenance tree. (Done.)
 23. The numbers page: `bench/` in four languages, on a fixed runner,
-    published.
+    published. (Done: `bench/` in Nexium, C, Rust, Go and Python, the
+    Bench workflow on a GitHub runner weekly and at tags, the medians on
+    `docs/numbers.md`, a regression a failing job.)
 24. `nx test --watch` and `nx run --watch` (file watching in the
     runtime).
 25. The ownership trace, `nx run --trace own` and the REPL's `:own`.

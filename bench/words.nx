@@ -1,0 +1,20 @@
+// two million words from a linear congruential generator, counted in a map:
+// the number of distinct words and the total
+const WORDS: i64 = 2000000
+
+fn main() {
+    var counts = Map(String, i64).new()
+    var seed: u64 = 42
+    var total: i64 = 0
+    var i: i64 = 0
+    while i < WORDS {
+        seed = seed *% 6364136223846793005 +% 1442695040888963407
+        let k = (seed >> 33) % 50000
+        let word = format("w{}", .{k})
+        let n = counts.get(word[..]) orelse 0
+        counts.put(word, n + 1)
+        total += 1
+        i += 1
+    }
+    println("{} {}", .{counts.len, total})
+}

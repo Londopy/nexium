@@ -18,6 +18,13 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   before replacing its files (Restart Manager; it is not started again),
   and keep a log of the run as `install.log` next to the program. The
   uninstaller takes `/LOG="path"` for a log of its own.
+- The numbers page: `bench/` holds four programs (`fib`, `nbody`, `sieve`,
+  `words`) written the same way in Nexium, C, Rust, Go and Python, and
+  `bench/run.py` builds and times them, checks the answers agree, and
+  writes the medians with the machine and the tool versions to JSON and
+  to `docs/numbers.md`; the Bench workflow runs it on a GitHub runner
+  weekly and at every tag, commits the numbers, and fails when Nexium
+  got a quarter slower than the last run.
 - `nx explain FILE f effect` prints why `f` has an effect as a tree: the
   reason the checker recorded in each function (an allocation, an
   overflow check, an explicit panic, with its position) and the calls

@@ -1,0 +1,46 @@
+# The numbers page: bench/ in five languages on a GitHub runner, the medians
+# committed to bench/results/latest.json and docs/numbers.md; a Nexium
+# median a quarter slower than the last run fails the job.
+name: Bench
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1"
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  ZIG_VERSION: "0.14.1"
+
+jobs:
+  numbers:
+    name: numbers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.23"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build nx from the seed
+        run: sh bootstrap/build.sh
+      - name: Run the benchmarks
+        run: |
+          python bench/run.py --runs 7 --nx nx-out/bootstrap/nx2 --check bench/results/latest.json --out bench/results/latest.json --page docs/numbers.md
+      - name: Commit the numbers
+        run: |
+          git fetch --depth=1 origin main
+          git checkout -B main origin/main
+          git add bench/results/latest.json docs/numbers.md
+          if git -c user.name=Londopy -c user.email=Londopy@users.noreply.github.com commit -q -m "bench: the numbers for $(date -u +%Y-%m-%d)"; then
+            git push origin main
+          else
+            echo "the numbers did not change"
+          fi

@@ -1,0 +1,46 @@
+{
+  "machine": {
+    "os": "Windows-11-10.0.26200-SP0",
+    "cpu": "Intel64 Family 6 Model 198 Stepping 2, GenuineIntel",
+    "date": "2026-09-20",
+    "runner": "MSI"
+  },
+  "tools": {
+    "nexium": "nx 1.0.3 (Annapurna: Schatz)",
+    "c": "clang version 21.1.0",
+    "rust": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+    "go": "go version go1.26.7 windows/amd64",
+    "python": "Python 3.13.15"
+  },
+  "runs": 3,
+  "results": {
+    "fib": {
+      "nexium": 0.0265,
+      "c": 0.0247,
+      "rust": 0.0102,
+      "go": 0.0127,
+      "python": 0.1844
+    },
+    "nbody": {
+      "nexium": 0.0303,
+      "c": 0.0289,
+      "rust": 0.0152,
+      "go": 0.0177,
+      "python": 0.664
+    },
+    "sieve": {
+      "nexium": 0.0505,
+      "c": 0.0449,
+      "rust": 0.0327,
+      "go": 0.0336,
+      "python": 0.3401
+    },
+    "words": {
+      "nexium": 0.4017,
+      "c": 0.1168,
+      "rust": 0.2158,
+      "go": 0.1532,
+      "python": 0.505
+    }
+  }
+}
