@@ -189,7 +189,12 @@ the effect, through calls. Function types may carry negative bounds
 (`fn(i32) -> i32 !allocates`); a closure or function coerced to such a type
 must satisfy them. `panics` is discharged by proof (E6): indexing with a loop
 index over the same slice, comptime-known indices, arithmetic whose operand
-ranges fit, and guarded locals do not contribute. `nx effects file.nx` prints
+ranges fit, and guarded locals do not contribute. `nx audit file.nx --lock`
+writes `file.effects.lock`, every function's effects, and `nx audit
+file.nx --check` fails when a function gained an effect the lock does not
+name (semver for behaviour: a dependency that starts allocating or
+blocking fails the build until the lock is regenerated on purpose). `nx
+effects file.nx` prints
 the inferred set per function.
 
 ## Standard library (builtins)

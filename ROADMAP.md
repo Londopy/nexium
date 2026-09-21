@@ -351,7 +351,8 @@ queue in front of them.
 18. Portable mode, and `nx install` from a portable copy. (Done: a
     `portable` marker keeps Zig's cache beside nx, `nx install [DIR]`
     copies the folder into the user's place and onto the PATH.)
-19. The effects lockfile (`nx audit --lock`) and the CI check.
+19. The effects lockfile (`nx audit --lock`) and the CI check. (Done:
+    `file.effects.lock`, `--check` in CI on the shipped example.)
 20. Panic proofs as code lenses in the language server.
 21. Colour as you type and completion in the REPL, from the server.
 
@@ -720,10 +721,11 @@ changes the language.
 - `nx explain f allocates` (1.3): the provenance of an effect, the call
   chain from `f` down to the primitive that brings it in, as a tree.
   Today the diagnostic shows the first hop.
-- An effects lockfile (1.3): `nx audit --lock` writes each public
-  function's effects to `effects.lock`; a change that adds an effect (a
-  function starts allocating, can now panic) fails CI until the lock is
-  updated on purpose. Semver for behaviour.
+- An effects lockfile (1.3, done on the way): `nx audit --lock` writes
+  each function's effects to `file.effects.lock`; a change that adds an
+  effect (a function starts allocating, can now panic) fails `nx audit
+  --check`, and CI, until the lock is updated on purpose. Semver for
+  behaviour.
 - Proofs in the editor (1.3): the language server already infers effects;
   a code lens above every function reads `cannot panic` or `panics: index
   at :12`, and hover on a slice index says which fact proved the bound.

@@ -18,6 +18,11 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   before replacing its files (Restart Manager; it is not started again),
   and keep a log of the run as `install.log` next to the program. The
   uninstaller takes `/LOG="path"` for a log of its own.
+- The effects lockfile: `nx audit FILE --lock` writes `FILE.effects.lock`,
+  every function's effects (the program's own modules and its packages,
+  not the standard library), and `nx audit FILE --check` fails when a
+  function gained an effect the lock does not name, noting what else
+  moved. The shipped example's lock is committed and CI checks it.
 - Portable mode: a file named `portable` beside the executable keeps
   Zig's global cache beside it (`cache/`), so a copy on a USB stick leaves
   nothing on the host, and `nx doctor` says so. `nx install [DIR]` puts

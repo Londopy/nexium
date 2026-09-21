@@ -280,6 +280,17 @@ fn suite_examples(e: *Env, failures: *mut List(String)) {
     } else if d.stdout[..].find("latest release:") == null {
         failures.append(format("examples: nx doctor did not report the latest release:\n{}", .{d.stdout}))
     }
+    // the effects lockfile: the shipped example's is committed and must match;
+    // a function that starts printing gains `blocks`, and --check says so
+    let lk = nx(e, ["audit", "examples/ropesim.nx", "--check"][..])
+    if lk.code != 0 or lk.stdout[..].find("effects match") == null { failures.append(format("examples: nx audit --check on ropesim:\n{}{}", .{lk.stdout, lk.stderr})) }
+    let lock_src = fs.join(e.root[..], "nx-out/cases/locked.nx")
+    fs.write(lock_src[..], "pub fn f() -> i32 { return 1 }\nfn main() { println(\"{}\", .{f()}) }\n") catch { }
+    let w = nx(e, ["audit", lock_src[..], "--lock"][..])
+    if w.code != 0 { failures.append(format("examples: nx audit --lock failed:\n{}", .{w.stderr})) }
+    fs.write(lock_src[..], "pub fn f() -> i32 { println(\"hi\", .{}); return 1 }\nfn main() { println(\"{}\", .{f()}) }\n") catch { }
+    let bad = nx(e, ["audit", lock_src[..], "--check"][..])
+    if bad.code == 0 or bad.stderr[..].find("gained: blocks") == null { failures.append(format("examples: nx audit --check missed a gained effect (exit {}):\n{}{}", .{bad.code, bad.stdout, bad.stderr})) }
     // nx install puts a copy in place (the PATH is left alone here), and a
     // `portable` marker beside it is reported by the doctor
     os.set_env("NEXIUM_NO_MODIFY_PATH", "1")

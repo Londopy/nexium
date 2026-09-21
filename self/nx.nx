@@ -740,7 +740,45 @@ fn cmd_refcounts(o: *Opts) -> i32 {
 }
 
 /// `nx audit`: the unsafe blocks and mutable globals, then a full check.
+/// `--lock` writes the effects lockfile beside the file instead, `--check`
+/// compares the program's effects with it and fails on a gained effect.
 fn cmd_audit(o: *Opts) -> i32 {
+    var lock_flag = false
+    var check_flag = false
+    for a in o.rest {
+        if a == "--lock" { lock_flag = true }
+        if a == "--check" { check_flag = true }
+    }
+    if lock_flag or check_flag {
+        var c = check_program(o) orelse return 1
+        let lock_path = fs.with_extension(o.file[..], "effects.lock")
+        if lock_flag {
+            let text = tools.effects_lock_text(&mut c)
+            io.write_file(lock_path[..], text[..]) catch {
+                eprintln("error: cannot write {}", .{lock_path})
+                return 1
+            }
+            var n: usize = 0
+            for l in text[..].lines() { if l.len > 0 and !l.starts_with("#") { n += 1 } }
+            println("wrote {} ({} functions)", .{lock_path, n})
+            return 0
+        }
+        let locked = fs.read(lock_path[..]) catch {
+            eprintln("error: no {}; `nx audit {} --lock` writes it", .{lock_path, o.file})
+            return 1
+        }
+        var gains = List(String).new()
+        var notes = List(String).new()
+        tools.effects_lock_compare(&mut c, locked[..], &mut gains, &mut notes)
+        for n in notes { println("note: {}", .{n}) }
+        for g in gains { eprintln("error: {}", .{g}) }
+        if gains.len > 0 {
+            eprintln("{} function(s) gained an effect since {}; `nx audit {} --lock` accepts the change", .{gains.len, lock_path, o.file})
+            return 1
+        }
+        println("effects match {} ({} note(s))", .{lock_path, notes.len})
+        return 0
+    }
     let mods = check.load(o.file[..], o.std_dir[..]) catch { return 1 }
     var c = check.new_checker(mods)
     c.cc = o.cc.clone()

@@ -277,6 +277,11 @@ jobs:
         run: sh bootstrap/build.sh
       - name: nx fmt --check on the tree
         run: nx-out/bootstrap/nx2 fmt $(git ls-files '*.nx') --check
+      # the effects lockfile of the shipped example: a function that gained an
+      # effect fails here until the lock is regenerated on purpose
+      - name: The effects lockfile matches
+        run: nx-out/bootstrap/nx2 audit examples/ropesim.nx --check
+
       - name: The package-manager manifests parse
         run: |
           pip install -q pyyaml

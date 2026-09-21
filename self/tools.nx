@@ -31,6 +31,115 @@ pub fn effects(c: *mut check.Checker) {
     for r, i in rows { println("{}\n    at {}", .{r, locs[i]}) }
 }
 
+/// The effects lockfile: one line per function of the program's own modules
+/// and its packages (never the standard library or an imported header),
+/// `signature<TAB>effects`, sorted, with `-` for none. Semver for behaviour:
+/// `nx audit --lock` writes it, `nx audit --check` fails when a function
+/// gained an effect the lock does not name.
+pub fn effects_lock_text(c: *mut check.Checker) -> String {
+    var lines = List(String).new()
+    let n = c.insts.len
+    for i in 0..n {
+        if c.insts[i].body == parser.NONE or c.insts[i].is_closure or c.insts[i].is_test { continue }
+        let mname = c.mods[c.insts[i].module].name.clone()
+        if mname[..].starts_with("std.") or mname[..].starts_with("cimport:") { continue }
+        var params = String.new()
+        let ps = c.insts[i].params.clone()
+        for p, pi in ps {
+            if pi > 0 { params.append(", ") }
+            let l = &c.insts[i].locals[p]
+            params.append(format("{}: {}", .{l.name, c.ty_name(l.ty)})[..])
+        }
+        let ret = c.ty_name(c.insts[i].ret)
+        let sig = format("{}fn {}({}) -> {}", .{if c.insts[i].is_pub { "pub " } else { "" }, c.insts[i].name, params, ret})
+        let eff = c.insts[i].effects
+        let effs = if eff == 0 { String.from("-") } else { check.render_effects(eff) }
+        lines.append(format("{}\t{}", .{sig, effs}))
+    }
+    // sorted, so the file diffs by function (insertion sort: a few hundred lines)
+    var i: usize = 1
+    while i < lines.len {
+        var j = i
+        while j > 0 and bytes_less(lines[j][..], lines[j - 1][..]) {
+            let tmp = lines[j - 1].clone()
+            lines[j - 1] = lines[j].clone()
+            lines[j] = tmp
+            j -= 1
+        }
+        i += 1
+    }
+    var out = String.from("# effects.lock: the effects of every function, written by `nx audit --lock`;\n# `nx audit --check` fails when one gained an effect this file does not name\n")
+    for l in lines {
+        out.append(l[..])
+        out.append("\n")
+    }
+    return out
+}
+
+/// Byte-wise order of two strings, for the lockfile's lines.
+fn bytes_less(a: []u8, b: []u8) -> bool {
+    var k: usize = 0
+    while k < a.len and k < b.len {
+        if a[k] != b[k] { return a[k] < b[k] }
+        k += 1
+    }
+    return a.len < b.len
+}
+
+/// Compare the program's effects with a lockfile's: the functions that
+/// gained an effect (a failure), and notes on what else moved (an effect
+/// lost, a function new or gone).
+pub fn effects_lock_compare(c: *mut check.Checker, locked: []u8, gains: *mut List(String), notes: *mut List(String)) {
+    var old_sigs = List(String).new()
+    var old_effs = List(String).new()
+    for line in locked.lines() {
+        if line.len == 0 or line.starts_with("#") { continue }
+        let tab = line.find("\t") orelse continue
+        old_sigs.append(String.from(line[0..tab]))
+        old_effs.append(String.from(line[tab + 1..]))
+    }
+    var seen = List(bool).new()
+    for _ in old_sigs { seen.append(false) }
+    let now = effects_lock_text(c)
+    for line in now[..].lines() {
+        if line.len == 0 or line.starts_with("#") { continue }
+        let tab = line.find("\t") orelse continue
+        let sig = line[0..tab]
+        let effs = line[tab + 1..]
+        var idx = parser.NONE
+        for s, i in old_sigs { if s[..] == sig { idx = i } }
+        if idx == parser.NONE {
+            notes.append(format("new: {}  {}", .{sig, effs}))
+            continue
+        }
+        seen[idx] = true
+        let was = old_effs[idx][..]
+        var gained = String.new()
+        var lost = String.new()
+        for e in effs.split(" ") {
+            if e == "-" or e.len == 0 { continue }
+            var had = false
+            for w in was.split(" ") { if w == e { had = true } }
+            if !had {
+                if gained.len > 0 { gained.append(" ") }
+                gained.append(e)
+            }
+        }
+        for w in was.split(" ") {
+            if w == "-" or w.len == 0 { continue }
+            var has = false
+            for e in effs.split(" ") { if e == w { has = true } }
+            if !has {
+                if lost.len > 0 { lost.append(" ") }
+                lost.append(w)
+            }
+        }
+        if gained.len > 0 { gains.append(format("{} gained: {}", .{sig, gained})) }
+        if lost.len > 0 { notes.append(format("{} lost: {}", .{sig, lost})) }
+    }
+    for s, i in old_sigs { if !seen[i] { notes.append(format("gone: {}", .{s})) } }
+}
+
 /// `nx audit`: every `unsafe` block with its statement count, and every
 /// mutable global, from the parse trees; then the program is checked.
 pub fn audit(c: *mut check.Checker, globals_flag: bool) {

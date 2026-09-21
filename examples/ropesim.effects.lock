@@ -1,0 +1,6 @@
+# effects.lock: the effects of every function, written by `nx audit --lock`;
+# `nx audit --check` fails when one gained an effect this file does not name
+pub fn checksum(data: []u8) -> u32	-
+pub fn divide(a: i64, b: i64) -> i64	panics
+pub fn dot(a: []f64, b: []f64) -> !f64	-
+pub fn simulate(positions: []mut f64, dt: f64, steps: u32) -> f64	-
