@@ -3243,6 +3243,25 @@ impl Gen {
             self.line(format("{}(c, &({}));", .{d, m})[..])
             return String.from("0")
         }
+        if name == "MapEntries" {
+            let m = self.simple(args[0])
+            let kt = tys[0]
+            let vt = tys[1]
+            let lt = self.res(ety)
+            let pt = self.c.tys.list[lt].args[0]
+            let pn = self.cty(pt)
+            let kn = self.cty(kt)
+            let vn = self.cty(vt)
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            self.line(format("{} {} = {{0}}; {}.ar = c->arena; nx_list_reserve(c, (nx_rawlist*)&{}, sizeof({}), _Alignof({}), ({}).len);", .{cn, t, t, t, pn, pn, m})[..])
+            self.line(format("{{ size_t i = 0; void* kp; void* vp; while (nx_map_next(&({}), &i, &kp, &vp)) {{", .{m})[..])
+            let kc = self.copy_value(format("(*({}*)kp)", .{kn})[..], kt)
+            let vc = self.copy_value(format("(*({}*)vp)", .{vn})[..], vt)
+            self.line(format("  {}.ptr[{}.len++] = ({}){{ .f0 = {}, .f1 = {} }};", .{t, t, pn, kc, vc})[..])
+            self.line("} }")
+            return t
+        }
         if name == "MapKeys" or name == "MapValues" {
             let m = self.simple(args[0])
             let is_keys = name == "MapKeys"

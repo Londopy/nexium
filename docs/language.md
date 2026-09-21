@@ -160,6 +160,8 @@ edges (`@weak(x)` or `x.weak()`, then `w.upgrade()`).
 ```
 while cond { }
 for x in items { }               // arrays, slices, lists, strings, map keys
+for (k, v) in m { }              // a map's entries
+for x in it { }                  // any value with next(self: *mut Self) -> ?T
 for x, i in items { }            // with index
 for x, y in a, b { }             // lockstep; lengths must match
 for i in 0..10 step 2 { }        // 0 2 4 6 8; `for i in 10..0 step -1` counts down (signed)

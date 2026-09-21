@@ -396,7 +396,7 @@ Ergonomics the self-hosted compiler paid for by hand.
   `frames_clone`.)
 - Iterators: `for x in v` over any value with a `next(self: *mut Self) -> ?T`
   method, so a user type iterates like a slice; `Map` iteration over
-  entries `(k, v)` as well as keys.
+  entries `(k, v)` as well as keys. (Done, decision 94.)
 - Slice patterns: `[first, rest..]`, `[a, b]`, and `x @ pat` bindings in
   `match`.
 - Range facts through `while` conditions and `else` branches (KNOWN_ISSUES),

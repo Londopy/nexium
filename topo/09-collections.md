@@ -63,8 +63,9 @@ A hash map. Keys may be integers, `bool`, `char`, text (`[]u8` or
 `String`) or any struct that derives `Hash` and `Eq`. `put(k, v)` inserts
 or replaces (and takes ownership of both), `get(k) -> ?V`, `m[k]` is the
 same lookup, `contains`, `remove(k) -> ?V`, `keys()` and `values()` collect
-into `List`s, `len`, `clear`. `for k in m` walks the keys; the order is
-the map's own, not insertion order, so sort the keys when the order shows.
+into `List`s, `len`, `clear`. `for k in m` walks the keys and
+`for (k, v) in m` the entries; the order is the map's own, not insertion
+order, so sort the keys when the order shows.
 
 A `Map(String, V)` is looked up with a `[]u8`: the key you store is owned,
 the key you search with is a view, which is what `stock["rope"]` above

@@ -258,8 +258,12 @@ Compound assignment: `= += -= *= /= %= &= |= ^= <<= >>= +%= -%= *%=`.
   `for i in lo..hi step s { }` (a negative step counts down and needs a
   signed loop variable; a zero step is an error). `while c { } else { }`
   runs the else block when the condition turns false, not after a `break`.
-  Iteration works over arrays, slices, lists, strings, and map keys.
-  Loop bodies take braces.
+  Iteration works over arrays, slices, lists, strings, map keys, and map
+  entries with a tuple binding (`for (k, v) in m { }`); and over any
+  value with a `next(self: *mut Self) -> ?T` method, which the loop
+  owns and drives until it yields `null` (`for x in (Counter{ .n = 3 }) { }`;
+  one iterator, one binding, no index, no `parallel`). Loop bodies take
+  braces.
 - `break`, `continue`, `return`, each optionally with a label:
   `outer: for a in ... { ... continue :outer }`. A labeled block yields a
   value with `break :label value`. `else` may start the next line.

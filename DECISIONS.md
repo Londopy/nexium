@@ -623,3 +623,12 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     copy field by field for containers, so the checker gates and the
     backend's `clone_fn` serves; the compile-time interpreter copies the
     value it holds.
+94. **An iterator is a value with `next(self: *mut Self) -> ?T`; no
+    trait.** `for x in it` owns the iterator (a hidden mutable local) and
+    is the `while true { if let x = it.next() { } else { break } }` it
+    stands for, so a yielded value is the binding's own and every loop
+    rule (`break`, `continue`, labels, the per-pass drop) holds without a
+    new statement kind. One iterator per loop, no index (count in the
+    body), no `for parallel` (a worker needs a slice to split). A map
+    iterates its entries under a tuple binding, `for (k, v) in m`, the
+    way it iterates keys: collected first, then walked.

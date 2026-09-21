@@ -1,0 +1,57 @@
+// SPEC 6.2: `for x in it` drives any value with `next(self: *mut Self) -> ?T`
+// until it yields null, owning the iterator and each yielded value (a String
+// per word here, dropped with the pass); `break` and `continue` work as in
+// any loop; `for (k, v) in m` walks a map's entries.
+struct Counter { n: i32, limit: i32 }
+
+impl Counter {
+    fn next(self: *mut Self) -> ?i32 {
+        if self.n >= self.limit { return null }
+        self.n += 1
+        return self.n
+    }
+}
+
+struct Words { text: []u8, at: usize }
+
+impl Words {
+    fn next(self: *mut Self) -> ?String {
+        while self.at < self.text.len and self.text[self.at] == ' ' { self.at += 1 }
+        if self.at >= self.text.len { return null }
+        let start = self.at
+        while self.at < self.text.len and self.text[self.at] != ' ' { self.at += 1 }
+        return String.from(self.text[start..self.at])
+    }
+}
+
+fn main() {
+    var total = 0
+    for x in (Counter{ .n = 0, .limit = 5 }) {
+        if x == 2 { continue }
+        if x == 5 { break }
+        total += x
+    }
+    println("{}", .{total})
+    var out = String.new()
+    for w in (Words{ .text = "the  summit  ridge", .at = 0 }) {
+        out.append(w[..])
+        out.push_byte('|')
+    }
+    println("{}", .{out})
+    let counter = Counter{ .n = 0, .limit = 3 }
+    var seen = 0
+    for x in counter { seen += x }
+    println("{}", .{seen})
+    var m = Map(String, i32).new()
+    m.put(String.from("a"), 1)
+    m.put(String.from("bb"), 2)
+    var sum: i32 = 0
+    var count: i32 = 0
+    for (k, v) in m {
+        sum += k.len as i32 + v
+        count += 1
+    }
+    println("{} {}", .{count, sum})
+    for (k, _) in m { count += k.len as i32 }
+    println("{}", .{count})
+}

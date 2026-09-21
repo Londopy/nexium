@@ -7063,6 +7063,61 @@ impl Checker {
 
     // ----- loops over items ----------------------------------------------------------------
 
+    /// `for x in it { }` over a value with `next(self: *mut Self) -> ?T`: the
+    /// iterator moves into a hidden mutable local and the loop is the
+    /// `while true { if let x = it.next() { body } else { break } }` it
+    /// stands for, so each yielded value is the binding's own, dropped with
+    /// the pass, and `break`, `continue` and labels work as in any loop.
+    /// Returns the hidden `let`; the loop follows it in the block.
+    fn check_for_iter(self: *mut Self, s: usize, te: usize, fid: usize, binding: []u8, label: []u8, body_node: usize, start: usize, end: usize, at: usize) -> usize {
+        let it = self.tys.shallow(self.tir.nodes[te].ty)
+        let init = self.take_ownership(te)
+        let iter = self.declare_local(format("__iter{}", .{s})[..], it, true, start, end)
+        let decl = self.stmt_node(TKind.SLet, start, end)
+        self.tir.nodes[decl].a = iter
+        self.tir.nodes[decl].kids.append(init)
+        let recv = self.mk(TKind.Local, it, at, at)
+        self.tir.nodes[recv].a = iter
+        let no_args = List(usize).new()
+        let call = self.call_fn_def(fid, recv, no_args[..], NONE, at, at)
+        let ct = self.tys.shallow(self.tir.nodes[call].ty)
+        if self.tys.kind(ct) != TK.Opt {
+            self.fail_here(at, format("`next` of `{}` returns `{}`; an iterator's `next` returns `?T`", .{self.ty_name(it), self.ty_name(ct)})[..])
+            return NONE
+        }
+        let payload = self.tys.list[ct].args[0]
+        let lid = self.new_label(label, label.len > 0, true, NONE)
+        self.ctx().loop_depth += 1
+        self.push_scope()
+        let local = self.declare_local(binding, payload, false, start, end)
+        let v = self.tys.void()
+        let tb = self.check_block(body_node, v, NONE, NONE)
+        self.pop_scope()
+        self.ctx().loop_depth -= 1
+        _ = self.ctx().labels.pop()
+        let brk = self.stmt_node(TKind.SBreak, start, end)
+        self.tir.nodes[brk].a = lid
+        let eb = self.mk(TKind.Block, self.tys.never(), start, end)
+        self.tir.nodes[eb].kids.append(brk)
+        let cap = self.mk(TKind.IfCapture, v, start, end)
+        self.tir.nodes[cap].a = local
+        self.tir.nodes[cap].kids.append(call)
+        self.tir.nodes[cap].kids.append(tb)
+        self.tir.nodes[cap].kids.append(eb)
+        let cap_st = self.tir.add(tblank(TKind.SExpr, v, start, end))
+        self.tir.nodes[cap_st].kids.append(cap)
+        let body = self.mk(TKind.Block, v, start, end)
+        self.tir.nodes[body].kids.append(cap_st)
+        let cond = self.mk(TKind.Bool, self.tys.bool_ty(), start, end)
+        self.tir.nodes[cond].flag = true
+        let wh = self.stmt_node(TKind.SWhile, start, end)
+        self.tir.nodes[wh].a = lid
+        self.tir.nodes[wh].kids.append(cond)
+        self.tir.nodes[wh].kids.append(body)
+        self.pending_stmts.append(wh)
+        return decl
+    }
+
     fn check_for_items(self: *mut Self, s: usize) -> usize {
         let m = self.cur_module()
         let n = self.node(m, s)
@@ -7080,7 +7135,7 @@ impl Checker {
         }
         var checked = List(usize).new()
         var elems = List(usize).new()
-        for it in items {
+        for it, i in items {
             let istart = self.node(m, it).start
             let iend = self.node(m, it).end
             var te = self.check_expr(it, NONE)
@@ -7092,6 +7147,40 @@ impl Checker {
                 elem = self.tys.list[t].args[0]
             } else if k == TK.Str {
                 elem = self.tys.u8_ty()
+            } else if k == TK.Struct and self.find_inherent_method(t, "next") != NONE {
+                // an iterator: any value with `next(self: *mut Self) -> ?T`
+                if n_items != 1 {
+                    self.fail_here(istart, "an iterator loop drives one iterator; zip slices, not iterators")
+                    return NONE
+                }
+                if is_parallel {
+                    self.fail_here(start, "a `for parallel` loop needs a slice, not an iterator")
+                    return NONE
+                }
+                if bindings.len != 1 {
+                    self.fail_here(start, "an iterator loop binds one name and takes no index; count in the body")
+                    return NONE
+                }
+                return self.check_for_iter(s, te, self.find_inherent_method(t, "next"), bindings[0][..], label[..], body_node, start, end, istart)
+            } else if k == TK.Map and i < bindings.len and bindings[i].len > 0 and bindings[i][0] == '(' {
+                // `for (k, v) in m`: the entries, collected into an owned List of
+                // pairs the loop walks as a slice, like the keys
+                let kt = self.tys.list[t].args[0]
+                let vt = self.tys.list[t].args[1]
+                var pair_args = List(usize).new()
+                pair_args.append(kt)
+                pair_args.append(vt)
+                let pt = self.tys.tuple(pair_args)
+                let ls = self.tys.wrap(TK.List, pt, false)
+                let b = self.builtin_node("MapEntries", ls, istart, iend)
+                self.tir.nodes[b].kids.append(te)
+                self.tir.nodes[b].kids2.append(kt)
+                self.tir.nodes[b].kids2.append(vt)
+                self.add_effect(EFF_ALLOCATES, istart, "iterating a Map's entries collects them")
+                let st = self.tys.wrap(TK.Slice, pt, false)
+                checked.append(self.wrap_node(TKind.ListToSlice, b, st))
+                elems.append(pt)
+                continue
             } else if k == TK.Map {
                 let kt = self.tys.list[t].args[0]
                 // the keys are collected into an owned List, a temporary the loop
@@ -7106,7 +7195,7 @@ impl Checker {
                 elems.append(kt)
                 continue
             } else {
-                self.fail_here(istart, format("cannot iterate a value of type `{}`; expected an array, slice, List, String, or Map", .{self.ty_name(t)})[..])
+                self.fail_here(istart, format("cannot iterate a value of type `{}`; expected an array, slice, List, String, Map, or a value with `next(self: *mut Self) -> ?T`", .{self.ty_name(t)})[..])
                 return NONE
             }
             if k == TK.Array {
@@ -10695,6 +10784,19 @@ impl Checker {
             var out = List(CV).new()
             var i: usize = if name == "MapKeys" { 0 } else { 1 }
             while i < vs[0].items.len { out.append(vs[0].items[i].clone()); i += 2 }
+            return cv_seq(VK_LIST, out)
+        }
+        if name == "MapEntries" {
+            if vs[0].kind != VK_MAP { return null }
+            var out = List(CV).new()
+            var i: usize = 0
+            while i + 1 < vs[0].items.len {
+                var pair = List(CV).new()
+                pair.append(vs[0].items[i].clone())
+                pair.append(vs[0].items[i + 1].clone())
+                out.append(cv_seq(VK_TUPLE, pair))
+                i += 2
+            }
             return cv_seq(VK_LIST, out)
         }
         if name == "SliceIndexOf" {

@@ -35,6 +35,12 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   `where T: Clone` bounds a type parameter. Closes the `KNOWN_ISSUES.md`
   entry: the compiler's hand-written `cv_clone` and `frames_clone` are
   gone (decision 93). Spec case `s8_derive_clone`; the third item of 1.1.
+- Iterators: `for x in it { }` drives any value with a
+  `next(self: *mut Self) -> ?T` method until it yields `null`, owning the
+  iterator and each yielded value, with `break`, `continue` and labels
+  as in any loop (it is the `while`/`if let` it stands for in the typed
+  IR, decision 94). `for (k, v) in m { }` walks a map's entries. Spec
+  case `s6_iterators`; the fourth item of 1.1.
 
 ### Fixed
 

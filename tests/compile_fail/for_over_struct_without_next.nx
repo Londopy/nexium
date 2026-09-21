@@ -1,0 +1,6 @@
+// EXPECT: cannot iterate a value of type `Point`
+struct Point { x: i32 }
+
+fn main() {
+    for p in (Point{ .x = 1 }) { println("{}", .{p.x}) }
+}

@@ -95,6 +95,8 @@ Chapter 7 uses that with enums, chapter 12 with binary data.
 
 ```nexium
 for x in items { }               // arrays, slices, lists, strings, map keys
+for (k, v) in m { }              // a map's entries
+for x in it { }                  // any value with next(self: *mut Self) -> ?T
 for x, i in items { }            // with the index
 for i in 0..10 { }               // a range: 0 to 9
 for i in 0..10 step 3 { }        // 0, 3, 6, 9; `for i in 10..0 step -1` counts down
