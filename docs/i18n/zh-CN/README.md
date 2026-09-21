@@ -22,7 +22,7 @@
 </p>
 
 <p align="center">
-  <b>一门完整到足以构建一切的语言，同时也是为别的系统添上一块拼图时的最佳选择。</b>
+  <b>Nexium 是一门完整到足以构建一切的语言，同时也是为别的系统添上一块拼图时的最佳选择。</b>
 </p>
 
 <p align="center">
@@ -110,6 +110,24 @@ curl -fsSL https://raw.githubusercontent.com/Londopy/nexium/main/installers/inst
 
 脚本会用发布版的校验和核对下载内容，安装到 `~/.nexium`，准备好 C 编译器
 （macOS 上是 Xcode 工具；Linux 上找不到时会下载 Zig），并把 `nx` 加入 PATH。
+
+**Windows，在 PowerShell 中**：`irm https://raw.githubusercontent.com/Londopy/nexium/main/installers/install.ps1 | iex`
+（便携版，已校验，加入 PATH；无向导）。
+
+**pip 或 npm**：`pip install nexium-lang` 或 `npm install -g nexium-lang`（按平台提供的二进制；C 编译器照常需要）。
+
+**Docker**：`docker run --rm -v "$PWD":/work ghcr.io/londopy/nexium run hello.nx`
+（Debian；也有 `:alpine`；amd64 与 arm64）。
+
+**Homebrew 与 Scoop**：这个仓库本身就是 tap 和 bucket。
+
+```bash
+brew tap londopy/tap https://github.com/Londopy/nexium && brew install londopy/tap/nexium
+```
+
+```powershell
+scoop install https://raw.githubusercontent.com/Londopy/nexium/main/bucket/nexium.json
+```
 
 然后在新的终端里运行 `nx doctor`，它会显示将使用什么。包括校验和验证与每个
 环境变量在内的全部细节，见 [docs/install.md](../../install.md)（英文）。
@@ -274,11 +292,12 @@ using arena {
 | 命令 | 作用 |
 | --- | --- |
 | `nx build file.nx` | 编译为可执行文件（没有 `main` 时为目标文件） |
-| `nx run file.nx` | 构建并运行 |
-| `nx test file.nx [filter]` | 运行 `test "..."` 块 |
+| `nx run file.nx` | 构建并运行；`--watch` 在程序的任一文件变化时重新运行 |
+| `nx test file.nx [filter]` | 运行 `test "..."` 块；也支持 `--watch` |
 | `nx check file.nx` | 类型检查并报告效应违规 |
 | `nx effects file.nx` | 打印每个函数推断出的效应 |
-| `nx audit file.nx` | 列出 `unsafe` 块和可变全局变量 |
+| `nx explain file.nx f effect` | `f` 为何带有该效应：把效应带进来的调用链，直到原语，以树的形式 |
+| `nx audit file.nx` | 列出 `unsafe` 块和可变全局变量；`--lock` 写出效应锁文件，`--check` 在新增效应时失败 |
 | `nx ship file.nx` | 生成声明的每个 `artifact` |
 | `nx emit-c file.nx` | 打印生成的 C |
 | `nx tir file.nx [--sigs]` | 以 S 表达式输出检查后的程序（编译器自己的测试会读取它） |
@@ -286,6 +305,9 @@ using arena {
 | `nx fix file.nx` | 改写编译器能迁移的已弃用写法（1.0 中没有；见 [docs/stability.md](../../stability.md)） |
 | `nx doc file.nx` | 带推断效应的 HTML 文档 |
 | `nx size file.nx` | 把二进制的字节归因到各声明 |
+| `nx layout file.nx [Type...]` | struct 或 enum 的偏移、大小和填充，以及能缩小它的按对齐排序 |
+| `nx upgrade` | 用最新发布版替换这个可执行文件，经过校验；`--check` 只报告 |
+| `nx install [DIR]` | 把这份副本连同旁边的文件装到用户目录并加入 PATH（便携 zip 自行安装） |
 | `nx refcounts file.nx` | 每一处 retain 和 release |
 | `nx leaks file.nx` | 带分配跟踪运行并报告泄漏 |
 | `nx lsp` | 基于 stdio 的语言服务器 |
@@ -293,7 +315,8 @@ using arena {
 | `nx repl`，或直接 `nx` | 交互式会话：输入代码，查看值，保留绑定 |
 
 选项：`--mode debug|safe|fast|small`、`--target x86_64-linux-gnu`（`zig cc` 认识的
-任何目标）、`--out-dir`、`--keep-c`、`--cc`，以及用于 C 互操作的 `-I`、`--link`、
+任何目标）、`--cpu baseline|native|<名称>`（默认 baseline，这样二进制能在同架构的
+任何机器上运行）、`--out-dir`、`--keep-c`、`--cc`，以及用于 C 互操作的 `-I`、`--link`、
 `--link-path`、`--c-source`。
 
 ## 现状
@@ -302,8 +325,10 @@ using arena {
 方式变化；编译器用 Nexium 写成并能构建自身；每个示例、规范用例和教程程序都在 CI 中于
 三个平台上、在 sanitizer 和 fuzzer 之下运行。1.0 还不是什么、每一点在哪里得到回答，
 是[路线图](../../../ROADMAP.md)的第一节：内存安全在 1.2 之前不作保证（没有 `unsafe`
-的代码里，视图仍可能比其存储活得更久），还没有基准测试数字，生态只有一位维护者和
-十六个标准库模块。[`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md) 列出每个未修复的缺陷
+的代码里，视图仍可能比其存储活得更久），除[数字页](../../numbers.md)（五种语言的四个
+程序在同一台 runner 上，每周重新生成）之外还没有基准数字，生态只有一位维护者、
+十六个标准库模块和一个来自树外的包（statusmith 的 [Discord Rich Presence SDK](../../discord.md)，
+`nx add discord_rpc ...`）。[`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md) 列出每个未修复的缺陷
 及其修法；[`DECISIONS.md`](../../../DECISIONS.md) 列出规范未定之处做出的每一个决定。
 
 ## 发布版名称
@@ -345,13 +370,17 @@ Nexium 程序的测试框架（`nx run tests/run.nx`）驱动，在 CI 中于三
 
 | 语言 | 行数 | 占比 | 是什么 |
 | --- | --- | --- | --- |
-| Nexium | 36,193 | 91.0% | 编译器及其工具（`self/` 下 25,400 行）、标准库、测试框架与 fuzzer、示例、教程程序、nexium-gui、站点生成器、规范测试套件 |
-| C | 2,021 | 5.1% | 运行时 `nx_rt.h`、GUI 窗口层、随附的测试用 C |
-| 编辑器文件 | 1,014 | 2.5% | tree-sitter 查询、Emacs Lisp、Vim script、Neovim 用的 Lua，以及 Zed 对扩展要求的 25 行 Rust |
-| JavaScript、TypeScript | 550 | 1.4% | VS Code 扩展和 tree-sitter 语法 |
+| Nexium | 38,374 | 85.4% | 编译器及其工具（`self/` 下 27,100 行）、标准库、测试框架与 fuzzer、示例、教程程序、nexium-gui、站点生成器、规范测试套件、四个基准程序 |
+| C | 2,925 | 6.5% | 运行时 `nx_rt.h`、GUI 窗口层、随附的测试用 C、一个基准程序 |
+| Python | 1,063 | 2.4% | 发布脚本（说明、包清单、wheel 与 npm 包、std 文档）、基准运行器、一个基准程序 |
+| 编辑器文件 | 1,028 | 2.3% | tree-sitter 查询、Emacs Lisp、Vim script、Neovim 用的 Lua，以及 Zed 对扩展要求的 25 行 Rust |
+| JavaScript、TypeScript | 550 | 1.2% | VS Code 扩展和 tree-sitter 语法 |
+| Inno Setup、shell、PowerShell | 777 | 1.7% | Windows 安装程序脚本、`install.sh`、`install.ps1`、Chocolatey 脚本 |
+| Rust、Go、Ruby | 236 | 0.5% | Rust 与 Go 各一个基准程序，以及 Homebrew 公式 |
 
-编译器里没有 Rust：第一个编译器推动了移植并在 1.0 时被删除（决策 90）；剩下的 Rust
-是 Zed 扩展的胶水代码，由 Zed 编译为 WebAssembly。Zig 不在表中，因为树里没有 Zig
+编译器里没有 Rust：第一个编译器推动了移植并在 1.0 时被删除（决策 90）。剩下的 Rust
+是 Zed 扩展的胶水代码，由 Zed 编译为 WebAssembly，以及一个用来对照测量的基准程序，
+旁边是它的 Go 孪生版本。Zig 不在表中，因为树里没有 Zig
 源码：`zig cc` 是 `nx` 运行的 C 编译器（Windows 安装程序随附，安装脚本下载），正如
 C 编译器是拿来用的，不是拿来写的。
 
@@ -369,7 +398,12 @@ topo/           教程：各章及其展示的程序（由测试运行）
 site/           文档站点生成器，一个 Nexium 程序
 tests/          测试框架（run.nx）、规范一致性套件（tests/spec）和编译失败用例
 docs/           工作原理、语言参考、嵌入指南、i18n/ 下的翻译
-assets/         标志与横幅
+bench/          数字页背后的五种语言四个程序
+installers/     Windows 安装程序脚本、install.sh 与 install.ps1、winget 与 Chocolatey 清单
+docker/         ghcr.io 上的编译器镜像（Debian 与 Alpine）
+Formula/, bucket/  这个仓库作为 Homebrew tap 与 Scoop bucket（每次发布时写入）
+scripts/        发布说明、包清单、wheel 与 npm 包、std 文档
+assets/         标志、横幅与社交预览图
 nexium-spec.txt          设计
 nexium-systems-spec.txt  已归档的系统语言；第 4 至 9 节是语法参考
 DECISIONS.md    规范未定之处做出的决定

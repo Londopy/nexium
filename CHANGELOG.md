@@ -12,6 +12,14 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Changed
 
+- The Windows installer's welcome page shows the mark over the social
+  preview's topographic contours (`scripts/make_wizard_images.py` draws
+  them).
+- The six translated READMEs (es, zh-CN, ja, ko, fr, de) caught up with
+  the English one: the install roads (PowerShell, pip and npm, Docker,
+  Homebrew and Scoop), the commands that arrived in 1.0.3 (`--watch`,
+  `explain`, `audit --lock`, `layout`, `upgrade`, `install`), the `--cpu`
+  flag, the status line, the languages table and the layout.
 - The Windows installer's "More from Londopy" page lists statusmith first
   (Discord Rich Presence from the tray, with its SDK as a Nexium package)
   and fits its four rows on the page: shorter blurbs, a "GitHub" and a

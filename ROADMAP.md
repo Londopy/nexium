@@ -540,6 +540,14 @@ own sources, and the language server answers from the checker.
 - `std.http` client with redirects, timeouts and streaming bodies; TLS
   through the platform (SChannel, Security.framework, OpenSSL where the
   system has it) so `https` works without vendoring a library.
+- Discord in the language, on top of that TLS: `std.websocket`, a client
+  with the handshake, frames, ping and close (a Discord bot, and every
+  gateway like it, needs one), and the second package from the wild
+  beside statusmith's presence SDK, `discord`: the gateway (identify,
+  heartbeat, resume), the REST calls a bot needs (messages, slash
+  commands, embeds, reactions), the events as an enum to `match` on, and
+  the token from the environment. The Topo's Discord bot chapter (below)
+  is its test, and statusmith's SDK grows the same way as it needs to.
 - `std.text`: grapheme clusters and case mapping tables, `chars()` over
   scalars, width for terminal alignment.
 - `std.time`: time zones from the platform database, ISO 8601 parsing
@@ -1026,7 +1034,10 @@ is a file in the repository the harness runs, so the course cannot rot:
   `nx topo` in `~/.nexium`; a chapter shows what the next one needs.
 - More chapters, each a project people actually want to write: a log
   analyser (text processing at scale), a game on nexium-gui, an HTTP
-  server with routing and JSON, SQLite through `@cImport`, a tiny
+  server with routing and JSON, a Discord bot (a token from the
+  environment, the gateway over `std.websocket`, a slash command that
+  answers, an embed, running as a service; statusmith's Rich Presence
+  from chapter 19 as the warm-up), SQLite through `@cImport`, a tiny
   language (lexer, parser, interpreter: the compiler in miniature), a
   program for the browser (wasm, 1.5), "port a Python script", and
   "profile and speed up" once the numbers page exists. Each chapter ends

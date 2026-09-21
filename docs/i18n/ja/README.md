@@ -22,7 +22,7 @@
 </p>
 
 <p align="center">
-  <b>すべてを作れるほど完全でありながら、別のものの一部分として採用するにも最良の言語。</b>
+  <b>Nexium は、すべてを作れるほど完全でありながら、別のものの一部分として採用するにも最良の言語。</b>
 </p>
 
 <p align="center">
@@ -114,6 +114,24 @@ curl -fsSL https://raw.githubusercontent.com/Londopy/nexium/main/installers/inst
 ダウンロードをリリースのチェックサムと照合し、`~/.nexium` にインストールし、
 C コンパイラを用意し（macOS では Xcode のツール、Linux では見つからなければ Zig を
 ダウンロード）、`nx` を PATH に加えます。
+
+**Windows、PowerShell から**：`irm https://raw.githubusercontent.com/Londopy/nexium/main/installers/install.ps1 | iex`
+（ポータブル版、検証済み、PATH に追加。ウィザードなし）。
+
+**pip または npm**：`pip install nexium-lang` または `npm install -g nexium-lang`（プラットフォームごとのバイナリ。C コンパイラはいつも通り必要）。
+
+**Docker**：`docker run --rm -v "$PWD":/work ghcr.io/londopy/nexium run hello.nx`
+（Debian。`:alpine` もあり。amd64 と arm64）。
+
+**Homebrew と Scoop**：このリポジトリ自体が tap であり bucket です。
+
+```bash
+brew tap londopy/tap https://github.com/Londopy/nexium && brew install londopy/tap/nexium
+```
+
+```powershell
+scoop install https://raw.githubusercontent.com/Londopy/nexium/main/bucket/nexium.json
+```
 
 その後、新しいコンソールで `nx doctor` を実行すると何が使われるかが分かります。
 チェックサムの検証やすべての環境変数を含む詳細は
@@ -279,11 +297,12 @@ using arena {
 | コマンド | 何をするか |
 | --- | --- |
 | `nx build file.nx` | 実行可能ファイルにコンパイル（`main` がなければオブジェクト） |
-| `nx run file.nx` | ビルドして実行 |
-| `nx test file.nx [filter]` | `test "..."` ブロックを実行 |
+| `nx run file.nx` | ビルドして実行。`--watch` はプログラムのファイルが変わるたびに再実行 |
+| `nx test file.nx [filter]` | `test "..."` ブロックを実行。`--watch` も可 |
 | `nx check file.nx` | 型検査とエフェクト違反の報告 |
 | `nx effects file.nx` | すべての関数の推論されたエフェクトを表示 |
-| `nx audit file.nx` | `unsafe` ブロックと可変グローバルを列挙 |
+| `nx explain file.nx f effect` | `f` がその効果を持つ理由：効果を持ち込む呼び出しを、プリミティブまで木として表示 |
+| `nx audit file.nx` | `unsafe` ブロックと可変グローバルを列挙。`--lock` は効果のロックファイルを書き、`--check` は効果が増えると失敗 |
 | `nx ship file.nx` | 宣言されたすべての `artifact` を生成 |
 | `nx emit-c file.nx` | 生成された C を表示 |
 | `nx tir file.nx [--sigs]` | 検査済みプログラムを S 式で（コンパイラ自身のテストが読む） |
@@ -291,6 +310,9 @@ using arena {
 | `nx fix file.nx` | コンパイラが移行できる非推奨の形を書き換える（1.0 ではなし。[docs/stability.md](../../stability.md) 参照） |
 | `nx doc file.nx` | 推論されたエフェクトつきの HTML ドキュメント |
 | `nx size file.nx` | バイナリのバイト数を宣言ごとに帰属 |
+| `nx layout file.nx [Type...]` | struct や enum のオフセット、サイズ、パディングと、小さくできる整列順 |
+| `nx upgrade` | この実行ファイルを最新リリースに置き換え（検証済み）。`--check` は報告のみ |
+| `nx install [DIR]` | このコピーを同梱物ごとユーザーの場所にインストールし PATH に追加（ポータブル zip が自らをインストール） |
 | `nx refcounts file.nx` | すべての retain と release の箇所 |
 | `nx leaks file.nx` | 確保を追跡しながら実行し、リークを報告 |
 | `nx lsp` | stdio 上の言語サーバ |
@@ -298,8 +320,9 @@ using arena {
 | `nx repl`、または単に `nx` | 対話セッション：コードを打ち、値を見て、束縛を保つ |
 
 オプション：`--mode debug|safe|fast|small`、`--target x86_64-linux-gnu`
-（`zig cc` が知るあらゆるターゲット）、`--out-dir`、`--keep-c`、`--cc`、
-C 連携用に `-I`、`--link`、`--link-path`、`--c-source`。
+（`zig cc` が知るあらゆるターゲット）、`--cpu baseline|native|<名前>`（既定は
+baseline。同じアーキテクチャのどのマシンでも動くバイナリになります）、`--out-dir`、
+`--keep-c`、`--cc`、C 連携用に `-I`、`--link`、`--link-path`、`--c-source`。
 
 ## 現状
 
@@ -310,8 +333,10 @@ Nexium で書かれ、自分自身をビルドします。すべてのサンプ�
 1.0 がまだ何でないか、そしてそれぞれがどこで答えられるかは
 [ロードマップ](../../../ROADMAP.md)の最初の節にあります。メモリ安全性は 1.2 まで
 保証されません（`unsafe` のないコードでもビューがその記憶域より長く生きることが
-あります）。ベンチマークの数値はまだなく、エコシステムはメンテナ一人と標準ライブラリ
-16 モジュールです。[`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md) は未修正のバグを
+あります）。ベンチマークの数値は[数値のページ](../../numbers.md)（5 言語で書いた 4 つの
+プログラムを同じランナーで、毎週再生成）にあるだけで、エコシステムはメンテナ一人、
+標準ライブラリ 16 モジュール、そしてツリー外からの最初のパッケージ（statusmith の
+[Discord Rich Presence SDK](../../discord.md)、`nx add discord_rpc ...`）です。[`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md) は未修正のバグを
 その修正案とともに、[`DECISIONS.md`](../../../DECISIONS.md) は仕様が開いていた箇所での
 すべての判断を列挙します。
 
@@ -358,13 +383,17 @@ Rust で書かれた最初のコンパイラは移植を牽引し、1.0 で削�
 
 | 言語 | 行数 | 割合 | 何か |
 | --- | --- | --- | --- |
-| Nexium | 36,193 | 91.0% | コンパイラとそのツール（`self/` 配下に 25,400 行）、標準ライブラリ、テストハーネスとファザー、サンプル、チュートリアルのプログラム、nexium-gui、サイト生成器、仕様スイート |
-| C | 2,021 | 5.1% | ランタイム `nx_rt.h`、GUI のウィンドウ層、同梱のテスト用 C |
-| エディタ用ファイル | 1,014 | 2.5% | tree-sitter クエリ、Emacs Lisp、Vim script、Neovim 用 Lua、そして Zed が拡張に要求する 25 行の Rust |
-| JavaScript、TypeScript | 550 | 1.4% | VS Code 拡張と tree-sitter 文法 |
+| Nexium | 38,374 | 85.4% | コンパイラとそのツール（`self/` 配下に 27,100 行）、標準ライブラリ、テストハーネスとファザー、サンプル、チュートリアルのプログラム、nexium-gui、サイト生成器、仕様スイート、ベンチマーク 4 つ |
+| C | 2,925 | 6.5% | ランタイム `nx_rt.h`、GUI のウィンドウ層、同梱のテスト用 C、ベンチマーク一つ |
+| Python | 1,063 | 2.4% | リリース用スクリプト（ノート、パッケージのマニフェスト、wheel と npm パッケージ、std ドキュメント）、ベンチマークランナー、ベンチマーク一つ |
+| エディタ用ファイル | 1,028 | 2.3% | tree-sitter クエリ、Emacs Lisp、Vim script、Neovim 用 Lua、そして Zed が拡張に要求する 25 行の Rust |
+| JavaScript、TypeScript | 550 | 1.2% | VS Code 拡張と tree-sitter 文法 |
+| Inno Setup、シェル、PowerShell | 777 | 1.7% | Windows インストーラのスクリプト、`install.sh`、`install.ps1`、Chocolatey のスクリプト |
+| Rust、Go、Ruby | 236 | 0.5% | Rust と Go にベンチマークが一つずつ、そして Homebrew の formula |
 
 コンパイラに Rust はありません。最初のコンパイラは移植を牽引して 1.0 で削除され
-（決定 90）、残る Rust は Zed が WebAssembly にコンパイルする Zed 拡張の接着部分だけです。
+（決定 90）、残る Rust は Zed が WebAssembly にコンパイルする Zed 拡張の接着部分と、
+比較対象として書かれたベンチマークプログラム一つ（Go の双子と並んで）です。
 Zig が表にないのは、ツリーに Zig のソースがないからです。`zig cc` は `nx` が実行する
 C コンパイラであり（Windows インストーラが同梱し、インストールスクリプトがダウンロード
 します）、C コンパイラが書くものではなく使うものであるのと同じです。
@@ -383,7 +412,12 @@ topo/           チュートリアル：各章と、そこで示すプログラ�
 site/           ドキュメントサイトの生成器。Nexium プログラム
 tests/          ハーネス（run.nx）、仕様の適合スイート（tests/spec）、コンパイル失敗ケース
 docs/           仕組み、言語リファレンス、組み込みガイド、i18n/ の翻訳
-assets/         ロゴとバナー
+bench/          数値のページを支える 5 言語 4 プログラム
+installers/     Windows インストーラのスクリプト、install.sh と install.ps1、winget と Chocolatey のマニフェスト
+docker/         ghcr.io 向けのコンパイラのイメージ（Debian と Alpine）
+Formula/, bucket/  Homebrew の tap と Scoop の bucket としてのこのリポジトリ（リリースごとに書き出し）
+scripts/        リリースノート、パッケージのマニフェスト、wheel と npm パッケージ、std のドキュメント
+assets/         ロゴ、バナー、ソーシャルプレビュー
 nexium-spec.txt          設計
 nexium-systems-spec.txt  アーカイブされたシステム言語。第 4〜9 節が構文リファレンス
 DECISIONS.md    仕様が開いていた箇所で下した決定

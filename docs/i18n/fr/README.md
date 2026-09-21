@@ -22,7 +22,7 @@
 </p>
 
 <p align="center">
-  <b>Un langage assez complet pour tout construire, et qui est aussi le meilleur choix pour une seule pièce d'autre chose.</b>
+  <b>Nexium est un langage assez complet pour tout construire, et qui est aussi le meilleur choix pour une seule pièce d'autre chose.</b>
 </p>
 
 <p align="center">
@@ -116,6 +116,24 @@ Le script vérifie le téléchargement contre les sommes de contrôle de la
 release, installe dans `~/.nexium`, met en place un compilateur C (les outils
 Xcode sur macOS ; sur Linux, Zig est téléchargé quand rien n'est trouvé) et
 ajoute `nx` à votre PATH.
+
+**Windows, depuis PowerShell** : `irm https://raw.githubusercontent.com/Londopy/nexium/main/installers/install.ps1 | iex`
+(la build portable, vérifiée, sur le PATH ; sans assistant).
+
+**pip ou npm** : `pip install nexium-lang` ou `npm install -g nexium-lang` (le binaire, par plateforme ; un compilateur C comme d'habitude).
+
+**Docker** : `docker run --rm -v "$PWD":/work ghcr.io/londopy/nexium run hello.nx`
+(Debian ; `:alpine` aussi ; amd64 et arm64).
+
+**Homebrew et Scoop** : le dépôt est son propre tap et son propre bucket.
+
+```bash
+brew tap londopy/tap https://github.com/Londopy/nexium && brew install londopy/tap/nexium
+```
+
+```powershell
+scoop install https://raw.githubusercontent.com/Londopy/nexium/main/bucket/nexium.json
+```
 
 Ensuite, dans une nouvelle console, `nx doctor` montre ce qui sera utilisé.
 Tous les détails, y compris la vérification des sommes et chaque variable
@@ -283,11 +301,12 @@ using arena {
 | commande | ce qu'elle fait |
 | --- | --- |
 | `nx build file.nx` | compile en exécutable (ou en objet quand il n'y a pas de `main`) |
-| `nx run file.nx` | compile et exécute |
-| `nx test file.nx [filter]` | exécute les blocs `test "..."` |
+| `nx run file.nx` | compile et exécute ; `--watch` relance dès qu'un fichier du programme change |
+| `nx test file.nx [filter]` | exécute les blocs `test "..."` ; `--watch` aussi |
 | `nx check file.nx` | vérifie les types et signale les violations d'effets |
 | `nx effects file.nx` | affiche les effets inférés de chaque fonction |
-| `nx audit file.nx` | liste les blocs `unsafe` et les globales mutables |
+| `nx explain file.nx f effect` | pourquoi `f` a l'effet : les appels qui l'apportent, jusqu'à la primitive, sous forme d'arbre |
+| `nx audit file.nx` | liste les blocs `unsafe` et les globales mutables ; `--lock` écrit le fichier de verrouillage des effets, `--check` échoue sur un effet gagné |
 | `nx ship file.nx` | produit chaque `artifact` déclaré |
 | `nx emit-c file.nx` | affiche le C généré |
 | `nx tir file.nx [--sigs]` | le programme vérifié en S-expressions (les tests du compilateur le lisent) |
@@ -295,6 +314,9 @@ using arena {
 | `nx fix file.nx` | réécrit les formes dépréciées que le compilateur sait migrer (aucune en 1.0 ; voir [docs/stability.md](../../stability.md)) |
 | `nx doc file.nx` | documentation HTML avec les effets inférés |
 | `nx size file.nx` | attribue les octets du binaire aux déclarations |
+| `nx layout file.nx [Type...]` | décalages, tailles et remplissage d'un struct ou d'un enum, et l'ordre par alignement qui le réduirait |
+| `nx upgrade` | la dernière release à la place de cet exécutable, vérifiée ; `--check` se contente de signaler |
+| `nx install [DIR]` | cette copie, avec ce qui l'accompagne, à la place de l'utilisateur et sur le PATH (le zip portable qui s'installe lui-même) |
 | `nx refcounts file.nx` | chaque site de retain et de release |
 | `nx leaks file.nx` | exécute avec suivi des allocations et signale les fuites |
 | `nx lsp` | serveur de langage sur stdio |
@@ -302,8 +324,10 @@ using arena {
 | `nx repl`, ou simplement `nx` | une session interactive : tapez du code, voyez les valeurs, gardez les liaisons |
 
 Options : `--mode debug|safe|fast|small`, `--target x86_64-linux-gnu` (toute
-cible connue de `zig cc`), `--out-dir`, `--keep-c`, `--cc`, et pour
-l'interopérabilité C `-I`, `--link`, `--link-path`, `--c-source`.
+cible connue de `zig cc`), `--cpu baseline|native|<nom>` (baseline par défaut,
+pour qu'un binaire tourne sur toute machine de son architecture), `--out-dir`,
+`--keep-c`, `--cc`, et pour l'interopérabilité C `-I`, `--link`, `--link-path`,
+`--c-source`.
 
 ## État
 
@@ -315,8 +339,11 @@ plateformes, sous les sanitizers et le fuzzer. Ce que 1.0 n'est pas encore,
 et où chaque point trouve sa réponse, est la première section de [la feuille
 de route](../../../ROADMAP.md) : la sûreté mémoire n'est pas garantie avant
 1.2 (une vue peut survivre à son stockage dans du code sans `unsafe`), il n'y
-a pas encore de chiffres de performance, et l'écosystème se résume à un seul
-mainteneur et seize modules de bibliothèque standard.
+a pas de chiffres de performance au-delà de [la page des chiffres](../../numbers.md)
+(quatre programmes en cinq langages sur un même runner, régénérée chaque
+semaine), et l'écosystème se résume à un seul mainteneur, seize modules de
+bibliothèque standard et un paquet venu d'ailleurs (le [SDK Discord Rich
+Presence](../../discord.md) de statusmith, `nx add discord_rpc ...`).
 [`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md) liste chaque bogue ouvert avec
 son correctif ; [`DECISIONS.md`](../../../DECISIONS.md), chaque choix fait là
 où la spécification était ouverte.
@@ -369,14 +396,18 @@ verrouillage) :
 
 | langage | lignes | part | ce que c'est |
 | --- | --- | --- | --- |
-| Nexium | 36 193 | 91,0 % | le compilateur et ses outils (25 400 lignes sous `self/`), la bibliothèque standard, le harnais de tests et le fuzzer, les exemples, les programmes du tutoriel, nexium-gui, le générateur du site, la suite de la spécification |
-| C | 2 021 | 5,1 % | le runtime `nx_rt.h`, la couche fenêtre de la GUI, du C de test embarqué |
-| fichiers d'éditeurs | 1 014 | 2,5 % | requêtes tree-sitter, Emacs Lisp, Vim script, Lua pour Neovim, et les 25 lignes de Rust que Zed exige d'une extension |
-| JavaScript, TypeScript | 550 | 1,4 % | l'extension VS Code et la grammaire tree-sitter |
+| Nexium | 38 374 | 85,4 % | le compilateur et ses outils (27 100 lignes sous `self/`), la bibliothèque standard, le harnais de tests et le fuzzer, les exemples, les programmes du tutoriel, nexium-gui, le générateur du site, la suite de la spécification, quatre benchmarks |
+| C | 2 925 | 6,5 % | le runtime `nx_rt.h`, la couche fenêtre de la GUI, du C de test embarqué, un benchmark |
+| Python | 1 063 | 2,4 % | les scripts de release (notes, manifestes de paquets, wheels et paquets npm, la documentation de std), le lanceur de benchmarks, un benchmark |
+| fichiers d'éditeurs | 1 028 | 2,3 % | requêtes tree-sitter, Emacs Lisp, Vim script, Lua pour Neovim, et les 25 lignes de Rust que Zed exige d'une extension |
+| JavaScript, TypeScript | 550 | 1,2 % | l'extension VS Code et la grammaire tree-sitter |
+| Inno Setup, shell, PowerShell | 777 | 1,7 % | le script de l'installateur Windows, `install.sh`, `install.ps1`, les scripts Chocolatey |
+| Rust, Go, Ruby | 236 | 0,5 % | un benchmark en Rust et un en Go, et la formule Homebrew |
 
 Il n'y a pas de Rust dans le compilateur : le premier compilateur a servi au
-portage et a été supprimé en 1.0 (décision 90) ; le Rust qui reste est la
-colle de l'extension Zed, que Zed compile en WebAssembly. Zig n'est pas dans
+portage et a été supprimé en 1.0 (décision 90). Le Rust qui reste est la
+colle de l'extension Zed, que Zed compile en WebAssembly, et un programme de
+benchmark écrit pour servir de mesure, à côté de son jumeau en Go. Zig n'est pas dans
 le tableau parce qu'il n'y a aucune source Zig dans l'arbre : `zig cc` est le
 compilateur C que `nx` lance (embarqué par l'installateur Windows, téléchargé
 par le script d'installation), de la même façon qu'un compilateur C s'utilise
@@ -396,7 +427,12 @@ topo/           le tutoriel : les chapitres et les programmes qu'ils montrent (e
 site/           le générateur du site de documentation, un programme Nexium
 tests/          le harnais (run.nx), la suite de conformité à la spécification (tests/spec) et les cas de compile-fail
 docs/           comment ça marche, référence du langage, guide d'intégration, traductions dans i18n/
-assets/         logo et bannière
+bench/          quatre programmes en cinq langages derrière la page des chiffres
+installers/     le script de l'installateur Windows, install.sh et install.ps1, les manifestes winget et Chocolatey
+docker/         les images du compilateur pour ghcr.io (Debian et Alpine)
+Formula/, bucket/  ce dépôt comme tap Homebrew et bucket Scoop (écrits à chaque release)
+scripts/        notes de release, manifestes de paquets, wheels et paquets npm, la documentation de std
+assets/         logo, bannière et l'aperçu social
 nexium-spec.txt          la conception
 nexium-systems-spec.txt  le langage système archivé ; les sections 4 à 9 sont la référence de syntaxe
 DECISIONS.md    décisions prises là où la spécification était ouverte
