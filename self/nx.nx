@@ -1062,9 +1062,52 @@ fn cmd_doctor(o: *Opts) -> i32 {
         println("  - any:     put zig on the PATH, or set NX_ZIG=/path/to/zig or NX_CC=gcc", .{})
         return 1
     }
+    // the answer that matters: a program goes through the checker, the C
+    // emitter, the C compiler, the linker, and runs. 1.0.1's doctor said
+    // "everything works" on a machine where the compiler could not compile a
+    // line, because it had only asked the C compiler for its version.
+    if !doctor_smoke(o) { return 1 }
     println("", .{})
     println("everything works. Try: nx run examples/hello.nx", .{})
     return 0
+}
+
+/// Build and run a one-line program in the temporary directory and report.
+fn doctor_smoke(o: *Opts) -> bool {
+    let dir = fs.join(fs.temp_dir()[..], "nx-doctor")
+    fs.make_dirs(dir[..]) catch { }
+    let src = fs.join(dir[..], "probe.nx")
+    io.write_file(src[..], "fn main() { println(\"nx doctor: ok\", .{}) }\n") catch {
+        println("smoke test:  cannot write to {}", .{dir})
+        return false
+    }
+    var p = clone_opts(o)
+    p.command = String.from("run")
+    p.file = src.clone()
+    p.out_dir = dir.clone()
+    p.out = String.new()
+    var exe = String.new()
+    if !cmd_build(&mut p, true, &mut exe) {
+        println("smoke test:  FAILED: the probe program did not compile (the diagnostics above say why)", .{})
+        return false
+    }
+    var argv = List([]u8).new()
+    argv.append(exe[..])
+    let code = os.exec(argv[..], "", "") catch { -1 }
+    let out = os.last_stdout()
+    io.remove_file(exe[..]) catch { }
+    io.remove_file(src[..]) catch { }
+    if code == 0 and out[..].find("nx doctor: ok") != null {
+        println("smoke test:  a program compiles and runs (checker, C emitter, C compiler, linker, executable)", .{})
+        return true
+    }
+    println("smoke test:  FAILED: the compiled program exited with {}", .{code})
+    if code == -1073741795 or code == 132 or code == -4 {
+        println("             an illegal instruction: the C compiler built it for another CPU (see docs/install.md, \"Which CPU a binary is built for\"; try NX_CPU=baseline)", .{})
+    } else {
+        println("             {}", .{os.last_stderr()[..].trim()})
+    }
+    return false
 }
 
 /// The C compiler and why it is the one, for the REPL banner: "zig via NX_ZIG".

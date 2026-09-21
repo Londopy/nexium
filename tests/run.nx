@@ -273,7 +273,12 @@ fn suite_examples(e: *Env, failures: *mut List(String)) {
     }
     cases.append(Case{ .kind = String.from("test"), .path = String.from("examples/tests.nx") })
     run_cases(e, &cases, failures)
-    println("examples: {} programs", .{cases.len})
+    // `nx doctor` must compile and run a program, not only find a C compiler
+    let d = nx(e, ["doctor"][..])
+    if d.code != 0 or d.stdout[..].find("smoke test:  a program compiles and runs") == null {
+        failures.append(format("examples: nx doctor did not pass its smoke test:\n{}{}", .{d.stdout, d.stderr}))
+    }
+    println("examples: {} programs, and nx doctor", .{cases.len})
 }
 
 fn suite_spec(e: *Env, failures: *mut List(String)) {

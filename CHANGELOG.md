@@ -10,6 +10,16 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ## [Unreleased]
 
+### Changed
+
+- `nx doctor` compiles and runs a one-line program before it says
+  "everything works": the checker, the C emitter, the C compiler, the
+  linker and the executable all have to answer. 1.0.1's doctor reported a
+  working installation on a machine where the compiler could not compile
+  a line, because it had only asked the C compiler for its version. An
+  illegal instruction from the probe is named as such, with the fix. The
+  harness runs the check.
+
 ### Added
 
 - A Sublime Text build system, `editors/sublime/Nexium.sublime-build`:
