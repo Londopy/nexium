@@ -277,7 +277,7 @@ end;
 // opens its latest release. Nothing is downloaded by the installer itself.
 
 const
-  ProjectCount = 3;
+  ProjectCount = 4;
 
 var
   MorePage: TWizardPage;
@@ -309,26 +309,26 @@ begin
   Text := TNewStaticText.Create(MorePage);
   Text.Parent := MorePage.Surface;
   Text.Left := 0;
-  Text.Top := Top + ScaleY(18);
-  Text.Width := MorePage.SurfaceWidth - ScaleX(220);
+  Text.Top := Top + ScaleY(16);
+  Text.Width := MorePage.SurfaceWidth - ScaleX(186);
   Text.WordWrap := True;
   Text.AutoSize := False;
-  Text.Height := ScaleY(48);
+  Text.Height := ScaleY(30);
   Text.Caption := Blurb;
   OpenBtn := TNewButton.Create(MorePage);
   OpenBtn.Parent := MorePage.Surface;
-  OpenBtn.Left := MorePage.SurfaceWidth - ScaleX(210);
-  OpenBtn.Top := Top + ScaleY(14);
-  OpenBtn.Width := ScaleX(100);
+  OpenBtn.Left := MorePage.SurfaceWidth - ScaleX(178);
+  OpenBtn.Top := Top + ScaleY(10);
+  OpenBtn.Width := ScaleX(86);
   OpenBtn.Height := ScaleY(23);
-  OpenBtn.Caption := 'Open on GitHub';
+  OpenBtn.Caption := 'GitHub';
   OpenBtn.Tag := Index * 2;
   OpenBtn.OnClick := @OpenProjectClick;
   DownloadBtn := TNewButton.Create(MorePage);
   DownloadBtn.Parent := MorePage.Surface;
-  DownloadBtn.Left := MorePage.SurfaceWidth - ScaleX(104);
-  DownloadBtn.Top := Top + ScaleY(14);
-  DownloadBtn.Width := ScaleX(104);
+  DownloadBtn.Left := MorePage.SurfaceWidth - ScaleX(86);
+  DownloadBtn.Top := Top + ScaleY(10);
+  DownloadBtn.Width := ScaleX(86);
   DownloadBtn.Height := ScaleY(23);
   DownloadBtn.Caption := 'Download';
   DownloadBtn.Tag := Index * 2 + 1;
@@ -349,16 +349,19 @@ begin
   Intro.Width := MorePage.SurfaceWidth;
   Intro.WordWrap := True;
   Intro.AutoSize := False;
-  Intro.Height := ScaleY(28);
-  Intro.Caption := 'Each button opens a page in your browser. "Download" goes to the latest release.';
-  AddProject(0, ScaleY(40), 'HideDesktopApps',
-    'A lightweight system-tray app that hides and shows desktop icons, the taskbar and all windows with hotkeys. For ricing, streaming and focus.',
+  Intro.Height := ScaleY(16);
+  Intro.Caption := 'Each button opens a page in your browser; "Download" goes to the latest release.';
+  AddProject(0, ScaleY(22), 'statusmith',
+    'Discord Rich Presence from your tray: presets, live values, rotation. Its SDK is a Nexium package.',
+    'https://github.com/Londopy/statusmith');
+  AddProject(1, ScaleY(74), 'HideDesktopApps',
+    'A tray app that hides and shows desktop icons, the taskbar and every window with hotkeys.',
     'https://github.com/Londopy/HideDesktopApps');
-  AddProject(1, ScaleY(116), 'capture-bypass',
-    'A DLL injection tool that bypasses screen-capture protection on Windows 10 and 11, so protected windows show up in recordings.',
+  AddProject(2, ScaleY(126), 'capture-bypass',
+    'A DLL injection tool that lets screen-capture-protected windows show up in recordings.',
     'https://github.com/Londopy/capture-bypass');
-  AddProject(2, ScaleY(192), 'gesture-synth',
-    'A chord instrument you play with your hands in front of a camera: hand tracking drives a polyphonic synth in the browser.',
+  AddProject(3, ScaleY(178), 'gesture-synth',
+    'A chord instrument played with your hands in front of a camera: hand tracking drives a synth.',
     'https://github.com/Londopy/gesture-synth');
 end;
 
