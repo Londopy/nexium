@@ -1,6 +1,7 @@
 // EXPECT: function `callback` is declared `!blocks` but has the `blocks` effect
 // EXPECT: this call acquires `blocks`
 // EXPECT: introduced by `log` here: writing to stdout may block
+// EXPECT: transitive_effect.nx:5:21
 fn log(msg: []u8) { println("{}", .{msg}) }
 
 fn callback(x: i32) -> i32 !blocks {

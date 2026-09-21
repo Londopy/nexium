@@ -2361,7 +2361,7 @@ impl Checker {
                 if intro == NONE { continue }
                 let why = self.introducer_why(intro, bit)
                 if intro == i {
-                    self.note(fm, self.insts[intro].start, format("the effect is introduced here: {}", .{why})[..])
+                    self.note(fm, self.introducer_at(intro, bit), format("the effect is introduced here: {}", .{why})[..])
                 } else {
                     // the first call in this function on a path to the introducer
                     var call_at = fstart
@@ -2369,7 +2369,7 @@ impl Checker {
                         if (self.insts[c].effects & bit) != 0 and ci < self.insts[i].callee_spans.len { call_at = self.insts[i].callee_spans[ci]; break }
                     }
                     self.note(fm, call_at, format("this call acquires `{}`", .{nm})[..])
-                    self.note(self.insts[intro].module, self.insts[intro].start, format("introduced by `{}` here: {}", .{self.insts[intro].name, why})[..])
+                    self.note(self.insts[intro].module, self.introducer_at(intro, bit), format("introduced by `{}` here: {}", .{self.insts[intro].name, why})[..])
                 }
             }
         }
@@ -2396,6 +2396,14 @@ impl Checker {
             }
         }
         return NONE
+    }
+
+    /// Where effect `bit` enters `inst`: the recorded witness (the call, the
+    /// append, the write), or the function's header when there is none (an
+    /// extern function has no body to point into).
+    fn introducer_at(self: *mut Self, inst: usize, bit: u64) -> usize {
+        for w in self.insts[inst].witnesses { if (w.effects & bit) != 0 { return w.at } }
+        return self.insts[inst].start
     }
 
     fn introducer_why(self: *mut Self, inst: usize, bit: u64) -> String {

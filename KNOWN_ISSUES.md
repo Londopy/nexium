@@ -69,16 +69,6 @@ Fixed bugs are not listed here; `CHANGELOG.md` and `git log` have them.
   accepting any sequence by copying. Regression tests in the CI Python
   step: list, read-only `bytes`, wrong-format `array.array("f")`, and a
   non-contiguous `memoryview` slice all rejected for `[]mut f64`.
-- **Effect notes point at the function, not the witness.** The checker
-  records where an effect enters a function (`Witness.at`), but
-  `check_effect_bounds` prints the notes at `insts[i].start`, so "the
-  effect is introduced here: appending to a List may grow it" points at
-  the declaration rather than the `append`. The README's "exact line" is
-  not yet true. Fix: use the witness position for a direct introduction
-  and for the last hop of a transitive chain (the call sites are already
-  right); the compile-fail cases check message text only, so add the
-  line and column to the expected diagnostics.
-
 - **No `.clone()` on user structs.** `List`, `String` and `Map` clone, but a
   struct holding them cannot be copied without writing a function by hand;
   code that needs a copy of a list element must return an index instead

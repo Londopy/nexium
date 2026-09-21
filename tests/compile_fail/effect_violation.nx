@@ -1,5 +1,6 @@
 // EXPECT: function `hot` is declared `!allocates` but has the `allocates` effect
 // EXPECT: the effect is introduced here: appending to a List may grow it
+// EXPECT: effect_violation.nx:6:5
 fn hot(n: i32) -> i32 !allocates {
     var list = List(i32).new()
     list.append(n)

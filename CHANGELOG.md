@@ -33,6 +33,14 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 *Annapurna: Terray* — the one who carried the frostbitten summiters down: the hotfix. The x86-64 binaries of 1.0.0 and 1.0.1 were built for the CPU of the machine that built them and crashed on any other; every build is for the architecture's baseline now, and the release refuses one that is not. With it, the fuzzer's two fixes, UTF-8 on the Windows console, and the day's documentation.
 
+### Fixed
+
+- The `!effect` diagnostic's notes point at the recorded witness (the
+  `append`, the `println`, the call) rather than at the header of the
+  function that holds it; the README's "exact line" is true again. The
+  compile-fail cases now pin the line and column of the notes, which is
+  how the wrong position went unnoticed.
+
 ### Added
 
 - `--cpu baseline|native|<name>` and `NX_CPU`, the CPU a build without
