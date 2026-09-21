@@ -539,10 +539,11 @@ fn edit_line(prompt: []u8, history: *List(String), s: *Session) -> ?String {
 }
 
 /// Run the session until the input ends or the user quits; the exit code.
-pub fn run(version: []u8, compiler: []u8, host: []u8, std_dir: []u8, cc: *List(String)) -> i32 {
+pub fn run(version: []u8, compiler: []u8, host: []u8, std_dir: []u8, cc: *List(String), newer: []u8) -> i32 {
     let interactive = io.is_terminal(1)
     if interactive and (host != "windows" or os.env("WT_SESSION") != null) { print("\x1b]0;Nexium {}\x07", .{version}) }
     println("Nexium {} (nx repl, {}) on {}", .{version, compiler, host})
+    if newer.len > 0 { println("nx {} is available: `nx upgrade` installs it.", .{newer}) }
     println("Type :help for commands, :quit to exit.", .{})
     var session = new_session()
     var pending = String.new()

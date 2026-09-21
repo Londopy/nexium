@@ -1462,6 +1462,10 @@ fn doctor_updates() {
         return
     }
     let latest = if tag.starts_with("v") { tag[1..] } else { tag }
+    var cache = read_update_cache(update_cache_path()[..])
+    cache.checked = time.now() / 1000
+    cache.latest = String.from(latest)
+    write_update_cache(update_cache_path()[..], &cache)
     let c = compare_versions(latest, VERSION)
     if c > 0 {
         println("latest release: {}; this is {}, and `nx upgrade` installs it", .{tag, VERSION})
@@ -1470,6 +1474,92 @@ fn doctor_updates() {
     } else {
         println("latest release: {}; this is {}, ahead of it", .{tag, VERSION})
     }
+}
+
+/// Where the daily release check keeps its answer: NX_UPDATE_CACHE, the
+/// portable copy's cache directory, or the user's Nexium directory.
+fn update_cache_path() -> String {
+    if let p = os.env("NX_UPDATE_CACHE") { return String.from(p) }
+    let portable = portable_dir()
+    if portable.len > 0 { return format("{}/cache/update-check", .{portable}) }
+    if host_os() == "windows" {
+        let la = os.env("LOCALAPPDATA") orelse return String.new()
+        return format("{}\\Nexium\\update-check", .{la})
+    }
+    let home = os.env("HOME") orelse return String.new()
+    return format("{}/.nexium/update-check", .{home})
+}
+
+/// When the release was last asked for and last named, in seconds since
+/// 1970, and the version the answer named ("" for none yet).
+struct UpdateCache {
+    checked: i64
+    noticed: i64
+    latest: String
+}
+
+fn read_update_cache(path: []u8) -> UpdateCache {
+    var c = UpdateCache{ .checked = 0, .noticed = 0, .latest = String.new() }
+    if path.len == 0 { return c }
+    let text = io.read_file(path) catch { return c }
+    for line in text[..].lines() {
+        let t = line.trim()
+        if t.len > 8 and t[..8] == "checked " { c.checked = t[8..].parse_int(i64) catch { 0 } }
+        else if t.len > 8 and t[..8] == "noticed " { c.noticed = t[8..].parse_int(i64) catch { 0 } }
+        else if t.len > 7 and t[..7] == "latest " { c.latest = String.from(t[7..]) }
+    }
+    return c
+}
+
+fn write_update_cache(path: []u8, c: *UpdateCache) {
+    if path.len == 0 { return }
+    fs.make_dirs(dir_of(path)[..]) catch { return }
+    io.write_file(path, format("checked {}\nnoticed {}\nlatest {}\n", .{c.checked, c.noticed, c.latest})[..]) catch { }
+}
+
+/// The latest release's version from the GitHub API (curl, as the doctor
+/// asks), or null when curl or the network does not answer in `seconds`.
+fn latest_release(seconds: []u8) -> ?String {
+    var auth = String.new()
+    var argv = github_api_argv(seconds, &mut auth)
+    let code = os.exec(argv[..], "", "") catch { -1 }
+    if code != 0 { return null }
+    let out = os.last_stdout()
+    let tag = json_string(out[..], "tag_name") orelse return null
+    return String.from(if tag.starts_with("v") { tag[1..] } else { tag })
+}
+
+/// Once a day, after a command has done its work: is there a newer release?
+/// The answer is kept in the update cache, and a newer release is named on
+/// stderr once a day with the way to get it. NX_NO_UPDATE_CHECK=1 silences
+/// the question and the notice; NX_OFFLINE=1 and a CI variable skip the
+/// question but not a cached answer; nothing is asked more than once a day,
+/// answer or not, so a machine without curl asks once and is quiet.
+fn update_notice() {
+    if let off = os.env("NX_NO_UPDATE_CHECK") { if off.len > 0 { return } }
+    let path = update_cache_path()
+    var c = read_update_cache(path[..])
+    let now = time.now() / 1000
+    let day: i64 = 86400
+    if os.env("NX_OFFLINE") == null and os.env("CI") == null and now - c.checked >= day {
+        c.checked = now
+        if let v = latest_release("2") { c.latest = v }
+        write_update_cache(path[..], &c)
+    }
+    if c.latest.len > 0 and compare_versions(c.latest[..], VERSION) > 0 and now - c.noticed >= day {
+        eprintln("nx {} is available (this is {}): `nx upgrade` installs it; https://github.com/Londopy/nexium/releases/latest", .{c.latest, VERSION})
+        c.noticed = now
+        write_update_cache(path[..], &c)
+    }
+}
+
+/// The newer release the cache already names, for the REPL's banner; it
+/// never asks.
+fn cached_newer_release() -> ?String {
+    if let off = os.env("NX_NO_UPDATE_CHECK") { if off.len > 0 { return null } }
+    let c = read_update_cache(update_cache_path()[..])
+    if c.latest.len > 0 and compare_versions(c.latest[..], VERSION) > 0 { return c.latest.clone() }
+    return null
 }
 
 /// `nx upgrade`: the latest release for this machine in place of the
@@ -1828,6 +1918,9 @@ fn main() -> u8 {
         usage()
         return 2
     }
+    // the commands that do work get the daily word on a newer release; the
+    // ones that are about the release, the editor's server and the one-liners do not
+    let quiet = o.command == "upgrade" or o.command == "doctor" or o.command == "lsp" or o.command == "repl" or o.command == "-e" or o.command == "-p" or o.command == "version" or o.command == "--version" or o.command == "-V"
     var code: i32 = 0
     if o.command == "build" {
         var out = String.new()
@@ -1890,7 +1983,8 @@ fn main() -> u8 {
         lsp.run(VERSION, o.std_dir[..], &o.cc)
         code = 0
     } else if o.command == "repl" {
-        code = repl.run(VERSION, compiler_summary(&o)[..], host_os()[..], o.std_dir[..], &o.cc)
+        let newer = cached_newer_release() orelse String.new()
+        code = repl.run(VERSION, compiler_summary(&o)[..], host_os()[..], o.std_dir[..], &o.cc, newer[..])
     } else if o.command == "-e" or o.command == "-p" {
         code = repl.eval(o.file[..], o.command == "-p", o.std_dir[..], &o.cc)
     } else if o.command == "upgrade" {
@@ -1899,5 +1993,6 @@ fn main() -> u8 {
         usage()
         return 2
     }
+    if !quiet { update_notice() }
     return (if code < 0 or code > 255 { 1 } else { code }) as u8
 }

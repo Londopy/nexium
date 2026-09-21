@@ -287,6 +287,29 @@ fn suite_examples(e: *Env, failures: *mut List(String)) {
     } else if d.stdout[..].find("latest release:") == null {
         failures.append(format("examples: nx doctor did not report the latest release:\n{}", .{d.stdout}))
     }
+    // the daily update notice: a cached answer naming a newer release is
+    // printed once, on stderr, and NX_NO_UPDATE_CHECK=1 silences it; the cache
+    // stays set for the rest of the run so no later case asks the network
+    let cache = fs.join(e.root[..], "nx-out/harness/update-check")
+    let stamp = time.now() / 1000
+    fs.write(cache[..], format("checked {}\nnoticed 0\nlatest 99.0.0\n", .{stamp})[..]) catch { }
+    os.set_env("NX_UPDATE_CACHE", cache[..])
+    let n1 = nx(e, ["run", "examples/hello.nx", "--out-dir", "nx-out/harness/notice"][..])
+    if n1.stderr[..].find("nx 99.0.0 is available") == null {
+        failures.append(format("examples: a cached newer release was not announced:\n{}{}", .{n1.stdout, n1.stderr}))
+    }
+    let n2 = nx(e, ["run", "examples/hello.nx", "--out-dir", "nx-out/harness/notice"][..])
+    if n2.stderr[..].find("is available") != null {
+        failures.append(format("examples: the update notice repeated within a day:\n{}", .{n2.stderr}))
+    }
+    fs.write(cache[..], format("checked {}\nnoticed 0\nlatest 99.0.0\n", .{stamp})[..]) catch { }
+    os.set_env("NX_NO_UPDATE_CHECK", "1")
+    let n3 = nx(e, ["run", "examples/hello.nx", "--out-dir", "nx-out/harness/notice"][..])
+    os.set_env("NX_NO_UPDATE_CHECK", "")
+    if n3.stderr[..].find("is available") != null {
+        failures.append(format("examples: NX_NO_UPDATE_CHECK=1 did not silence the update notice:\n{}", .{n3.stderr}))
+    }
+    fs.write(cache[..], format("checked {}\nnoticed {}\nlatest {}\n", .{stamp, stamp, "0.0.0"})[..]) catch { }
     // --watch: the program runs again after a file changes (a thread rewrites
     // it two seconds in; NX_WATCH_ROUNDS=1 stops after that rerun)
     let wsrc = fs.join(e.root[..], "nx-out/cases/watch.nx")

@@ -287,6 +287,24 @@ upgraded the way it came: the installer (it offers the upgrade), `winget
 upgrade Londopy.Nexium`, `scoop update nexium`, `brew upgrade nexium`,
 `pip install -U nexium-lang`, `npm update -g nexium-lang`.
 
+You do not have to ask. Once a day, after a command has done its work,
+`nx` asks GitHub for the latest release and, when there is a newer one,
+says so once, on stderr:
+
+```
+nx 1.1.1 is available (this is 1.1.0): `nx upgrade` installs it; https://github.com/Londopy/nexium/releases/latest
+```
+
+The REPL's banner names it too. The answer is kept in
+`~/.nexium/update-check` (`%LocalAppData%\Nexium\update-check` on
+Windows, `cache/update-check` beside a portable copy, or the file
+`NX_UPDATE_CACHE` names), so no command waits for more than that one
+question a day, and a machine without `curl` asks once and is quiet.
+`NX_NO_UPDATE_CHECK=1` silences the question and the notice;
+`NX_OFFLINE=1` or a `CI` variable skips the question but not an answer
+already cached. `nx doctor`, `nx upgrade`, `nx lsp` and the one-liners
+never print it.
+
 ## Torrents
 
 Every file of a release is also attached as a `.torrent`, one file each,

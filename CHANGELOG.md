@@ -10,6 +10,17 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ## [Unreleased]
 
+### Added
+
+- `nx` says once a day when a newer release exists, the way npm and Deno
+  do: after a command has done its work, one line on stderr names the
+  release and `nx upgrade`, and the REPL's banner names it too. The
+  question to GitHub is asked at most once a day (kept in
+  `~/.nexium/update-check`, `%LocalAppData%\Nexium\update-check` on
+  Windows, or beside a portable copy) and never in CI or with
+  `NX_OFFLINE=1`; `NX_NO_UPDATE_CHECK=1` silences it. The harness checks
+  the notice, its once-a-day silence and the switch.
+
 ### Changed
 
 - The Windows installer's welcome page shows the mark over the social
