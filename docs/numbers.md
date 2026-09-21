@@ -5,7 +5,9 @@ machine on one day: the median wall time of several runs, in seconds,
 smaller is better. What each program measures, the rules, and how to run
 them yourself are in [`bench/`](https://github.com/Londopy/nexium/tree/main/bench);
 the Bench workflow regenerates this page on a GitHub runner weekly and at
-every tag, and fails when Nexium gets a quarter slower than the last run.
+every tag (on the branch `numbers` when `main` is protected, and the site
+shows that copy), and fails when Nexium gets a quarter slower than the
+last run.
 
 Measured 2026-09-20 on MSI, Windows-11-10.0.26200-SP0, Intel64 Family 6 Model 198 Stepping 2, GenuineIntel; 3 runs each.
 

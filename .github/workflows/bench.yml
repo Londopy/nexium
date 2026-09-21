@@ -1,6 +1,9 @@
 # The numbers page: bench/ in five languages on a GitHub runner, the medians
 # committed to bench/results/latest.json and docs/numbers.md; a Nexium
-# median a quarter slower than the last run fails the job.
+# median a quarter slower than the last run fails the job. A protected main
+# refuses the workflow's push: the numbers then live on the branch
+# `numbers`, the last run there is the baseline, and the site reads the
+# page from there.
 name: Bench
 
 on:
@@ -31,16 +34,26 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Build nx from the seed
         run: sh bootstrap/build.sh
+      - name: The last run, as the baseline
+        run: |
+          cp bench/results/latest.json nx-out/baseline.json
+          if git fetch --depth=1 origin numbers 2>/dev/null; then
+            git show FETCH_HEAD:bench/results/latest.json > nx-out/baseline.json
+            echo "the baseline is the numbers branch"
+          fi
       - name: Run the benchmarks
         run: |
-          python bench/run.py --runs 7 --nx nx-out/bootstrap/nx2 --check bench/results/latest.json --out bench/results/latest.json --page docs/numbers.md
+          python bench/run.py --runs 7 --nx nx-out/bootstrap/nx2 --check nx-out/baseline.json --out bench/results/latest.json --page docs/numbers.md
       - name: Commit the numbers
         run: |
           git fetch --depth=1 origin main
           git checkout -B main origin/main
           git add bench/results/latest.json docs/numbers.md
-          if git -c user.name=Londopy -c user.email=Londopy@users.noreply.github.com commit -q -m "bench: the numbers for $(date -u +%Y-%m-%d)"; then
-            git push origin main
-          else
+          if ! git -c user.name=Londopy -c user.email=Londopy@users.noreply.github.com commit -q -m "bench: the numbers for $(date -u +%Y-%m-%d)"; then
             echo "the numbers did not change"
+          elif git push origin main; then
+            echo "the numbers are on main"
+          else
+            git push --force origin HEAD:refs/heads/numbers
+            echo "::notice::main is protected, so the numbers live on the branch numbers, which the site reads. To land them on main: git fetch origin numbers && git cherry-pick FETCH_HEAD && git push origin main"
           fi

@@ -10,6 +10,16 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ## [Unreleased]
 
+### Fixed
+
+- The Release and Bench workflows could not commit the package-manager
+  manifests and the numbers to a protected `main` (both jobs of v1.0.3
+  failed on the push, the release itself was fine). A refused push now
+  puts the commit on a branch (`packaging/vx.y.z`, `numbers`) and the job
+  says how to land it; the site reads the numbers page from that branch,
+  the next Bench run measures against it, and the release steps in
+  `CONTRIBUTING.md` name the landing.
+
 ## [1.0.3] - 2026-09-20
 
 *Annapurna: Schatz* — the one who found the summit party in the crevasse the morning after: the long-hidden bugs, and then the roads in. An outside review of 1.0.1 read the code and found five bugs that had been there since their features shipped: a contained panic leaked what the call acquired, the lockfile pinned nothing, the Python wrapper dropped writes to a mutable slice, effect notes pointed at the function instead of the line, and `SECURITY.md` promised more than the specification did. All five are fixed here, the compile-time interpreter is freed from its 32-call limit, and the roadmap's quick wins that followed are in too: every way to install (a one-liner on each platform, pip and npm, Homebrew, Scoop, winget and Chocolatey, Docker, torrents), `nx upgrade`, `nx install`, `nx layout`, `nx explain`, the effects lockfile, code lenses with the panic proof, the REPL's line editor and one-liners, watch mode, the numbers page, and the first package from outside the tree.

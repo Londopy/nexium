@@ -21,8 +21,10 @@ python bench/run.py --check bench/results/latest.json   # fails when Nexium got 
 
 The Bench workflow runs this on a GitHub runner (the same kind each time)
 weekly and at every tag, commits `bench/results/latest.json` and
-`docs/numbers.md`, and fails on a regression. A number here is a median
-on one machine on one day; the page names both.
+`docs/numbers.md` (to `main`, or to the branch `numbers` when `main` is
+protected; the site reads the page from there and the next run measures
+against it), and fails on a regression. A number here is a median on one
+machine on one day; the page names both.
 
 The rule for a program: no tricks a reader would not write by hand in
 that language, the standard library where the language has one, one file

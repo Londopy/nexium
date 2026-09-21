@@ -168,3 +168,11 @@ skips too (spell it out, "the skip marker", when writing about it).
    workflow refuses a tag that does not match `self/nx.nx`, builds `nx` from
    the seed for Windows, Linux, and macOS, and publishes a GitHub release
    with the changelog section as its notes.
+4. Land what the workflows could not. The release workflow commits the
+   package-manager manifests (`Formula/`, `bucket/`, `installers/`) to
+   `main`, and the Bench workflow the numbers; a protected `main` refuses
+   those pushes, so the commits wait on `packaging/vx.y.z` and `numbers`
+   and each job's notice says so. Land them with
+   `git fetch origin packaging/vx.y.z && git cherry-pick FETCH_HEAD && git push origin main`
+   (the same for `numbers`; the site reads the numbers page from that
+   branch either way).

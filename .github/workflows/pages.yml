@@ -31,6 +31,14 @@ jobs:
           version: ${{ env.ZIG_VERSION }}
       - name: Build nx from the seed
         run: sh bootstrap/build.sh
+      # the numbers page from the Bench workflow's branch, where the numbers
+      # live when a protected main refused the workflow's commit
+      - name: The latest numbers
+        run: |
+          if git fetch --depth=1 origin numbers 2>/dev/null; then
+            git checkout FETCH_HEAD -- docs/numbers.md bench/results/latest.json
+            echo "the numbers page is the numbers branch's"
+          fi
       - name: Build the site
         run: |
           export NX_ZIG=zig
