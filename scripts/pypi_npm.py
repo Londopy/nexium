@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Wheels and npm packages that carry the compiler, from a release's archives.
 
-    python scripts/pypi_npm.py v1.0.3 artifacts/
+    python scripts/pypi_npm.py v1.1.0 artifacts/
 
 For every `nx-<tag>-<target>.tar.gz` or `.zip` in the directory:
 

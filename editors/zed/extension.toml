@@ -1,6 +1,6 @@
 id = "nexium"
 name = "Nexium"
-version = "0.1.0"
+version = "0.2.0"
 schema_version = 1
 authors = ["Londopy"]
 description = "Nexium: highlighting, outline, brackets and the nx language server"
@@ -9,7 +9,7 @@ repository = "https://github.com/Londopy/nexium"
 [grammars.nexium]
 repository = "https://github.com/Londopy/nexium"
 # the commit of the 1.0.0 release; bump when the grammar changes
-rev = "cc72fa69d97151a0bd65cf2e8d48989b10dfc213"
+rev = "21c3a2c07be28c25fc833e97085633ac5d804742"
 path = "editors/tree-sitter-nexium"
 
 [language_servers.nexium]

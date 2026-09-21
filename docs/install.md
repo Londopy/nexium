@@ -50,7 +50,7 @@ it against the release's `SHA256SUMS.txt`, installs `nx.exe`, the standard
 library, the examples and the docs to `%LocalAppData%\Programs\Nexium`,
 adds that directory to the user's PATH, and downloads Zig beside it when
 no C compiler is found. No wizard, no administrator rights, nothing
-registered. Variables, set before the line: `NEXIUM_VERSION=v1.0.3` pins a
+registered. Variables, set before the line: `NEXIUM_VERSION=v1.1.0` pins a
 release, `NEXIUM_HOME` changes the directory, `NEXIUM_NO_MODIFY_PATH=1`
 leaves the PATH alone, `NEXIUM_NO_ZIG=1` never downloads Zig. Remove it by
 deleting the directory and the PATH entry.
@@ -104,7 +104,7 @@ board), or the download fails, the script builds `nx` from the one C file
 below with the C compiler it finds (`cc`, `gcc`, `clang` or `zig`) and
 installs that instead.
 
-Variables: `NEXIUM_VERSION=v1.0.3` pins a release, `NEXIUM_HOME` changes the
+Variables: `NEXIUM_VERSION=v1.1.0` pins a release, `NEXIUM_HOME` changes the
 directory, `NEXIUM_NO_MODIFY_PATH=1` leaves shell files alone,
 `NEXIUM_NO_ZIG=1` never downloads Zig, `NEXIUM_FROM_SOURCE=1` builds from
 the one C file even when a release exists. Uninstall by deleting `~/.nexium`
@@ -175,11 +175,11 @@ is the whole `nx`, on any Unix the C compiler runs on, including machines
 no release is built for:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Londopy/nexium/v1.0.3/bootstrap/nx.c -o nx.c
+curl -fsSL https://raw.githubusercontent.com/Londopy/nexium/v1.1.0/bootstrap/nx.c -o nx.c
 cc -std=gnu11 -O2 -w -fno-strict-aliasing -o nx nx.c -lm -lpthread
 ```
 
-(`main` in place of `v1.0.3` gives the seed of the next release, which may
+(`main` in place of `v1.1.0` gives the seed of the next release, which may
 be a little behind `self/`.) `nx` needs a C compiler at run time as well;
 the one that built it will do. On Windows, `zig cc` builds it with
 `-lws2_32` at the end, but the installer is the shorter road there.
@@ -308,7 +308,7 @@ shasum -a 256 -c SHA256SUMS.txt --ignore-missing   # macOS
 ```
 
 ```powershell
-Get-FileHash .\nexium-1.0.3-setup-x64.exe -Algorithm SHA256
+Get-FileHash .\nexium-1.1.0-setup-x64.exe -Algorithm SHA256
 ```
 
 The install script verifies automatically and refuses a mismatch.

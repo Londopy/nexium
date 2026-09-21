@@ -102,7 +102,7 @@ fits and the pencilled one goes back in the pool.
 
 | version | name | why |
 | --- | --- | --- |
-| 1.1.0 | Annapurna: Dutch Rib | the safer line that became the everyday route: the ergonomics the compiler wanted |
+| 1.1.0 | Annapurna: Dutch Rib | minor: the safer line that became the everyday route, the ergonomics the compiler wanted (`?.`, tuple destructuring, `derive(Clone)`, iterators, slice patterns, guard facts, named format arguments, the intrinsics) |
 | 1.2.0 | Annapurna: South Face | the great wall climbed by siege: memory safety without a garbage collector, the view rules |
 | 1.3.0 | Annapurna: North Face | the original line completed: the toolchain grown up, incremental builds, the semantic language server |
 | 1.4.0 | Annapurna: the Sanctuary | the basin that holds everything and supplies every route: a standard library people stop supplementing |
@@ -150,7 +150,7 @@ summiters lost fingers and toes on the descent.
 | Summit Ridge | the final ridge; nothing left but walking up | the last minor before a major (used: 0.9.0) |
 | Summit | 3 June 1950 | `X.0.0` (used: 1.0.0) |
 | North Face | the 1950 route, the face the camps are on | a release that completes the original line: finishes something begun in 0.x (planned: 1.3.0) |
-| Dutch Rib | the 1977 route on the North Face, now the usual line because it is safer than the Sickle | the release that makes the everyday path easier and safer: ergonomics (planned: 1.1.0) |
+| Dutch Rib | the 1977 route on the North Face, now the usual line because it is safer than the Sickle | the release that makes the everyday path easier and safer: ergonomics (1.1.0) |
 | South Face | Bonington's 1970 siege of the great wall; Whillans and Haston to the top; the first big-wall climb in the Himalaya | the biggest minor of a line, climbed the hard way (planned: 1.2.0) |
 | the Sanctuary | the glacial basin ringed by the Annapurna peaks; the base of every south-side route | the release that supplies everything else: the standard library (planned: 1.4.0) |
 | East Ridge | the long traverse route over the massif's summits (1984) | traverse: many platforms from one source (planned: 1.5.0) |

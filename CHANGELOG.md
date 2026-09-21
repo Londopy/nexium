@@ -10,6 +10,10 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-21
+
+*Annapurna: Dutch Rib* — the 1977 route on the north face that became the everyday line because it is safer than the Sickle: the language the compiler wanted. `?.` reads through an optional, `let (a, b) = pair` and `for (k, v) in m` take tuples apart, `derive(Clone)` gives a struct its deep copy (the compiler's own hand-written copies are gone), any value with `next(self: *mut Self) -> ?T` iterates, slices match by shape with `[first, rest..]` and `whole @ pattern`, guard facts flow through `while` and `else` and prove `!= 0`, `!= null`, `s.len >= n` and `i < s.len`, format arguments have names and a width from a value, and `@alignOf`, `@bitCast`, `@min`, `@max` and `@target()` arrive. Found on the way and fixed: `place.?` and `place orelse d` dropped the payload twice in a read, and a guard fact outlived the loop that changed its variable, a bounds check elided since 0.6.0. The seed is regenerated from the final sources.
+
 ### Added
 
 - `?.` reads through an optional: `opt?.field` and `opt?.method(args)`
@@ -1169,7 +1173,8 @@ First public release.
   Korean, French, and German; the language reference and architecture tour in
   Spanish, Chinese, and Japanese.
 
-[Unreleased]: https://github.com/Londopy/nexium/compare/v1.0.3...HEAD
+[Unreleased]: https://github.com/Londopy/nexium/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/Londopy/nexium/compare/v1.0.3...v1.1.0
 [1.0.3]: https://github.com/Londopy/nexium/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/Londopy/nexium/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/Londopy/nexium/compare/v1.0.0...v1.0.1

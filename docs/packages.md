@@ -83,7 +83,7 @@ table is the registry until then. A package is any git repository with a
 `nexium.toml` at its root and a tag to pin:
 
 ```sh
-nx add words --git https://github.com/Londopy/nexium --tag v1.0.3
+nx add words --git https://github.com/Londopy/nexium --tag v1.1.0
 ```
 
 | package | what it is | add it with |

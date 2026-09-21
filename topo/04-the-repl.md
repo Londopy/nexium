@@ -6,7 +6,7 @@ its interpreter, one line at a time:
 
 ```
 $ nx
-Nexium 1.0.3 (nx repl, zig on PATH) on linux
+Nexium 1.1.0 (nx repl, zig on PATH) on linux
 Type :help for commands, :quit to exit.
 > let xs = [3, 1, 2]
 > xs

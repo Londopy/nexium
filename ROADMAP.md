@@ -424,6 +424,12 @@ Exit: the compile-time interpreter and `check.nx` lose their hand-written
 copies and index workarounds; `nx audit self/check.nx` reports fewer
 `panics` than in 1.0.
 
+Status: shipped as 1.1.0 on 2026-09-21, every item. `check.nx` lost
+`cv_clone` and `frames_clone` to `derive(Clone)`, and the share of its
+functions carrying `panics` fell from 549 of 589 (1.0.3) to 551 of 611
+(the new proofs against the new code); the rest index a list by a
+computed position, which no guard proves.
+
 ### 1.2: memory safety without a garbage collector
 
 The promise of section 12, no undefined behaviour in safe code, has four
