@@ -67,7 +67,10 @@ almost always take slices, so that arrays, `List`s and pieces of either all
 fit; `primes[..]` is the slice of the whole array.
 
 A tuple groups a few values of different types: `(3, "three")` has type
-`(i64, []u8)` and fields `.0` and `.1`.
+`(i64, []u8)` and fields `.0` and `.1`. `let (n, word) = pair` names the
+parts in one line, and `for (n, word) in pairs` does it for each element;
+over a value that already has a home the names are views of its parts,
+over a fresh one (a call's result, a literal) they own them.
 
 ## `if`, blocks, `match`
 

@@ -20,6 +20,12 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   stands for in the typed IR, so the emitter and the interpreter learned
   nothing new; the formatter, the tree-sitter grammar, the spec and the
   Topo know the operator. The first item of 1.1.
+- Tuple destructuring: `let (a, b) = pair`, `var (x, y) = f()`, and
+  `for (k, v) in pairs` (an index may follow, `for (k, v), i in pairs`),
+  with `_` skipping an element. Over an owned value the names own the
+  elements; over a place they are views of it, as an `if let` binding is
+  (decision 92). Each name is one `let` in the typed IR. Spec case
+  `s5_tuple_destructuring`; the second item of 1.1.
 
 ### Fixed
 

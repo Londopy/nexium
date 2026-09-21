@@ -389,6 +389,7 @@ Ergonomics the self-hosted compiler paid for by hand.
 - `?T` chaining: `a?.b` is `null` when `a` is (deferred since phase 1).
   (Done: the rest of a chain applies to the payload, `a?.name.len`.)
 - Tuple destructuring: `let (a, b) = pair`, in `for` bindings too.
+  (Done: views over a place, owners over a temporary, decision 92.)
 - `derive(Clone)` for structs and enums whose fields all clone, the way
   drops are derived (KNOWN_ISSUES: every deep copy in `check.nx` is a hand
   written function).

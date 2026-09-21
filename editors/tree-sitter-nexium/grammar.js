@@ -199,7 +199,7 @@ module.exports = grammar({
         optional(seq('=', field('value', $.expression))),
       )),
 
-    tuple_binding: ($) => seq('(', sep($.identifier), ')'),
+    tuple_binding: ($) => seq('(', sep(choice($.identifier, '_')), ')'),
 
     assignment_statement: ($) =>
       prec.right(seq(field('left', choice($.expression, '_')), field('operator', choice('=', '+=', '-=', '*=', '/=', '%=', '&=', '|=', '^=', '<<=', '>>=', '+%=', '-%=', '*%=', '+|=', '-|=', '*|=')), field('right', $.expression))),
@@ -221,7 +221,7 @@ module.exports = grammar({
         field('body', $.block),
       ),
 
-    for_bindings: ($) => seq(choice($.identifier, '_'), repeat(seq(',', choice($.identifier, '_')))),
+    for_bindings: ($) => seq(choice($.identifier, '_', $.tuple_binding), repeat(seq(',', choice($.identifier, '_', $.tuple_binding)))),
 
     // `outer: for (...)` declares a label; `break :outer` refers to it
     label: ($) => seq($.identifier, ':'),

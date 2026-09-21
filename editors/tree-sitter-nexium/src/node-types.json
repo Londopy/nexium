@@ -1661,6 +1661,10 @@
         {
           "type": "identifier",
           "named": true
+        },
+        {
+          "type": "tuple_binding",
+          "named": true
         }
       ]
     }

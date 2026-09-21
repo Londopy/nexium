@@ -1141,13 +1141,27 @@ impl Parser {
             if s == "let" or s == "var" {
                 let mutable = s == "var"
                 self.bump()
-                let name = try self.expect_ident()
+                var name = String.new()
+                var names = List(String).new()
+                if self.at(lexer.Kind.LParen) {
+                    // `let (a, b) = pair`: a name per element, `_` skips one
+                    self.bump()
+                    while true {
+                        names.append(try self.expect_ident())
+                        if !self.eat(lexer.Kind.Comma) { break }
+                    }
+                    try self.expect(lexer.Kind.RParen)
+                    if names.len < 2 { return self.fail(start, "a tuple binding names at least two elements") }
+                } else {
+                    name = try self.expect_ident()
+                }
                 var ty: usize = NONE
                 if self.eat(lexer.Kind.Colon) { ty = try self.parse_type() }
                 var init: usize = NONE
                 if self.eat(lexer.Kind.Eq) { init = try self.parse_expr() }
                 var n = blank(NodeKind.Let, start, self.prev_end())
                 n.name = name
+                n.words = names
                 n.flag = mutable
                 n.x = ty
                 n.y = init
@@ -1280,7 +1294,22 @@ impl Parser {
         n.name = label
         n.flag2 = is_parallel
         while true {
-            n.words.append(try self.expect_ident())
+            if self.at(lexer.Kind.LParen) {
+                // `for (k, v) in pairs`: a name per element of each item, kept as one word
+                self.bump()
+                var pat = String.from("(")
+                while true {
+                    if pat.len > 1 { pat.push_byte(',') }
+                    let part = try self.expect_ident()
+                    for ch in part { pat.push_byte(ch) }
+                    if !self.eat(lexer.Kind.Comma) { break }
+                }
+                try self.expect(lexer.Kind.RParen)
+                pat.push_byte(')')
+                n.words.append(pat)
+            } else {
+                n.words.append(try self.expect_ident())
+            }
             if !self.eat(lexer.Kind.Comma) { break }
         }
         if !self.at_ident("in") {
@@ -2776,7 +2805,16 @@ impl Printer {
         let k = n.k
         let sp = self.sp(id)
         if k == NodeKind.Let {
-            self.open(format("(let {} name={} mut={}", .{sp, n.name, bool_text(n.flag)}))
+            if n.words.len > 0 {
+                var names = String.new()
+                for w, i in n.words {
+                    if i > 0 { names.push_byte(',') }
+                    for ch in w { names.push_byte(ch) }
+                }
+                self.open(format("(let {} names=({}) mut={}", .{sp, names, bool_text(n.flag)}))
+            } else {
+                self.open(format("(let {} name={} mut={}", .{sp, n.name, bool_text(n.flag)}))
+            }
             if n.x == NONE { self.line("(notype)") } else { self.ty(n.x) }
             if n.y == NONE { self.line("(noinit)") } else { self.expr(n.y) }
             self.close()

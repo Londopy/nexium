@@ -1,0 +1,44 @@
+// SPEC 5.1: `let (a, b) = e` binds a name per element. Over an owned value
+// the names own the elements (dropped once each, a skipped `_` element too);
+// over a place they are views of it, so the place keeps its value. `var`
+// destructures owned values; `for (k, v) in pairs` binds views of each item
+// and may take an index.
+struct Row { name: String, hits: i32 }
+
+fn split(s: []u8) -> (String, usize) {
+    return (String.from(s), s.len)
+}
+
+fn rows() -> List((String, i32)) {
+    var out = List((String, i32)).new()
+    out.append((String.from("ada"), 3))
+    out.append((String.from("bob"), 1))
+    return out
+}
+
+fn main() {
+    let (word, n) = split("summit")
+    println("{} {}", .{word, n})
+    let (_, m) = split("skipped")
+    println("{}", .{m})
+    let pair = (String.from("pair"), 7)
+    let (p, q) = pair
+    println("{} {} {}", .{p, q, pair.0})
+    var (x, y) = (1, 2)
+    x += y
+    println("{} {}", .{x, y})
+    let (a, b): (i64, i64) = (3, 4)
+    println("{}", .{a * b})
+    let table = rows()
+    let (first, hits) = table[0]
+    println("{} {}", .{first, hits})
+    for (name, count) in table {
+        println("{}={}", .{name, count})
+    }
+    for (name, count), i in table {
+        println("{} {} {}", .{i, name, count})
+    }
+    let (r, s) = (Row{ .name = String.from("row"), .hits = 2 }, split("s"))
+    let (t, u) = s
+    println("{} {} {} {}", .{r.name, r.hits, t, u})
+}

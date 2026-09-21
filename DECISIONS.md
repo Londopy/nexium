@@ -604,3 +604,11 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     since a search has other things called Nexium to get past; the
     compiler stays `nx`. Where a registry already has an unrelated
     `nexium` (PyPI, npm), the language's own packages are `nexium-lang`.
+92. **Destructuring views a place and owns a temporary.** `let (a, b) = e`
+    and `for (k, v) in pairs` follow `if let` (decision on bindings over a
+    place): over a place the names are views of its elements, so the place
+    keeps its value and a move out of a name is an error; over an owned
+    value the names own the elements and the tuple itself, a hidden local,
+    drops nothing. One rule for both, no partial moves to track, and each
+    name is an ordinary `let` in the typed IR, so the emitter and the
+    interpreter learned nothing new.

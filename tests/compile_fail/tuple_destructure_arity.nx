@@ -1,0 +1,5 @@
+// EXPECT: this binding names 2 elements but the tuple has 3
+fn main() {
+    let (a, b) = (1, 2, 3)
+    println("{} {}", .{a, b})
+}

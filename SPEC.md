@@ -152,6 +152,14 @@ itself by value.
 holding `*mut T` mutates through the pointer. An unused value is an error;
 `_ = expr` discards explicitly.
 
+`let (a, b) = e` binds one name per element of a tuple, `_` skipping one
+(a skipped element is still dropped). Over an owned value (a call's
+result, a literal, a moved local) the names own the elements; over a
+place they are views of its elements, as `if let` binds over a place, so
+the place keeps its value and moving out of a name is an error. `var`
+destructures owned values only. `for (k, v) in pairs` binds the same way
+over each item, and may still take an index: `for (k, v), i in pairs`.
+
 ### 5.2 Owning values and moves
 
 `List`, `String`, `Map`, and any struct, enum, or tuple containing one are
@@ -245,6 +253,7 @@ Compound assignment: `= += -= *= /= %= &= |= ^= <<= >>= +%= -%= *%=`.
   it, or take the value with `opt.?`). When `opt` is an owned temporary,
   such as a call result, the binding owns the payload.
 - `while c { }`, `for x in items { }`, `for x, i in items { }`,
+  `for (k, v) in pairs { }`,
   `for x, y in a, b { }` (lengths must match), `for i in lo..hi { }`,
   `for i in lo..hi step s { }` (a negative step counts down and needs a
   signed loop variable; a zero step is an error). `while c { } else { }`

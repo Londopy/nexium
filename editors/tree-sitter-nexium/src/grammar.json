@@ -1825,8 +1825,17 @@
               "type": "SEQ",
               "members": [
                 {
-                  "type": "SYMBOL",
-                  "name": "identifier"
+                  "type": "CHOICE",
+                  "members": [
+                    {
+                      "type": "SYMBOL",
+                      "name": "identifier"
+                    },
+                    {
+                      "type": "STRING",
+                      "value": "_"
+                    }
+                  ]
                 },
                 {
                   "type": "REPEAT",
@@ -1838,8 +1847,17 @@
                         "value": ","
                       },
                       {
-                        "type": "SYMBOL",
-                        "name": "identifier"
+                        "type": "CHOICE",
+                        "members": [
+                          {
+                            "type": "SYMBOL",
+                            "name": "identifier"
+                          },
+                          {
+                            "type": "STRING",
+                            "value": "_"
+                          }
+                        ]
                       }
                     ]
                   }
@@ -2248,6 +2266,10 @@
             {
               "type": "STRING",
               "value": "_"
+            },
+            {
+              "type": "SYMBOL",
+              "name": "tuple_binding"
             }
           ]
         },
@@ -2270,6 +2292,10 @@
                   {
                     "type": "STRING",
                     "value": "_"
+                  },
+                  {
+                    "type": "SYMBOL",
+                    "name": "tuple_binding"
                   }
                 ]
               }

@@ -711,6 +711,8 @@ pub struct Local {
     owned: bool
     loop_item: bool
     if_let: bool
+    // a name of `let (a, b) = place` or `for (k, v) in items`: a view of the element
+    tuple_view: bool
 }
 
 pub struct LabelInfo {
@@ -900,6 +902,8 @@ pub struct Checker {
     repl_mode: bool
     // the bindings of the `?.` chains being checked, innermost last (ChainSelf reads the top)
     chain_locals: List(usize)
+    // statements a statement expands to after itself (`let (a, b) = e` is one `let` per name), drained by the block
+    pending_stmts: List(usize)
     // the compile-time interpreter's state (see `it_enter`)
     it_steps: u64
     it_panic: String
@@ -2102,7 +2106,7 @@ impl Checker {
     fn declare_local(self: *mut Self, name: []u8, ty: usize, mutable: bool, start: usize, end: usize) -> usize {
         let c = self.ctx()
         let id = c.locals.len
-        c.locals.append(Local{ .name = String.from(name), .ty = ty, .mutable = mutable, .start = start, .end = end, .is_param = false, .owned = false, .loop_item = false, .if_let = false })
+        c.locals.append(Local{ .name = String.from(name), .ty = ty, .mutable = mutable, .start = start, .end = end, .is_param = false, .owned = false, .loop_item = false, .if_let = false, .tuple_view = false })
         c.scope_names.append(String.from(name))
         c.scope_locals.append(id)
         c.scope_deref.append(false)
@@ -2243,7 +2247,7 @@ impl Checker {
                     self.fail(m, pstart, format("`own` applies to owning types (`List`, `String`, `Map`, or structs holding them); `{}` is copied anyway", .{self.ty_name(t)})[..])
                 }
                 if owned { any_owned = true }
-                locals.append(Local{ .name = pname, .ty = t, .mutable = owned, .start = pstart, .end = pend, .is_param = true, .owned = owned, .loop_item = false, .if_let = false })
+                locals.append(Local{ .name = pname, .ty = t, .mutable = owned, .start = pstart, .end = pend, .is_param = true, .owned = owned, .loop_item = false, .if_let = false, .tuple_view = false })
                 params.append(locals.len - 1)
             }
             ret = if ret_node == NONE { self.tys.void() } else { self.resolve_type(m, ret_node, self_ty) }
@@ -2745,6 +2749,8 @@ impl Checker {
         for s in stmts {
             let ts = self.check_stmt(s)
             if ts != NONE { tb.kids.append(ts) }
+            for extra in self.pending_stmts.clone() { tb.kids.append(extra) }
+            self.pending_stmts.clear()
         }
         var ty = self.tys.void()
         var tail = NONE
@@ -2874,6 +2880,11 @@ impl Checker {
             let tb = self.check_stmt(body)
             self.pop_scope()
             self.ctx().in_defer = saved
+            if self.pending_stmts.len > 0 {
+                self.pending_stmts.clear()
+                self.fail_here(start, "a tuple binding cannot be the body of a `defer`")
+                return NONE
+            }
             if tb == NONE { return NONE }
             let st = self.stmt_node(if is_err { TKind.SErrDefer } else { TKind.SDefer }, start, end)
             self.tir.nodes[st].kids.append(tb)
@@ -2908,6 +2919,7 @@ impl Checker {
     fn check_let(self: *mut Self, s: usize) -> usize {
         let m = self.cur_module()
         let n = self.node(m, s)
+        if n.words.len > 0 { return self.check_let_tuple(s) }
         let name = n.name.clone()
         let mutable = n.flag
         let ty_node = n.x
@@ -2949,6 +2961,105 @@ impl Checker {
         self.tir.nodes[st].a = id
         if init != NONE { self.tir.nodes[st].kids.append(init) }
         return st
+    }
+
+    /// `let (a, b) = e`: a binding per element, `_` skipping one. Over an
+    /// owned value (a call's result, a literal, a moved local) the names own
+    /// the elements: the tuple lands in a hidden local that drops nothing,
+    /// its elements having moved on. Over a place the names are views of its
+    /// elements, as an `if let` binding is, so the place keeps its value and
+    /// moving out of a name is an error. Each name is one `let` (the first
+    /// returned, the rest pending for the block), so the emitter and the
+    /// interpreter learned nothing new.
+    fn check_let_tuple(self: *mut Self, s: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, s)
+        let names = n.words.clone()
+        let mutable = n.flag
+        let ty_node = n.x
+        let init_node = n.y
+        let start = n.start
+        let end = n.end
+        var declared = NONE
+        if ty_node != NONE {
+            let st = self.ctx().self_ty
+            declared = self.resolve_type(m, ty_node, st)
+        }
+        if init_node == NONE {
+            self.fail_here(start, "a tuple binding needs an initializer")
+            return NONE
+        }
+        var te = self.check_expr(init_node, declared)
+        if declared != NONE { te = self.coerce_or_error(te, declared, "initializer of a tuple binding") }
+        let tt = self.tys.shallow(self.tir.nodes[te].ty)
+        if self.tys.kind(tt) != TK.Tuple {
+            self.fail_here(self.tir.nodes[te].start, format("a tuple binding needs a tuple but found `{}`", .{self.ty_name(tt)})[..])
+            return NONE
+        }
+        let elems = self.tys.list[tt].args.clone()
+        if elems.len != names.len {
+            self.fail_here(start, format("this binding names {} elements but the tuple has {}", .{names.len, elems.len})[..])
+            return NONE
+        }
+        let view = self.is_place(te) or self.is_borrowed_view(te)
+        if view and mutable {
+            self.fail_here(start, "`var` cannot destructure a place, whose elements the names would only view; use `let`, or destructure a `.clone()`")
+            return NONE
+        }
+        var hidden = NONE
+        var first = NONE
+        if view and self.tir.nodes[te].k == TKind.Local {
+            // the names read the local's elements in place
+            hidden = self.tir.nodes[te].a
+        } else {
+            var init = te
+            if !view { init = self.take_ownership(te) }
+            hidden = self.declare_local(format("__tuple{}", .{s})[..], tt, false, start, end)
+            if view { self.ctx().locals[hidden].if_let = true }
+            first = self.stmt_node(TKind.SLet, start, end)
+            self.tir.nodes[first].a = hidden
+            self.tir.nodes[first].kids.append(init)
+            // nothing to drop: the elements move on to the names, or were never owned here
+            self.tir.nodes[first].flag = true
+        }
+        for name, i in names {
+            if view and name == "_" { continue }
+            let st = self.element_let(hidden, tt, i, elems[i], name[..], mutable, view, start, end)
+            if first == NONE { first = st } else { self.pending_stmts.append(st) }
+        }
+        return first
+    }
+
+    /// One name of a tuple binding: `let name = hidden.i`, a view when the
+    /// tuple is; `_` becomes a hidden name that owns (and drops) its element.
+    fn element_let(self: *mut Self, hidden: usize, tt: usize, i: usize, ety: usize, name: []u8, mutable: bool, view: bool, start: usize, end: usize) -> usize {
+        let b = self.mk(TKind.Local, tt, start, end)
+        self.tir.nodes[b].a = hidden
+        let f = self.mk(TKind.TupleField, ety, start, end)
+        self.tir.nodes[f].a = i
+        self.tir.nodes[f].kids.append(b)
+        let lname = if name == "_" { format("__skip{}_{}", .{hidden, i}) } else { String.from(name) }
+        let id = self.declare_local(lname[..], ety, mutable, start, end)
+        if view {
+            self.ctx().locals[id].if_let = true
+            self.ctx().locals[id].tuple_view = true
+        } else if self.is_ref_class(ety) { self.add_effect(EFF_REFCOUNTS, start, "holding a reference releases it at scope exit") }
+        let st = self.stmt_node(TKind.SLet, start, end)
+        self.tir.nodes[st].a = id
+        self.tir.nodes[st].kids.append(f)
+        if view { self.tir.nodes[st].flag = true }
+        return st
+    }
+
+    /// The names of a `(a,b)` loop binding.
+    fn tuple_pattern_names(self: *mut Self, w: []u8) -> List(String) {
+        var out = List(String).new()
+        var cur = String.new()
+        for ch in w[1..w.len - 1] {
+            if ch == ',' { out.append(cur.clone()); cur.clear() } else { cur.push_byte(ch) }
+        }
+        out.append(cur)
+        return out
     }
 
     fn check_assign(self: *mut Self, s: usize) -> usize {
@@ -3453,6 +3564,7 @@ impl Checker {
             let owned = self.ctx().locals[l].owned
             let loop_item = self.ctx().locals[l].loop_item
             let if_let = self.ctx().locals[l].if_let
+            let tuple_view = self.ctx().locals[l].tuple_view
             let lname = self.ctx().locals[l].name.clone()
             if is_param and !owned {
                 if k == TKind.Local {
@@ -3465,6 +3577,12 @@ impl Checker {
                     self.fail_here(at, format("cannot move `{}` out of a loop; a loop variable is a view of the element", .{lname})[..])
                 } else {
                     self.fail_here(at, format("cannot move the `{}` out of the loop variable `{}`; it is a view of the element", .{self.ty_name(t), lname})[..])
+                }
+            } else if tuple_view {
+                if k == TKind.Local {
+                    self.fail_here(at, format("cannot move `{}` out of a tuple binding over a place; the name is a view of the element (use `.clone()`, or destructure an owned value)", .{lname})[..])
+                } else {
+                    self.fail_here(at, format("cannot move the `{}` out of the tuple binding `{}`; it is a view of the element", .{self.ty_name(t), lname})[..])
                 }
             } else if if_let {
                 if k == TKind.Local {
@@ -6915,14 +7033,42 @@ impl Checker {
         }
         self.push_scope()
         var item_locals = List(usize).new()
+        // `for (k, v) in pairs`: the item is a hidden local, the names views of its elements
+        var prologue = List(usize).new()
         for te, i in checked {
-            let l = self.declare_local(bindings[i][..], elems[i], false, start, end)
+            let w = bindings[i].clone()
+            if w.len > 0 and w[0] == '(' {
+                let et = self.tys.shallow(elems[i])
+                if self.tys.kind(et) != TK.Tuple {
+                    self.fail_here(start, format("a tuple binding needs tuple items but found `{}`", .{self.ty_name(et)})[..])
+                    return NONE
+                }
+                let parts = self.tuple_pattern_names(w[..])
+                let ets = self.tys.list[et].args.clone()
+                if parts.len != ets.len {
+                    self.fail_here(start, format("this binding names {} elements but the items have {}", .{parts.len, ets.len})[..])
+                    return NONE
+                }
+                let l = self.declare_local(format("__item{}_{}", .{s, i})[..], elems[i], false, start, end)
+                self.ctx().locals[l].loop_item = true
+                item_locals.append(l)
+                for p, j in parts {
+                    if p == "_" { continue }
+                    prologue.append(self.element_let(l, et, j, ets[j], p[..], false, true, start, end))
+                }
+                continue
+            }
+            let l = self.declare_local(w[..], elems[i], false, start, end)
             self.ctx().locals[l].loop_item = true
             item_locals.append(l)
         }
         var index = NONE
         if bindings.len == n_items + 1 {
             let u = self.tys.usize_ty()
+            if bindings[n_items].len > 0 and bindings[n_items][0] == '(' {
+                self.fail_here(start, "the loop index is one `usize`, not a tuple binding")
+                return NONE
+            }
             let l = self.declare_local(bindings[n_items][..], u, false, start, end)
             for te in checked {
                 var src = te
@@ -6940,6 +7086,10 @@ impl Checker {
         let c_before = self.ctx().callees.len
         if is_parallel { self.ctx().in_parallel += 1 }
         let tb = self.check_block(body_node, v, NONE, NONE)
+        if prologue.len > 0 {
+            for k in self.tir.nodes[tb].kids.clone() { prologue.append(k) }
+            self.tir.nodes[tb].kids = prologue
+        }
         if is_parallel {
             self.ctx().in_parallel -= 1
             let nw = self.ctx().witnesses.len
@@ -12443,7 +12593,7 @@ impl Checker {
         var locals = List(Local).new()
         var params = List(usize).new()
         for t, i in ptys {
-            locals.append(Local{ .name = pnames[i].clone(), .ty = t, .mutable = false, .start = pstarts[i], .end = pends[i], .is_param = true, .owned = false, .loop_item = false, .if_let = false })
+            locals.append(Local{ .name = pnames[i].clone(), .ty = t, .mutable = false, .start = pstarts[i], .end = pends[i], .is_param = true, .owned = false, .loop_item = false, .if_let = false, .tuple_view = false })
             params.append(i)
         }
         let fname = self.ctx().fn_name.clone()
@@ -12486,7 +12636,7 @@ impl Checker {
             let by_ref = refs[i]
             let mutable = muts[i]
             let lty = if by_ref { self.tys.wrap(TK.Ptr, tys[i], mutable) } else { tys[i] }
-            ctx.locals.append(Local{ .name = format("cap_{}", .{nm}), .ty = lty, .mutable = mutable or !by_ref, .start = starts[i], .end = ends[i], .is_param = true, .owned = false, .loop_item = false, .if_let = false })
+            ctx.locals.append(Local{ .name = format("cap_{}", .{nm}), .ty = lty, .mutable = mutable or !by_ref, .start = starts[i], .end = ends[i], .is_param = true, .owned = false, .loop_item = false, .if_let = false, .tuple_view = false })
             ctx.scope_names.append(nm.clone())
             ctx.scope_locals.append(lid)
             ctx.scope_deref.append(by_ref)
@@ -12571,7 +12721,7 @@ pub fn new_checker(own mods: List(Mod)) -> Checker {
         .record_new_mode = false, .vtables = List(VTable).new(), .obligations = List(Obligation).new(),
         .parallel_calls = List(Obligation).new(), .global_uses = List(Obligation).new(), .global_use_fns = List(String).new(), .artifact_kinds = List(String).new(), .wild_pat_node = NONE,
         .cc = List(String).new(), .target = String.new(), .cimport_headers = List(String).new(), .cimport_system = List(bool).new(), .cimport_unsupported = Map(String, String).new(),
-        .values = List(CV).new(), .repl_mode = false, .chain_locals = List(usize).new(),
+        .values = List(CV).new(), .repl_mode = false, .chain_locals = List(usize).new(), .pending_stmts = List(usize).new(),
         .it_steps = 0, .it_panic = String.new(), .it_panic_at = NONE, .it_has_panic = false, .it_budget = false,
         .it_pending = 0, .it_pending_label = NONE, .it_pending_val = cv_none(), .it_failed_at = NONE,
         .frames = List(Frame).new(), .it_cur_fn = NONE, .it_out = cv_none(), .it_flow_val = cv_none(), .it_flow_label = NONE,

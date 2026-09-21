@@ -138,6 +138,9 @@ edges (`@weak(x)` or `x.weak()`, then `w.upgrade()`).
   is, otherwise the member as an optional; the rest of a chain applies to
   the payload (`a?.name.len orelse 0`), and an optional result is not
   wrapped twice (`a?.b?.c`).
+- `let (a, b) = pair` and `for (k, v) in pairs` bind a name per tuple
+  element (`_` skips one): over an owned value the names own the elements,
+  over a place they are views of it, like an `if let` binding.
 - An integer or float literal coerces into `?T`: `f(1)` where `f(x: ?i32)`.
 - `defer stmt` runs at scope exit, `errdefer stmt` only when the scope exits
   through an error; both in reverse order of registration.

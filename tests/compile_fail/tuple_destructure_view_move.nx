@@ -1,0 +1,7 @@
+// EXPECT: cannot move `s` out of a tuple binding over a place
+fn main() {
+    let pair = (String.from("view"), 1)
+    let (s, n) = pair
+    let taken = s
+    println("{} {} {}", .{taken, n, pair.1})
+}

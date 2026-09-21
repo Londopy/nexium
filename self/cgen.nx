@@ -1432,7 +1432,9 @@ impl Gen {
                     self.line(format("{} {} = {};", .{cn, name, v})[..])
                 }
             }
-            self.register_drop(name[..], ty)
+            // a flagged `let` owns nothing: a view of a tuple binding, or the
+            // tuple whose elements moved on to its names
+            if !self.c.tir.nodes[s].flag { self.register_drop(name[..], ty) }
             return
         }
         if k == check.TKind.SAssign {
