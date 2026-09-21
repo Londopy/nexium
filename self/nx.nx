@@ -47,6 +47,8 @@ pub struct Opts {
     cc: List(String)
     target: String
     keep_c: bool
+    /// `--watch`: run again whenever a file of the program changes
+    watch: bool
     /// the CPU the C compiler targets when no --target is given: "baseline"
     /// (the default: plain x86-64, so a binary runs on any 64-bit x86 machine),
     /// "native" (this machine's; not portable), or a name for -march
@@ -77,6 +79,7 @@ fn usage() {
     eprintln("  --target <triple>  cross-compile", .{})
     eprintln("  --cpu <name>       baseline (default: runs on any machine of the architecture), native, or a CPU name (NX_CPU too)", .{})
     eprintln("  --keep-c           keep the generated C", .{})
+    eprintln("  --watch            run or test again whenever a file of the program changes", .{})
 }
 
 fn parse_opts(args: [][]u8) -> ?Opts {
@@ -91,7 +94,7 @@ fn parse_opts(args: [][]u8) -> ?Opts {
     }
     var o = Opts{
         .command = String.from(args[1]), .file = String.from(args[2]), .out = String.new(), .out_dir = String.from("nx-out"), .mode = cgen.MODE_DEBUG,
-        .std_dir = String.from("std"), .cc = List(String).new(), .target = String.new(), .keep_c = false, .cpu = String.from("baseline"),
+        .std_dir = String.from("std"), .cc = List(String).new(), .target = String.new(), .keep_c = false, .watch = false, .cpu = String.from("baseline"),
         .defines = List(String).new(), .include_dirs = List(String).new(), .rest = List(String).new(), .sigs = false, .cc_source = 0,
     }
     if let v = os.env("NX_CPU") { o.cpu = String.from(v) }
@@ -118,6 +121,7 @@ fn parse_opts(args: [][]u8) -> ?Opts {
             continue
         }
         if a == "--keep-c" { o.keep_c = true; i += 1; continue }
+        if a == "--watch" { o.watch = true; i += 1; continue }
         if a == "--cpu" and i + 1 < args.len { o.cpu = String.from(args[i + 1]); i += 2; continue }
         if a == "--sigs" { o.sigs = true; i += 1; continue }
         if a.len > 2 and a[0..2] == "-D" { o.defines.append(String.from(a[2..])); i += 1; continue }
@@ -629,12 +633,77 @@ fn run_program(exe: []u8, rest: *List(String)) -> i32 {
 }
 
 fn cmd_run(o: *Opts) -> i32 {
+    if o.watch { return watch_loop(o) }
     var exe = String.new()
     if !cmd_build(o, true, &mut exe) { return 1 }
     return run_program(exe[..], &o.rest)
 }
 
+/// `nx run FILE --watch`, `nx test FILE --watch`: run, then run again
+/// whenever a file of the program changes. The files are the modules the
+/// checker loads (the program's own and its packages', never the standard
+/// library), polled twice a second by their modification times; a change
+/// waits a moment for the editor to finish writing. Ctrl-C leaves.
+/// NX_WATCH_ROUNDS=N stops after N reruns, for the harness.
+fn watch_loop(o: *Opts) -> i32 {
+    var rounds: i64 = -1
+    if let r = os.env("NX_WATCH_ROUNDS") { if r.len > 0 { rounds = r.parse_int(i64) catch { -1 } } }
+    var files = watched_files(o)
+    var stamps = stamps_of(&files)
+    var code = run_once(o)
+    println("--- watching {} file(s); Ctrl-C leaves ---", .{files.len})
+    var done: i64 = 0
+    while rounds < 0 or done < rounds {
+        time.sleep(500)
+        let now = stamps_of(&files)
+        if !stamps_differ(&stamps, &now) { continue }
+        time.sleep(150)
+        println("--- changed; running again ---", .{})
+        code = run_once(o)
+        files = watched_files(o)
+        stamps = stamps_of(&files)
+        done += 1
+    }
+    return code
+}
+
+fn run_once(o: *Opts) -> i32 {
+    var once = clone_opts(o)
+    once.watch = false
+    if o.command == "test" { return cmd_test(&once) }
+    return cmd_run(&once)
+}
+
+/// The program's files: the one named and every module the checker loads
+/// for it, apart from the standard library and imported headers.
+fn watched_files(o: *Opts) -> List(String) {
+    var out = List(String).new()
+    out.append(o.file.clone())
+    let mods = check.load(o.file[..], o.std_dir[..]) catch { return out }
+    for i in 0..mods.len {
+        let p = mods[i].path[..]
+        if p.len == 0 or p.starts_with("<std>") or mods[i].name[..].starts_with("cimport:") { continue }
+        var known = false
+        for f in out { if f[..] == p { known = true } }
+        if !known { out.append(String.from(p)) }
+    }
+    return out
+}
+
+fn stamps_of(files: *List(String)) -> List(i64) {
+    var out = List(i64).new()
+    for f in files { out.append(fs.modified(f[..]) catch { 0 }) }
+    return out
+}
+
+fn stamps_differ(a: *List(i64), b: *List(i64)) -> bool {
+    if a.len != b.len { return true }
+    for x, i in a { if x != b[i] { return true } }
+    return false
+}
+
 fn cmd_test(o: *Opts) -> i32 {
+    if o.watch { return watch_loop(o) }
     var c = check_program(o) orelse return 1
     if c.tests.len == 0 {
         println("no tests found", .{})
@@ -796,7 +865,7 @@ fn cmd_audit(o: *Opts) -> i32 {
 fn clone_opts(o: *Opts) -> Opts {
     return Opts{
         .command = o.command.clone(), .file = o.file.clone(), .out = o.out.clone(), .out_dir = o.out_dir.clone(), .mode = o.mode,
-        .std_dir = o.std_dir.clone(), .cc = o.cc.clone(), .target = o.target.clone(), .keep_c = o.keep_c, .cpu = o.cpu.clone(),
+        .std_dir = o.std_dir.clone(), .cc = o.cc.clone(), .target = o.target.clone(), .keep_c = o.keep_c, .watch = o.watch, .cpu = o.cpu.clone(),
         .defines = o.defines.clone(), .include_dirs = o.include_dirs.clone(), .rest = o.rest.clone(), .sigs = o.sigs, .cc_source = o.cc_source,
     }
 }

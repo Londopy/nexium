@@ -188,6 +188,13 @@ fn suite_bootstrap(e: *Env, failures: *mut List(String)) {
 
 // ----- cases that run in parallel -------------------------------------------------
 
+/// The rewrite behind the --watch check: two seconds in, the program prints two.
+fn rewrite_later(p: *mut String) -> i32 {
+    time.sleep(2000)
+    fs.write(p.*[..], "fn main() { println(\"two\", .{}) }\n") catch { return 1 }
+    return 0
+}
+
 /// A recorded program: its output and exit code must match.
 fn run_case(e: *Env, c: *Case) -> ?String {
     let kind = c.kind[..]
@@ -279,6 +286,18 @@ fn suite_examples(e: *Env, failures: *mut List(String)) {
         failures.append(format("examples: nx doctor did not pass its smoke test:\n{}{}", .{d.stdout, d.stderr}))
     } else if d.stdout[..].find("latest release:") == null {
         failures.append(format("examples: nx doctor did not report the latest release:\n{}", .{d.stdout}))
+    }
+    // --watch: the program runs again after a file changes (a thread rewrites
+    // it two seconds in; NX_WATCH_ROUNDS=1 stops after that rerun)
+    let wsrc = fs.join(e.root[..], "nx-out/cases/watch.nx")
+    fs.write(wsrc[..], "fn main() { println(\"one\", .{}) }\n") catch { }
+    os.set_env("NX_WATCH_ROUNDS", "1")
+    var rewriter = thread.spawn(String, i32, rewrite_later, wsrc.clone())
+    let w = nx(e, ["run", wsrc[..], "--watch", "--out-dir", fs.join(e.root[..], "nx-out/cases/watch-out")[..]][..])
+    _ = rewriter.join()
+    os.set_env("NX_WATCH_ROUNDS", "")
+    if w.code != 0 or w.stdout[..].find("one") == null or w.stdout[..].find("two") == null or w.stdout[..].find("running again") == null {
+        failures.append(format("examples: nx run --watch (exit {}):\n{}{}", .{w.code, w.stdout, w.stderr}))
     }
     // nx explain: the tree from main down to the overflow check in twice
     let ex_src = fs.join(e.root[..], "nx-out/cases/explain.nx")

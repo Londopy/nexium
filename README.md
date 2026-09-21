@@ -298,8 +298,8 @@ using arena {
 | command | what it does |
 | --- | --- |
 | `nx build file.nx` | compile to an executable (or object when there is no `main`) |
-| `nx run file.nx` | build and run |
-| `nx test file.nx [filter]` | run the `test "..."` blocks |
+| `nx run file.nx` | build and run; `--watch` runs again whenever a file of the program changes |
+| `nx test file.nx [filter]` | run the `test "..."` blocks; `--watch` too |
 | `nx check file.nx` | type-check and report effect violations |
 | `nx effects file.nx` | print the inferred effects of every function |
 | `nx explain file.nx f effect` | why `f` has the effect: the calls that carry it in, down to the primitive, as a tree |

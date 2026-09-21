@@ -18,6 +18,11 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   before replacing its files (Restart Manager; it is not started again),
   and keep a log of the run as `install.log` next to the program. The
   uninstaller takes `/LOG="path"` for a log of its own.
+- `nx run FILE --watch` and `nx test FILE --watch` run again whenever a
+  file of the program changes: the modules the checker loads (the
+  program's own and its packages', not the standard library), polled
+  twice a second by their modification times. `NX_WATCH_ROUNDS=N` stops
+  after N reruns, which is how the harness checks it.
 - The numbers page: `bench/` holds four programs (`fib`, `nbody`, `sieve`,
   `words`) written the same way in Nexium, C, Rust, Go and Python, and
   `bench/run.py` builds and times them, checks the answers agree, and

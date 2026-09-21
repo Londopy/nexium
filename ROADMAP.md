@@ -366,7 +366,8 @@ queue in front of them.
     Bench workflow on a GitHub runner weekly and at tags, the medians on
     `docs/numbers.md`, a regression a failing job.)
 24. `nx test --watch` and `nx run --watch` (file watching in the
-    runtime).
+    runtime). (Done, polling the program's files twice a second; a
+    watcher in the runtime can replace the poll when one is wanted.)
 25. The ownership trace, `nx run --trace own` and the REPL's `:own`.
 26. The binary-pattern debugger, `nx bin`.
 27. `:show` and `:plot` in the REPL: the inspector and chart windows on
