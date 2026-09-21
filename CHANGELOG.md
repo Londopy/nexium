@@ -18,6 +18,11 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   before replacing its files (Restart Manager; it is not started again),
   and keep a log of the run as `install.log` next to the program. The
   uninstaller takes `/LOG="path"` for a log of its own.
+- `std.testing` has `expect_snapshot(name, actual)` and
+  `expect_snapshot_in(dir, name, actual)`: `snapshot` in the `expect_`
+  form, so a mismatch fails the test naming the file, the first differing
+  line and how to accept the new output (`NX_UPDATE_SNAPSHOTS=1`), and a
+  file that cannot be read or written fails it too.
 - `nx layout FILE [Type...]` prints the C layout of a struct (every
   field's offset and size, the padding, the total, and the order by
   alignment that would shrink it, since the backend keeps declaration
@@ -83,6 +88,11 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Fixed
 
+- A `catch` or `orelse` handler whose tail is a panic, on a value with a
+  struct type (a `String`, say), emitted C that did not compile (`_t = 0`
+  for a struct): the tail was typed as the value the block should have,
+  by coercion, and the generator assigned its placeholder. Found by
+  `expect_snapshot`'s own test; a spec case keeps it.
 - On a macOS or Linux machine without Zig, `nx` takes `cc`, `gcc` or
   `clang` from the PATH instead of running a `zig` it assumed was there;
   `nx doctor` names the choice. A gcc-only Ubuntu could build `nx` from

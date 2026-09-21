@@ -1,0 +1,11 @@
+// SPEC 10: a `catch` or `orelse` handler whose tail diverges (a panic) yields
+// no value; the C for a String-typed one must still compile (the tail is typed
+// as the value the block should have, by coercion, but there is none).
+fn text() -> !String { return String.from("ok") }
+fn maybe() -> ?String { return String.from("some") }
+fn main() {
+    let s = text() catch { panic("unreachable") }
+    let t = maybe() orelse { panic("unreachable") }
+    let n = maybe() orelse { panic("unreachable") }
+    println("{} {} {}", .{s, t, n.len})
+}

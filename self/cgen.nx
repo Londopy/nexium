@@ -1727,7 +1727,9 @@ impl Gen {
         let tail = self.c.tir.nodes[b].a
         if tail == NONE { return String.new() }
         let v = self.expr_owned(tail)
-        if self.is_void(self.c.tir.nodes[tail].ty) {
+        // a tail that diverges (a panic, say) was typed by coercion as the
+        // value the block should have, but yields none: no assignment
+        if self.is_void(self.c.tir.nodes[tail].ty) or self.c.expr_diverges(tail) {
             if v != "0" { self.line(format("{};", .{v})[..]) }
             return String.new()
         }
@@ -2195,7 +2197,8 @@ impl Gen {
             }
             let h = self.expr_owned(handler)
             if out.len > 0 {
-                if !self.is_void(self.c.tir.nodes[handler].ty) { self.line(format("{} = {};", .{out, h})[..]) }
+                // a handler that diverges (a panic) yields no value, whatever it was typed as
+                if !self.is_void(self.c.tir.nodes[handler].ty) and !self.c.expr_diverges(handler) { self.line(format("{} = {};", .{out, h})[..]) }
             } else if h != "0" {
                 self.line(format("{};", .{h})[..])
             }
@@ -2221,7 +2224,7 @@ impl Gen {
             self.push_buf()
             let d = self.expr_owned(dflt)
             if out.len > 0 {
-                if !self.is_void(self.c.tir.nodes[dflt].ty) { self.line(format("{} = {};", .{out, d})[..]) }
+                if !self.is_void(self.c.tir.nodes[dflt].ty) and !self.c.expr_diverges(dflt) { self.line(format("{} = {};", .{out, d})[..]) }
             } else if d != "0" {
                 self.line(format("{};", .{d})[..])
             }

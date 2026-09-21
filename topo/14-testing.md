@@ -48,10 +48,12 @@ tedious to write by hand:
   that should fail.
 - `expect_contains(text, needle)` and `expect_lines(actual, expected)`,
   which names the first line that differs.
-- `snapshot(name, actual)`: compares `actual` with
+- `expect_snapshot(name, actual)`: compares `actual` with
   `snapshots/<name>.txt`, creates the file the first time, and rewrites it
-  when `NX_UPDATE_SNAPSHOTS=1` is set. Snapshot tests are how a program's
-  whole output is kept honest with one line.
+  when `NX_UPDATE_SNAPSHOTS=1` is set; a mismatch names the file and the
+  first line that differs. `try snapshot(name, actual)` is the same as an
+  error union. Snapshot tests are how a program's whole output is kept
+  honest with one line.
 
 ## The command
 

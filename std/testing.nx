@@ -6,11 +6,13 @@
 //     testing.expect_err(i32, parse("nope"))
 //     testing.expect_contains(output, "42 items")
 //     testing.expect_lines(rendered, expected)    // reports the first differing line
-//     try testing.snapshot("report", rendered)     // compares to snapshots/report.txt
+//     testing.expect_snapshot("report", rendered)  // compares to snapshots/report.txt
+//     try testing.snapshot("report", rendered)     // the same, as an error union
 //
 // Snapshots live in `snapshots/<name>.txt` under the current directory. A
 // missing file is written and the test passes; a mismatch fails with the
-// first differing line. Set `NX_UPDATE_SNAPSHOTS=1` to rewrite them all.
+// first differing line and how to accept the new output. Set
+// `NX_UPDATE_SNAPSHOTS=1` to rewrite them all.
 
 import std.fs
 
@@ -83,11 +85,54 @@ pub fn snapshot(name: []u8, actual: []u8) -> !void {
     return snapshot_in("snapshots", name, actual)
 }
 
+/// `snapshot_in`, in the `expect_` form: a mismatch fails the test naming
+/// the file, the first differing line and how to accept the new output;
+/// a file that cannot be read or written fails it too, instead of
+/// returning an error for the test to handle.
+pub fn expect_snapshot_in(dir: []u8, name: []u8, actual: []u8) {
+    var file = fs.join(dir, name)
+    file.append(".txt")
+    let update = os.env("NX_UPDATE_SNAPSHOTS") != null
+    if update or !fs.exists(file) {
+        fs.make_dirs(dir) catch { panic(format("snapshot {}: cannot create the directory {}", .{file, dir})) }
+        fs.write(file, actual) catch { panic(format("snapshot {}: cannot write it", .{file})) }
+        eprintln("wrote snapshot {}", .{file})
+        return
+    }
+    let expected = fs.read(file) catch { panic(format("snapshot {}: cannot read it", .{file})) }
+    let a = actual.lines()
+    let e = expected[..].lines()
+    var i: usize = 0
+    while i < a.len and i < e.len {
+        if a[i] != e[i] {
+            panic(format("snapshot {} differs at line {}:\n  expected: {}\n  actual:   {}\nNX_UPDATE_SNAPSHOTS=1 accepts the new output", .{file, i + 1, e[i], a[i]}))
+        }
+        i += 1
+    }
+    if a.len != e.len {
+        panic(format("snapshot {}: expected {} line(s) but got {}; NX_UPDATE_SNAPSHOTS=1 accepts the new output", .{file, e.len, a.len}))
+    }
+}
+
+/// `expect_snapshot_in("snapshots", name, actual)`.
+pub fn expect_snapshot(name: []u8, actual: []u8) {
+    expect_snapshot_in("snapshots", name, actual)
+}
+
 // ------------------------------------------------------------------ tests
 
 fn parse_digit(s: []u8) -> !i32 {
     if s.len != 1 or s[0] < '0' or s[0] > '9' { return error.InvalidInput }
     return (s[0] - '0') as i32
+}
+
+test "snapshots" {
+    let dir = fs.join(io.temp_dir()[..], "nx-testing-snapshots")
+    fs.remove_all(dir[..]) catch { }
+    expect_snapshot_in(dir[..], "report", "one\ntwo\n") // written
+    expect_snapshot_in(dir[..], "report", "one\ntwo\n") // read back, equal
+    expect(fs.exists(fs.join(dir[..], "report.txt")))
+    fs.remove_all(dir[..]) catch { }
 }
 
 test "floats and errors" {

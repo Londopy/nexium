@@ -336,7 +336,7 @@ queue in front of them.
     keep.)
 13. `nx layout Type`: offsets, sizes, padding, the reordering. (Done:
     `nx layout FILE [Type...]`.)
-14. `expect_snapshot` in `std.testing`.
+14. `expect_snapshot` in `std.testing`. (Done, beside `snapshot`.)
 15. `pip install nexium` and `npm install nexium`, wheels and packages
     that carry the binary.
 16. The installer detects an installed version: upgrade, repair, remove,

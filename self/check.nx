@@ -2700,9 +2700,22 @@ impl Checker {
         return false
     }
 
-    fn expr_diverges(self: *mut Self, e: usize) -> bool {
+    /// Does the expression never yield a value? Its type is `never`, or it
+    /// was `never` before a coercion typed it as what the context wanted
+    /// (`coerce` retypes in place): a panic, `unreachable`, a call to a
+    /// function returning `never`, or a block whose tail diverges.
+    pub fn expr_diverges(self: *mut Self, e: usize) -> bool {
         let t = self.tys.shallow(self.tir.nodes[e].ty)
-        return self.tys.kind(t) == TK.Never
+        if self.tys.kind(t) == TK.Never { return true }
+        let k = self.tir.nodes[e].k
+        if k == TKind.Unreachable { return true }
+        if k == TKind.Builtin and self.tir.nodes[e].name[..] == "Panic" { return true }
+        if k == TKind.BlockExpr { return self.block_diverges(self.tir.nodes[e].kids[0]) }
+        if k == TKind.Call {
+            let f = self.tir.nodes[e].a
+            if f != NONE and f < self.insts.len and self.tys.kind(self.tys.shallow(self.insts[f].ret)) == TK.Never { return true }
+        }
+        return false
     }
 
     // ----- blocks and statements ----------------------------------------------------

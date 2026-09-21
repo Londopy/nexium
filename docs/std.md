@@ -352,7 +352,7 @@ std.strings: text utilities on `[]u8` and `String`, written in Nexium. `import s
 
 ## std.testing
 
-std.testing: conveniences for `test` blocks, written in Nexium. `import std.testing` then, inside a test: testing.expect_approx(area, 3.14159, 0.001) testing.expect_err(i32, parse("nope")) testing.expect_contains(output, "42 items") testing.expect_lines(rendered, expected)    // reports the first differing line try testing.snapshot("report", rendered)     // compares to snapshots/report.txt Snapshots live in `snapshots/<name>.txt` under the current directory. A missing file is written and the test passes; a mismatch fails with the first differing line. Set `NX_UPDATE_SNAPSHOTS=1` to rewrite them all.
+std.testing: conveniences for `test` blocks, written in Nexium. `import std.testing` then, inside a test: testing.expect_approx(area, 3.14159, 0.001) testing.expect_err(i32, parse("nope")) testing.expect_contains(output, "42 items") testing.expect_lines(rendered, expected)    // reports the first differing line testing.expect_snapshot("report", rendered)  // compares to snapshots/report.txt try testing.snapshot("report", rendered)     // the same, as an error union Snapshots live in `snapshots/<name>.txt` under the current directory. A missing file is written and the test passes; a mismatch fails with the first differing line and how to accept the new output. Set `NX_UPDATE_SNAPSHOTS=1` to rewrite them all.
 
 | function | what it does |
 | --- | --- |
@@ -365,6 +365,8 @@ std.testing: conveniences for `test` blocks, written in Nexium. `import std.test
 | `expect_lines(actual: []u8, expected: []u8)` | Compares line by line; panics naming the first line that differs. |
 | `snapshot_in(dir: []u8, name: []u8, actual: []u8) -> !void` | NX_UPDATE_SNAPSHOTS is set. |
 | `snapshot(name: []u8, actual: []u8) -> !void` | `snapshot_in("snapshots", name, actual)`. |
+| `expect_snapshot_in(dir: []u8, name: []u8, actual: []u8)` | returning an error for the test to handle. |
+| `expect_snapshot(name: []u8, actual: []u8)` | `expect_snapshot_in("snapshots", name, actual)`. |
 
 ## std.text
 
