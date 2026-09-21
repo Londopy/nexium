@@ -51,6 +51,8 @@ pub enum NodeKind {
     // expressions
     Lit, Ident, FieldE, ImplicitVariant, Index, SliceE, Call, MethodCall, Unary, Binary, Pipe, Try, Catch,
     OrElse, Unwrap, Deref, If, IfCapture, Match, Arm, StructLit, Init, ArrayLit, TupleLit, Closure, Capture,
+    // `a?.b.c(x)`: OptChain (x: the optional, y: the tail applied to the payload, whose innermost base is a ChainSelf)
+    OptChain, ChainSelf,
     Range, Cast, Null, Undefined, Unreachable, ErrorLit, Builtin, BinConstruct, Seg, Comptime, TypeVal, UnsafeE,
     // patterns
     PWild, PBind, PLit, PVariant, PError, PNull, PRange, POr, PBinary, PTuple,
@@ -125,7 +127,7 @@ fn describe(t: *lexer.Token) -> String {
 fn punct_text(k: lexer.Kind) -> []u8 {
     return match k {
         .LParen => "(", .RParen => ")", .LBrace => "{", .RBrace => "}", .LBracket => "[", .RBracket => "]",
-        .Comma => ",", .Colon => ":", .Semi => ";", .Dot => ".", .DotStar => ".*", .DotQuestion => ".?",
+        .Comma => ",", .Colon => ":", .Semi => ";", .Dot => ".", .DotStar => ".*", .DotQuestion => ".?", .QuestionDot => "?.",
         .DotDot => "..", .DotLBrace => ".{", .Arrow => "->", .FatArrow => "=>", .Question => "?", .Bang => "!",
         .Tilde => "~", .At => "@", .Pipe => "|", .PipeGt => "|>", .Hash => "#", .Dollar => "$",
         .Plus => "+", .Minus => "-", .Star => "*", .Slash => "/", .Percent => "%",
@@ -1621,7 +1623,14 @@ impl Parser {
     }
 
     fn parse_postfix(self: *mut Self) -> !usize {
-        var e = try self.parse_primary()
+        let e = try self.parse_primary()
+        return self.parse_postfix_from(e, false)
+    }
+
+    /// The postfix forms after an operand. Inside the tail of a `?.` chain a
+    /// further `?.` ends the tail: it applies to the chain's own value.
+    fn parse_postfix_from(self: *mut Self, e0: usize, in_chain: bool) -> !usize {
+        var e = e0
         while true {
             if self.at(lexer.Kind.Newline) and self.peek_at(1) == lexer.Kind.Dot and self.peek_at(2) == lexer.Kind.Ident {
                 self.bump()
@@ -1690,6 +1699,37 @@ impl Parser {
                     let got = describe(&self.toks[self.pos])
                     return self.fail(self.start(), format("expected a field name after `.` but found {}", .{got}))
                 }
+            } else if k == lexer.Kind.QuestionDot {
+                if in_chain { break }
+                self.bump()
+                if self.peek() != lexer.Kind.Ident and self.peek() != lexer.Kind.Int {
+                    let got = describe(&self.toks[self.pos])
+                    return self.fail(self.start(), format("expected a field or method name after `?.` but found {}", .{got}))
+                }
+                // the tail: the member on a placeholder for the payload, then the rest
+                let p = self.tree.add(blank(NodeKind.ChainSelf, self.start(), self.start()))
+                let is_name = self.peek() == lexer.Kind.Ident
+                let name = String.from(self.text())
+                self.bump()
+                var first = NONE
+                if is_name and self.at(lexer.Kind.LParen) {
+                    let args = try self.parse_args()
+                    var mn = blank(NodeKind.MethodCall, self.span_of(p), self.prev_end())
+                    mn.name = name
+                    mn.x = p
+                    mn.kids = args
+                    first = self.tree.add(mn)
+                } else {
+                    var fnode = blank(NodeKind.FieldE, self.span_of(p), self.prev_end())
+                    fnode.name = name
+                    fnode.x = p
+                    first = self.tree.add(fnode)
+                }
+                let tail = try self.parse_postfix_from(first, true)
+                var n = blank(NodeKind.OptChain, self.span_of(e), self.prev_end())
+                n.x = e
+                n.y = tail
+                e = self.tree.add(n)
             } else if k == lexer.Kind.DotStar {
                 self.bump()
                 var n = blank(NodeKind.Deref, self.span_of(e), self.prev_end())
@@ -2913,6 +2953,14 @@ impl Printer {
         } else if k == NodeKind.Unwrap {
             self.open(format("(unwrap {}", .{sp}))
             self.expr(n.x)
+            self.close()
+        } else if k == NodeKind.OptChain {
+            self.open(format("(optchain {}", .{sp}))
+            self.expr(n.x)
+            self.expr(n.y)
+            self.close()
+        } else if k == NodeKind.ChainSelf {
+            self.open(format("(chainself {}", .{sp}))
             self.close()
         } else if k == NodeKind.Deref {
             self.open(format("(deref {}", .{sp}))

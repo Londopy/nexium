@@ -898,6 +898,8 @@ pub struct Checker {
     values: List(CV)
     // `nx repl`: unused values in `main` are printed, and the interpreter may talk to the world
     repl_mode: bool
+    // the bindings of the `?.` chains being checked, innermost last (ChainSelf reads the top)
+    chain_locals: List(usize)
     // the compile-time interpreter's state (see `it_enter`)
     it_steps: u64
     it_panic: String
@@ -3916,6 +3918,8 @@ impl Checker {
         }
         if k == parser.NodeKind.Cast { return self.check_cast(e) }
         if k == parser.NodeKind.FieldE { return self.check_field(e, expected) }
+        if k == parser.NodeKind.OptChain { return self.check_opt_chain(e, expected) }
+        if k == parser.NodeKind.ChainSelf { return self.check_chain_self(e) }
         if k == parser.NodeKind.ImplicitVariant { return self.check_implicit_variant(e, expected) }
         if k == parser.NodeKind.Index { return self.check_index(e) }
         if k == parser.NodeKind.SliceE { return self.check_slice_op(e) }
@@ -6016,6 +6020,79 @@ impl Checker {
             e = self.wrap_node(TKind.Deref, e, inner)
         }
         return e
+    }
+
+    /// `a?.b`, `a?.m(x).c`: null when `a` is, otherwise the tail applied to
+    /// the payload, wrapped as an optional (a result that is an optional
+    /// already is not wrapped twice). Checked as the `if let` it stands for,
+    /// so the emitter and the interpreter see nothing new; the tail reaches
+    /// the binding through its ChainSelf node.
+    fn check_opt_chain(self: *mut Self, e: usize, expected: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        let base_node = n.x
+        let tail_node = n.y
+        let start = n.start
+        let end = n.end
+        let c = self.check_expr(base_node, NONE)
+        let ct = self.tys.shallow(self.tir.nodes[c].ty)
+        if self.tys.kind(ct) != TK.Opt {
+            self.fail_here(self.tir.nodes[c].start, format("`?.` reads through an optional but found `{}`; `.` reaches a value that is always there", .{self.ty_name(ct)})[..])
+            return self.error_expr(start, end)
+        }
+        let payload = self.tys.list[ct].args[0]
+        self.push_scope()
+        let local = self.declare_local(format("__chain{}", .{e})[..], payload, false, start, end)
+        // a chain over a place reads the payload in place; an owned temporary
+        // hands its payload to the binding, dropped with the branch
+        if self.is_place(c) or self.is_borrowed_view(c) { self.ctx().locals[local].if_let = true }
+        var inner_expected = NONE
+        if expected != NONE {
+            let ex = self.tys.shallow(expected)
+            if self.tys.kind(ex) == TK.Opt { inner_expected = self.tys.list[ex].args[0] }
+        }
+        let moved_before = self.moved_snapshot()
+        self.chain_locals.append(local)
+        let inner = self.check_expr(tail_node, inner_expected)
+        _ = self.chain_locals.pop()
+        self.pop_scope()
+        let moved_then = self.moved_snapshot()
+        self.moved_restore(&moved_before)
+        self.moved_merge(&moved_then)
+        let it = self.tys.shallow(self.tir.nodes[inner].ty)
+        let ik = self.tys.kind(it)
+        if ik == TK.Void or ik == TK.Never {
+            self.fail_here(start, "`?.` needs a member with a value; a call that returns nothing cannot become an optional")
+            return self.error_expr(start, end)
+        }
+        let rty = if ik == TK.Opt { it } else { self.tys.wrap(TK.Opt, it, false) }
+        let val = if ik == TK.Opt { inner } else { self.wrap_node(TKind.OptWrap, inner, rty) }
+        let tb = self.mk(TKind.Block, rty, start, end)
+        self.tir.nodes[tb].a = val
+        let nul = self.mk(TKind.OptNull, rty, start, end)
+        let eb = self.mk(TKind.Block, rty, start, end)
+        self.tir.nodes[eb].a = nul
+        let r = self.mk(TKind.IfCapture, rty, start, end)
+        self.tir.nodes[r].a = local
+        self.tir.nodes[r].kids.append(c)
+        self.tir.nodes[r].kids.append(tb)
+        self.tir.nodes[r].kids.append(eb)
+        return r
+    }
+
+    /// The payload of the innermost `?.` chain, where its tail begins.
+    fn check_chain_self(self: *mut Self, e: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        if self.chain_locals.len == 0 {
+            self.fail_here(n.start, "a chain tail outside a `?.` chain")
+            return self.error_expr(n.start, n.end)
+        }
+        let local = self.chain_locals[self.chain_locals.len - 1]
+        let ty = self.ctx().locals[local].ty
+        let r = self.mk(TKind.Local, ty, n.start, n.end)
+        self.tir.nodes[r].a = local
+        return r
     }
 
     fn check_field(self: *mut Self, e: usize, expected: usize) -> usize {
@@ -12494,7 +12571,7 @@ pub fn new_checker(own mods: List(Mod)) -> Checker {
         .record_new_mode = false, .vtables = List(VTable).new(), .obligations = List(Obligation).new(),
         .parallel_calls = List(Obligation).new(), .global_uses = List(Obligation).new(), .global_use_fns = List(String).new(), .artifact_kinds = List(String).new(), .wild_pat_node = NONE,
         .cc = List(String).new(), .target = String.new(), .cimport_headers = List(String).new(), .cimport_system = List(bool).new(), .cimport_unsupported = Map(String, String).new(),
-        .values = List(CV).new(), .repl_mode = false,
+        .values = List(CV).new(), .repl_mode = false, .chain_locals = List(usize).new(),
         .it_steps = 0, .it_panic = String.new(), .it_panic_at = NONE, .it_has_panic = false, .it_budget = false,
         .it_pending = 0, .it_pending_label = NONE, .it_pending_val = cv_none(), .it_failed_at = NONE,
         .frames = List(Frame).new(), .it_cur_fn = NONE, .it_out = cv_none(), .it_flow_val = cv_none(), .it_flow_label = NONE,

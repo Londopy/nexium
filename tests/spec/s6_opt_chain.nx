@@ -1,0 +1,21 @@
+// SPEC 6.3: `?.` reads through an optional: null when the base is, otherwise
+// the chain applied to the payload as an optional; the rest of a chain
+// applies to the payload (`a?.name.len`), an optional result is not wrapped
+// twice, and a chain over a temporary owns and drops the payload.
+struct User { name: String, age: i32 }
+
+fn find(id: i32) -> ?User {
+    if id == 1 { return User{ .name = String.from("ada"), .age = 36 } }
+    return null
+}
+
+fn main() {
+    let a = find(1)
+    let b = find(2)
+    println("{} {}", .{a?.age orelse -1, b?.age orelse -1})
+    println("{} {}", .{a?.name.len orelse 0, b?.name.len orelse 0})
+    let upper = a?.name.clone()
+    println("{}", .{upper orelse String.from("nobody")})
+    println("{}", .{find(1)?.age orelse 0})
+    println("{}", .{find(2)?.name.len orelse 99})
+}

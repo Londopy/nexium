@@ -266,6 +266,14 @@ is an expression of `T`'s type, or a jump (`return`, `break`, `continue`).
 unwraps and panics on null. `defer stmt` runs at scope exit; `errdefer stmt`
 only when the scope exits through an error.
 
+`opt?.field`, `opt?.method(args)`, and any postfix chain after `?.`, read
+through an optional: `null` when `opt` is, otherwise the chain applied to
+the payload, wrapped as an optional; a result that is an optional already
+is not wrapped twice, so `a?.b?.c` chains, and `a?.name.len orelse 0`
+reads as `(a?.name.len) orelse 0`. A chain over a place reads the payload
+in place; over an owned temporary the payload belongs to the chain and is
+dropped with it.
+
 ### 6.4 Closures
 
 `|[captures] params| -> R { body }`. Captures are explicit: `[x]` copies,

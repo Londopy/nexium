@@ -1,0 +1,24 @@
+// SPEC 6.3: `place.?`, `place orelse d` and `try place` read in place when
+// nothing takes the value: the payload stays the place's, so it is dropped
+// once, and only an `orelse` default is a temporary of the read's own. A
+// `let` from the same forms moves the payload out (and the source reads as
+// null afterwards, which the checker refuses to observe).
+fn parse(s: []u8) -> !String {
+    if s.len == 0 { return error.Empty }
+    return String.from(s)
+}
+
+fn main() -> !void {
+    let name: ?String = String.from("ada")
+    let none: ?String = null
+    println("{} {}", .{name orelse String.from("nobody"), none orelse String.from("nobody")})
+    println("{}", .{name.?})
+    println("{}", .{(name orelse String.from("x")).len})
+    let words: ?List(String) = List(String).new()
+    println("{}", .{(words orelse List(String).new()).len})
+    let r = parse("ok")
+    println("{}", .{try r})
+    println("{}", .{(try r).len})
+    let taken = name orelse String.from("y")
+    println("{}", .{taken})
+}

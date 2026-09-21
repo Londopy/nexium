@@ -10,8 +10,24 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ## [Unreleased]
 
+### Added
+
+- `?.` reads through an optional: `opt?.field` and `opt?.method(args)`
+  are `null` when `opt` is and the member as an optional otherwise; the
+  rest of a postfix chain applies to the payload (`a?.name.len orelse
+  0`), an optional result is not wrapped twice (`a?.b?.c`), and a chain
+  over a temporary owns and drops the payload. It is the `if let` it
+  stands for in the typed IR, so the emitter and the interpreter learned
+  nothing new; the formatter, the tree-sitter grammar, the spec and the
+  Topo know the operator. The first item of 1.1.
+
 ### Fixed
 
+- `place.?`, `place orelse d` and `try place` used where nothing takes the
+  value (a print argument, a `.len`) dropped the payload twice: once as the
+  read's temporary and once with the place. The read is now a view of the
+  place's payload, and only an `orelse` default is a temporary of the
+  read's own. Spec case `s6_optional_reads`.
 - The Release and Bench workflows could not commit the package-manager
   manifests and the numbers to a protected `main` (both jobs of v1.0.3
   failed on the push, the release itself was fine). A refused push now

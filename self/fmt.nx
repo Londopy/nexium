@@ -288,10 +288,10 @@ fn needs_space(toks: *List(lexer.Token), ctx: *Line, i: usize) -> bool {
         return ! (a == lexer.Kind.LParen or a == lexer.Kind.LBracket or a == lexer.Kind.Comma) or a == lexer.Kind.Comma
     }
     // openers and member access never have a space after them
-    if a == lexer.Kind.LParen or a == lexer.Kind.LBracket or a == lexer.Kind.Dot or a == lexer.Kind.DotStar or a == lexer.Kind.DotQuestion or a == lexer.Kind.At { return false }
+    if a == lexer.Kind.LParen or a == lexer.Kind.LBracket or a == lexer.Kind.Dot or a == lexer.Kind.DotStar or a == lexer.Kind.DotQuestion or a == lexer.Kind.QuestionDot or a == lexer.Kind.At { return false }
     if a == lexer.Kind.Pipe and b == lexer.Kind.LBracket { return false }
     // closers and separators never have a space before them
-    if b == lexer.Kind.RParen or b == lexer.Kind.RBracket or b == lexer.Kind.Comma or b == lexer.Kind.Semi or b == lexer.Kind.DotStar or b == lexer.Kind.DotQuestion { return false }
+    if b == lexer.Kind.RParen or b == lexer.Kind.RBracket or b == lexer.Kind.Comma or b == lexer.Kind.Semi or b == lexer.Kind.DotStar or b == lexer.Kind.DotQuestion or b == lexer.Kind.QuestionDot { return false }
     // `.field` after a comma or an opening brace is a field initializer; otherwise member access
     if b == lexer.Kind.Dot { return a == lexer.Kind.Comma or a == lexer.Kind.LBrace or a == lexer.Kind.DotLBrace }
     if a == lexer.Kind.Colon or a == lexer.Kind.Comma { return true }

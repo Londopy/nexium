@@ -112,6 +112,10 @@
         "named": true
       },
       {
+        "type": "optional_chain_expression",
+        "named": true
+      },
+      {
         "type": "orelse_expression",
         "named": true
       },
@@ -2249,6 +2253,36 @@
     }
   },
   {
+    "type": "optional_chain_expression",
+    "named": true,
+    "fields": {
+      "field": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "integer_literal",
+            "named": true
+          }
+        ]
+      },
+      "value": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "expression",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "optional_type",
     "named": true,
     "fields": {},
@@ -3266,6 +3300,10 @@
   },
   {
     "type": "?",
+    "named": false
+  },
+  {
+    "type": "?.",
     "named": false
   },
   {

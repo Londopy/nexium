@@ -1690,7 +1690,18 @@ impl Gen {
     /// A temporary whose contents belong to the expression itself (not a view
     /// into a container that keeps ownership).
     fn is_owned_temp(self: *mut Self, e: usize) -> bool {
+        // `place.?`, `place orelse d`, `try place` read in place: the value is
+        // a view of the place's payload, which the place still owns (a move
+        // out of it goes through `expr_owned`, which zeroes the source)
+        if self.reads_place(e) { return false }
         return !self.is_place_expr(e) and !self.c.is_borrowed_view(e)
+    }
+
+    /// `.?`, `orelse` or `try` over a place (a local, a global).
+    fn reads_place(self: *mut Self, e: usize) -> bool {
+        let k = self.c.tir.nodes[e].k
+        if k != check.TKind.Unwrap and k != check.TKind.OrElse and k != check.TKind.Try { return false }
+        return self.is_place_expr(self.c.tir.nodes[e].kids[0])
     }
 
     fn is_place_expr(self: *mut Self, e: usize) -> bool {
@@ -1820,12 +1831,37 @@ impl Gen {
     /// A temporary that owns resources is released when the enclosing scope
     /// ends (the value is only borrowed by whatever reads it).
     fn simple(self: *mut Self, e: usize) -> String {
+        let ty = self.c.tir.nodes[e].ty
+        if self.c.tir.nodes[e].k == check.TKind.OrElse and self.reads_place(e) and self.needs_drop(ty) { return self.orelse_view(e) }
         let cexpr = self.expr(e)
         if self.is_simple(e) { return cexpr }
-        let ty = self.c.tir.nodes[e].ty
         let t = self.bind_tmp(cexpr[..], ty)
         if self.is_owned_temp(e) { self.register_drop(t[..], ty) }
         return t
+    }
+
+    /// `place orelse d` read in place: the payload stays the place's (a view),
+    /// while the default is a temporary of the read's own, dropped with the
+    /// scope; a zeroed value drops as a no-op, so one temporary serves both
+    /// branches.
+    fn orelse_view(self: *mut Self, e: usize) -> String {
+        let kids = self.c.tir.nodes[e].kids.clone()
+        let ety = self.c.tir.nodes[e].ty
+        let v = self.simple_owned(kids[0])
+        let dflt = kids[1]
+        let cn = self.cty(ety)
+        let d = self.tmp()
+        let out = self.tmp()
+        self.line(format("{} {} = {{0}}; {} {};", .{cn, d, cn, out})[..])
+        self.line(format("if (!{}.has) {{", .{v})[..])
+        self.push_buf()
+        let dv = self.expr_owned(dflt)
+        if !self.is_void(self.c.tir.nodes[dflt].ty) and !self.c.expr_diverges(dflt) { self.line(format("{} = {}; {} = {};", .{d, dv, out, d})[..]) }
+        else if dv != "0" { self.line(format("{};", .{dv})[..]) }
+        self.splice_buf()
+        self.line(format("}} else {{ {} = {}.val; }}", .{out, v})[..])
+        self.register_drop(d[..], ety)
+        return out
     }
 
     /// Like `simple`, but the caller takes ownership of the temporary's contents.

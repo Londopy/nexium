@@ -134,6 +134,10 @@ edges (`@weak(x)` or `x.weak()`, then `w.upgrade()`).
   `opt.?` unwraps (panics on null). The right-hand side of `orelse` and
   `catch` may be a jump: `let v = opt orelse return null`,
   `let v = r catch |e| return -1`.
+- `opt?.field` and `opt?.m(x)` read through an optional: `null` when it
+  is, otherwise the member as an optional; the rest of a chain applies to
+  the payload (`a?.name.len orelse 0`), and an optional result is not
+  wrapped twice (`a?.b?.c`).
 - An integer or float literal coerces into `?T`: `f(1)` where `f(x: ?i32)`.
 - `defer stmt` runs at scope exit, `errdefer stmt` only when the scope exits
   through an error; both in reverse order of registration.

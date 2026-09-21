@@ -83,6 +83,11 @@ otherwise, for the places where you have already checked. A number literal
 where a `?T` is expected is wrapped for you, so `find_byte(...) orelse 99`
 reads as it should.
 
+And when what you want is a field or a method of the value inside, `?.`
+reaches through: `user?.name` is `null` when `user` is and the name as an
+optional otherwise, so `user?.name.len orelse 0` is one line where an `if
+let` would be four.
+
 ## `defer` and `errdefer`
 
 ```nexium

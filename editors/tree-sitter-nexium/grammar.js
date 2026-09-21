@@ -285,7 +285,7 @@ module.exports = grammar({
 
     address_of: ($) => prec(PREC.unary, seq('&', optional('mut'), $.expression)),
 
-    _postfix_expression: ($) => choice($.call_expression, $.field_expression, $.index_expression, $.slice_expression, $.unwrap_expression, $.deref_expression),
+    _postfix_expression: ($) => choice($.call_expression, $.field_expression, $.index_expression, $.slice_expression, $.unwrap_expression, $.deref_expression, $.optional_chain_expression),
 
     call_expression: ($) => prec(PREC.postfix, seq(field('function', $.expression), field('arguments', $.arguments))),
     arguments: ($) => seq('(', sep(choice($.expression, $.type_argument)), ')'),
@@ -297,6 +297,8 @@ module.exports = grammar({
     slice_expression: ($) =>
       prec(PREC.postfix, seq(field('value', $.expression), '[', optional(field('from', $.expression)), '..', optional(field('to', $.expression)), ']')),
     unwrap_expression: ($) => prec(PREC.postfix, seq($.expression, '.?')),
+    // `a?.b`: null when `a` is, otherwise the member of the payload, as an optional
+    optional_chain_expression: ($) => prec(PREC.postfix, seq(field('value', $.expression), '?.', field('field', choice($.identifier, $.integer_literal)))),
     deref_expression: ($) => prec(PREC.postfix, seq($.expression, '.*')),
 
     unary_expression: ($) => prec(PREC.unary, seq(field('operator', choice('-', '!', '~')), field('operand', $.expression))),

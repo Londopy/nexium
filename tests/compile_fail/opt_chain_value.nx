@@ -1,0 +1,6 @@
+// EXPECT: `?.` reads through an optional but found `i32`
+fn main() {
+    let x: i32 = 3
+    let y = x?.abs()
+    println("{}", .{y orelse 0})
+}

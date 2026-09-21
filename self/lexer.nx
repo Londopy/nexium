@@ -8,7 +8,7 @@
 pub enum Kind {
     Ident, Int, Float, Str, Bytes, Char, Doc, Comment, Newline, Eof,
     LParen, RParen, LBrace, RBrace, LBracket, RBracket,
-    Comma, Colon, Semi, Dot, DotStar, DotQuestion, DotDot, DotLBrace,
+    Comma, Colon, Semi, Dot, DotStar, DotQuestion, QuestionDot, DotDot, DotLBrace,
     Arrow, FatArrow, Question, Bang, Tilde, At, Pipe, PipeGt, Hash, Dollar,
     Plus, Minus, Star, Slash, Percent,
     PlusPct, MinusPct, StarPct, PlusPipe, MinusPipe, StarPipe,
@@ -26,7 +26,7 @@ pub fn kind_name(k: Kind) -> []u8 {
         .LParen => "LParen", .RParen => "RParen", .LBrace => "LBrace", .RBrace => "RBrace",
         .LBracket => "LBracket", .RBracket => "RBracket",
         .Comma => "Comma", .Colon => "Colon", .Semi => "Semi", .Dot => "Dot", .DotStar => "DotStar",
-        .DotQuestion => "DotQuestion", .DotDot => "DotDot", .DotLBrace => "DotLBrace",
+        .DotQuestion => "DotQuestion", .QuestionDot => "QuestionDot", .DotDot => "DotDot", .DotLBrace => "DotLBrace",
         .Arrow => "Arrow", .FatArrow => "FatArrow", .Question => "Question", .Bang => "Bang",
         .Tilde => "Tilde", .At => "At", .Pipe => "Pipe", .PipeGt => "PipeGt", .Hash => "Hash",
         .Dollar => "Dollar",
@@ -454,6 +454,7 @@ impl Lexer {
         else if c == ':' { kind = Kind.Colon }
         else if c == '.' and c1 == '*' { kind = Kind.DotStar; len = 2 }
         else if c == '.' and c1 == '?' { kind = Kind.DotQuestion; len = 2 }
+        else if c == '?' and c1 == '.' { kind = Kind.QuestionDot; len = 2 }
         else if c == '.' and c1 == '.' { kind = Kind.DotDot; len = 2 }
         else if c == '.' and c1 == '{' { self.depth.append('{'); kind = Kind.DotLBrace; len = 2 }
         else if c == '.' { kind = Kind.Dot }

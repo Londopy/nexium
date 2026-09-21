@@ -72,8 +72,8 @@ misses nothing for the tool's own needs.
 
 Exit: `examples/tool.nx`, a real utility (a log grep with regex, dates, and
 file walking) under 300 lines, runs on all three platforms from the release.
-Status: done except `?T` chaining (`a?.b`, waiting on the spec review) and
-the `nx fmt` trailing-comma rule. `std.fs`, `std.time`, `std.regex`,
+Status: done except the `nx fmt` trailing-comma rule (`?T` chaining,
+`a?.b`, landed in 1.1). `std.fs`, `std.time`, `std.regex`,
 `std.text`, `std.testing`, `std.stream`, range steps, `while`/`else`, full
 match exhaustiveness, `nx test --filter`/`--verbose`, `os.environ`, and
 `examples/tool.nx` (142 lines) shipped in 0.3.0.
@@ -387,6 +387,7 @@ the Hut (1.8).
 Ergonomics the self-hosted compiler paid for by hand.
 
 - `?T` chaining: `a?.b` is `null` when `a` is (deferred since phase 1).
+  (Done: the rest of a chain applies to the payload, `a?.name.len`.)
 - Tuple destructuring: `let (a, b) = pair`, in `for` bindings too.
 - `derive(Clone)` for structs and enums whose fields all clone, the way
   drops are derived (KNOWN_ISSUES: every deep copy in `check.nx` is a hand
