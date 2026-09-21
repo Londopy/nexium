@@ -18,6 +18,17 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   before replacing its files (Restart Manager; it is not started again),
   and keep a log of the run as `install.log` next to the program. The
   uninstaller takes `/LOG="path"` for a log of its own.
+- `installers/install.ps1`, the Windows one-liner:
+  `irm https://raw.githubusercontent.com/Londopy/nexium/main/installers/install.ps1 | iex`
+  downloads the portable build for the machine, verifies it against the
+  release's checksums, installs it under `%LocalAppData%\Programs\Nexium`
+  on the user's PATH and downloads Zig beside it when no C compiler is
+  found; `NEXIUM_VERSION`, `NEXIUM_HOME`, `NEXIUM_NO_MODIFY_PATH` and
+  `NEXIUM_NO_ZIG` as in the shell script. A Chocolatey package
+  (`installers/chocolatey/`, written by `scripts/packaging.py`) wraps the
+  installer with its checksum; the Windows build job packs it, attaches
+  the `.nupkg` to the release, and pushes it to chocolatey.org when
+  `CHOCO_API_KEY` is set.
 - `ghcr.io/londopy/nexium`: the compiler with its Zig toolchain, the
   standard library, the examples and the docs, on Debian (`latest`) and
   Alpine (`:alpine`), for amd64 and arm64, built from the release's seed

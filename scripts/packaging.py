@@ -14,6 +14,11 @@
   the Inno Setup installer. They are submitted to microsoft/winget-pkgs by
   hand (a new package needs a person's pull request); until then they
   install with `winget install --manifest installers/winget`.
+- `installers/chocolatey/`: the Chocolatey package, which wraps the Inno
+  Setup installer with its checksum and silent switches. The Windows build
+  job packs and pushes it (`choco pack`, `choco push` when CHOCO_API_KEY
+  is set) with `--only chocolatey`, which needs only the installer's line
+  of the checksums.
 
 The release workflow runs this after the release is published and commits
 the result to main. The source tarball's checksum is computed from GitHub
@@ -23,7 +28,9 @@ import hashlib, json, os, subprocess, sys, urllib.request
 from datetime import date
 
 REPO = "Londopy/nexium"
-tag, sums_path = sys.argv[1], sys.argv[2]
+args = [a for a in sys.argv[1:] if not a.startswith("--")]
+only = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--only=")), "")
+tag, sums_path = args[0], args[1]
 version = tag.lstrip("v")
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 download = f"https://github.com/{REPO}/releases/download/{tag}"
@@ -48,7 +55,7 @@ setup = f"nexium-{version}-setup-x64.exe"
 
 source_url = f"https://github.com/{REPO}/archive/refs/tags/{tag}.tar.gz"
 source_sha = os.environ.get("NX_SOURCE_SHA256")
-if not source_sha:
+if not source_sha and only != "chocolatey":
     h = hashlib.sha256()
     with urllib.request.urlopen(source_url) as r:
         for chunk in iter(lambda: r.read(1 << 20), b""):
@@ -66,6 +73,68 @@ def write(rel, text):
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(text)
     print("wrote", rel)
+
+# ---------------------------------------------------------------- Chocolatey
+def chocolatey():
+    write("installers/chocolatey/nexium.nuspec", f'''<?xml version="1.0" encoding="utf-8"?>
+<!-- The Nexium language for Chocolatey, written by scripts/packaging.py at each
+     release: the Inno Setup installer, with its checksum and silent switches. -->
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>nexium</id>
+    <version>{version}</version>
+    <title>Nexium</title>
+    <authors>Londopy</authors>
+    <owners>Londopy</owners>
+    <projectUrl>https://londopy.github.io/nexium/</projectUrl>
+    <projectSourceUrl>https://github.com/{REPO}</projectSourceUrl>
+    <packageSourceUrl>https://github.com/{REPO}/tree/main/installers/chocolatey</packageSourceUrl>
+    <docsUrl>https://londopy.github.io/nexium/docs/install.html</docsUrl>
+    <bugTrackerUrl>https://github.com/{REPO}/issues</bugTrackerUrl>
+    <licenseUrl>https://github.com/{REPO}/blob/main/LICENSE</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <releaseNotes>https://github.com/{REPO}/releases/tag/{tag}</releaseNotes>
+    <tags>nexium compiler language c programming</tags>
+    <summary>The Nexium language: a compiler that emits C and ships libraries, packages and tools</summary>
+    <description>Nexium compiles to native code through C, has reference counting without a tracing collector, a checked effect system that says whether a function allocates, blocks or can panic, and a compiler that turns one source tree into a C library, a Python wheel, a Rust crate, an npm package or a command line tool.
+
+This package runs the Windows installer silently: nx.exe, the bundled Zig toolchain nx uses as its C compiler, the standard library, the examples, the docs and the VS Code extension file, with nx added to the PATH.</description>
+  </metadata>
+  <files>
+    <file src="tools\\**" target="tools" />
+  </files>
+</package>
+''')
+    write("installers/chocolatey/tools/chocolateyinstall.ps1", f'''$ErrorActionPreference = 'Stop'
+$packageArgs = @{{
+    packageName    = 'nexium'
+    fileType       = 'exe'
+    url64bit       = '{download}/{setup}'
+    checksum64     = '{sha(setup)}'
+    checksumType64 = 'sha256'
+    silentArgs     = '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS=addtopath'
+    validExitCodes = @(0)
+    softwareName   = 'Nexium*'
+}}
+Install-ChocolateyPackage @packageArgs
+''')
+    write("installers/chocolatey/tools/chocolateyuninstall.ps1", '''$ErrorActionPreference = 'Stop'
+[array]$keys = Get-UninstallRegistryKey -SoftwareName 'Nexium*'
+if ($keys.Count -eq 1) {
+    $keys | ForEach-Object {
+        Uninstall-ChocolateyPackage -PackageName 'nexium' -FileType 'exe' -SilentArgs '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART' -File ($_.UninstallString.Trim('"'))
+    }
+} elseif ($keys.Count -eq 0) {
+    Write-Warning 'nexium is not installed'
+} else {
+    Write-Warning "$($keys.Count) programs match Nexium*; uninstall from Settings"
+}
+''')
+
+if only == "chocolatey":
+    chocolatey()
+    sys.exit(0)
+chocolatey()
 
 # ------------------------------------------------------------------ Homebrew
 write("Formula/nexium.rb", f'''# The Nexium language, for Homebrew. Written by scripts/packaging.py at each

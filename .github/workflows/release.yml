@@ -147,6 +147,22 @@ jobs:
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$ver" "/DSourceDir=$src" installers\windows\nexium.iss
           Copy-Item installers\windows\Output\nexium-$ver-setup-x64.exe .
 
+      # the Chocolatey package wraps the installer just built: packed here,
+      # attached to the release, pushed to chocolatey.org when the key is set
+      - name: Chocolatey package
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          CHOCO_API_KEY: ${{ secrets.CHOCO_API_KEY }}
+        run: |
+          $ver = "${{ github.ref_name }}".TrimStart("v")
+          $sha = (Get-FileHash "nexium-$ver-setup-x64.exe" -Algorithm SHA256).Hash.ToLower()
+          "$sha  nexium-$ver-setup-x64.exe" | Set-Content sums-win.txt
+          python scripts/packaging.py "${{ github.ref_name }}" sums-win.txt --only=chocolatey
+          choco pack installers/chocolatey/nexium.nuspec --outputdirectory .
+          if ($env:CHOCO_API_KEY) { choco push "nexium.$ver.nupkg" --source https://push.chocolatey.org/ --api-key $env:CHOCO_API_KEY }
+          else { Write-Host "CHOCO_API_KEY is not set: the package is attached to the release, not pushed" }
+
       - uses: actions/upload-artifact@v7
         with:
           name: nx-${{ matrix.target }}
@@ -154,6 +170,7 @@ jobs:
             nx-${{ github.ref_name }}-*
             nexium-*-setup-x64.exe
             nexium-${{ github.ref_name }}.vsix
+            nexium.*.nupkg
 
   release:
     needs: [build]

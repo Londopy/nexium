@@ -33,6 +33,28 @@ the PATH entry, and leaves programs you compiled alone.
 
 Silent install for scripts: `nexium-<version>-setup-x64.exe /VERYSILENT /TASKS=addtopath`.
 
+## Windows: the PowerShell one-liner
+
+```powershell
+irm https://raw.githubusercontent.com/Londopy/nexium/main/installers/install.ps1 | iex
+```
+
+It downloads the portable build for the machine (x64 or ARM64), verifies
+it against the release's `SHA256SUMS.txt`, installs `nx.exe`, the standard
+library, the examples and the docs to `%LocalAppData%\Programs\Nexium`,
+adds that directory to the user's PATH, and downloads Zig beside it when
+no C compiler is found. No wizard, no administrator rights, nothing
+registered. Variables, set before the line: `NEXIUM_VERSION=v1.0.3` pins a
+release, `NEXIUM_HOME` changes the directory, `NEXIUM_NO_MODIFY_PATH=1`
+leaves the PATH alone, `NEXIUM_NO_ZIG=1` never downloads Zig. Remove it by
+deleting the directory and the PATH entry.
+
+**Chocolatey**: `choco install nexium` once the package is on
+chocolatey.org (the release workflow pushes it when its key is set); each
+release also attaches the `.nupkg`, which installs with
+`choco install nexium --source .` from the directory it is in. The package
+runs the installer silently with `nx` added to the PATH.
+
 The installer refuses to start while another Nexium installer or
 uninstaller is open, and names it. A running `nx.exe` holds the files
 being replaced, so the installer closes it first (Windows' Restart

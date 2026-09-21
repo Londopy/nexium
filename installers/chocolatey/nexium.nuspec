@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Nexium language for Chocolatey, written by scripts/packaging.py at each
+     release: the Inno Setup installer, with its checksum and silent switches. -->
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>nexium</id>
+    <version>1.0.2</version>
+    <title>Nexium</title>
+    <authors>Londopy</authors>
+    <owners>Londopy</owners>
+    <projectUrl>https://londopy.github.io/nexium/</projectUrl>
+    <projectSourceUrl>https://github.com/Londopy/nexium</projectSourceUrl>
+    <packageSourceUrl>https://github.com/Londopy/nexium/tree/main/installers/chocolatey</packageSourceUrl>
+    <docsUrl>https://londopy.github.io/nexium/docs/install.html</docsUrl>
+    <bugTrackerUrl>https://github.com/Londopy/nexium/issues</bugTrackerUrl>
+    <licenseUrl>https://github.com/Londopy/nexium/blob/main/LICENSE</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <releaseNotes>https://github.com/Londopy/nexium/releases/tag/v1.0.2</releaseNotes>
+    <tags>nexium compiler language c programming</tags>
+    <summary>The Nexium language: a compiler that emits C and ships libraries, packages and tools</summary>
+    <description>Nexium compiles to native code through C, has reference counting without a tracing collector, a checked effect system that says whether a function allocates, blocks or can panic, and a compiler that turns one source tree into a C library, a Python wheel, a Rust crate, an npm package or a command line tool.
+
+This package runs the Windows installer silently: nx.exe, the bundled Zig toolchain nx uses as its C compiler, the standard library, the examples, the docs and the VS Code extension file, with nx added to the PATH.</description>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>

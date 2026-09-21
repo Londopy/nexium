@@ -326,7 +326,9 @@ queue in front of them.
 **A day or two each.**
 
 10. `install.ps1`, the PowerShell one-liner, and the Chocolatey package
-    that wraps it.
+    that wraps it. (Done; the package wraps the installer with its
+    checksum, as Chocolatey's moderation asks, and the push needs the
+    maintainer's `CHOCO_API_KEY`.)
 11. REPL `:undo`, `:save` and `:load`; `:effects expr`.
 12. `nx -e` and `nx -p` one-liners on the REPL's compile cache.
 13. `nx layout Type`: offsets, sizes, padding, the reordering.
