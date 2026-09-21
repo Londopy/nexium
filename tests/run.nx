@@ -540,7 +540,7 @@ fn suite_installer(e: *Env, failures: *mut List(String)) {
     if !fs.exists(fs.join(dir[..], "assets/data.txt")[..]) { failures.append(String.from("installer: files were not copied next to the program")) }
     if e.windows {
         let iss = fs.read(fs.join(dir[..], "Greeter.iss")[..]) catch { failures.append(String.from("installer: no Greeter.iss")); return }
-        for want in ["AppName=Greeter", "AppVersion=1.0.0", "addtopath", "assets\\*", "AppId={{"] {
+        for want in ["AppName=Greeter", "AppVersion=1.0.0", "addtopath", "assets\\*", "AppId={{", "SetupMutex=GreeterSetupMutex", "CloseApplications=yes", "SetupLogging=yes", "install.log", "Another Greeter installer"] {
             if iss[..].find(want) == null { failures.append(format("installer: the script lacks `{}`:\n{}", .{want, iss})) }
         }
     } else {

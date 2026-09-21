@@ -62,9 +62,24 @@ ArchitecturesInstallIn64BitMode=x64compatible
 ChangesEnvironment=yes
 ChangesAssociations=yes
 MinVersion=10.0
+; one installer at a time: Setup and Uninstall refuse to start while another
+; holds this mutex, and say so (the message is under [Messages])
+SetupMutex=NexiumSetupMutex
+; a running nx.exe holds the files being replaced: Restart Manager closes it
+; first, and does not start it again (a console program has nothing to resume)
+CloseApplications=yes
+CloseApplicationsFilter=*.exe,*.dll
+RestartApplications=no
+; every step of the install, kept next to the program as install.log
+; (see CurStepChanged); the uninstaller logs with /LOG="file"
+SetupLogging=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[Messages]
+SetupAppRunningError=Another Nexium installer (%1) is already open.%n%nFinish or close it, then click OK to try again, or Cancel to exit.
+UninstallAppRunningError=Another Nexium installer or uninstaller (%1) is already open.%n%nFinish or close it, then click OK to try again, or Cancel to exit.
 
 [Types]
 Name: "full"; Description: "Full installation (recommended)"
@@ -129,6 +144,7 @@ Filename: "{app}\CHANGELOG.md"; Description: "Show what's new in {#AppVersion}";
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\nx-out"
+Type: files; Name: "{app}\install.log"
 
 [Code]
 // ---- "More from Londopy": a page after the tasks presenting the publisher's
@@ -271,6 +287,9 @@ procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if (CurStep = ssPostInstall) and WizardIsTaskSelected('addtopath') then
     EnvAddPath(ExpandConstant('{app}'));
+  // the log of this run, next to the program (SetupLogging=yes writes it)
+  if CurStep = ssDone then
+    FileCopy(ExpandConstant('{log}'), ExpandConstant('{app}\install.log'), False);
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);

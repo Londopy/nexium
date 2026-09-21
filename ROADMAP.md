@@ -292,11 +292,12 @@ queue in front of them.
    instruction from the probe is named as such with the fix. 1.0.1's
    doctor reported a working installation on a machine where the
    compiler could not compile a line, because it had only asked the C
-   compiler for its version. The harness runs the check. (The code for
-   this was written and set aside on 2026-09-20; it is the next thing.)
+   compiler for its version. The harness runs the check. (Shipped in
+   1.0.3.)
 1. The installer refuses to run twice (a setup mutex naming the one
    already open), closes a running `nx` before replacing files, and
-   writes a log; the uninstaller the same.
+   writes a log; the uninstaller the same. (Done, for the compiler's
+   installer and the ones `nx ship` writes.)
 2. The one-C-file install on the front page of the docs, and
    `install.sh` falling back to `cc bootstrap/nx.c` when there is
    nothing to download.

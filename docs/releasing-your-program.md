@@ -97,6 +97,10 @@ artifact installer {
 }
 ```
 
+- The Windows installer refuses to start while another installer or
+  uninstaller of the program is open, closes the program if it is running
+  before replacing its files, and keeps a log of the run as `install.log`
+  next to the program (the uninstaller takes `/LOG="path"`).
 - On Windows, `nx ship` writes `nx-out/taskdesk/TaskDesk.iss` and, when
   [Inno Setup 6](https://jrsoftware.org/isinfo.php) is installed (or the
   `ISCC` environment variable points at `ISCC.exe`),

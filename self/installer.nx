@@ -101,7 +101,11 @@ pub fn inno_script(spec: *Spec, source_dir: []u8) -> String {
     s.append(format("UninstallDisplayIcon={{app}}\\{}\n", .{iss_str(spec.exe[..])})[..])
     s.append("Compression=lzma2\nSolidCompression=yes\nWizardStyle=modern\nPrivilegesRequired=lowest\nPrivilegesRequiredOverridesAllowed=dialog\nArchitecturesAllowed=x64compatible\nArchitecturesInstallIn64BitMode=x64compatible\n")
     if spec.add_to_path { s.append("ChangesEnvironment=yes\n") }
+    // one installer at a time, a running program closed before its files are
+    // replaced, and a log of the run kept next to the program
+    s.append(format("SetupMutex={}SetupMutex\nCloseApplications=yes\nCloseApplicationsFilter=*.exe,*.dll\nRestartApplications=no\nSetupLogging=yes\n", .{iss_str(no_spaces(spec.name[..])[..])})[..])
     s.append("\n[Languages]\nName: \"english\"; MessagesFile: \"compiler:Default.isl\"\n\n")
+    s.append(format("[Messages]\nSetupAppRunningError=Another {} installer (%1) is already open.%n%nFinish or close it, then click OK to try again, or Cancel to exit.\nUninstallAppRunningError=Another {} installer or uninstaller (%1) is already open.%n%nFinish or close it, then click OK to try again, or Cancel to exit.\n\n", .{iss_str(spec.name[..]), iss_str(spec.name[..])})[..])
     if spec.add_to_path { s.append("[Tasks]\nName: \"addtopath\"; Description: \"Add the program to the PATH\"; GroupDescription: \"Environment:\"\n\n") }
     s.append("[Files]\n")
     s.append(format("Source: \"{{#SourcePath}}\\{}\"; DestDir: \"{{app}}\"; Flags: ignoreversion\n", .{iss_str(spec.exe[..])})[..])
@@ -121,11 +125,17 @@ pub fn inno_script(spec: *Spec, source_dir: []u8) -> String {
     if spec.readme.len > 0 {
         s.append(format("Filename: \"{{app}}\\{}\"; Description: \"Open the README\"; Flags: postinstall shellexec skipifsilent unchecked\n", .{iss_str(fs.base_name(spec.readme[..]))})[..])
     }
-    if spec.add_to_path { s.append(PATH_CODE) }
+    s.append("\n[UninstallDelete]\nType: files; Name: \"{app}\\install.log\"\n")
+    s.append("\n[Code]\n")
+    if spec.add_to_path { s.append(PATH_FUNCS) }
+    s.append("procedure CurStepChanged(CurStep: TSetupStep);\nbegin\n")
+    if spec.add_to_path { s.append("  if (CurStep = ssPostInstall) and WizardIsTaskSelected('addtopath') then\n    EnvAddPath(ExpandConstant('{app}'));\n") }
+    s.append("  if CurStep = ssDone then\n    FileCopy(ExpandConstant('{log}'), ExpandConstant('{app}\\install.log'), False);\nend;\n")
+    if spec.add_to_path { s.append("\nprocedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);\nbegin\n  if CurUninstallStep = usPostUninstall then\n    EnvRemovePath(ExpandConstant('{app}'));\nend;\n") }
     return s
 }
 
-const PATH_CODE = "\n[Code]\nfunction EnvKey(): string;\nbegin\n  if IsAdminInstallMode then\n    Result := 'SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment'\n  else\n    Result := 'Environment';\nend;\n\nfunction EnvRoot(): Integer;\nbegin\n  if IsAdminInstallMode then\n    Result := HKEY_LOCAL_MACHINE\n  else\n    Result := HKEY_CURRENT_USER;\nend;\n\nprocedure EnvAddPath(Dir: string);\nvar\n  Paths: string;\nbegin\n  if not RegQueryStringValue(EnvRoot(), EnvKey(), 'Path', Paths) then\n    Paths := '';\n  if Pos(';' + Uppercase(Dir) + ';', ';' + Uppercase(Paths) + ';') > 0 then\n    exit;\n  if (Paths <> '') and (Paths[Length(Paths)] <> ';') then\n    Paths := Paths + ';';\n  Paths := Paths + Dir;\n  RegWriteExpandStringValue(EnvRoot(), EnvKey(), 'Path', Paths);\nend;\n\nprocedure EnvRemovePath(Dir: string);\nvar\n  Paths: string;\n  P: Integer;\nbegin\n  if not RegQueryStringValue(EnvRoot(), EnvKey(), 'Path', Paths) then\n    exit;\n  P := Pos(';' + Uppercase(Dir) + ';', ';' + Uppercase(Paths) + ';');\n  if P = 0 then\n    exit;\n  Delete(Paths, P - 1, Length(Dir) + 1);\n  RegWriteExpandStringValue(EnvRoot(), EnvKey(), 'Path', Paths);\nend;\n\nprocedure CurStepChanged(CurStep: TSetupStep);\nbegin\n  if (CurStep = ssPostInstall) and WizardIsTaskSelected('addtopath') then\n    EnvAddPath(ExpandConstant('{app}'));\nend;\n\nprocedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);\nbegin\n  if CurUninstallStep = usPostUninstall then\n    EnvRemovePath(ExpandConstant('{app}'));\nend;\n"
+const PATH_FUNCS = "function EnvKey(): string;\nbegin\n  if IsAdminInstallMode then\n    Result := 'SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment'\n  else\n    Result := 'Environment';\nend;\n\nfunction EnvRoot(): Integer;\nbegin\n  if IsAdminInstallMode then\n    Result := HKEY_LOCAL_MACHINE\n  else\n    Result := HKEY_CURRENT_USER;\nend;\n\nprocedure EnvAddPath(Dir: string);\nvar\n  Paths: string;\nbegin\n  if not RegQueryStringValue(EnvRoot(), EnvKey(), 'Path', Paths) then\n    Paths := '';\n  if Pos(';' + Uppercase(Dir) + ';', ';' + Uppercase(Paths) + ';') > 0 then\n    exit;\n  if (Paths <> '') and (Paths[Length(Paths)] <> ';') then\n    Paths := Paths + ';';\n  Paths := Paths + Dir;\n  RegWriteExpandStringValue(EnvRoot(), EnvKey(), 'Path', Paths);\nend;\n\nprocedure EnvRemovePath(Dir: string);\nvar\n  Paths: string;\n  P: Integer;\nbegin\n  if not RegQueryStringValue(EnvRoot(), EnvKey(), 'Path', Paths) then\n    exit;\n  P := Pos(';' + Uppercase(Dir) + ';', ';' + Uppercase(Paths) + ';');\n  if P = 0 then\n    exit;\n  Delete(Paths, P - 1, Length(Dir) + 1);\n  RegWriteExpandStringValue(EnvRoot(), EnvKey(), 'Path', Paths);\nend;\n\n"
 
 fn sh_str(s: []u8) -> String {
     var out = String.from("'")

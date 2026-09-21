@@ -29,6 +29,13 @@ the PATH entry, and leaves programs you compiled alone.
 
 Silent install for scripts: `nexium-<version>-setup-x64.exe /VERYSILENT /TASKS=addtopath`.
 
+The installer refuses to start while another Nexium installer or
+uninstaller is open, and names it. A running `nx.exe` holds the files
+being replaced, so the installer closes it first (Windows' Restart
+Manager; it is not started again). Every step of the run is logged, and
+the log is kept as `install.log` next to `nx.exe`; the uninstaller takes
+`/LOG="path"` to write one of its own.
+
 A portable `nx-<version>-x86_64-pc-windows-msvc.zip` has the same files
 without the installer or Zig; put its folder on the PATH and have Zig on the
 PATH yourself.

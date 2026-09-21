@@ -10,6 +10,15 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ## [Unreleased]
 
+### Added
+
+- The Windows installers, the compiler's own and the ones `nx ship`
+  writes, refuse to start while another installer or uninstaller of the
+  same program is open and name it, close the program if it is running
+  before replacing its files (Restart Manager; it is not started again),
+  and keep a log of the run as `install.log` next to the program. The
+  uninstaller takes `/LOG="path"` for a log of its own.
+
 ## [1.0.3] - 2026-09-20
 
 *Annapurna: Schatz* — the one who found the summit party in the crevasse the morning after: the long-hidden bugs. An outside review of 1.0.1 read the code and found five that had been there since their features shipped: a contained panic leaked what the call acquired, the lockfile pinned nothing, the Python wrapper dropped writes to a mutable slice, effect notes pointed at the function instead of the line, and `SECURITY.md` promised more than the specification did. All five are fixed here, and with them the compile-time interpreter is freed from its 32-call limit, `nx doctor` proves a program runs, and `nx update` exists.
