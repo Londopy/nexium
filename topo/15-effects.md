@@ -62,9 +62,10 @@ says exactly how:
 {{output topo/code/effects_fails.expected}}
 
 The first note points at the call inside `tag` that brings the effect in;
-the second at the function that introduces it and the reason, however far
-down the chain. Rename `label` to something in another module, five calls
-deep, and the notes still lead you to the line.
+the second at the exact line that introduces it (the `format` call inside
+`label`) and the reason, however far down the chain. Rename `label` to
+something in another module, five calls deep, and the notes still lead you
+to the line.
 
 Bounds go on function types too. `apply` accepts only functions that are
 `!allocates !panics`; passing one that could panic is a type error at the

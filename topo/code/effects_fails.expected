@@ -9,8 +9,8 @@ error: function `tag` is declared `!allocates` but has the `allocates` effect
   7|     return label(n)
    |            ^
   note: introduced by `label` here: `format` builds an owned String
-  --> topo/code/effects_fails.nx:1:1
+  --> topo/code/effects_fails.nx:2:12
    |
-  1| fn label(n: i32) -> String {
-   | ^
+  2|     return format("#{}", .{n})
+   |            ^
 1 error(s)

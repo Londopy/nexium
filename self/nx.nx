@@ -60,7 +60,7 @@ fn usage() {
     eprintln("       nx doc <file.nx> [-o <dir>]", .{})
     eprintln("       nx ship <file.nx> [--mode m] [--target t]   produce the declared artifacts", .{})
     eprintln("       nx version | nx doctor | nx lsp | nx repl", .{})
-    eprintln("       nx init [name] | nx add <name> --git URL [--tag TAG] | --path DIR | nx fetch", .{})
+    eprintln("       nx init [name] | nx add <name> --git URL [--tag TAG] | --path DIR | nx fetch | nx update [name...]", .{})
     eprintln("  -o <path>          output file", .{})
     eprintln("  --out-dir <dir>    where C and binaries go (default nx-out)", .{})
     eprintln("  --mode <m>         debug (default), safe, fast, small", .{})
@@ -678,17 +678,22 @@ fn cmd_add(rest: [][]u8) -> i32 {
     let mpath = format("{}/{}", .{mf.dir, manifest.MANIFEST})
     manifest.add(mpath[..], &dep) catch { return 1 }
     println("added `{}` to {}", .{dep.name, mpath})
-    return cmd_fetch()
+    // the new dependency is not in the lock yet, so a fetch resolves its tag
+    var none = List([]u8).new()
+    return cmd_fetch(none[..], false)
 }
 
 /// `nx fetch`: clone every git dependency and write the lock file.
-fn cmd_fetch() -> i32 {
+/// `nx fetch`: every dependency at the commit the lock names (or at its tag,
+/// the first time). `nx update [name...]`: those dependencies (all, with no
+/// name) get their tag resolved again and the lock rewritten.
+fn cmd_fetch(update: [][]u8, update_all: bool) -> i32 {
     let cwd = io.cwd() catch { String.from(".") }
     let mf = manifest.find(cwd[..]) orelse {
         eprintln("error: no {} here or above; run `nx init` first", .{manifest.MANIFEST})
         return 1
     }
-    let lock = manifest.fetch(&mf) catch { return 1 }
+    let lock = manifest.fetch(&mf, update, update_all) catch { return 1 }
     for l in lock {
         if l.source != "path" {
             let short = if l.commit.len > 10 { l.commit[0..10] } else { l.commit[..] }
@@ -1190,9 +1195,10 @@ fn main() -> u8 {
         padded.append("repl")
         args = padded[..]
     }
-    if args.len >= 2 and (args[1] == "init" or args[1] == "add" or args[1] == "fetch") {
+    if args.len >= 2 and (args[1] == "init" or args[1] == "add" or args[1] == "fetch" or args[1] == "update") {
         let rest = args[2..]
-        let c = if args[1] == "init" { cmd_init(rest) } else if args[1] == "add" { cmd_add(rest) } else { cmd_fetch() }
+        var none = List([]u8).new()
+        let c = if args[1] == "init" { cmd_init(rest) } else if args[1] == "add" { cmd_add(rest) } else if args[1] == "update" { cmd_fetch(rest, rest.len == 0) } else { cmd_fetch(none[..], false) }
         return (if c < 0 or c > 255 { 1 } else { c }) as u8
     }
     let o = parse_opts(args) orelse {

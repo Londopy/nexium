@@ -447,7 +447,59 @@ fn suite_packages(e: *Env, failures: *mut List(String)) {
     let lock = fs.read(fs.join(app[..], "nexium.lock")[..]) catch { String.new() }
     if lock[..].find("greet\tpath\t../greet") == null { failures.append(format("packages: lock file:\n{}", .{lock})) }
     if lock[..].find("words\tpath") == null { failures.append(format("packages: the transitive dependency is missing from the lock:\n{}", .{lock})) }
-    println("packages: path dependencies, module imports, the lock file", .{})
+    // a git dependency: the lock pins the commit, so a moved tag does not move
+    // a build until `nx update` asks for it
+    if !program_found(e, "git") {
+        println("packages: path dependencies, module imports, the lock file (git not found: the git dependency is not tested)", .{})
+        return
+    }
+    let repo = fs.join(base[..], "gitdep")
+    fs.make_dirs(fs.join(repo[..], "src")[..]) catch { }
+    fs.write(fs.join(repo[..], "nexium.toml")[..], "[package]\nname = \"gitdep\"\nversion = \"0.1.0\"\n") catch { }
+    fs.write(fs.join(repo[..], "src/lib.nx")[..], "pub fn v() -> i32 { return 1 }\n") catch { }
+    let gitc = ["git", "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false"]
+    var g = List([]u8).new()
+    for a in gitc { g.append(a) }
+    for step in [["init", "-q", "-b", "main"][..], ["add", "."][..], ["commit", "-qm", "one"][..], ["tag", "v1"][..]] {
+        var argv = g.clone()
+        for a in step { argv.append(a) }
+        let r = run_in(e, argv[..], "", repo[..])
+        if r.code != 0 { failures.append(format("packages: git {} failed:\n{}", .{step[0], r.stderr})); return }
+    }
+    let url = strings.replace(repo[..], "\\", "/")
+    let gitapp = fs.join(base[..], "gitapp")
+    fs.make_dirs(gitapp[..]) catch { }
+    fs.write(fs.join(gitapp[..], "nexium.toml")[..], format("[package]\nname = \"gitapp\"\nversion = \"0.1.0\"\n\n[dependencies]\ngitdep = {{ git = \"{}\", tag = \"v1\" }}\n", .{url})[..]) catch { }
+    fs.write(fs.join(gitapp[..], "main.nx")[..], "import gitdep\nfn main() { println(\"{}\", .{gitdep.v()}) }\n") catch { }
+    let f1 = nx_in(e, ["fetch"][..], "", gitapp[..])
+    if f1.code != 0 { failures.append(format("packages: nx fetch of a git dependency failed:\n{}", .{f1.stderr})); return }
+    let r1 = nx_in(e, ["run", "main.nx"][..], "", gitapp[..])
+    if r1.text() != "1" { failures.append(format("packages: the git dependency at v1 printed {} {}", .{r1.stdout, r1.stderr})); return }
+    let lock1 = fs.read(fs.join(gitapp[..], "nexium.lock")[..]) catch { String.new() }
+    // the tag moves to a second commit
+    fs.write(fs.join(repo[..], "src/lib.nx")[..], "pub fn v() -> i32 { return 2 }\n") catch { }
+    for step in [["commit", "-qam", "two"][..], ["tag", "-f", "v1"][..]] {
+        var argv = g.clone()
+        for a in step { argv.append(a) }
+        let r = run_in(e, argv[..], "", repo[..])
+        if r.code != 0 { failures.append(format("packages: git {} failed:\n{}", .{step[0], r.stderr})); return }
+    }
+    // a fresh machine: no modules, the lock committed; fetch must give the locked commit
+    fs.remove_all(fs.join(gitapp[..], "nexium_modules")[..]) catch { }
+    let f2 = nx_in(e, ["fetch"][..], "", gitapp[..])
+    if f2.code != 0 { failures.append(format("packages: nx fetch from the lock failed:\n{}", .{f2.stderr})); return }
+    let r2 = nx_in(e, ["run", "main.nx"][..], "", gitapp[..])
+    if r2.text() != "1" { failures.append(format("packages: after the tag moved, fetch from the lock printed {} (the lock was not honoured)", .{r2.stdout})); return }
+    let lock2 = fs.read(fs.join(gitapp[..], "nexium.lock")[..]) catch { String.new() }
+    if lock2[..] != lock1[..] { failures.append(format("packages: fetch rewrote the lock:\n{}\nwas:\n{}", .{lock2, lock1})); return }
+    // `nx update` is what follows the tag
+    let u = nx_in(e, ["update", "gitdep"][..], "", gitapp[..])
+    if u.code != 0 { failures.append(format("packages: nx update failed:\n{}", .{u.stderr})); return }
+    let r3 = nx_in(e, ["run", "main.nx"][..], "", gitapp[..])
+    if r3.text() != "2" { failures.append(format("packages: after nx update the program printed {}", .{r3.stdout})); return }
+    let lock3 = fs.read(fs.join(gitapp[..], "nexium.lock")[..]) catch { String.new() }
+    if lock3[..] == lock1[..] { failures.append(String.from("packages: nx update did not rewrite the lock")) }
+    println("packages: path dependencies, module imports, the lock file, a git dependency whose tag moves", .{})
 }
 
 /// `artifact installer`: `nx ship` writes an Inno Setup script on Windows

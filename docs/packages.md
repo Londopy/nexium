@@ -35,11 +35,15 @@ import local
 ```
 
 `nx fetch` clones every git dependency (transitively) into
-`nexium_modules/` next to the manifest with a shallow checkout of the tag,
-and writes `nexium.lock` with the exact commit each one resolved to. Commit
-the lock file. Commit `nexium_modules/` too if you want a build with no
-network at all (vendoring); otherwise add it to `.gitignore` and run
-`nx fetch` after cloning.
+`nexium_modules/` next to the manifest with a shallow checkout, and writes
+`nexium.lock` with the exact commit each one resolved to. When a lock file
+exists, `nx fetch` checks each dependency out at the commit it names,
+whatever the tag points at today, so a fresh clone of your repository
+builds exactly what you built; `nx update` (all of them) or `nx update
+name` resolves the tag again and rewrites the lock. Commit the lock file.
+Commit `nexium_modules/` too if you want a build with no network at all
+(vendoring); otherwise add it to `.gitignore` and run `nx fetch` after
+cloning.
 
 The compiler finds the manifest by walking up from the root source file, so
 `nx run src/main.nx` and `nx run main.nx` both work.
@@ -63,7 +67,7 @@ are fetched along with it. Only `pub` items are visible to importers.
 To publish, push the repository and tag it (`git tag v1.2.0 && git push
 --tags`). Users depend on the tag. Bump the tag for every release; the lock
 file pins the commit, so moving a tag does not change anyone's build until
-they fetch again.
+they run `nx update`.
 
 ## Rules
 

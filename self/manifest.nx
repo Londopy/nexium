@@ -327,6 +327,15 @@ fn git(args: [][]u8, cwd: []u8) -> !String {
     return String.from(out[..].trim())
 }
 
+/// `git` that may fail: true when it exits 0, nothing printed otherwise.
+fn git_try(args: [][]u8, cwd: []u8) -> bool {
+    var argv = List([]u8).new()
+    argv.append("git")
+    for a in args { argv.append(a) }
+    let code = process.exec(argv[..], "", cwd) catch { return false }
+    return code == 0
+}
+
 /// A line of the lock file: name, source, tag, commit.
 pub struct Locked {
     name: String
@@ -335,10 +344,35 @@ pub struct Locked {
     commit: String
 }
 
+/// The lines of `nexium.lock` next to the manifest, or none when there is
+/// no lock file yet.
+pub fn read_lock(dir: []u8) -> List(Locked) {
+    var out = List(Locked).new()
+    let text = fs.read(fs.join(dir, LOCK)[..]) catch { return out }
+    for line in text[..].lines() {
+        let t = line.trim()
+        if t.len == 0 or t.starts_with("#") { continue }
+        let parts = t.split("\t")
+        if parts.len < 4 { continue }
+        out.append(Locked{ .name = String.from(parts[0]), .source = String.from(parts[1]), .tag = String.from(parts[2]), .commit = String.from(parts[3]) })
+    }
+    return out
+}
+
+fn has_name(xs: [][]u8, n: []u8) -> bool {
+    for x in xs { if x == n { return true } }
+    return false
+}
+
 /// Clone every git dependency (transitively) into `nexium_modules/` and
-/// write `nexium.lock` with the commit each one resolved to.
-pub fn fetch(root: *Manifest) -> !List(Locked) {
+/// write `nexium.lock` with the commit each one resolved to. A dependency
+/// the lock already names is checked out at the locked commit, whatever
+/// its tag points at today, so another machine builds the same thing; the
+/// dependencies in `update` (or all of them, with `update_all`) have their
+/// tag resolved again and the lock rewritten.
+pub fn fetch(root: *Manifest, update: [][]u8, update_all: bool) -> !List(Locked) {
     let modules = fs.join(root.dir[..], MODULES_DIR)
+    let locked = if update_all { List(Locked).new() } else { read_lock(root.dir[..]) }
     var lock = List(Locked).new()
     var done = List(String).new()
     var queue = List(Manifest).new()
@@ -355,6 +389,22 @@ pub fn fetch(root: *Manifest) -> !List(Locked) {
             done.append(d.name.clone())
             let dir = if d.path.len > 0 { fs.join(qdir[..], d.path[..]) } else { fs.join(modules[..], d.name[..]) }
             if d.git.len > 0 {
+                let renew = update_all or has_name(update, d.name[..])
+                // the commit the lock names for this dependency, from this source
+                var want = String.new()
+                if !renew {
+                    for l in locked { if l.name == d.name and l.source == d.git { want = l.commit.clone() } }
+                }
+                // `nx update`: the tag is resolved again from a fresh clone; a
+                // directory that is not a checkout (a removal that stopped
+                // halfway) is replaced too, or `git` would answer for the
+                // repository above it
+                if fs.exists(dir[..]) and (renew or !fs.exists(fs.join(dir[..], ".git")[..])) {
+                    fs.remove_all(dir[..]) catch {
+                        eprintln("error: dependency `{}`: cannot replace {}", .{d.name, dir})
+                        return error.IoError
+                    }
+                }
                 if !fs.exists(dir[..]) {
                     fs.make_dirs(modules[..]) catch {
                         eprintln("error: cannot create {}", .{modules})
@@ -373,7 +423,30 @@ pub fn fetch(root: *Manifest) -> !List(Locked) {
                 var rp = List([]u8).new()
                 rp.append("rev-parse")
                 rp.append("HEAD")
-                let commit = try git(rp[..], dir[..])
+                var commit = try git(rp[..], dir[..])
+                if want.len > 0 and want != commit {
+                    // the checkout is not at the locked commit (the tag moved, or the
+                    // clone is fresh): fetch that commit and check it out
+                    var fa = List([]u8).new()
+                    fa.append("fetch")
+                    fa.append("--depth")
+                    fa.append("1")
+                    fa.append("--quiet")
+                    fa.append("origin")
+                    fa.append(want[..])
+                    // a source may refuse a fetch by commit (a local path does) while
+                    // the clone has the object already, so the checkout decides
+                    _ = git_try(fa[..], dir[..])
+                    var co = List([]u8).new()
+                    co.append("checkout")
+                    co.append("--quiet")
+                    co.append(want[..])
+                    if !git_try(co[..], dir[..]) {
+                        eprintln("error: dependency `{}`: {} names commit {}, which {} does not have; `nx update {}` resolves the tag again", .{d.name, LOCK, want, d.git, d.name})
+                        return error.NotFound
+                    }
+                    commit = want.clone()
+                }
                 lock.append(Locked{ .name = d.name.clone(), .source = d.git.clone(), .tag = d.tag.clone(), .commit = commit })
             } else {
                 if !fs.exists(dir[..]) {

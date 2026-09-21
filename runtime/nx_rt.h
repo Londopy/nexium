@@ -1139,7 +1139,13 @@ NX_INLINE int32_t nx_fs_mkdir(nx_sl_u8 path) {
 NX_INLINE int32_t nx_fs_remove_file(nx_sl_u8 path) {
     char p[4096];
     if (!nx_cpath(path, p, sizeof p)) return 2;
-    return remove(p) == 0 ? 0 : nx_fs_errcode();
+    if (remove(p) == 0) return 0;
+#if defined(_WIN32)
+    /* a read-only file (every object in a git checkout) refuses `remove` on
+       Windows; asking to delete it is asking to clear that bit first */
+    if (errno == EACCES && _chmod(p, _S_IWRITE) == 0 && remove(p) == 0) return 0;
+#endif
+    return nx_fs_errcode();
 }
 NX_INLINE int32_t nx_fs_remove_dir(nx_sl_u8 path) {
     char p[4096];

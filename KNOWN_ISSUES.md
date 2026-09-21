@@ -47,17 +47,6 @@ Fixed bugs are not listed here; `CHANGELOG.md` and `git log` have them.
   that reservation, and the compiler declaring it for itself, after which
   the limit becomes a few thousand; separately, `self/cgen.nx` scoping
   temporaries to their blocks would shrink every frame.
-- **`nexium.lock` is written but never read.** `nx fetch`
-  (`self/manifest.nx`) resolves each git dependency's tag and writes the
-  commit to `nexium.lock`, but nothing consumes the file: a fresh checkout
-  followed by `nx fetch` clones whatever the tag points at today and
-  overwrites the lock, so `docs/packages.md`'s promise that another
-  machine gets the pinned commit is false. Planned fix: `nx fetch` reads
-  the lock first and checks out the recorded commit (verifying the source
-  URL), `nx update [package]` is the command that resolves tags again,
-  a dependency missing from the lock is resolved and added, and the
-  harness's `packages` suite deletes `nexium_modules` and restores from
-  the lock against a local git repository with two tags.
 - **No `.clone()` on user structs.** `List`, `String` and `Map` clone, but a
   struct holding them cannot be copied without writing a function by hand;
   code that needs a copy of a list element must return an index instead

@@ -35,6 +35,18 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Fixed
 
+- `fs.remove_all` removes read-only files on Windows (every object in a
+  git checkout is one), where `remove` refused them and a directory tree
+  was left half deleted.
+- `nexium.lock` pins dependencies. `nx fetch` wrote the commit each git
+  dependency resolved to and never read it back, so a fresh clone got
+  whatever the tag pointed at that day and the lock's promise was empty.
+  `nx fetch` now checks a locked dependency out at the locked commit (a
+  shallow fetch of that commit when the tag has moved), rewrites the lock
+  only for dependencies it had to resolve, and refuses a locked commit the
+  source no longer has with the command that resolves the tag again. The
+  harness builds a git dependency, moves its tag, fetches from the lock on
+  a bare tree and checks the old commit is what runs.
 - The generated Python package took a list, a read-only buffer, an array
   of another item type or a strided view for a `[]mut T` parameter,
   copied it into a temporary and lost the writes; each is a `TypeError`
@@ -52,6 +64,9 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Added
 
+- `nx update [name...]`: resolve the tag of every dependency (or of the
+  ones named) again and rewrite `nexium.lock`; the counterpart of
+  `nx fetch`, which follows the lock.
 - `--cpu baseline|native|<name>` and `NX_CPU`, the CPU a build without
   `--target` is for; `nx doctor` prints it. `os.arch()`, the architecture
   a program runs on.
