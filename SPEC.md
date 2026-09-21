@@ -298,7 +298,11 @@ and to `fn(...) -> R !bounds` when it satisfies the bounds.
 `println(fmt, .{args})`, `print`, `eprintln`, and `format(...) -> String`
 take a literal format string with placeholders `{}` `{x}` `{X}` `{b}` `{o}`
 `{e}` `{c}` `{:.N}` `{>N}` `{<N}`; `{{` and `}}` are literal braces.
-Formatting is compiled: each placeholder becomes a typed write.
+With named arguments, `.{ .name = value, ... }`, every placeholder names
+one, `{name}` or `{name:spec}`, an argument may be written more than
+once, every argument must be used, and a width may come from an
+integer argument: `{v:>w}` with `.w = 8`. Formatting is compiled: each
+placeholder becomes a typed write.
 
 ## 7. Patterns
 

@@ -53,6 +53,11 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   functions carry `panics` (decision 96). Closes the `KNOWN_ISSUES.md`
   entry on range facts. Spec case `s9_guard_proofs`; the sixth item of
   1.1.
+- Named format arguments: `println("{name} is {age}", .{ .name = n, .age = a })`,
+  `{name:spec}` for a spec, an argument written more than once, and a
+  width from an integer argument, `{v:>w}` with `.w = 8` (decision 97).
+  Format arguments are now evaluated once each, in order, before the
+  first write. Spec case `s6_formatting` grew; the seventh item of 1.1.
 
 ### Fixed
 

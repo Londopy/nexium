@@ -655,3 +655,12 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     side of a bug 1.0.3 shipped with, a guard fact surviving into a loop
     that changed the variable. Lengths are tracked for slices only, whose
     length cannot change.
+97. **Named format arguments are a mode of the literal, not of the
+    placeholder.** `.{a, b}` is positional and `{x}` there is the hex
+    spec as before; `.{ .x = a }` is named and every placeholder names
+    an argument, `{x}` or `{x:>w}`, with a width taken from an integer
+    argument by name. No mixing, and every named argument must be used.
+    The checker rewrites either form to `{#index:spec}` for the emitter
+    and the interpreter, which evaluate each argument once, in order,
+    before the first write, so an argument written twice is computed
+    once.

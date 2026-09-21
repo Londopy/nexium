@@ -110,7 +110,9 @@ library's helpers.
 
 `{>3}` right-aligns the value in three columns. The format language has a
 handful of these: `{:.2}` for two decimals, `{x}` for hexadecimal, `{<8}` for
-left alignment. They are all in the [reference](../docs/language.html).
+left alignment. Arguments can be named, `.{ .word = w, .cols = 3 }`, and
+then the placeholders name them, `{word:>cols}`, with the width coming
+from an argument. They are all in the [reference](../docs/language.html).
 
 ## What you have
 

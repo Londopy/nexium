@@ -218,7 +218,9 @@ brings it.
 
 ## Standard library (builtins)
 
-- `println(fmt, .{args})`, `print`, `eprintln`, `format(...) -> String`.
+- `println(fmt, .{args})`, `print`, `eprintln`, `format(...) -> String`;
+  named arguments `.{ .name = v }` with `{name}` / `{name:spec}`
+  placeholders, and a width from an argument, `{v:>w}`.
   Placeholders: `{}`, `{x}`, `{X}`, `{b}`, `{o}`, `{e}`, `{c}`, `{:.N}`,
   `{>N}`, `{<N}`; `{{` and `}}` are literal braces.
 - `expect(cond)`, `expect_eq(a, b)`, `panic(msg)`.

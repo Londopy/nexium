@@ -4,4 +4,11 @@ fn main() {
     println("{:.2} [{>6}] [{<6}] {{}} {}", .{3.14159, 42, 42, true})
     let s = format("{}-{}", .{"a", 1})
     println("{} {}", .{s, s.len})
+    // named arguments, a spec on a name, a name written twice, a width from an argument
+    println("{name} is {age}", .{ .name = "ada", .age = 36 })
+    println("[{v:>w}] [{v:<w}] {v:x} {v}", .{ .v = 42, .w = 6 })
+    let cols = 4
+    println("[{s:>cols}]|{s:<cols}|", .{ .s = "ab", .cols = cols })
+    let t = format("{a}{b}{a}", .{ .a = 1, .b = 2 })
+    println("{}", .{t})
 }

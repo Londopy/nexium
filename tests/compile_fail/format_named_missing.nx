@@ -1,0 +1,4 @@
+// EXPECT: format string names `y` but the arguments have no such field
+fn main() {
+    println("{x} {y}", .{ .x = 1 })
+}

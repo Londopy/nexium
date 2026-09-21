@@ -2889,9 +2889,10 @@ impl Gen {
         return 0
     }
 
-    fn write_value(self: *mut Self, sink: []u8, v: []u8, t0: usize, spec0: []u8) {
+    fn write_value(self: *mut Self, sink: []u8, v: []u8, t0: usize, spec0: []u8, vals: *List(String)) {
         let t = self.res(t0)
-        var width: i32 = 0
+        // the width: a number, or `#index` for an argument's value
+        var width = String.from("0")
         var left = false
         var base: i32 = 10
         var prec: i32 = -1
@@ -2906,8 +2907,15 @@ impl Gen {
         else if spec == "e" { exp = true }
         else if spec == "c" { as_char = true }
         else if spec.len > 0 and spec[0] == '.' { prec = spec[1..].parse_int(i32) catch { -1 } }
-        else if spec.len > 0 and spec[0] == '>' { width = spec[1..].parse_int(i32) catch { 0 } }
-        else if spec.len > 0 and spec[0] == '<' { width = spec[1..].parse_int(i32) catch { 0 }; left = true }
+        else if spec.len > 0 and (spec[0] == '>' or spec[0] == '<') {
+            left = spec[0] == '<'
+            if spec.len > 1 and spec[1] == '#' {
+                let k = spec[2..].parse_int(usize) catch { 0 }
+                if k < vals.len { width = format("(int32_t)({})", .{vals.*[k]}) }
+            } else {
+                width = format("{}", .{spec[1..].parse_int(i32) catch { 0 }})
+            }
+        }
         let k = self.c.tys.kind(t)
         if k == check.TK.Int {
             if as_char { self.line(format("nx_w_char({}, (uint32_t)({}));", .{sink, v})[..]) }
@@ -2919,7 +2927,7 @@ impl Gen {
         } else if k == check.TK.Bool {
             self.line(format("nx_w_bool({}, {});", .{sink, v})[..])
         } else if k == check.TK.Slice {
-            if width > 0 { self.line(format("nx_w_pad({}, (const char*)({}).ptr, ({}).len, {}, {});", .{sink, v, v, width, left})[..]) }
+            if width != "0" { self.line(format("nx_w_pad({}, (const char*)({}).ptr, ({}).len, {}, {});", .{sink, v, v, width, left})[..]) }
             else { self.line(format("nx_w_sl({}, {});", .{sink, v})[..]) }
         } else if k == check.TK.Str {
             self.line(format("nx_w_sl({}, nx_str_slice({}));", .{sink, v})[..])
@@ -2935,7 +2943,7 @@ impl Gen {
             self.line(format("{} {} = {};", .{cn, tmp, v})[..])
             self.line(format("if (!{}.has) nx_w_cstr({}, \"null\"); else {{", .{tmp, sink})[..])
             self.push_buf()
-            self.write_value(sink, format("{}.val", .{tmp})[..], self.c.tys.list[t].args[0], spec)
+            self.write_value(sink, format("{}.val", .{tmp})[..], self.c.tys.list[t].args[0], spec, vals)
             self.splice_buf()
             self.line("}")
         } else if k == check.TK.Ptr {
@@ -2963,6 +2971,13 @@ impl Gen {
     fn emit_format(self: *mut Self, sink: []u8, args: []usize) {
         var fmt = String.new()
         if self.c.tir.nodes[args[0]].k == check.TKind.Str { fmt = self.c.tir.nodes[args[0]].text.clone() }
+        // every argument once, in order, before the first write: a placeholder
+        // may name an argument twice, and a width may come from one
+        var vals = List(String).new()
+        for a, ai in args {
+            if ai == 0 { continue }
+            vals.append(self.simple(a))
+        }
         var lit = String.new()
         var ai: usize = 1
         var i: usize = 0
@@ -2972,13 +2987,22 @@ impl Gen {
                 if i + 1 < fmt.len and fmt[i + 1] == '{' { lit.push_byte('{'); i += 2; continue }
                 var j = i + 1
                 while j < fmt.len and fmt[j] != '}' { j += 1 }
-                let spec = String.from(fmt[i + 1..j])
-                self.flush_lit(sink, &mut lit)
-                if ai < args.len {
-                    let v = self.simple(args[ai])
-                    self.write_value(sink, v[..], self.c.tir.nodes[args[ai]].ty, spec[..])
+                var spec = String.from(fmt[i + 1..j])
+                // `{#index:spec}` from the checker, or a position
+                var idx = ai
+                if spec.len > 0 and spec[0] == '#' {
+                    var n: usize = 0
+                    var p: usize = 1
+                    while p < spec.len and spec[p] >= '0' and spec[p] <= '9' { n = n * 10 + (spec[p] - '0') as usize; p += 1 }
+                    idx = 1 + n
+                    spec = String.from(spec[p..])
+                } else {
+                    ai += 1
                 }
-                ai += 1
+                self.flush_lit(sink, &mut lit)
+                if idx < args.len {
+                    self.write_value(sink, vals[idx - 1][..], self.c.tir.nodes[args[idx]].ty, spec[..], &vals)
+                }
                 i = j + 1
             } else if ch == '}' and i + 1 < fmt.len and fmt[i + 1] == '}' {
                 lit.push_byte('}')
@@ -3028,7 +3052,8 @@ impl Gen {
             self.line(format("nx_string {} = {{0}}; {}.ar = c->arena;", .{out, out})[..])
             self.line(format("nx_sink {} = nx_sink_str(c, &{});", .{s, out})[..])
             let v = self.simple(args[0])
-            self.write_value(format("&{}", .{s})[..], v[..], self.c.tir.nodes[args[0]].ty, "")
+            let no_vals = List(String).new()
+            self.write_value(format("&{}", .{s})[..], v[..], self.c.tir.nodes[args[0]].ty, "", &no_vals)
             return out
         }
         if name == "Expect" {

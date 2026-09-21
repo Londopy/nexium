@@ -5229,52 +5229,132 @@ impl Checker {
             let fmt = fn_.name.clone()
             let fstart = fn_.start
             let fend = fn_.end
-            // placeholders
-            var count: usize = 0
+            // the arguments: positional `.{a, b}` or named `.{ .x = a, .w = 8 }`
+            var arg_nodes = List(usize).new()
+            var arg_names = List(String).new()
+            var named = false
+            if args.len == 2 {
+                let an = self.node(m, args[1])
+                if an.k == parser.NodeKind.TupleLit {
+                    arg_nodes = an.kids.clone()
+                } else if an.k == parser.NodeKind.StructLit and an.x == NONE {
+                    named = an.kids.len > 0
+                    for f in an.kids.clone() {
+                        arg_names.append(self.node(m, f).name.clone())
+                        arg_nodes.append(self.node(m, f).x)
+                    }
+                } else {
+                    arg_nodes.append(args[1])
+                }
+            }
+            // the placeholders, rewritten for the emitter to `{#index:spec}`: a
+            // name or a position becomes an index into the arguments (so one
+            // argument may be written twice), and a width taken from an argument
+            // (`{v:>w}`) becomes `>#index`
+            var out = String.new()
+            var used = List(bool).new()
+            for _ in arg_nodes { used.append(false) }
+            var width_args = List(usize).new()
+            var next: usize = 0
             var i: usize = 0
             while i < fmt.len {
-                if fmt[i] == '{' {
-                    if i + 1 < fmt.len and fmt[i + 1] == '{' { i += 2; continue }
+                let ch = fmt[i]
+                if ch == '{' {
+                    if i + 1 < fmt.len and fmt[i + 1] == '{' { out.append("{{"); i += 2; continue }
                     var j = i + 1
                     while j < fmt.len and fmt[j] != '}' { j += 1 }
                     if j >= fmt.len {
                         self.fail_here(fstart, "unterminated `{` in format string (write `{{` for a literal brace)")
                         return self.error_expr(start, end)
                     }
-                    count += 1
+                    var head = String.new()
+                    var spec = String.new()
+                    var seen_colon = false
+                    for b in fmt[i + 1..j] {
+                        if !seen_colon and b == ':' { seen_colon = true }
+                        else if seen_colon { spec.push_byte(b) }
+                        else { head.push_byte(b) }
+                    }
+                    var idx = NONE
+                    if named {
+                        if head.len == 0 {
+                            self.fail_here(fstart, "named arguments need a name in every placeholder, `{name}` or `{name:spec}`")
+                            return self.error_expr(start, end)
+                        }
+                        idx = name_index(&arg_names, head[..]) orelse {
+                            self.fail_here(fstart, format("format string names `{}` but the arguments have no such field", .{head})[..])
+                            return self.error_expr(start, end)
+                        }
+                    } else {
+                        // positional: the body is the spec (`x`, `>6`, `.2`, `:.2`)
+                        if head.len > 0 and !seen_colon {
+                            spec = head.clone()
+                            head.clear()
+                        } else if head.len > 0 {
+                            self.fail_here(fstart, format("`{{{}:...}}` names an argument, but the arguments are positional; write `.{{ .{} = value }}`", .{head, head})[..])
+                            return self.error_expr(start, end)
+                        }
+                        idx = next
+                        next += 1
+                    }
+                    // a width from an argument: `>name`, `<name`
+                    if spec.len > 1 and (spec[0] == '>' or spec[0] == '<') and ! (spec[1] >= '0' and spec[1] <= '9') {
+                        if !named {
+                            self.fail_here(fstart, "a width taken from an argument needs named arguments, `.{ .w = 8, ... }`")
+                            return self.error_expr(start, end)
+                        }
+                        let widx = name_index(&arg_names, spec[1..]) orelse {
+                            self.fail_here(fstart, format("format width names `{}` but the arguments have no such field", .{spec[1..]})[..])
+                            return self.error_expr(start, end)
+                        }
+                        width_args.append(widx)
+                        used[widx] = true
+                        let align = spec[0]
+                        spec = String.new()
+                        spec.push_byte(align)
+                        spec.append(format("#{}", .{widx})[..])
+                    }
+                    if idx < arg_nodes.len { used[idx] = true }
+                    out.append(format("{{#{}", .{idx})[..])
+                    if spec.len > 0 {
+                        out.push_byte(':')
+                        out.append(spec[..])
+                    }
+                    out.push_byte('}')
                     i = j + 1
-                } else if fmt[i] == '}' {
-                    if i + 1 < fmt.len and fmt[i + 1] == '}' { i += 2; continue }
+                } else if ch == '}' {
+                    if i + 1 < fmt.len and fmt[i + 1] == '}' { out.append("}}"); i += 2; continue }
                     self.fail_here(fstart, "unmatched `}` in format string (write `}}` for a literal brace)")
                     return self.error_expr(start, end)
                 } else {
+                    out.push_byte(ch)
                     i += 1
                 }
             }
-            var arg_nodes = List(usize).new()
-            if args.len == 2 {
-                let an = self.node(m, args[1])
-                if an.k == parser.NodeKind.TupleLit {
-                    arg_nodes = an.kids.clone()
-                } else if an.k == parser.NodeKind.StructLit and an.x == NONE and an.kids.len == 0 {
-                    // `.{}`: no arguments
-                } else {
-                    arg_nodes.append(args[1])
-                }
-            }
-            if arg_nodes.len != count {
-                self.fail_here(start, format("format string has {} placeholder(s) but {} argument(s) were given", .{count, arg_nodes.len})[..])
+            if !named and next != arg_nodes.len {
+                self.fail_here(start, format("format string has {} placeholder(s) but {} argument(s) were given", .{next, arg_nodes.len})[..])
                 return self.error_expr(start, end)
+            }
+            if named {
+                for u, ui in used {
+                    if !u {
+                        self.fail_here(start, format("the argument `{}` is not used by the format string", .{arg_names[ui]})[..])
+                        return self.error_expr(start, end)
+                    }
+                }
             }
             var all = List(usize).new()
             let fs = self.mk(TKind.Str, bytes, fstart, fend)
-            self.tir.nodes[fs].text = fmt.clone()
+            self.tir.nodes[fs].text = out
             all.append(fs)
-            for a in arg_nodes {
+            for a, ai in arg_nodes {
                 var te = self.check_expr(a, NONE)
                 te = self.finalize_expr(te)
                 let t = self.tys.resolve(self.tir.nodes[te].ty, true)
                 let k = self.tys.kind(t)
+                if has_local(&width_args, ai) and k != TK.Int {
+                    self.fail_here(self.tir.nodes[te].start, format("a format width must be an integer but `{}` is a `{}`", .{arg_names[ai], self.ty_name(t)})[..])
+                }
                 var ok = k == TK.Int or k == TK.Float or k == TK.Bool or k == TK.Char or k == TK.ErrorSet or k == TK.Ptr
                 if k == TK.Slice {
                     let es = self.tys.shallow(self.tys.list[t].args[0])
@@ -5800,6 +5880,11 @@ fn facts_both(l: *Facts, r: *Facts) -> Facts {
     for p in l.below { out.below.append(p) }
     for p in r.below { out.below.append(p) }
     return out
+}
+
+fn name_index(names: *List(String), name: []u8) -> ?usize {
+    for n, i in names.*{ if n[..] == name { return i } }
+    return null
 }
 
 fn has_local(xs: *List(usize), v: usize) -> bool {
@@ -9148,9 +9233,18 @@ fn it_format_values(vs: *List(CV)) -> ?String {
             if i + 1 < fmt.len and fmt[i + 1] == '{' { out.push_byte('{'); i += 2; continue }
             var j = i + 1
             while j < fmt.len and fmt[j] != '}' { j += 1 }
-            if ai >= vs.len { return null }
-            out.append(cv_format(&vs[ai])[..])
-            ai += 1
+            // `{#index...}` from the checker, or a position
+            var idx = ai
+            if i + 1 < j and fmt[i + 1] == '#' {
+                var n: usize = 0
+                var p = i + 2
+                while p < j and fmt[p] >= '0' and fmt[p] <= '9' { n = n * 10 + (fmt[p] - '0') as usize; p += 1 }
+                idx = 1 + n
+            } else {
+                ai += 1
+            }
+            if idx >= vs.len { return null }
+            out.append(cv_format(&vs[idx])[..])
             i = j + 1
         } else if fmt[i] == '}' and i + 1 < fmt.len and fmt[i + 1] == '}' {
             out.push_byte('}')

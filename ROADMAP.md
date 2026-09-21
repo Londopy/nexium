@@ -404,7 +404,7 @@ Ergonomics the self-hosted compiler paid for by hand.
   bounds after `if s.len >= n`, so fewer functions carry `panics`. (Done,
   decision 96.)
 - Format width from a value (`{:>w}`) and named placeholders with an
-  anonymous literal (`format("{x}", .{ .x = 1 })`).
+  anonymous literal (`format("{x}", .{ .x = 1 })`). (Done, decision 97.)
 - Intrinsics still missing from a systems language: `@bitCast`, `@min`,
   `@max`, `@alignOf`, `@target()` (os, arch, pointer width) for compile-time
   `if` in std.
