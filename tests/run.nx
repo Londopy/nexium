@@ -321,7 +321,9 @@ fn suite_examples(e: *Env, failures: *mut List(String)) {
     // nx upgrade --check asks GitHub, so only online (CI is); offline it must still fail cleanly
     let up = nx(e, ["upgrade", "--check"][..])
     if os.env("NX_ONLINE") != null {
-        if up.code != 0 or (up.stdout[..].find("latest release") == null and up.stdout[..].find("is the latest release") == null) {
+        if up.code != 0 and up.stderr[..].find("no answer from api.github.com") != null {
+            println("examples: nx upgrade --check: api.github.com did not answer (a rate limit?); not counted", .{})
+        } else if up.code != 0 or (up.stdout[..].find("latest release") == null and up.stdout[..].find("is the latest release") == null) {
             failures.append(format("examples: nx upgrade --check answered (exit {}):\n{}{}", .{up.code, up.stdout, up.stderr}))
         }
     } else if up.code == 0 and up.stdout[..].find("latest release") == null and up.stdout[..].find("is the latest release") == null {
@@ -374,8 +376,9 @@ fn suite_topo(e: *Env, failures: *mut List(String)) {
     let app = fs.join(e.root[..], "topo/code/pkg/app")
     let pkg = nx_in(e, ["run", "main.nx", "--out-dir", fs.join(e.root[..], "nx-out/cases/topo-pkg")[..]][..], "", app[..])
     if pkg.code != 0 or pkg.text() != "SUMMIT!\nquiet" { failures.append(format("topo: the packages example printed:\n{}{}", .{pkg.stdout, pkg.stderr})) }
-    // the package from the wild comes from GitHub: only when online (CI is)
-    if os.env("NX_ONLINE") != null {
+    // the package from the wild comes from GitHub: only when online (CI is), and
+    // on Windows, where the SDK's pipe lives today
+    if os.env("NX_ONLINE") != null and e.windows {
         let card = fs.join(e.root[..], "topo/code/discord")
         let fetched = nx_in(e, ["fetch"][..], "", card[..])
         if fetched.code != 0 { failures.append(format("topo: fetching the Discord SDK failed:\n{}", .{fetched.stderr})) }
@@ -384,7 +387,7 @@ fn suite_topo(e: *Env, failures: *mut List(String)) {
             failures.append(format("topo: the Discord example printed:\n{}{}", .{ran.stdout, ran.stderr}))
         }
     } else {
-        println("topo: offline (NX_ONLINE unset): the Discord package example is not fetched", .{})
+        println("topo: the Discord package example is fetched only online (NX_ONLINE=1) and on Windows", .{})
     }
     let shot = fs.join(e.root[..], "nx-out/cases/topo-counter.ppm")
     let g = nx(e, ["run", "gui/counter.nx", "--out-dir", fs.join(e.root[..], "nx-out/cases/topo-gui")[..], "--", "--shot", shot[..]][..])

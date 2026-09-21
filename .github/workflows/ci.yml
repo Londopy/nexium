@@ -59,6 +59,9 @@ jobs:
       - name: Every suite, through the harness written in Nexium
         env:
           NX_ONLINE: "1"
+          # nx doctor and nx upgrade ask the GitHub API; the token lifts the
+          # rate limit an anonymous runner shares with every other
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
           nx=nx-out/bootstrap/nx2; [ -f "$nx.exe" ] && nx="$nx.exe"

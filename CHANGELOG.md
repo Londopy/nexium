@@ -150,6 +150,11 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Fixed
 
+- `nx doctor` and `nx upgrade` send `GITHUB_TOKEN` (or `GH_TOKEN`) to
+  the GitHub API when the environment has one, so a CI runner is not
+  rate-limited into "no answer"; the harness counts a silent API as a
+  note, not a failure, and fetches the Topo's Discord example only on
+  Windows, where the SDK's pipe lives today.
 - A `catch` or `orelse` handler whose tail is a panic, on a value with a
   struct type (a `String`, say), emitted C that did not compile (`_t = 0`
   for a struct): the tail was typed as the value the block should have,

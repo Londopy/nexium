@@ -1379,7 +1379,8 @@ fn doctor_updates() {
         println("latest release: not checked (NX_OFFLINE is set)", .{})
         return
     }
-    let argv: [][]u8 = ["curl", "-fsSL", "-m", "3", "-H", "Accept: application/vnd.github+json", "https://api.github.com/repos/Londopy/nexium/releases/latest"]
+    var auth = String.new()
+    var argv = github_api_argv("3", &mut auth)
     let code = os.exec(argv[..], "", "") catch { -1 }
     if code != 0 {
         let why = if code < 0 { "curl is not on the PATH" } else { "no answer from api.github.com in 3 s" }
@@ -1423,7 +1424,8 @@ fn cmd_upgrade(check_only: bool) -> i32 {
         eprintln("error: NX_OFFLINE is set; nx upgrade needs the network", .{})
         return 1
     }
-    let api: [][]u8 = ["curl", "-fsSL", "-m", "10", "-H", "Accept: application/vnd.github+json", "https://api.github.com/repos/Londopy/nexium/releases/latest"]
+    var auth = String.new()
+    var api = github_api_argv("10", &mut auth)
     let code = os.exec(api[..], "", "") catch { -1 }
     if code != 0 {
         let why = if code < 0 { "curl is not on the PATH" } else { "no answer from api.github.com" }
@@ -1526,6 +1528,29 @@ fn cmd_upgrade(check_only: bool) -> i32 {
     fs.remove_all(tmp[..]) catch { }
     println("upgraded to nx {} at {}; `nx version` in a new console shows it", .{tag, exe})
     return 0
+}
+
+/// curl's arguments for the latest-release query. A token from the
+/// environment (GITHUB_TOKEN or GH_TOKEN, which a CI runner has) goes in
+/// the header, since anonymous requests share a rate limit per address and
+/// a runner's is often spent; `auth` keeps the header alive for the call.
+fn github_api_argv(seconds: []u8, auth: *mut String) -> List([]u8) {
+    var argv = List([]u8).new()
+    for a in ["curl", "-fsSL", "-m"] { argv.append(a) }
+    argv.append(seconds)
+    argv.append("-H")
+    argv.append("Accept: application/vnd.github+json")
+    if let t = os.env("GITHUB_TOKEN") {
+        auth.*= format("Authorization: Bearer {}", .{t})
+    } else if let t = os.env("GH_TOKEN") {
+        auth.*= format("Authorization: Bearer {}", .{t})
+    }
+    if auth.len > 0 {
+        argv.append("-H")
+        argv.append(auth.*[..])
+    }
+    argv.append("https://api.github.com/repos/Londopy/nexium/releases/latest")
+    return argv
 }
 
 /// Download a URL to a file with curl (two minutes at most); false on failure.

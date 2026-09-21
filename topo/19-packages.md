@@ -111,8 +111,9 @@ would have said when there is no Discord to talk to:
 
 {{include topo/code/discord/main.nx}}
 
-The suite runs this one when it is online (`NX_ONLINE=1`, as CI is),
-since the package comes from GitHub. [The Discord page](../docs/discord.html)
+The suite runs this one when it is online (`NX_ONLINE=1`, as CI is) and
+on Windows, where the SDK's pipe lives today; the package comes from
+GitHub. [The Discord page](../docs/discord.html)
 has the fields of a card.
 
 ## Rules worth knowing
