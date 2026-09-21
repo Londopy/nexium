@@ -18,7 +18,8 @@ A struct is a value: assigning one copies its fields, and two `Point`s are
 two `Point`s. Fields are separated by commas or newlines and may have
 defaults (`verbose: bool = false`). `derive(Eq)` makes `==` work field by
 field; `derive(Ord)` adds `<` and friends, and `derive(Hash)` lets the type
-be a map key.
+be a map key. `derive(Clone)` gives it `.clone()`, a deep copy field by
+field, once every field can clone.
 
 Methods live in an `impl` block. The receiver is spelled out:
 

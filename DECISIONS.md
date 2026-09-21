@@ -612,3 +612,14 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     drops nothing. One rule for both, no partial moves to track, and each
     name is an ordinary `let` in the typed IR, so the emitter and the
     interpreter learned nothing new.
+93. **`derive(Clone)` is explicit for structs and enums; everything else
+    clones by structure.** A struct or enum gets `.clone()` only when it
+    says so (a copy of a user type is a design decision, as `Eq` is), and
+    then only when every field and payload clones: numbers, strings,
+    slices, containers, optionals, tuples, arrays, weak references, other
+    `Clone` types, and reference classes, which clone by retaining. A
+    pointer, a trait object and a function value do not clone (a pointer
+    is a view; clone what it points to). The emitter already derived the
+    copy field by field for containers, so the checker gates and the
+    backend's `clone_fn` serves; the compile-time interpreter copies the
+    value it holds.

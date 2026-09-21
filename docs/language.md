@@ -118,6 +118,10 @@ edges (`@weak(x)` or `x.weak()`, then `w.upgrade()`).
   and saturating `+| -| *|` never fail. Bitwise `& | ^ ~ << >>`. Comparison
   `== != < <= > >=` on numbers, chars, bools, `[]u8`, `String`, unit enums,
   and types that `derive(Eq)` / `derive(Ord)`. Logical `and`, `or`, `!`.
+- `derive(Clone)` gives a struct or enum `.clone()`, a deep copy field by
+  field, once every field clones (a pointer field cannot); tuples,
+  optionals and arrays of clonable things clone without it, and
+  `where T: Clone` bounds a type parameter.
 - `x |> f(a)` is `f(x, a)`.
 - `if c { a } else { b }` is an expression; `if let v = opt { } else { }`
   unwraps (over a place the binding is a view, like a loop variable: clone

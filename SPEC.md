@@ -360,6 +360,13 @@ A trait declares method signatures with receivers `self: *Self` or
 implements it; `impl Type` adds inherent methods; the receiver is the first
 parameter named `self`. Method calls dereference pointers automatically.
 `derive(Eq, Ord)` on a struct synthesizes comparisons over its fields.
+`derive(Clone)` synthesizes `.clone()`, a deep copy field by field, for a
+struct or an enum whose fields and payloads clone: numbers, `String`,
+`List`, `Map`, slices, optionals, tuples, arrays, weak references, other
+`Clone` types, and reference classes (a retained copy). A pointer, a
+trait object or a function value does not clone, and the error names the
+field. Tuples, optionals and arrays of clonable things clone without a
+derive; `where T: Clone` bounds a type parameter the same way.
 
 ### 8.4 Trait objects
 

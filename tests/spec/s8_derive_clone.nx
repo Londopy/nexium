@@ -1,0 +1,55 @@
+// SPEC 8.3: `derive(Clone)` synthesizes `.clone()` field by field for a
+// struct or an enum whose fields clone; the copy is deep (a String, a List
+// inside it are copied, and mutating one side leaves the other), tuples and
+// optionals of clonable things clone without a derive, a generic struct
+// clones when its arguments do, and `where T: Clone` bounds a parameter.
+struct Tag derive(Clone) { name: String, n: i32 }
+
+enum Shape derive(Clone) {
+    Dot,
+    Named(String),
+    Pair(Tag, Tag),
+}
+
+struct Bag(T) derive(Clone) { items: List(T), label: String }
+
+fn twice(comptime T: type where T: Clone, x: *T) -> (T, T) {
+    return (x.clone(), x.clone())
+}
+
+fn describe(s: *Shape) -> String {
+    match s.*{
+        .Dot => { return String.from("dot") }
+        .Named(n) => { return format("named {}", .{n.*}) }
+        .Pair(a, b) => { return format("pair {} {}", .{a.name, b.name}) }
+    }
+}
+
+fn main() {
+    let a = Tag{ .name = String.from("a"), .n = 1 }
+    var b = a.clone()
+    b.name.push_byte('!')
+    b.n = 2
+    println("{} {} {} {}", .{a.name, a.n, b.name, b.n})
+    let s = Shape.Pair(a.clone(), b.clone())
+    let s2 = s.clone()
+    println("{} / {}", .{describe(&s), describe(&s2)})
+    let named = Shape.Named(String.from("n"))
+    let named2 = named.clone()
+    let dot = Shape.Dot
+    let dot2 = dot.clone()
+    println("{} {}", .{describe(&named2), describe(&dot2)})
+    var bag = Bag(Tag){ .items = List(Tag).new(), .label = String.from("bag") }
+    bag.items.append(a.clone())
+    let bag2 = bag.clone()
+    bag.items[0].n = 9
+    println("{} {} {}", .{bag.items[0].n, bag2.items[0].n, bag2.label})
+    let t = (a.clone(), 3)
+    let t2 = t.clone()
+    println("{} {}", .{t2.0.name, t2.1})
+    let o: ?Tag = a.clone()
+    let o2 = o.clone()
+    println("{}", .{(o2 orelse b.clone()).name})
+    let (p, q) = twice(Tag, &a)
+    println("{} {} {}", .{p.name, q.name, a.name})
+}

@@ -1,0 +1,7 @@
+a 1 a! 2
+pair a a! / pair a a!
+named n dot
+9 1 bag
+a 3
+a
+a a a

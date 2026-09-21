@@ -3058,7 +3058,7 @@ impl Gen {
             self.line(format("({}).len = 0;", .{l})[..])
             return String.from("0")
         }
-        if name == "ListClone" or name == "StringClone" or name == "MapClone" {
+        if name == "ListClone" or name == "StringClone" or name == "MapClone" or name == "Clone" {
             let v = self.simple(args[0])
             let f = self.clone_fn(ety)
             return format("{}(c, &{})", .{f, v})

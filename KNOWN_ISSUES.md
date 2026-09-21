@@ -10,12 +10,6 @@ Fixed bugs are not listed here; `CHANGELOG.md` and `git log` have them.
 
 ## Compiler
 
-- **No `.clone()` on user structs.** `List`, `String` and `Map` clone, but a
-  struct holding them cannot be copied without writing a function by hand;
-  code that needs a copy of a list element must return an index instead
-  (`self/check.nx`, `find_label`). Likely fix: derive `clone` for value
-  structs and enums whose fields all clone, the way drops are derived
-  (decision pending).
 - **Range facts stop at `if` guards.** A `while c < n { }` body and an
   `else` branch get no range facts from their conditions, so arithmetic
   and indexing there carry checks that a guard would have discharged. The

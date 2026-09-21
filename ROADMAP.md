@@ -392,7 +392,8 @@ Ergonomics the self-hosted compiler paid for by hand.
   (Done: views over a place, owners over a temporary, decision 92.)
 - `derive(Clone)` for structs and enums whose fields all clone, the way
   drops are derived (KNOWN_ISSUES: every deep copy in `check.nx` is a hand
-  written function).
+  written function). (Done, decision 93; `check.nx` lost `cv_clone` and
+  `frames_clone`.)
 - Iterators: `for x in v` over any value with a `next(self: *mut Self) -> ?T`
   method, so a user type iterates like a slice; `Map` iteration over
   entries `(k, v)` as well as keys.

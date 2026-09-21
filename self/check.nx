@@ -904,6 +904,8 @@ pub struct Checker {
     chain_locals: List(usize)
     // statements a statement expands to after itself (`let (a, b) = e` is one `let` per name), drained by the block
     pending_stmts: List(usize)
+    // the types a clone walk has visited (recursive types end the walk)
+    clone_seen: List(usize)
     // the compile-time interpreter's state (see `it_enter`)
     it_steps: u64
     it_panic: String
@@ -3606,7 +3608,7 @@ impl Checker {
     fn is_fresh_ref(self: *mut Self, e: usize) -> bool {
         let k = self.tir.nodes[e].k
         if k == TKind.RefNew or k == TKind.Call or k == TKind.Retained { return true }
-        if k == TKind.Builtin { return self.tir.nodes[e].name == "Weak" or self.tir.nodes[e].name == "Upgrade" }
+        if k == TKind.Builtin { return self.tir.nodes[e].name == "Weak" or self.tir.nodes[e].name == "Upgrade" or self.tir.nodes[e].name == "Clone" }
         if k == TKind.OptWrap or k == TKind.ErrWrap { return self.is_fresh_ref(self.tir.nodes[e].kids[0]) }
         return false
     }
@@ -5013,10 +5015,101 @@ impl Checker {
         return false
     }
 
+    /// Why `t` cannot be cloned, or null. A struct or enum clones when it
+    /// derives `Clone` and its fields and payloads do (a unit enum always);
+    /// numbers, strings, slices, containers of clonable elements, optionals,
+    /// tuples, arrays, weak references and reference classes (a retained copy)
+    /// clone; a pointer, a trait object or a function value does not. The walk
+    /// starts with `clone_seen` cleared; a type met twice is a recursion, not
+    /// a blocker.
+    fn clone_blocker(self: *mut Self, t0: usize) -> ?String {
+        let t = self.tys.resolve(t0, true)
+        for s in self.clone_seen { if s == t { return null } }
+        self.clone_seen.append(t)
+        let k = self.tys.kind(t)
+        if k == TK.Int or k == TK.Float or k == TK.Bool or k == TK.Char or k == TK.Str or k == TK.Slice or k == TK.Weak or k == TK.ErrorSet or k == TK.Void { return null }
+        if k == TK.List or k == TK.Opt or k == TK.Array or k == TK.ErrUnion or k == TK.Map or k == TK.Tuple {
+            for a in self.tys.list[t].args.clone() {
+                if let why = self.clone_blocker(a) { return why }
+            }
+            return null
+        }
+        if k == TK.Distinct { return self.clone_blocker(self.distinct_underlying(self.tys.list[t].def)) }
+        if k == TK.Struct {
+            let d = self.tys.list[t].def
+            if self.structs[d].kind == "ref" { return null }
+            let name = self.ty_name(t)
+            if !list_has(&self.structs[d].derives, "Clone") { return format("`{}` does not derive `Clone`", .{name}) }
+            let fields = self.structs[d].fields.clone()
+            let fts = self.struct_field_types(t)
+            let dm = self.structs[d].module
+            for f, i in fields {
+                if let why = self.clone_blocker(fts[i]) { return format("field `{}` of `{}`: {}", .{self.node(dm, f).name, name, why}) }
+            }
+            return null
+        }
+        if k == TK.Enum {
+            let d = self.tys.list[t].def
+            let name = self.ty_name(t)
+            let variants = self.enums[d].variants.clone()
+            let em = self.enums[d].module
+            var all_unit = true
+            for v in variants { if self.node(em, v).text != "unit" { all_unit = false } }
+            if all_unit { return null }
+            if !list_has(&self.enums[d].derives, "Clone") { return format("`{}` does not derive `Clone`", .{name}) }
+            let vtys = self.enum_variant_types(t)
+            for tys, vi in vtys {
+                for pt in tys {
+                    if let why = self.clone_blocker(pt) { return format("variant `{}` of `{}`: {}", .{self.node(em, variants[vi]).name, name, why}) }
+                }
+            }
+            return null
+        }
+        if k == TK.Ptr { return String.from("a pointer is a view into other storage; clone what it points to") }
+        if k == TK.Dyn { return String.from("a trait object cannot be cloned") }
+        if k == TK.Fn { return String.from("a function value cannot be cloned") }
+        return format("`{}` cannot be cloned", .{self.ty_name(t)})
+    }
+
+    /// The effects of cloning a `t`: an allocation for a string, a list or
+    /// a map anywhere inside, a retain for a reference class or a weak
+    /// reference. Starts with `clone_seen` cleared.
+    fn clone_effects(self: *mut Self, t0: usize) -> u64 {
+        let t = self.tys.resolve(t0, true)
+        for s in self.clone_seen { if s == t { return 0 } }
+        self.clone_seen.append(t)
+        let k = self.tys.kind(t)
+        var eff: u64 = 0
+        if k == TK.Str or k == TK.List or k == TK.Map { eff |= EFF_ALLOCATES }
+        if k == TK.Weak { return EFF_REFCOUNTS }
+        if k == TK.List or k == TK.Opt or k == TK.Array or k == TK.ErrUnion or k == TK.Map or k == TK.Tuple {
+            for a in self.tys.list[t].args.clone() { eff |= self.clone_effects(a) }
+            return eff
+        }
+        if k == TK.Distinct { return self.clone_effects(self.distinct_underlying(self.tys.list[t].def)) }
+        if k == TK.Struct {
+            let d = self.tys.list[t].def
+            if self.structs[d].kind == "ref" { return EFF_REFCOUNTS }
+            for ft in self.struct_field_types(t) { eff |= self.clone_effects(ft) }
+            return eff
+        }
+        if k == TK.Enum {
+            for tys in self.enum_variant_types(t) {
+                for pt in tys { eff |= self.clone_effects(pt) }
+            }
+            return eff
+        }
+        return eff
+    }
+
     /// Does `t` satisfy a trait: the derivable ones by their rules, others by an impl.
     fn type_satisfies_trait(self: *mut Self, t0: usize, trait_name: []u8) -> bool {
         let t = self.tys.resolve(t0, true)
         let k = self.tys.kind(t)
+        if trait_name == "Clone" {
+            self.clone_seen.clear()
+            return self.clone_blocker(t) == null
+        }
         let derivable = trait_name == "Eq" or trait_name == "Ord" or trait_name == "Hash" or trait_name == "Format" or trait_name == "Copy"
         if derivable {
             if k == TK.Int or k == TK.Float or k == TK.Bool or k == TK.Char { return true }
@@ -7970,6 +8063,25 @@ impl Checker {
         let t = self.tys.resolve(self.tir.nodes[recv2].ty, true)
         let r = self.builtin_method(recv2, t, method[..], args[..], start, end)
         if r != NONE { return r }
+        // `.clone()` on a struct or enum that derives `Clone` (and on tuples,
+        // optionals, arrays and weak references of clonable things): a deep
+        // copy the emitter derives field by field, the way it derives drops
+        if method == "clone" {
+            if !self.args_n(args[..], 0, "clone", start) { return self.error_expr(start, end) }
+            self.clone_seen.clear()
+            if let why = self.clone_blocker(t) {
+                self.fail_here(start, format("cannot clone a `{}`: {}", .{self.ty_name(t), why})[..])
+                return self.error_expr(start, end)
+            }
+            self.clone_seen.clear()
+            let eff = self.clone_effects(t)
+            if (eff & EFF_ALLOCATES) != 0 { self.add_effect(EFF_ALLOCATES, start, "cloning allocates") }
+            if (eff & EFF_REFCOUNTS) != 0 { self.add_effect(EFF_REFCOUNTS, start, "cloning retains a reference") }
+            let b = self.builtin_node("Clone", t, start, end)
+            self.tir.nodes[b].kids.append(recv2)
+            self.tir.nodes[b].kids2.append(t)
+            return b
+        }
         self.fail_here(start, format("no method `{}` on type `{}`", .{method, self.ty_name(t)})[..])
         for a in args { _ = self.check_expr(a, NONE) }
         return self.error_expr(start, end)
@@ -8314,6 +8426,8 @@ impl Checker {
             return NONE
         }
         if k == TK.Opt {
+            // an optional of a clonable thing clones (the generic path)
+            if method == "clone" { return NONE }
             self.fail_here(start, format("cannot call `{}` on an optional; unwrap it first with `orelse`, `.?`, or `if let`", .{method})[..])
             return self.error_expr(start, end)
         }
@@ -8498,7 +8612,7 @@ const VK_NEVER: u8 = 21
 const VK_PTR: u8 = 22
 
 /// A compile-time value, the Rust `Value`.
-pub struct CV {
+pub struct CV derive(Clone) {
     kind: u8
     ival: i128
     fval: f64
@@ -8530,12 +8644,6 @@ pub fn cv_keepable(v: *CV) -> bool {
     return true
 }
 
-pub fn cv_clone(v: *CV) -> CV {
-    var c = CV{ .kind = v.kind, .ival = v.ival, .fval = v.fval, .flag = v.flag, .text = v.text.clone(), .items = List(CV).new(), .path = v.path.clone(), .b = v.b }
-    for it in v.items { c.items.append(cv_clone(&it)) }
-    return c
-}
-
 fn cv_as_int(v: *CV) -> ?i128 {
     if v.kind == VK_INT or v.kind == VK_CHAR { return v.ival }
     if v.kind == VK_BOOL { return if v.flag { 1 } else { 0 } }
@@ -8563,7 +8671,7 @@ fn cv_seq_len(v: *CV) -> ?usize {
 fn cv_seq_items(v: *CV) -> ?List(CV) {
     var out = List(CV).new()
     if v.kind == VK_ARRAY or v.kind == VK_LIST {
-        for it in v.items { out.append(cv_clone(&it)) }
+        for it in v.items { out.append(it.clone()) }
         return out
     }
     if v.kind == VK_STR or v.kind == VK_OWNED_STR {
@@ -8874,7 +8982,7 @@ impl Checker {
         if v.kind > VK_STR {
             self.tir.nodes[r].name = String.from("agg")
             self.tir.nodes[r].a = self.values.len
-            self.values.append(cv_clone(v))
+            self.values.append(v.clone())
             return r
         }
         let names = ["int", "float", "bool", "char", "str"]
@@ -8889,7 +8997,7 @@ impl Checker {
     /// The value a `(value ...)` node holds.
     fn value_of_node(self: *mut Self, e: usize) -> CV {
         let nm = self.tir.nodes[e].name.clone()
-        if nm == "agg" { return cv_clone(&self.values[self.tir.nodes[e].a]) }
+        if nm == "agg" { return self.values[self.tir.nodes[e].a].clone() }
         if nm == "int" { return cv_int(self.tir.nodes[e].ival) }
         if nm == "float" { return cv_float(self.tir.nodes[e].fval) }
         if nm == "bool" { return cv_bool(self.tir.nodes[e].flag) }
@@ -8927,7 +9035,7 @@ const FL_FAIL: u8 = 4
 
 /// One function activation: the values of its locals by id (`VK_NONE` when
 /// unset). Temporaries made for `&rvalue` are appended past the locals.
-pub struct Frame {
+pub struct Frame derive(Clone) {
     vals: List(CV)
 }
 
@@ -8964,16 +9072,6 @@ pub struct ItSave {
     out: CV
     flow_val: CV
     flow_label: usize
-}
-
-fn frames_clone(fs: *List(Frame)) -> List(Frame) {
-    var out = List(Frame).new()
-    for f in fs {
-        var nf = Frame{ .vals = List(CV).new() }
-        for v in f.vals { nf.vals.append(cv_clone(&v)) }
-        out.append(nf)
-    }
-    return out
 }
 
 fn wrap_to(v: i128, bits: u32, signed: bool) -> i128 {
@@ -9089,9 +9187,9 @@ impl Checker {
     fn it_enter(self: *mut Self) -> ItSave {
         let s = ItSave{
             .steps = self.it_steps, .panic = self.it_panic.clone(), .panic_at = self.it_panic_at, .has_panic = self.it_has_panic,
-            .budget = self.it_budget, .pending = self.it_pending, .pending_label = self.it_pending_label, .pending_val = cv_clone(&self.it_pending_val),
-            .failed_at = self.it_failed_at, .frames = frames_clone(&self.frames), .cur_fn = self.it_cur_fn, .out = cv_clone(&self.it_out),
-            .flow_val = cv_clone(&self.it_flow_val), .flow_label = self.it_flow_label,
+            .budget = self.it_budget, .pending = self.it_pending, .pending_label = self.it_pending_label, .pending_val = self.it_pending_val.clone(),
+            .failed_at = self.it_failed_at, .frames = self.frames.clone(), .cur_fn = self.it_cur_fn, .out = self.it_out.clone(),
+            .flow_val = self.it_flow_val.clone(), .flow_label = self.it_flow_label,
         }
         self.it_steps = 0
         self.it_panic = String.new()
@@ -9118,12 +9216,12 @@ impl Checker {
         self.it_budget = s.budget
         self.it_pending = s.pending
         self.it_pending_label = s.pending_label
-        self.it_pending_val = cv_clone(&s.pending_val)
+        self.it_pending_val = s.pending_val.clone()
         self.it_failed_at = s.failed_at
-        self.frames = frames_clone(&s.frames)
+        self.frames = s.frames.clone()
         self.it_cur_fn = s.cur_fn
-        self.it_out = cv_clone(&s.out)
-        self.it_flow_val = cv_clone(&s.flow_val)
+        self.it_out = s.out.clone()
+        self.it_flow_val = s.flow_val.clone()
         self.it_flow_label = s.flow_label
     }
 
@@ -9264,7 +9362,7 @@ impl Checker {
             if self.tir.nodes[st].k != TKind.SLet { continue }
             let l = self.tir.nodes[st].a
             let lname = self.insts[inst].locals[l].name.clone()
-            for n, j in names { if n == lname { self.it_env_set(l, cv_clone(&vals[j])) } }
+            for n, j in names { if n == lname { self.it_env_set(l, vals[j].clone()) } }
         }
         var last = cv(VK_NONE)
         var last_ty = NONE
@@ -9318,9 +9416,9 @@ impl Checker {
             for n, j in out.names { if n == lname { idx = j } }
             if idx == NONE {
                 out.names.append(lname)
-                out.values.append(cv_clone(&self.frames[fi].vals[l]))
+                out.values.append(self.frames[fi].vals[l].clone())
             } else {
-                out.values[idx] = cv_clone(&self.frames[fi].vals[l])
+                out.values[idx] = self.frames[fi].vals[l].clone()
             }
         }
         for n, j in out.names {
@@ -9474,7 +9572,7 @@ impl Checker {
         let nlocals = self.insts[inst].locals.len
         for i in 0..nlocals { fr.vals.append(cv(VK_NONE)) }
         let params = self.insts[inst].params.clone()
-        for a, i in args { if i < params.len { fr.vals[params[i]] = cv_clone(&a) } }
+        for a, i in args { if i < params.len { fr.vals[params[i]] = a.clone() } }
         self.frames.append(fr)
         let outer = self.it_cur_fn
         self.it_cur_fn = inst
@@ -9483,16 +9581,16 @@ impl Checker {
         self.it_cur_fn = outer
         _ = self.frames.pop()
         if flow == FL_FAIL { return null }
-        if flow == FL_RETURN { return cv_clone(&self.it_flow_val) }
+        if flow == FL_RETURN { return self.it_flow_val.clone() }
         if self.it_out.kind == VK_NONE { return cv(VK_VOID) }
-        return cv_clone(&self.it_out)
+        return self.it_out.clone()
     }
 
     fn it_env_get(self: *mut Self, l: usize) -> CV {
         let fi = self.frames.len - 1
         if l >= self.frames[fi].vals.len { return cv(VK_UNDEFINED) }
         if self.frames[fi].vals[l].kind == VK_NONE { return cv(VK_UNDEFINED) }
-        return cv_clone(&self.frames[fi].vals[l])
+        return self.frames[fi].vals[l].clone()
     }
 
     fn it_env_set(self: *mut Self, l: usize, own v: CV) {
@@ -9527,13 +9625,13 @@ impl Checker {
             if self.it_pending != 0 {
                 flow = self.it_pending
                 self.it_flow_label = self.it_pending_label
-                self.it_flow_val = cv_clone(&self.it_pending_val)
+                self.it_flow_val = self.it_pending_val.clone()
                 self.it_pending = 0
                 value = cv(VK_NONE)
             }
         }
         // the flow's payload survives the defers
-        let fval = cv_clone(&self.it_flow_val)
+        let fval = self.it_flow_val.clone()
         let flabel = self.it_flow_label
         var i = defers.len
         while i > 0 {
@@ -9544,7 +9642,7 @@ impl Checker {
         self.it_flow_label = flabel
         // labeled block: a break targeting this block yields its value
         if flow == FL_BREAK and label != NONE and self.it_flow_label == label {
-            self.it_out = cv_clone(&self.it_flow_val)
+            self.it_out = self.it_flow_val.clone()
             return FL_NEXT
         }
         self.it_out = value
@@ -9557,7 +9655,7 @@ impl Checker {
         if self.it_pending != 0 {
             let p = self.it_pending
             self.it_flow_label = self.it_pending_label
-            self.it_flow_val = cv_clone(&self.it_pending_val)
+            self.it_flow_val = self.it_pending_val.clone()
             self.it_pending = 0
             return p
         }
@@ -9700,7 +9798,7 @@ impl Checker {
             }
             for i in 0..n {
                 if !self.it_step() { return FL_FAIL }
-                for l, j in locals { self.it_env_set(l, cv_clone(&seqs[j].items[i])) }
+                for l, j in locals { self.it_env_set(l, seqs[j].items[i].clone()) }
                 if index != NONE { self.it_env_set(index, cv_int(i as i128)) }
                 let f = self.it_exec_block(body)
                 if f == FL_FAIL { return FL_FAIL }
@@ -9804,7 +9902,7 @@ impl Checker {
                 return null
             }
         }
-        return cv_clone(cur)
+        return cur.clone()
     }
 
     fn it_assign(self: *mut Self, target: usize, own v: CV) -> bool {
@@ -9863,9 +9961,9 @@ impl Checker {
         if f == FL_FAIL { return null }
         if f == FL_NEXT {
             if self.it_out.kind == VK_NONE { return cv(VK_VOID) }
-            return cv_clone(&self.it_out)
+            return self.it_out.clone()
         }
-        return self.it_escape(f, self.it_flow_label, cv_clone(&self.it_flow_val))
+        return self.it_escape(f, self.it_flow_label, self.it_flow_val.clone())
     }
 
     fn it_eval_inner(self: *mut Self, e: usize) -> ?CV {
@@ -9938,7 +10036,7 @@ impl Checker {
             }
             if bv.kind == VK_ARRAY or bv.kind == VK_LIST {
                 var items = List(CV).new()
-                for i in s..en { items.append(cv_clone(&bv.items[i])) }
+                for i in s..en { items.append(bv.items[i].clone()) }
                 return cv_seq(VK_ARRAY, items)
             }
             if bv.kind == VK_STR or bv.kind == VK_OWNED_STR { return cv_str(bv.text[s..en]) }
@@ -9951,7 +10049,7 @@ impl Checker {
             let l = p.b
             if fi >= self.frames.len or l >= self.frames[fi].vals.len { return null }
             if self.frames[fi].vals[l].kind == VK_NONE { return null }
-            let root = cv_clone(&self.frames[fi].vals[l])
+            let root = self.frames[fi].vals[l].clone()
             return self.it_read_path(&root, p.path[..])
         }
         if k == TKind.AddrOf {
@@ -10081,7 +10179,7 @@ impl Checker {
         if k == TKind.IfCapture {
             let c = self.it_eval(kids[0]) orelse return null
             if c.kind == VK_SOME {
-                self.it_env_set(a, cv_clone(&c.items[0]))
+                self.it_env_set(a, c.items[0].clone())
                 return self.it_block_value(kids[1])
             }
             if c.kind == VK_NULL {
@@ -10148,33 +10246,33 @@ impl Checker {
         if k == TKind.ArrayRepeat {
             let v = self.it_eval(kids[0]) orelse return null
             var vals = List(CV).new()
-            for i in 0..a { vals.append(cv_clone(&v)) }
+            for i in 0..a { vals.append(v.clone()) }
             return cv_seq(VK_ARRAY, vals)
         }
         if k == TKind.Try {
             let v = self.it_eval(kids[0]) orelse return null
-            if v.kind == VK_OK { return cv_clone(&v.items[0]) }
+            if v.kind == VK_OK { return v.items[0].clone() }
             if v.kind == VK_ERR { return self.it_escape(FL_RETURN, NONE, v) }
             return v
         }
         if k == TKind.Catch {
             let v = self.it_eval(kids[0]) orelse return null
-            if v.kind == VK_OK { return cv_clone(&v.items[0]) }
+            if v.kind == VK_OK { return v.items[0].clone() }
             if v.kind == VK_ERR {
-                if a != NONE { self.it_env_set(a, cv_clone(&v)) }
+                if a != NONE { self.it_env_set(a, v.clone()) }
                 return self.it_eval(kids[1])
             }
             return v
         }
         if k == TKind.OrElse {
             let v = self.it_eval(kids[0]) orelse return null
-            if v.kind == VK_SOME { return cv_clone(&v.items[0]) }
+            if v.kind == VK_SOME { return v.items[0].clone() }
             if v.kind == VK_NULL { return self.it_eval(kids[1]) }
             return null
         }
         if k == TKind.Unwrap {
             let v = self.it_eval(kids[0]) orelse return null
-            if v.kind == VK_SOME { return cv_clone(&v.items[0]) }
+            if v.kind == VK_SOME { return v.items[0].clone() }
             if v.kind == VK_NULL {
                 self.it_fail_panic("unwrapped a null optional", at)
                 return null
@@ -10280,7 +10378,7 @@ impl Checker {
                 by_ptr = self.tys.kind(self.tys.shallow(lt)) == TK.Ptr and v.kind != VK_PTR
             }
             if by_ptr { self.it_env_set(a, cv_ptr(pfi, pl, ppath.clone())) }
-            else { self.it_env_set(a, cv_clone(v)) }
+            else { self.it_env_set(a, v.clone()) }
             return 1
         }
         if k == TKind.PInt { let i = cv_as_int(v) orelse return 0; return if i == self.tir.nodes[p].ival { 1 } else { 0 } }
@@ -10578,7 +10676,7 @@ impl Checker {
             if vs[0].kind != VK_MAP { return null }
             var i: usize = 0
             while i + 1 < vs[0].items.len {
-                if cv_key_eq(&vs[0].items[i], &vs[1]) { return cv_wrap(VK_SOME, cv_clone(&vs[0].items[i + 1])) }
+                if cv_key_eq(&vs[0].items[i], &vs[1]) { return cv_wrap(VK_SOME, vs[0].items[i + 1].clone()) }
                 i += 2
             }
             return cv(VK_NULL)
@@ -10596,7 +10694,7 @@ impl Checker {
             if vs[0].kind != VK_MAP { return null }
             var out = List(CV).new()
             var i: usize = if name == "MapKeys" { 0 } else { 1 }
-            while i < vs[0].items.len { out.append(cv_clone(&vs[0].items[i])); i += 2 }
+            while i < vs[0].items.len { out.append(vs[0].items[i].clone()); i += 2 }
             return cv_seq(VK_LIST, out)
         }
         if name == "SliceIndexOf" {
@@ -10655,8 +10753,8 @@ impl Checker {
         }
         if name == "SliceToOwned" {
             if vs[0].kind == VK_STR { return cv_owned(vs[0].text[..]) }
-            if vs[0].kind == VK_ARRAY { var v = cv_clone(&vs[0]); v.kind = VK_LIST; return v }
-            return cv_clone(&vs[0])
+            if vs[0].kind == VK_ARRAY { var v = vs[0].clone(); v.kind = VK_LIST; return v }
+            return vs[0].clone()
         }
         if name == "SliceParseInt" {
             let s = cv_bytes(&vs[0]) orelse return null
@@ -10708,16 +10806,16 @@ impl Checker {
         }
         // ---- reference classes are plain values in the interpreter
         if name == "Retain" or name == "Release" or name == "Drop" { return cv(VK_VOID) }
-        if name == "Weak" { return cv_wrap(VK_SOME, cv_clone(&vs[0])) }
+        if name == "Weak" { return cv_wrap(VK_SOME, vs[0].clone()) }
         if name == "Upgrade" {
-            if vs[0].kind == VK_SOME or vs[0].kind == VK_NULL { return cv_clone(&vs[0]) }
-            return cv_wrap(VK_SOME, cv_clone(&vs[0]))
+            if vs[0].kind == VK_SOME or vs[0].kind == VK_NULL { return vs[0].clone() }
+            return cv_wrap(VK_SOME, vs[0].clone())
         }
         if name == "RefCount" { return cv_int(1) }
         if name == "RefEq" { return cv_bool(cv_key_eq(&vs[0], &vs[1])) }
         if name == "ListNew" or name == "ListWithCapacity" { return cv_seq(VK_LIST, List(CV).new()) }
         if name == "ListFromSlice" {
-            if vs[0].kind == VK_ARRAY { var v = cv_clone(&vs[0]); v.kind = VK_LIST; return v }
+            if vs[0].kind == VK_ARRAY { var v = vs[0].clone(); v.kind = VK_LIST; return v }
             if vs[0].kind == VK_STR {
                 var items = List(CV).new()
                 for b in vs[0].text { items.append(cv_int(b as i128)) }
@@ -10725,15 +10823,15 @@ impl Checker {
             }
             return null
         }
-        if name == "ListClone" or name == "StringClone" or name == "MapClone" { return cv_clone(&vs[0]) }
+        if name == "ListClone" or name == "StringClone" or name == "MapClone" or name == "Clone" { return vs[0].clone() }
         if name == "ListLast" {
             let which = cv_as_int(&vs[1]) orelse return null
             if vs[0].kind != VK_ARRAY { return null }
             if vs[0].items.len == 0 { return cv(VK_NULL) }
-            if which == 1 { return cv_wrap(VK_SOME, cv_clone(&vs[0].items[vs[0].items.len - 1])) }
-            return cv_wrap(VK_SOME, cv_clone(&vs[0].items[0]))
+            if which == 1 { return cv_wrap(VK_SOME, vs[0].items[vs[0].items.len - 1].clone()) }
+            return cv_wrap(VK_SOME, vs[0].items[0].clone())
         }
-        if name == "ListItems" { return cv_clone(&vs[0]) }
+        if name == "ListItems" { return vs[0].clone() }
         if name == "StringNew" or name == "StringWithCapacity" { return cv_owned("") }
         if name == "StringFrom" {
             if vs[0].kind == VK_STR or vs[0].kind == VK_OWNED_STR { return cv_owned(vs[0].text[..]) }
@@ -11028,7 +11126,7 @@ impl Checker {
                 self.it_panic_at("insert index out of range", at)
                 return null
             }
-            cur.items.insert(i, cv_clone(&vs[2]))
+            cur.items.insert(i, vs[2].clone())
             return cv(VK_VOID)
         }
         if name == "ListRemove" or name == "ListSwapRemove" {
@@ -11044,14 +11142,14 @@ impl Checker {
         if name == "ListExtend" {
             if k != VK_LIST { return null }
             let more = cv_seq_items(&vs[1]) orelse return null
-            for x in more { cur.items.append(cv_clone(&x)) }
+            for x in more { cur.items.append(x.clone()) }
             return cv(VK_VOID)
         }
         if name == "ListAppend" {
-            if k == VK_LIST { cur.items.append(cv_clone(&vs[1])); return cv(VK_VOID) }
+            if k == VK_LIST { cur.items.append(vs[1].clone()); return cv(VK_VOID) }
             if k == VK_UNDEFINED {
                 var items = List(CV).new()
-                items.append(cv_clone(&vs[1]))
+                items.append(vs[1].clone())
                 cur.*= cv_seq(VK_LIST, items)
                 return cv(VK_VOID)
             }
@@ -11077,19 +11175,19 @@ impl Checker {
                 var i: usize = 0
                 while i + 1 < cur.items.len {
                     if cv_key_eq(&cur.items[i], &vs[1]) {
-                        cur.items[i + 1] = cv_clone(&vs[2])
+                        cur.items[i + 1] = vs[2].clone()
                         return cv(VK_VOID)
                     }
                     i += 2
                 }
-                cur.items.append(cv_clone(&vs[1]))
-                cur.items.append(cv_clone(&vs[2]))
+                cur.items.append(vs[1].clone())
+                cur.items.append(vs[2].clone())
                 return cv(VK_VOID)
             }
             if k == VK_UNDEFINED {
                 var items = List(CV).new()
-                items.append(cv_clone(&vs[1]))
-                items.append(cv_clone(&vs[2]))
+                items.append(vs[1].clone())
+                items.append(vs[2].clone())
                 cur.*= cv_seq(VK_MAP, items)
                 return cv(VK_VOID)
             }
@@ -11116,7 +11214,7 @@ impl Checker {
         if name == "SliceCopy" {
             let src = cv_seq_items(&vs[1]) orelse return null
             if k == VK_LIST or k == VK_ARRAY {
-                for x, i in src { if i < cur.items.len { cur.items[i] = cv_clone(&x) } }
+                for x, i in src { if i < cur.items.len { cur.items[i] = x.clone() } }
                 return cv(VK_VOID)
             }
             if k == VK_OWNED_STR or k == VK_STR {
@@ -11130,7 +11228,7 @@ impl Checker {
         if name == "SliceFill" {
             if k == VK_LIST or k == VK_ARRAY {
                 let n = cur.items.len
-                for i in 0..n { cur.items[i] = cv_clone(&vs[1]) }
+                for i in 0..n { cur.items[i] = vs[1].clone() }
                 return cv(VK_VOID)
             }
             if k == VK_OWNED_STR or k == VK_STR {
@@ -11147,8 +11245,8 @@ impl Checker {
                 var j = cur.items.len
                 while i + 1 < j {
                     j -= 1
-                    let t = cv_clone(&cur.items[i])
-                    cur.items[i] = cv_clone(&cur.items[j])
+                    let t = cur.items[i].clone()
+                    cur.items[i] = cur.items[j].clone()
                     cur.items[j] = t
                     i += 1
                 }
@@ -11176,8 +11274,8 @@ impl Checker {
                 while i < n {
                     var j = i
                     while j > 0 and cv_cmp(&cur.items[j - 1], &cur.items[j]) > 0 {
-                        let t = cv_clone(&cur.items[j - 1])
-                        cur.items[j - 1] = cv_clone(&cur.items[j])
+                        let t = cur.items[j - 1].clone()
+                        cur.items[j - 1] = cur.items[j].clone()
                         cur.items[j] = t
                         j -= 1
                     }
@@ -12721,7 +12819,7 @@ pub fn new_checker(own mods: List(Mod)) -> Checker {
         .record_new_mode = false, .vtables = List(VTable).new(), .obligations = List(Obligation).new(),
         .parallel_calls = List(Obligation).new(), .global_uses = List(Obligation).new(), .global_use_fns = List(String).new(), .artifact_kinds = List(String).new(), .wild_pat_node = NONE,
         .cc = List(String).new(), .target = String.new(), .cimport_headers = List(String).new(), .cimport_system = List(bool).new(), .cimport_unsupported = Map(String, String).new(),
-        .values = List(CV).new(), .repl_mode = false, .chain_locals = List(usize).new(), .pending_stmts = List(usize).new(),
+        .values = List(CV).new(), .repl_mode = false, .chain_locals = List(usize).new(), .pending_stmts = List(usize).new(), .clone_seen = List(usize).new(),
         .it_steps = 0, .it_panic = String.new(), .it_panic_at = NONE, .it_has_panic = false, .it_budget = false,
         .it_pending = 0, .it_pending_label = NONE, .it_pending_val = cv_none(), .it_failed_at = NONE,
         .frames = List(Frame).new(), .it_cur_fn = NONE, .it_out = cv_none(), .it_flow_val = cv_none(), .it_flow_label = NONE,

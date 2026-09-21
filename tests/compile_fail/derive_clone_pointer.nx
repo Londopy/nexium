@@ -1,0 +1,9 @@
+// EXPECT: cannot clone a `Holder`: field `p` of `Holder`: a pointer is a view into other storage
+struct Holder derive(Clone) { p: *mut i32, n: i32 }
+
+fn main() {
+    var v: i32 = 1
+    let h = Holder{ .p = &mut v, .n = 2 }
+    let h2 = h.clone()
+    println("{}", .{h2.n})
+}

@@ -213,7 +213,7 @@ fn accept(s: *mut Session, own input: String, std_dir: []u8, cc: *List(String), 
     // the bindings before this statement, for `:undo`
     s.hist_names.append(s.names.clone())
     var before = List(check.CV).new()
-    for i in 0..s.values.len { before.append(check.cv_clone(&s.values[i])) }
+    for i in 0..s.values.len { before.append(s.values[i].clone()) }
     s.hist_values.append(before)
     s.hist_shown.append(s.shown.clone())
     s.hist_types.append(s.types.clone())
@@ -227,7 +227,7 @@ fn accept(s: *mut Session, own input: String, std_dir: []u8, cc: *List(String), 
     for n, i in out.names {
         if !check.cv_keepable(&out.values[i]) { continue }
         names.append(n.clone())
-        values.append(check.cv_clone(&out.values[i]))
+        values.append(out.values[i].clone())
         shown.append(out.shown[i].clone())
         types.append(if i < out.types.len { out.types[i].clone() } else { String.new() })
     }

@@ -26,6 +26,15 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   elements; over a place they are views of it, as an `if let` binding is
   (decision 92). Each name is one `let` in the typed IR. Spec case
   `s5_tuple_destructuring`; the second item of 1.1.
+- `derive(Clone)` gives a struct or enum `.clone()`, a deep copy field by
+  field, once every field and payload clones (numbers, `String`, `List`,
+  `Map`, slices, optionals, tuples, arrays, weak references, other `Clone`
+  types, reference classes by retaining); a pointer, a trait object or a
+  function value does not, and the error names the field. Tuples,
+  optionals and arrays of clonable things clone without a derive, and
+  `where T: Clone` bounds a type parameter. Closes the `KNOWN_ISSUES.md`
+  entry: the compiler's hand-written `cv_clone` and `frames_clone` are
+  gone (decision 93). Spec case `s8_derive_clone`; the third item of 1.1.
 
 ### Fixed
 
