@@ -95,7 +95,8 @@ import std.json                             // a std module embedded in the comp
 Visibility: `pub` items of an imported module are reached as
 `module.item`. Fields are visible to any code that can see the struct.
 Struct fields are separated by commas or newlines and may carry defaults
-(`verbose: u8 = 0`).
+(`verbose: u8 = 0`). A struct literal's initializers are evaluated in the
+order written, then the defaults of the fields it leaves out.
 
 **Entry points.** `fn main()`, `fn main() -> !void`, or `fn main() -> u8`.
 An error returned from `main` prints `error: Name` and exits with 1; a
@@ -181,7 +182,9 @@ function that mutates a collection takes `*mut List(T)`. A parameter marked
 `own` takes ownership (**decided**, 61): the argument is moved at the call
 site, the callee may mutate it, move it on, or let it drop at return. `own`
 is rejected on receivers, on non-owning types, on exported functions, and a
-function with an `own` parameter cannot be used as a function value.
+function with an `own` parameter cannot be used as a function value. An
+`own` parameter is the callee's storage: a view into it is a view into a
+local (5.6).
 
 ### 5.4 Reference classes
 
@@ -199,33 +202,67 @@ dereference automatically. `unsafe { }` is required for: reading or writing
 a mutable global, calling a foreign function, casting between pointers or
 between integers and pointers, and taking `.ptr` of a slice.
 
-### 5.6 Regions
+### 5.6 Views and their storage
 
-Rule R1 is enforced: a function may not return a slice or a pointer into
-one of its own locals. Views into parameters are allowed, because the
-caller owns that storage. R1 is the region rule of the language
-(**decided**, 88); the archived rules R2 to R4 are not adopted. The cases
-R1 does not cover are the programmer's responsibility, as data races are
-(section 13): a view stored into a variable or a field that outlives the
-storage it points into (`out = s[..]` where `s` is a local of an inner
-block), a view kept across a growth of the `List`, `String` or `Map` it
-points into, a view into a value that is then moved away and dropped,
-and a `*mut` obtained inside `unsafe`. A debug build fills freed storage with a fixed byte
-(`0xDD`), so such a use reads garbage or panics on a length instead of
-yielding the old contents by luck.
+A view (a slice, a pointer, a closure, or a value holding one) points into
+storage it does not own. The checker knows where every view points (its
+*origins*: locals, a parameter's storage, a literal, a temporary, the
+value's own heap storage) and enforces five rules over them (**decided**,
+100 to 104). In 1.2 they are warnings; `--strict` (or `NX_STRICT=1`) makes
+them errors, and 1.3 makes them errors for everyone (`docs/stability.md`).
+The archived region rules R2 to R4 are not adopted (**decided**, 88); the
+view rules replace them.
+
+- **V1.** A function may not return a view into its own locals, its
+  temporaries or its `own` parameters, nor a value holding one. Views into
+  borrowed parameters are allowed: the caller owns that storage. The direct
+  case, a returned slice or pointer into a local, has been an error since
+  1.0 as rule R1.
+- **V2.** A view stored into a place (a variable, a field, an element, a
+  global, a closure capture, the caller's storage through a pointer
+  parameter) must not outlive the storage it points into: `out = s[..]`
+  with `s` a local of an inner block, or a temporary of that statement.
+- **V3.** A view into a `List`, `String` or `Map` is stale once the
+  container grows, is cleared or is reassigned (`append`, `insert`, `put`,
+  `extend`, `reserve`, `clear`, `=`). A use of the view after the change is
+  reported, and so is a change inside a loop of a container a view taken
+  before the loop reads in it.
+- **V4.** A view into a value is stale once the value moves away; a use
+  after the move is reported. A move on the line of the use is not: a
+  literal or a `return` holding the value and the view together keeps the
+  storage alive.
+- **V5.** A value made inside `using arena { }` may not be kept past the
+  block (5.7).
+
+A view into heap storage a value owns (a slice of its `String` field) that
+the same literal moves in is a view into the literal's value: it travels
+with the value, and V3 and V4 then apply to that value. The rules report
+at the use that would read released storage, naming the storage and the
+moment it was released; a view that is not used again is not reported.
+`.clone()` makes an independent copy where a view was kept. A `*mut`
+obtained inside `unsafe` stays the programmer's responsibility. A debug
+build fills freed storage with a fixed byte (`0xDD`), so a use the rules
+miss reads garbage or panics on a length instead of yielding the old
+contents by luck; such a use is a bug to report (`SECURITY.md`).
 
 ### 5.7 Allocation scopes
 
 `using arena { ... }` installs a bump allocator for the block. Values
 created inside are allocated from the arena, their releases are no-ops, and
-the arena is freed as a whole at the end of the block. Containers created
-outside the block keep using the heap when they grow inside it, so
-collecting results into an outer `List`, `String`, or `Map` is safe. A
-value created inside the block must not be kept past it: this is not
-checked, for the same reason as the view cases of 5.6, and it is the
-programmer's responsibility in the same way; a debug build fills the
-arena's storage with `0xDD` when the block ends. `arena` is the only
-allocation strategy; `pool` and `stack` are not adopted (**decided**, 88).
+the arena is freed as a whole at the end of the block, and on a `return`,
+`break` or `continue` that leaves it. Containers created outside the block
+keep using the heap when they grow inside it, so collecting numbers and
+other values that own no heap storage into an outer `List`, `String`, or
+`Map` is safe. A value made inside the block must not be kept past it
+(rule V5 of 5.6): not returned, not assigned to a place declared outside,
+not appended to an outer container, not handed to a global or to the
+caller. `@escape(v)` is the way out: a copy of `v` (a variable, a field or
+an element) made by the allocator the block was entered with, which lives
+on after the block; `.clone()` inside the block allocates from the arena
+and does not. A value a call returns inside the block counts as made
+there. A debug build fills the arena's storage with `0xDD` when the block
+ends. `arena` is the only allocation strategy; `pool` and `stack` are not
+adopted (**decided**, 88).
 
 ## 6. Expressions and statements
 
@@ -493,7 +530,7 @@ evaluation into a compile error. `const` initializers, `@embedFile`, record
 checks on literals, and `comptime test` blocks run here. Intrinsics:
 `@typeName(T) @sizeOf(T) @alignOf(T) @truncate(T, x) @bitCast(T, x)
 @min(a, b) @max(a, b) @errorName(e) @embedFile(path) @weak(x)
-@refCount(x) @cImport(header) @cstr(literal) @target()`. `@bitCast`
+@refCount(x) @cImport(header) @cstr(literal) @target() @escape(v)`. `@bitCast`
 reinterprets the bytes of one scalar as another of the same size;
 `@min` and `@max` take two numbers of one type and carry the range of
 their operands; `@target()` is `(os, arch, pointer_bits)` (`"windows"`,

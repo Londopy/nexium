@@ -1,0 +1,10 @@
+// STRICT
+// EXPECT: `kept` lives past this `using arena` block, but the value stored in it was made inside the block and its storage is freed with the arena at the end (rule V5)
+fn main() {
+    var kept = List(String).new()
+    using arena {
+        let s = String.from("gone")
+        kept.append(s)
+    }
+    println("{}", .{kept.len})
+}

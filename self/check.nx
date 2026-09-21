@@ -591,7 +591,8 @@ pub fn load_with_text(root: []u8, root_text: []u8, std_dir: []u8) -> !List(Mod) 
                 }
             }
         }
-        mods.append(Mod{ .name = mname, .source = text, .dir = String.from(std_dir), .path = format("<std>/{}.nx", .{short}), .parsed = parsed, .pkg = String.new() })
+        let path = format("<std>/{}.nx", .{short})
+        mods.append(Mod{ .name = mname, .source = text, .dir = String.from(std_dir), .path = path, .parsed = parsed, .pkg = String.new() })
     }
     return mods
 }
@@ -715,7 +716,48 @@ pub struct Local {
     if_let: bool
     // a name of `let (a, b) = place` or `for (k, v) in items`: a view of the element
     tuple_view: bool
+    // where the value points when it holds a view (section 5.6): the locals it
+    // borrows from, or ORIGIN_PARAM, ORIGIN_STATIC, ORIGIN_TEMP
+    origins: List(Origin)
+    // the scope depth at the declaration (the mark stack's height)
+    depth: usize
+    // the growths, clearings and reassignments of this local's storage, for V3
+    changes: List(Change)
+    // the origins already warned about through this local (once each)
+    warned: List(usize)
+    // the `using arena` nesting the local is declared in (0: outside any)
+    arena_depth: usize
+    // the `using arena` nesting the value it holds was made in, for V5: a
+    // local declared inside a block may hold a value `@escape` made outside
+    made_in: usize
+    // the position of the last read of the local, for V3's loop rule
+    last_use: usize
 }
+
+/// The storage a view points into and when the view was taken (a source
+/// position, so a later change of the storage is later than the view).
+pub struct Origin {
+    local: usize
+    taken_at: usize
+    // the view is into heap storage the value owns (a `List`, `String` or
+    // `Map` buffer), which moves with the value: a view into a value that the
+    // same literal moves in is a view into the literal's own value
+    heap: bool
+}
+
+/// A change of a local's storage: where, and the loops it sits in (a view
+/// taken before the loop meets it on the next pass).
+pub struct Change {
+    pos: usize
+    loops: List(usize)
+}
+
+/// The caller's storage (a parameter's), a global's or a literal's, a temporary's.
+const ORIGIN_PARAM: usize = 0xFFFFFFFFFFFFFFFE
+const ORIGIN_STATIC: usize = 0xFFFFFFFFFFFFFFFD
+// the value's own heap storage (see `Origin.heap`), which travels with it
+const ORIGIN_SELF: usize = 0xFFFFFFFFFFFFFFFC
+const ORIGIN_TEMP: usize = 0xFFFFFFFFFFFFFFFB
 
 pub struct LabelInfo {
     name: String
@@ -739,6 +781,8 @@ pub struct Diag {
     at: usize
     msg: String
     note: bool
+    // a warning (or a note on one): reported, not fatal, unless `--strict`
+    warn: bool
 }
 
 /// Tarjan's strongly connected components over the instance call graph.
@@ -774,6 +818,15 @@ pub struct FnCtx {
     callees: List(usize)
     callee_spans: List(usize)
     moved: Map(usize, usize)
+    // the start of every loop being checked, innermost last (V3's loop rule)
+    loop_starts: List(usize)
+    // how many `using arena` blocks enclose the point being checked (V5)
+    using_depth: usize
+    // the value being matched, for what its pattern bindings view
+    pat_source: usize
+    // the local named on the left of `x = v` while that name is checked: a
+    // write, not a read of what it views
+    assign_target: usize
     ranges: Map(usize, Range)
     // facts from guards beyond ranges: locals proven `!= 0`, optionals proven
     // `!= null`, slices with a proven least length (`lo`); all dropped when the
@@ -799,7 +852,7 @@ fn new_ctx(ret: usize, module: usize, name: []u8) -> FnCtx {
         .scope_names = List(String).new(), .scope_locals = List(usize).new(), .scope_deref = List(bool).new(), .scope_marks = List(usize).new(),
         .labels = List(LabelInfo).new(), .next_label = 0, .own_effects = 0, .witnesses = List(Witness).new(),
         .callees = List(usize).new(), .callee_spans = List(usize).new(), .moved = Map(usize, usize).new(), .ranges = Map(usize, Range).new(), .nonzero = List(usize).new(), .nonnull = List(usize).new(), .min_len = Map(usize, Range).new(),
-        .index_of = Map(usize, usize).new(), .in_defer = false, .loop_depth = 0, .unsafe_depth = 0, .is_comptime = false, .in_parallel = 0, .self_ty = NONE, .pat_by_ref = NONE,
+        .index_of = Map(usize, usize).new(), .in_defer = false, .loop_depth = 0, .loop_starts = List(usize).new(), .using_depth = 0, .pat_source = NONE, .assign_target = NONE, .unsafe_depth = 0, .is_comptime = false, .in_parallel = 0, .self_ty = NONE, .pat_by_ref = NONE,
     }
 }
 
@@ -867,6 +920,12 @@ pub struct Checker {
     aliases: List(AliasDef)
     error_sets: List(ErrorSetDef)
     errors: List(String)
+    // warnings, rendered like errors; `--strict` turns them into errors
+    warnings: List(String)
+    // per type: 1 when it cannot hold a view, 2 when it can (section 5.6)
+    view_cache: Map(usize, u8)
+    // a closure instance's captured locals, for the views it carries
+    closure_caps: Map(usize, List(usize))
     diags: List(Diag)
     // error names, 1-based ids in order of first mention
     error_names: List(String)
@@ -942,6 +1001,16 @@ pub fn print_errors(errors: *List(String)) {
     if n > 0 { eprintln("{} error(s)", .{n}) }
 }
 
+/// Warnings, with their prefix; under `--strict` they are printed as errors.
+pub fn print_warnings(warnings: *List(String), strict: bool) {
+    var n: usize = 0
+    let label = if strict { "error" } else { "warning" }
+    for w in warnings {
+        if w[..].starts_with("  note:") { eprintln("{}", .{w}) } else { eprintln("{}: {}", .{label, w}); n += 1 }
+    }
+    if n > 0 { eprintln("{} {}(s){}", .{n, label, if strict { " (warnings, under --strict)" } else { "" }}) }
+}
+
 fn item_key(module: usize, name: []u8) -> String {
     return format("{}:{}", .{module, name})
 }
@@ -957,13 +1026,32 @@ impl Checker {
     ///        |     ^
     fn fail(self: *mut Self, module: usize, at: usize, msg: []u8) {
         self.errors.append(format("{}\n{}", .{msg, self.render_at(module, at)}))
-        self.diags.append(Diag{ .module = module, .at = at, .msg = String.from(msg), .note = false })
+        self.diags.append(Diag{ .module = module, .at = at, .msg = String.from(msg), .note = false, .warn = false })
     }
 
     /// A note attached to the error just reported.
     fn note(self: *mut Self, module: usize, at: usize, msg: []u8) {
         self.errors.append(format("  note: {}\n{}", .{msg, self.render_at(module, at)}))
-        self.diags.append(Diag{ .module = module, .at = at, .msg = String.from(msg), .note = true })
+        self.diags.append(Diag{ .module = module, .at = at, .msg = String.from(msg), .note = true, .warn = false })
+    }
+
+    /// A warning: reported like an error, fatal only under `--strict`. The
+    /// view rules of 1.2 arrive this way (docs/stability.md: a warning in one
+    /// release, an error in the next).
+    fn warn(self: *mut Self, module: usize, at: usize, msg: []u8) {
+        self.warnings.append(format("{}\n{}", .{msg, self.render_at(module, at)}))
+        self.diags.append(Diag{ .module = module, .at = at, .msg = String.from(msg), .note = false, .warn = true })
+    }
+
+    fn warn_here(self: *mut Self, at: usize, msg: []u8) {
+        let m = self.cur_module()
+        self.warn(m, at, msg)
+    }
+
+    /// A note attached to the warning just reported.
+    fn warn_note(self: *mut Self, module: usize, at: usize, msg: []u8) {
+        self.warnings.append(format("  note: {}\n{}", .{msg, self.render_at(module, at)}))
+        self.diags.append(Diag{ .module = module, .at = at, .msg = String.from(msg), .note = true, .warn = true })
     }
 
     /// `path:line:col` of a byte offset in a module.
@@ -2116,7 +2204,7 @@ impl Checker {
     fn declare_local(self: *mut Self, name: []u8, ty: usize, mutable: bool, start: usize, end: usize) -> usize {
         let c = self.ctx()
         let id = c.locals.len
-        c.locals.append(Local{ .name = String.from(name), .ty = ty, .mutable = mutable, .start = start, .end = end, .is_param = false, .owned = false, .loop_item = false, .if_let = false, .tuple_view = false })
+        c.locals.append(Local{ .name = String.from(name), .ty = ty, .mutable = mutable, .start = start, .end = end, .is_param = false, .owned = false, .loop_item = false, .if_let = false, .tuple_view = false, .origins = List(Origin).new(), .depth = c.scope_marks.len, .changes = List(Change).new(), .warned = List(usize).new(), .arena_depth = c.using_depth, .made_in = c.using_depth, .last_use = 0 })
         c.scope_names.append(String.from(name))
         c.scope_locals.append(id)
         c.scope_deref.append(false)
@@ -2257,7 +2345,7 @@ impl Checker {
                     self.fail(m, pstart, format("`own` applies to owning types (`List`, `String`, `Map`, or structs holding them); `{}` is copied anyway", .{self.ty_name(t)})[..])
                 }
                 if owned { any_owned = true }
-                locals.append(Local{ .name = pname, .ty = t, .mutable = owned, .start = pstart, .end = pend, .is_param = true, .owned = owned, .loop_item = false, .if_let = false, .tuple_view = false })
+                locals.append(Local{ .name = pname, .ty = t, .mutable = owned, .start = pstart, .end = pend, .is_param = true, .owned = owned, .loop_item = false, .if_let = false, .tuple_view = false, .origins = List(Origin).new(), .depth = 0, .changes = List(Change).new(), .warned = List(usize).new(), .arena_depth = 0, .made_in = 0, .last_use = 0 })
                 params.append(locals.len - 1)
             }
             ret = if ret_node == NONE { self.tys.void() } else { self.resolve_type(m, ret_node, self_ty) }
@@ -2916,7 +3004,9 @@ impl Checker {
             let strategy = n.name.clone()
             let body = n.x
             let v = self.tys.void()
+            self.ctx().using_depth += 1
             let tb = self.check_block(body, v, NONE, NONE)
+            self.ctx().using_depth -= 1
             let st = self.stmt_node(TKind.SUsing, start, end)
             st_set_name(&mut self.tir, st, strategy[..])
             self.tir.nodes[st].kids.append(tb)
@@ -2965,6 +3055,7 @@ impl Checker {
             }
         }
         let id = self.declare_local(name[..], lty, mutable, start, end)
+        if init != NONE { self.check_store_local(id, init, start) }
         if !mutable and has_range { self.ctx().ranges.put(id, range) }
         if self.is_ref_class(lty) { self.add_effect(EFF_REFCOUNTS, start, "holding a reference releases it at scope exit") }
         let st = self.stmt_node(TKind.SLet, start, end)
@@ -3058,6 +3149,7 @@ impl Checker {
         self.tir.nodes[st].a = id
         self.tir.nodes[st].kids.append(f)
         if view { self.tir.nodes[st].flag = true }
+        if view { self.bind_view(id, f, start) } else { self.check_store_local(id, f, start) }
         return st
     }
 
@@ -3091,9 +3183,11 @@ impl Checker {
                     _ = self.ctx().moved.remove(l)
                     self.forget_local(l)
                 }
+                self.ctx().assign_target = l
             }
         }
         let t = self.check_expr(target_node, NONE)
+        self.ctx().assign_target = NONE
         if !self.is_place(t) {
             self.fail_here(self.tir.nodes[t].start, "the left side of an assignment must be a variable, field, element, or dereference")
             _ = self.check_expr(value_node, NONE)
@@ -3119,7 +3213,13 @@ impl Checker {
                 let l = self.tir.nodes[t].a
                 _ = self.ctx().moved.remove(l)
                 self.forget_local(l)
+                // the local views what the new value views, from here
+                self.ctx().locals[l].origins.clear()
+                self.ctx().locals[l].warned.clear()
             }
+            // the old storage of a container is released: a change for V3; then V2 for what is stored
+            if self.tir.nodes[t].k == TKind.Local and self.needs_drop(tt) { self.note_change(self.tir.nodes[t].a, start) }
+            self.check_store(t, v, start)
             st_set_name(&mut self.tir, st, "=")
             self.tir.nodes[st].kids.append(t)
             self.tir.nodes[st].kids.append(v)
@@ -3130,7 +3230,10 @@ impl Checker {
         if self.tir.nodes[be].k != TKind.Binary { return NONE }
         let mode = self.tir.nodes[be].name.clone()
         let v = self.tir.nodes[be].kids[1]
-        if self.tir.nodes[t].k == TKind.Local { self.forget_local(self.tir.nodes[t].a) }
+        if self.tir.nodes[t].k == TKind.Local {
+            self.forget_local(self.tir.nodes[t].a)
+            if self.needs_drop(tt) { self.note_change(self.tir.nodes[t].a, start) }
+        }
         st_set_name(&mut self.tir, st, format("{}= {}", .{bop, mode})[..])
         self.tir.nodes[st].kids.append(t)
         self.tir.nodes[st].kids.append(v)
@@ -3160,9 +3263,546 @@ impl Checker {
         }
         te = self.coerce_or_error(te, ret, "return value")
         self.check_escaping_view(te, start)
+        self.check_arena_return(te, start)
         te = self.take_ownership(te)
         self.tir.nodes[st].kids.append(te)
         return st
+    }
+
+    // ----- views and their origins (section 5.6) --------------------------------------------
+
+    /// Can a value of this type hold a view: a slice, a pointer, a function
+    /// value (a closure's captures) or a trait object, or a container, an
+    /// optional, an error union, a tuple, a struct or an enum holding one. A
+    /// recursive type answers for its inner mention with "no", which is what
+    /// the outer answer needs.
+    fn holds_view(self: *mut Self, t0: usize) -> bool {
+        // without defaulting: an open literal is decided by its use, not here
+        let t = self.tys.resolve(t0, false)
+        if let c = self.view_cache.get(t) { return c == 2 }
+        self.view_cache.put(t, 1)
+        let k = self.tys.kind(t)
+        var r = false
+        if k == TK.Slice or k == TK.Ptr or k == TK.Fn or k == TK.Dyn {
+            r = true
+        } else if k == TK.Opt or k == TK.ErrUnion or k == TK.Array or k == TK.List or k == TK.Map or k == TK.Tuple {
+            for a in self.tys.list[t].args.clone() { if self.holds_view(a) { r = true } }
+        } else if k == TK.Struct {
+            for ft in self.struct_field_types(t) { if self.holds_view(ft) { r = true } }
+        } else if k == TK.Enum {
+            for tys in self.enum_variant_types(t) {
+                for pt in tys { if self.holds_view(pt) { r = true } }
+            }
+        } else if k == TK.Distinct {
+            r = self.holds_view(self.distinct_underlying(self.tys.list[t].def))
+        }
+        self.view_cache.put(t, if r { 2 } else { 1 })
+        return r
+    }
+
+    /// The line of a source position in the current module.
+    fn line_no(self: *mut Self, at: usize) -> usize {
+        let src = self.mods[self.cur_module()].source[..]
+        var line: usize = 1
+        var i: usize = 0
+        let stop = if at < src.len { at } else { src.len }
+        while i < stop {
+            if src[i] == '\n' { line += 1 }
+            i += 1
+        }
+        return line
+    }
+
+    /// Where a value expression points when it holds a view: the storage it
+    /// was taken from, or the origins the places and locals it reads already
+    /// carry. Empty for an owner or a scalar. A view of a temporary is
+    /// ORIGIN_TEMP; of a literal, ORIGIN_STATIC; of a parameter's storage,
+    /// ORIGIN_PARAM; a call's result may point into any argument.
+    fn origins_of(self: *mut Self, e: usize) -> List(Origin) {
+        var out = List(Origin).new()
+        if !self.holds_view(self.tir.nodes[e].ty) { return out }
+        let k = self.tir.nodes[e].k
+        let at = self.tir.nodes[e].start
+        let kids = self.tir.nodes[e].kids.clone()
+        if k == TKind.Local {
+            let l = self.tir.nodes[e].a
+            // a parameter is the caller's storage, unless `own`: then it is a local
+            if self.ctx().locals[l].is_param and !self.ctx().locals[l].owned { add_origin(&mut out, ORIGIN_PARAM, at); return out }
+            add_origins(&mut out, &self.ctx().locals[l].origins)
+            return out
+        }
+        if k == TKind.Global { add_origin(&mut out, ORIGIN_STATIC, at); return out }
+        if k == TKind.Str { add_origin(&mut out, ORIGIN_STATIC, at); return out }
+        if k == TKind.Field or k == TKind.RefField or k == TKind.TupleField or k == TKind.Index or k == TKind.Deref {
+            let os = self.origins_of(kids[0])
+            // a part of a value that views its own heap storage: a view into the value
+            let r = self.place_root(kids[0])
+            if r == NONE { return os }
+            for o in os {
+                if o.local == ORIGIN_SELF { add_origin_h(&mut out, r, o.taken_at, true) } else { add_origin_h(&mut out, o.local, o.taken_at, o.heap) }
+            }
+            return out
+        }
+        if k == TKind.ArrayToSlice or k == TKind.ListToSlice or k == TKind.StrToSlice or k == TKind.SliceOp or k == TKind.AddrOf {
+            var base = kids[0]
+            var bk = self.tir.nodes[base].k
+            var kind = k
+            if k == TKind.SliceOp and (bk == TKind.ArrayToSlice or bk == TKind.ListToSlice or bk == TKind.StrToSlice) {
+                kind = bk
+                base = self.tir.nodes[base].kids[0]
+                bk = self.tir.nodes[base].k
+            }
+            let os = self.storage_of(base, at)
+            // into a container's buffer, which moves with the container, or into
+            // inline storage (an array, a struct's fields), which does not
+            var heap = false
+            if kind == TKind.AddrOf {
+                heap = self.place_through_heap(base)
+            } else if kind == TKind.ListToSlice or kind == TKind.StrToSlice {
+                heap = true
+            } else {
+                let btk = self.tys.kind(self.tys.shallow(self.tys.resolve(self.tir.nodes[base].ty, false)))
+                if btk == TK.Slice or btk == TK.Ptr { return os }
+                heap = btk == TK.List or btk == TK.Str or btk == TK.Map or self.place_through_heap(base)
+            }
+            for o in os { add_origin_h(&mut out, o.local, o.taken_at, (heap or o.heap) and o.local < ORIGIN_TEMP) }
+            return out
+        }
+        if k == TKind.OptWrap or k == TKind.ErrWrap or k == TKind.Unwrap or k == TKind.Try or k == TKind.Retained or k == TKind.Cast or k == TKind.ErrToUnion or k == TKind.FnToFat or k == TKind.DynFrom {
+            if kids.len > 0 { return self.origins_of(kids[0]) }
+            return out
+        }
+        if k == TKind.OrElse or k == TKind.Catch {
+            for c in kids {
+                let os = self.origins_of(c)
+                add_origins(&mut out, &os)
+            }
+            return out
+        }
+        if k == TKind.BlockExpr {
+            let tail = self.tir.nodes[kids[0]].a
+            if tail != NONE { return self.origins_of(tail) }
+            return out
+        }
+        if k == TKind.Block {
+            let tail = self.tir.nodes[e].a
+            if tail != NONE { return self.origins_of(tail) }
+            return out
+        }
+        if k == TKind.If or k == TKind.IfCapture {
+            var i: usize = 1
+            while i < kids.len {
+                let os = self.origins_of(kids[i])
+                add_origins(&mut out, &os)
+                i += 1
+            }
+            return out
+        }
+        if k == TKind.Match {
+            var i: usize = 1
+            while i < kids.len {
+                let arm = kids[i]
+                let ak = self.tir.nodes[arm].kids.clone()
+                if ak.len > 0 {
+                    let os = self.origins_of(ak[ak.len - 1])
+                    add_origins(&mut out, &os)
+                }
+                i += 1
+            }
+            return out
+        }
+        if k == TKind.StructLit or k == TKind.TupleLit or k == TKind.ArrayLit or k == TKind.ArrayRepeat or k == TKind.EnumLit or k == TKind.RefNew {
+            for c in kids {
+                let os = self.origins_of(c)
+                add_origins(&mut out, &os)
+            }
+            return out
+        }
+        if k == TKind.Closure {
+            if let caps = self.closure_caps.get(self.tir.nodes[e].a) {
+                for l in caps {
+                    if self.ctx().locals[l].is_param and !self.ctx().locals[l].owned { add_origin(&mut out, ORIGIN_PARAM, at); continue }
+                    add_origin(&mut out, l, at)
+                    add_origins(&mut out, &self.ctx().locals[l].origins)
+                }
+            }
+            return out
+        }
+        if k == TKind.Call or k == TKind.CallPtr or k == TKind.DynCall or k == TKind.Builtin {
+            // the result may point into any argument: a view's storage, a place, a temporary
+            var any = false
+            for c in kids {
+                // a scalar argument is passed by value: nothing points into it
+                let ck = self.tys.kind(self.tys.shallow(self.tys.resolve(self.tir.nodes[c].ty, false)))
+                if ck == TK.Type or ck == TK.Int or ck == TK.Float or ck == TK.Bool or ck == TK.Char or ck == TK.Void or ck == TK.Never or ck == TK.ErrorSet { continue }
+                // an argument moved into the call is the callee's now, not storage borrowed
+                let cr = self.place_root(c)
+                if cr != NONE and self.ctx().moved.contains(cr) { continue }
+                let os = self.storage_of(c, at)
+                if os.len > 0 { any = true }
+                // a container passed by pointer: the result points into its buffer
+                var heap = false
+                if self.tir.nodes[c].k == TKind.AddrOf {
+                    let ak = self.tys.kind(self.tys.shallow(self.tys.resolve(self.tir.nodes[self.tir.nodes[c].kids[0]].ty, false)))
+                    heap = ak == TK.List or ak == TK.Str or ak == TK.Map
+                }
+                for o in os { add_origin_h(&mut out, o.local, o.taken_at, (heap or o.heap) and o.local < ORIGIN_TEMP) }
+            }
+            if !any { add_origin(&mut out, ORIGIN_STATIC, at) }
+            return out
+        }
+        return out
+    }
+
+    /// The storage a view taken from `e` points into: the root local of a
+    /// place, the origins of a view or a value that holds one, the caller's
+    /// storage for a parameter, a literal's, or a temporary's.
+    fn storage_of(self: *mut Self, e: usize, at: usize) -> List(Origin) {
+        var out = List(Origin).new()
+        let k = self.tir.nodes[e].k
+        if k == TKind.Str { add_origin(&mut out, ORIGIN_STATIC, at); return out }
+        if k == TKind.Global { add_origin(&mut out, ORIGIN_STATIC, at); return out }
+        // a slice or a pointer is not storage: the view's origins are its storage's
+        let ek = self.tys.kind(self.tys.shallow(self.tys.resolve(self.tir.nodes[e].ty, false)))
+        if ek == TK.Slice or ek == TK.Ptr { return self.origins_of(e) }
+        let r = self.place_root(e)
+        if r != NONE {
+            if self.ctx().locals[r].is_param and !self.ctx().locals[r].owned { add_origin(&mut out, ORIGIN_PARAM, at); return out }
+            // a binding that views a value stands for that value's storage
+            if self.ctx().locals[r].loop_item or self.ctx().locals[r].if_let or self.ctx().locals[r].tuple_view {
+                add_origins(&mut out, &self.ctx().locals[r].origins)
+                return out
+            }
+            add_origin(&mut out, r, at)
+            return out
+        }
+        if self.holds_view(self.tir.nodes[e].ty) or self.is_borrowed_view(e) {
+            let os = self.origins_of(e)
+            if os.len > 0 { return os }
+            if self.is_borrowed_view(e) { return out }
+        }
+        // a temporary is released at the end of the block that made it: it is
+        // storage of this depth, a hidden local the rules can compare against
+        if !self.is_place(e) and !self.is_borrowed_view(e) and self.needs_drop(self.tir.nodes[e].ty) {
+            let t = self.declare_local("__temp", self.tir.nodes[e].ty, false, at, at)
+            add_origin(&mut out, t, at)
+        }
+        return out
+    }
+
+    /// Does a view of this place point into heap storage its value owns (an
+    /// element of a `List`, `String` or `Map` on the path), rather than into
+    /// the place's own inline storage (an array, a struct's fields)?
+    fn place_through_heap(self: *mut Self, e: usize) -> bool {
+        let k = self.tir.nodes[e].k
+        if k == TKind.Field or k == TKind.TupleField or k == TKind.Index {
+            let base = self.tir.nodes[e].kids[0]
+            if k == TKind.Index {
+                let bk = self.tys.kind(self.tys.shallow(self.tys.resolve(self.tir.nodes[base].ty, false)))
+                if bk == TK.List or bk == TK.Str or bk == TK.Map { return true }
+            }
+            return self.place_through_heap(base)
+        }
+        return false
+    }
+
+    /// What a stored value points into, where a view into heap storage that
+    /// the same expression moves in (a literal holding a `String` and a slice
+    /// of it) is a view into the value itself: it travels with the value.
+    fn origins_for_store(self: *mut Self, value: usize) -> List(Origin) {
+        var out = List(Origin).new()
+        let lo = self.tir.nodes[value].start
+        let hi = self.tir.nodes[value].end
+        for o in self.origins_of(value) {
+            if o.heap and o.local < ORIGIN_TEMP {
+                if let moved_at = self.ctx().moved.get(o.local) {
+                    if moved_at >= lo and moved_at <= hi { add_origin(&mut out, ORIGIN_SELF, o.taken_at); continue }
+                }
+            }
+            add_origin_h(&mut out, o.local, o.taken_at, o.heap)
+        }
+        return out
+    }
+
+    /// The `using arena` nesting a value's heap storage was made in (0: the
+    /// heap). A call, a literal or a clone makes its value where it stands,
+    /// `@escape` one level out, a local carries what it was given, and a
+    /// value taken out of a container was made where the container's was.
+    fn value_arena_depth(self: *mut Self, e: usize) -> usize {
+        if self.ctx().using_depth == 0 { return 0 }
+        if !self.needs_drop(self.tir.nodes[e].ty) { return 0 }
+        let k = self.tir.nodes[e].k
+        let kids = self.tir.nodes[e].kids.clone()
+        if k == TKind.Local { return self.ctx().locals[self.tir.nodes[e].a].made_in }
+        if k == TKind.Global or k == TKind.Str { return 0 }
+        if k == TKind.Field or k == TKind.TupleField or k == TKind.Index { return self.value_arena_depth(kids[0]) }
+        if k == TKind.RefField or k == TKind.Deref {
+            var d: usize = 0
+            for o in self.origins_of(kids[0]) {
+                if o.local < ORIGIN_TEMP and self.ctx().locals[o.local].made_in > d { d = self.ctx().locals[o.local].made_in }
+            }
+            return d
+        }
+        if k == TKind.Builtin {
+            let name = self.tir.nodes[e].name.clone()
+            if name == "Escape" { return self.ctx().using_depth - 1 }
+            if name == "ListPop" or name == "ListRemove" or name == "ListSwapRemove" or name == "MapRemove" {
+                var recv = kids[0]
+                if self.tir.nodes[recv].k == TKind.AddrOf { recv = self.tir.nodes[recv].kids[0] }
+                return self.value_arena_depth(recv)
+            }
+            return self.ctx().using_depth
+        }
+        if k == TKind.OptWrap or k == TKind.ErrWrap or k == TKind.Unwrap or k == TKind.Try or k == TKind.Retained or k == TKind.Cast or k == TKind.ErrToUnion {
+            if kids.len > 0 { return self.value_arena_depth(kids[0]) }
+            return 0
+        }
+        if k == TKind.BlockExpr {
+            let tail = self.tir.nodes[kids[0]].a
+            if tail != NONE { return self.value_arena_depth(tail) }
+            return 0
+        }
+        if k == TKind.Block {
+            let tail = self.tir.nodes[e].a
+            if tail != NONE { return self.value_arena_depth(tail) }
+            return 0
+        }
+        if k == TKind.Match {
+            var d: usize = 0
+            var i: usize = 1
+            while i < kids.len {
+                let ak = self.tir.nodes[kids[i]].kids.clone()
+                if ak.len > 0 {
+                    let ad = self.value_arena_depth(ak[ak.len - 1])
+                    if ad > d { d = ad }
+                }
+                i += 1
+            }
+            return d
+        }
+        if k == TKind.OrElse or k == TKind.Catch or k == TKind.If or k == TKind.IfCapture or k == TKind.StructLit or k == TKind.TupleLit or k == TKind.ArrayLit or k == TKind.ArrayRepeat or k == TKind.EnumLit {
+            var d: usize = 0
+            for c in kids {
+                let cd = self.value_arena_depth(c)
+                if cd > d { d = cd }
+            }
+            return d
+        }
+        // a call, a literal, a container made here
+        return self.ctx().using_depth
+    }
+
+    /// Rule V5: a value whose heap storage was made inside a `using arena`
+    /// block may not be kept in a place that outlives the block, where the
+    /// arena has freed it.
+    fn check_arena_store(self: *mut Self, value: usize, roots: *List(usize), caller: bool, global: bool, at: usize) {
+        let vd = self.value_arena_depth(value)
+        if vd == 0 { return }
+        if global {
+            self.warn_here(at, "a global keeps a value made inside this `using arena` block, whose storage is freed with the arena at the end of the block (rule V5); `@escape` it first")
+            return
+        }
+        if caller {
+            self.warn_here(at, "the caller's storage keeps a value made inside this `using arena` block, whose storage is freed with the arena at the end of the block (rule V5); `@escape` it first")
+            return
+        }
+        for r in roots.*{
+            if self.ctx().locals[r].arena_depth < vd {
+                let name = self.ctx().locals[r].name.clone()
+                self.warn_here(at, format("`{}` lives past this `using arena` block, but the value stored in it was made inside the block and its storage is freed with the arena at the end (rule V5); `@escape` it first, or declare `{}` inside the block", .{name, name})[..])
+                return
+            }
+        }
+    }
+
+    /// Rule V5 at a `return`: the returned value must not have been made in
+    /// a `using arena` block the return leaves.
+    fn check_arena_return(self: *mut Self, te: usize, at: usize) {
+        if self.value_arena_depth(te) > 0 {
+            self.warn_here(at, "this returns a value made inside a `using arena` block, whose storage is freed with the arena when the block ends (rule V5); `@escape` it first")
+        }
+    }
+
+    /// A hidden local standing for a temporary (see `storage_of`).
+    fn is_temp_local(self: *mut Self, l: usize) -> bool {
+        return l < ORIGIN_TEMP and self.ctx().locals[l].name == "__temp"
+    }
+
+    /// How an origin is named in a diagnostic: the local, or the temporary's line.
+    fn origin_name(self: *mut Self, l: usize) -> String {
+        if self.is_temp_local(l) { return format("a temporary of line {}", .{self.line_no(self.ctx().locals[l].start)}) }
+        return format("`{}`", .{self.ctx().locals[l].name})
+    }
+
+    /// The roots a store into place `t` lands in: locals, or the caller's
+    /// storage (through a parameter or a pointer into it), or a global.
+    fn store_roots(self: *mut Self, t: usize, roots: *mut List(usize), caller: *mut bool, global: *mut bool) {
+        let k = self.tir.nodes[t].k
+        if k == TKind.Global { global.*= true; return }
+        let r = self.place_root(t)
+        if r != NONE {
+            if self.ctx().locals[r].is_param and !self.ctx().locals[r].owned { caller.*= true } else { roots.append(r) }
+            return
+        }
+        // through a pointer or a slice: where its local points
+        var b = t
+        while true {
+            let bk = self.tir.nodes[b].k
+            if bk == TKind.Field or bk == TKind.RefField or bk == TKind.TupleField or bk == TKind.Index or bk == TKind.Deref { b = self.tir.nodes[b].kids[0] } else { break }
+        }
+        if self.tir.nodes[b].k != TKind.Local { return }
+        let l = self.tir.nodes[b].a
+        if self.ctx().locals[l].is_param and !self.ctx().locals[l].owned { caller.*= true }
+        for o in self.ctx().locals[l].origins.clone() {
+            if o.local == ORIGIN_PARAM { caller.*= true }
+            else if o.local < ORIGIN_TEMP { roots.append(o.local) }
+        }
+    }
+
+    /// Rule V2: a view stored into a place must not outlive the storage it
+    /// points into. `t` is the place (a local, a field, an element, through a
+    /// pointer, a global); the stored value's origins are then the place's.
+    fn check_store(self: *mut Self, t: usize, value: usize, at: usize) {
+        var roots = List(usize).new()
+        var caller = false
+        var global = false
+        self.store_roots(t, &mut roots, &mut caller, &mut global)
+        self.check_arena_store(value, &roots, caller, global, at)
+        if !self.holds_view(self.tir.nodes[value].ty) { return }
+        let os = self.origins_for_store(value)
+        if os.len == 0 { return }
+        var tname = String.from("this place")
+        if self.tir.nodes[t].k == TKind.Local { tname = format("`{}`", .{self.ctx().locals[self.tir.nodes[t].a].name}) }
+        else if roots.len > 0 { tname = format("`{}`", .{self.ctx().locals[roots[0]].name}) }
+        for o in os {
+            if o.local == ORIGIN_TEMP {
+                self.warn_here(at, format("{} keeps a view into a temporary that is released at the end of this statement; bind the temporary with `let` first, or clone the view (rule V2)", .{tname})[..])
+                continue
+            }
+            if o.local == ORIGIN_STATIC or o.local == ORIGIN_SELF { continue }
+            if o.local == ORIGIN_PARAM {
+                if global { self.warn_here(at, "a global keeps a view into a caller's storage, which is released when the caller returns (rule V2)") }
+                continue
+            }
+            let oname = self.origin_name(o.local)
+            let odepth = self.ctx().locals[o.local].depth
+            if self.ctx().locals[o.local].is_param and !self.ctx().locals[o.local].owned { if global { self.warn_here(at, format("a global keeps a view into `{}`, a parameter whose storage is released when the caller returns (rule V2)", .{oname})[..]) }; continue }
+            if global {
+                self.warn_here(at, format("a global keeps a view into {}, which is released when the function returns (rule V2); clone it", .{oname})[..])
+                continue
+            }
+            if caller {
+                self.warn_here(at, format("the caller's storage would keep a view into {}, which is released when this function returns (rule V2); clone it", .{oname})[..])
+                continue
+            }
+            for r in roots {
+                if self.ctx().locals[r].depth < odepth {
+                    let rname = self.ctx().locals[r].name.clone()
+                    if self.is_temp_local(o.local) {
+                        self.warn_here(at, format("`{}` keeps a view into {}, which is released at the end of that block while `{}` lives on (rule V2); bind the temporary with `let` where `{}` lives, or clone the view", .{rname, oname, rname, rname})[..])
+                    } else {
+                        self.warn_here(at, format("`{}` keeps a view into {}, which is released at the end of its block on line {}, while `{}` lives on (rule V2); clone it, or declare {} where `{}` lives", .{rname, oname, self.line_no(self.ctx().locals[o.local].start), rname, oname, rname})[..])
+                    }
+                    break
+                }
+            }
+        }
+        // the place now carries what it holds
+        for r in roots {
+            var kept = self.ctx().locals[r].origins.clone()
+            for o in os { if o.local != ORIGIN_TEMP { add_origin_h(&mut kept, o.local, at, o.heap) } }
+            self.ctx().locals[r].origins = kept
+        }
+    }
+
+    /// A `let` binding: the new local carries what its initializer points into.
+    fn check_store_local(self: *mut Self, l: usize, init: usize, at: usize) {
+        let lt = self.ctx().locals[l].ty
+        // where the value's heap storage was made (V5): `@escape` lands one level out
+        if self.needs_drop(lt) { self.ctx().locals[l].made_in = self.value_arena_depth(init) }
+        if !self.holds_view(lt) { return }
+        let os = self.origins_for_store(init)
+        var kept = List(Origin).new()
+        for o in os {
+            if o.local == ORIGIN_TEMP {
+                self.warn_here(at, format("`{}` keeps a view into a temporary that is released at the end of this statement; bind the temporary with `let` first, or clone the view (rule V2)", .{self.ctx().locals[l].name})[..])
+                continue
+            }
+            add_origin_h(&mut kept, o.local, at, o.heap)
+        }
+        self.ctx().locals[l].origins = kept
+    }
+
+    /// Rules V3 and V4 at a use of a local that holds a view: its storage
+    /// must not have moved away, nor changed since the view was taken (a
+    /// change inside a loop the view was taken before counts, for the next
+    /// pass). Each origin is reported once per local.
+    fn check_view_use(self: *mut Self, l: usize, at: usize) {
+        let name = self.ctx().locals[l].name.clone()
+        for o in self.ctx().locals[l].origins.clone() {
+            if o.local >= ORIGIN_TEMP { continue }
+            if has_local(&self.ctx().locals[l].warned, o.local) { continue }
+            let oname = self.origin_name(o.local)
+            if let moved_at = self.ctx().moved.get(o.local) {
+                // moved on the line of this use: a literal or a return that holds
+                // the value and the view together, which keeps the storage alive
+                if moved_at != 0 and self.line_no(moved_at) == self.line_no(at) { continue }
+                let when_moved = if moved_at == 0 { String.from("in a branch") } else { format("on line {}", .{self.line_no(moved_at)}) }
+                self.warn_here(at, format("`{}` is a view into {}, which was moved away {}; the storage may be released (rule V4); clone the view, or use it before the move", .{name, oname, when_moved})[..])
+                self.ctx().locals[l].warned.append(o.local)
+                continue
+            }
+            var hit = NONE
+            for ch in self.ctx().locals[o.local].changes.clone() {
+                if ch.pos > o.taken_at and ch.pos < at { hit = ch.pos; break }
+                for s in ch.loops { if s > o.taken_at and has_local(&self.ctx().loop_starts, s) { hit = ch.pos } }
+                if hit != NONE { break }
+            }
+            if hit != NONE {
+                self.warn_here(at, format("`{}` is a view into {}, which changed on line {} after the view was taken; its storage may have moved (rule V3); take the view after the change, or clone it", .{name, oname, self.line_no(hit)})[..])
+                self.ctx().locals[l].warned.append(o.local)
+            }
+        }
+    }
+
+    /// A binding that views a value (a loop item, an `if let` over a place, a
+    /// pattern binding, a tuple name) points where that value's storage is.
+    fn bind_view(self: *mut Self, l: usize, src: usize, at: usize) {
+        self.ctx().locals[l].origins = self.storage_of(src, at)
+    }
+
+    /// A pattern binding: over a place it views the value (through a pointer,
+    /// by reference); over a temporary it owns its part.
+    fn bind_pattern_local(self: *mut Self, l: usize) {
+        let src = self.ctx().pat_source
+        if src == NONE { return }
+        let at = self.ctx().locals[l].start
+        if self.is_place(src) or self.is_borrowed_view(src) or self.ctx().pat_by_ref != NONE { self.bind_view(l, src, at) } else { self.check_store_local(l, src, at) }
+    }
+
+    /// The storage of a local changes here: a growth, a clearing, a reassignment.
+    fn note_change(self: *mut Self, l: usize, at: usize) {
+        if l == NONE { return }
+        self.ctx().locals[l].changes.append(Change{ .pos = at, .loops = self.ctx().loop_starts.clone() })
+        // a view taken before an enclosing loop and read in the loop before this
+        // change reads moved storage on the next pass: reported here, at the change
+        if self.ctx().loop_starts.len == 0 { return }
+        let lname = self.ctx().locals[l].name.clone()
+        var w: usize = 0
+        while w < self.ctx().locals.len {
+            var taken = NONE
+            for o in self.ctx().locals[w].origins.clone() {
+                if o.local != l { continue }
+                let used = self.ctx().locals[w].last_use
+                for s in self.ctx().loop_starts.clone() { if o.taken_at < s and used > s and used < at { taken = o.taken_at } }
+            }
+            if taken != NONE and !has_local(&self.ctx().locals[w].warned, l) {
+                let wname = self.ctx().locals[w].name.clone()
+                self.warn_here(at, format("`{}` changes here inside a loop, while `{}`, a view into it taken before the loop on line {}, is read in the loop; the next pass reads moved storage (rule V3); take the view inside the loop, or clone it", .{lname, wname, self.line_no(taken)})[..])
+                self.ctx().locals[w].warned.append(l)
+            }
+            w += 1
+        }
     }
 
     /// Region rule R1, conservatively: a returned slice or pointer must not be
@@ -3175,11 +3815,28 @@ impl Checker {
             t = self.tys.shallow(self.tys.list[t].args[0])
             k = self.tys.kind(t)
         }
-        if ! (k == TK.Slice or k == TK.Ptr) { return }
+        if ! (k == TK.Slice or k == TK.Ptr) {
+            // a struct, a closure, a list holding a view: where it points (a warning in 1.2)
+            if !self.holds_view(t) { return }
+            for o in self.origins_of(te) {
+                if o.local == ORIGIN_TEMP {
+                    self.warn_here(at, "this returns a value holding a view into a temporary that is released before the caller sees it (rule V1)")
+                } else if o.local < ORIGIN_TEMP and (!self.ctx().locals[o.local].is_param or self.ctx().locals[o.local].owned) {
+                    self.warn_here(at, format("this returns a value holding a view into {}, which is released when the function returns (rule V1); clone the view", .{self.origin_name(o.local)})[..])
+                }
+            }
+            return
+        }
         var what: []u8 = ""
         let local = self.view_root(te, &mut what)
         if local == NONE { return }
-        if self.ctx().locals[local].is_param { return }
+        if self.ctx().locals[local].is_param {
+            // an `own` parameter is the callee's, released at return unless moved on
+            if self.ctx().locals[local].owned and !self.ctx().moved.contains(local) {
+                self.warn_here(at, format("this returns a {} into `{}`, an `own` parameter that is released when the function returns (rule V1); clone the view", .{what, self.ctx().locals[local].name})[..])
+            }
+            return
+        }
         let lt = self.tys.shallow(self.tys.resolve(self.ctx().locals[local].ty, false))
         let lk = self.tys.kind(lt)
         let owns = lk == TK.Array or lk == TK.List or lk == TK.Str or lk == TK.Map or lk == TK.Struct or lk == TK.Tuple or lk == TK.Enum
@@ -3307,6 +3964,7 @@ impl Checker {
         c = self.coerce_or_error(c, bt, "while condition")
         let lid = self.new_label(label[..], label.len > 0, true, NONE)
         self.ctx().loop_depth += 1
+        self.ctx().loop_starts.append(start)
         // a loop may change any `var`: their facts end here; the condition's
         // own facts hold at the top of every pass
         self.forget_var_facts()
@@ -3317,6 +3975,7 @@ impl Checker {
         let tb = self.check_block(body_node, v, NONE, NONE)
         self.facts_restore(&saved)
         self.ctx().loop_depth -= 1
+        _ = self.ctx().loop_starts.pop()
         _ = self.ctx().labels.pop()
         let st = self.stmt_node(TKind.SWhile, start, end)
         self.tir.nodes[st].a = lid
@@ -3398,10 +4057,12 @@ impl Checker {
             }
             let lid = self.new_label(label[..], label.len > 0, true, NONE)
             self.ctx().loop_depth += 1
+            self.ctx().loop_starts.append(start)
             self.forget_var_facts()
             let vt = self.tys.void()
             let tb = self.check_block(body_node, vt, NONE, NONE)
             self.ctx().loop_depth -= 1
+            _ = self.ctx().loop_starts.pop()
             _ = self.ctx().labels.pop()
             self.pop_scope()
             if is_parallel { self.fail_here(start, "`for parallel` iterates slices: write `for parallel x, i in items { ... }`") }
@@ -3629,7 +4290,7 @@ impl Checker {
     fn is_fresh_ref(self: *mut Self, e: usize) -> bool {
         let k = self.tir.nodes[e].k
         if k == TKind.RefNew or k == TKind.Call or k == TKind.Retained { return true }
-        if k == TKind.Builtin { return self.tir.nodes[e].name == "Weak" or self.tir.nodes[e].name == "Upgrade" or self.tir.nodes[e].name == "Clone" }
+        if k == TKind.Builtin { return self.tir.nodes[e].name == "Weak" or self.tir.nodes[e].name == "Upgrade" or self.tir.nodes[e].name == "Clone" or self.tir.nodes[e].name == "Escape" }
         if k == TKind.OptWrap or k == TKind.ErrWrap { return self.is_fresh_ref(self.tir.nodes[e].kids[0]) }
         return false
     }
@@ -4306,6 +4967,11 @@ impl Checker {
             if let moved_at = self.ctx().moved.get(l) {
                 _ = moved_at
                 self.fail_here(start, format("use of `{}` after it was moved", .{name})[..])
+            }
+            // naming the target of `x = v` is a write, not a read of what `x` views
+            if l != self.ctx().assign_target {
+                self.ctx().locals[l].last_use = start
+                if self.ctx().locals[l].origins.len > 0 { self.check_view_use(l, start) }
             }
             let r = self.mk(TKind.Local, ty, start, end)
             self.tir.nodes[r].a = l
@@ -5896,6 +6562,18 @@ fn name_index(names: *List(String), name: []u8) -> ?usize {
     return null
 }
 
+/// An origin joins a list once.
+fn add_origin(out: *mut List(Origin), local: usize, at: usize) { add_origin_h(out, local, at, false) }
+
+fn add_origin_h(out: *mut List(Origin), local: usize, at: usize, heap: bool) {
+    for o in out.*{ if o.local == local { return } }
+    out.append(Origin{ .local = local, .taken_at = at, .heap = heap })
+}
+
+fn add_origins(out: *mut List(Origin), more: *List(Origin)) {
+    for o in more.*{ add_origin_h(out, o.local, o.taken_at, o.heap) }
+}
+
 fn has_local(xs: *List(usize), v: usize) -> bool {
     for x in xs.*{ if x == v { return true } }
     return false
@@ -6577,7 +7255,12 @@ impl Checker {
         let local = self.declare_local(format("__chain{}", .{e})[..], payload, false, start, end)
         // a chain over a place reads the payload in place; an owned temporary
         // hands its payload to the binding, dropped with the branch
-        if self.is_place(c) or self.is_borrowed_view(c) { self.ctx().locals[local].if_let = true }
+        if self.is_place(c) or self.is_borrowed_view(c) {
+            self.ctx().locals[local].if_let = true
+            self.bind_view(local, c, start)
+        } else {
+            self.check_store_local(local, c, start)
+        }
         var inner_expected = NONE
         if expected != NONE {
             let ex = self.tys.shallow(expected)
@@ -7015,20 +7698,18 @@ impl Checker {
                 self.fail_here(start, format("missing field `{}` in literal of `{}`", .{fname, self.structs[d].name})[..])
             }
         }
-        // in field order
+        // in written order (defaults after): the emitter and the interpreter
+        // evaluate the initializers in this order, the order the moves above
+        // were checked in; `kids2` names the field of each
         let is_ref = self.structs[d].kind == "ref"
         if is_ref {
             self.add_effect(EFF_ALLOCATES, start, "constructing a `ref class` allocates")
             self.add_effect(EFF_REFCOUNTS, start, "a `ref class` value is reference counted")
         }
         let lit = self.mk(if is_ref { TKind.RefNew } else { TKind.StructLit }, t, start, end)
-        for fi in 0..n_fields {
-            for x, j in idxs {
-                if x == fi {
-                    self.tir.nodes[lit].kids2.append(x)
-                    self.tir.nodes[lit].kids.append(vals[j])
-                }
-            }
+        for x, j in idxs {
+            self.tir.nodes[lit].kids2.append(x)
+            self.tir.nodes[lit].kids.append(vals[j])
         }
         if self.structs[d].kind == "record" and !self.record_new_mode {
             return self.record_check(lit, t, false, start, end)
@@ -7371,7 +8052,12 @@ impl Checker {
         let local = self.declare_local(binding[..], payload, false, start, end)
         // a binding over a place is a view of the payload (the optional keeps ownership);
         // only an owned temporary hands its payload to the binding
-        if self.is_place(c) or self.is_borrowed_view(c) { self.ctx().locals[local].if_let = true }
+        if self.is_place(c) or self.is_borrowed_view(c) {
+            self.ctx().locals[local].if_let = true
+            self.bind_view(local, c, start)
+        } else {
+            self.check_store_local(local, c, start)
+        }
         let moved_before = self.moved_snapshot()
         let v = self.tys.void()
         let then_expected = if els_node != NONE { expected } else { v }
@@ -7441,13 +8127,16 @@ impl Checker {
         let payload = self.tys.list[ct].args[0]
         let lid = self.new_label(label, label.len > 0, true, NONE)
         self.ctx().loop_depth += 1
+        self.ctx().loop_starts.append(start)
         self.forget_var_facts()
         self.push_scope()
         let local = self.declare_local(binding, payload, false, start, end)
+        self.check_store_local(local, call, start)
         let v = self.tys.void()
         let tb = self.check_block(body_node, v, NONE, NONE)
         self.pop_scope()
         self.ctx().loop_depth -= 1
+        _ = self.ctx().loop_starts.pop()
         _ = self.ctx().labels.pop()
         let brk = self.stmt_node(TKind.SBreak, start, end)
         self.tir.nodes[brk].a = lid
@@ -7587,6 +8276,7 @@ impl Checker {
                 }
                 let l = self.declare_local(format("__item{}_{}", .{s, i})[..], elems[i], false, start, end)
                 self.ctx().locals[l].loop_item = true
+                self.bind_view(l, te, start)
                 item_locals.append(l)
                 for p, j in parts {
                     if p == "_" { continue }
@@ -7596,6 +8286,7 @@ impl Checker {
             }
             let l = self.declare_local(w[..], elems[i], false, start, end)
             self.ctx().locals[l].loop_item = true
+            self.bind_view(l, te, start)
             item_locals.append(l)
         }
         var index = NONE
@@ -7616,6 +8307,7 @@ impl Checker {
         }
         let lid = self.new_label(label[..], label.len > 0, true, NONE)
         self.ctx().loop_depth += 1
+        self.ctx().loop_starts.append(start)
         self.forget_var_facts()
         let v = self.tys.void()
         // a parallel body must not touch shared mutable state
@@ -7644,6 +8336,7 @@ impl Checker {
             self.add_effect(EFF_BLOCKS, start, "`for parallel` joins its worker threads")
         }
         self.ctx().loop_depth -= 1
+        _ = self.ctx().loop_starts.pop()
         _ = self.ctx().labels.pop()
         self.pop_scope()
         let node = self.stmt_node(TKind.SForSlice, start, end)
@@ -8537,6 +9230,10 @@ impl Checker {
             if self.tir.nodes[recv].k == TKind.Local { what = format("`{}`", .{self.ctx().locals[self.tir.nodes[recv].a].name}) }
             self.fail_here(at, format("`{}` mutates its receiver, but {} is immutable", .{method, what})[..])
         }
+        // the methods that may move or release the storage a view points into (V3)
+        if method == "append" or method == "append_char" or method == "push_byte" or method == "extend" or method == "insert" or method == "put" or method == "reserve" or method == "clear" {
+            self.note_change(self.place_root(recv), at)
+        }
     }
 
     fn bnode(self: *mut Self, op: []u8, recv: usize, ty: usize, ety: usize, start: usize, end: usize) -> usize {
@@ -8569,6 +9266,7 @@ impl Checker {
                 self.require_mut_recv(recv, "append", start)
                 var x = self.arg(args[0], e, "element")
                 x = self.take_ownership(x)
+                self.check_store(recv, x, start)
                 self.add_effect(EFF_ALLOCATES, start, "appending to a List may grow it")
                 let b = self.bnode("ListAppend", recv, v, e, start, end)
                 self.tir.nodes[b].kids.append(x)
@@ -8607,6 +9305,7 @@ impl Checker {
                 let i = self.arg(args[0], u, "index")
                 var x = self.arg(args[1], e, "element")
                 x = self.take_ownership(x)
+                self.check_store(recv, x, start)
                 self.add_effect(EFF_ALLOCATES, start, "inserting into a List may grow it")
                 self.add_effect(EFF_PANICS, start, "insert panics when the index is out of range")
                 let b = self.bnode("ListInsert", recv, v, e, start, end)
@@ -8629,6 +9328,7 @@ impl Checker {
                 let st = self.tys.wrap(TK.Slice, e, false)
                 let s = self.arg(args[0], st, "elements")
                 if self.needs_drop(e) { self.fail_here(start, "`extend` copies elements; the element type owns resources, so append clones instead") }
+                self.check_store(recv, s, start)
                 self.add_effect(EFF_ALLOCATES, start, "extending a List may grow it")
                 let b = self.bnode("ListExtend", recv, v, e, start, end)
                 self.tir.nodes[b].kids.append(s)
@@ -8728,6 +9428,8 @@ impl Checker {
                 kk = self.take_ownership(kk)
                 var vv = self.arg(args[1], vt, "value")
                 vv = self.take_ownership(vv)
+                self.check_store(recv, kk, start)
+                self.check_store(recv, vv, start)
                 self.add_effect(EFF_ALLOCATES, start, "inserting into a Map may grow it")
                 let b = self.bnode("MapPut", recv, v, kt, start, end)
                 self.tir.nodes[b].kids2.append(vt)
@@ -11328,7 +12030,7 @@ impl Checker {
             }
             return null
         }
-        if name == "ListClone" or name == "StringClone" or name == "MapClone" or name == "Clone" { return vs[0].clone() }
+        if name == "ListClone" or name == "StringClone" or name == "MapClone" or name == "Clone" or name == "Escape" { return vs[0].clone() }
         if name == "ListLast" {
             let which = cv_as_int(&vs[1]) orelse return null
             if vs[0].kind != VK_ARRAY { return null }
@@ -11868,6 +12570,8 @@ impl Checker {
         }
         let saved_by_ref = self.ctx().pat_by_ref
         self.ctx().pat_by_ref = by_ref
+        let saved_source = self.ctx().pat_source
+        self.ctx().pat_source = s
         if arms.len == 0 {
             self.fail_here(start, "`match` needs at least one arm")
             return self.error_expr(start, end)
@@ -11920,6 +12624,7 @@ impl Checker {
         }
         self.check_exhaustive(st, r, start)
         self.ctx().pat_by_ref = saved_by_ref
+        self.ctx().pat_source = saved_source
         self.tir.nodes[r].ty = ty
         return r
     }
@@ -12283,12 +12988,14 @@ impl Checker {
                 let inner = self.tys.list[ty].args[0]
                 let bt = self.pat_bind_ty(inner)
                 let l = self.declare_local(name[..], bt, false, start, end)
+                self.bind_pattern_local(l)
                 let b = self.pat_node(TKind.PBind, start, end)
                 self.tir.nodes[b].a = l
                 return self.pat_wrap(if tk == TK.Opt { TKind.PSome } else { TKind.POk }, b, start, end)
             }
             let bt = self.pat_bind_ty(ty)
             let l = self.declare_local(name[..], bt, false, start, end)
+            self.bind_pattern_local(l)
             let b = self.pat_node(TKind.PBind, start, end)
             self.tir.nodes[b].a = l
             return b
@@ -12365,6 +13072,7 @@ impl Checker {
             let sub = self.check_pattern(n.x, ty0)
             let bt = self.pat_bind_ty(ty)
             let l = self.declare_local(n.name[..], bt, false, start, end)
+            self.bind_pattern_local(l)
             let p = self.pat_node(TKind.PAt, start, end)
             self.tir.nodes[p].a = l
             self.tir.nodes[p].kids.append(sub)
@@ -12406,6 +13114,7 @@ impl Checker {
                         let mu = tk == TK.Slice and self.tys.list[ty].flag
                         let st = self.tys.wrap(TK.Slice, et, mu)
                         let l = self.declare_local(rn[..], st, false, start, end)
+                        self.bind_pattern_local(l)
                         self.tir.nodes[q].a = l
                     }
                     self.tir.nodes[p].kids.append(q)
@@ -12966,6 +13675,38 @@ impl Checker {
             self.tir.nodes[b].kids2.append(vt)
             return b
         }
+        if name == "escape" {
+            // a copy made by the allocator outside the innermost `using arena`
+            // block, so the value may leave it (rule V5)
+            if !self.args_n(args[..], 1, "@escape", start) { return self.error_expr(start, end) }
+            if self.ctx().using_depth == 0 {
+                self.fail_here(start, "`@escape` copies a value out of a `using arena` block and is only meaningful inside one")
+                return self.error_expr(start, end)
+            }
+            let v = self.check_expr(args[0], NONE)
+            if !self.is_place(v) {
+                self.fail_here(start, "`@escape` takes a variable, a field or an element; bind the value with `let` first")
+                return self.error_expr(start, end)
+            }
+            let t = self.tys.resolve(self.tir.nodes[v].ty, true)
+            if !self.needs_drop(t) {
+                self.fail_here(start, format("`@escape` copies heap storage out of the arena, but a `{}` owns none; use the value as it is", .{self.ty_name(t)})[..])
+                return self.error_expr(start, end)
+            }
+            self.clone_seen.clear()
+            if let why = self.clone_blocker(t) {
+                self.fail_here(start, format("cannot escape a `{}`: {}", .{self.ty_name(t), why})[..])
+                return self.error_expr(start, end)
+            }
+            self.clone_seen.clear()
+            let eff = self.clone_effects(t)
+            if (eff & EFF_ALLOCATES) != 0 { self.add_effect(EFF_ALLOCATES, start, "escaping a value from an arena allocates") }
+            if (eff & EFF_REFCOUNTS) != 0 { self.add_effect(EFF_REFCOUNTS, start, "escaping a value from an arena retains a reference") }
+            let b = self.builtin_node("Escape", t, start, end)
+            self.tir.nodes[b].kids.append(v)
+            self.tir.nodes[b].kids2.append(t)
+            return b
+        }
         if name == "target" {
             if !self.args_n(args[..], 0, "@target", start) { return self.error_expr(start, end) }
             var parts = List(usize).new()
@@ -13367,7 +14108,7 @@ impl Checker {
         var locals = List(Local).new()
         var params = List(usize).new()
         for t, i in ptys {
-            locals.append(Local{ .name = pnames[i].clone(), .ty = t, .mutable = false, .start = pstarts[i], .end = pends[i], .is_param = true, .owned = false, .loop_item = false, .if_let = false, .tuple_view = false })
+            locals.append(Local{ .name = pnames[i].clone(), .ty = t, .mutable = false, .start = pstarts[i], .end = pends[i], .is_param = true, .owned = false, .loop_item = false, .if_let = false, .tuple_view = false, .origins = List(Origin).new(), .depth = 0, .changes = List(Change).new(), .warned = List(usize).new(), .arena_depth = 0, .made_in = 0, .last_use = 0 })
             params.append(i)
         }
         let fname = self.ctx().fn_name.clone()
@@ -13385,6 +14126,7 @@ impl Checker {
         let ft = self.tys.func(ptys, ret, exp_eff)
         let r = self.mk(TKind.Closure, ft, start, end)
         self.tir.nodes[r].a = id
+        self.closure_caps.put(id, cap_locals.clone())
         for l, i in cap_locals {
             self.tir.nodes[r].kids2.append(l)
             self.tir.nodes[r].kids.append(if cap_refs[i] { 1 } else { 0 })
@@ -13410,7 +14152,7 @@ impl Checker {
             let by_ref = refs[i]
             let mutable = muts[i]
             let lty = if by_ref { self.tys.wrap(TK.Ptr, tys[i], mutable) } else { tys[i] }
-            ctx.locals.append(Local{ .name = format("cap_{}", .{nm}), .ty = lty, .mutable = mutable or !by_ref, .start = starts[i], .end = ends[i], .is_param = true, .owned = false, .loop_item = false, .if_let = false, .tuple_view = false })
+            ctx.locals.append(Local{ .name = format("cap_{}", .{nm}), .ty = lty, .mutable = mutable or !by_ref, .start = starts[i], .end = ends[i], .is_param = true, .owned = false, .loop_item = false, .if_let = false, .tuple_view = false, .origins = List(Origin).new(), .depth = 0, .changes = List(Change).new(), .warned = List(usize).new(), .arena_depth = 0, .made_in = 0, .last_use = 0 })
             ctx.scope_names.append(nm.clone())
             ctx.scope_locals.append(lid)
             ctx.scope_deref.append(by_ref)
@@ -13488,7 +14230,7 @@ pub fn new_checker(own mods: List(Mod)) -> Checker {
         .structs = List(StructDef).new(), .enums = List(EnumDef).new(), .traits = List(TraitDef).new(),
         .impls = List(ImplDef).new(), .fns = List(FnDef).new(), .consts = List(ConstDef).new(),
         .globals = List(GlobalDef).new(), .aliases = List(AliasDef).new(), .error_sets = List(ErrorSetDef).new(),
-        .errors = List(String).new(), .diags = List(Diag).new(), .error_names = List(String).new(), .error_ids = Map(String, usize).new(),
+        .errors = List(String).new(), .warnings = List(String).new(), .view_cache = Map(usize, u8).new(), .closure_caps = Map(usize, List(usize)).new(), .diags = List(Diag).new(), .error_names = List(String).new(), .error_ids = Map(String, usize).new(),
         .insts = List(Inst).new(), .inst_map = Map(String, usize).new(), .queue = List(usize).new(), .tir = Tir{ .nodes = List(T).new() },
         .ctxs = List(FnCtx).new(), .main_inst = NONE, .tests = List(usize).new(),
         .env_names = List(String).new(), .env_tys = List(usize).new(),

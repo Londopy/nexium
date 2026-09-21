@@ -1,0 +1,29 @@
+// SPEC 3: a struct literal's initializers are evaluated in the order
+// written, whatever the order the fields are declared in, so an earlier
+// initializer can read (and take a view of) a value a later one moves.
+struct Pair { name: String, first: []u8 }
+
+fn first_word(s: []u8) -> []u8 {
+    var i: usize = 0
+    while i < s.len and s[i] != ' ' { i += 1 }
+    return s[..i]
+}
+
+fn noted(order: *mut List(i32), n: i32, s: []u8) -> []u8 {
+    order.append(n)
+    return s
+}
+
+fn noted_owned(order: *mut List(i32), n: i32, s: []u8) -> String {
+    order.append(n)
+    return String.from(s)
+}
+
+fn main() {
+    let name = String.from("dutch rib")
+    let p = Pair{ .first = first_word(name[..]), .name = name }
+    println("{} / {}", .{p.first, p.name})
+    var order = List(i32).new()
+    let q = Pair{ .first = noted(&mut order, 1, "one"), .name = noted_owned(&mut order, 2, "two") }
+    println("{} {} {} {}", .{q.first, q.name, order[0], order[1]})
+}

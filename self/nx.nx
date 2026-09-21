@@ -49,6 +49,8 @@ pub struct Opts {
     keep_c: bool
     /// `--watch`: run again whenever a file of the program changes
     watch: bool
+    /// `--strict` (or NX_STRICT=1): warnings are errors
+    strict: bool
     /// the CPU the C compiler targets when no --target is given: "baseline"
     /// (the default: plain x86-64, so a binary runs on any 64-bit x86 machine),
     /// "native" (this machine's; not portable), or a name for -march
@@ -80,6 +82,7 @@ fn usage() {
     eprintln("  --cpu <name>       baseline (default: runs on any machine of the architecture), native, or a CPU name (NX_CPU too)", .{})
     eprintln("  --keep-c           keep the generated C", .{})
     eprintln("  --watch            run or test again whenever a file of the program changes", .{})
+    eprintln("  --strict           warnings are errors (the view rules of 1.2; NX_STRICT=1 too)", .{})
 }
 
 fn parse_opts(args: [][]u8) -> ?Opts {
@@ -94,7 +97,7 @@ fn parse_opts(args: [][]u8) -> ?Opts {
     }
     var o = Opts{
         .command = String.from(args[1]), .file = String.from(args[2]), .out = String.new(), .out_dir = String.from("nx-out"), .mode = cgen.MODE_DEBUG,
-        .std_dir = String.from("std"), .cc = List(String).new(), .target = String.new(), .keep_c = false, .watch = false, .cpu = String.from("baseline"),
+        .std_dir = String.from("std"), .cc = List(String).new(), .target = String.new(), .keep_c = false, .watch = false, .strict = os.env("NX_STRICT") != null, .cpu = String.from("baseline"),
         .defines = List(String).new(), .include_dirs = List(String).new(), .rest = List(String).new(), .sigs = false, .cc_source = 0,
     }
     if let v = os.env("NX_CPU") { o.cpu = String.from(v) }
@@ -122,6 +125,7 @@ fn parse_opts(args: [][]u8) -> ?Opts {
         }
         if a == "--keep-c" { o.keep_c = true; i += 1; continue }
         if a == "--watch" { o.watch = true; i += 1; continue }
+        if a == "--strict" { o.strict = true; i += 1; continue }
         if a == "--cpu" and i + 1 < args.len { o.cpu = String.from(args[i + 1]); i += 2; continue }
         if a == "--sigs" { o.sigs = true; i += 1; continue }
         if a.len > 2 and a[0..2] == "-D" { o.defines.append(String.from(a[2..])); i += 1; continue }
@@ -391,10 +395,12 @@ fn check_program(o: *Opts) -> ?check.Checker {
     c.collect()
     c.reserve_errors()
     c.check_program()
+    if c.warnings.len > 0 { check.print_warnings(&c.warnings, o.strict) }
     if c.errors.len > 0 {
         check.print_errors(&c.errors)
         return null
     }
+    if o.strict and c.warnings.len > 0 { return null }
     return c
 }
 
@@ -865,7 +871,7 @@ fn cmd_audit(o: *Opts) -> i32 {
 fn clone_opts(o: *Opts) -> Opts {
     return Opts{
         .command = o.command.clone(), .file = o.file.clone(), .out = o.out.clone(), .out_dir = o.out_dir.clone(), .mode = o.mode,
-        .std_dir = o.std_dir.clone(), .cc = o.cc.clone(), .target = o.target.clone(), .keep_c = o.keep_c, .watch = o.watch, .cpu = o.cpu.clone(),
+        .std_dir = o.std_dir.clone(), .cc = o.cc.clone(), .target = o.target.clone(), .keep_c = o.keep_c, .watch = o.watch, .strict = o.strict, .cpu = o.cpu.clone(),
         .defines = o.defines.clone(), .include_dirs = o.include_dirs.clone(), .rest = o.rest.clone(), .sigs = o.sigs, .cc_source = o.cc_source,
     }
 }
@@ -1897,9 +1903,10 @@ fn cmd_tir(o: *Opts) -> i32 {
 fn main() -> u8 {
     var args = os.args()
     apply_portable()
-    // like `python`: no arguments at a terminal opens the REPL
+    // like `python`: no arguments at a terminal opens the REPL (`padded` lives
+    // as long as `args` does: a view into a local of the block would dangle)
+    var padded = List([]u8).new()
     if args.len == 1 and io.is_terminal(1) {
-        var padded = List([]u8).new()
         padded.append(args[0])
         padded.append("repl")
         args = padded[..]

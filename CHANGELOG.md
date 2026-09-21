@@ -12,6 +12,25 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Added
 
+- The view rules of 1.2 (`SPEC.md` 5.6 and 5.7): a view may not be stored
+  past the storage it points into (V2), read after its container grew or
+  was cleared (V3) or after its value moved away (V4), or returned inside
+  a value (V1, extended from rule R1 to structs, closures and lists that
+  hold views, and to `own` parameters), and a value made inside `using
+  arena` may not be kept past the block (V5). The checker reports at the
+  use that would read released storage, naming the storage and the moment
+  it was released. They are warnings in this release and become errors in
+  1.3; `--strict` (or `NX_STRICT=1`) makes them errors now.
+- A warning channel: the checker's warnings print like errors with
+  `warning:` in front, the language server reports them with warning
+  severity, and the harness runs compile-fail cases marked `// STRICT`
+  under `--strict`.
+- `@escape(v)`: a copy of a value made by the allocator outside the
+  innermost `using arena` block, the one way a value leaves the block.
+- The fuzzer builds every tenth accepted mutant in debug mode (released
+  storage filled with `0xDD`) and runs it: a signal or an abort is a
+  finding (`nx run tests/fuzz.nx -- --run 10`, as CI does).
+- Every `unsafe` block in `self/` and `std/` carries a reason comment.
 - `nx` says once a day when a newer release exists, the way npm and Deno
   do: after a command has done its work, one line on stderr names the
   release and `nx upgrade`, and the REPL's banner names it too. The
@@ -35,6 +54,21 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   (Discord Rich Presence from the tray, with its SDK as a Nexium package)
   and fits its four rows on the page: shorter blurbs, a "GitHub" and a
   "Download" button each.
+
+### Fixed
+
+- A struct literal evaluated its initializers in declaration order while
+  the checker had checked moves in the order written, so `Pair{ .first =
+  name[..], .name = name }` with `name` declared first read a zeroed
+  `name`. Initializers run in the order written (spec case
+  `s6_literal_written_order`, decision 105).
+- A `return`, `break` or `continue` out of a `using arena` block leaked
+  the arena. It ends with the block's scope on every exit (the harness
+  runs `s5_arena_escape` under `nx leaks`).
+- `nx` with no arguments at a terminal read its padded argument list
+  through a view into a list released at the end of an inner block, and
+  the loader read a module's name after moving the string it was a view
+  into. Both worked by luck; the new rules found them.
 
 ## [1.1.0] - 2026-09-21
 

@@ -522,7 +522,7 @@ fn analyze(path: []u8, text: []u8, std_dir: []u8, cc: *List(String), out: *mut L
             i += 1
         }
         if d.module != 0 { continue }
-        out.append(diag_at(text, d.at, 1, 1.0, message))
+        out.append(diag_at(text, d.at, 1, if d.warn { 2.0 } else { 1.0 }, message))
     }
     if c.errors.len > 0 { return null }
     return c

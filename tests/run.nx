@@ -229,7 +229,9 @@ fn run_case(e: *Env, c: *Case) -> ?String {
         var expects = List(String).new()
         for l in text[..].lines() { if let rest = strings.strip_prefix(l, "// EXPECT:") { expects.append(String.from(rest.trim())) } }
         if expects.len == 0 { return format("{} has no // EXPECT: line", .{path}) }
-        let out = nx(e, ["check", path][..])
+        // `// STRICT`: the case fails only because warnings are errors under --strict
+        let strict = text[..].find("// STRICT") != null
+        let out = if strict { nx(e, ["check", path, "--strict"][..]) } else { nx(e, ["check", path][..]) }
         if out.code == 0 { return format("{} was accepted but should fail", .{path}) }
         let diag = normalize(out.stderr[..])
         for x in expects {
@@ -313,6 +315,12 @@ fn suite_examples(e: *Env, failures: *mut List(String)) {
         failures.append(format("examples: NX_NO_UPDATE_CHECK=1 did not silence the update notice:\n{}", .{n3.stderr}))
     }
     fs.write(cache[..], format("checked {}\nnoticed {}\nlatest {}\n", .{stamp, stamp, "0.0.0"})[..]) catch { }
+    // an early `return` out of a `using arena` block ends the arena: nothing
+    // is still live at exit under `nx leaks`
+    let arena_lk = nx(e, ["leaks", "tests/spec/s5_arena_escape.nx", "--out-dir", "nx-out/harness/leaks"][..])
+    if arena_lk.code != 0 or arena_lk.stderr[..].find("still live at exit") != null {
+        failures.append(format("examples: nx leaks on s5_arena_escape (exit {}):\n{}{}", .{arena_lk.code, arena_lk.stdout, arena_lk.stderr}))
+    }
     // --watch: the program runs again after a file changes (a thread rewrites
     // it two seconds in; NX_WATCH_ROUNDS=1 stops after that rerun)
     let wsrc = fs.join(e.root[..], "nx-out/cases/watch.nx")

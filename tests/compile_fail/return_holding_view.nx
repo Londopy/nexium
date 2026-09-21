@@ -1,0 +1,13 @@
+// STRICT
+// EXPECT: this returns a value holding a view into `s`, which is released when the function returns (rule V1)
+struct Holder { data: []u8 }
+
+fn make() -> Holder {
+    let s = String.from("local")
+    return Holder{ .data = s[..] }
+}
+
+fn main() {
+    let h = make()
+    println("{}", .{h.data})
+}

@@ -56,7 +56,9 @@ Undefined behaviour was never promised. A program that has it under
 `SPEC.md` (the view cases of 5.6, a value leaving its arena in 5.7) may
 become an error in a minor as the checker learns to see it; such a rule
 arrives as a warning in one release and an error in the next, so the
-program gets a release to run `nx fix`. The roadmap's 1.2 is this.
+program gets a release to run `nx fix`. 1.2 did this for the view rules
+V1 to V5 (`SPEC.md` 5.6 and 5.7): they warn, `--strict` or `NX_STRICT=1`
+makes them errors, and 1.3 makes them errors for everyone.
 
 ## Deprecation
 

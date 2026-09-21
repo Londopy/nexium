@@ -1,0 +1,9 @@
+// STRICT
+// EXPECT: `out` keeps a view into a temporary of line 7, which is released at the end of that block while `out` lives on (rule V2)
+fn word() -> String { return String.from("gone") }
+
+fn main() {
+    var out: []u8 = ""
+    { out = word()[..] }
+    println("{}", .{out})
+}

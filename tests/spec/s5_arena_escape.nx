@@ -1,0 +1,28 @@
+// SPEC 5.7: a value made inside `using arena` leaves the block through
+// `@escape`, a copy made by the allocator the block was entered with; a
+// `return` from inside the block ends the arena like the block's end does
+// (the harness runs this file under `nx leaks` as well).
+fn shout(word: []u8) -> String {
+    using arena {
+        var s = String.from(word)
+        s.append("!")
+        if s.len > 3 { return @escape(s) }
+        let t = @escape(s)
+        return t
+    }
+    return String.new()
+}
+
+fn main() {
+    var kept = List(String).new()
+    using arena {
+        var scratch = List(String).new()
+        for w in ["a", "bb", "ccc"] { scratch.append(String.from(w)) }
+        for s in scratch {
+            if s.len > 1 { kept.append(@escape(s)) }
+        }
+    }
+    println("{} {} {}", .{kept.len, kept[0], kept[1]})
+    println("{}", .{shout("hi")})
+    println("{}", .{shout("summit")})
+}

@@ -11,6 +11,14 @@
 //! program full of binary patterns is built once and fed random byte
 //! strings: it must answer every one without crashing. The exit code is the
 //! number of findings, capped at 100.
+//!
+//! `--run N` is the hunter of 1.2: every Nth accepted mutant is built in
+//! debug mode, where released storage is filled with `0xDD`, and run. A
+//! signal or an abort is a finding (a view the rules of SPEC 5.6 and 5.7
+//! missed reads released storage and dies there instead of by luck); a
+//! panic or an exit code is a program's own answer. A mutant the checker
+//! accepted and the emitter or the C compiler then rejected is a finding
+//! too.
 
 import std.fs
 import std.process
@@ -21,6 +29,8 @@ struct Env {
     windows: bool
     dir: String
     findings: usize
+    // build and run every Nth accepted mutant in debug mode (0: none)
+    run_every: usize
 }
 
 fn run_in(argv: [][]u8, stdin: []u8, cwd: []u8) -> process.Output {
@@ -49,6 +59,23 @@ fn note_finding(e: *mut Env, what: []u8, text: []u8, out: *process.Output) {
     var first = String.new()
     for l in out.stderr[..].lines() { if first.len == 0 and l.trim().len > 0 { first = String.from(l) } }
     println("FINDING {}: exit {} ({}) saved as {}", .{what, out.code, first, saved})
+}
+
+/// The hunter: an accepted mutant built in debug mode and run under a time
+/// limit where the platform has one.
+fn run_mutant(e: *mut Env, path: []u8, mutant: []u8) {
+    let exe = fs.join(e.dir[..], if e.windows { "mutant.exe" } else { "mutant" })
+    var build_args = List([]u8).new()
+    build_args.append(e.nx[..])
+    for a in ["build", path, "-o", exe[..], "--mode", "debug", "--out-dir", e.dir[..]] { build_args.append(a) }
+    let b = run_in(build_args[..], "", "")
+    if b.code != 0 { note_finding(e, "emit", mutant, &b); return }
+    var argv = List([]u8).new()
+    if !e.windows { argv.append("timeout"); argv.append("10") }
+    argv.append(exe[..])
+    let r = run_in(argv[..], "", "")
+    // 0 to 100 are a program's own codes, 101 a panic, 124 the time limit
+    if r.code < 0 or (r.code > 101 and r.code != 124) { note_finding(e, "dangling", mutant, &r) }
 }
 
 // ----- mutations ---------------------------------------------------------------
@@ -138,17 +165,24 @@ fn fuzz_sources(e: *mut Env, iterations: usize) {
     let case_path = fs.join(e.dir[..], "case.nx")
     var accepted: usize = 0
     var rejected: usize = 0
+    var ran: usize = 0
     for i in 0..iterations {
         let src = &texts[rand_below(texts.len)]
         let other = &texts[rand_below(texts.len)]
         let mutant = mutate(src[..], other[..])
         fs.write(case_path[..], mutant[..]) catch { println("cannot write {}", .{case_path}); return }
         let out = check(e, case_path[..])
-        if out.code == 0 { accepted += 1 }
+        if out.code == 0 {
+            accepted += 1
+            if e.run_every > 0 and accepted % e.run_every == 0 {
+                ran += 1
+                run_mutant(e, case_path[..], mutant[..])
+            }
+        }
         else if out.code == 1 { rejected += 1 }
         else { note_finding(e, "source", mutant[..], &out) }
     }
-    println("sources: {} mutants, {} accepted, {} rejected, {} finding(s)", .{iterations, accepted, rejected, e.findings})
+    println("sources: {} mutants, {} accepted, {} rejected, {} run in debug mode, {} finding(s)", .{iterations, accepted, rejected, ran, e.findings})
 }
 
 // ----- the binary pattern engine ---------------------------------------------------
@@ -182,7 +216,7 @@ fn fuzz_binary(e: *mut Env, iterations: usize) {
 
 fn main() -> u8 {
     let args = os.args()
-    var e = Env{ .nx = String.from("nx-out/bootstrap/nx2"), .windows = os.env("COMSPEC") != null and os.env("WINDIR") != null, .dir = String.from("nx-out/fuzzing"), .findings = 0 }
+    var e = Env{ .nx = String.from("nx-out/bootstrap/nx2"), .windows = os.env("COMSPEC") != null and os.env("WINDIR") != null, .dir = String.from("nx-out/fuzzing"), .findings = 0, .run_every = 0 }
     if e.windows { e.nx.append(".exe") }
     var iterations: usize = 200
     var seed: u64 = 1
@@ -192,7 +226,8 @@ fn main() -> u8 {
         if a == "--nx" and i + 1 < args.len { e.nx = String.from(args[i + 1]); i += 2; continue }
         if a == "--iterations" and i + 1 < args.len { iterations = args[i + 1].parse_int(usize) catch { 200 }; i += 2; continue }
         if a == "--seed" and i + 1 < args.len { seed = args[i + 1].parse_int(u64) catch { 1 }; i += 2; continue }
-        eprintln("usage: nx run tests/fuzz.nx -- [--nx PATH] [--iterations N] [--seed N]", .{})
+        if a == "--run" and i + 1 < args.len { e.run_every = args[i + 1].parse_int(usize) catch { 0 }; i += 2; continue }
+        eprintln("usage: nx run tests/fuzz.nx -- [--nx PATH] [--iterations N] [--seed N] [--run N]", .{})
         return 2
     }
     random.seed(seed)

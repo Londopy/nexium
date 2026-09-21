@@ -96,7 +96,10 @@ no-ops, and the whole region is freed at once when the block ends. A
 thousand temporary strings cost one allocation. Containers created *outside*
 the block (`lengths`) keep using the heap when they grow inside it, so
 collecting results into an outer list is safe; values created inside must
-not be kept past the end. It is the allocation strategy for a parse, a
+not be kept past the end, and since 1.2 the compiler warns when one is
+(rule V5: assigned outward, appended to an outer container, returned).
+`@escape(s)` is the way out when a value has to leave: a copy made by the
+allocator outside the block. It is the allocation strategy for a parse, a
 frame, a request: work that has a clear end.
 
 ## Threads and the rest of the language

@@ -684,3 +684,78 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     "reserved" was stale; the effect has been implemented and tested since
     0.9 (spec case `s9_unbounded_stack`, two compile-fail cases), and the
     1.1 theme leaves it as it is.
+100. **Views have origins, not lifetimes.** The checker records, per
+    local, the storage each view it holds points into (an *origin*: a
+    local, a parameter's storage, a literal, a temporary, or the value's
+    own heap storage) and when the view was taken. Origins flow through
+    bindings, literals, calls (a result may point into any argument
+    passed by reference or as a view, not into one moved to an `own`
+    parameter), closures (their captures), and the `if let`, loop and
+    pattern bindings, which view what they bind over. An `own` parameter
+    is the callee's storage, released at return: a view into it is a view
+    into a local. There are no lifetime annotations and no
+    interprocedural analysis: a signature says all a caller needs, because
+    a returned view can only point into the caller's own arguments (V1).
+    The rules are checked at the use that would read released storage,
+    which is where the fault is, so a view that is never used again costs
+    nothing (liveness, not lifetimes). What the model cannot see is taken
+    conservatively: a call's result may point into every non-scalar
+    argument.
+101. **Warnings first, `--strict` for those who want the errors now.** The
+    checker gained a warning channel beside its errors: rendered the same
+    with `warning:` in front, warning severity in the language server,
+    and `--strict` or `NX_STRICT=1` turning them into errors. The view
+    rules of 1.2 arrive this way, as `docs/stability.md` requires (a
+    warning in one release, an error in the next); 1.3 makes them errors.
+    The compiler, the standard library, the examples, the Topo and the
+    tests build without a warning, and the harness runs the compile-fail
+    cases marked `// STRICT` under `--strict`.
+102. **V2 compares scope depths; a temporary is a hidden local of its
+    block.** Every local knows the depth of the scope it was declared in,
+    and a view of a local of a deeper scope stored into a shallower one is
+    reported, as is a view of a temporary (the emitter releases
+    temporaries at the end of the block, so a temporary is a hidden local
+    of the current depth the rule compares like any other), a view stored
+    into a global, and a view stored through a pointer parameter into the
+    caller's storage. A view of a borrowed parameter may be stored
+    anywhere but a global.
+103. **V3 and V4 are events on the storage, matched against when the view
+    was taken.** A growth, a clearing or a reassignment of a container and
+    a move of a value are recorded with their position, and a read of a
+    view taken before the event is reported. Inside a loop, a change after
+    a read of a view taken before the loop is reported at the change,
+    because the next pass reads it. A move on the line of the use is not
+    an event: a literal or a return that holds the value and the view
+    together keeps the storage alive. A view into heap storage a value
+    owns that the same literal moves in (`Pair{ .first = name[..], .name =
+    name }`) is a view into the literal's value, which travels with it;
+    whether a part is heap storage (a `List`, `String` or `Map` buffer) or
+    inline (an array, a struct's fields) decides that, because inline
+    storage does not move with a move.
+104. **V5 counts arena depth, and `@escape` is the one way out.** Every
+    local knows the `using arena` nesting it was declared in and the
+    nesting the value it holds was made in; a value made inside a block (a
+    call's result, a literal, a clone, a container) kept in a place
+    declared outside, handed to a global or to the caller, or returned, is
+    reported. `@escape(v)` is a clone made by the allocator the block was
+    entered with (the arena's parent context), so the copy survives the
+    block; it takes a place, so what it copies is named and released as
+    usual. `.clone()` inside the block allocates from the arena and does
+    not escape. A call inside the block that returns a value it took from
+    outside counts as made inside, because the model does not look into
+    callees; `@escape` is the answer there, at the cost of a copy. A value
+    taken out of a container (`pop`, `remove`) was made where the
+    container's values were.
+105. **A struct literal evaluates its initializers in the order written.**
+    The checker checked moves in written order while the emitter and the
+    interpreter evaluated in declaration order, so `Pair{ .first =
+    name[..], .name = name }` with `name` declared first read a zeroed
+    `name`; the view rules found it. The typed IR keeps the written order,
+    with the field of each initializer beside it, and the defaults of the
+    fields left out come last.
+106. **A `return` out of `using arena` ends the arena.** The emitter ended
+    an arena after its block's closing brace only, so a `return`, `break`
+    or `continue` leaving the block leaked the arena's chunks (`nx leaks`
+    showed 64 KiB live). The arena belongs to the block's scope now, whose
+    exit actions (defers, drops, then the arena's end) run on every way
+    out.

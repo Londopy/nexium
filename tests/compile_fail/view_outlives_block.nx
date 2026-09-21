@@ -1,0 +1,10 @@
+// STRICT
+// EXPECT: `out` keeps a view into `s`, which is released at the end of its block on line 6, while `out` lives on (rule V2)
+fn main() {
+    var out: []u8 = ""
+    {
+        let s = String.from("gone")
+        out = s[..]
+    }
+    println("{}", .{out})
+}

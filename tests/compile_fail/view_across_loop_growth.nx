@@ -1,0 +1,11 @@
+// STRICT
+// EXPECT: `xs` changes here inside a loop, while `v`, a view into it taken before the loop on line 6, is read in the loop; the next pass reads moved storage (rule V3)
+fn main() {
+    var xs = List(i32).new()
+    xs.append(1)
+    let v = xs[..]
+    for i in 0..3 {
+        println("{}", .{v.len})
+        xs.append(i)
+    }
+}

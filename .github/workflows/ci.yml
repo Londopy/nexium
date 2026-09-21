@@ -150,8 +150,9 @@ jobs:
 
   fuzz:
     name: fuzz
-    # mutated sources through the front end and random bytes through the
-    # binary pattern engine (tests/fuzz.nx); a crash is a failure
+    # mutated sources through the front end (every tenth accepted one built
+    # in debug mode and run) and random bytes through the binary pattern
+    # engine (tests/fuzz.nx); a crash is a failure
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -163,7 +164,7 @@ jobs:
       - name: Fuzz
         run: |
           export NX_ZIG=zig
-          nx-out/bootstrap/nx2 run tests/fuzz.nx -- --iterations 1500 --seed ${{ github.run_number }}
+          nx-out/bootstrap/nx2 run tests/fuzz.nx -- --iterations 1500 --seed ${{ github.run_number }} --run 10
       - uses: actions/upload-artifact@v7
         if: failure()
         with:

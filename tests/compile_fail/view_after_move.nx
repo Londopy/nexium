@@ -1,0 +1,8 @@
+// STRICT
+// EXPECT: `v` is a view into `s`, which was moved away on line 6; the storage may be released (rule V4)
+fn main() {
+    let s = String.from("moved")
+    let v = s[..]
+    let t = s
+    println("{} {}", .{v, t})
+}

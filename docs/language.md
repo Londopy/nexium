@@ -307,7 +307,8 @@ brings it.
   `@bitCast(T, x)` (same size, scalars), `@min(a, b)`, `@max(a, b)`,
   `@errorName(e)`, `@embedFile(path)`, `@weak(x)`, `@refCount(x)`,
   `@cImport(header)`, `@cstr(literal)`, `@target()` (`(os, arch, bits)`,
-  a constant of the C build).
+  a constant of the C build), `@escape(v)` (a copy of `v` made outside the
+  innermost `using arena` block).
 
 Predefined errors: `OutOfMemory Panic InvalidRecord Truncated Overflow
 InvalidUtf8 NotFound IoError InvalidInput BufferTooSmall`. Any `error.Name`
@@ -392,14 +393,20 @@ typedefs, function-like macros) are named in the error when used.
 `comptime test "name" { ... }` runs in the interpreter during checking; a
 failure is a compile error pointing at the expectation.
 
-## Regions
+## Views and their storage
 
 A function may not return a slice or pointer into one of its own locals
-(rule R1); views into parameters are fine because the caller owns them. A view
-stored into an outer variable is not tracked.
+(rule R1, an error since 1.0); views into borrowed parameters are fine
+because the caller owns them. 1.2 adds the view rules V1 to V5 (`SPEC.md`
+5.6 and 5.7): a view stored past the storage it points into, a view used
+after its container grew or its value moved, a value holding a view
+returned, a value kept past its `using arena` block. They are warnings in
+1.2 and errors in 1.3; `nx check --strict` (or `NX_STRICT=1`) makes them
+errors now. `@escape(v)` copies a value out of an arena block.
 
 ## Not implemented yet
 
 `nx publish` and the registry. `soa` and `packed` layouts, `pool` and
-`stack` allocation strategies, and region rules beyond R1 are not part of
-the language (decision 88); the compiler rejects the spellings.
+`stack` allocation strategies, and the archived region rules R2 to R4 are
+not part of the language (decision 88); the compiler rejects the
+spellings.

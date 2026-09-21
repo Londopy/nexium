@@ -1,0 +1,39 @@
+// SPEC 5.6: the view rules pass what is sound and this file has no warning
+// to show for it. A view into a parameter may be returned (the caller owns
+// the storage); a view lives beside the local it borrows in one block; a
+// view is retaken after the container grows; a struct literal holds a value
+// and a view into it on one line; a loop item's view is stored while the
+// items live; a view into a local is cloned to leave.
+struct Pair { name: String, first: []u8 }
+
+fn first_word(s: []u8) -> []u8 {
+    var i: usize = 0
+    while i < s.len and s[i] != ' ' { i += 1 }
+    return s[..i]
+}
+
+fn own_word(s: []u8) -> String {
+    let w = first_word(s)
+    return String.from(w)
+}
+
+fn main() {
+    let text = String.from("summit ridge")
+    let w = first_word(text[..])
+    println("{}", .{w})
+    var xs = List(i32).new()
+    xs.append(1)
+    var v = xs[..]
+    println("{}", .{v.len})
+    xs.append(2)
+    v = xs[..]
+    println("{}", .{v.len})
+    let name = String.from("dutch rib")
+    let p = Pair{ .first = first_word(name[..]), .name = name }
+    println("{} {}", .{p.first, p.name})
+    var seen = List([]u8).new()
+    let words = [String.from("a"), String.from("b")]
+    for x in words { seen.append(x[..]) }
+    println("{}", .{seen.len})
+    println("{}", .{own_word("alone here")})
+}

@@ -98,6 +98,8 @@ fn run_pp(opts: *ImportOptions, source: []u8, extra: []u8) -> !String {
         if err[..].find("error:") != null { break }
         time.sleep(50 *((attempt as u64) + 1))
     }
+    // unsafe: a mutable global (the exit code for `pp_error_line`), written by
+    // the one thread that runs the preprocessor
     unsafe { last_code = code }
     io.remove_file(path[..]) catch { }
     io.remove_dir(dir[..]) catch { }
@@ -117,6 +119,7 @@ pub fn pp_error_line() -> String {
     for line in err[..].lines() {
         if line.trim().len > 0 { return String.from(line.trim()) }
     }
+    // unsafe: reads the mutable global `run_pp` wrote on this thread
     let code = unsafe { last_code }
     if code >= 128 { return String.from("killed by a signal") }
     return format("exit code {}", .{code})

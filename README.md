@@ -323,8 +323,8 @@ using arena {
 Options: `--mode debug|safe|fast|small`, `--target x86_64-linux-gnu` (any
 target `zig cc` knows), `--cpu baseline|native|<name>` (baseline by default,
 so a binary runs on any machine of its architecture), `--out-dir`,
-`--keep-c`, `--cc`, and for C interop `-I`, `--link`, `--link-path`,
-`--c-source`.
+`--keep-c`, `--cc`, `--strict` (the view rules' warnings are errors),
+and for C interop `-I`, `--link`, `--link-path`, `--c-source`.
 
 ## Status
 

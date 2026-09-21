@@ -432,6 +432,14 @@ computed position, which no guard proves.
 
 ### 1.2: memory safety without a garbage collector
 
+Status, 1.2.0: V1 to V5 are in the checker as warnings (decisions 100 to
+104), `--strict` makes them errors, `@escape(v)` is how a value leaves an
+arena block, every `unsafe` block in `self/` and `std/` carries its
+reason, and the fuzzer runs mutants in debug mode. Left for 1.3: the
+warnings become errors, and `nx fix` inserts `.clone()` where that is the
+fix. The rules found three bugs in the compiler on their first run
+(changelog, `Fixed`).
+
 The promise of section 12, no undefined behaviour in safe code, has four
 holes that 5.6 and 5.7 hand to the programmer: a view stored past the
 storage it points into, a view kept across a growth of its container, a

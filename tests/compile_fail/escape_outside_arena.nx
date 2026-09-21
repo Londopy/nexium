@@ -1,0 +1,6 @@
+// EXPECT: `@escape` copies a value out of a `using arena` block and is only meaningful inside one
+fn main() {
+    let s = String.from("x")
+    let t = @escape(s)
+    println("{}", .{t})
+}

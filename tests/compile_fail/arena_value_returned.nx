@@ -1,0 +1,11 @@
+// STRICT
+// EXPECT: this returns a value made inside a `using arena` block, whose storage is freed with the arena when the block ends (rule V5)
+fn make() -> String {
+    using arena {
+        let s = String.from("gone")
+        return s
+    }
+    return String.new()
+}
+
+fn main() { println("{}", .{make()}) }

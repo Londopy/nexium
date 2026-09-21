@@ -12,17 +12,19 @@ should hear back within a week.
 
 ## What counts
 
-Nexium is deterministically memory-managed without a garbage collector;
-memory safety is complete in 1.2, when the view rules land. Until then a
-view can outlive its storage in code without `unsafe` (`SPEC.md` 5.6 and
-5.7 leave that to the programmer), and that is the one known gap in the
-list below. Outside it, the specification promises no undefined behavior
-in safe code (section 12) and that a panic never crosses an export
-boundary (S3). Reports that safe Nexium code can be made to:
+Nexium is deterministically memory-managed without a garbage collector.
+The view rules of `SPEC.md` 5.6 and 5.7 (V1 to V5) keep a view from
+outliving its storage in code without `unsafe`: in 1.2 they are warnings
+that `--strict` makes errors, and 1.3 makes them errors for everyone. A
+program that builds under `--strict` has no known way to read released
+memory in safe code; the specification promises no undefined behavior in
+safe code (section 12) and that a panic never crosses an export boundary
+(S3). Reports that safe Nexium code can be made to:
 
 - read or write out of bounds,
-- use memory after it was released, or double free, other than through a
-  view that outlived its storage,
+- use memory after it was released, or double free (a view that outlives
+  its storage without a warning from the rules of 5.6 and 5.7 is such a
+  report),
 - abort a host process that called an exported function, or leave it
   holding what a panicked call acquired,
 - execute arbitrary code during compilation through `comptime` or

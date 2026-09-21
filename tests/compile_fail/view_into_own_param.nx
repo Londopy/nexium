@@ -1,0 +1,7 @@
+// STRICT
+// EXPECT: this returns a slice into `s`, an `own` parameter that is released when the function returns (rule V1)
+fn first(own s: String) -> []u8 {
+    return s[..]
+}
+
+fn main() { println("{}", .{first(String.from("abc"))}) }

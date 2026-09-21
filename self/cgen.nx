@@ -26,10 +26,13 @@ pub struct Scope {
     drop_names: List(String)
     drop_tys: List(usize)
     is_loop_body: bool
+    // the arena of a `using arena` block, ended with the scope (also on a
+    // `return`, `break` or `continue` that leaves it); empty otherwise
+    arena: String
 }
 
 fn new_scope(is_loop_body: bool) -> Scope {
-    return Scope{ .defer_stmts = List(usize).new(), .defer_err = List(bool).new(), .drop_names = List(String).new(), .drop_tys = List(usize).new(), .is_loop_body = is_loop_body }
+    return Scope{ .defer_stmts = List(usize).new(), .defer_err = List(bool).new(), .drop_names = List(String).new(), .drop_tys = List(usize).new(), .is_loop_body = is_loop_body, .arena = String.new() }
 }
 
 /// The function being emitted.
@@ -1340,6 +1343,8 @@ impl Gen {
             let d = self.drop_fn(tys[j])
             self.line(format("{}(c, &{});", .{d, names[j]})[..])
         }
+        let ar = self.cur.scopes[i].arena.clone()
+        if ar.len > 0 { self.line(format("nx_arena_end(&{});", .{ar})[..]) }
     }
 
     /// Emit exits for all scopes from innermost down to (and including) index `to`.
@@ -1367,6 +1372,7 @@ impl Gen {
         self.cur.scopes[i].drop_tys.clear()
         self.cur.scopes[i].defer_stmts.clear()
         self.cur.scopes[i].defer_err.clear()
+        self.cur.scopes[i].arena = String.new()
     }
 
     fn loop_scope_depth(self: *mut Self, label: usize) -> usize {
@@ -1686,11 +1692,13 @@ impl Gen {
             self.push_buf()
             self.line(format("nx_ctx* c = &{}_ctx;", .{ar})[..])
             self.push_scope(false)
+            // the scope ends the arena, so an early exit from the block ends it too
+            let sc = self.cur.scopes.len - 1
+            self.cur.scopes[sc].arena = ar.clone()
             self.block_stmt(kids[0])
             self.pop_scope_emit()
             self.splice_buf()
             self.line("}")
-            self.line(format("nx_arena_end(&{});", .{ar})[..])
             self.splice_buf()
             self.line("}")
             return
@@ -3160,6 +3168,14 @@ impl Gen {
             let v = self.simple(args[0])
             let f = self.clone_fn(ety)
             return format("{}(c, &{})", .{f, v})
+        }
+        if name == "Escape" {
+            // a clone made by the allocator the innermost `using arena` block
+            // was entered with: the block's context holds the arena, whose
+            // parent is that allocator's context
+            let v = self.simple(args[0])
+            let f = self.clone_fn(ety)
+            return format("{}(((nx_arena*)c->alloc.state)->parent, &{})", .{f, v})
         }
         if name == "ListLast" {
             let s = self.simple(args[0])
