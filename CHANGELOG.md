@@ -18,6 +18,15 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   before replacing its files (Restart Manager; it is not started again),
   and keep a log of the run as `install.log` next to the program. The
   uninstaller takes `/LOG="path"` for a log of its own.
+- Homebrew, Scoop and winget: the repository is its own Homebrew tap
+  (`brew tap londopy/tap https://github.com/Londopy/nexium`, then
+  `brew install londopy/tap/nexium`; the release build on Apple Silicon
+  and Linux, the compiler built from its one C file elsewhere) and its own
+  Scoop bucket (`bucket/nexium.json`, also installable by URL), and
+  `installers/winget/` holds the manifests for `Londopy.Nexium`, ready
+  for microsoft/winget-pkgs and usable with `winget install --manifest`
+  today. `scripts/packaging.py` writes all three from a release's
+  checksums, and the release workflow commits them to `main`.
 - Releases attach a `.torrent` for every file, with its GitHub download
   as the web seed, and the notes list the magnet links with a QR code of
   each (`scripts/release_notes.py`; the release job installs `segno`).

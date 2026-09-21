@@ -174,3 +174,18 @@ jobs:
           name: ${{ steps.notes.outputs.title }}
           body_path: notes.md
           files: artifacts/*
+
+      # the Homebrew formula, the Scoop manifest and the winget manifests for
+      # this release, committed to main (this repository is the tap and the
+      # bucket; the winget manifests are submitted by hand)
+      - name: Package-manager manifests
+        run: |
+          git fetch --depth=1 origin main
+          git checkout -B main origin/main
+          python scripts/packaging.py "${{ github.ref_name }}" artifacts/SHA256SUMS.txt
+          git add Formula bucket installers/winget
+          if git -c user.name=Londopy -c user.email=Londopy@users.noreply.github.com commit -q -m "packaging: the manifests for ${{ github.ref_name }}"; then
+            git push origin main
+          else
+            echo "the manifests were already current"
+          fi

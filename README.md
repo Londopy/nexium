@@ -116,6 +116,16 @@ It verifies the download against the release checksums, installs to
 `~/.nexium`, sets up a C compiler (the Xcode tools on macOS; Zig is downloaded
 on Linux when nothing is found), and adds `nx` to your PATH.
 
+**Homebrew and Scoop**: the repository is its own tap and bucket.
+
+```bash
+brew tap londopy/tap https://github.com/Londopy/nexium && brew install londopy/tap/nexium
+```
+
+```powershell
+scoop install https://raw.githubusercontent.com/Londopy/nexium/main/bucket/nexium.json
+```
+
 Then, in a new console, `nx doctor` shows what will be used. All the details,
 including verifying checksums and every environment variable, are in
 [docs/install.md](docs/install.md).

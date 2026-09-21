@@ -65,6 +65,42 @@ directory, `NEXIUM_NO_MODIFY_PATH=1` leaves shell files alone,
 the one C file even when a release exists. Uninstall by deleting `~/.nexium`
 and the three lines the script added.
 
+## Homebrew, Scoop and winget
+
+The repository is its own Homebrew tap and Scoop bucket; the release
+workflow regenerates the manifests with each release's checksums
+(`scripts/packaging.py`).
+
+**Homebrew**, on macOS and Linux. Apple Silicon and Linux get the release
+build; an Intel Mac or another architecture builds the compiler from its
+one C file:
+
+```sh
+brew tap londopy/tap https://github.com/Londopy/nexium
+brew install londopy/tap/nexium
+```
+
+**Scoop**, on Windows: the portable build, without Zig (`scoop install zig`
+beside it, or let `nx doctor` tell you what it found):
+
+```powershell
+scoop bucket add nexium https://github.com/Londopy/nexium
+scoop install nexium
+```
+
+or, without adding the bucket,
+`scoop install https://raw.githubusercontent.com/Londopy/nexium/main/bucket/nexium.json`.
+
+**winget**: the manifests for `Londopy.Nexium` are in `installers/winget/`,
+ready for [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs)
+(a new package is a pull request there, made by a person). Until it is
+accepted, a checkout installs them directly:
+
+```powershell
+winget settings --enable LocalManifestFiles    # once, as administrator
+winget install --manifest installers\winget
+```
+
 ## One C file
 
 `bootstrap/nx.c` is the C the compiler emits for itself, as of the release,

@@ -17,6 +17,9 @@ on:
       - "assets/**"
       - "linguist/**"
       - ".gitattributes"
+      - "Formula/**"
+      - "bucket/**"
+      - "installers/winget/**"
   pull_request:
     paths:
       - "**.md"
@@ -25,6 +28,9 @@ on:
       - "assets/**"
       - "linguist/**"
       - ".gitattributes"
+      - "Formula/**"
+      - "bucket/**"
+      - "installers/winget/**"
 
 permissions:
   contents: read

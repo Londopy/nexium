@@ -305,7 +305,10 @@ queue in front of them.
    and puts the magnet link in the notes; a QR code beside it. (Done:
    one torrent per file, from 1.0.4 on.)
 4. A Homebrew tap, a Scoop bucket and the winget manifest, from the
-   archives the release already builds.
+   archives the release already builds. (Done: the repository is the tap
+   and the bucket, `scripts/packaging.py` writes all three at each
+   release; the winget submission to microsoft/winget-pkgs is a pull
+   request by hand.)
 5. `nx doctor` says when a newer release exists.
 6. The VS Code extension on Open VSX beside the Marketplace.
 7. A `packages.md`: the packages people can `nx add` from git today.

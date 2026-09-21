@@ -12,6 +12,9 @@ on:
       - "assets/**"
       - "linguist/**"
       - ".gitattributes"
+      - "Formula/**"
+      - "bucket/**"
+      - "installers/winget/**"
   pull_request:
     paths-ignore:
       - "**.md"
@@ -20,6 +23,9 @@ on:
       - "assets/**"
       - "linguist/**"
       - ".gitattributes"
+      - "Formula/**"
+      - "bucket/**"
+      - "installers/winget/**"
 
 permissions:
   contents: read
@@ -269,6 +275,13 @@ jobs:
         run: sh bootstrap/build.sh
       - name: nx fmt --check on the tree
         run: nx-out/bootstrap/nx2 fmt $(git ls-files '*.nx') --check
+      - name: The package-manager manifests parse
+        run: |
+          pip install -q pyyaml
+          ruby -c Formula/nexium.rb
+          python -c "import json; m = json.load(open('bucket/nexium.json')); print('scoop', m['version'])"
+          python -c "import yaml, glob; [yaml.safe_load(open(f)) for f in glob.glob('installers/winget/*.yaml')]; print('winget ok')"
+
       - name: nx check on the compiler, the harness and the fuzzer
         run: |
           export NX_ZIG=zig
