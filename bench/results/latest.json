@@ -3,10 +3,10 @@
     "os": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
     "cpu": "x86_64",
     "date": "2026-09-21",
-    "runner": "GitHub Actions 1000006508"
+    "runner": "GitHub Actions 1000006796"
   },
   "tools": {
-    "nexium": "nx 1.1.0 (Annapurna: Dutch Rib)",
+    "nexium": "nx 1.2.0 (Annapurna: South Face)",
     "c": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
     "rust": "rustc 1.98.1 (48a229cea 2026-09-01)",
     "go": "go version go1.23.12 linux/amd64",
@@ -15,32 +15,32 @@
   "runs": 7,
   "results": {
     "fib": {
-      "nexium": 0.0082,
+      "nexium": 0.0081,
       "c": 0.0049,
       "rust": 0.0082,
       "go": 0.0133,
-      "python": 0.339
+      "python": 0.3381
     },
     "nbody": {
-      "nexium": 0.0159,
+      "nexium": 0.016,
       "c": 0.0145,
-      "rust": 0.0164,
-      "go": 0.0185,
-      "python": 1.2346
+      "rust": 0.0165,
+      "go": 0.0191,
+      "python": 1.2627
     },
     "sieve": {
-      "nexium": 0.0382,
-      "c": 0.0212,
-      "rust": 0.0267,
-      "go": 0.0275,
-      "python": 0.574
+      "nexium": 0.0381,
+      "c": 0.0214,
+      "rust": 0.027,
+      "go": 0.0258,
+      "python": 0.5766
     },
     "words": {
-      "nexium": 0.2827,
-      "c": 0.1476,
-      "rust": 0.2426,
-      "go": 0.2917,
-      "python": 1.0109
+      "nexium": 0.2904,
+      "c": 0.1601,
+      "rust": 0.2508,
+      "go": 0.3018,
+      "python": 1.0489
     }
   }
 }
