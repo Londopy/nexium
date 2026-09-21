@@ -2,6 +2,7 @@
 // `i < 3` does not carry into the loop that increments `i`, so `xs[i]` keeps
 // its bounds check and panics on the fourth pass instead of reading past
 // the array (1.0.3 elided the check).
+// EXIT: 101
 fn main() {
     let xs = [1, 2, 3]
     var i: usize = 0
