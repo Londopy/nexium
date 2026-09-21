@@ -1043,11 +1043,55 @@ is a file in the repository the harness runs, so the course cannot rot:
   questions as `nx topo quiz` in the terminal.
 - Predict-the-output cards: the code shown, the output hidden until the
   reader commits to a guess.
-- In the page, once the compiler runs in the browser (1.5): every code
-  block editable with a *Run* button, the exercises and quizzes graded
-  in place, a *reset* to the book's version, and a link that carries the
+- In the page, once the compiler runs in the browser: every code block
+  editable with a *Run* button, the exercises and quizzes graded in
+  place, a *reset* to the book's version, and a link that carries the
   reader's code (the playground's share URL). Until then the same
   exercises run in the terminal through `nx topo`.
+
+**The playground, light: the compiler in the page without the C backend**
+(next, before the rest of the course; the full wasm target stays in 1.5).
+
+The site is static files on GitHub Pages, so running code there means
+the compiler itself runs in the browser. Two things make that possible
+now rather than in 1.5: the compiler is one C file with no dependencies
+(`bootstrap/nx.c`), which `zig cc -target wasm32-wasi` compiles to
+WebAssembly, and the REPL already runs programs without the C backend,
+through the compile-time interpreter, `println` included. So a wasm
+build of `nx` can check a program (the real diagnostics, for the
+fix-the-error exercises) and run it through the interpreter, capturing
+the output to compare with the recorded one: the whole grading loop,
+client side, no server. The pieces:
+
+- `NX_WASM`: a build of the runtime with the parts a browser has no
+  equivalent for (threads, sockets, process spawning, the file system)
+  stubbed to a clear error, behind one define.
+- `nx play`: a command that reads a program from stdin, checks it, runs
+  `main` in the interpreter and prints its output or its diagnostics;
+  the standard modules are embedded, so no file access is needed. The
+  same command serves the terminal (`nx play < file.nx`) and the harness.
+- The Pages workflow compiles the seed to wasm with the pinned Zig and
+  publishes it beside the site; a small WASI shim in the page's
+  JavaScript feeds stdin and collects stdout and stderr, loaded on the
+  first Run, not with the page.
+- On the site: every exercise's code box editable, with *Run*, *Check*
+  and *Reset*; a fill-in-the-blank or fix-the-error exercise is graded in
+  place against its recorded output and ticks its own box; a prediction
+  reveals the real output after the guess; every other code block of the
+  Topo and the docs gets *Run* too.
+- The limits, said on the page: the interpreter is not the C backend. It
+  runs the language and the standard library's pure parts, not threads,
+  networking, the GUI, `@cImport` or `test` blocks as the harness runs
+  them, so chapters 2 to 15 run in the page and the others say "run this
+  one in the terminal". Programs are exercise-sized; the interpreter's
+  step budget bounds a runaway one.
+- Exit: every fill and fix exercise of chapters 2 to 15 grades in the
+  page with the same verdict `nx topo check` gives, checked by a headless
+  browser in CI against the wasm build of that commit.
+
+What 1.5 adds on top is the real thing: `--target wasm32-wasi` for
+programs, the C backend in the browser through a wasm C compiler, and the
+share URL.
 - Progress: the route map of the Topo with each pitch ticked as its
   exercises pass, kept in the browser (nothing to sign into) and by
   `nx topo` in `~/.nexium`; a chapter shows what the next one needs.

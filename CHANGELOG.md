@@ -21,7 +21,9 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   `NX_TOPO_PROGRESS` says), and the site shows the same exercises with the
   solutions folded away, a "done" box per exercise kept in the browser and
   the count on every chapter link. The harness runs every solution, every
-  starter's failure and a whole chapter through `nx topo`.
+  starter's failure and a whole chapter through `nx topo`. `nx fmt` spaces
+  the hole of an exercise (`???`) like a word, so formatting a starter in
+  the editor leaves it as written.
 
 ## [1.2.0] - 2026-09-21
 

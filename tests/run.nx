@@ -467,10 +467,23 @@ fn suite_fmt(e: *Env, failures: *mut List(String)) {
     args.append("fmt")
     var files = List(String).new()
     for dir in ["examples", "std", "gui", "self", "tests/spec", "tests/compile_fail", "tests", "topo/code", "site", "bench"] { for f in tree_files(dir) { files.append(f.clone()) } }
+    // the course's starters too: a hole (`???`) is spaced like a word
+    for d in fs.list("topo/exercises") catch { List(String).new() } {
+        let dir = fs.join("topo/exercises", d[..])
+        if fs.is_dir(dir[..]) { for f in tree_files(dir[..]) { files.append(f.clone()) } }
+    }
     for f in files { args.append(f[..]) }
     args.append("--check")
     let out = nx(e, args[..])
     if out.code != 0 { failures.append(format("fmt: sources are not canonically formatted:\n{}{}", .{out.stdout, out.stderr})) }
+    // a hole in every shape stays where it is written
+    let holes = fs.join(e.root[..], "nx-out/cases/holes.nx")
+    let text = "fn keep(??? text: String) -> i32 {\n    let s = x.??? + f(???, 1)\n    match p { .A => ???, ??? => 0 }\n    println(\"{}\", .{??? , a ??? b})\n    match d { <<len:???/big, rest:bytes>> => 1, _ => 0 }\n    ???\n}\n"
+    let want = "fn keep(??? text: String) -> i32 {\n    let s = x.??? + f(???, 1)\n    match p { .A => ???, ??? => 0 }\n    println(\"{}\", .{???, a ??? b})\n    match d { <<len:???/big, rest:bytes>> => 1, _ => 0 }\n    ???\n}\n"
+    fs.write(holes[..], text) catch { }
+    let h = nx(e, ["fmt", holes[..]][..])
+    let got = normalize((fs.read(holes[..]) catch { String.new() })[..])
+    if h.code != 0 or got[..] != want { failures.append(format("fmt: the holes of an exercise moved (exit {}):\n{}{}", .{h.code, got, h.stderr})) }
     println("fmt: {} files", .{files.len})
 }
 

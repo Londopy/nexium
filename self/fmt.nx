@@ -176,6 +176,29 @@ fn bar_role(toks: *List(lexer.Token), ctx: *Line, at: usize) -> u8 {
     return role
 }
 
+/// Two tokens of a line written with nothing between them.
+fn adjacent(toks: *List(lexer.Token), ctx: *Line, x: usize, y: usize) -> bool {
+    return toks[ctx.toks[x]].end == toks[ctx.toks[y]].start
+}
+
+/// `???`, the hole of a Topo exercise: three `?` written together (after a
+/// member dot the lexer reads the first two as `.?`). Which of a hole's
+/// three the token at `j` is (1 the first, 2 the middle, 3 the last), or 0
+/// when it is not part of one.
+fn hole_part(toks: *List(lexer.Token), ctx: *Line, j: usize) -> u8 {
+    let k0 = toks[ctx.toks[j]].kind
+    if k0 != lexer.Kind.Question and k0 != lexer.Kind.DotQuestion { return 0 }
+    var s = j
+    if k0 == lexer.Kind.Question {
+        while s > 0 and toks[ctx.toks[s - 1]].kind == lexer.Kind.Question and adjacent(toks, ctx, s - 1, s) { s -= 1 }
+        if s > 0 and toks[ctx.toks[s - 1]].kind == lexer.Kind.DotQuestion and adjacent(toks, ctx, s - 1, s) { s -= 1 }
+    }
+    var e = j
+    while e + 1 < ctx.toks.len and toks[ctx.toks[e + 1]].kind == lexer.Kind.Question and adjacent(toks, ctx, e, e + 1) { e += 1 }
+    if e - s + 1 != 3 { return 0 }
+    return (j - s + 1) as u8
+}
+
 /// Ends an operand: a word or a closer, so the next `-`/`&`/`*` is binary.
 fn ends_operand(toks: *List(lexer.Token), id: usize) -> bool {
     let t = &toks[id]
@@ -258,6 +281,14 @@ fn needs_space(toks: *List(lexer.Token), ctx: *Line, i: usize) -> bool {
     let pp = kind_back(toks, ctx, i, 2)
     let has_next = i + 1 < ctx.toks.len
     if b == lexer.Kind.Comment or b == lexer.Kind.Doc { return true }
+    // `???`, the hole of a Topo exercise, is spaced like a word (tight in a
+    // binary pattern, like the rest of it)
+    let ha = hole_part(toks, ctx, i - 1)
+    let hb = hole_part(toks, ctx, i)
+    if ha > 0 and ha < 3 and hb > 1 { return false }
+    if (ha > 0 or hb > 0) and in_pattern(toks, ctx, i) { return false }
+    if hb == 1 { return b != lexer.Kind.DotQuestion and ! (a == lexer.Kind.LParen or a == lexer.Kind.LBracket or a == lexer.Kind.Dot or a == lexer.Kind.DotLBrace or a == lexer.Kind.At) }
+    if ha == 3 { return ! (b == lexer.Kind.RParen or b == lexer.Kind.RBracket or b == lexer.Kind.RBrace or b == lexer.Kind.Comma or b == lexer.Kind.Semi or b == lexer.Kind.LParen or b == lexer.Kind.Dot or b == lexer.Kind.DotStar or b == lexer.Kind.DotQuestion) }
     // ranges and member access are tight: `0..n`, `1..=9`
     if a == lexer.Kind.DotDot or b == lexer.Kind.DotDot or (a == lexer.Kind.Eq and kind_is(pp, lexer.Kind.DotDot)) { return false }
     // or-patterns in match arms: `.A | .B => ...`
