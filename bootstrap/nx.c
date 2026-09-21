@@ -2421,10 +2421,10 @@ typedef struct nx_sl_m10_Scope { nx_m10_Scope* ptr; size_t len; } nx_sl_m10_Scop
 /* ---- data ---- */
 static const char* const nx_error_names[] = { "(ok)", "OutOfMemory", "Panic", "InvalidRecord", "Truncated", "Overflow", "InvalidUtf8", "NotFound", "IoError", "InvalidInput", "BufferTooSmall", "Timeout", "ConnectionRefused", "TruncatedCoff", "Elf32", "MachO", "Unrecognized", "AlreadyExists", "UnterminatedHeader", "ExpectedLine", "UnterminatedString", "UnterminatedTable", "UnterminatedArray", "ExpectedKeyValue" };
 NX_INLINE const char* nx_error_name(uint32_t e) { return e <= sizeof(nx_error_names)/sizeof(*nx_error_names) - 1 ? nx_error_names[e] : "(unknown error)"; }
-static const char nx_str_0[6] = "1.1.0";
+static const char nx_str_0[6] = "1.2.0";
 static const nx_sl_u8 nxc_VERSION_0 = { (uint8_t*)nx_str_0, 5 };
-static const char nx_str_1[21] = "Annapurna: Dutch Rib";
-static const nx_sl_u8 nxc_RELEASE_NAME_1 = { (uint8_t*)nx_str_1, 20 };
+static const char nx_str_1[22] = "Annapurna: South Face";
+static const nx_sl_u8 nxc_RELEASE_NAME_1 = { (uint8_t*)nx_str_1, 21 };
 static const size_t nxc_NONE_2 = ((size_t)18446744073709551615ULL);
 static const char nx_str_2[3] = "fn";
 static const char nx_str_3[4] = "pub";
@@ -16712,7 +16712,7 @@ static int32_t nx_cmd_version(nx_ctx* c) {
   NX_UNUSED(c);
   nx_sink _t1 = nx_sink_file(c, c->out);
   nx_sl_u8 _t2 = nx_lit(nx_str_0, 5);
-  nx_sl_u8 _t3 = nx_lit(nx_str_1, 20);
+  nx_sl_u8 _t3 = nx_lit(nx_str_1, 21);
   nx_w(&_t1, (const uint8_t*)nx_str_638, 3);
   nx_w_sl(&_t1, _t2);
   nx_w(&_t1, (const uint8_t*)nx_str_520, 2);
@@ -16728,7 +16728,7 @@ static int32_t nx_cmd_doctor(nx_ctx* c, nx_Opts* o_0) {
   NX_UNUSED(c);
   nx_sink _t1 = nx_sink_file(c, c->out);
   nx_sl_u8 _t2 = nx_lit(nx_str_0, 5);
-  nx_sl_u8 _t3 = nx_lit(nx_str_1, 20);
+  nx_sl_u8 _t3 = nx_lit(nx_str_1, 21);
   nx_w(&_t1, (const uint8_t*)nx_str_638, 3);
   nx_w_sl(&_t1, _t2);
   nx_w(&_t1, (const uint8_t*)nx_str_520, 2);

@@ -432,8 +432,8 @@ computed position, which no guard proves.
 
 ### 1.2: memory safety without a garbage collector
 
-Status, 1.2.0: V1 to V5 are in the checker as warnings (decisions 100 to
-104), `--strict` makes them errors, `@escape(v)` is how a value leaves an
+Status: shipped as 1.2.0 on 2026-09-21. V1 to V5 are in the checker as
+warnings (decisions 100 to 104), `--strict` makes them errors, `@escape(v)` is how a value leaves an
 arena block, every `unsafe` block in `self/` and `std/` carries its
 reason, and the fuzzer runs mutants in debug mode. Left for 1.3: the
 warnings become errors, and `nx fix` inserts `.clone()` where that is the

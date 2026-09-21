@@ -10,6 +10,10 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-21
+
+*Annapurna: South Face* — the great wall, climbed by siege in 1970: memory safety without a garbage collector. The checker knows where every view points and enforces five rules over it: a view may not be returned inside a value or into an `own` parameter, stored past the storage it points into, read after its container grew or its value moved, and a value made inside `using arena` may not leave the block; `@escape(v)` is the copy that may. The rules are warnings in this release and errors in 1.3, and `--strict` makes them errors now. They found three bugs in the compiler on their first run (a struct literal evaluating out of written order, an arena leaked by an early `return`, two views held by luck), all fixed. The fuzzer runs mutants in debug mode, `nx` says when a newer release exists, and the Windows installer's welcome page carries the topographic contours. The seed is regenerated from the final sources.
+
 ### Added
 
 - The view rules of 1.2 (`SPEC.md` 5.6 and 5.7): a view may not be stored
@@ -1233,7 +1237,8 @@ First public release.
   Korean, French, and German; the language reference and architecture tour in
   Spanish, Chinese, and Japanese.
 
-[Unreleased]: https://github.com/Londopy/nexium/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/Londopy/nexium/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/Londopy/nexium/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/Londopy/nexium/compare/v1.0.3...v1.1.0
 [1.0.3]: https://github.com/Londopy/nexium/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/Londopy/nexium/compare/v1.0.1...v1.0.2

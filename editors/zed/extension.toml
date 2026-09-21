@@ -1,6 +1,6 @@
 id = "nexium"
 name = "Nexium"
-version = "0.2.0"
+version = "0.3.0"
 schema_version = 1
 authors = ["Londopy"]
 description = "Nexium: highlighting, outline, brackets and the nx language server"
