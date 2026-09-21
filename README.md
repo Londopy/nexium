@@ -333,8 +333,9 @@ program runs in CI on three platforms, under the sanitizers and the fuzzer.
 What 1.0 is not yet, and where each is answered, is the first section of
 [the roadmap](ROADMAP.md): memory safety is not guaranteed until 1.2 (a view
 can outlive its storage in code without `unsafe`), there are no benchmark
-numbers yet, and the ecosystem is one maintainer and sixteen standard
-library modules. [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) lists every open bug
+numbers yet, and the ecosystem is one maintainer, sixteen standard
+library modules and one package from outside the tree (statusmith's
+[Discord Rich Presence SDK](docs/discord.md), `nx add discord_rpc ...`). [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) lists every open bug
 with its fix; [`DECISIONS.md`](DECISIONS.md) every call made where the
 specification was open.
 

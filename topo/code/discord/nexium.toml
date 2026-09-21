@@ -1,0 +1,6 @@
+[package]
+name = "card"
+version = "0.1.0"
+
+[dependencies]
+discord_rpc = { git = "https://github.com/Londopy/statusmith", tag = "sdk-v0.1.0", dir = "nexium" }

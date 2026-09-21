@@ -90,14 +90,10 @@ nx add words --git https://github.com/Londopy/nexium --tag v1.0.3
 | --- | --- | --- |
 | `words` (in this repository, `topo/code/pkg/words`) | the Topo's example package: a few functions over words, the layout to copy | a `path` dependency on a checkout, or copy the two files |
 | `app` (in this repository, `topo/code/pkg/app`) | the program that depends on `words`; the shape of a program with dependencies | the same |
+| `discord_rpc` ([statusmith](https://github.com/Londopy/statusmith), its `nexium/` directory) | Discord Rich Presence over the local pipe: `connect`, `set_activity`, `clear`, `close`; Windows; [the page](discord.html) | `nx add discord_rpc --git https://github.com/Londopy/statusmith --tag sdk-v0.1.0 --dir nexium` |
 
-That is the honest list on the day this page was written: the language is
-young, and the packages people write are still in their programs. Two
-things are on their way to it: the Nexium SDK inside
-[statusmith](https://github.com/Londopy/statusmith) (Discord Rich Presence
-from Nexium; it needs a `nexium.toml` at the root of a repository of its
-own), and the standard library's next modules, which land in `std/`, not
-here.
+The standard library's next modules land in `std/`, not here; the packages
+people write are still mostly in their programs.
 
 To be listed, open a pull request adding a row: the repository, one line
 of what it does, the tag to pin. The package has to build with the

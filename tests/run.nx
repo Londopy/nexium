@@ -336,6 +336,18 @@ fn suite_topo(e: *Env, failures: *mut List(String)) {
     let app = fs.join(e.root[..], "topo/code/pkg/app")
     let pkg = nx_in(e, ["run", "main.nx", "--out-dir", fs.join(e.root[..], "nx-out/cases/topo-pkg")[..]][..], "", app[..])
     if pkg.code != 0 or pkg.text() != "SUMMIT!\nquiet" { failures.append(format("topo: the packages example printed:\n{}{}", .{pkg.stdout, pkg.stderr})) }
+    // the package from the wild comes from GitHub: only when online (CI is)
+    if os.env("NX_ONLINE") != null {
+        let card = fs.join(e.root[..], "topo/code/discord")
+        let fetched = nx_in(e, ["fetch"][..], "", card[..])
+        if fetched.code != 0 { failures.append(format("topo: fetching the Discord SDK failed:\n{}", .{fetched.stderr})) }
+        let ran = nx_in(e, ["run", "main.nx", "--out-dir", fs.join(e.root[..], "nx-out/cases/topo-discord")[..]][..], "", card[..])
+        if ran.code != 0 or (ran.stdout[..].find("the card would have said") == null and ran.stdout[..].find("on your profile now") == null) {
+            failures.append(format("topo: the Discord example printed:\n{}{}", .{ran.stdout, ran.stderr}))
+        }
+    } else {
+        println("topo: offline (NX_ONLINE unset): the Discord package example is not fetched", .{})
+    }
     let shot = fs.join(e.root[..], "nx-out/cases/topo-counter.ppm")
     let g = nx(e, ["run", "gui/counter.nx", "--out-dir", fs.join(e.root[..], "nx-out/cases/topo-gui")[..], "--", "--shot", shot[..]][..])
     if g.code != 0 { failures.append(format("topo: the counter GUI failed:\n{}", .{g.stderr})) }

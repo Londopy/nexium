@@ -57,6 +57,8 @@ jobs:
         run: sh bootstrap/build.sh
 
       - name: Every suite, through the harness written in Nexium
+        env:
+          NX_ONLINE: "1"
         shell: bash
         run: |
           nx=nx-out/bootstrap/nx2; [ -f "$nx.exe" ] && nx="$nx.exe"

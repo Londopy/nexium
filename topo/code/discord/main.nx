@@ -1,0 +1,19 @@
+import discord_rpc
+
+fn main() {
+    var a = discord_rpc.activity()
+    a.details = String.from("climbing the Topo")
+    a.state = String.from("chapter 19")
+    a.start_ms = time.now()
+    // your Application ID from the Discord Developer Portal goes here
+    var client = discord_rpc.connect("1234567890123456789") catch {
+        println("no Discord to talk to here; the card would have said: {} / {}", .{a.details, a.state})
+        return
+    }
+    let headline = client.set_activity(&a) catch {
+        println("Discord did not take the card", .{})
+        return
+    }
+    println("on your profile now: Playing {}", .{headline})
+    client.close()
+}

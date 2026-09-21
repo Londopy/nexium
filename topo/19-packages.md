@@ -93,6 +93,28 @@ ok    shout
 1 passed, 0 failed
 ```
 
+## A package from the wild
+
+The first package outside this repository is a Discord Rich Presence SDK,
+the `nexium/` directory of [statusmith](https://github.com/Londopy/statusmith).
+It lives beside the app it belongs to, so the dependency names the
+directory with `dir`; the lock still pins the repository's commit.
+
+```sh
+nx add discord_rpc --git https://github.com/Londopy/statusmith --tag sdk-v0.1.0 --dir nexium
+```
+
+{{include topo/code/discord/nexium.toml}}
+
+A card on your profile is a few lines, and the program says what the card
+would have said when there is no Discord to talk to:
+
+{{include topo/code/discord/main.nx}}
+
+The suite runs this one when it is online (`NX_ONLINE=1`, as CI is),
+since the package comes from GitHub. [The Discord page](../docs/discord.html)
+has the fields of a card.
+
 ## Rules worth knowing
 
 - The dependency's name in the manifest is the identifier programs import.
