@@ -258,6 +258,19 @@ fn render_negative(mask: u64) -> String {
 }
 
 /// The effects present in a mask, `allocates panics`.
+/// A number right-aligned in `w` columns, for `nx layout`.
+fn lpad(n: u64, w: usize) -> String {
+    let digits = format("{}", .{n})
+    var out = String.new()
+    var k = digits.len
+    while k < w {
+        out.append(" ")
+        k += 1
+    }
+    out.append(digits[..])
+    return out
+}
+
 pub fn render_effects(mask: u64) -> String {
     var out = String.new()
     for e, i in EFFECT_NAMES {
@@ -12018,6 +12031,116 @@ impl Checker {
         self.fail_here(start, format("unknown builtin `@{}`", .{name})[..])
         for a in args { _ = self.check_expr(a, NONE) }
         return self.error_expr(start, end)
+    }
+
+    /// `nx layout`: the C layout of the struct or enum `name` of the root
+    /// module. A struct: every field's offset and size, the padding between
+    /// them, the total, and the order by alignment that would shrink it when
+    /// one would (the backend keeps fields in declaration order). An enum:
+    /// the tag, where the payload starts, and each variant's payload. Null
+    /// when there is no such type.
+    pub fn layout_report(self: *mut Self, name: []u8) -> ?String {
+        var out = String.new()
+        for d in 0..self.structs.len {
+            if self.structs[d].module != 0 or self.structs[d].name[..] != name { continue }
+            if self.structs[d].tparams.len > 0 {
+                out.append(format("struct {}: generic; the layout depends on the type arguments\n", .{name})[..])
+                return out
+            }
+            let t = self.tys.of_def(TK.Struct, d, List(usize).new())
+            let m = self.structs[d].module
+            let fields = self.structs[d].fields.clone()
+            let fts = self.struct_field_types(t)
+            var names = List(String).new()
+            for f in fields { names.append(self.node(m, f).name.clone()) }
+            // declaration order, which is the backend's
+            var off: u64 = 0
+            var maxa: u64 = 1
+            var pad: u64 = 0
+            var rows = String.new()
+            for ft, i in fts {
+                let a = self.align_of(ft)
+                let sz = self.size_of(ft)
+                maxa = max64(maxa, a)
+                let at = round_up(off, a)
+                if at > off {
+                    rows.append(format("  {}  {}  (padding)\n", .{lpad(off, 6), lpad(at - off, 4)})[..])
+                    pad += at - off
+                }
+                rows.append(format("  {}  {}  {}: {}\n", .{lpad(at, 6), lpad(sz, 4), names[i], self.ty_name(ft)})[..])
+                off = at + sz
+            }
+            let total = round_up(off, maxa)
+            if total > off {
+                rows.append(format("  {}  {}  (padding at the end)\n", .{lpad(off, 6), lpad(total - off, 4)})[..])
+                pad += total - off
+            }
+            let what = if self.structs[d].kind == "ref" { "ref class (a pointer of 8 bytes; the object behind it)" } else { "struct" }
+            out.append(format("{} {}: {} bytes, alignment {}, {} of padding\n  offset  size  field\n", .{what, name, total, maxa, pad})[..])
+            out.append(rows[..])
+            // the same fields, largest alignment first (stable)
+            var order = List(usize).new()
+            for i in 0..fts.len { order.append(i) }
+            var i: usize = 1
+            while i < order.len {
+                var j = i
+                while j > 0 and self.align_of(fts[order[j - 1]]) < self.align_of(fts[order[j]]) {
+                    let tmp = order[j - 1]
+                    order[j - 1] = order[j]
+                    order[j] = tmp
+                    j -= 1
+                }
+                i += 1
+            }
+            var off2: u64 = 0
+            for k in order { off2 = round_up(off2, self.align_of(fts[k])) + self.size_of(fts[k]) }
+            let total2 = round_up(off2, maxa)
+            if total2 < total {
+                var seq = String.new()
+                for k in order {
+                    if seq.len > 0 { seq.append(", ") }
+                    seq.append(names[k][..])
+                }
+                out.append(format("reordered by alignment ({}): {} bytes, {} fewer\n", .{seq, total2, total - total2})[..])
+            } else if fts.len > 1 {
+                out.append("reordering by alignment gains nothing\n")
+            }
+            return out
+        }
+        for d in 0..self.enums.len {
+            if self.enums[d].module != 0 or self.enums[d].name[..] != name { continue }
+            if self.enums[d].tparams.len > 0 {
+                out.append(format("enum {}: generic; the layout depends on the type arguments\n", .{name})[..])
+                return out
+            }
+            let t = self.tys.of_def(TK.Enum, d, List(usize).new())
+            let m = self.enums[d].module
+            let variants = self.enums[d].variants.clone()
+            let vtys = self.enum_variant_types(t)
+            var maxs: u64 = 0
+            var maxa: u64 = 4
+            var rows = String.new()
+            for v, i in vtys {
+                var voff: u64 = 0
+                var tys = String.new()
+                for f in v {
+                    let a = self.align_of(f)
+                    maxa = max64(maxa, a)
+                    voff = round_up(voff, a) + self.size_of(f)
+                    if tys.len > 0 { tys.append(", ") }
+                    tys.append(self.ty_name(f)[..])
+                }
+                maxs = max64(maxs, voff)
+                let shown = if tys.len > 0 { format("{}({})", .{self.node(m, variants[i]).name, tys}) } else { self.node(m, variants[i]).name.clone() }
+                rows.append(format("  {}: {} bytes of payload\n", .{shown, voff})[..])
+            }
+            let payload_at = round_up(4, maxa)
+            let total = round_up(payload_at + maxs, maxa)
+            out.append(format("enum {}: {} bytes, alignment {}; the tag is 4 bytes at 0, the payload starts at {}, {} bytes for the largest variant\n", .{name, total, maxa, payload_at, maxs})[..])
+            out.append(rows[..])
+            return out
+        }
+        return null
     }
 
     /// Sizes and alignments of types, as the C backend lays them out.

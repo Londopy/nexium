@@ -60,7 +60,7 @@ pub struct Opts {
 }
 
 fn usage() {
-    eprintln("usage: nx <build|run|test|check|effects|audit|refcounts|leaks|size|emit-c|tir> <file.nx> [options] [-- args]", .{})
+    eprintln("usage: nx <build|run|test|check|effects|audit|refcounts|leaks|size|layout|emit-c|tir> <file.nx> [options] [-- args]", .{})
     eprintln("       nx fmt <file.nx>... [--check] | nx fix <file.nx>...", .{})
     eprintln("       nx doc <file.nx> [-o <dir>]", .{})
     eprintln("       nx ship <file.nx> [--mode m] [--target t]   produce the declared artifacts", .{})
@@ -614,6 +614,33 @@ fn clone_opts(o: *Opts) -> Opts {
 
 /// `nx size`: the program compiled to an object with one section per
 /// function, the sections attributed to declarations by C symbol.
+/// `nx layout FILE [TYPE...]`: the C layout of the named structs and enums
+/// of the file, or of every non-generic one when none is named.
+fn cmd_layout(o: *Opts) -> i32 {
+    var c = check_program(o) orelse return 1
+    var names = List(String).new()
+    for r in o.rest { names.append(r.clone()) }
+    if names.len == 0 {
+        for d in 0..c.structs.len { if c.structs[d].module == 0 and c.structs[d].tparams.len == 0 { names.append(c.structs[d].name.clone()) } }
+        for d in 0..c.enums.len { if c.enums[d].module == 0 and c.enums[d].tparams.len == 0 { names.append(c.enums[d].name.clone()) } }
+        if names.len == 0 {
+            println("no struct or enum in {}", .{o.file})
+            return 0
+        }
+    }
+    var code: i32 = 0
+    for n, i in names {
+        if i > 0 { println("", .{}) }
+        let report = c.layout_report(n[..]) orelse {
+            eprintln("error: no struct or enum named `{}` in {}", .{n, o.file})
+            code = 1
+            continue
+        }
+        print("{}", .{report})
+    }
+    return code
+}
+
 fn cmd_size(o: *Opts) -> i32 {
     var c = check_program(o) orelse return 1
     let stem = stem_of(o.file[..])
@@ -1369,6 +1396,8 @@ fn main() -> u8 {
         for a in args { if a == "--mode" { mode_given = true } }
         if !mode_given { so.mode = cgen.MODE_SAFE }
         code = cmd_ship(&so)
+    } else if o.command == "layout" {
+        code = cmd_layout(&o)
     } else if o.command == "size" {
         var so = o
         var mode_given = false

@@ -334,7 +334,8 @@ queue in front of them.
 12. `nx -e` and `nx -p` one-liners on the REPL's compile cache. (Done,
     on the interpreter: nothing is compiled, so there is no cache to
     keep.)
-13. `nx layout Type`: offsets, sizes, padding, the reordering.
+13. `nx layout Type`: offsets, sizes, padding, the reordering. (Done:
+    `nx layout FILE [Type...]`.)
 14. `expect_snapshot` in `std.testing`.
 15. `pip install nexium` and `npm install nexium`, wheels and packages
     that carry the binary.

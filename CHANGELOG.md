@@ -18,6 +18,11 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   before replacing its files (Restart Manager; it is not started again),
   and keep a log of the run as `install.log` next to the program. The
   uninstaller takes `/LOG="path"` for a log of its own.
+- `nx layout FILE [Type...]` prints the C layout of a struct (every
+  field's offset and size, the padding, the total, and the order by
+  alignment that would shrink it, since the backend keeps declaration
+  order) or an enum (the tag, where the payload starts, each variant's
+  payload); without a name, every non-generic struct and enum of the file.
 - `nx -e CODE` runs lines as the prompt would and `nx -p EXPR` prints
   the value of an expression on its own; the interpreter runs them, so
   nothing is compiled.
