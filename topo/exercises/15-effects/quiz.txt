@@ -1,0 +1,11 @@
+Q: What does `!allocates` after a return type mean?
+- the function allocates
+* the function promises never to allocate, and the compiler checks it
+- the function frees what it allocated
+> A negative effect bound is a promise the checker enforces through every callee.
+
+Q: Which of these carries the `panics` effect?
+* `a + b` on two `i32` values
+- `a +% b`
+- `a +| b`
+> Checked arithmetic traps on overflow, a defined panic; the wrapping and saturating forms never fail.

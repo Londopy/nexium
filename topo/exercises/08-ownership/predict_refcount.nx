@@ -1,0 +1,15 @@
+// topo: predict the output
+// Write what this prints into predict_refcount.guess before you run it.
+// hint: copying a `ref class` value retains it; a copy that goes out of scope releases it
+ref class Node { value: i32, next: ?Node }
+
+fn main() {
+    let a = Node{ .value = 1, .next = null }
+    let b = a
+    println("{}", .{@refCount(a)})
+    {
+        let c = b
+        println("{} {}", .{c.value, @refCount(a)})
+    }
+    println("{}", .{@refCount(a)})
+}

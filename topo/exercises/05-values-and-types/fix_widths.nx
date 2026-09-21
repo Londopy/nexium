@@ -1,0 +1,8 @@
+// topo: fix the error
+// The compiler rejects this program; make it print the recorded output.
+// hint: there is no implicit conversion between integer widths; `as` converts
+fn main() {
+    let small: u8 = 200
+    let big: u32 = 100_000
+    println("{}", .{small + big})
+}

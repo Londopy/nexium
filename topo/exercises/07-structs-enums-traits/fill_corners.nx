@@ -1,0 +1,17 @@
+// topo: fill in the blank
+// Replace each ??? with the pattern that matches the variant, so every shape reports its corners.
+// hint: an arm names the variant with a leading dot and `_` for each payload it ignores
+enum Shape { Circle(f64), Rect { w: f64, h: f64 }, Triangle(f64, f64, f64) }
+
+fn corners(s: *Shape) -> u32 {
+    return match s.*{
+        ??? => 0,
+        .Rect(_, _) => 4,
+        ??? => 3,
+    }
+}
+
+fn main() {
+    let shapes = [Shape.Circle(1.0), Shape.Rect{ .w = 2.0, .h = 3.0 }, Shape.Triangle(3.0, 4.0, 5.0)]
+    for s in shapes { println("{}", .{corners(&s)}) }
+}

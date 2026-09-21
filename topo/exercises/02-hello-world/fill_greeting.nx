@@ -1,0 +1,7 @@
+// topo: fill in the blank
+// Replace ??? so the program greets the mountain by name.
+// hint: `println` takes a format string and a `.{ }` list of arguments
+fn main() {
+    let peak = "Annapurna"
+    println("hello, {}", .{???})
+}

@@ -1,0 +1,9 @@
+fn find(xs: []i32, wanted: i32) -> ?usize {
+    for x, i in xs { if x == wanted { return i } }
+    return null
+}
+
+fn main() {
+    let xs: [3]i32 = [4, 8, 15]
+    println("{} {}", .{find(xs[..], 15) orelse 0, find(xs[..], 16) orelse 0})
+}

@@ -1,0 +1,37 @@
+// topo: write it
+// Fill in `letter` so the tests pass: 90 and up is "A", 80 and up "B", 70 and up "C",
+// anything lower "F"; a score under 0 or over 100 is an error.
+// hint: `return error.TooHigh` fails; `return "A"` succeeds; the error set names both cases
+import std.testing
+
+error Bad { Negative, TooHigh }
+
+fn letter(score: i32) -> Bad![]u8 {
+    ???
+}
+
+fn main() {
+    let scores: [6]i32 = [95, 85, 72, 40, 101, -3]
+    for s in scores {
+        let g = letter(s) catch |e| { println("{}: {}", .{s, @errorName(e)}); continue }
+        println("{}: {}", .{s, g})
+    }
+}
+
+test "letters" {
+    expect_eq(try letter(95), "A")
+    expect_eq(try letter(85), "B")
+    expect_eq(try letter(72), "C")
+    expect_eq(try letter(40), "F")
+}
+
+test "the edges" {
+    expect_eq(try letter(90), "A")
+    expect_eq(try letter(0), "F")
+    expect_eq(try letter(100), "A")
+}
+
+test "out of range" {
+    testing.expect_error([]u8, letter(101), error.TooHigh)
+    testing.expect_error([]u8, letter(-3), error.Negative)
+}

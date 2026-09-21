@@ -1,0 +1,17 @@
+Q: After `let b = a` where `a` is a `List(i32)`, what is `a`?
+* moved: using it is a compile error
+- a copy of `b`
+- an alias of `b`
+> Owning values move on assignment; `.clone()` is the explicit copy.
+
+Q: A function takes `xs: List(String)` without `own`. What may it do with `xs`?
+* read it
+- move it into a struct
+- drop it early
+> Parameters are borrowed: the callee reads, the caller keeps the value. `own` hands it over.
+
+Q: Which view does the compiler reject since 1.0?
+* returning a slice of a local from the function that owns it
+- returning a slice of a parameter
+- storing a slice of a literal in a global
+> Rule R1 (now V1): the local dies with the function. A parameter's storage belongs to the caller, and a literal lives as long as the program.

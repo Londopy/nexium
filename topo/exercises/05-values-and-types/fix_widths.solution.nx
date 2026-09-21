@@ -1,0 +1,5 @@
+fn main() {
+    let small: u8 = 200
+    let big: u32 = 100_000
+    println("{}", .{small as u32 + big})
+}

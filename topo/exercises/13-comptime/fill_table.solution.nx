@@ -1,0 +1,11 @@
+fn squares() -> [8]u32 {
+    var t: [8]u32 = undefined
+    for i in 0..8 { t[i] = (i * i) as u32 }
+    return t
+}
+
+const SQUARES: [8]u32 = comptime squares()
+
+comptime test "the table is right" { expect_eq(SQUARES[5], 25) }
+
+fn main() { println("{} {}", .{SQUARES[3], SQUARES[7]}) }

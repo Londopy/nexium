@@ -1,0 +1,7 @@
+// topo: predict the output
+// Write what this prints into predict_pitches.guess before you run it.
+// hint: a range `1..4` stops before 4
+fn main() {
+    for i in 1..4 { println("pitch {}", .{i}) }
+    println("done", .{})
+}

@@ -1,0 +1,7 @@
+fn main() {
+    let packet = b"\x00\x03hi!\xff"
+    match packet {
+        <<len:16/big, payload:len*8, rest:bytes>> => println("{} {} {}", .{len, payload, rest.len}),
+        _ => println("no match", .{}),
+    }
+}

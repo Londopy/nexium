@@ -1,0 +1,11 @@
+// topo: fill in the blank
+// Replace ??? so `keep` takes the text over instead of borrowing it; a borrowed parameter cannot be moved into the struct.
+// hint: the one-word parameter marker from the chapter
+struct Note { text: String }
+
+fn keep(??? text: String) -> Note { return Note{ .text = text } }
+
+fn main() {
+    let n = keep(String.from("bring rope"))
+    println("{}", .{n.text})
+}

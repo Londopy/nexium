@@ -21,6 +21,10 @@ const SITE_TITLE = "Nexium"
 const SITE_URL = "https://londopy.github.io/nexium/"
 const SIDE_SCRIPT = r"<script>(function(){var n=document.querySelector('nav.side');if(!n)return;var k='nx-side-scroll';try{var s=sessionStorage.getItem(k);if(s!==null)n.scrollTop=+s;}catch(e){}var c=n.querySelector('a.current');if(c){var r=c.getBoundingClientRect(),h=n.getBoundingClientRect();if(r.top<h.top+8||r.bottom>h.bottom-8)n.scrollTop+=(r.top-h.top)-n.clientHeight/2+r.height/2;}function save(){try{sessionStorage.setItem(k,n.scrollTop)}catch(e){}}n.addEventListener('scroll',save);n.addEventListener('click',save);window.addEventListener('pagehide',save);})();</script>"
 
+/// The course's progress, kept in the browser: the "done" boxes of the
+/// exercises, and the count on every chapter link of the sidebar.
+const TOPO_SCRIPT = r"<script>(function(){var k='nx-topo-done';function load(){try{return JSON.parse(localStorage.getItem(k)||'[]')}catch(e){return []}}function save(d){try{localStorage.setItem(k,JSON.stringify(d))}catch(e){}}var done=load();document.querySelectorAll('input[data-done]').forEach(function(b){b.checked=done.indexOf(b.dataset.done)>=0;b.addEventListener('change',function(){done=load();var i=done.indexOf(b.dataset.done);if(b.checked&&i<0)done.push(b.dataset.done);if(!b.checked&&i>=0)done.splice(i,1);save(done);mark();});});function mark(){done=load();document.querySelectorAll('nav.side a[data-chapter]').forEach(function(a){var n=+a.dataset.exercises,c=a.dataset.chapter,h=0;done.forEach(function(d){if(d.indexOf(c+'/')===0)h++;});var s=a.querySelector('.done');if(!s){s=document.createElement('span');s.className='done';a.appendChild(s);}s.textContent=h>=n?' \u2713':(h>0?' '+h+'/'+n:'');});}mark();})();</script>"
+
 /// One page of the site: where it comes from, where it goes, what it is called.
 struct Page {
     // "topo", "docs", "reference", "project", "index"
@@ -655,6 +659,19 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 2rem 0; }
 .toc h4 { margin: 0 0 0.3rem; font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
 .toc a { display: block; color: var(--fg); padding: 0.1rem 0; }
 .toc a.l3 { padding-left: 0.9rem; color: var(--muted); }
+.exercise { margin: 1.5rem 0 2rem; padding: 0 0 0 1rem; border-left: 4px solid var(--accent-2); }
+.exercise h3 { margin-top: 0; }
+.exercise .kind { display: inline-block; font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin-left: 0.5rem; }
+.exercise details { margin: 0.5rem 0; }
+.exercise summary { cursor: pointer; color: var(--accent); }
+.exercise label.done { display: inline-block; margin-top: 0.4rem; font-size: 0.9rem; color: var(--muted); cursor: pointer; }
+.quiz ol { padding-left: 1.4rem; }
+.quiz ol > li { margin-bottom: 0.9rem; }
+.quiz ul { list-style: none; padding-left: 0.4rem; margin: 0.3rem 0; }
+.quiz ul li { margin: 0.1rem 0; }
+.quiz details { margin: 0.2rem 0; }
+.quiz summary { cursor: pointer; color: var(--accent); font-size: 0.9rem; }
+nav.side a .done { color: var(--accent); margin-left: 0.3rem; font-size: 0.85em; }
 .pager { display: flex; justify-content: space-between; margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line); gap: 1rem; }
 .pager a { max-width: 48%; }
 .pager .label { display: block; font-size: 0.75rem; color: var(--muted); }
@@ -701,7 +718,12 @@ fn page_head(out: *mut String, title: []u8, root: []u8, description: []u8) {
 }
 
 fn nav_link(out: *mut String, root: []u8, p: *Page, current: bool, number: usize) {
-    out.append(format("<a href=\"{}{}\"{}>", .{root, p.out, if current { " class=\"current\"" } else { "" }})[..])
+    out.append(format("<a href=\"{}{}\"{}", .{root, p.out, if current { " class=\"current\"" } else { "" }})[..])
+    if p.section[..] == "topo" {
+        let n = exercise_count(fs.stem(p.src[..]))
+        if n > 0 { out.append(format(" data-chapter=\"{}\" data-exercises=\"{}\"", .{fs.stem(p.src[..]), n})[..]) }
+    }
+    out.append(">")
     if number > 0 { out.append(format("<span class=\"num\">{}</span>", .{number})[..]) }
     out.append(esc(p.title[..])[..])
     out.append("</a>\n")
@@ -727,6 +749,155 @@ fn sidebar(out: *mut String, pages: *List(Page), current: usize, root: []u8) {
     // page's link is brought into view when it is not
     out.append(SIDE_SCRIPT)
     out.append("\n")
+}
+
+// ----- the course: exercises and quizzes ---------------------------------------------
+
+/// The exercise files of a chapter (starters only), sorted.
+fn exercise_files(stem: []u8) -> List(String) {
+    var out = List(String).new()
+    let dir = fs.join("topo/exercises", stem)
+    let names = fs.list(dir[..]) catch { return out }
+    for nm in names {
+        if !nm[..].ends_with(".nx") or nm[..].ends_with(".solution.nx") { continue }
+        out.append(nm.clone())
+    }
+    return out
+}
+
+/// How many exercises a chapter has, its quiz counted as one.
+fn exercise_count(stem: []u8) -> usize {
+    var n = exercise_files(stem).len
+    if fs.exists(fs.join(fs.join("topo/exercises", stem)[..], "quiz.txt")[..]) { n += 1 }
+    return n
+}
+
+/// The kind of an exercise from its name's prefix, spelled out (the same
+/// words `nx topo` uses).
+fn kind_label(name: []u8) -> []u8 {
+    if name.starts_with("fill_") { return "fill in the blank" }
+    if name.starts_with("fix_") { return "fix the error" }
+    if name.starts_with("write_") { return "write it" }
+    if name.starts_with("test_") { return "make the tests pass" }
+    if name.starts_with("predict_") { return "predict the output" }
+    return "exercise"
+}
+
+/// The header of an exercise file: the task lines and the hints, the rest
+/// being the code shown.
+fn split_exercise(source: []u8, task: *mut List(String), hints: *mut List(String)) -> String {
+    var code = String.new()
+    var in_header = true
+    var first = true
+    for l in source.lines() {
+        if in_header {
+            let t = l.trim()
+            if first { first = false; if t.starts_with("// topo:") { continue } }
+            if let h = strings.strip_prefix(t, "// hint:") { hints.append(String.from(h.trim())); continue }
+            if t.starts_with("//") {
+                let r = t[2..].trim()
+                if r.len > 0 { task.append(String.from(r)) }
+                continue
+            }
+            in_header = false
+        }
+        code.append(l)
+        code.append("\n")
+    }
+    return code
+}
+
+/// The Exercises section at the end of a chapter, when it has any.
+fn exercises_section(out: *mut String, stem: []u8, links: *Links, page: *Page) {
+    let files = exercise_files(stem)
+    let dir = fs.join("topo/exercises", stem)
+    let quiz_path = fs.join(dir[..], "quiz.txt")
+    let has_quiz = fs.exists(quiz_path[..])
+    if files.len == 0 and !has_quiz { return }
+    out.append("<h2 id=\"exercises\">Exercises<a class=\"anchor\" href=\"#exercises\">#</a></h2>\n")
+    out.append(format("<p>The compiler grades these: <code>nx topo {}</code> writes them into a directory, <code>nx topo check</code> runs them. Or read them here, think, and open the solution.</p>\n", .{chapter_number(stem)})[..])
+    for f in files {
+        let name = fs.stem(f[..])
+        let path = fs.join(dir[..], f[..])
+        let source = fs.read(path[..]) catch { continue }
+        var task = List(String).new()
+        var hints = List(String).new()
+        let code = split_exercise(source[..], &mut task, &mut hints)
+        let key = format("{}/{}", .{stem, name})
+        out.append(format("<div class=\"exercise\" id=\"{}\">\n<h3>{}<span class=\"kind\">{}</span></h3>\n", .{esc(name[..]), esc(name[..]), kind_label(name[..])})[..])
+        for t in task { out.append(format("<p>{}</p>\n", .{inline(t[..], links, page)})[..]) }
+        out.append(format("<div class=\"included\"><span class=\"file\">{}.nx</span>", .{esc(name[..])})[..])
+        code_block(out, "nexium", code[..])
+        out.append("</div>\n")
+        let expected_path = fs.join(dir[..], format("{}.expected", .{name})[..])
+        let is_predict = name.starts_with("predict_")
+        let expected = fs.read(expected_path[..]) catch { String.new() }
+        if expected.len > 0 {
+            out.append(if is_predict { "<details><summary>What does it print?</summary>" } else { "<details><summary>The recorded output</summary>" })
+            code_block(out, "text", expected[..])
+            out.append("</details>\n")
+        }
+        if hints.len > 0 {
+            out.append("<details><summary>Hints</summary><ul>")
+            for h in hints { out.append(format("<li>{}</li>", .{inline(h[..], links, page)})[..]) }
+            out.append("</ul></details>\n")
+        }
+        let solution_path = fs.join(dir[..], format("{}.solution.nx", .{name})[..])
+        let solution = fs.read(solution_path[..]) catch { String.new() }
+        if solution.len > 0 {
+            out.append("<details><summary>Solution</summary>")
+            code_block(out, "nexium", solution[..])
+            out.append("</details>\n")
+        }
+        out.append(format("<label class=\"done\"><input type=\"checkbox\" data-done=\"{}\"> done</label>\n</div>\n", .{esc(key[..])})[..])
+    }
+    if has_quiz {
+        let text = fs.read(quiz_path[..]) catch { String.new() }
+        out.append("<div class=\"quiz exercise\" id=\"quiz\">\n<h3>Quiz<span class=\"kind\">no peeking</span></h3>\n<ol>\n")
+        var open = false
+        var right = String.new()
+        var choices = List(String).new()
+        for l in text[..].lines() {
+            let t = l.trim()
+            if t.len == 0 { continue }
+            if let q = strings.strip_prefix(t, "Q:") {
+                if open { flush_quiz(out, &choices, links, page); out.append("</li>\n") }
+                out.append(format("<li>{}\n", .{inline(q.trim(), links, page)})[..])
+                open = true
+                right = String.new()
+                choices = List(String).new()
+                continue
+            }
+            if let c = strings.strip_prefix(t, "* ") { right = String.from(c); choices.append(String.from(c)); continue }
+            if let c = strings.strip_prefix(t, "- ") { choices.append(String.from(c)); continue }
+            if let w = strings.strip_prefix(t, ">") {
+                flush_quiz(out, &choices, links, page)
+                choices = List(String).new()
+                out.append(format("<details><summary>Answer</summary><p><b>{}</b>. {}</p></details>\n", .{inline(right[..], links, page), inline(w.trim(), links, page)})[..])
+                right = String.new()
+            }
+        }
+        if open { flush_quiz(out, &choices, links, page); out.append("</li>\n") }
+        out.append(format("</ol>\n<label class=\"done\"><input type=\"checkbox\" data-done=\"{}/quiz\"> done</label>\n</div>\n", .{esc(stem)})[..])
+    }
+}
+
+/// The choices of a question, once.
+fn flush_quiz(out: *mut String, choices: *List(String), links: *Links, page: *Page) {
+    if choices.len == 0 { return }
+    out.append("<ul>")
+    for c in choices.*{ out.append(format("<li>{}</li>", .{inline(c[..], links, page)})[..]) }
+    out.append("</ul>\n")
+}
+
+/// The chapter's number from its stem ("05-values-and-types" is 5).
+fn chapter_number(stem: []u8) -> usize {
+    var n: usize = 0
+    for c in stem {
+        if c < '0' or c > '9' { break }
+        n = n * 10 + (c - '0') as usize
+    }
+    return n
 }
 
 fn toc(out: *mut String, headings: *List(Heading), links: *Links, page: *Page) {
@@ -825,7 +996,10 @@ fn main() -> u8 {
             html.append(format("<h1>{}</h1>\n", .{inline(p.title[..], &links, &p)})[..])
         }
         html.append(body[..])
+        if p.section[..] == "topo" { exercises_section(&mut html, fs.stem(p.src[..]), &links, &p) }
         pager(&mut html, &pages, pi, root)
+        html.append(TOPO_SCRIPT)
+        html.append("\n")
         footer(&mut html, p.src[..])
         let path = fs.join(out_dir[..], p.out[..])
         fs.write(path[..], html[..]) catch { eprintln("error: cannot write {}", .{path}); return 1 }

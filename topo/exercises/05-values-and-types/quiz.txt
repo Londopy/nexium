@@ -1,0 +1,17 @@
+Q: Which addition wraps around on overflow instead of trapping?
+- +
+* +%
+- +|
+> `+%` wraps, `+|` saturates at the type's limits, and plain `+` traps with a defined panic.
+
+Q: What is the type of `x` in `let x = 7`?
+- i32
+* i64
+- usize
+> An integer literal takes the type the context asks for; with no context it defaults to `i64`.
+
+Q: What does `let s = "camp"` hold?
+- an owned String
+* a view of four bytes in the executable, a `[]u8`
+- a `char` array
+> A string literal is a slice of bytes that live in the program; `String.from("camp")` would copy them onto the heap.

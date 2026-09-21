@@ -1,0 +1,10 @@
+// topo: fill in the blank
+// Replace ??? so the pattern reads a 16-bit big-endian length, then that many bytes of payload.
+// hint: a segment is `name:size/modifiers`, the size in bits; a later size may use an earlier binding
+fn main() {
+    let packet = b"\x00\x03hi!\xff"
+    match packet {
+        <<len:???/big, payload:len*8, rest:bytes>> => println("{} {} {}", .{len, payload, rest.len}),
+        _ => println("no match", .{}),
+    }
+}

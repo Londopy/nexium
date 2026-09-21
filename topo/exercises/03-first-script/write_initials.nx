@@ -1,0 +1,14 @@
+// topo: write it
+// Fill in `initials` so the tests pass: the first byte of every word, upper-cased.
+// hint: `for word in name.split(" ")` walks the words; `word[0]` is a `u8`
+// hint: `out.push_byte(b)` appends one byte; lower-case letters are 32 above upper-case
+fn initials(name: []u8) -> String {
+    ???
+}
+
+fn main() { println("{}", .{initials("Chris Bonington")}) }
+
+test "two names" { expect_eq(initials("Chris Bonington")[..], "CB") }
+test "one name" { expect_eq(initials("Reinhold")[..], "R") }
+test "lower case" { expect_eq(initials("don whillans")[..], "DW") }
+test "extra spaces" { expect_eq(initials("Doug  Scott")[..], "DS") }

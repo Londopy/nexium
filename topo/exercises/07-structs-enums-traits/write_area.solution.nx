@@ -1,0 +1,30 @@
+trait Area {
+    fn area(self: *Self) -> f64
+}
+
+struct Square { side: f64 }
+struct Circle { r: f64 }
+
+impl Area for Square {
+    fn area(self: *Self) -> f64 { return self.side * self.side }
+}
+
+impl Area for Circle {
+    fn area(self: *Self) -> f64 { return math.PI * self.r * self.r }
+}
+
+fn main() {
+    let sq = Square{ .side = 3.0 }
+    let c = Circle{ .r = 1.0 }
+    println("{:.2} {:.2}", .{sq.area(), c.area()})
+}
+
+test "square" {
+    let s = Square{ .side = 2.0 }
+    expect_eq(s.area(), 4.0)
+}
+
+test "circle" {
+    let c = Circle{ .r = 2.0 }
+    expect(c.area() > 12.56 and c.area() < 12.57)
+}

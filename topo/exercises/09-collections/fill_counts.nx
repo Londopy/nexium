@@ -1,0 +1,11 @@
+// topo: fill in the blank
+// Replace each ??? so the words are counted.
+// hint: `m.get(key)` is an optional that needs a default; one method stores a key and a value
+fn main() {
+    var counts = Map([]u8, u32).new()
+    for w in ["col", "ridge", "col", "summit", "col"] {
+        let n = counts.get(w) ??? 0
+        counts.???(w, n + 1)
+    }
+    println("{} {} {}", .{counts.len, counts["col"].?, counts.get("summit") orelse 0})
+}

@@ -1,0 +1,4 @@
+fn main() {
+    let small: u8 = 250
+    println("{}", .{small +% 10})
+}

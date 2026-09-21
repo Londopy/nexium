@@ -1,0 +1,8 @@
+fn main() {
+    var names = List(String).new()
+    names.append(String.from("ridge"))
+    names.append(String.from("col"))
+    let backup = names.clone()
+    names.append(String.from("summit"))
+    println("{} {}", .{names.len, backup.len})
+}

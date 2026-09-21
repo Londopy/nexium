@@ -445,6 +445,7 @@ fn suite_topo(e: *Env, failures: *mut List(String)) {
     let shot = fs.join(e.root[..], "nx-out/cases/topo-counter.ppm")
     let g = nx(e, ["run", "gui/counter.nx", "--out-dir", fs.join(e.root[..], "nx-out/cases/topo-gui")[..], "--", "--shot", shot[..]][..])
     if g.code != 0 { failures.append(format("topo: the counter GUI failed:\n{}", .{g.stderr})) }
+    suite_exercises(e, failures)
     let site = nx(e, ["run", "site/build.nx", "--out-dir", fs.join(e.root[..], "nx-out/cases/topo-site")[..], "--", "--out", fs.join(e.root[..], "nx-out/site")[..]][..])
     if site.code != 0 { failures.append(format("topo: the site did not build:\n{}{}", .{site.stdout, site.stderr})) }
     if !fs.exists(fs.join(e.root[..], "nx-out/site/index.html")[..]) { failures.append(String.from("topo: the site has no index.html")) }
@@ -471,6 +472,97 @@ fn suite_fmt(e: *Env, failures: *mut List(String)) {
     let out = nx(e, args[..])
     if out.code != 0 { failures.append(format("fmt: sources are not canonically formatted:\n{}{}", .{out.stdout, out.stderr})) }
     println("fmt: {} files", .{files.len})
+}
+
+fn has_str(xs: *List(String), v: []u8) -> bool {
+    for x in xs.*{ if x[..] == v { return true } }
+    return false
+}
+
+/// The course: every exercise's solution passes its own check, every
+/// starter fails it the way its kind says, the compiler embeds every one,
+/// and `nx topo` walks a chapter from the map to "all of it".
+fn suite_exercises(e: *Env, failures: *mut List(String)) {
+    var listed = List(String).new()
+    var n: usize = 0
+    let dirs = fs.list("topo/exercises") catch { List(String).new() }
+    for d in dirs {
+        let dir = fs.join("topo/exercises", d[..])
+        if !fs.is_dir(dir[..]) { continue }
+        let names = fs.list(dir[..]) catch { continue }
+        for nm in names {
+            if nm[..] == "quiz.txt" { listed.append(format("{}/quiz", .{d})); continue }
+            if !nm[..].ends_with(".nx") or nm[..].ends_with(".solution.nx") { continue }
+            n += 1
+            let name = fs.stem(nm[..])
+            let kind = name[..(name.find("_") orelse name.len)]
+            listed.append(format("{}/{}", .{d, name}))
+            let starter = fs.join(dir[..], nm[..])
+            let solution = fs.join(dir[..], format("{}.solution.nx", .{name})[..])
+            let expected_path = fs.join(dir[..], format("{}.expected", .{name})[..])
+            let out_dir = format("{}/nx-out/cases/ex-{}-{}", .{e.root, d, name})
+            let text = fs.read(starter[..]) catch { String.new() }
+            if kind == "fill" or kind == "write" {
+                if text[..].find("???") == null { failures.append(format("topo: {} has no ??? hole", .{starter})) }
+            } else if kind == "fix" {
+                let c = nx(e, ["check", starter[..]][..])
+                if c.code == 0 { failures.append(format("topo: {} is accepted but should need fixing", .{starter})) }
+            } else if kind == "test" {
+                let t = nx(e, ["test", starter[..], "--out-dir", out_dir[..]][..])
+                if t.code == 0 { failures.append(format("topo: the tests of {} pass before the fix", .{starter})) }
+            } else if kind != "predict" {
+                failures.append(format("topo: {} has an unknown kind `{}`", .{starter, kind}))
+            }
+            // the solution passes, or the program itself for a prediction
+            let program = if kind == "predict" { starter.clone() } else { solution.clone() }
+            if kind == "write" or kind == "test" {
+                let t = nx(e, ["test", program[..], "--out-dir", out_dir[..]][..])
+                if t.code != 0 { failures.append(format("topo: the solution {} fails its tests:\n{}{}", .{program, t.stdout, t.stderr})) }
+            }
+            if fs.exists(expected_path[..]) {
+                let r = nx(e, ["run", program[..], "--out-dir", out_dir[..]][..])
+                let expected = normalize((fs.read(expected_path[..]) catch { String.new() })[..])
+                if r.code != 0 { failures.append(format("topo: {} does not run:\n{}", .{program, r.stderr})) }
+                else if let diff = same_text(expected[..].trim(), normalize(r.stdout[..])[..].trim(), format("output of {} differs", .{program})[..]) { failures.append(diff) }
+            }
+            let f = nx(e, ["fmt", program[..], "--check"][..])
+            if f.code != 0 { failures.append(format("topo: {} is not canonically formatted:\n{}{}", .{program, f.stdout, f.stderr})) }
+        }
+    }
+    // the compiler embeds every one, and nothing else
+    let l = nx(e, ["topo", "list"][..])
+    var embedded = List(String).new()
+    for line in l.stdout[..].lines() { if line.trim().len > 0 { embedded.append(String.from(line.trim())) } }
+    for k in listed { if !has_str(&embedded, k[..]) { failures.append(format("topo: {} is not embedded in self/topo.nx", .{k})) } }
+    for k in embedded { if !has_str(&listed, k[..]) { failures.append(format("topo: self/topo.nx embeds {}, which topo/exercises lacks", .{k})) } }
+    // a chapter, walked: the map, the start, the starters failing, the
+    // solutions passing, the quiz answered, the progress recorded
+    let work = fs.join(e.root[..], "nx-out/cases/topo-course")
+    fs.remove_all(work[..]) catch { }
+    fs.make_dirs(work[..]) catch { }
+    let progress = fs.join(work[..], "progress.txt")
+    os.set_env("NX_TOPO_PROGRESS", progress[..])
+    let m0 = nx_in(e, ["topo"][..], "", work[..])
+    if m0.code != 0 or m0.stdout[..].find("Values and types") == null or m0.stdout[..].find("0/4 done") == null { failures.append(format("topo: the map:\n{}{}", .{m0.stdout, m0.stderr})) }
+    let s = nx_in(e, ["topo", "5"][..], "", work[..])
+    let chapter = fs.join(work[..], "topo-05-values-and-types")
+    if s.code != 0 or !fs.exists(fs.join(chapter[..], "fill_wrap.nx")[..]) { failures.append(format("topo: starting chapter 5:\n{}{}", .{s.stdout, s.stderr})) }
+    let c0 = nx_in(e, ["topo", "check"][..], "", work[..])
+    if c0.code == 0 or c0.stdout[..].find("still has a hole") == null { failures.append(format("topo: the starters should not pass:\n{}{}", .{c0.stdout, c0.stderr})) }
+    for nm in ["fill_wrap", "fix_widths"] {
+        fs.copy(format("topo/exercises/05-values-and-types/{}.solution.nx", .{nm})[..], fs.join(chapter[..], format("{}.nx", .{nm})[..])[..]) catch { failures.append(format("topo: cannot copy the solution of {}", .{nm})) }
+    }
+    fs.write(fs.join(chapter[..], "predict_slices.guess")[..], "3 5 11\n9 camp\n") catch { }
+    let c1 = nx_in(e, ["topo", "check"][..], "", work[..])
+    if c1.code != 0 { failures.append(format("topo: the solutions should pass:\n{}{}", .{c1.stdout, c1.stderr})) }
+    let q = nx_in(e, ["topo", "quiz", "5"][..], "2\n2\n2\n", work[..])
+    if q.code != 0 or q.stdout[..].find("3 of 3 right") == null { failures.append(format("topo: the quiz:\n{}{}", .{q.stdout, q.stderr})) }
+    let m1 = nx_in(e, ["topo"][..], "", work[..])
+    if m1.stdout[..].find("4/4 done, all of it") == null { failures.append(format("topo: the map after the chapter:\n{}{}", .{m1.stdout, m1.stderr})) }
+    let h = nx_in(e, ["topo", "hint", "topo-05-values-and-types/fill_wrap.nx"][..], "", work[..])
+    if h.code != 0 or h.stdout[..].find("hint 1:") == null { failures.append(format("topo: hints:\n{}{}", .{h.stdout, h.stderr})) }
+    os.set_env("NX_TOPO_PROGRESS", "")
+    println("topo: {} exercises checked, and the course walked", .{n})
 }
 
 // ----- the tool suites ------------------------------------------------------------

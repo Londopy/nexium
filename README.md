@@ -280,7 +280,7 @@ using arena {
 - [Embedding](docs/embedding.md): calling shipped libraries from Python, Rust, and C.
 - [The interactive session](docs/repl.md): `nx` at a prompt, like `python`.
 - [Stability](docs/stability.md) and [platforms](docs/platforms.md): what a version promises, the deprecation cycle, `nx fix`, the tiers.
-- [The Topo](https://londopy.github.io/nexium/topo/01-base-camp.html): the tutorial, from installing the compiler to a neural network, a GUI and a shipped library; the source is [`topo/`](topo/). All of the above, rendered, is at [londopy.github.io/nexium](https://londopy.github.io/nexium/).
+- [The Topo](https://londopy.github.io/nexium/topo/01-base-camp.html): the tutorial, from installing the compiler to a neural network, a GUI and a shipped library, with exercises the compiler grades (on the page, or `nx topo` in the terminal); the source is [`topo/`](topo/). All of the above, rendered, is at [londopy.github.io/nexium](https://londopy.github.io/nexium/).
 - [Installing](docs/install.md): the Windows installer, the macOS/Linux script, source builds, checksums, and how `nx` finds a C compiler.
 - [Packages](docs/packages.md): `nexium.toml`, `nx add`, `nx fetch`, git or path dependencies, the lock file.
 - [Standard library](docs/std.md): the modules written in Nexium (`std.strings`, `std.lists`, `std.bytes`, `std.num`, `std.json`, `std.args`, `std.fs`, `std.time`, `std.regex`, `std.text`, `std.testing`, `std.stream`, `std.net`, `std.http`, `std.thread`, `std.process`).
@@ -319,6 +319,7 @@ using arena {
 | `nx lsp` | language server over stdio |
 | `nx doctor` | which C compiler will be used, and whether the installation works |
 | `nx repl`, or just `nx` | an interactive session: type code, see values, keep bindings |
+| `nx topo [<chapter>\|check\|hint\|solution\|quiz]` | the Topo's exercises in the terminal, graded by the compiler, progress kept |
 
 Options: `--mode debug|safe|fast|small`, `--target x86_64-linux-gnu` (any
 target `zig cc` knows), `--cpu baseline|native|<name>` (baseline by default,

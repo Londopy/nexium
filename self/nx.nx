@@ -25,6 +25,7 @@ import ship_node
 import installer
 import lsp
 import repl
+import topo
 import std.fs
 import std.strings
 
@@ -83,11 +84,13 @@ fn usage() {
     eprintln("  --keep-c           keep the generated C", .{})
     eprintln("  --watch            run or test again whenever a file of the program changes", .{})
     eprintln("  --strict           warnings are errors (the view rules of 1.2; NX_STRICT=1 too)", .{})
+    eprintln("", .{})
+    eprintln("  nx topo [<chapter>|check|hint|solution|quiz|reset]   the Topo's exercises in the terminal", .{})
 }
 
 fn parse_opts(args: [][]u8) -> ?Opts {
     if args.len < 3 {
-        if args.len == 2 and (args[1] == "version" or args[1] == "--version" or args[1] == "-V" or args[1] == "doctor" or args[1] == "lsp" or args[1] == "repl" or args[1] == "upgrade") {
+        if args.len == 2 and (args[1] == "version" or args[1] == "--version" or args[1] == "-V" or args[1] == "doctor" or args[1] == "lsp" or args[1] == "repl" or args[1] == "upgrade" or args[1] == "topo") {
             var padded = List([]u8).new()
             for a in args { padded.append(a) }
             padded.append("")
@@ -1482,6 +1485,15 @@ fn doctor_updates() {
     }
 }
 
+/// Where `nx topo` keeps what is done: NX_TOPO_PROGRESS, or `topo-progress`
+/// beside the update cache.
+fn topo_progress_path() -> String {
+    if let p = os.env("NX_TOPO_PROGRESS") { return String.from(p) }
+    let cache = update_cache_path()
+    if cache.len == 0 { return String.new() }
+    return fs.join(fs.parent(cache[..]), "topo-progress")
+}
+
 /// Where the daily release check keeps its answer: NX_UPDATE_CACHE, the
 /// portable copy's cache directory, or the user's Nexium directory.
 fn update_cache_path() -> String {
@@ -1927,7 +1939,7 @@ fn main() -> u8 {
     }
     // the commands that do work get the daily word on a newer release; the
     // ones that are about the release, the editor's server and the one-liners do not
-    let quiet = o.command == "upgrade" or o.command == "doctor" or o.command == "lsp" or o.command == "repl" or o.command == "-e" or o.command == "-p" or o.command == "version" or o.command == "--version" or o.command == "-V"
+    let quiet = o.command == "upgrade" or o.command == "doctor" or o.command == "lsp" or o.command == "repl" or o.command == "-e" or o.command == "-p" or o.command == "version" or o.command == "--version" or o.command == "-V" or o.command == "topo"
     var code: i32 = 0
     if o.command == "build" {
         var out = String.new()
@@ -1996,6 +2008,12 @@ fn main() -> u8 {
         code = repl.eval(o.file[..], o.command == "-p", o.std_dir[..], &o.cc)
     } else if o.command == "upgrade" {
         code = cmd_upgrade(o.file[..] == "--check")
+    } else if o.command == "topo" {
+        // the words after `topo`: the chapter or the subcommand, then its arguments
+        var words = List([]u8).new()
+        if o.file.len > 0 { words.append(o.file[..]) }
+        for r in o.rest { words.append(r[..]) }
+        code = topo.run(words[..], os.exe_path()[..], topo_progress_path()[..])
     } else {
         usage()
         return 2

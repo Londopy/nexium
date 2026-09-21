@@ -1,0 +1,13 @@
+fn clamp(x: i32, lo: i32, hi: i32) -> i32 {
+    if x < lo { return lo }
+    if x > hi { return hi }
+    return x
+}
+
+test "inside" { expect_eq(clamp(5, 0, 10), 5) }
+test "below" { expect_eq(clamp(-3, 0, 10), 0) }
+test "above" { expect_eq(clamp(42, 0, 10), 10) }
+test "at the edges" {
+    expect_eq(clamp(0, 0, 10), 0)
+    expect_eq(clamp(10, 0, 10), 10)
+}

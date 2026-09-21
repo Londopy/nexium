@@ -759,3 +759,21 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     showed 64 KiB live). The arena belongs to the block's scope now, whose
     exit actions (defers, drops, then the arena's end) run on every way
     out.
+107. **An exercise is a file whose name says its kind, and one header
+    serves the page and the terminal.** `topo/exercises/<chapter>/` holds
+    a starter per exercise (`fill_`, `fix_`, `write_`, `test_`, `predict_`
+    decide how it is checked), its recorded output where the output is
+    the check, and its solution beside it; a chapter's `quiz.txt` holds
+    questions with the right answer starred and a line of why. The
+    starter's comment header (`// topo: kind`, the task, `// hint:` lines)
+    is what both `site/build.nx` renders and `self/topo.nx` prints, so
+    the two cannot drift, and the harness runs every solution, checks that
+    every starter fails the way its kind says, and that the compiler
+    embeds exactly the files in the directory. A prediction is graded from
+    a `.guess` file rather than a prompt, so the terminal course needs no
+    interaction beyond the quiz and the harness can walk it. Progress is
+    a text file of `done <chapter>/<exercise>` lines in the terminal and a
+    list in the browser's local storage on the site, and the two are not
+    synchronized: nothing to sign into, and the site never sees the
+    reader. The `???` hole is the marker because it is not Nexium: a
+    starter with one cannot compile by accident.

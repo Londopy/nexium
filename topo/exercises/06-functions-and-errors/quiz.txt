@@ -1,0 +1,11 @@
+Q: What does `try f()` do when `f` returns an error?
+- panics with the error's name
+* returns that error from the current function
+- turns the error into `null`
+> `try` hands the error to the caller, whose return type must allow it; `catch` is the form that handles it here.
+
+Q: When does a `defer` statement run?
+- right away
+- only when the function returns an error
+* when the enclosing scope ends, however it ends
+> `defer` runs at scope exit on every path; `errdefer` runs only on the error path.

@@ -1,0 +1,23 @@
+// topo: write it
+// Fill in `is_sorted` so the tests pass: true when every element is at most the next one.
+// hint: `for x, i in xs` gives the index too; an empty or one-element slice is sorted
+fn is_sorted(xs: []i32) -> bool {
+    ???
+}
+
+test "sorted" {
+    let a: [4]i32 = [1, 2, 2, 9]
+    expect(is_sorted(a[..]))
+}
+
+test "not sorted" {
+    let a: [3]i32 = [3, 1, 2]
+    expect(!is_sorted(a[..]))
+}
+
+test "short" {
+    let one: [1]i32 = [7]
+    expect(is_sorted(one[..]))
+    let none = List(i32).new()
+    expect(is_sorted(none[..]))
+}

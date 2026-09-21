@@ -1,0 +1,11 @@
+// topo: fix the error
+// The compile-time test fails; fix `fib` so the program builds and prints the recorded output.
+// hint: the two calls in the recursion should not be the same
+fn fib(n: u32) -> u32 {
+    if n < 2 { return n }
+    return fib(n - 1) + fib(n - 1)
+}
+
+comptime test "fibonacci" { expect_eq(fib(10), 55) }
+
+fn main() { println("{}", .{fib(12)}) }

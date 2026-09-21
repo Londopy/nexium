@@ -10,6 +10,19 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ## [Unreleased]
 
+### Added
+
+- The Topo is a course: twenty-five exercises of five kinds (fill in the
+  blank, fix the error, write it, make the tests pass, predict the output)
+  and four quizzes at the end of chapters 2 to 16, graded by the compiler.
+  `nx topo` runs it in the terminal (the route map with progress, `nx topo
+  <chapter>` writing the exercises to work on, `check`, `hint`, `solution`,
+  `quiz`, `reset`; progress kept beside the update cache, or where
+  `NX_TOPO_PROGRESS` says), and the site shows the same exercises with the
+  solutions folded away, a "done" box per exercise kept in the browser and
+  the count on every chapter link. The harness runs every solution, every
+  starter's failure and a whole chapter through `nx topo`.
+
 ## [1.2.0] - 2026-09-21
 
 *Annapurna: South Face* — the great wall, climbed by siege in 1970: memory safety without a garbage collector. The checker knows where every view points and enforces five rules over it: a view may not be returned inside a value or into an `own` parameter, stored past the storage it points into, read after its container grew or its value moved, and a value made inside `using arena` may not leave the block; `@escape(v)` is the copy that may. The rules are warnings in this release and errors in 1.3, and `--strict` makes them errors now. They found three bugs in the compiler on their first run (a struct literal evaluating out of written order, an arena leaked by an early `return`, two views held by luck), all fixed. The fuzzer runs mutants in debug mode, `nx` says when a newer release exists, and the Windows installer's welcome page carries the topographic contours. The seed is regenerated from the final sources.

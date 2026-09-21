@@ -1,0 +1,10 @@
+// topo: predict the output
+// Write what this prints into predict_nibbles.guess before you run it.
+// hint: 0xA5 is 1010 0101 in binary; sizes are in bits
+fn main() {
+    let byte = b"\xa5"
+    match byte {
+        <<hi:4, lo:4>> => println("{} {}", .{hi, lo}),
+        _ => println("?", .{}),
+    }
+}

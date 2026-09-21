@@ -1,0 +1,8 @@
+fn main() {
+    var counts = Map([]u8, u32).new()
+    for w in ["col", "ridge", "col", "summit", "col"] {
+        let n = counts.get(w) orelse 0
+        counts.put(w, n + 1)
+    }
+    println("{} {} {}", .{counts.len, counts["col"].?, counts.get("summit") orelse 0})
+}

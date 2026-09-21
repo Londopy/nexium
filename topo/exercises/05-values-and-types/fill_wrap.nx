@@ -1,0 +1,7 @@
+// topo: fill in the blank
+// Replace ??? with the addition that wraps around instead of trapping.
+// hint: the chapter's arithmetic section shows three forms of `+`
+fn main() {
+    let small: u8 = 250
+    println("{}", .{small ??? 10})
+}

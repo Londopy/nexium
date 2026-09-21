@@ -1,0 +1,10 @@
+// topo: fix the error
+// The compiler rejects this program; make it build and print the recorded output.
+// hint: a binding that changes is declared with a different keyword
+fn main() {
+    let count = 0
+    for word in "one two three".split(" ") {
+        if word.len > 0 { count += 1 }
+    }
+    println("{} words", .{count})
+}

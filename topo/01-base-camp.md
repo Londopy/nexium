@@ -136,6 +136,31 @@ Some chapters show a program that does not compile, on purpose, next to the
 message the compiler gives. Those are recorded too: if the compiler's words
 change, the page changes with them.
 
+## Exercises
+
+Most chapters end with exercises, and the compiler grades them. There are
+five kinds: *fill in the blank* (a program with a hole marked `???` that
+must print the recorded output), *fix the error* (a program the compiler
+rejects), *write it* and *make the tests pass* (a function under tests),
+and *predict the output* (say what a program prints before running it).
+On the page each one shows its code, with the hints and the solution
+folded away and a box to tick when it is done; the ticks are kept by your
+browser and show on the chapter list at the left. In the terminal, `nx
+topo` is the same course:
+
+```bash
+nx topo            # the route map, with what is done
+nx topo 5          # writes chapter 5's exercises into topo-05-values-and-types/
+nx topo check      # grades them: the compiler runs each one against its recorded output
+nx topo hint topo-05-values-and-types/fill_wrap.nx
+nx topo quiz 5     # the chapter's questions
+```
+
+The exercises are files in the repository under `topo/exercises/`, and the
+test suite runs every solution, so they cannot rot. The chapters without
+exercises yet are the projects and the later ones; they grow as the book
+does.
+
 ## The route ahead
 
 1. Hello, world: what `nx run` does.

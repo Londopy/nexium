@@ -1,0 +1,8 @@
+struct Note { text: String }
+
+fn keep(own text: String) -> Note { return Note{ .text = text } }
+
+fn main() {
+    let n = keep(String.from("bring rope"))
+    println("{}", .{n.text})
+}

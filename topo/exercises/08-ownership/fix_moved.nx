@@ -1,0 +1,11 @@
+// topo: fix the error
+// `names` is used after it was moved; make the program print the recorded output, keeping both lists.
+// hint: `.clone()` makes an independent copy
+fn main() {
+    var names = List(String).new()
+    names.append(String.from("ridge"))
+    names.append(String.from("col"))
+    let backup = names
+    names.append(String.from("summit"))
+    println("{} {}", .{names.len, backup.len})
+}

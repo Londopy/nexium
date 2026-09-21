@@ -1,0 +1,14 @@
+// topo: fill in the blank
+// Replace ??? with the bounds that let only functions which neither allocate nor panic be passed to `apply`.
+// hint: bounds on a function type are written after its return type, each with a `!`
+fn apply(xs: []mut f64, f: fn(f64) -> f64 ???) {
+    for i in 0..xs.len { xs[i] = f(xs[i]) }
+}
+
+fn halve(x: f64) -> f64 { return x / 2.0 }
+
+fn main() {
+    var xs = [2.0, 4.0]
+    apply(xs[..], halve)
+    println("{:.1} {:.1}", .{xs[0], xs[1]})
+}

@@ -1,0 +1,477 @@
+//! `nx topo`: the Topo as a course, in the terminal. The exercises of every
+//! chapter are embedded in the compiler: `nx topo <chapter>` writes them
+//! into a directory to work in, `nx topo check` grades them with the
+//! compiler and keeps the progress, `nx topo hint` and `nx topo solution`
+//! help, `nx topo quiz <chapter>` asks the chapter's questions, and
+//! `nx topo` alone is the route map with each pitch ticked.
+//!
+//! An exercise is a file under `topo/exercises/<chapter>/` whose name says
+//! its kind: `fill_` (a hole marked `???` to fill so the program prints the
+//! recorded output), `fix_` (a program the compiler rejects), `write_` and
+//! `test_` (tests that must pass), `predict_` (the output, written into a
+//! `.guess` file before running). Solutions live beside them; the harness
+//! runs every one.
+
+import std.fs
+import std.strings
+import std.process
+
+/// A chapter of the Topo.
+pub struct Chapter { n: usize, dir: []u8, title: []u8 }
+
+/// An exercise: the starter the reader edits, its recorded output (empty
+/// when the tests are the check), the solution.
+pub struct Exercise {
+    chapter: usize
+    dir: []u8
+    name: []u8
+    source: []u8
+    expected: []u8
+    solution: []u8
+}
+
+/// A chapter's quiz: questions with one right answer each.
+pub struct Quiz { chapter: usize, dir: []u8, text: []u8 }
+
+fn chapters() -> List(Chapter) {
+    var out = List(Chapter).new()
+    out.append(Chapter{ .n = 1, .dir = "01-base-camp", .title = "Base camp" })
+    out.append(Chapter{ .n = 2, .dir = "02-hello-world", .title = "Hello, world" })
+    out.append(Chapter{ .n = 3, .dir = "03-first-script", .title = "Your first script" })
+    out.append(Chapter{ .n = 4, .dir = "04-the-repl", .title = "The REPL" })
+    out.append(Chapter{ .n = 5, .dir = "05-values-and-types", .title = "Values and types" })
+    out.append(Chapter{ .n = 6, .dir = "06-functions-and-errors", .title = "Functions and errors" })
+    out.append(Chapter{ .n = 7, .dir = "07-structs-enums-traits", .title = "Structs, enums and traits" })
+    out.append(Chapter{ .n = 8, .dir = "08-ownership", .title = "Ownership" })
+    out.append(Chapter{ .n = 9, .dir = "09-collections", .title = "Collections" })
+    out.append(Chapter{ .n = 10, .dir = "10-project-calculator", .title = "Project: a calculator" })
+    out.append(Chapter{ .n = 11, .dir = "11-project-todo", .title = "Project: a to-do list" })
+    out.append(Chapter{ .n = 12, .dir = "12-binary-patterns", .title = "Binary patterns" })
+    out.append(Chapter{ .n = 13, .dir = "13-comptime", .title = "Compile time" })
+    out.append(Chapter{ .n = 14, .dir = "14-testing", .title = "Tests" })
+    out.append(Chapter{ .n = 15, .dir = "15-effects", .title = "Effects" })
+    out.append(Chapter{ .n = 16, .dir = "16-concurrency", .title = "Threads and parallel loops" })
+    out.append(Chapter{ .n = 17, .dir = "17-networking", .title = "A network service" })
+    out.append(Chapter{ .n = 18, .dir = "18-your-first-gui", .title = "Your first GUI" })
+    out.append(Chapter{ .n = 19, .dir = "19-packages", .title = "Packages" })
+    out.append(Chapter{ .n = 20, .dir = "20-shipping", .title = "Shipping a library" })
+    out.append(Chapter{ .n = 21, .dir = "21-project-neural-network", .title = "Project: a neural network" })
+    out.append(Chapter{ .n = 22, .dir = "22-tools", .title = "The tools" })
+    out.append(Chapter{ .n = 23, .dir = "23-summit", .title = "The summit" })
+    return out
+}
+
+fn ex(out: *mut List(Exercise), chapter: usize, dir: []u8, name: []u8, source: []u8, expected: []u8, solution: []u8) {
+    out.append(Exercise{ .chapter = chapter, .dir = dir, .name = name, .source = source, .expected = expected, .solution = solution })
+}
+
+/// Every exercise, embedded from `topo/exercises/` (the harness checks the
+/// directory and this list agree).
+pub fn exercises() -> List(Exercise) {
+    var out = List(Exercise).new()
+    ex(&mut out, 2, "02-hello-world", "fill_greeting", @embedFile("../topo/exercises/02-hello-world/fill_greeting.nx"), @embedFile("../topo/exercises/02-hello-world/fill_greeting.expected"), @embedFile("../topo/exercises/02-hello-world/fill_greeting.solution.nx"))
+    ex(&mut out, 2, "02-hello-world", "predict_pitches", @embedFile("../topo/exercises/02-hello-world/predict_pitches.nx"), @embedFile("../topo/exercises/02-hello-world/predict_pitches.expected"), "")
+    ex(&mut out, 3, "03-first-script", "fix_count_words", @embedFile("../topo/exercises/03-first-script/fix_count_words.nx"), @embedFile("../topo/exercises/03-first-script/fix_count_words.expected"), @embedFile("../topo/exercises/03-first-script/fix_count_words.solution.nx"))
+    ex(&mut out, 3, "03-first-script", "write_initials", @embedFile("../topo/exercises/03-first-script/write_initials.nx"), @embedFile("../topo/exercises/03-first-script/write_initials.expected"), @embedFile("../topo/exercises/03-first-script/write_initials.solution.nx"))
+    ex(&mut out, 5, "05-values-and-types", "fill_wrap", @embedFile("../topo/exercises/05-values-and-types/fill_wrap.nx"), @embedFile("../topo/exercises/05-values-and-types/fill_wrap.expected"), @embedFile("../topo/exercises/05-values-and-types/fill_wrap.solution.nx"))
+    ex(&mut out, 5, "05-values-and-types", "fix_widths", @embedFile("../topo/exercises/05-values-and-types/fix_widths.nx"), @embedFile("../topo/exercises/05-values-and-types/fix_widths.expected"), @embedFile("../topo/exercises/05-values-and-types/fix_widths.solution.nx"))
+    ex(&mut out, 5, "05-values-and-types", "predict_slices", @embedFile("../topo/exercises/05-values-and-types/predict_slices.nx"), @embedFile("../topo/exercises/05-values-and-types/predict_slices.expected"), "")
+    ex(&mut out, 6, "06-functions-and-errors", "fill_orelse", @embedFile("../topo/exercises/06-functions-and-errors/fill_orelse.nx"), @embedFile("../topo/exercises/06-functions-and-errors/fill_orelse.expected"), @embedFile("../topo/exercises/06-functions-and-errors/fill_orelse.solution.nx"))
+    ex(&mut out, 6, "06-functions-and-errors", "write_letter", @embedFile("../topo/exercises/06-functions-and-errors/write_letter.nx"), @embedFile("../topo/exercises/06-functions-and-errors/write_letter.expected"), @embedFile("../topo/exercises/06-functions-and-errors/write_letter.solution.nx"))
+    ex(&mut out, 7, "07-structs-enums-traits", "fill_corners", @embedFile("../topo/exercises/07-structs-enums-traits/fill_corners.nx"), @embedFile("../topo/exercises/07-structs-enums-traits/fill_corners.expected"), @embedFile("../topo/exercises/07-structs-enums-traits/fill_corners.solution.nx"))
+    ex(&mut out, 7, "07-structs-enums-traits", "write_area", @embedFile("../topo/exercises/07-structs-enums-traits/write_area.nx"), @embedFile("../topo/exercises/07-structs-enums-traits/write_area.expected"), @embedFile("../topo/exercises/07-structs-enums-traits/write_area.solution.nx"))
+    ex(&mut out, 8, "08-ownership", "fix_moved", @embedFile("../topo/exercises/08-ownership/fix_moved.nx"), @embedFile("../topo/exercises/08-ownership/fix_moved.expected"), @embedFile("../topo/exercises/08-ownership/fix_moved.solution.nx"))
+    ex(&mut out, 8, "08-ownership", "fill_own", @embedFile("../topo/exercises/08-ownership/fill_own.nx"), @embedFile("../topo/exercises/08-ownership/fill_own.expected"), @embedFile("../topo/exercises/08-ownership/fill_own.solution.nx"))
+    ex(&mut out, 8, "08-ownership", "predict_refcount", @embedFile("../topo/exercises/08-ownership/predict_refcount.nx"), @embedFile("../topo/exercises/08-ownership/predict_refcount.expected"), "")
+    ex(&mut out, 9, "09-collections", "fill_counts", @embedFile("../topo/exercises/09-collections/fill_counts.nx"), @embedFile("../topo/exercises/09-collections/fill_counts.expected"), @embedFile("../topo/exercises/09-collections/fill_counts.solution.nx"))
+    ex(&mut out, 9, "09-collections", "write_unique", @embedFile("../topo/exercises/09-collections/write_unique.nx"), @embedFile("../topo/exercises/09-collections/write_unique.expected"), @embedFile("../topo/exercises/09-collections/write_unique.solution.nx"))
+    ex(&mut out, 12, "12-binary-patterns", "fill_frame", @embedFile("../topo/exercises/12-binary-patterns/fill_frame.nx"), @embedFile("../topo/exercises/12-binary-patterns/fill_frame.expected"), @embedFile("../topo/exercises/12-binary-patterns/fill_frame.solution.nx"))
+    ex(&mut out, 12, "12-binary-patterns", "predict_nibbles", @embedFile("../topo/exercises/12-binary-patterns/predict_nibbles.nx"), @embedFile("../topo/exercises/12-binary-patterns/predict_nibbles.expected"), "")
+    ex(&mut out, 13, "13-comptime", "fix_fib", @embedFile("../topo/exercises/13-comptime/fix_fib.nx"), @embedFile("../topo/exercises/13-comptime/fix_fib.expected"), @embedFile("../topo/exercises/13-comptime/fix_fib.solution.nx"))
+    ex(&mut out, 13, "13-comptime", "fill_table", @embedFile("../topo/exercises/13-comptime/fill_table.nx"), @embedFile("../topo/exercises/13-comptime/fill_table.expected"), @embedFile("../topo/exercises/13-comptime/fill_table.solution.nx"))
+    ex(&mut out, 14, "14-testing", "test_clamp", @embedFile("../topo/exercises/14-testing/test_clamp.nx"), "", @embedFile("../topo/exercises/14-testing/test_clamp.solution.nx"))
+    ex(&mut out, 14, "14-testing", "write_is_sorted", @embedFile("../topo/exercises/14-testing/write_is_sorted.nx"), "", @embedFile("../topo/exercises/14-testing/write_is_sorted.solution.nx"))
+    ex(&mut out, 15, "15-effects", "fix_promise", @embedFile("../topo/exercises/15-effects/fix_promise.nx"), @embedFile("../topo/exercises/15-effects/fix_promise.expected"), @embedFile("../topo/exercises/15-effects/fix_promise.solution.nx"))
+    ex(&mut out, 15, "15-effects", "fill_bound", @embedFile("../topo/exercises/15-effects/fill_bound.nx"), @embedFile("../topo/exercises/15-effects/fill_bound.expected"), @embedFile("../topo/exercises/15-effects/fill_bound.solution.nx"))
+    ex(&mut out, 16, "16-concurrency", "fill_join", @embedFile("../topo/exercises/16-concurrency/fill_join.nx"), @embedFile("../topo/exercises/16-concurrency/fill_join.expected"), @embedFile("../topo/exercises/16-concurrency/fill_join.solution.nx"))
+    return out
+}
+
+/// Every quiz, embedded from `topo/exercises/<chapter>/quiz.txt`.
+pub fn quizzes() -> List(Quiz) {
+    var out = List(Quiz).new()
+    out.append(Quiz{ .chapter = 5, .dir = "05-values-and-types", .text = @embedFile("../topo/exercises/05-values-and-types/quiz.txt") })
+    out.append(Quiz{ .chapter = 6, .dir = "06-functions-and-errors", .text = @embedFile("../topo/exercises/06-functions-and-errors/quiz.txt") })
+    out.append(Quiz{ .chapter = 8, .dir = "08-ownership", .text = @embedFile("../topo/exercises/08-ownership/quiz.txt") })
+    out.append(Quiz{ .chapter = 15, .dir = "15-effects", .text = @embedFile("../topo/exercises/15-effects/quiz.txt") })
+    return out
+}
+
+// ----- what an exercise says about itself ------------------------------------------
+
+/// The kind of an exercise, from its name's prefix.
+pub fn kind_of(name: []u8) -> []u8 {
+    if let i = name.find("_") { return name[..i] }
+    return name
+}
+
+pub fn kind_label(kind: []u8) -> []u8 {
+    if kind == "fill" { return "fill in the blank" }
+    if kind == "fix" { return "fix the error" }
+    if kind == "write" { return "write it" }
+    if kind == "test" { return "make the tests pass" }
+    if kind == "predict" { return "predict the output" }
+    return kind
+}
+
+/// The task: the comment lines after `// topo:` up to the first hint or code.
+pub fn task_lines(source: []u8) -> List([]u8) {
+    var out = List([]u8).new()
+    var first = true
+    for l in source.lines() {
+        let t = l.trim()
+        if first { first = false; continue }
+        if t.starts_with("// hint:") { continue }
+        if let rest = strings.strip_prefix(t, "//") {
+            let r = rest.trim()
+            if r.len > 0 { out.append(r) }
+            continue
+        }
+        break
+    }
+    return out
+}
+
+/// The hints: every `// hint:` line of the header.
+pub fn hints(source: []u8) -> List([]u8) {
+    var out = List([]u8).new()
+    for l in source.lines() {
+        let t = l.trim()
+        if let rest = strings.strip_prefix(t, "// hint:") { out.append(rest.trim()); continue }
+        if !t.starts_with("//") { break }
+    }
+    return out
+}
+
+// ----- progress -------------------------------------------------------------------------
+
+fn load_done(path: []u8) -> List(String) {
+    var out = List(String).new()
+    let text = fs.read(path) catch { return out }
+    for l in text[..].lines() {
+        if let rest = strings.strip_prefix(l.trim(), "done ") { out.append(String.from(rest.trim())) }
+    }
+    return out
+}
+
+fn is_done(done: *List(String), key: []u8) -> bool {
+    for d in done.*{ if d[..] == key { return true } }
+    return false
+}
+
+fn mark_done(path: []u8, key: []u8) {
+    if path.len == 0 { return }
+    let done = load_done(path)
+    if is_done(&done, key) { return }
+    let parent = fs.parent(path)
+    if parent.len > 0 { fs.make_dirs(parent) catch { } }
+    fs.append(path, format("done {}\n", .{key})[..]) catch { eprintln("note: cannot record progress in {}", .{path}) }
+}
+
+fn normalize(s: []u8) -> String {
+    return strings.replace(s, "\r\n", "\n")
+}
+
+/// The first line where two texts differ, or null when they agree.
+fn first_difference(expected: []u8, got: []u8) -> ?(usize, []u8, []u8) {
+    var el = List([]u8).new()
+    var gl = List([]u8).new()
+    for l in expected.lines() { el.append(l) }
+    for l in got.lines() { gl.append(l) }
+    let n = if el.len > gl.len { el.len } else { gl.len }
+    for i in 0..n {
+        let e = if i < el.len { el[i] } else { "" }
+        let g = if i < gl.len { gl[i] } else { "" }
+        if e != g { return (i + 1, e, g) }
+    }
+    return null
+}
+
+// ----- the commands -----------------------------------------------------------------
+
+fn chapter_by_number(n: usize) -> ?Chapter {
+    for c in chapters() { if c.n == n { return c } }
+    return null
+}
+
+/// The exercise a file stands for: its directory names the chapter
+/// (`topo-05-values-and-types` or the repository's `05-values-and-types`),
+/// its stem the exercise.
+fn exercise_for(path: []u8) -> ?Exercise {
+    let dir_name = fs.base_name(fs.parent(path))
+    let dir = strings.strip_prefix(dir_name, "topo-") orelse dir_name
+    let stem = fs.stem(path)
+    for e in exercises() {
+        if e.dir == dir and e.name == stem { return e }
+    }
+    return null
+}
+
+fn print_map(progress: []u8) {
+    let done = load_done(progress)
+    let all = exercises()
+    let qs = quizzes()
+    println("The Topo, chapter by chapter; `nx topo <n>` starts one, `nx topo check` grades it", .{})
+    for c in chapters() {
+        var total: usize = 0
+        var have: usize = 0
+        for e in all {
+            if e.chapter != c.n { continue }
+            total += 1
+            if is_done(&done, format("{}/{}", .{e.dir, e.name})[..]) { have += 1 }
+        }
+        for q in qs {
+            if q.chapter != c.n { continue }
+            total += 1
+            if is_done(&done, format("{}/quiz", .{q.dir})[..]) { have += 1 }
+        }
+        var status = String.new()
+        if total > 0 {
+            status = if have == total { format("{}/{} done, all of it", .{have, total}) } else { format("{}/{} done", .{have, total}) }
+        }
+        println("  {>2}  {<28} {}", .{c.n, c.title, status})
+    }
+}
+
+fn start(n: usize) -> i32 {
+    let c = chapter_by_number(n) orelse { eprintln("error: there is no chapter {}; `nx topo` lists them", .{n}); return 2 }
+    var mine = List(Exercise).new()
+    for e in exercises() { if e.chapter == n { mine.append(e) } }
+    var has_quiz = false
+    for q in quizzes() { if q.chapter == n { has_quiz = true } }
+    if mine.len == 0 and !has_quiz {
+        println("chapter {}, {}: no exercises yet; read it on the site and move on", .{n, c.title})
+        return 0
+    }
+    let dir = format("topo-{}", .{c.dir})
+    fs.make_dirs(dir[..]) catch { eprintln("error: cannot create {}", .{dir}); return 1 }
+    println("chapter {}, {}: {} exercise(s) in {}/", .{n, c.title, mine.len, dir})
+    for e in mine {
+        let path = fs.join(dir[..], format("{}.nx", .{e.name})[..])
+        if !fs.exists(path[..]) { fs.write(path[..], e.source) catch { eprintln("error: cannot write {}", .{path}); return 1 } }
+        if e.expected.len > 0 and kind_of(e.name) != "predict" {
+            fs.write(fs.join(dir[..], format("{}.expected", .{e.name})[..])[..], e.expected) catch { }
+        }
+        if kind_of(e.name) == "predict" {
+            let guess = fs.join(dir[..], format("{}.guess", .{e.name})[..])
+            if !fs.exists(guess[..]) { fs.write(guess[..], "") catch { } }
+        }
+        let task = task_lines(e.source)
+        let first = if task.len > 0 { task[0] } else { "" }
+        println("  {<24} {<20} {}", .{format("{}.nx", .{e.name}), kind_label(kind_of(e.name)), first})
+    }
+    println("edit them, then `nx topo check {}`; `nx topo hint {}/<file>` when stuck", .{dir, dir})
+    if has_quiz { println("the chapter has a quiz too: `nx topo quiz {}`", .{n}) }
+    return 0
+}
+
+/// Why an exercise file does not pass yet, or null when it does.
+fn check_one(e: *Exercise, path: []u8, exe: []u8) -> ?String {
+    let text = fs.read(path) catch { return format("cannot read {}", .{path}) }
+    let kind = kind_of(e.name)
+    if kind != "predict" {
+        for l, i in text[..].lines() {
+            if l.trim().starts_with("//") { continue }
+            if l.find("???") != null { return format("still has a hole (???) on line {}", .{i + 1}) }
+        }
+    }
+    let out_dir = fs.join(fs.temp_dir()[..], "nexium-topo")
+    if kind == "fill" or kind == "fix" {
+        let r = process.run([exe, "run", path, "--out-dir", out_dir[..]][..]) catch { return format("cannot run {}", .{exe}) }
+        if r.code != 0 { return format("does not build or run (exit {}):\n{}", .{r.code, r.stderr[..].trim()}) }
+        let got = normalize(r.stdout[..])
+        let want = normalize(e.expected)
+        if let d = first_difference(want[..].trim(), got[..].trim()) {
+            return format("the output differs on line {}: it prints `{}`, the chapter recorded `{}`", .{d.0, d.2, d.1})
+        }
+        return null
+    }
+    if kind == "write" or kind == "test" {
+        let r = process.run([exe, "test", path, "--out-dir", out_dir[..]][..]) catch { return format("cannot run {}", .{exe}) }
+        if r.code != 0 {
+            var msg = String.from("the tests do not pass:\n")
+            msg.append(r.stdout[..].trim())
+            if r.stderr.len > 0 { msg.append("\n"); msg.append(r.stderr[..].trim()) }
+            return msg
+        }
+        return null
+    }
+    if kind == "predict" {
+        let guess_path = fs.with_extension(path, "guess")
+        let guess = fs.read(guess_path[..]) catch { return format("write what it prints into {} first", .{fs.base_name(guess_path[..])}) }
+        let g = normalize(guess[..])
+        if g[..].trim().len == 0 { return format("write what it prints into {} first", .{fs.base_name(guess_path[..])}) }
+        let want = normalize(e.expected)
+        if let d = first_difference(want[..].trim(), g[..].trim()) {
+            return format("the guess differs on line {}: you wrote `{}`, the program prints `{}`; run it and see why", .{d.0, d.2, d.1})
+        }
+        return null
+    }
+    return format("unknown kind of exercise `{}`", .{kind})
+}
+
+fn check(paths: [][]u8, exe: []u8, progress: []u8) -> i32 {
+    var files = List(String).new()
+    var roots = List(String).new()
+    for p in paths { roots.append(String.from(p)) }
+    if roots.len == 0 {
+        // every chapter directory here
+        let names = fs.list(".") catch { List(String).new() }
+        for nm in names { if nm[..].starts_with("topo-") and fs.is_dir(nm[..]) { roots.append(nm.clone()) } }
+        if roots.len == 0 { eprintln("nothing to check here: `nx topo <n>` starts a chapter, or name a file or directory", .{}); return 2 }
+    }
+    for r in roots {
+        if fs.is_dir(r[..]) {
+            let names = fs.list(r[..]) catch { List(String).new() }
+            for nm in names { if nm[..].ends_with(".nx") { files.append(fs.join(r[..], nm[..])) } }
+        } else {
+            files.append(r.clone())
+        }
+    }
+    var passed: usize = 0
+    var total: usize = 0
+    for f in files {
+        let e = exercise_for(f[..]) orelse { continue }
+        total += 1
+        if let why = check_one(&e, f[..], exe) {
+            println("  --   {}: {}", .{f, why})
+        } else {
+            println("  ok   {}", .{f})
+            passed += 1
+            mark_done(progress, format("{}/{}", .{e.dir, e.name})[..])
+        }
+    }
+    if total == 0 { eprintln("no exercise files found; `nx topo <n>` writes a chapter's", .{}); return 2 }
+    if passed == total { println("{} of {} pass; the chapter is done, `nx topo` shows the map", .{passed, total}); return 0 }
+    println("{} of {} pass", .{passed, total})
+    return 1
+}
+
+fn show_hint(path: []u8) -> i32 {
+    let e = exercise_for(path) orelse { eprintln("error: {} is not one of the Topo's exercises", .{path}); return 2 }
+    let hs = hints(e.source)
+    if hs.len == 0 { println("no hints for {}; the chapter's text is the hint", .{e.name}); return 0 }
+    for h, i in hs { println("hint {}: {}", .{i + 1, h}) }
+    return 0
+}
+
+fn show_solution(path: []u8) -> i32 {
+    let e = exercise_for(path) orelse { eprintln("error: {} is not one of the Topo's exercises", .{path}); return 2 }
+    if e.solution.len == 0 {
+        println("{} has no solution file: run it and read the output", .{e.name})
+        return 0
+    }
+    print("{}", .{e.solution})
+    return 0
+}
+
+/// One question of a quiz: the text, the choices, which is right, why.
+struct Question { text: String, choices: List(String), right: usize, why: String }
+
+fn parse_quiz(text: []u8) -> List(Question) {
+    var out = List(Question).new()
+    var cur = Question{ .text = String.new(), .choices = List(String).new(), .right = 0, .why = String.new() }
+    for l in text.lines() {
+        let t = l.trim()
+        if t.len == 0 {
+            if cur.text.len > 0 { out.append(cur) }
+            cur = Question{ .text = String.new(), .choices = List(String).new(), .right = 0, .why = String.new() }
+            continue
+        }
+        if let q = strings.strip_prefix(t, "Q:") { cur.text = String.from(q.trim()); continue }
+        if let c = strings.strip_prefix(t, "* ") { cur.right = cur.choices.len; cur.choices.append(String.from(c)); continue }
+        if let c = strings.strip_prefix(t, "- ") { cur.choices.append(String.from(c)); continue }
+        if let w = strings.strip_prefix(t, ">") { cur.why = String.from(w.trim()); continue }
+    }
+    if cur.text.len > 0 { out.append(cur) }
+    return out
+}
+
+fn quiz(n: usize, progress: []u8) -> i32 {
+    let c = chapter_by_number(n) orelse { eprintln("error: there is no chapter {}; `nx topo` lists them", .{n}); return 2 }
+    var text: []u8 = ""
+    for q in quizzes() { if q.chapter == n { text = q.text } }
+    if text.len == 0 { println("chapter {}, {}: no quiz yet", .{n, c.title}); return 0 }
+    let qs = parse_quiz(text)
+    println("chapter {}, {}: {} question(s); answer with a number", .{n, c.title, qs.len})
+    var right: usize = 0
+    for q, qi in qs {
+        println("", .{})
+        println("{}. {}", .{qi + 1, q.text})
+        for ch, i in q.choices { println("   {}) {}", .{i + 1, ch}) }
+        print("> ", .{})
+        let line = io.read_line() orelse { println("", .{}); break }
+        let pick = line[..].trim().parse_int(usize) catch { 0 }
+        if pick == q.right + 1 {
+            right += 1
+            println("right. {}", .{q.why})
+        } else {
+            println("no: {}) {}. {}", .{q.right + 1, q.choices[q.right], q.why})
+        }
+    }
+    println("", .{})
+    println("{} of {} right", .{right, qs.len})
+    if right == qs.len { mark_done(progress, format("{}/quiz", .{c.dir})[..]); return 0 }
+    return 1
+}
+
+fn list_all() -> i32 {
+    for e in exercises() { println("{}/{}", .{e.dir, e.name}) }
+    for q in quizzes() { println("{}/quiz", .{q.dir}) }
+    return 0
+}
+
+fn usage() {
+    eprintln("usage: nx topo                       the route map and your progress", .{})
+    eprintln("       nx topo <chapter>             write the chapter's exercises into topo-<chapter>/", .{})
+    eprintln("       nx topo check [file|dir ...]  grade them with the compiler (all topo-*/ here by default)", .{})
+    eprintln("       nx topo hint <file>           the hints of an exercise", .{})
+    eprintln("       nx topo solution <file>       its solution", .{})
+    eprintln("       nx topo quiz <chapter>        the chapter's questions", .{})
+    eprintln("       nx topo reset                 forget the progress", .{})
+}
+
+/// `nx topo ...`: `args` are the words after `topo`; `exe` is this compiler,
+/// `progress` the file that keeps what is done ("" keeps nothing).
+pub fn run(args: [][]u8, exe: []u8, progress: []u8) -> i32 {
+    if args.len == 0 { print_map(progress); return 0 }
+    let cmd = args[0]
+    if cmd == "check" { return check(args[1..], exe, progress) }
+    if cmd == "hint" {
+        if args.len < 2 { usage(); return 2 }
+        return show_hint(args[1])
+    }
+    if cmd == "solution" {
+        if args.len < 2 { usage(); return 2 }
+        return show_solution(args[1])
+    }
+    if cmd == "quiz" {
+        if args.len < 2 { usage(); return 2 }
+        let n = args[1].parse_int(usize) catch { usage(); return 2 }
+        return quiz(n, progress)
+    }
+    if cmd == "reset" {
+        if progress.len > 0 { fs.remove(progress) catch { } }
+        println("progress forgotten", .{})
+        return 0
+    }
+    if cmd == "list" { return list_all() }
+    let n = cmd.parse_int(usize) catch { 0 }
+    if n > 0 { return start(n) }
+    if cmd == "start" and args.len >= 2 {
+        let n = args[1].parse_int(usize) catch { usage(); return 2 }
+        return start(n)
+    }
+    usage()
+    return 2
+}
