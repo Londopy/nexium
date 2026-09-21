@@ -28,6 +28,15 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Added
 
+- `artifact cli { stack = "1G" }`: `main` runs on a thread reserving that
+  much stack (`"64K"`, `"256M"`, `"1G"` or a byte count), so a recursion
+  deeper than the platform's default completes; the reservation is address
+  space, committed as the program reaches it, and a 32-bit process caps it
+  at 256 MB. The compiler declares a gigabyte for itself, and compile-time
+  evaluation may now nest 1000 calls (it stopped at 32 since the fuzzer
+  found the unbounded case; each nested call costs about 165 KiB of the
+  compiler's stack). A spec case recurses 300,000 deep at run time and 300
+  deep at compile time.
 - A Sublime Text build system, `editors/sublime/Nexium.sublime-build`:
   Ctrl+B runs the file, the variants test, check, build and print its
   effects, and a diagnostic's `--> file:line:col` line is clickable.

@@ -1,0 +1,23 @@
+// SPEC 3 and 15: `artifact cli { stack = ... }` runs `main` on a thread with
+// that much stack, so a recursion far deeper than the default stack allows
+// completes; and compile-time evaluation nests hundreds of calls (the
+// compiler declares a gigabyte for itself).
+artifact cli { name = "entry_stack", stack = "512M" }
+
+fn deep(n: u64, seen: *mut List(u64)) -> u64 {
+    if n == 0 { return 0 }
+    if n % 100000 == 0 { seen.append(n) }
+    return deep(n - 1, seen) + 1
+}
+
+fn down(n: u64) -> u64 {
+    if n == 0 { return 0 }
+    return down(n - 1) + 1
+}
+const D: u64 = comptime down(300)
+
+fn main() {
+    var seen = List(u64).new()
+    let depth = deep(300000, &mut seen)
+    println("{} {} {}", .{depth, seen.len, D})
+}

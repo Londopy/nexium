@@ -8649,7 +8649,7 @@ const STEP_BUDGET: u64 = 20000000
 /// function scope), so a runaway recursion must become a diagnostic well
 /// before an 8 MiB stack runs out (KNOWN_ISSUES: the limit rises when the
 /// compiler runs its work on a thread with a stack of its own).
-const CALL_DEPTH: usize = 32
+const CALL_DEPTH: usize = 1000
 
 // control flow out of a statement or block
 const FL_NEXT: u8 = 0

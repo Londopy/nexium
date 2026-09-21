@@ -10,19 +10,6 @@ Fixed bugs are not listed here; `CHANGELOG.md` and `git log` have them.
 
 ## Compiler
 
-- **Compile-time recursion is limited to 32 nested calls.** The
-  compile-time interpreter recurses on the compiler's own stack, and each
-  nested call costs about 165 KiB of it (the interpreter's large functions
-  declare every temporary at function scope in the generated C), so a
-  `comptime` call chain 100 deep overflowed a 16 MiB stack and crashed
-  the compiler (found by the fuzzer, which turned `fib` into an unbounded
-  recursion). The interpreter now stops at 32 nested calls with a
-  diagnostic; `fib(30)` is fine (its depth is 30), a recursive descent
-  parser at compile time may not be. Planned fix: `artifact cli { stack
-  = "1G" }`, a runtime `nx_run_on_stack` that runs `main` on a thread with
-  that reservation, and the compiler declaring it for itself, after which
-  the limit becomes a few thousand; separately, `self/cgen.nx` scoping
-  temporaries to their blocks would shrink every frame.
 - **No `.clone()` on user structs.** `List`, `String` and `Map` clone, but a
   struct holding them cannot be copied without writing a function by hand;
   code that needs a copy of a list element must return an index instead

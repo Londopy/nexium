@@ -66,6 +66,22 @@ binary into an installer:
 Each job is a few lines and is annotated in the template. Turn one on by
 setting its `if:` to `true`.
 
+## The stack `main` runs on
+
+`artifact cli` also takes `stack`, the size of the stack `main` runs on:
+
+```nexium
+artifact cli { name = "taskdesk", stack = "256M" }
+```
+
+`"64K"`, `"256M"`, `"1G"` or a count of bytes. The program's `main` then
+runs on a thread reserving that much, whatever the platform's default is
+(eight megabytes on Linux and macOS, one to sixteen on Windows depending
+on the toolchain), so a recursion deeper than the default gets the room it
+declared. The reservation is address space; pages are committed as the
+program reaches them. The compiler declares a gigabyte for itself, which is
+what lets compile-time evaluation nest a thousand calls.
+
 ## An installer for your program
 
 Declare it next to the `cli` artifact and `nx ship` produces one:

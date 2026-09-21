@@ -91,6 +91,9 @@ pub struct Gen {
     c: *mut check.Checker
     mode: u8
     entry: u8
+    /// `artifact cli { stack = ... }`: main runs on a thread reserving this
+    /// many bytes (0: the platform's default stack)
+    stack_bytes: u64
     /// the exported functions, in order, for the artifacts
     exports: List(ExportInfo)
     types_out: String
@@ -233,7 +236,7 @@ pub fn new_gen(c: *mut check.Checker, mode: u8, entry: u8) -> Gen {
         starts.append(v)
     }
     return Gen{
-        .c = c, .exports = List(ExportInfo).new(), .mode = mode, .entry = entry,
+        .c = c, .exports = List(ExportInfo).new(), .mode = mode, .entry = entry, .stack_bytes = 0,
         .types_out = String.new(), .forward_only = List(usize).new(), .runtime_idents = idents,
         .fwd_out = String.new(), .protos_out = String.new(), .helpers_out = String.new(), .data_out = String.new(), .funcs_out = String.new(),
         .type_names = Map(usize, String).new(), .emitted_names = Map(String, bool).new(),
@@ -4552,7 +4555,8 @@ impl Gen {
         let target = self.fn_c_name(main)
         let ret_t = self.res(self.c.insts[main].ret)
         var out = String.new()
-        out.append("int main(int argc, char** argv) {\n  nx_console_utf8();\n  nx_ctx ctx = nx_default_ctx(argc, argv);\n  nx_ctx_track_self(&ctx);\n  nx_boundary b; b.track = NULL; nx_tls_boundary = &b;\n  if (setjmp(b.jb)) { fflush(stdout); fprintf(stderr, \"panic: %s\\n  at %s\\n\", b.msg, b.loc); return 101; }\n")
+        out.append(self.entry_head()[..])
+        out.append("  nx_console_utf8();\n  nx_ctx ctx = nx_default_ctx(argc, argv);\n  nx_ctx_track_self(&ctx);\n  nx_boundary b; b.track = NULL; nx_tls_boundary = &b;\n  if (setjmp(b.jb)) { fflush(stdout); fprintf(stderr, \"panic: %s\\n  at %s\\n\", b.msg, b.loc); return 101; }\n")
         if self.c.insts[main].params.len > 0 { self.errors.append(String.from("`main` takes no parameters; read arguments with `os.args()`")) }
         let rk = self.c.tys.kind(ret_t)
         if rk == check.TK.Void {
@@ -4567,12 +4571,29 @@ impl Gen {
             self.errors.append(String.from("`main` must return `void`, `!void`, or an integer exit code"))
         }
         out.append("}\n")
+        self.entry_tail(&mut out)
         return out
+    }
+
+    /// The opening line of the C entry point: `main` itself, or the body that
+    /// `main` runs on a thread with the declared stack (see `entry_tail`).
+    fn entry_head(self: *mut Self) -> String {
+        if self.stack_bytes > 0 { return String.from("static int nx_main_body(int argc, char** argv) {\n") }
+        return String.from("int main(int argc, char** argv) {\n")
+    }
+
+    /// With `artifact cli { stack = ... }`: the real `main`, which runs the
+    /// body on a thread reserving that much stack (`nx_run_on_stack`).
+    fn entry_tail(self: *mut Self, out: *mut String) {
+        if self.stack_bytes == 0 { return }
+        out.append("typedef struct nx_main_call { int argc; char** argv; int code; } nx_main_call;\nstatic void nx_main_trampoline(void* p) { nx_main_call* c = (nx_main_call*)p; c->code = nx_main_body(c->argc, c->argv); }\n")
+        out.append(format("int main(int argc, char** argv) {{ nx_main_call c; c.argc = argc; c.argv = argv; c.code = 0; nx_run_on_stack({}ULL, nx_main_trampoline, &c); return c.code; }}\n", .{self.stack_bytes})[..])
     }
 
     fn test_runner(self: *mut Self) -> String {
         var out = String.new()
-        out.append("int main(int argc, char** argv) {\n  nx_console_utf8();\n  nx_ctx ctx = nx_default_ctx(argc, argv);\n  const char* filter = NULL; int verbose = 0;\n  for (int ai = 1; ai < argc; ai++) { if (strcmp(argv[ai], \"--verbose\") == 0) verbose = 1; else filter = argv[ai]; }\n  int passed = 0, failed = 0, skipped = 0;\n  nx_boundary b; b.track = NULL; uint64_t t0 = 0;\n")
+        out.append(self.entry_head()[..])
+        out.append("  nx_console_utf8();\n  nx_ctx ctx = nx_default_ctx(argc, argv);\n  const char* filter = NULL; int verbose = 0;\n  for (int ai = 1; ai < argc; ai++) { if (strcmp(argv[ai], \"--verbose\") == 0) verbose = 1; else filter = argv[ai]; }\n  int passed = 0, failed = 0, skipped = 0;\n  nx_boundary b; b.track = NULL; uint64_t t0 = 0;\n")
         for t in self.c.tests.clone() {
             let full = self.c.insts[t].name.clone()
             let name = full[5..]
@@ -4582,6 +4603,7 @@ impl Gen {
             out.append(format("  if (!filter || strstr({}, filter)) {{\n    nx_tls_boundary = &b; t0 = nx_time_monotonic_ns();\n    if (setjmp(b.jb)) {{ failed++; printf(\"FAIL  %s\\n      panic: %s\\n      at %s\\n\", {}, b.msg, b.loc); }}\n    else {{ {} r = {}(&ctx); if (r.err) {{ failed++; printf(\"FAIL  %s\\n      error: %s\\n\", {}, nx_error_name(r.err)); }} else {{ passed++; if (verbose) printf(\"ok    %s  (%.1f ms)\\n\", {}, (double)(nx_time_monotonic_ns() - t0) / 1e6); else printf(\"ok    %s\\n\", {}); }} }}\n    nx_tls_boundary = NULL;\n  }} else {{ skipped++; if (verbose) printf(\"skip  %s\\n\", {}); }}\n", .{esc, esc, rcn, target, esc, esc, esc, esc})[..])
         }
         out.append("  printf(\"\\n%d passed, %d failed%s\\n\", passed, failed, skipped ? \" (some skipped by filter)\" : \"\");\n  return failed ? 1 : 0;\n}\n")
+        self.entry_tail(&mut out)
         return out
     }
 

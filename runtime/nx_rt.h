@@ -1819,6 +1819,39 @@ NX_INT_OPS(u128, nx_u128, nx_u128, 0, (~(nx_u128)0))
 
 #endif /* NX_RT_H */
 
+/* ---------------------------------------------------- main on a big stack */
+/* `artifact cli { stack = "1G" }`: the generated main runs the program on a
+ * thread reserving that much stack, so a recursion deeper than the platform's
+ * default (a megabyte on some Windows toolchains, eight on Linux and macOS)
+ * gets the room it declared. The reservation is address space; pages are
+ * committed as the program reaches them. When the thread cannot be created
+ * the program runs on the default stack. A 32-bit process caps it at 256 MB. */
+typedef struct nx_stack_call { void (*f)(void*); void* arg; } nx_stack_call;
+#if defined(_WIN32)
+#ifndef STACK_SIZE_PARAM_IS_A_RESERVATION
+#define STACK_SIZE_PARAM_IS_A_RESERVATION 0x00010000
+#endif
+static DWORD WINAPI nx_stack_entry(LPVOID p) { nx_stack_call* c = (nx_stack_call*)p; c->f(c->arg); return 0; }
+#else
+static void* nx_stack_entry(void* p) { nx_stack_call* c = (nx_stack_call*)p; c->f(c->arg); return NULL; }
+#endif
+NX_INLINE void nx_run_on_stack(uint64_t bytes, void (*f)(void*), void* arg) {
+    nx_stack_call c; c.f = f; c.arg = arg;
+    if (sizeof(void*) < 8 && bytes > (uint64_t)256 * 1024 * 1024) bytes = (uint64_t)256 * 1024 * 1024;
+#if defined(_WIN32)
+    HANDLE h = CreateThread(NULL, (SIZE_T)bytes, nx_stack_entry, &c, STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);
+    if (h) { WaitForSingleObject(h, INFINITE); CloseHandle(h); return; }
+#else
+    pthread_attr_t attr; pthread_t t;
+    if (pthread_attr_init(&attr) == 0) {
+        bool ok = pthread_attr_setstacksize(&attr, (size_t)bytes) == 0 && pthread_create(&t, &attr, nx_stack_entry, &c) == 0;
+        pthread_attr_destroy(&attr);
+        if (ok) { pthread_join(t, NULL); return; }
+    }
+#endif
+    f(arg);
+}
+
 /* ------------------------------------------- what an export call acquired */
 /* S3 promises that a panic never crosses an export boundary; this is the
  * other half: a panic caught at the boundary releases everything the call

@@ -505,6 +505,10 @@ and setup program on Windows and an `install.sh` with a tarball elsewhere
 produces an npm package: `index.js` calling the shared library through
 `koffi`, `index.d.ts`, `package.json`.
 
+`artifact cli { name = "tool" }` names the executable; `stack = "1G"` (K, M,
+G or a byte count) runs `main` on a thread reserving that much stack, so a
+recursion deeper than the platform's default gets the room it declared.
+
 Exported functions take and return scalars, `layout(c)` structs, and slices
 (as pointer plus length); they cannot return slices into their own storage,
 cannot take `own` parameters, and cannot be generic. A program that declares

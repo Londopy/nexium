@@ -27,6 +27,10 @@ import lsp
 import repl
 import std.fs
 
+// the compiler runs on a gigabyte of stack: the compile-time interpreter
+// recurses on it, and each nested call costs about 165 KiB of frame
+artifact cli { name = "nx", stack = "1G" }
+
 const VERSION = "1.0.2"
 const RELEASE_NAME = "Annapurna: Terray"
 
@@ -219,6 +223,7 @@ fn emit(c: *mut check.Checker, o: *Opts, entry: u8) -> String {
 fn emit_with(c: *mut check.Checker, o: *Opts, entry: u8, lib_name: []u8, mode: u8, infos: *mut List(cgen.ExportInfo)) -> String {
     var g = cgen.new_gen(c, mode, entry)
     g.lib_name = String.from(lib_name)
+    g.stack_bytes = cli_stack(c) orelse return String.new()
     let out = g.generate()
     if g.errors.len > 0 {
         for e in g.errors { eprintln("error: {}", .{e}) }
@@ -704,6 +709,41 @@ fn cmd_fetch(update: [][]u8, update_all: bool) -> i32 {
     }
     println("wrote {}/{}", .{mf.dir, manifest.LOCK})
     return 0
+}
+
+/// `artifact cli { stack = "1G" }` in the program's own modules: the bytes
+/// `main` runs on, 0 when nothing is declared, null after a diagnostic for a
+/// value that is not a size (K, M or G after the digits, or plain bytes).
+fn cli_stack(c: *check.Checker) -> ?u64 {
+    for m in 0..c.mods.len {
+        if c.mods[m].name[..].starts_with("std.") or c.mods[m].name[..].starts_with("cimport:") { continue }
+        for it in c.mods[m].parsed.items.clone() {
+            if c.node(m, it).k != parser.NodeKind.Artifact { continue }
+            let kind = c.node(m, it).name.clone()
+            if kind[..] != "cli" and kind[..] != "app" { continue }
+            let s = artifact_str(c, m, it, "stack")
+            if s.len == 0 { continue }
+            if let n = parse_size(s[..]) { return n }
+            eprintln("error: artifact cli: `stack` must be a size such as \"1G\", \"256M\" or \"64K\" (got \"{}\")", .{s})
+            return null
+        }
+    }
+    return 0
+}
+
+/// "64K", "256M", "1G" or a count of bytes; null for anything else or zero.
+fn parse_size(s: []u8) -> ?u64 {
+    if s.len == 0 { return null }
+    var digits = s
+    var mult: u64 = 1
+    let last = s[s.len - 1]
+    if last == 'K' or last == 'k' { mult = 1024; digits = s[0..s.len - 1] }
+    else if last == 'M' or last == 'm' { mult = 1024 * 1024; digits = s[0..s.len - 1] }
+    else if last == 'G' or last == 'g' { mult = 1024 * 1024 * 1024; digits = s[0..s.len - 1] }
+    if digits.len == 0 { return null }
+    let n = digits.parse_int(u64) catch { return null }
+    if n == 0 { return null }
+    return n * mult
 }
 
 /// The string value of an artifact field, or "".
