@@ -277,6 +277,8 @@ fn suite_examples(e: *Env, failures: *mut List(String)) {
     let d = nx(e, ["doctor"][..])
     if d.code != 0 or d.stdout[..].find("smoke test:  a program compiles and runs") == null {
         failures.append(format("examples: nx doctor did not pass its smoke test:\n{}{}", .{d.stdout, d.stderr}))
+    } else if d.stdout[..].find("latest release:") == null {
+        failures.append(format("examples: nx doctor did not report the latest release:\n{}", .{d.stdout}))
     }
     println("examples: {} programs, and nx doctor", .{cases.len})
 }

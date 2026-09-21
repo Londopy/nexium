@@ -150,6 +150,11 @@ In order, the first that applies wins:
 `nx doctor` prints which one is in effect and whether it runs. Cross-compiling
 (`--target`) always uses Zig, since that is what makes it possible.
 
+`nx doctor` also asks GitHub for the latest release (through `curl`, three
+seconds at most) and says when a newer one exists; `NX_OFFLINE=1` skips
+the question, and a machine without `curl` or a connection is told so, not
+failed.
+
 ## Which CPU a binary is built for
 
 By default, the baseline of the machine's architecture: on x86-64 that is

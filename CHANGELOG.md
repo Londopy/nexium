@@ -18,6 +18,10 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   before replacing its files (Restart Manager; it is not started again),
   and keep a log of the run as `install.log` next to the program. The
   uninstaller takes `/LOG="path"` for a log of its own.
+- `nx doctor` says when a newer release exists: it asks the GitHub API
+  through `curl` (three seconds at most) and prints the latest tag beside
+  its own version; `NX_OFFLINE=1` skips the question, and no `curl` or no
+  answer is reported rather than failed.
 - Homebrew, Scoop and winget: the repository is its own Homebrew tap
   (`brew tap londopy/tap https://github.com/Londopy/nexium`, then
   `brew install londopy/tap/nexium`; the release build on Apple Silicon

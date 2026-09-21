@@ -309,7 +309,7 @@ queue in front of them.
    and the bucket, `scripts/packaging.py` writes all three at each
    release; the winget submission to microsoft/winget-pkgs is a pull
    request by hand.)
-5. `nx doctor` says when a newer release exists.
+5. `nx doctor` says when a newer release exists. (Done.)
 6. The VS Code extension on Open VSX beside the Marketplace.
 7. A `packages.md`: the packages people can `nx add` from git today.
 8. An "Open REPL here" folder entry and a Windows Terminal profile from

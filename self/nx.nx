@@ -1144,8 +1144,65 @@ fn cmd_doctor(o: *Opts) -> i32 {
     // "everything works" on a machine where the compiler could not compile a
     // line, because it had only asked the C compiler for its version.
     if !doctor_smoke(o) { return 1 }
+    doctor_updates()
     println("", .{})
     println("everything works. Try: nx run examples/hello.nx", .{})
+    return 0
+}
+
+/// Whether a newer release exists: curl asks the GitHub API (TLS is curl's;
+/// std.http speaks plain http only), three seconds at most, and the answer
+/// is one line. NX_OFFLINE=1 skips the question; no curl or no answer is
+/// reported, never an error.
+fn doctor_updates() {
+    if os.env("NX_OFFLINE") != null {
+        println("latest release: not checked (NX_OFFLINE is set)", .{})
+        return
+    }
+    let argv: [][]u8 = ["curl", "-fsSL", "-m", "3", "-H", "Accept: application/vnd.github+json", "https://api.github.com/repos/Londopy/nexium/releases/latest"]
+    let code = os.exec(argv[..], "", "") catch { -1 }
+    if code != 0 {
+        let why = if code < 0 { "curl is not on the PATH" } else { "no answer from api.github.com in 3 s" }
+        println("latest release: not checked ({}; NX_OFFLINE=1 skips the check)", .{why})
+        return
+    }
+    let out = os.last_stdout()
+    let tag = json_string(out[..], "tag_name") orelse {
+        println("latest release: not checked (unexpected answer from api.github.com)", .{})
+        return
+    }
+    let latest = if tag.starts_with("v") { tag[1..] } else { tag }
+    let c = compare_versions(latest, VERSION)
+    if c > 0 {
+        println("latest release: {}; this is {}, get the new one at https://github.com/Londopy/nexium/releases/latest", .{tag, VERSION})
+    } else if c == 0 {
+        println("latest release: {}, this one", .{tag})
+    } else {
+        println("latest release: {}; this is {}, ahead of it", .{tag, VERSION})
+    }
+}
+
+/// The string value of a key in a JSON text, by the first `"key"` in it.
+fn json_string(text: []u8, key: []u8) -> ?[]u8 {
+    let quoted = format("\"{}\"", .{key})
+    let i = text.find(quoted[..]) orelse return null
+    let rest = text[i + quoted.len..]
+    let q1 = rest.find("\"") orelse return null
+    let after = rest[q1 + 1..]
+    let q2 = after.find("\"") orelse return null
+    return after[0..q2]
+}
+
+/// Numeric comparison of dotted versions: negative, zero or positive.
+fn compare_versions(a: []u8, b: []u8) -> i32 {
+    let pa = a.split(".")
+    let pb = b.split(".")
+    for k in 0..3 {
+        let x = if k < pa.len { pa[k].parse_int(u64) catch { 0 } } else { 0 }
+        let y = if k < pb.len { pb[k].parse_int(u64) catch { 0 } } else { 0 }
+        if x < y { return -1 }
+        if x > y { return 1 }
+    }
     return 0
 }
 
