@@ -675,3 +675,12 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     `@min` and `@max` are the `min`/`max` methods as intrinsics that
     also carry the range of their operands, so `@min(i, n - 1)` proves an
     index; `@alignOf` reads the layout the checker already computes.
+99. **`unbounded_stack` stays the call-graph effect, and there is no
+    depth proof.** A recursive call on a strictly smaller argument bounds
+    the depth by the argument, which is still a depth the caller cannot
+    see: an exported function that carries the effect needs a stack sized
+    for its input either way (section 15), and the discharge is what it
+    has always been, a loop over an explicit stack. The roadmap's
+    "reserved" was stale; the effect has been implemented and tested since
+    0.9 (spec case `s9_unbounded_stack`, two compile-fail cases), and the
+    1.1 theme leaves it as it is.

@@ -417,9 +417,10 @@ them, minus the type's bounds), `unbounded_stack` among them.
 
 `unbounded_stack` is discharged by rewriting the recursion as a loop over
 an explicit stack; there is no proof for it, because a depth bounded by an
-integer parameter is still a depth the caller cannot see. It matters at
-the export boundary (section 15): a host calling an exported function that
-carries it must give it a stack sized for the input.
+integer parameter is still a depth the caller cannot see (**decided**,
+99). It matters at the export boundary (section 15): a host calling an
+exported function that carries it must give it a stack sized for the
+input.
 
 ### 9.1 Discharging `panics`
 

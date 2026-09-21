@@ -411,6 +411,8 @@ Ergonomics the self-hosted compiler paid for by hand.
 - `unbounded_stack`: the spec says reserved. Either a recursion-depth
   proof (a function is bounded when every recursive call is on a strictly
   smaller argument) or removal, the way decision 88 settled the others.
+  (Settled, decision 99: the effect stays as the call-graph fact it has
+  been since 0.9, with no depth proof; "reserved" was stale.)
 - The numbers page (pulled forward from 1.6): `bench/`, the programs the
   examples already implement written the same way in C, Rust, Go and
   Python, run by CI on a fixed runner, the medians published on the site
