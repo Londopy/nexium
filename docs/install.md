@@ -17,8 +17,12 @@ wizard offers:
   library sources and examples, the documentation, and the VS Code
   extension file.
 - **Tasks**: add `nx` to the PATH (checked by default), register the `.nx`
-  file type with an icon and a "Run with Nexium" context entry, and install
-  the VS Code extension if `code` is on the PATH.
+  file type with an icon and a "Run with Nexium" context entry, add "Open
+  Nexium console here" and "Open Nexium REPL here" to the right-click menu
+  of a folder's background, add a "Nexium REPL" profile to Windows Terminal
+  (offered checked when Terminal is installed; a JSON fragment, so your
+  settings are not touched), and install the VS Code extension if `code`
+  is on the PATH.
 - **Finish**: launch the interactive session, open the README, or open a
   console that runs `nx doctor`.
 - **Start menu**: "Nexium <version> (64-bit)" opens the interactive session,

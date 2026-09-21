@@ -318,7 +318,7 @@ queue in front of them.
    (Done, as a section of `docs/packages.md`: the honest list is the
    Topo's two example packages, and how to get a row.)
 8. An "Open REPL here" folder entry and a Windows Terminal profile from
-   the installer.
+   the installer. (Done.)
 9. `ghcr.io/londopy/nexium`: the compiler with Zig, on Alpine and Debian.
 
 **A day or two each.**

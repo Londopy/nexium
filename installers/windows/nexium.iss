@@ -96,7 +96,8 @@ Name: "vscode"; Description: "VS Code extension (.vsix file)"; Types: full custo
 [Tasks]
 Name: "addtopath"; Description: "Add nx to the PATH"; GroupDescription: "Environment:"
 Name: "assoc"; Description: "Register the .nx file type (icon and ""Open with"")"; GroupDescription: "File types:"; Flags: unchecked
-Name: "foldermenu"; Description: "Add ""Open Nexium console here"" to the folder right-click menu"; GroupDescription: "Explorer:"; Flags: unchecked
+Name: "foldermenu"; Description: "Add ""Open Nexium console here"" and ""Open Nexium REPL here"" to the folder right-click menu"; GroupDescription: "Explorer:"; Flags: unchecked
+Name: "wtprofile"; Description: "Add a ""Nexium REPL"" profile to Windows Terminal"; GroupDescription: "Windows Terminal:"; Flags: unchecked
 Name: "desktopicon"; Description: "Create a desktop shortcut to the Nexium console"; GroupDescription: "Shortcuts:"; Flags: unchecked
 Name: "installvsix"; Description: "Install the VS Code extension now (needs 'code' on the PATH)"; GroupDescription: "Editors:"; Components: vscode; Flags: unchecked
 
@@ -123,6 +124,10 @@ Root: HKA; Subkey: "Software\Classes\Nexium.Source\shell\run\command"; ValueType
 Root: HKA; Subkey: "Software\Classes\Directory\Background\shell\NexiumConsole"; ValueType: string; ValueName: ""; ValueData: "Open Nexium console here"; Flags: uninsdeletekey; Tasks: foldermenu
 Root: HKA; Subkey: "Software\Classes\Directory\Background\shell\NexiumConsole"; ValueType: string; ValueName: "Icon"; ValueData: "{app}\nx.exe,0"; Tasks: foldermenu
 Root: HKA; Subkey: "Software\Classes\Directory\Background\shell\NexiumConsole\command"; ValueType: string; ValueName: ""; ValueData: "cmd.exe /k ""set PATH={app};%PATH% && ""{app}\nx.exe"" version"""; Tasks: foldermenu
+; right-click a folder's background: the interactive session, in that folder
+Root: HKA; Subkey: "Software\Classes\Directory\Background\shell\NexiumRepl"; ValueType: string; ValueName: ""; ValueData: "Open Nexium REPL here"; Flags: uninsdeletekey; Tasks: foldermenu
+Root: HKA; Subkey: "Software\Classes\Directory\Background\shell\NexiumRepl"; ValueType: string; ValueName: "Icon"; ValueData: "{app}\nx.exe,0"; Tasks: foldermenu
+Root: HKA; Subkey: "Software\Classes\Directory\Background\shell\NexiumRepl\command"; ValueType: string; ValueName: ""; ValueData: "cmd.exe /c ""cd /d ""%V"" && set PATH={app};%PATH% && ""{app}\nx.exe"" repl"""; Tasks: foldermenu
 
 [Icons]
 Name: "{group}\Nexium {#AppVersion} (64-bit)"; Filename: "{app}\nx.exe"; IconFilename: "{app}\nexium.ico"; WorkingDir: "{userdocs}"; Comment: "The Nexium interactive session (nx repl)"
@@ -145,6 +150,11 @@ Filename: "{app}\CHANGELOG.md"; Description: "Show what's new in {#AppVersion}";
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\nx-out"
 Type: files; Name: "{app}\install.log"
+; the Windows Terminal profile (whichever install mode wrote it)
+Type: files; Name: "{localappdata}\Microsoft\Windows Terminal\Fragments\Nexium\nexium.json"
+Type: dirifempty; Name: "{localappdata}\Microsoft\Windows Terminal\Fragments\Nexium"
+Type: files; Name: "{commonappdata}\Microsoft\Windows Terminal\Fragments\Nexium\nexium.json"
+Type: dirifempty; Name: "{commonappdata}\Microsoft\Windows Terminal\Fragments\Nexium"
 
 [Code]
 // ---- "More from Londopy": a page after the tasks presenting the publisher's
@@ -283,10 +293,59 @@ begin
   RegWriteExpandStringValue(EnvRoot(), EnvKey(), 'Path', Paths);
 end;
 
+// Windows Terminal: a profile "Nexium REPL", as a JSON fragment in the
+// per-user or the all-users fragments directory (Terminal reads both and
+// shows the profile in its menu; no settings.json is touched).
+
+function JsonPath(const Path: string): string;
+begin
+  Result := Path;
+  StringChangeEx(Result, '\', '\\', True);
+end;
+
+procedure WriteTerminalProfile();
+var
+  Dir, Text: string;
+begin
+  if IsAdminInstallMode then
+    Dir := ExpandConstant('{commonappdata}\Microsoft\Windows Terminal\Fragments\Nexium')
+  else
+    Dir := ExpandConstant('{localappdata}\Microsoft\Windows Terminal\Fragments\Nexium');
+  ForceDirectories(Dir);
+  Text := '{' + #13#10 +
+    '  "$help": "https://aka.ms/terminal-documentation",' + #13#10 +
+    '  "profiles": [' + #13#10 +
+    '    {' + #13#10 +
+    '      "name": "Nexium REPL",' + #13#10 +
+    '      "commandline": "\"' + JsonPath(ExpandConstant('{app}\nx.exe')) + '\" repl",' + #13#10 +
+    '      "icon": "' + JsonPath(ExpandConstant('{app}\nexium.ico')) + '",' + #13#10 +
+    '      "startingDirectory": "%USERPROFILE%"' + #13#10 +
+    '    }' + #13#10 +
+    '  ]' + #13#10 +
+    '}' + #13#10;
+  SaveStringToFile(Dir + '\nexium.json', Text, False);
+end;
+
+var
+  TerminalOffered: Boolean;
+
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  // the profile task is checked once, when Windows Terminal is installed
+  if (CurPageID = wpSelectTasks) and not TerminalOffered then
+  begin
+    TerminalOffered := True;
+    if FileExists(ExpandConstant('{localappdata}\Microsoft\WindowsApps\wt.exe')) then
+      WizardSelectTasks('wtprofile');
+  end;
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if (CurStep = ssPostInstall) and WizardIsTaskSelected('addtopath') then
     EnvAddPath(ExpandConstant('{app}'));
+  if (CurStep = ssPostInstall) and WizardIsTaskSelected('wtprofile') then
+    WriteTerminalProfile();
   // the log of this run, next to the program (SetupLogging=yes writes it)
   if CurStep = ssDone then
     FileCopy(ExpandConstant('{log}'), ExpandConstant('{app}\install.log'), False);

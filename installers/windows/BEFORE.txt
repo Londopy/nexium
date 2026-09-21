@@ -14,6 +14,9 @@ What the installer can change
   - add the install folder to your PATH (for this user, or for all users
     when you choose an all-users install), so `nx` works in any console
   - register the .nx file type with an icon and a "Run with Nexium" entry
+  - add "Open Nexium console here" and "Open Nexium REPL here" to the
+    right-click menu of folders, and a "Nexium REPL" profile to Windows
+    Terminal (each is a task you can leave unchecked)
 
 After installing, open a new console and run:
   nx doctor        checks the installation and shows which compiler is used
