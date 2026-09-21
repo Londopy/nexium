@@ -14,6 +14,8 @@
 #   NEXIUM_HOME=/opt/nexium    install somewhere else (default: ~/.nexium)
 #   NEXIUM_NO_MODIFY_PATH=1    do not edit shell startup files
 #   NEXIUM_NO_ZIG=1            never download Zig
+#   NEXIUM_FROM_SOURCE=1       build nx from bootstrap/nx.c with the C compiler on
+#                              the machine instead of downloading a release
 set -eu
 
 REPO="Londopy/nexium"
@@ -30,49 +32,86 @@ have tar || die "tar is required"
 
 os="$(uname -s)"
 arch="$(uname -m)"
+# the release built for this machine, or nothing: then the one C file below
 case "$os" in
-  Darwin) case "$arch" in arm64|aarch64) target="aarch64-apple-darwin" ;; *) die "macOS on $arch is not built yet; build from source: git clone https://github.com/Londopy/nexium && sh bootstrap/build.sh" ;; esac ;;
-  Linux)  case "$arch" in x86_64|amd64) target="x86_64-unknown-linux-gnu" ;; aarch64|arm64) target="aarch64-unknown-linux-gnu" ;; *) die "Linux on $arch is not built yet; build from source: git clone https://github.com/Londopy/nexium && sh bootstrap/build.sh" ;; esac ;;
-  *) die "unsupported OS: $os (use the Windows installer from the Releases page)" ;;
+  Darwin) case "$arch" in arm64|aarch64) target="aarch64-apple-darwin" ;; *) target="" ;; esac ;;
+  Linux)  case "$arch" in x86_64|amd64) target="x86_64-unknown-linux-gnu" ;; aarch64|arm64) target="aarch64-unknown-linux-gnu" ;; *) target="" ;; esac ;;
+  MINGW*|MSYS*|CYGWIN*) die "on Windows, use the installer from the Releases page" ;;
+  *) target="" ;;
 esac
+[ -z "${NEXIUM_FROM_SOURCE:-}" ] || target=""
 
 # resolve the release tag
 if [ "$VERSION" = "latest" ]; then
   VERSION="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)"
-  [ -n "$VERSION" ] || die "could not find the latest release"
+  if [ -z "$VERSION" ]; then
+    [ -z "$target" ] || die "could not find the latest release"
+    VERSION=main
+  fi
 fi
 base="https://github.com/$REPO/releases/download/$VERSION"
-asset="nx-$VERSION-$target.tar.gz"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
-say "downloading $asset"
-curl -fsSL "$base/$asset" -o "$tmp/$asset"
-curl -fsSL "$base/SHA256SUMS.txt" -o "$tmp/SHA256SUMS.txt" || die "SHA256SUMS.txt missing from release $VERSION"
 
-# verify
-expected="$(grep " $asset\$" "$tmp/SHA256SUMS.txt" | awk '{print $1}')"
-[ -n "$expected" ] || die "no checksum for $asset in SHA256SUMS.txt"
-if have sha256sum; then actual="$(sha256sum "$tmp/$asset" | awk '{print $1}')"
-elif have shasum; then actual="$(shasum -a 256 "$tmp/$asset" | awk '{print $1}')"
-else die "need sha256sum or shasum to verify the download"; fi
-[ "$actual" = "$expected" ] || die "checksum mismatch for $asset (expected $expected, got $actual)"
-say "checksum ok"
+# The one C file: bootstrap/nx.c is the C the compiler emits for itself, as
+# of the release, with the standard library inside. Any C compiler builds it,
+# and the result is the whole nx, on any Unix the C compiler runs on. This is
+# the road when no release is built for the machine, when the download
+# fails, or when NEXIUM_FROM_SOURCE=1 asks for it.
+build_from_seed() {
+  cc_cmd=""
+  if have cc; then cc_cmd="cc"; elif have gcc; then cc_cmd="gcc"; elif have clang; then cc_cmd="clang"; elif have zig; then cc_cmd="zig cc"; fi
+  [ -n "$cc_cmd" ] || die "no release is built for $os/$arch and there is no C compiler to build one; install cc, gcc, clang or zig and run this again"
+  say "building nx from the one C file, bootstrap/nx.c at $VERSION, with $cc_cmd"
+  curl -fsSL "https://raw.githubusercontent.com/$REPO/$VERSION/bootstrap/nx.c" -o "$tmp/nx.c" || die "could not download bootstrap/nx.c at $VERSION"
+  case "$cc_cmd" in
+    *zig*) march="-mcpu=baseline" ;;
+    *) case "$arch" in x86_64|amd64) march="-march=x86-64" ;; *) march="" ;; esac ;;
+  esac
+  case "$os" in Darwin) libs="" ;; *) libs="-lm -lc -lpthread" ;; esac
+  $cc_cmd -std=gnu11 -O2 -w -fno-strict-aliasing $march -o "$tmp/nx" "$tmp/nx.c" $libs || die "$cc_cmd could not build bootstrap/nx.c"
+  mkdir -p "$HOME_DIR/bin" "$HOME_DIR/share"
+  install -m 755 "$tmp/nx" "$HOME_DIR/bin/nx"
+  say "installed nx $VERSION (built from bootstrap/nx.c) to $HOME_DIR/bin/nx; the examples and docs are at https://github.com/$REPO"
+}
 
-# install
-mkdir -p "$HOME_DIR/bin" "$HOME_DIR/share"
-tar -xzf "$tmp/$asset" -C "$tmp"
-install -m 755 "$tmp/nx" "$HOME_DIR/bin/nx"
-for f in README.md LICENSE CHANGELOG.md; do [ -f "$tmp/$f" ] && cp "$tmp/$f" "$HOME_DIR/share/"; done
-for d in examples std docs; do [ -d "$tmp/$d" ] && { rm -rf "$HOME_DIR/share/$d"; cp -R "$tmp/$d" "$HOME_DIR/share/$d"; }; done
-say "installed nx $VERSION to $HOME_DIR/bin/nx"
+asset="nx-$VERSION-$target.tar.gz"
+if [ -z "$target" ]; then
+  [ -n "${NEXIUM_FROM_SOURCE:-}" ] || say "no release is built for $os/$arch"
+  build_from_seed
+elif ! curl -fsSL "$base/$asset" -o "$tmp/$asset"; then
+  say "$asset is not in release $VERSION"
+  build_from_seed
+else
+  say "downloaded $asset"
+  curl -fsSL "$base/SHA256SUMS.txt" -o "$tmp/SHA256SUMS.txt" || die "SHA256SUMS.txt missing from release $VERSION"
 
-# a C compiler: nx looks for a bundled zig next to itself first, then the system
+  # verify
+  expected="$(grep " $asset\$" "$tmp/SHA256SUMS.txt" | awk '{print $1}')"
+  [ -n "$expected" ] || die "no checksum for $asset in SHA256SUMS.txt"
+  if have sha256sum; then actual="$(sha256sum "$tmp/$asset" | awk '{print $1}')"
+  elif have shasum; then actual="$(shasum -a 256 "$tmp/$asset" | awk '{print $1}')"
+  else die "need sha256sum or shasum to verify the download"; fi
+  [ "$actual" = "$expected" ] || die "checksum mismatch for $asset (expected $expected, got $actual)"
+  say "checksum ok"
+
+  # install
+  mkdir -p "$HOME_DIR/bin" "$HOME_DIR/share"
+  tar -xzf "$tmp/$asset" -C "$tmp"
+  install -m 755 "$tmp/nx" "$HOME_DIR/bin/nx"
+  for f in README.md LICENSE CHANGELOG.md; do [ -f "$tmp/$f" ] && cp "$tmp/$f" "$HOME_DIR/share/"; done
+  for d in examples std docs; do [ -d "$tmp/$d" ] && { rm -rf "$HOME_DIR/share/$d"; cp -R "$tmp/$d" "$HOME_DIR/share/$d"; }; done
+  say "installed nx $VERSION to $HOME_DIR/bin/nx"
+fi
+
+# a C compiler: nx looks for a bundled zig next to itself first, then the
+# system compiler on macOS, then zig on the PATH, then cc, gcc or clang
 compiler=""
 if [ -x "$HOME_DIR/zig/zig" ]; then compiler="bundled zig"
 elif [ "$os" = "Darwin" ] && have cc; then compiler="system cc"
 elif have zig; then compiler="zig on PATH"
-elif have cc; then compiler="system cc"
+elif have cc || have gcc || have clang; then compiler="the system compiler on the PATH"
 fi
 if [ -z "$compiler" ] && [ "${NEXIUM_NO_ZIG:-}" != "1" ]; then
   case "$target" in
@@ -100,8 +139,8 @@ fi
 [ -n "$compiler" ] || say "warning: no C compiler found; install Zig (https://ziglang.org/download) or a system compiler"
 
 # PATH
+line="export PATH=\"$HOME_DIR/bin:\$PATH\""
 if [ "${NEXIUM_NO_MODIFY_PATH:-}" != "1" ]; then
-  line="export PATH=\"$HOME_DIR/bin:\$PATH\""
   added=""
   for rc in "$HOME/.profile" "$HOME/.bashrc" "$HOME/.zshrc"; do
     [ -f "$rc" ] || continue

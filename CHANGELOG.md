@@ -18,6 +18,21 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   before replacing its files (Restart Manager; it is not started again),
   and keep a log of the run as `install.log` next to the program. The
   uninstaller takes `/LOG="path"` for a log of its own.
+- The install script builds `nx` from the one C file, `bootstrap/nx.c`,
+  with the C compiler on the machine when no release is built for it (an
+  x86-64 Mac, a BSD, a RISC-V board), when the download fails, or when
+  `NEXIUM_FROM_SOURCE=1` asks for it; the one-C-file install is on the
+  front page of the docs and in `docs/install.md`.
+
+### Fixed
+
+- On a macOS or Linux machine without Zig, `nx` takes `cc`, `gcc` or
+  `clang` from the PATH instead of running a `zig` it assumed was there;
+  `nx doctor` names the choice. A gcc-only Ubuntu could build `nx` from
+  the one C file and then compile nothing. `-lpthread` is linked on Linux
+  for glibc before 2.34. CI builds hello with zig removed from the PATH.
+- The install script no longer stops with `line: parameter not set` at
+  the end when `NEXIUM_NO_MODIFY_PATH=1` is set.
 
 ## [1.0.3] - 2026-09-20
 

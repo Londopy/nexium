@@ -54,7 +54,8 @@ pub struct Opts {
     include_dirs: List(String)
     rest: List(String)
     sigs: bool
-    /// how the C compiler was chosen: 1 --cc, 2 NX_CC, 3 NX_ZIG, 4 the system compiler on macOS, 0 zig on PATH
+    /// how the C compiler was chosen: 1 --cc, 2 NX_CC, 3 NX_ZIG, 4 the system compiler on macOS,
+    /// 5 a zig bundled with nx, 6 cc/gcc/clang on the PATH when there is no zig, 0 zig on PATH
     cc_source: u8
 }
 
@@ -139,11 +140,40 @@ fn parse_opts(args: [][]u8) -> ?Opts {
         // compiler can (the Rust driver makes the same choice)
         o.cc.append(String.from("cc"))
         o.cc_source = 4
+    } else if found_on_path("zig") {
+        o.cc.append(String.from("zig"))
+        o.cc.append(String.from("cc"))
+    } else if let sys = system_cc() {
+        // no zig anywhere: the machine's own compiler, so a Linux with gcc
+        // alone still builds programs (it built nx from the seed, after all)
+        o.cc.append(sys)
+        o.cc_source = 6
     } else {
         o.cc.append(String.from("zig"))
         o.cc.append(String.from("cc"))
     }
     return o
+}
+
+/// Whether a program of that name is in a PATH directory.
+fn found_on_path(name: []u8) -> bool {
+    let path = os.env("PATH") orelse return false
+    let windows = is_windows_target("")
+    let sep = if windows { ";" } else { ":" }
+    for d in path.split(sep) {
+        if d.len == 0 { continue }
+        let p = if windows { format("{}/{}.exe", .{d, name}) } else { format("{}/{}", .{d, name}) }
+        if io.file_kind(p[..]) == 1 { return true }
+    }
+    return false
+}
+
+/// The system C compiler on a Unix without zig: the first of cc, gcc and
+/// clang on the PATH. Windows has no such fallback: zig is the toolchain there.
+fn system_cc() -> ?String {
+    if is_windows_target("") { return null }
+    for n in ["cc", "gcc", "clang"] { if found_on_path(n) { return String.from(n) } }
+    return null
 }
 
 /// A Zig installed next to `nx`: `<dir>/zig/zig` (the Windows installer) or
@@ -340,6 +370,8 @@ fn compile_c(c: *check.Checker, o: *Opts, c_path: []u8, out: []u8, kind: []u8) -
         // its implicit libc link on machines without an SDK. Ask for libc explicitly.
         if !is_macos_target(o.target[..]) { argv.append(String.from("-lm")) }
         argv.append(String.from("-lc"))
+        // threads live in libpthread before glibc 2.34; harmless after, and zig accepts it
+        if !is_macos_target(o.target[..]) { argv.append(String.from("-lpthread")) }
     }
     var views = List([]u8).new()
     for a in argv { views.append(a[..]) }
@@ -1103,7 +1135,7 @@ fn cmd_doctor(o: *Opts) -> i32 {
         println("no working C compiler. Options:", .{})
         println("  - Windows: run the installer from https://github.com/Londopy/nexium/releases (it bundles Zig)", .{})
         println("  - macOS:   xcode-select --install", .{})
-        println("  - Linux:   the install script (installers/install.sh) downloads Zig, or install zig / gcc", .{})
+        println("  - Linux:   the install script (installers/install.sh) downloads Zig, or install zig, gcc or clang (nx takes cc, gcc or clang when there is no zig)", .{})
         println("  - any:     put zig on the PATH, or set NX_ZIG=/path/to/zig or NX_CC=gcc", .{})
         return 1
     }
@@ -1202,6 +1234,7 @@ fn cc_why(o: *Opts) -> []u8 {
     if o.cc_source == 3 { return "NX_ZIG" }
     if o.cc_source == 4 { return "system compiler (macOS)" }
     if o.cc_source == 5 { return "bundled with nx" }
+    if o.cc_source == 6 { return "the system compiler on the PATH, no zig found" }
     return "zig on PATH"
 }
 

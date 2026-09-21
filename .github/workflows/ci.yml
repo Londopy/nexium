@@ -63,6 +63,18 @@ jobs:
           echo "AVX instructions: $n"
           [ "$n" = 0 ]
 
+      # a Linux with gcc alone: no zig on the PATH, and nx must take the
+      # system compiler (it did not, before 1.0.4: it assumed zig was there)
+      - name: With gcc alone the compiler still builds programs
+        if: runner.os == 'Linux'
+        run: |
+          zigdir=$(dirname "$(command -v zig)")
+          clean=$(printf '%s' "$PATH" | tr ':' '\n' | grep -v -x "$zigdir" | paste -sd: -)
+          out=$(env -u NX_ZIG -u NX_CC PATH="$clean" nx-out/bootstrap/nx2 doctor) || { echo "$out"; exit 1; }
+          echo "$out" | head -4
+          echo "$out" | grep -q "system compiler on the PATH"
+          env -u NX_ZIG -u NX_CC PATH="$clean" nx-out/bootstrap/nx2 run examples/hello.nx
+
       - name: Ship the example library
         shell: bash
         run: |

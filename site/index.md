@@ -33,6 +33,13 @@ curl -fsSL https://raw.githubusercontent.com/Londopy/nexium/main/installers/inst
 </div>
 <div>
 
+**One C file**, on any Unix with a C compiler. It is the compiler's own C, standard library inside, and the result is the whole `nx`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Londopy/nexium/main/bootstrap/nx.c -o nx.c
+cc -std=gnu11 -O2 -w -fno-strict-aliasing -o nx nx.c -lm -lpthread
+```
+
 **From source**, with nothing but a C compiler (Zig on the PATH, or `cc` on macOS):
 
 ```bash

@@ -300,7 +300,7 @@ queue in front of them.
    installer and the ones `nx ship` writes.)
 2. The one-C-file install on the front page of the docs, and
    `install.sh` falling back to `cc bootstrap/nx.c` when there is
-   nothing to download.
+   nothing to download. (Done; `NEXIUM_FROM_SOURCE=1` asks for it.)
 3. The release workflow writes a `.torrent` with the assets as web seeds
    and puts the magnet link in the notes; a QR code beside it.
 4. A Homebrew tap, a Scoop bucket and the winget manifest, from the

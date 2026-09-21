@@ -54,10 +54,33 @@ adds the bin directory to your PATH in `~/.profile`, `~/.bashrc`, and
 used (`xcode-select --install` if missing). On Linux, when no compiler is
 found, it downloads Zig into `~/.nexium/zig`.
 
+When no release is built for the machine (an x86-64 Mac, a BSD, a RISC-V
+board), or the download fails, the script builds `nx` from the one C file
+below with the C compiler it finds (`cc`, `gcc`, `clang` or `zig`) and
+installs that instead.
+
 Variables: `NEXIUM_VERSION=v1.0.3` pins a release, `NEXIUM_HOME` changes the
 directory, `NEXIUM_NO_MODIFY_PATH=1` leaves shell files alone,
-`NEXIUM_NO_ZIG=1` never downloads Zig. Uninstall by deleting `~/.nexium` and
-the three lines the script added.
+`NEXIUM_NO_ZIG=1` never downloads Zig, `NEXIUM_FROM_SOURCE=1` builds from
+the one C file even when a release exists. Uninstall by deleting `~/.nexium`
+and the three lines the script added.
+
+## One C file
+
+`bootstrap/nx.c` is the C the compiler emits for itself, as of the release,
+with the standard library inside. Any C compiler builds it, and the result
+is the whole `nx`, on any Unix the C compiler runs on, including machines
+no release is built for:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Londopy/nexium/v1.0.3/bootstrap/nx.c -o nx.c
+cc -std=gnu11 -O2 -w -fno-strict-aliasing -o nx nx.c -lm -lpthread
+```
+
+(`main` in place of `v1.0.3` gives the seed of the next release, which may
+be a little behind `self/`.) `nx` needs a C compiler at run time as well;
+the one that built it will do. On Windows, `zig cc` builds it with
+`-lws2_32` at the end, but the installer is the shorter road there.
 
 ## From source
 
@@ -84,6 +107,9 @@ In order, the first that applies wins:
    `<nx directory>/../zig/zig` (`~/.nexium`).
 5. On macOS, for native builds, the system `cc`.
 6. `zig` on the PATH.
+7. On macOS and Linux, when there is no zig: `cc`, `gcc` or `clang` on the
+   PATH, the first found. A machine that built `nx` from the one C file has
+   one.
 
 `nx doctor` prints which one is in effect and whether it runs. Cross-compiling
 (`--target`) always uses Zig, since that is what makes it possible.
