@@ -355,6 +355,8 @@ queue in front of them.
     `file.effects.lock`, `--check` in CI on the shipped example.)
 20. Panic proofs as code lenses in the language server. (Done.)
 21. Colour as you type and completion in the REPL, from the server.
+    (Done: a line editor on raw terminal input, the server's completion
+    at the cursor, history; `NX_PLAIN=1` for the plain reader.)
 
 **About a week each.**
 

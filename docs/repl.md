@@ -31,6 +31,19 @@ fails to check is not kept; a line that panics is reported and not kept.
 An expression on its own prints its type and value. `let` and `var`
 bindings persist. Lines with unclosed brackets continue on the next prompt.
 
+## The prompt
+
+At a terminal the line colours as you type (keywords, strings, numbers,
+types, comments), Tab completes the name or the member before the cursor
+from what the language server's completion finds at that point (one
+candidate goes in, a shared prefix goes in, several are listed), the
+arrows and Home/End move, Up/Down walk the history, Ctrl-A/E jump to the
+ends, Ctrl-U/K cut, Ctrl-L clears the screen, Ctrl-C drops the line and
+Ctrl-D at an empty line leaves. The console is in raw mode only while a
+line is typed; a statement runs with the console as it was. `NX_PLAIN=1`
+asks for the plain reader (no editor), `NO_COLOR` keeps the editor
+without the colours, and a pipe gets the plain reader by itself.
+
 ## Commands
 
 | command | effect |

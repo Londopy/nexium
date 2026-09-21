@@ -8,6 +8,7 @@
 
 import lexer
 import check
+import lsp
 
 const ITEM_KEYWORDS = ["fn", "pub", "struct", "enum", "record", "ref", "trait", "impl", "import", "type", "error", "test", "extern", "artifact", "comptime"]
 
@@ -145,6 +146,8 @@ fn help() {
     println("  :undo          take back the last line, bindings and all", .{})
     println("  :save FILE     write the session as a program nx run runs", .{})
     println("  :effects EXPR  the effects of an expression, with the bindings in scope", .{})
+    println("At a terminal the line colours as you type, Tab completes, the arrows move and", .{})
+    println("Up/Down walk the history, Ctrl-C drops the line; NX_PLAIN=1 asks for the plain reader.", .{})
     println("Not available at the prompt: @cImport, for parallel, using arena, artifacts.", .{})
 }
 
@@ -271,6 +274,270 @@ pub fn eval(code: []u8, print_last: bool, std_dir: []u8, cc: *List(String)) -> i
     return 0
 }
 
+// ----- the line editor at the prompt ------------------------------------------------
+
+const K_UP: i64 = -1
+const K_DOWN: i64 = -2
+const K_RIGHT: i64 = -3
+const K_LEFT: i64 = -4
+const K_HOME: i64 = -5
+const K_END: i64 = -6
+const K_DEL: i64 = -7
+const K_ESC: i64 = -8
+
+/// The colour a token gets at the prompt, or "" for none.
+fn colour_of(k: lexer.Kind, text: []u8) -> []u8 {
+    if k == lexer.Kind.Ident {
+        if lexer.is_keyword(text) { return "\x1b[1;34m" }
+        if text.len > 0 and text[0] >= 'A' and text[0] <= 'Z' { return "\x1b[33m" }
+        return ""
+    }
+    if k == lexer.Kind.Str or k == lexer.Kind.Bytes or k == lexer.Kind.Char { return "\x1b[32m" }
+    if k == lexer.Kind.Int or k == lexer.Kind.Float { return "\x1b[36m" }
+    if k == lexer.Kind.Comment or k == lexer.Kind.Doc { return "\x1b[90m" }
+    if k == lexer.Kind.At or k == lexer.Kind.Hash { return "\x1b[35m" }
+    return ""
+}
+
+/// The line with its tokens coloured, as the prompt draws it; the plain
+/// line when NO_COLOR is set.
+pub fn colourize(line: []u8) -> String {
+    if os.env("NO_COLOR") != null { return String.from(line) }
+    var lx = lexer.new_lexer(line)
+    lx.lex()
+    var out = String.new()
+    var pos: usize = 0
+    for t in lx.toks {
+        if t.kind == lexer.Kind.Eof or t.kind == lexer.Kind.Newline { continue }
+        if t.start < pos or t.end > line.len or t.start > t.end { continue }
+        out.append(line[pos..t.start])
+        let c = colour_of(t.kind, line[t.start..t.end])
+        if c.len > 0 {
+            out.append(c)
+            out.append(line[t.start..t.end])
+            out.append("\x1b[0m")
+        } else {
+            out.append(line[t.start..t.end])
+        }
+        pos = t.end
+    }
+    if pos < line.len { out.append(line[pos..]) }
+    return out
+}
+
+/// One key: a byte, or a named key from an escape sequence (arrows, Home,
+/// End and Delete arrive as `ESC [ ... final` whole, so the bytes pending
+/// after an escape say whether one starts).
+fn next_key() -> ?i64 {
+    let b = io.read_key() orelse return null
+    if b != 27 { return b }
+    if io.pending_input() == 0 { return K_ESC }
+    let c = io.read_key() orelse return K_ESC
+    if c != ('[' as i64) and c != ('O' as i64) { return K_ESC }
+    var seq = String.new()
+    while true {
+        let d = io.read_key() orelse break
+        seq.push_byte(d as u8)
+        if d >= 0x40 and d <= 0x7E { break }
+        if io.pending_input() == 0 { break }
+    }
+    let s = seq[..]
+    if s == "A" { return K_UP }
+    if s == "B" { return K_DOWN }
+    if s == "C" { return K_RIGHT }
+    if s == "D" { return K_LEFT }
+    if s == "H" or s == "1~" or s == "7~" { return K_HOME }
+    if s == "F" or s == "4~" or s == "8~" { return K_END }
+    if s == "3~" { return K_DEL }
+    return K_ESC
+}
+
+/// Columns a byte string takes: one per character (a continuation byte of
+/// UTF-8 adds none); a wide character counts as one, which is close.
+fn columns(s: []u8) -> usize {
+    var n: usize = 0
+    for b in s { if (b & 0xC0) != 0x80 { n += 1 } }
+    return n
+}
+
+fn prev_char(s: []u8, i: usize) -> usize {
+    if i == 0 { return 0 }
+    var j = i - 1
+    while j > 0 and (s[j] & 0xC0) == 0x80 { j -= 1 }
+    return j
+}
+
+fn next_char(s: []u8, i: usize) -> usize {
+    if i >= s.len { return s.len }
+    var j = i + 1
+    while j < s.len and (s[j] & 0xC0) == 0x80 { j += 1 }
+    return j
+}
+
+/// Draw the prompt and the line, coloured, and put the cursor at `cur`.
+fn redraw(prompt: []u8, buf: []u8, cur: usize) {
+    print("\r{}{}\x1b[K", .{prompt, colourize(buf)})
+    let col = columns(prompt) + columns(buf[0..cur])
+    print("\r", .{})
+    if col > 0 { print("\x1b[{}C", .{col}) }
+    io.flush(2) catch { }
+}
+
+fn ident_byte(c: u8) -> bool {
+    return (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '_'
+}
+
+struct Completed {
+    line: String
+    cur: usize
+}
+
+/// Tab: the identifier before the cursor completed from what the language
+/// server's completion finds at that point of the synthetic program. One
+/// candidate, or a prefix they all share, goes into the line; otherwise the
+/// candidates are listed under the prompt.
+fn complete_at(s: *Session, buf: []u8, cur: usize) -> ?Completed {
+    var text = String.new()
+    for it in s.items {
+        text.append(it[..])
+        text.append("\n")
+    }
+    text.append("fn main() -> !void {\n")
+    for st in s.stmts {
+        text.append(st[..])
+        text.append("\n")
+    }
+    let off = text.len + cur
+    text.append(buf)
+    text.append("\n    return\n}\n")
+    let mods = lsp.editor_modules("repl_session.nx", text[..])
+    let cands = lsp.completions(&mods, text[..], off)
+    var ws = cur
+    while ws > 0 and ident_byte(buf[ws - 1]) { ws -= 1 }
+    let prefix = buf[ws..cur]
+    var labels = List(String).new()
+    for c in cands { if c.label[..].starts_with(prefix) { labels.append(c.label.clone()) } }
+    if labels.len == 0 {
+        print("\x07", .{})
+        return null
+    }
+    var common = labels[0].clone()
+    for l in labels {
+        var n: usize = 0
+        while n < common.len and n < l.len and common[n] == l[n] { n += 1 }
+        common = String.from(common[0..n])
+    }
+    if common.len > prefix.len {
+        var nb = String.from(buf[0..cur])
+        nb.append(common[prefix.len..])
+        nb.append(buf[cur..])
+        return Completed{ .line = nb, .cur = cur + (common.len - prefix.len) }
+    }
+    if labels.len > 1 {
+        print("\r\n", .{})
+        for l, i in labels {
+            if i > 0 { print("  ", .{}) }
+            print("{}", .{l})
+        }
+        print("\r\n", .{})
+    }
+    return null
+}
+
+fn hist_line(h: *List(String), i: usize) -> String {
+    for s, k in h { if k == i { return s.clone() } }
+    return String.new()
+}
+
+/// A line at the prompt with the editor: the line redrawn in colour after
+/// every key, Tab completing, arrows and Home/End moving, Up/Down through
+/// the history, Ctrl-A/E to the ends, Ctrl-U/K cutting, Ctrl-L clearing
+/// the screen, Ctrl-C dropping the line (the result is "\x03"), Ctrl-D at
+/// an empty line leaving. Null at the end of input.
+fn edit_line(prompt: []u8, history: *List(String), s: *Session) -> ?String {
+    var buf = String.new()
+    var cur: usize = 0
+    var hist_pos = history.len
+    var stash = String.new()
+    redraw(prompt, buf[..], cur)
+    while true {
+        let k = next_key() orelse {
+            print("\r\n", .{})
+            return null
+        }
+        if k == 13 or k == 10 {
+            print("\r\n", .{})
+            return buf
+        }
+        if k == 3 {
+            print("^C\r\n", .{})
+            return String.from("\x03")
+        }
+        if k == 4 {
+            if buf.len == 0 {
+                print("\r\n", .{})
+                return null
+            }
+        } else if k == 127 or k == 8 {
+            if cur > 0 {
+                let p = prev_char(buf[..], cur)
+                var nb = String.from(buf[0..p])
+                nb.append(buf[cur..])
+                buf = nb
+                cur = p
+            }
+        } else if k == K_DEL {
+            if cur < buf.len {
+                let n = next_char(buf[..], cur)
+                var nb = String.from(buf[0..cur])
+                nb.append(buf[n..])
+                buf = nb
+            }
+        } else if k == K_LEFT {
+            cur = prev_char(buf[..], cur)
+        } else if k == K_RIGHT {
+            cur = next_char(buf[..], cur)
+        } else if k == K_HOME or k == 1 {
+            cur = 0
+        } else if k == K_END or k == 5 {
+            cur = buf.len
+        } else if k == 21 {
+            buf = String.new()
+            cur = 0
+        } else if k == 11 {
+            buf = String.from(buf[0..cur])
+        } else if k == 12 {
+            print("\x1b[2J\x1b[H", .{})
+        } else if k == K_UP {
+            if hist_pos > 0 {
+                if hist_pos == history.len { stash = buf.clone() }
+                hist_pos -= 1
+                buf = hist_line(history, hist_pos)
+                cur = buf.len
+            }
+        } else if k == K_DOWN {
+            if hist_pos < history.len {
+                hist_pos += 1
+                buf = if hist_pos == history.len { stash.clone() } else { hist_line(history, hist_pos) }
+                cur = buf.len
+            }
+        } else if k == 9 {
+            if let c = complete_at(s, buf[..], cur) {
+                buf = c.line.clone()
+                cur = c.cur
+            }
+        } else if k >= 32 and k != 127 {
+            var nb = String.from(buf[0..cur])
+            nb.push_byte(k as u8)
+            nb.append(buf[cur..])
+            buf = nb
+            cur += 1
+        }
+        redraw(prompt, buf[..], cur)
+    }
+    return null
+}
+
 /// Run the session until the input ends or the user quits; the exit code.
 pub fn run(version: []u8, compiler: []u8, host: []u8, std_dir: []u8, cc: *List(String)) -> i32 {
     let interactive = io.is_terminal(1)
@@ -279,11 +546,33 @@ pub fn run(version: []u8, compiler: []u8, host: []u8, std_dir: []u8, cc: *List(S
     println("Type :help for commands, :quit to exit.", .{})
     var session = new_session()
     var pending = String.new()
+    var history = List(String).new()
+    // the line editor: raw input at a terminal, unless NX_PLAIN asks for the
+    // plain reader; raw mode is on only while a line is being typed
+    let editor = interactive and os.env("NX_PLAIN") == null and io.raw_mode(true)
+    if editor { _ = io.raw_mode(false) }
     while true {
-        if interactive { print("{}", .{if pending.len == 0 { "> " } else { "... " }}) }
-        let raw = io.read_line() orelse {
-            if interactive { println("", .{}) }
-            return 0
+        let prompt = if pending.len == 0 { "> " } else { "... " }
+        var raw = String.new()
+        if editor {
+            if !io.raw_mode(true) { return 0 }
+            let got = edit_line(prompt, &history, &session) orelse {
+                _ = io.raw_mode(false)
+                return 0
+            }
+            _ = io.raw_mode(false)
+            raw = got
+            if raw[..] == "\x03" {
+                pending = String.new()
+                continue
+            }
+            if raw[..].trim().len > 0 { history.append(raw.clone()) }
+        } else {
+            if interactive { print("{}", .{prompt}) }
+            raw = io.read_line() orelse {
+                if interactive { println("", .{}) }
+                return 0
+            }
         }
         var line = raw[..]
         while line.len > 0 and (line[line.len - 1] == '\n' or line[line.len - 1] == '\r') { line = line[0..line.len - 1] }
@@ -352,6 +641,9 @@ pub fn run(version: []u8, compiler: []u8, host: []u8, std_dir: []u8, cc: *List(S
                         continue
                     }
                     println("saved {} item(s) and {} statement(s) to {}; nx run {} runs it", .{session.items.len, session.stmts.len, path, path})
+                } else if word == "colour" or word == "color" {
+                    // the line as the prompt colours it (a testing aid)
+                    println("{}", .{colourize(rest)})
                 } else if word == "effects" {
                     let expr = rest.trim()
                     if expr.len == 0 {

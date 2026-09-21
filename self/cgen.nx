@@ -3645,6 +3645,17 @@ impl Gen {
             self.line(format("nx_set_env({}, {});", .{n, v})[..])
             return String.from("0")
         }
+        if name == "RawMode" {
+            let on = self.simple(args[0])
+            return format("nx_raw_mode({})", .{on})
+        }
+        if name == "ReadKey" {
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            self.line(format("{} {}; {{ int64_t _k = 0; {}.has = nx_read_key(&_k); if ({}.has) {}.val = _k; }}", .{cn, t, t, t, t})[..])
+            return t
+        }
+        if name == "PendingInput" { return String.from("nx_pending_input()") }
         if name == "IsTerminal" {
             let h = self.simple(args[0])
             return format("nx_is_terminal({})", .{h})

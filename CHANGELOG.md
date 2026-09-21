@@ -18,6 +18,13 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   before replacing its files (Restart Manager; it is not started again),
   and keep a log of the run as `install.log` next to the program. The
   uninstaller takes `/LOG="path"` for a log of its own.
+- The REPL has a line editor at a terminal: the line colours as you
+  type, Tab completes from the language server's completion at the
+  cursor, the arrows and Home/End move, Up/Down walk the history, the
+  usual control keys cut and clear, Ctrl-C drops the line. Raw terminal
+  input comes from three builtins, `io.raw_mode(on)`, `io.read_key()` and
+  `io.pending_input()`; the console is raw only while a line is typed.
+  `NX_PLAIN=1` asks for the plain reader, `NO_COLOR` for no colours.
 - The language server puts a code lens above every function with its
   panic proof, `cannot panic` or `panics: <why> at :<line>` from the
   witness the checker recorded, followed by the rest of its effects.

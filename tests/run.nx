@@ -651,6 +651,12 @@ fn suite_repl(e: *Env, failures: *mut List(String)) {
     if saved[..].find("fn sq(n: i32)") == null or saved[..].find("fn main() -> !void") == null or saved[..].find("_ = x * 21") == null {
         failures.append(format("repl: :save did not write the session:\n{}", .{saved}))
     }
+    // the prompt's colours: a keyword bold blue, a string green (the editor
+    // itself needs a terminal; :colour renders a line the way it would)
+    let col = nx_in(e, ["repl"][..], ":colour let s = \"hi\"\n:quit\n", e.root[..])
+    if col.stdout[..].find("\x1b[1;34mlet\x1b[0m") == null or col.stdout[..].find("\x1b[32m\"hi\"\x1b[0m") == null {
+        failures.append(format("repl: :colour did not colour the line:\n{}", .{col.stdout}))
+    }
     // nx -p prints a value, nx -e runs lines
     let p = nx(e, ["-p", "2 * 21"][..])
     if p.code != 0 or p.text() != "42" { failures.append(format("repl: nx -p answered `{}` (exit {}):\n{}", .{p.text(), p.code, p.stderr})) }

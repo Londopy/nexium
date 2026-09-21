@@ -35,6 +35,7 @@
 #else
 #include <sys/time.h>
 #include <unistd.h>
+#include <termios.h>
 #include <poll.h>
 #include <spawn.h>
 #include <sys/wait.h>
@@ -1747,6 +1748,55 @@ NX_INLINE void nx_cond_free(int64_t cv) { pthread_cond_destroy((pthread_cond_t*)
    tracker's own lock uses the raw pair, which registers nothing) */
 NX_INLINE void nx_mutex_lock(int64_t m) { nx_mutex_lock_raw(m); nx_track_handle(2, m, true); }
 NX_INLINE void nx_mutex_unlock(int64_t m) { nx_track_handle(2, m, false); nx_mutex_unlock_raw(m); }
+
+/* ---------------------------------------------------- raw terminal input */
+/* `io.raw_mode(true)`: the console gives bytes as they are typed, without
+ * echo, with VT sequences in (arrow keys) and out (colours); false restores
+ * what was there, and so does exit. The REPL's line editor lives on this.
+ * `io.read_key()` is one byte from the same buffer `io.read_line()` reads,
+ * `io.pending_input()` how many are buffered (an escape sequence arrives
+ * whole). */
+#if defined(_WIN32)
+static DWORD nx_saved_in_mode, nx_saved_out_mode;
+static bool nx_raw_saved;
+static void nx_raw_restore(void) {
+    if (!nx_raw_saved) return;
+    SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), nx_saved_in_mode);
+    SetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE), nx_saved_out_mode);
+}
+NX_INLINE bool nx_raw_mode(bool on) {
+    HANDLE hin = GetStdHandle(STD_INPUT_HANDLE), hout = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (!on) { nx_raw_restore(); return true; }
+    DWORD im, om;
+    if (!GetConsoleMode(hin, &im) || !GetConsoleMode(hout, &om)) return false;
+    if (!nx_raw_saved) { nx_saved_in_mode = im; nx_saved_out_mode = om; nx_raw_saved = true; atexit(nx_raw_restore); }
+    DWORD nim = (im & ~(DWORD)(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT)) | ENABLE_VIRTUAL_TERMINAL_INPUT;
+    if (!SetConsoleMode(hin, nim)) return false;
+    SetConsoleMode(hout, om | ENABLE_VIRTUAL_TERMINAL_PROCESSING | ENABLE_PROCESSED_OUTPUT);
+    return true;
+}
+#else
+static struct termios nx_saved_termios;
+static bool nx_raw_saved;
+static void nx_raw_restore(void) { if (nx_raw_saved) tcsetattr(0, TCSANOW, &nx_saved_termios); }
+NX_INLINE bool nx_raw_mode(bool on) {
+    if (!on) { nx_raw_restore(); return true; }
+    struct termios t;
+    if (tcgetattr(0, &t) != 0) return false;
+    if (!nx_raw_saved) { nx_saved_termios = t; nx_raw_saved = true; atexit(nx_raw_restore); }
+    t.c_lflag &= ~(tcflag_t)(ICANON | ECHO | ISIG);
+    t.c_iflag &= ~(tcflag_t)(ICRNL);
+    t.c_cc[VMIN] = 1;
+    t.c_cc[VTIME] = 0;
+    return tcsetattr(0, TCSANOW, &t) == 0;
+}
+#endif
+NX_INLINE bool nx_read_key(int64_t* out) {
+    if (!nx_stdin_fill()) return false;
+    *out = (int64_t)nx_stdin_buf[nx_stdin_pos++];
+    return true;
+}
+NX_INLINE int64_t nx_pending_input(void) { return (int64_t)(nx_stdin_len - nx_stdin_pos); }
 
 NX_INLINE bool nx_read_line(nx_ctx* c, nx_string* out) {
     nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;

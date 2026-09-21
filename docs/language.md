@@ -237,7 +237,11 @@ the inferred set per function.
   `n` bytes; empty at end of input), `io.write(h, bytes) -> !void`,
   `io.flush(h) -> !void`, `io.close(h) -> !void`. Handles 1, 2 and 3 are
   stdin, stdout and stderr; `io.is_terminal(h) -> bool` says whether one of
-  those is a terminal. Not available at the REPL.
+  those is a terminal. `io.raw_mode(on) -> bool` gives the console's bytes
+  as they are typed, without echo, with VT sequences in and out (the REPL's
+  line editor; exit restores the console), `io.read_key() -> ?i64` is one
+  byte of input and `io.pending_input() -> i64` how many are buffered (an
+  escape sequence arrives whole). Not available at the REPL.
 - Sockets (`std.net` and `std.http` build on these; every call `blocks`):
   `net.connect(host, port, timeout_ms) -> !i64`, `net.listen(host, port) ->
   !i64`, `net.accept(listener, timeout_ms) -> !i64`, `net.send(sock, bytes)
