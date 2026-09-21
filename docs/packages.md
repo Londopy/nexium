@@ -9,6 +9,7 @@ git tag or a directory on disk. No registry is needed.
 ```sh
 nx init                     # writes nexium.toml (and main.nx when the folder is empty)
 nx add greet --git https://github.com/someone/greet --tag v1.2.0
+nx add sdk --git https://github.com/someone/app --tag v2.0.0 --dir nexium   # a package in a directory of a repository
 nx add local --path ../local
 nx run main.nx
 ```
@@ -23,6 +24,7 @@ version = "0.1.0"
 
 [dependencies]
 greet = { git = "https://github.com/someone/greet", tag = "v1.2.0" }
+sdk = { git = "https://github.com/someone/app", tag = "v2.0.0", dir = "nexium" }
 local = { path = "../local" }
 ```
 
@@ -63,6 +65,11 @@ Inside a package, `import util` refers to the package's own `src/util.nx`,
 never to a file of the program using the package; two packages may both
 have a `util` module. A package's own dependencies go in its manifest and
 are fetched along with it. Only `pub` items are visible to importers.
+
+A package may live in a directory of a larger repository, an SDK beside
+the app it belongs to: the dependency names it with `dir = "nexium"`, and
+the package's `nexium.toml` and `src/` sit in that directory. The lock
+pins the repository's commit as for any git source.
 
 To publish, push the repository and tag it (`git tag v1.2.0 && git push
 --tags`). Users depend on the tag. Bump the tag for every release; the lock

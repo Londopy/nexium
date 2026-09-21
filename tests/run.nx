@@ -484,6 +484,10 @@ fn suite_packages(e: *Env, failures: *mut List(String)) {
     fs.make_dirs(fs.join(repo[..], "src")[..]) catch { }
     fs.write(fs.join(repo[..], "nexium.toml")[..], "[package]\nname = \"gitdep\"\nversion = \"0.1.0\"\n") catch { }
     fs.write(fs.join(repo[..], "src/lib.nx")[..], "pub fn v() -> i32 { return 1 }\n") catch { }
+    // and a second package in a directory of the same repository
+    fs.make_dirs(fs.join(repo[..], "sdk/src")[..]) catch { }
+    fs.write(fs.join(repo[..], "sdk/nexium.toml")[..], "[package]\nname = \"sdk\"\nversion = \"0.1.0\"\n") catch { }
+    fs.write(fs.join(repo[..], "sdk/src/lib.nx")[..], "pub fn w() -> i32 { return 10 }\n") catch { }
     let gitc = ["git", "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false"]
     var g = List([]u8).new()
     for a in gitc { g.append(a) }
@@ -526,7 +530,16 @@ fn suite_packages(e: *Env, failures: *mut List(String)) {
     if r3.text() != "2" { failures.append(format("packages: after nx update the program printed {}", .{r3.stdout})); return }
     let lock3 = fs.read(fs.join(gitapp[..], "nexium.lock")[..]) catch { String.new() }
     if lock3[..] == lock1[..] { failures.append(String.from("packages: nx update did not rewrite the lock")) }
-    println("packages: path dependencies, module imports, the lock file, a git dependency whose tag moves", .{})
+    // a package in a directory of the repository: `dir` names it
+    let gitapp2 = fs.join(base[..], "gitapp2")
+    fs.make_dirs(gitapp2[..]) catch { }
+    fs.write(fs.join(gitapp2[..], "nexium.toml")[..], format("[package]\nname = \"gitapp2\"\nversion = \"0.1.0\"\n\n[dependencies]\nsdk = {{ git = \"{}\", tag = \"v1\", dir = \"sdk\" }}\n", .{url})[..]) catch { }
+    fs.write(fs.join(gitapp2[..], "main.nx")[..], "import sdk\nfn main() { println(\"{}\", .{sdk.w()}) }\n") catch { }
+    let f3 = nx_in(e, ["fetch"][..], "", gitapp2[..])
+    if f3.code != 0 { failures.append(format("packages: nx fetch of a package in a directory failed:\n{}", .{f3.stderr})); return }
+    let r3 = nx_in(e, ["run", "main.nx"][..], "", gitapp2[..])
+    if r3.text() != "10" { failures.append(format("packages: the package in a directory printed {} {}", .{r3.stdout, r3.stderr})); return }
+    println("packages: path dependencies, module imports, the lock file, a git dependency whose tag moves, a package in a directory", .{})
 }
 
 /// `artifact installer`: `nx ship` writes an Inno Setup script on Windows

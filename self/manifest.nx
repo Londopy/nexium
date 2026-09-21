@@ -179,6 +179,9 @@ pub struct Dep {
     git: String
     tag: String
     path: String
+    // the package's directory inside a git repository (an SDK beside an
+    // app), empty for the root
+    dir: String
 }
 
 /// A manifest: the package's name and version, its dependencies, and the
@@ -224,19 +227,24 @@ pub fn read(path: []u8) -> !Manifest {
     var deps = List(Dep).new()
     if let d = table_of(&tables, "dependencies") {
         for e in d.entries {
-            var dep = Dep{ .name = e.key.clone(), .git = String.new(), .tag = String.new(), .path = String.new() }
+            var dep = Dep{ .name = e.key.clone(), .git = String.new(), .tag = String.new(), .path = String.new(), .dir = String.new() }
             if e.value.kind == V_STR {
                 dep.tag = e.value.text.clone()
             } else if e.value.kind == V_TABLE {
                 if let g = e.value.get("git") { if let s = g.as_str() { dep.git = String.from(s) } }
                 if let t = e.value.get("tag") { if let s = t.as_str() { dep.tag = String.from(s) } }
                 if let p = e.value.get("path") { if let s = p.as_str() { dep.path = String.from(s) } }
+                if let x = e.value.get("dir") { if let s = x.as_str() { dep.dir = String.from(s) } }
             } else {
                 eprintln("error: {}: dependency `{}` cannot be an array", .{path, e.key})
                 return error.InvalidInput
             }
             if dep.git.len == 0 and dep.path.len == 0 {
                 eprintln("error: {}: dependency `{}` needs `git = \"url\"` (with `tag`) or `path = \"dir\"`", .{path, e.key})
+                return error.InvalidInput
+            }
+            if dep.dir.len > 0 and dep.git.len == 0 {
+                eprintln("error: {}: dependency `{}`: `dir` goes with `git` (a `path` points at the package's directory itself)", .{path, e.key})
                 return error.InvalidInput
             }
             deps.append(dep)
@@ -300,8 +308,14 @@ pub fn packages(root: *Manifest) -> !List(Package) {
                 eprintln("error: dependency `{}` is not fetched; run `nx fetch` in {}", .{d.name, root.dir})
                 return error.NotFound
             }
-            out.append(Package{ .name = d.name.clone(), .src = fs.join(dir[..], "src") })
-            let sub = fs.join(dir[..], MANIFEST)
+            // the package's own directory: the checkout, or `dir` inside it
+            let pkg = if d.dir.len > 0 { fs.join(dir[..], d.dir[..]) } else { dir.clone() }
+            if !fs.exists(pkg[..]) {
+                eprintln("error: dependency `{}`: {} has no directory `{}`", .{d.name, dir, d.dir})
+                return error.NotFound
+            }
+            out.append(Package{ .name = d.name.clone(), .src = fs.join(pkg[..], "src") })
+            let sub = fs.join(pkg[..], MANIFEST)
             if fs.exists(sub[..]) { queue.append(try read(sub[..])) }
         }
     }
@@ -447,6 +461,10 @@ pub fn fetch(root: *Manifest, update: [][]u8, update_all: bool) -> !List(Locked)
                     }
                     commit = want.clone()
                 }
+                if d.dir.len > 0 and !fs.exists(fs.join(dir[..], d.dir[..])[..]) {
+                    eprintln("error: dependency `{}`: {} has no directory `{}` at {}", .{d.name, d.git, d.dir, d.tag})
+                    return error.NotFound
+                }
                 lock.append(Locked{ .name = d.name.clone(), .source = d.git.clone(), .tag = d.tag.clone(), .commit = commit })
             } else {
                 if !fs.exists(dir[..]) {
@@ -455,7 +473,8 @@ pub fn fetch(root: *Manifest, update: [][]u8, update_all: bool) -> !List(Locked)
                 }
                 lock.append(Locked{ .name = d.name.clone(), .source = String.from("path"), .tag = d.path.clone(), .commit = String.new() })
             }
-            let sub = fs.join(dir[..], MANIFEST)
+            let pkg = if d.dir.len > 0 { fs.join(dir[..], d.dir[..]) } else { dir.clone() }
+            let sub = fs.join(pkg[..], MANIFEST)
             if fs.exists(sub[..]) { queue.append(try read(sub[..])) }
         }
     }
@@ -504,8 +523,10 @@ pub fn add(manifest_path: []u8, dep: *Dep) -> !void {
     }
     var line = String.new()
     if dep.git.len > 0 {
-        if dep.tag.len > 0 { line = format("{} = {{ git = \"{}\", tag = \"{}\" }}\n", .{dep.name, dep.git, dep.tag}) }
-        else { line = format("{} = {{ git = \"{}\" }}\n", .{dep.name, dep.git}) }
+        var fields = format("git = \"{}\"", .{dep.git})
+        if dep.tag.len > 0 { fields.append(format(", tag = \"{}\"", .{dep.tag})[..]) }
+        if dep.dir.len > 0 { fields.append(format(", dir = \"{}\"", .{dep.dir})[..]) }
+        line = format("{} = {{ {} }}\n", .{dep.name, fields})
     } else if dep.path.len > 0 {
         var p = String.new()
         for c in dep.path { p.push_byte(if c == '\\' { '/' } else { c }) }

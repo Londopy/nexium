@@ -66,7 +66,7 @@ fn usage() {
     eprintln("       nx ship <file.nx> [--mode m] [--target t]   produce the declared artifacts", .{})
     eprintln("       nx version | nx doctor | nx lsp | nx repl", .{})
     eprintln("       nx -e CODE | nx -p EXPR                    run a line as at the prompt; -p prints the value", .{})
-    eprintln("       nx init [name] | nx add <name> --git URL [--tag TAG] | --path DIR | nx fetch | nx update [name...]", .{})
+    eprintln("       nx init [name] | nx add <name> --git URL [--tag TAG] [--dir SUB] | --path DIR | nx fetch | nx update [name...]", .{})
     eprintln("  -o <path>          output file", .{})
     eprintln("  --out-dir <dir>    where C and binaries go (default nx-out)", .{})
     eprintln("  --mode <m>         debug (default), safe, fast, small", .{})
@@ -719,19 +719,20 @@ fn cmd_init(rest: [][]u8) -> i32 {
 /// manifest, then `nx fetch`.
 fn cmd_add(rest: [][]u8) -> i32 {
     var name = String.new()
-    var dep = manifest.Dep{ .name = String.new(), .git = String.new(), .tag = String.new(), .path = String.new() }
+    var dep = manifest.Dep{ .name = String.new(), .git = String.new(), .tag = String.new(), .path = String.new(), .dir = String.new() }
     var i: usize = 0
     while i < rest.len {
         let a = rest[i]
         if a == "--git" and i + 1 < rest.len { dep.git = String.from(rest[i + 1]); i += 2; continue }
         if a == "--tag" and i + 1 < rest.len { dep.tag = String.from(rest[i + 1]); i += 2; continue }
         if a == "--path" and i + 1 < rest.len { dep.path = String.from(rest[i + 1]); i += 2; continue }
+        if a == "--dir" and i + 1 < rest.len { dep.dir = String.from(rest[i + 1]); i += 2; continue }
         if name.len == 0 and !a.starts_with("--") { name = String.from(a); i += 1; continue }
         eprintln("error: unexpected argument `{}`", .{a})
         return 1
     }
     if name.len == 0 {
-        eprintln("usage: nx add <name> --git URL [--tag TAG] | --path DIR", .{})
+        eprintln("usage: nx add <name> --git URL [--tag TAG] [--dir SUB] | --path DIR", .{})
         return 1
     }
     dep.name = name

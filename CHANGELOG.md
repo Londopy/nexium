@@ -18,6 +18,10 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   before replacing its files (Restart Manager; it is not started again),
   and keep a log of the run as `install.log` next to the program. The
   uninstaller takes `/LOG="path"` for a log of its own.
+- A git dependency may name the package's directory inside the
+  repository: `sdk = { git = "...", tag = "v2.0.0", dir = "nexium" }`, or
+  `nx add sdk --git URL --tag TAG --dir nexium`, for an SDK that lives
+  beside the app it belongs to. The packages suite fetches one.
 - The Windows installer detects an installed Nexium: the page after the
   welcome names its version and directory and offers the upgrade (a
   repair when it is the same version, a replacement when the installed
