@@ -28,6 +28,9 @@ in settings.
   within its function or of an item across the file.
 - Diagnostics on every edit and hover on functions showing the signature and
   the inferred effect set.
+- A code lens above every function with its panic proof: `cannot panic`,
+  or `panics: <why> at :<line>` naming the line the checker recorded as the
+  witness, followed by the rest of its effects.
 - **Nexium: Run Current File** in the command palette runs `nx run` in a
   terminal.
 - **Nexium: Restart Language Server**.

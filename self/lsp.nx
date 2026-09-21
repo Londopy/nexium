@@ -554,6 +554,50 @@ fn hover(path: []u8, text: []u8, off: usize, std_dir: []u8, cc: *List(String)) -
     return format("```nexium\nfn {}({}) -> {}\n```\n{}", .{c.insts[best].name, params, ret, eff})
 }
 
+/// Code lenses: above every function, the panic proof ("cannot panic", or
+/// "panics: <why> at :<line>", the witness the checker recorded) and the
+/// rest of its effects. A file that does not check has no lenses.
+fn code_lenses(path: []u8, text: []u8, std_dir: []u8, cc: *List(String)) -> json.Json {
+    var lenses = json.array()
+    var diags = List(LspDiag).new()
+    var c = analyze(path, text, std_dir, cc, &mut diags) orelse return lenses
+    let n = c.insts.len
+    for i in 0..n {
+        if c.insts[i].module != 0 or c.insts[i].body == parser.NONE or c.insts[i].is_closure or c.insts[i].is_test { continue }
+        let start = c.insts[i].start
+        let eff = c.insts[i].effects
+        var title = String.new()
+        if (eff & check.EFF_PANICS) == 0 {
+            title.append("cannot panic")
+        } else {
+            // the witness, when the panic enters here; an effect that arrives only
+            // through a call has none recorded (nx explain, on the roadmap, will walk it)
+            let at = c.witness_at(i, check.EFF_PANICS)
+            let why = c.witness_why(i, check.EFF_PANICS)
+            if at != start and why.len > 0 {
+                let wl = loc_of(text, path, at, at)
+                title.append(format("panics: {} at :{}", .{why, wl.line + 1})[..])
+            } else if at != start {
+                let wl = loc_of(text, path, at, at)
+                title.append(format("panics at :{}", .{wl.line + 1})[..])
+            } else {
+                title.append("panics (through a call)")
+            }
+        }
+        let rest = eff - (eff & check.EFF_PANICS)
+        if rest != 0 { title.append(format("; {}", .{check.render_effects(rest)})[..]) }
+        let l = loc_of(text, path, start, start)
+        var cmd = json.object()
+        json.set(&mut cmd, "title", str(title[..]))
+        json.set(&mut cmd, "command", str(""))
+        var lens = json.object()
+        json.set(&mut lens, "range", range_json(l.line, l.col, l.line, l.col))
+        json.set(&mut lens, "command", cmd)
+        json.push(&mut lenses, lens)
+    }
+    return lenses
+}
+
 /// Hover for a file that does not check: the signature as written, without effects.
 fn hover_from_syntax(text: []u8, off: usize) -> ?String {
     let m = EditorMod{ .name = String.new(), .path = String.new(), .text = String.from(text), .parsed = parser.parse_source(text) }
@@ -732,6 +776,9 @@ pub fn run(version: []u8, std_dir: []u8, cc: *List(String)) {
             json.set(&mut caps, "definitionProvider", json.boolean(true))
             json.set(&mut caps, "completionProvider", completion)
             json.set(&mut caps, "renameProvider", rename)
+            var lens = json.object()
+            json.set(&mut lens, "resolveProvider", json.boolean(false))
+            json.set(&mut caps, "codeLensProvider", lens)
             var info = json.object()
             json.set(&mut info, "name", str("nx"))
             json.set(&mut info, "version", str(version))
@@ -782,6 +829,14 @@ pub fn run(version: []u8, std_dir: []u8, cc: *List(String)) {
                 }
                 publish(&mut out, uri[..], items)
             }
+        } else if method == "textDocument/codeLens" {
+            var uri = String.new()
+            if let td = json.get(&params, "textDocument") { if let u = json.get(td, "uri") { if let s = json.as_str(u) { uri = String.from(s) } } }
+            var current: ?String = null
+            for u, i in doc_uris { if u == uri { current = doc_texts[i].clone() } }
+            var result = json.array()
+            if let t = current { result = code_lenses(uri_to_path(uri[..])[..], t[..], std_dir, cc) }
+            reply(&mut out, &id, result)
         } else if method == "textDocument/didClose" {
             var uri = String.new()
             if let td = json.get(&params, "textDocument") { if let u = json.get(td, "uri") { if let s = json.as_str(u) { uri = String.from(s) } } }

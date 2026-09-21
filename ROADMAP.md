@@ -353,7 +353,7 @@ queue in front of them.
     copies the folder into the user's place and onto the PATH.)
 19. The effects lockfile (`nx audit --lock`) and the CI check. (Done:
     `file.effects.lock`, `--check` in CI on the shipped example.)
-20. Panic proofs as code lenses in the language server.
+20. Panic proofs as code lenses in the language server. (Done.)
 21. Colour as you type and completion in the REPL, from the server.
 
 **About a week each.**
@@ -726,9 +726,9 @@ changes the language.
   effect (a function starts allocating, can now panic) fails `nx audit
   --check`, and CI, until the lock is updated on purpose. Semver for
   behaviour.
-- Proofs in the editor (1.3): the language server already infers effects;
-  a code lens above every function reads `cannot panic` or `panics: index
-  at :12`, and hover on a slice index says which fact proved the bound.
+- Proofs in the editor (1.3): the code lens above every function reads
+  `cannot panic` or `panics: index at :12` (done on the way); hover on a
+  slice index saying which fact proved the bound is still to come.
 - Profile by effect (1.6): `nx run --trace allocates` instruments only the
   allocation sites, `--trace blocks` only the blocking calls, and prints
   a histogram per function: a profiler with no configuration, from the

@@ -18,6 +18,9 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   before replacing its files (Restart Manager; it is not started again),
   and keep a log of the run as `install.log` next to the program. The
   uninstaller takes `/LOG="path"` for a log of its own.
+- The language server puts a code lens above every function with its
+  panic proof, `cannot panic` or `panics: <why> at :<line>` from the
+  witness the checker recorded, followed by the rest of its effects.
 - The effects lockfile: `nx audit FILE --lock` writes `FILE.effects.lock`,
   every function's effects (the program's own modules and its packages,
   not the standard library), and `nx audit FILE --check` fails when a

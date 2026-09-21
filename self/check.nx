@@ -835,7 +835,7 @@ const EFF_REFCOUNTS: u64 = 2
 const EFF_BLOCKS: u64 = 4
 const EFF_SHARED_MUTABLE: u64 = 8
 const EFF_NONDETERMINISTIC: u64 = 16
-const EFF_PANICS: u64 = 32
+pub const EFF_PANICS: u64 = 32
 const EFF_FFI: u64 = 64
 const EFF_UNBOUNDED_STACK: u64 = 128
 const EFF_ALL: u64 = 255
@@ -2414,6 +2414,16 @@ impl Checker {
     /// Where effect `bit` enters `inst`: the recorded witness (the call, the
     /// append, the write), or the function's header when there is none (an
     /// extern function has no body to point into).
+    /// The witness of an effect in an instance, for the editor: where it
+    /// enters (the instance's start when it has no recorded witness) and why.
+    pub fn witness_at(self: *mut Self, inst: usize, bit: u64) -> usize {
+        return self.introducer_at(inst, bit)
+    }
+
+    pub fn witness_why(self: *mut Self, inst: usize, bit: u64) -> String {
+        return self.introducer_why(inst, bit)
+    }
+
     fn introducer_at(self: *mut Self, inst: usize, bit: u64) -> usize {
         for w in self.insts[inst].witnesses { if (w.effects & bit) != 0 { return w.at } }
         return self.insts[inst].start

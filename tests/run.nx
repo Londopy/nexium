@@ -699,12 +699,16 @@ fn suite_lsp(e: *Env, failures: *mut List(String)) {
         input.append(frame(format("{{\"jsonrpc\":\"2.0\",\"id\":{},\"method\":\"textDocument/{}\",\"params\":{{\"textDocument\":{{\"uri\":\"{}\"}},\"position\":{{\"line\":{},\"character\":{}}}}}}}", .{a.0, a.1, uri, a.2, a.3})[..])[..])
     }
     input.append(frame(format("{{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"textDocument/rename\",\"params\":{{\"textDocument\":{{\"uri\":\"{}\"}},\"position\":{{\"line\":10,\"character\":17}},\"newName\":\"sum\"}}}}", .{uri})[..])[..])
+    input.append(frame(format("{{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"textDocument/codeLens\",\"params\":{{\"textDocument\":{{\"uri\":\"{}\"}}}}}}", .{uri})[..])[..])
     input.append(frame("{\"jsonrpc\":\"2.0\",\"id\":99,\"method\":\"shutdown\"}")[..])
     input.append(frame("{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}")[..])
     let lsp_args = ["lsp"]
     let out = nx_in(e, lsp_args[..], input[..], e.root[..])
     let o = out.stdout[..]
     if o.find("\"definitionProvider\":true") == null { failures.append(format("lsp: capabilities:\n{}", .{o})); return }
+    // code lenses: the panic proof above every function (origin cannot panic; main can)
+    let r8 = response(o, 8)
+    if r8.find("cannot panic") == null or r8.find("panics") == null { failures.append(format("lsp: code lenses: {}", .{r8})) }
     let r1 = response(o, 1)
     if r1.find("helper.nx") == null or r1.find("\"line\":0") == null { failures.append(format("lsp: definition of helper.twice: {}", .{r1})) }
     let r2 = response(o, 2)
