@@ -69,6 +69,34 @@ To publish, push the repository and tag it (`git tag v1.2.0 && git push
 file pins the commit, so moving a tag does not change anyone's build until
 they run `nx update`.
 
+## Packages you can `nx add` today
+
+There is no registry yet (it is on the roadmap, under *Ecosystem*); this
+table is the registry until then. A package is any git repository with a
+`nexium.toml` at its root and a tag to pin:
+
+```sh
+nx add words --git https://github.com/Londopy/nexium --tag v1.0.3
+```
+
+| package | what it is | add it with |
+| --- | --- | --- |
+| `words` (in this repository, `topo/code/pkg/words`) | the Topo's example package: a few functions over words, the layout to copy | a `path` dependency on a checkout, or copy the two files |
+| `app` (in this repository, `topo/code/pkg/app`) | the program that depends on `words`; the shape of a program with dependencies | the same |
+
+That is the honest list on the day this page was written: the language is
+young, and the packages people write are still in their programs. Two
+things are on their way to it: the Nexium SDK inside
+[statusmith](https://github.com/Londopy/statusmith) (Discord Rich Presence
+from Nexium; it needs a `nexium.toml` at the root of a repository of its
+own), and the standard library's next modules, which land in `std/`, not
+here.
+
+To be listed, open a pull request adding a row: the repository, one line
+of what it does, the tag to pin. The package has to build with the
+current release (`nx check` on its `src/`), carry a license, and keep its
+name a valid identifier.
+
 ## Rules
 
 - A dependency's name in the manifest is the identifier programs import;

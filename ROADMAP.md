@@ -315,6 +315,8 @@ queue in front of them.
    `OVSX_PAT` are set; the tokens and the namespaces are the
    maintainer's to create, see `editors/vscode/README.md`.)
 7. A `packages.md`: the packages people can `nx add` from git today.
+   (Done, as a section of `docs/packages.md`: the honest list is the
+   Topo's two example packages, and how to get a row.)
 8. An "Open REPL here" folder entry and a Windows Terminal profile from
    the installer.
 9. `ghcr.io/londopy/nexium`: the compiler with Zig, on Alpine and Debian.

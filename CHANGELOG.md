@@ -18,6 +18,9 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   before replacing its files (Restart Manager; it is not started again),
   and keep a log of the run as `install.log` next to the program. The
   uninstaller takes `/LOG="path"` for a log of its own.
+- `docs/packages.md` has the list of packages one can `nx add` today,
+  what a repository needs to be one, and how to get a row; it is the
+  registry until there is a registry.
 - The release workflow publishes the VS Code extension to the Visual
   Studio Marketplace and to Open VSX when the `VSCE_PAT` and `OVSX_PAT`
   secrets are set, and says so when they are not; the extension is
