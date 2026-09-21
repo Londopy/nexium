@@ -1,0 +1,12 @@
+// EXPECT: `match` is not exhaustive
+fn sum(xs: []i32) -> i32 {
+    return match xs {
+        [a, b] => a + b,
+        [a, b, rest..] => a + b + rest.len as i32,
+    }
+}
+
+fn main() {
+    let xs = [1, 2, 3]
+    println("{}", .{sum(xs[..])})
+}

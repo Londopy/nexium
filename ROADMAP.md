@@ -398,7 +398,7 @@ Ergonomics the self-hosted compiler paid for by hand.
   method, so a user type iterates like a slice; `Map` iteration over
   entries `(k, v)` as well as keys. (Done, decision 94.)
 - Slice patterns: `[first, rest..]`, `[a, b]`, and `x @ pat` bindings in
-  `match`.
+  `match`. (Done, decision 95.)
 - Range facts through `while` conditions and `else` branches (KNOWN_ISSUES),
   and proofs for `x / y` after `y != 0`, `.?` after `x != null`, and slice
   bounds after `if s.len >= n`, so fewer functions carry `panics`.

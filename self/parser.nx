@@ -56,6 +56,8 @@ pub enum NodeKind {
     Range, Cast, Null, Undefined, Unreachable, ErrorLit, Builtin, BinConstruct, Seg, Comptime, TypeVal, UnsafeE,
     // patterns
     PWild, PBind, PLit, PVariant, PError, PNull, PRange, POr, PBinary, PTuple,
+    // `[a, rest..]` (kids: the elements, a PRest among them), `rest..` / `..`, `name @ pattern` (x: the pattern)
+    PSlice, PRest, PAt,
 }
 
 pub const NONE: usize = 0xFFFFFFFFFFFFFFFF
@@ -2342,6 +2344,37 @@ impl Parser {
             n.end = self.prev_end()
             return self.tree.add(n)
         }
+        if k == lexer.Kind.LBracket {
+            // `[a, b]`, `[first, rest..]`, `[.., last]`: a slice by shape, one rest
+            self.bump()
+            var n = blank(NodeKind.PSlice, start, start)
+            var rests: usize = 0
+            while true {
+                if self.at(lexer.Kind.RBracket) { break }
+                let estart = self.start()
+                if self.at(lexer.Kind.DotDot) {
+                    self.bump()
+                    n.kids.append(self.tree.add(blank(NodeKind.PRest, estart, self.prev_end())))
+                    rests += 1
+                } else {
+                    let q = try self.parse_pattern()
+                    if self.tree.nodes[q].k == NodeKind.PBind and self.at(lexer.Kind.DotDot) {
+                        self.bump()
+                        var r = blank(NodeKind.PRest, estart, self.prev_end())
+                        r.name = self.tree.nodes[q].name.clone()
+                        n.kids.append(self.tree.add(r))
+                        rests += 1
+                    } else {
+                        n.kids.append(q)
+                    }
+                }
+                if !self.eat(lexer.Kind.Comma) { break }
+            }
+            try self.expect(lexer.Kind.RBracket)
+            if rests > 1 { return self.fail(start, "a slice pattern takes one `rest..`") }
+            n.end = self.prev_end()
+            return self.tree.add(n)
+        }
         if k == lexer.Kind.Dot {
             self.bump()
             let name = try self.expect_ident()
@@ -2379,6 +2412,15 @@ impl Parser {
             if lexer.is_keyword(s) { return self.fail(start, format("unexpected keyword `{}` in pattern", .{s})) }
             let name = String.from(s)
             self.bump()
+            if self.at(lexer.Kind.At) {
+                // `whole @ pattern`: the value under a name while its parts match
+                self.bump()
+                let sub = try self.parse_pattern_atom()
+                var n = blank(NodeKind.PAt, start, self.prev_end())
+                n.name = name
+                n.x = sub
+                return self.tree.add(n)
+            }
             if self.at(lexer.Kind.Dot) {
                 var n = blank(NodeKind.PVariant, start, start)
                 n.words.append(name)
@@ -3145,6 +3187,16 @@ impl Printer {
         } else if k == NodeKind.PTuple {
             self.open(format("(ptuple {}", .{sp}))
             for e in n.kids { self.pattern(e) }
+            self.close()
+        } else if k == NodeKind.PSlice {
+            self.open(format("(pslice {}", .{sp}))
+            for e in n.kids { self.pattern(e) }
+            self.close()
+        } else if k == NodeKind.PRest {
+            self.line(format("(prest {} name={})", .{sp, n.name}))
+        } else if k == NodeKind.PAt {
+            self.open(format("(pat {} name={}", .{sp, n.name}))
+            self.pattern(n.x)
             self.close()
         }
     }

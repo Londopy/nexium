@@ -405,6 +405,8 @@ module.exports = grammar({
         $.error_pattern,
         $.null_literal,
         $.tuple_pattern,
+        $.slice_pattern,
+        $.at_pattern,
         $.or_pattern,
         $.binary_pattern,
         $.else_pattern,
@@ -418,6 +420,11 @@ module.exports = grammar({
       seq('.', field('variant', $.identifier), optional(choice(seq('(', sep($.pattern), ')'), seq('{', sep(seq($.identifier, ':', $.pattern)), '}')))),
     error_pattern: ($) => seq('error', '.', $.identifier),
     tuple_pattern: ($) => seq('(', sep($.pattern), ')'),
+    // `[a, b]`, `[first, rest..]`, `[.., last]`
+    slice_pattern: ($) => seq('[', sep(choice($.pattern, $.rest_pattern)), ']'),
+    rest_pattern: ($) => seq(optional($.identifier), '..'),
+    // `whole @ pattern`
+    at_pattern: ($) => prec.right(seq(field('name', $.identifier), '@', field('pattern', $.pattern))),
     or_pattern: ($) => prec.left(seq($.pattern, '|', $.pattern)),
     binary_pattern: ($) => seq('<<', sep($.binary_segment), '>>'),
     binary_segment: ($) => seq(choice($.identifier, $.integer_literal, $.char_literal, $.string_literal, '_'), optional(seq(':', $.segment_size)), repeat(seq('/', $.segment_modifier))),

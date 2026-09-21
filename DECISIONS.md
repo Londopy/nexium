@@ -632,3 +632,13 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     body), no `for parallel` (a worker needs a slice to split). A map
     iterates its entries under a tuple binding, `for (k, v) in m`, the
     way it iterates keys: collected first, then walked.
+95. **Slice patterns match by shape; the rest is a view; `@` names the
+    whole.** `[a, b]`, `[first, rest..]` and `[.., last]` match slices and
+    arrays (an array pattern names every element or ends in a rest, so
+    the length is static). Elements bind as views of the slice's storage,
+    never as owners, and the one `rest..` binds a `[]T` slice of the
+    middle. Exhaustiveness is by length: the rest-arm with the fewest
+    fixed elements must leave no shorter length without an exact arm,
+    which makes `[]` plus `[x, rest..]` total without a `_`. `whole @
+    pattern` binds the value (owned when the value is) while its parts
+    match as views of it, so nothing is dropped twice.

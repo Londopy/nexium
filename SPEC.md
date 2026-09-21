@@ -310,8 +310,14 @@ literals), integer ranges `1..=9`, enum variants `.Variant(p, q)` (a struct
 variant's fields bind positionally, in declaration order), `null` and a
 binding on optionals (the binding is
 the payload), `error.Name` and a binding on error unions (the binding is
-the success value), tuples, wildcards, or-patterns `.A | .B`, and guards
-`pattern if cond`.
+the success value), tuples, slices by shape (`[]`, `[x]`, `[a, b]`,
+`[first, rest..]`, `[.., last]`; one `rest..` binds a `[]T` view of the
+middle, and an array pattern names every element or ends in a rest),
+`whole @ pattern` (the value under a name while its parts match; the
+parts are views of it), wildcards, or-patterns `.A | .B`, and guards
+`pattern if cond`. Slice arms are exhaustive when the rest-arm with the
+fewest elements leaves no shorter length uncovered (`[]` with
+`[x, rest..]`); otherwise a slice match needs `_ =>`.
 
 **Binding mode** (**decided**, 68): matching a value binds copies of the
 payload. Matching through a pointer, `match p.*`, binds owning payloads as

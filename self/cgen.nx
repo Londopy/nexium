@@ -2743,6 +2743,26 @@ impl Gen {
             return format("({})", .{join_strings(&conds, " && ")})
         }
         if k == check.TKind.PBinary { return self.bin_pattern_test(kids[..], s, ty) }
+        if k == check.TKind.PAt { return self.pattern_test(kids[0], s, ty) }
+        if k == check.TKind.PSlice {
+            let rest = a
+            let et = self.c.tys.list[ty].args[0]
+            let is_arr = tk == check.TK.Array
+            let len_e = if is_arr { format("{}", .{self.c.tys.list[ty].n}) } else { format("({}).len", .{s}) }
+            let fixed = if rest == NONE { kids.len } else { kids.len - 1 }
+            var conds = List(String).new()
+            // an array's length is static (the checker matched it); a slice's is tested
+            if !is_arr { conds.append(format("({} {} {})", .{len_e, if rest == NONE { "==" } else { ">=" }, fixed})) }
+            for q, i in kids {
+                if i == rest { continue }
+                let idx = if rest == NONE or i < rest { format("{}", .{i}) } else { format("({} - {})", .{len_e, kids.len - i}) }
+                let el = if is_arr { format("({}).v[{}]", .{s, idx}) } else { format("({}).ptr[{}]", .{s, idx}) }
+                let cnd = self.pattern_test(q, el[..], et)
+                if cnd != "1" { conds.append(cnd) }
+            }
+            if conds.len == 0 { return String.from("1") }
+            return format("({})", .{join_strings(&conds, " && ")})
+        }
         return String.from("1")
     }
 
@@ -2788,6 +2808,44 @@ impl Gen {
         if k == check.TKind.PTuple {
             let ts = if tk == check.TK.Tuple { self.c.tys.list[ty].args.clone() } else { List(usize).new() }
             for q, i in kids { self.pattern_bind(q, format("{}.f{}", .{s, i})[..], ts[i], owned) }
+            return
+        }
+        if k == check.TKind.PAt {
+            // the whole (owned when the value is), then its parts as views of it
+            let name = self.local_name(a)
+            let lt = self.res(self.cur.local_tys[a])
+            if lt != ty and self.c.tys.kind(lt) == check.TK.Ptr and self.res(self.c.tys.list[lt].args[0]) == ty {
+                let pn = self.cty(lt)
+                self.line(format("{} {} = &({});", .{pn, name, s})[..])
+            } else {
+                let cn = self.cty(ty)
+                self.line(format("{} {} = {};", .{cn, name, s})[..])
+                if owned { self.register_drop(name[..], ty) }
+            }
+            self.pattern_bind(kids[0], s, ty, false)
+            return
+        }
+        if k == check.TKind.PSlice {
+            // elements are views of the slice's storage, never owned by the arm
+            let rest = a
+            let et = self.c.tys.list[ty].args[0]
+            let is_arr = tk == check.TK.Array
+            let len_e = if is_arr { format("{}", .{self.c.tys.list[ty].n}) } else { format("({}).len", .{s}) }
+            let fixed = if rest == NONE { kids.len } else { kids.len - 1 }
+            for q, i in kids {
+                if i == rest {
+                    let ra = self.c.tir.nodes[q].a
+                    if ra == NONE { continue }
+                    let name = self.local_name(ra)
+                    let cn = self.cty(self.res(self.cur.local_tys[ra]))
+                    let base = if is_arr { format("({}).v", .{s}) } else { format("({}).ptr", .{s}) }
+                    self.line(format("{} {}; {}.ptr = nx_padd({}, {}); {}.len = {} - {};", .{cn, name, name, base, i, name, len_e, fixed})[..])
+                    continue
+                }
+                let idx = if rest == NONE or i < rest { format("{}", .{i}) } else { format("({} - {})", .{len_e, kids.len - i}) }
+                let el = if is_arr { format("({}).v[{}]", .{s, idx}) } else { format("({}).ptr[{}]", .{s, idx}) }
+                self.pattern_bind(q, el[..], et, false)
+            }
             return
         }
         if k == check.TKind.PBinary { self.bin_pattern_bind(kids[..], s, ty) }
@@ -4181,7 +4239,9 @@ impl Gen {
         let k = self.c.tir.nodes[p].k
         let kids = self.c.tir.nodes[p].kids.clone()
         if k == check.TKind.PBind { declared.append(self.c.tir.nodes[p].a); return }
-        if k == check.TKind.PVariant or k == check.TKind.POr or k == check.TKind.PTuple or k == check.TKind.PSome or k == check.TKind.POk {
+        if k == check.TKind.PRest { if self.c.tir.nodes[p].a != NONE { declared.append(self.c.tir.nodes[p].a) }; return }
+        if k == check.TKind.PAt { declared.append(self.c.tir.nodes[p].a) }
+        if k == check.TKind.PVariant or k == check.TKind.POr or k == check.TKind.PTuple or k == check.TKind.PSome or k == check.TKind.POk or k == check.TKind.PSlice or k == check.TKind.PAt {
             for q in kids { self.walk_pat(q, declared) }
             return
         }

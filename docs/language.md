@@ -130,8 +130,11 @@ edges (`@weak(x)` or `x.weak()`, then `w.upgrade()`).
   may start the next line.
 - `match v { pat => expr, ... }` on integers (literals, ranges `1..=9`),
   strings, bools, chars, enums (`.Variant(p)`), optionals (`null`, binding),
-  error unions (`error.Name`, binding), tuples, and byte slices (binary
-  patterns). Enum and bool matches must be exhaustive; others need `_ =>`.
+  error unions (`error.Name`, binding), tuples, slices by shape (`[]`,
+  `[first, rest..]`, `[.., last]`; the rest is a `[]T` view), `whole @ pat`,
+  and byte slices (binary patterns). Enum and bool matches must be
+  exhaustive, slice matches by length (`[]` with `[x, rest..]`); others
+  need `_ =>`.
 - Blocks are expressions whose value is the final expression. A labeled block
   yields through `break :label value`.
 - `try e` propagates an error; `e catch |err| handler`; `opt orelse default`;

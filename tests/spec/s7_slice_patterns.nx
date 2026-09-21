@@ -1,0 +1,56 @@
+// SPEC 7: slice patterns match by shape (`[]`, `[x]`, `[first, rest..]`,
+// `[.., last]`; the rest is a view of the middle), an array pattern names
+// every element, slice arms are exhaustive by length, and `whole @ pattern`
+// binds the value while its parts match.
+fn describe(xs: []i32) -> String {
+    match xs {
+        [] => String.from("empty"),
+        [x] => format("one {}", .{x}),
+        [a, b] => format("two {} {}", .{a, b}),
+        [first, rest..] => format("{} then {} more", .{first, rest.len}),
+    }
+}
+
+fn last_byte(xs: []u8) -> ?u8 {
+    match xs {
+        [.., last] => last,
+        _ => null,
+    }
+}
+
+fn ends(xs: []i32) -> i32 {
+    match xs {
+        [h, mid.., t] => h + t + mid.len as i32,
+        _ => -1,
+    }
+}
+
+fn classify(n: i32) -> String {
+    match n {
+        small @ 0..=9 => format("small {}", .{small}),
+        big @ _ => format("big {}", .{big}),
+    }
+}
+
+fn pair_sum(p: (i32, i32)) -> String {
+    match p {
+        whole @ (a, b) if a == b => format("same {} {}", .{whole.0, a}),
+        (a, b) => format("{}", .{a + b}),
+    }
+}
+
+fn main() {
+    let a = [1, 2, 3, 4]
+    println("{} / {} / {} / {}", .{describe(a[..]), describe(a[..1]), describe(a[..2]), describe(a[..0])})
+    println("{} {}", .{last_byte("abc") orelse 0, last_byte("") orelse 0})
+    println("{} {}", .{ends(a[..]), ends(a[..1])})
+    println("{} {}", .{classify(3), classify(42)})
+    println("{} {}", .{pair_sum((2, 2)), pair_sum((2, 3))})
+    let arr = [10, 20, 30]
+    match arr {
+        [x, y, z] => println("{}", .{x + y + z}),
+    }
+    match arr {
+        [head, tail..] => println("{} {}", .{head, tail.len}),
+    }
+}

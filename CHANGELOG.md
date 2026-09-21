@@ -41,6 +41,11 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   as in any loop (it is the `while`/`if let` it stands for in the typed
   IR, decision 94). `for (k, v) in m { }` walks a map's entries. Spec
   case `s6_iterators`; the fourth item of 1.1.
+- Slice patterns in `match`: `[]`, `[x]`, `[a, b]`, `[first, rest..]`,
+  `[.., last]` on slices and arrays, the rest a `[]T` view of the middle,
+  exhaustive by length (`[]` with `[x, rest..]` needs no `_`); and
+  `whole @ pattern`, the value under a name while its parts match
+  (decision 95). Spec case `s7_slice_patterns`; the fifth item of 1.1.
 
 ### Fixed
 

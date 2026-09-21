@@ -66,6 +66,11 @@ a slice of it: a pointer and a length, a view that owns nothing. Functions
 almost always take slices, so that arrays, `List`s and pieces of either all
 fit; `primes[..]` is the slice of the whole array.
 
+A `match` takes a slice apart by shape: `[] =>` the empty one, `[x] =>`
+one element, `[first, rest..] =>` the first and a view of the others
+(`[.., last]` reads from the end), and the arms are exhaustive once every
+length has one.
+
 A tuple groups a few values of different types: `(3, "three")` has type
 `(i64, []u8)` and fields `.0` and `.1`. `let (n, word) = pair` names the
 parts in one line, and `for (n, word) in pairs` does it for each element;

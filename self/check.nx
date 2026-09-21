@@ -655,6 +655,8 @@ pub enum TKind {
     BinConstruct, Value, TypeVal, RecordCheck, Retained, DynFrom, DynCall,
     // match arms and patterns
     Arm, PWild, PBind, PInt, PFloat, PBool, PStr, PChar, PRange, PVariant, PError, PNull, PSome, POk, POr, PTuple, PBinary,
+    // `[a, rest..]` (a: the rest's position or NONE; flag: total for its type), the rest (a: its local or NONE), `x @ p` (a: the local)
+    PSlice, PRest, PAt,
     Seg,
 }
 
@@ -6125,6 +6127,19 @@ impl Checker {
             p.close()
             return
         }
+        if k == TKind.PSlice {
+            p.open(format("(pat slice rest={} total={}", .{a, self.tir.nodes[q].flag})[..])
+            for c in kids { self.print_pat(c, p) }
+            p.close()
+            return
+        }
+        if k == TKind.PRest { p.line(format("(pat rest {})", .{a})[..]); return }
+        if k == TKind.PAt {
+            p.open(format("(pat at {}", .{a})[..])
+            for c in kids { self.print_pat(c, p) }
+            p.close()
+            return
+        }
         if k == TKind.PBinary {
             p.open("(pat binary")
             for c in kids { self.print_seg(c, p) }
@@ -10533,6 +10548,45 @@ impl Checker {
             }
             return 1
         }
+        if k == TKind.PAt {
+            var by_ptr = false
+            if has_place and self.it_cur_fn != NONE {
+                let lt = self.insts[self.it_cur_fn].locals[a].ty
+                by_ptr = self.tys.kind(self.tys.shallow(lt)) == TK.Ptr and v.kind != VK_PTR
+            }
+            if by_ptr { self.it_env_set(a, cv_ptr(pfi, pl, ppath.clone())) }
+            else { self.it_env_set(a, v.clone()) }
+            return self.it_match_pat(kids[0], v, has_place, pfi, pl, ppath)
+        }
+        if k == TKind.PSlice {
+            // the elements as values (a string's bytes become integers)
+            var items = List(CV).new()
+            if v.kind == VK_ARRAY or v.kind == VK_LIST { items = v.items.clone() }
+            else if v.kind == VK_STR or v.kind == VK_OWNED_STR { for b in v.text { items.append(cv_int(b as i128)) } }
+            else { return 0 }
+            let rest = a
+            let fixed = if rest == NONE { kids.len } else { kids.len - 1 }
+            if rest == NONE and items.len != fixed { return 0 }
+            if rest != NONE and items.len < fixed { return 0 }
+            for q, i in kids {
+                if i == rest {
+                    let ra = self.tir.nodes[q].a
+                    if ra != NONE {
+                        var part = List(CV).new()
+                        let after = kids.len - 1 - i
+                        for j in i..items.len - after { part.append(items[j].clone()) }
+                        self.it_env_set(ra, cv_seq(VK_ARRAY, part))
+                    }
+                    continue
+                }
+                let idx = if rest == NONE or i < rest { i } else { items.len - (kids.len - i) }
+                var sub = ppath.clone()
+                sub.append(idx)
+                let r = self.it_match_pat(q, &items[idx], has_place, pfi, pl, &sub)
+                if r != 1 { return r }
+            }
+            return 1
+        }
         if k == TKind.PBinary {
             var bytes = String.new()
             if v.kind == VK_STR or v.kind == VK_OWNED_STR { bytes = v.text.clone() }
@@ -11520,6 +11574,15 @@ impl Checker {
             for q in self.tir.nodes[p].kids.clone() { if !self.pat_irrefutable(q) { return false } }
             return true
         }
+        if k == TKind.PAt { return self.pat_irrefutable(self.tir.nodes[p].kids[0]) }
+        if k == TKind.PSlice {
+            // total for its type (an array with every element named, a slice that is one rest) and every element irrefutable
+            if !self.tir.nodes[p].flag { return false }
+            for q in self.tir.nodes[p].kids.clone() {
+                if self.tir.nodes[q].k != TKind.PRest and !self.pat_irrefutable(q) { return false }
+            }
+            return true
+        }
         if k == TKind.POr {
             for q in self.tir.nodes[p].kids.clone() { if self.pat_irrefutable(q) { return true } }
             return false
@@ -11566,6 +11629,7 @@ impl Checker {
         var tys = List(usize).new()
         tys.append(st)
         if self.rows_exhaustive(&tys, &rows) { return }
+        if k == TK.Slice and self.slice_arms_exhaustive(&flat) { return }
         var hint = String.from("; add a catch-all arm `_ =>`")
         if k == TK.Enum {
             let d = self.tys.list[t].def
@@ -11586,7 +11650,9 @@ impl Checker {
                 missing.append(self.node(em, v).name[..])
             }
             hint = format("; not covered: {}", .{missing})
-        } else if k == TK.Slice or k == TK.Str or k == TK.Array {
+        } else if k == TK.Slice or k == TK.Array {
+            hint = String.from("; add a catch-all arm `_ =>`, or slice arms for every length (`[]` with `[x, rest..]`)")
+        } else if k == TK.Str {
             hint = String.from("; binary and string matches need a catch-all arm `_ =>` (section 6.2)")
         } else if k == TK.ErrUnion {
             hint = String.from("; add `else => ...` to handle the remaining errors")
@@ -11594,6 +11660,36 @@ impl Checker {
             hint = String.from("; cover both `null` and a binding for the value")
         }
         self.fail_here(at, format("`match` is not exhaustive{}", .{hint})[..])
+    }
+
+    /// Slice patterns cover every length when the rest-arm with the fewest
+    /// fixed elements leaves no shorter length without an exact arm:
+    /// `[]` and `[x, rest..]`, or `[]`, `[x]` and `[a, b, rest..]`. Only arms
+    /// whose elements are irrefutable count.
+    fn slice_arms_exhaustive(self: *mut Self, flat: *List(usize)) -> bool {
+        var min_rest = NONE
+        var exact = List(usize).new()
+        for p in flat.*{
+            if self.tir.nodes[p].k != TKind.PSlice { continue }
+            let rest = self.tir.nodes[p].a
+            let kids = self.tir.nodes[p].kids.clone()
+            var all = true
+            for q in kids { if self.tir.nodes[q].k != TKind.PRest and !self.pat_irrefutable(q) { all = false } }
+            if !all { continue }
+            let fixed = if rest == NONE { kids.len } else { kids.len - 1 }
+            if rest != NONE {
+                if min_rest == NONE or fixed < min_rest { min_rest = fixed }
+            } else {
+                exact.append(fixed)
+            }
+        }
+        if min_rest == NONE { return false }
+        for l in 0..min_rest {
+            var found = false
+            for e in exact { if e == l { found = true } }
+            if !found { return false }
+        }
+        return true
     }
 
     /// The sub-patterns of `p` when it is built with constructor `c` (a
@@ -11899,9 +11995,64 @@ impl Checker {
             let alts = n.kids.clone()
             let p = self.pat_node(TKind.POr, start, end)
             for a in alts {
-                if self.node(m, a).k == parser.NodeKind.PBind { self.fail_here(self.node(m, a).start, "bindings are not allowed inside `|` patterns") }
+                if self.node(m, a).k == parser.NodeKind.PBind or self.node(m, a).k == parser.NodeKind.PAt { self.fail_here(self.node(m, a).start, "bindings are not allowed inside `|` patterns") }
                 let q = self.check_pattern(a, ty)
                 self.tir.nodes[p].kids.append(q)
+            }
+            return p
+        }
+        if k == parser.NodeKind.PAt {
+            // the whole under a name, then its parts
+            let sub = self.check_pattern(n.x, ty0)
+            let bt = self.pat_bind_ty(ty)
+            let l = self.declare_local(n.name[..], bt, false, start, end)
+            let p = self.pat_node(TKind.PAt, start, end)
+            self.tir.nodes[p].a = l
+            self.tir.nodes[p].kids.append(sub)
+            return p
+        }
+        if k == parser.NodeKind.PSlice {
+            let elems = n.kids.clone()
+            if tk != TK.Slice and tk != TK.Array {
+                self.fail_here(start, format("slice pattern on a value of type `{}`; slices and arrays match by shape", .{self.ty_name(ty)})[..])
+                return self.pat_node(TKind.PWild, start, end)
+            }
+            let et = self.tys.list[ty].args[0]
+            var rest = NONE
+            var fixed: usize = 0
+            for x, i in elems {
+                if self.node(m, x).k == parser.NodeKind.PRest { rest = i } else { fixed += 1 }
+            }
+            if tk == TK.Array {
+                let count = self.tys.list[ty].n as usize
+                if rest == NONE and fixed != count {
+                    self.fail_here(start, format("array pattern has {} elements but the array has {}", .{fixed, count})[..])
+                    return self.pat_node(TKind.PWild, start, end)
+                }
+                if rest != NONE and fixed > count {
+                    self.fail_here(start, format("array pattern names {} elements but the array has {}", .{fixed, count})[..])
+                    return self.pat_node(TKind.PWild, start, end)
+                }
+            }
+            let p = self.pat_node(TKind.PSlice, start, end)
+            self.tir.nodes[p].a = rest
+            // total for its type: an array with every element named, or a slice that is one rest
+            self.tir.nodes[p].flag = tk == TK.Array or (fixed == 0 and rest != NONE)
+            for x, i in elems {
+                if i == rest {
+                    let q = self.pat_node(TKind.PRest, self.node(m, x).start, self.node(m, x).end)
+                    self.tir.nodes[q].a = NONE
+                    let rn = self.node(m, x).name.clone()
+                    if rn.len > 0 and rn != "_" {
+                        let mu = tk == TK.Slice and self.tys.list[ty].flag
+                        let st = self.tys.wrap(TK.Slice, et, mu)
+                        let l = self.declare_local(rn[..], st, false, start, end)
+                        self.tir.nodes[q].a = l
+                    }
+                    self.tir.nodes[p].kids.append(q)
+                } else {
+                    self.tir.nodes[p].kids.append(self.check_pattern(x, et))
+                }
             }
             return p
         }

@@ -287,6 +287,8 @@ fn needs_space(toks: *List(lexer.Token), ctx: *Line, i: usize) -> bool {
     } else if b == lexer.Kind.LtLt and !ends_operand(toks, ctx.toks[i - 1]) {
         return ! (a == lexer.Kind.LParen or a == lexer.Kind.LBracket or a == lexer.Kind.Comma) or a == lexer.Kind.Comma
     }
+    // `name @ pattern` keeps its spaces; `@builtin` has none after the sign
+    if a == lexer.Kind.At and arm_line and kind_is(pp, lexer.Kind.Ident) { return true }
     // openers and member access never have a space after them
     if a == lexer.Kind.LParen or a == lexer.Kind.LBracket or a == lexer.Kind.Dot or a == lexer.Kind.DotStar or a == lexer.Kind.DotQuestion or a == lexer.Kind.QuestionDot or a == lexer.Kind.At { return false }
     if a == lexer.Kind.Pipe and b == lexer.Kind.LBracket { return false }
