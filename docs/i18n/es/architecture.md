@@ -115,8 +115,11 @@ binarios** (`check/binpat.rs`) convierten `<<len:16/little, payload:len*8,
 rest:bytes>>` en una secuencia de lecturas de bits comprobadas cuyos tamaños
 pueden depender de ligaduras anteriores.
 
-**Las regiones** se comprueban de forma conservadora: devolver un slice o
-puntero a un local de la función es un error (regla R1).
+**Las vistas** se rastrean por sus orígenes (`self/check.nx`): cada local
+sabe a qué almacenamiento apuntan las vistas que contiene, y las reglas V1 a
+V5 de `SPEC.md` 5.6 y 5.7 se comprueban en el uso que leería almacenamiento
+liberado, como avisos en 1.2 (`--strict` los hace errores). Devolver un slice
+o puntero a un local de la función (regla R1) es un error desde 1.0.
 
 **Los objetos de trait** reciben una vtable por par (trait, tipo), generada
 como thunks que adaptan el receptor; `dyn Shape !allocates` es un tipo

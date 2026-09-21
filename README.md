@@ -333,8 +333,8 @@ addition under the [stability policy](docs/stability.md); the compiler is
 written in Nexium and builds itself; every example, spec case and tutorial
 program runs in CI on three platforms, under the sanitizers and the fuzzer.
 What 1.0 is not yet, and where each is answered, is the first section of
-[the roadmap](ROADMAP.md): memory safety is not guaranteed until 1.2 (a view
-can outlive its storage in code without `unsafe`), there are no benchmark
+[the roadmap](ROADMAP.md): memory safety is the view rules of 1.2, warnings
+until 1.3 makes them errors (`--strict` does now), there are no benchmark
 numbers beyond [the numbers page](docs/numbers.md) (four programs in five
 languages on one runner, regenerated weekly), and the ecosystem is one maintainer, sixteen standard
 library modules and one package from outside the tree (statusmith's

@@ -327,7 +327,8 @@ using arena {
 Optionen: `--mode debug|safe|fast|small`, `--target x86_64-linux-gnu` (jedes
 Ziel, das `zig cc` kennt), `--cpu baseline|native|<name>` (standardmäßig
 baseline, damit ein Binary auf jeder Maschine seiner Architektur läuft),
-`--out-dir`, `--keep-c`, `--cc`, und für die C-Interoperabilität `-I`, `--link`,
+`--out-dir`, `--keep-c`, `--cc`, `--strict` (Warnungen der Sichtregeln sind
+Fehler), und für die C-Interoperabilität `-I`, `--link`,
 `--link-path`, `--c-source`.
 
 ## Stand
@@ -338,8 +339,8 @@ Compiler ist in Nexium geschrieben und baut sich selbst; jedes Beispiel,
 jeder Spezifikationsfall und jedes Tutorial-Programm läuft in CI auf drei
 Plattformen, unter den Sanitizern und dem Fuzzer. Was 1.0 noch nicht ist,
 und wo jeder Punkt beantwortet wird, ist der erste Abschnitt der
-[Roadmap](../../../ROADMAP.md): Speichersicherheit ist bis 1.2 nicht
-garantiert (eine Sicht kann in Code ohne `unsafe` ihren Speicher überleben),
+[Roadmap](../../../ROADMAP.md): Speichersicherheit sind die Sichtregeln von
+1.2, Warnungen, bis 1.3 sie zu Fehlern macht (`--strict` tut es jetzt schon),
 es gibt keine Benchmark-Zahlen über [die Zahlenseite](../../numbers.md) hinaus
 (vier Programme in fünf Sprachen auf einem Runner, wöchentlich neu erzeugt),
 und das Ökosystem besteht aus einem Maintainer, sechzehn Modulen der

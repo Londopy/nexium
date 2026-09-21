@@ -280,14 +280,20 @@ función) se nombran en el error cuando se usan.
 comprobación; un fallo es un error de compilación que apunta a la
 expectativa.
 
-## Regiones
+## Vistas y su almacenamiento
 
 Una función no puede devolver un slice o puntero a uno de sus propios locales
-(regla R1); las vistas a parámetros están bien porque el llamador es su
-dueño. Una vista almacenada en una variable exterior no se rastrea.
+(regla R1, un error desde 1.0); las vistas a parámetros prestados están bien
+porque el llamador es su dueño. 1.2 añade las reglas de vistas V1 a V5
+(`SPEC.md` 5.6 y 5.7): una vista guardada más allá de su almacenamiento, una
+vista usada después de que su contenedor creció o su valor se movió, un valor
+que contiene una vista devuelto, un valor conservado más allá de su bloque
+`using arena`. Son avisos en 1.2 y errores en 1.3; `nx check --strict` (o
+`NX_STRICT=1`) los convierte en errores ya. `@escape(v)` copia un valor fuera
+de un bloque de arena.
 
 ## Aún no implementado
 
 Disposiciones `soa` y `packed`, artefactos `node` e `installer`, `nx publish`
-y el registro, estrategias de asignación `pool`/`stack`, y comprobación de
-regiones más allá de la regla R1.
+y el registro, estrategias de asignación `pool`/`stack`, y las reglas de
+regiones archivadas R2 a R4 (decisión 88).
