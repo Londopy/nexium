@@ -310,7 +310,10 @@ queue in front of them.
    release; the winget submission to microsoft/winget-pkgs is a pull
    request by hand.)
 5. `nx doctor` says when a newer release exists. (Done.)
-6. The VS Code extension on Open VSX beside the Marketplace.
+6. The VS Code extension on Open VSX beside the Marketplace. (Done in
+   the release workflow: both publishes run when `VSCE_PAT` and
+   `OVSX_PAT` are set; the tokens and the namespaces are the
+   maintainer's to create, see `editors/vscode/README.md`.)
 7. A `packages.md`: the packages people can `nx add` from git today.
 8. An "Open REPL here" folder entry and a Windows Terminal profile from
    the installer.

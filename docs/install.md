@@ -177,7 +177,7 @@ directory of the repository has the pieces for each one:
 
 | editor | install |
 | --- | --- |
-| VS Code | the "Nexium" extension on the Marketplace, or the `.vsix` on every release (the Windows installer installs it when `code` is on the PATH) |
+| VS Code | the `.vsix` on every release (the Windows installer installs it when `code` is on the PATH); the "Nexium" extension on the Marketplace and on Open VSX once a release has been published there (the release workflow does it when the publisher tokens are set) |
 | Vim | `Plug 'Londopy/nexium', { 'rtp': 'editors/vim' }` |
 | Neovim | the `editors/neovim` plugin: tree-sitter, LSP and the Vim files as fallback |
 | Helix | append `editors/helix/languages.toml`, copy its queries, `hx --grammar fetch && hx --grammar build` |

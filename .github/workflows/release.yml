@@ -124,7 +124,9 @@ jobs:
           Push-Location editors/vscode
           npm ci
           npm run compile
-          npx @vscode/vsce package -o ../../dist-win/editors/nexium.vsix
+          # the extension carries the release's version, so each release publishes once
+          $ver = "${{ github.ref_name }}".TrimStart("v")
+          npx @vscode/vsce package $ver --no-update-package-json --no-git-tag-version -o ../../dist-win/editors/nexium.vsix
           Pop-Location
           Copy-Item dist-win/editors/nexium.vsix nexium-${{ github.ref_name }}.vsix
           # portable zip: compiler and docs only (no Zig; see the installer for that)
@@ -174,6 +176,18 @@ jobs:
           name: ${{ steps.notes.outputs.title }}
           body_path: notes.md
           files: artifacts/*
+
+      # the VS Code extension on the Marketplace and on Open VSX, when the
+      # publisher tokens are in the repository's secrets (editors/vscode/README.md)
+      - name: Publish the VS Code extension
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          vsix=$(ls artifacts/nexium-*.vsix | head -n 1)
+          echo "extension: $vsix"
+          if [ -n "$VSCE_PAT" ]; then npx @vscode/vsce publish --packagePath "$vsix" -p "$VSCE_PAT"; else echo "VSCE_PAT is not set: not published to the Marketplace"; fi
+          if [ -n "$OVSX_PAT" ]; then npx ovsx publish "$vsix" -p "$OVSX_PAT"; else echo "OVSX_PAT is not set: not published to Open VSX"; fi
 
       # the Homebrew formula, the Scoop manifest and the winget manifests for
       # this release, committed to main (this repository is the tap and the
