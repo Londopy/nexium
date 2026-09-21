@@ -250,7 +250,7 @@ with a reproduction and the fix it needs, a fix removes the entry, adds a
 Nothing below is started while a known bug that a user can hit sits
 there. (1.0.2 was the hotfix for the release binaries, which were built
 for the runner's CPU.) The four entries an outside review of 1.0.1
-added are fixed on `main` and wait for 1.0.3:
+added shipped in 1.0.3:
 
 1. A contained panic leaked what the call acquired: the export wrapper's
    `longjmp` skipped every drop between the panic and the boundary. A

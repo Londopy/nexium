@@ -92,6 +92,7 @@ ordering; the name carries the character.
 | 1.0.0 | Annapurna: Summit | the top of the mountain the project has been on since 0.1: the language stops changing under people's feet, the compiler is written in itself, and nothing but Nexium, one C file and a runtime header is left |
 | 1.0.1 | Annapurna: Rébuffat | patch (roster 3): the loose ends after the summit; the fixes the tutorial found, the docs site and the Topo, eleven editors |
 | 1.0.2 | Annapurna: Terray | patch (roster 4): the hotfix; the release binaries were built for the build machine's CPU and crashed on others |
+| 1.0.3 | Annapurna: Schatz | patch (roster 6): the long-hidden bugs an outside review found; the panic that leaked what it held, the lockfile that pinned nothing, the compile-time depth |
 
 ## The plan
 
@@ -168,7 +169,7 @@ summiters lost fingers and toes on the descent.
 | Terray | carried the frostbitten summiters down | rescues a broken release: the hotfix (used: 1.0.2) |
 | Rébuffat | the guide; roped the snow-blind party together on the descent | ties loose ends: docs, tests, consistency (used: 1.0.1) |
 | Couzy | the engineer of the team | fixes the build, the toolchain, the C |
-| Schatz | found the summit party in the crevasse the morning after | finds a long-hidden bug |
+| Schatz | found the summit party in the crevasse the morning after | finds a long-hidden bug (used: 1.0.3) |
 | Oudot | the doctor; amputations on the march out | removes something to save the rest |
 | Ichac | the filmmaker | is all documentation, examples, screenshots |
 | de Noyelle | liaison officer; permits and diplomacy | packaging, licensing, distribution channels |

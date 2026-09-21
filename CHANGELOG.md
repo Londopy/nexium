@@ -10,6 +10,10 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-09-20
+
+*Annapurna: Schatz* — the one who found the summit party in the crevasse the morning after: the long-hidden bugs. An outside review of 1.0.1 read the code and found five that had been there since their features shipped: a contained panic leaked what the call acquired, the lockfile pinned nothing, the Python wrapper dropped writes to a mutable slice, effect notes pointed at the function instead of the line, and `SECURITY.md` promised more than the specification did. All five are fixed here, and with them the compile-time interpreter is freed from its 32-call limit, `nx doctor` proves a program runs, and `nx update` exists.
+
 ### Changed
 
 - `SECURITY.md` states the promise precisely: deterministically
@@ -928,7 +932,8 @@ First public release.
   Korean, French, and German; the language reference and architecture tour in
   Spanish, Chinese, and Japanese.
 
-[Unreleased]: https://github.com/Londopy/nexium/compare/v1.0.2...HEAD
+[Unreleased]: https://github.com/Londopy/nexium/compare/v1.0.3...HEAD
+[1.0.3]: https://github.com/Londopy/nexium/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/Londopy/nexium/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/Londopy/nexium/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/Londopy/nexium/compare/v0.9.0...v1.0.0

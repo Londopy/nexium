@@ -31,8 +31,8 @@ import std.fs
 // recurses on it, and each nested call costs about 165 KiB of frame
 artifact cli { name = "nx", stack = "1G" }
 
-const VERSION = "1.0.2"
-const RELEASE_NAME = "Annapurna: Terray"
+const VERSION = "1.0.3"
+const RELEASE_NAME = "Annapurna: Schatz"
 
 const NONE: usize = 0xFFFFFFFFFFFFFFFF
 
