@@ -35,6 +35,15 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Fixed
 
+- The generated Python package took a list, a read-only buffer, an array
+  of another item type or a strided view for a `[]mut T` parameter,
+  copied it into a temporary and lost the writes; each is a `TypeError`
+  now that says what to pass. A `[]mut T` parameter takes any writable,
+  contiguous buffer of the matching item format (`bytearray`,
+  `array.array`, a writable `memoryview`, a NumPy array) and writes
+  through it; a read-only slice parameter takes any buffer by pointer
+  when the format matches, otherwise by copy, and any sequence by copy.
+  CI calls the shipped library with all of them.
 - The `!effect` diagnostic's notes point at the recorded witness (the
   `append`, the `println`, the call) rather than at the header of the
   function that holds it; the README's "exact line" is true again. The

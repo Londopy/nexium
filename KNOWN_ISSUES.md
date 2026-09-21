@@ -58,17 +58,6 @@ Fixed bugs are not listed here; `CHANGELOG.md` and `git log` have them.
   a dependency missing from the lock is resolved and added, and the
   harness's `packages` suite deletes `nexium_modules` and restores from
   the lock against a local git repository with two tags.
-- **The Python wrapper accepts a list for `[]mut T` and drops the
-  writes.** `_buf` in the generated package (`self/ship.nx`) turns any
-  sequence into a temporary ctypes array, so `simulate(pos, ...)` with a
-  plain list returns success and `pos` is unchanged; the same happens for
-  a writable buffer whose item format differs (it is converted to a
-  temporary `array.array`). Planned fix: for a mutable slice, accept only
-  a writable, contiguous buffer with the matching format and raise
-  `TypeError` naming the accepted types otherwise; immutable slices keep
-  accepting any sequence by copying. Regression tests in the CI Python
-  step: list, read-only `bytes`, wrong-format `array.array("f")`, and a
-  non-contiguous `memoryview` slice all rejected for `[]mut f64`.
 - **No `.clone()` on user structs.** `List`, `String` and `Map` clone, but a
   struct holding them cannot be copied without writing a function by hand;
   code that needs a copy of a list element must return an index instead

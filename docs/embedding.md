@@ -108,10 +108,15 @@ except ropesim.NexiumPanic as e:
 ```
 
 The package uses `ctypes` over the shared library: one wheel per platform,
-any Python 3.8+ interpreter (the "stable ABI" default of spec 4.2). Slice
-arguments accept `bytes`, `bytearray`, `array.array`, `memoryview`, or any
-sequence; a `[]mut T` parameter needs a writable buffer (`bytearray` or
-`array.array`) and writes through to it. `layout(c)` structs become
+any Python 3.8+ interpreter (the "stable ABI" default of spec 4.2). A
+read-only slice parameter accepts any buffer (`bytes`, `bytearray`,
+`array.array`, `memoryview`, a NumPy array), by pointer when the item
+format matches and by copy otherwise, or any sequence, by copy. A `[]mut T`
+parameter accepts only a writable, contiguous buffer of the matching item
+format (`bytearray`, `array.array`, a writable `memoryview`, a NumPy
+array) and writes through to it; a list, a read-only buffer, a
+differently-typed array or a strided view is a `TypeError`, because the
+writes would otherwise be lost in a copy. `layout(c)` structs become
 `ctypes.Structure` subclasses with the same field names. Type stubs
 (`__init__.pyi`) are included for editors.
 

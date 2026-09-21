@@ -103,6 +103,20 @@ jobs:
           assert ropesim.checksum(b"hello") == 1335831723
           pos = array.array("d", [0.1, 0.2, 0.3])
           ropesim.simulate(pos, 0.01, 10)
+          assert pos[1] != 0.2, "a []mut f64 writes through an array.array"
+          view = memoryview(array.array("d", [0.1, 0.2, 0.3]))
+          ropesim.simulate(view, 0.01, 10)
+          assert view[1] != 0.2, "a []mut f64 writes through a writable memoryview"
+          # a []mut parameter refuses what it cannot write back to, instead of dropping the writes
+          for bad, why in [([0.1, 0.2, 0.3], "a list"), (bytes(24), "a read-only buffer"),
+                           (array.array("f", [0.1, 0.2, 0.3]), "the wrong item format"),
+                           (memoryview(array.array("d", [0.0] * 6))[::2], "a strided view")]:
+              try:
+                  ropesim.simulate(bad, 0.01, 1)
+                  raise SystemExit("expected a TypeError for " + why)
+              except TypeError as e:
+                  print("rejected", why + ":", e)
+          assert ropesim.dot([1.0, 2.0, 3.0], [4.0, 5.0, 6.0]) == 32.0, "a read-only slice still takes a list"
           try:
               ropesim.divide(1, 0)
               raise SystemExit("expected a panic")
