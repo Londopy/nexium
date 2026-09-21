@@ -280,6 +280,15 @@ fn suite_examples(e: *Env, failures: *mut List(String)) {
     } else if d.stdout[..].find("latest release:") == null {
         failures.append(format("examples: nx doctor did not report the latest release:\n{}", .{d.stdout}))
     }
+    // nx upgrade --check asks GitHub, so only online (CI is); offline it must still fail cleanly
+    let up = nx(e, ["upgrade", "--check"][..])
+    if os.env("NX_ONLINE") != null {
+        if up.code != 0 or (up.stdout[..].find("latest release") == null and up.stdout[..].find("is the latest release") == null) {
+            failures.append(format("examples: nx upgrade --check answered (exit {}):\n{}{}", .{up.code, up.stdout, up.stderr}))
+        }
+    } else if up.code == 0 and up.stdout[..].find("latest release") == null and up.stdout[..].find("is the latest release") == null {
+        failures.append(format("examples: nx upgrade --check exit 0 without an answer:\n{}", .{up.stdout}))
+    }
     // nx layout: offsets, padding, the total, and the reordering that shrinks a struct
     let lay_src = fs.join(e.root[..], "nx-out/cases/layout.nx")
     fs.write(lay_src[..], "struct P { a: u8, b: u64, c: u8 }\nenum E { Unit, Pair(u8, u64) }\nfn main() {}\n") catch { failures.append(String.from("examples: cannot write layout.nx")); return }

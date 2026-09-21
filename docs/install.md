@@ -261,6 +261,19 @@ directory of the repository has the pieces for each one:
 
 Each directory has a README with the details.
 
+## Upgrading
+
+`nx doctor` says when a newer release exists, and `nx upgrade` installs it
+in place: the archive for the machine is downloaded from the release,
+verified against its `SHA256SUMS.txt` with the machine's checksum tool,
+unpacked with `tar`, and moved over the running executable (which is set
+aside as `nx.exe.old` on Windows until the next upgrade). A bundled Zig,
+the examples and the docs beside `nx` stay as they are. `nx upgrade
+--check` only reports. An `nx` that a package manager put in place is
+upgraded the way it came: the installer (it offers the upgrade), `winget
+upgrade Londopy.Nexium`, `scoop update nexium`, `brew upgrade nexium`,
+`pip install -U nexium-lang`, `npm update -g nexium-lang`.
+
 ## Torrents
 
 Every file of a release is also attached as a `.torrent`, one file each,

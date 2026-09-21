@@ -26,6 +26,7 @@ import installer
 import lsp
 import repl
 import std.fs
+import std.strings
 
 // the compiler runs on a gigabyte of stack: the compile-time interpreter
 // recurses on it, and each nested call costs about 165 KiB of frame
@@ -64,7 +65,7 @@ fn usage() {
     eprintln("       nx fmt <file.nx>... [--check] | nx fix <file.nx>...", .{})
     eprintln("       nx doc <file.nx> [-o <dir>]", .{})
     eprintln("       nx ship <file.nx> [--mode m] [--target t]   produce the declared artifacts", .{})
-    eprintln("       nx version | nx doctor | nx lsp | nx repl", .{})
+    eprintln("       nx version | nx doctor | nx upgrade [--check] | nx lsp | nx repl", .{})
     eprintln("       nx -e CODE | nx -p EXPR                    run a line as at the prompt; -p prints the value", .{})
     eprintln("       nx init [name] | nx add <name> --git URL [--tag TAG] [--dir SUB] | --path DIR | nx fetch | nx update [name...]", .{})
     eprintln("  -o <path>          output file", .{})
@@ -79,7 +80,7 @@ fn usage() {
 
 fn parse_opts(args: [][]u8) -> ?Opts {
     if args.len < 3 {
-        if args.len == 2 and (args[1] == "version" or args[1] == "--version" or args[1] == "-V" or args[1] == "doctor" or args[1] == "lsp" or args[1] == "repl") {
+        if args.len == 2 and (args[1] == "version" or args[1] == "--version" or args[1] == "-V" or args[1] == "doctor" or args[1] == "lsp" or args[1] == "repl" or args[1] == "upgrade") {
             var padded = List([]u8).new()
             for a in args { padded.append(a) }
             padded.append("")
@@ -1203,12 +1204,186 @@ fn doctor_updates() {
     let latest = if tag.starts_with("v") { tag[1..] } else { tag }
     let c = compare_versions(latest, VERSION)
     if c > 0 {
-        println("latest release: {}; this is {}, get the new one at https://github.com/Londopy/nexium/releases/latest", .{tag, VERSION})
+        println("latest release: {}; this is {}, and `nx upgrade` installs it", .{tag, VERSION})
     } else if c == 0 {
         println("latest release: {}, this one", .{tag})
     } else {
         println("latest release: {}; this is {}, ahead of it", .{tag, VERSION})
     }
+}
+
+/// `nx upgrade`: the latest release for this machine in place of the
+/// running executable. The GitHub API names the release (through curl, as
+/// the doctor asks it), the archive is downloaded and verified against the
+/// release's SHA256SUMS.txt with the machine's own checksum tool, unpacked
+/// with tar (bsdtar on Windows reads the zip too), and moved over the
+/// executable: a running program may be renamed, so the old one is set
+/// aside as `nx.exe.old` and removed by the next upgrade. A bundled Zig, the
+/// examples and the docs next to nx are left as they are. `--check` only
+/// reports; NX_OFFLINE=1 refuses.
+fn cmd_upgrade(check_only: bool) -> i32 {
+    let exe = os.exe_path()
+    if exe.len == 0 {
+        eprintln("error: cannot find the running executable", .{})
+        return 1
+    }
+    let old = format("{}.old", .{exe})
+    if fs.exists(old[..]) { fs.remove(old[..]) catch { } }
+    if os.env("NX_OFFLINE") != null {
+        eprintln("error: NX_OFFLINE is set; nx upgrade needs the network", .{})
+        return 1
+    }
+    let api: [][]u8 = ["curl", "-fsSL", "-m", "10", "-H", "Accept: application/vnd.github+json", "https://api.github.com/repos/Londopy/nexium/releases/latest"]
+    let code = os.exec(api[..], "", "") catch { -1 }
+    if code != 0 {
+        let why = if code < 0 { "curl is not on the PATH" } else { "no answer from api.github.com" }
+        eprintln("error: cannot ask for the latest release ({}); the releases are at https://github.com/Londopy/nexium/releases/latest", .{why})
+        return 1
+    }
+    let body = os.last_stdout()
+    let tag = String.from(json_string(body[..], "tag_name") orelse {
+            eprintln("error: unexpected answer from api.github.com", .{})
+            return 1
+    })
+    let latest = if tag[..].starts_with("v") { tag[1..] } else { tag[..] }
+    let c = compare_versions(latest, VERSION)
+    if c <= 0 {
+        println("nx {} is the latest release{}", .{VERSION, if c < 0 { " (this build is ahead of it)" } else { "" }})
+        return 0
+    }
+    println("latest release: {}; this is {}", .{tag, VERSION})
+    if check_only {
+        println("`nx upgrade` installs it", .{})
+        return 0
+    }
+    let host = host_os()
+    let arch = os.arch()
+    let name = if host == "windows" { "nx.exe" } else { "nx" }
+    var target = String.new()
+    if host == "windows" { target = format("{}-pc-windows-msvc.zip", .{arch}) }
+    else if host == "macos" { target = format("{}-apple-darwin.tar.gz", .{arch}) }
+    else { target = format("{}-unknown-linux-gnu.tar.gz", .{arch}) }
+    let asset = format("nx-{}-{}", .{tag, target})
+    let base = format("https://github.com/Londopy/nexium/releases/download/{}", .{tag})
+    let tmp = fs.temp_path("nx-upgrade")
+    fs.make_dirs(tmp[..]) catch {
+        eprintln("error: cannot create {}", .{tmp})
+        return 1
+    }
+    let archive = fs.join(tmp[..], asset[..])
+    println("downloading {}", .{asset})
+    if !curl_to(format("{}/{}", .{base, asset})[..], archive[..]) {
+        eprintln("error: no {} in release {}; the ways in are at https://londopy.github.io/nexium/docs/install.html", .{asset, tag})
+        return 1
+    }
+    let sums = fs.join(tmp[..], "SHA256SUMS.txt")
+    if !curl_to(format("{}/SHA256SUMS.txt", .{base})[..], sums[..]) {
+        eprintln("error: SHA256SUMS.txt is missing from release {}", .{tag})
+        return 1
+    }
+    let want = checksum_listed(sums[..], asset[..]) orelse {
+        eprintln("error: no checksum for {} in SHA256SUMS.txt", .{asset})
+        return 1
+    }
+    let got = sha256_of(archive[..]) orelse {
+        eprintln("error: no checksum tool found (sha256sum, shasum or certutil); the archive is at {}", .{archive})
+        return 1
+    }
+    if want[..] != got[..] {
+        eprintln("error: checksum mismatch for {} (expected {}, got {})", .{asset, want, got})
+        return 1
+    }
+    println("checksum ok", .{})
+    let unpack = fs.join(tmp[..], "unpacked")
+    fs.make_dirs(unpack[..]) catch { }
+    let untar: [][]u8 = ["tar", "-xf", archive[..], "-C", unpack[..]]
+    let tcode = os.exec(untar[..], "", "") catch { -1 }
+    if tcode != 0 {
+        eprintln("error: tar could not unpack {}", .{asset})
+        return 1
+    }
+    let fresh = fs.join(unpack[..], name)
+    if !fs.exists(fresh[..]) {
+        eprintln("error: {} has no {}", .{asset, name})
+        return 1
+    }
+    // the running executable is set aside, the new one takes its place; a
+    // rename across volumes fails, so a copy that keeps the mode follows
+    fs.rename(exe[..], old[..]) catch {
+        eprintln("error: cannot replace {}: is it writable? The way it was installed (the installer, pip, npm, brew, scoop, winget) upgrades it too", .{exe})
+        return 1
+    }
+    var placed = true
+    fs.rename(fresh[..], exe[..]) catch { placed = false }
+    if !placed {
+        if host == "windows" {
+            fs.copy(fresh[..], exe[..]) catch {
+                fs.rename(old[..], exe[..]) catch { }
+                eprintln("error: cannot move the new nx into {}", .{exe})
+                return 1
+            }
+        } else {
+            let cp: [][]u8 = ["cp", "-p", fresh[..], exe[..]]
+            let ccode = os.exec(cp[..], "", "") catch { -1 }
+            if ccode != 0 {
+                fs.rename(old[..], exe[..]) catch { }
+                eprintln("error: cannot move the new nx into {}", .{exe})
+                return 1
+            }
+        }
+    }
+    fs.remove(old[..]) catch { }
+    fs.remove_all(tmp[..]) catch { }
+    println("upgraded to nx {} at {}; `nx version` in a new console shows it", .{tag, exe})
+    return 0
+}
+
+/// Download a URL to a file with curl (two minutes at most); false on failure.
+fn curl_to(url: []u8, path: []u8) -> bool {
+    let argv: [][]u8 = ["curl", "-fsSL", "-m", "120", "-o", path, url]
+    let code = os.exec(argv[..], "", "") catch { -1 }
+    return code == 0
+}
+
+/// The checksum a SHA256SUMS.txt lists for a file, lowercased.
+fn checksum_listed(sums_path: []u8, asset: []u8) -> ?String {
+    let text = fs.read(sums_path) catch { return null }
+    for line in text[..].lines() {
+        let t = line.trim()
+        if t.len < 66 or !t.ends_with(asset) { continue }
+        let rest = t[64..].trim()
+        if rest != asset { continue }
+        return strings.to_lower(t[0..64])
+    }
+    return null
+}
+
+/// The SHA-256 of a file, by the first checksum tool the machine has.
+fn sha256_of(path: []u8) -> ?String {
+    let s1: [][]u8 = ["sha256sum", path]
+    if (os.exec(s1[..], "", "") catch { -1 }) == 0 {
+        let out = os.last_stdout()
+        for w in out[..].split(" ") { if w.len == 64 { return strings.to_lower(w) } }
+    }
+    let s2: [][]u8 = ["shasum", "-a", "256", path]
+    if (os.exec(s2[..], "", "") catch { -1 }) == 0 {
+        let out = os.last_stdout()
+        for w in out[..].split(" ") { if w.len == 64 { return strings.to_lower(w) } }
+    }
+    let s3: [][]u8 = ["certutil", "-hashfile", path, "SHA256"]
+    if (os.exec(s3[..], "", "") catch { -1 }) == 0 {
+        // the hash is the second line; older versions space the bytes
+        let out = os.last_stdout()
+        var n: usize = 0
+        for line in out[..].lines() {
+            n += 1
+            if n != 2 { continue }
+            var hex = String.new()
+            for c in line.trim() { if c != ' ' { hex.push_byte(c) } }
+            if hex.len == 64 { return strings.to_lower(hex[..]) }
+        }
+    }
+    return null
 }
 
 /// The string value of a key in a JSON text, by the first `"key"` in it.
@@ -1421,6 +1596,8 @@ fn main() -> u8 {
         code = repl.run(VERSION, compiler_summary(&o)[..], host_os()[..], o.std_dir[..], &o.cc)
     } else if o.command == "-e" or o.command == "-p" {
         code = repl.eval(o.file[..], o.command == "-p", o.std_dir[..], &o.cc)
+    } else if o.command == "upgrade" {
+        code = cmd_upgrade(o.file[..] == "--check")
     } else {
         usage()
         return 2

@@ -311,6 +311,7 @@ using arena {
 | `nx doc file.nx` | HTML documentation with inferred effects |
 | `nx size file.nx` | attribute binary bytes to declarations |
 | `nx layout file.nx [Type...]` | offsets, sizes and padding of a struct or enum, and the order by alignment that would shrink it |
+| `nx upgrade` | the latest release in place of this executable, verified; `--check` only reports |
 | `nx refcounts file.nx` | every retain and release site |
 | `nx leaks file.nx` | run with allocation tracking and report leaks |
 | `nx lsp` | language server over stdio |

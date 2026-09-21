@@ -345,7 +345,9 @@ queue in front of them.
 16. The installer detects an installed version: upgrade, repair, remove,
     the previous choices as defaults. (Done in the compiler's installer;
     the ones `nx ship` writes keep Inno's own upgrade-in-place.)
-17. `nx upgrade`, and `nxup` behind it later.
+17. `nx upgrade`, and `nxup` behind it later. (`nx upgrade` done: the
+    release for the machine, verified, over the running executable; a
+    separate `nxup` when one is needed.)
 18. Portable mode, and `nx install` from a portable copy.
 19. The effects lockfile (`nx audit --lock`) and the CI check.
 20. Panic proofs as code lenses in the language server.

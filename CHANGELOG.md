@@ -18,6 +18,11 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   before replacing its files (Restart Manager; it is not started again),
   and keep a log of the run as `install.log` next to the program. The
   uninstaller takes `/LOG="path"` for a log of its own.
+- `nx upgrade` installs the latest release in place of the running
+  executable: the archive for the machine, verified against the release's
+  `SHA256SUMS.txt`, unpacked with `tar`, moved over `nx` (set aside as
+  `nx.exe.old` on Windows until the next upgrade); `--check` only reports,
+  and `nx doctor` now points at it when a newer release exists.
 - A git dependency may name the package's directory inside the
   repository: `sdk = { git = "...", tag = "v2.0.0", dir = "nexium" }`, or
   `nx add sdk --git URL --tag TAG --dir nexium`, for an SDK that lives
