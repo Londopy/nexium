@@ -348,7 +348,9 @@ queue in front of them.
 17. `nx upgrade`, and `nxup` behind it later. (`nx upgrade` done: the
     release for the machine, verified, over the running executable; a
     separate `nxup` when one is needed.)
-18. Portable mode, and `nx install` from a portable copy.
+18. Portable mode, and `nx install` from a portable copy. (Done: a
+    `portable` marker keeps Zig's cache beside nx, `nx install [DIR]`
+    copies the folder into the user's place and onto the PATH.)
 19. The effects lockfile (`nx audit --lock`) and the CI check.
 20. Panic proofs as code lenses in the language server.
 21. Colour as you type and completion in the REPL, from the server.

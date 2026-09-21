@@ -55,6 +55,19 @@ release, `NEXIUM_HOME` changes the directory, `NEXIUM_NO_MODIFY_PATH=1`
 leaves the PATH alone, `NEXIUM_NO_ZIG=1` never downloads Zig. Remove it by
 deleting the directory and the PATH entry.
 
+## Portable mode and `nx install`
+
+The portable zip on every release is a folder that runs from anywhere:
+`nx.exe` (or `nx`), the standard library, the examples and the docs, and
+nothing is written outside it except Zig's global cache in the user's
+profile. A file named `portable` beside the executable moves that cache
+beside it too (`cache/`), so a copy on a USB stick leaves nothing on the
+host; `nx doctor` reports the mode. When the copy should stay, `nx
+install` puts it in the user's place (`%LocalAppData%\Programs\Nexium`,
+or `~/.nexium` with `bin/` and `share/`; `nx install DIR` names another),
+with the zig, examples, std and docs beside it, and adds the directory to
+the user's PATH unless `NEXIUM_NO_MODIFY_PATH=1`.
+
 **Chocolatey**: `choco install nexium` once the package is on
 chocolatey.org (the release workflow pushes it when its key is set); each
 release also attaches the `.nupkg`, which installs with

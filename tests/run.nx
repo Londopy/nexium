@@ -280,6 +280,24 @@ fn suite_examples(e: *Env, failures: *mut List(String)) {
     } else if d.stdout[..].find("latest release:") == null {
         failures.append(format("examples: nx doctor did not report the latest release:\n{}", .{d.stdout}))
     }
+    // nx install puts a copy in place (the PATH is left alone here), and a
+    // `portable` marker beside it is reported by the doctor
+    os.set_env("NEXIUM_NO_MODIFY_PATH", "1")
+    let inst_dir = fs.join(e.root[..], "nx-out/cases/install-test")
+    fs.remove_all(inst_dir[..]) catch { }
+    let inst = nx(e, ["install", inst_dir[..]][..])
+    let inst_bin = if e.windows { inst_dir.clone() } else { fs.join(inst_dir[..], "bin") }
+    let installed = fs.join(inst_bin[..], if e.windows { "nx.exe" } else { "nx" })
+    if inst.code != 0 or !fs.exists(installed[..]) {
+        failures.append(format("examples: nx install failed (exit {}):\n{}{}", .{inst.code, inst.stdout, inst.stderr}))
+    } else {
+        let v = run_in(e, [installed[..], "version"][..], "", e.root[..])
+        if v.code != 0 or v.stdout[..].find("nx ") == null { failures.append(format("examples: the installed nx does not run:\n{}{}", .{v.stdout, v.stderr})) }
+        fs.write(fs.join(inst_bin[..], "portable")[..], "") catch { }
+        let d2 = run_in(e, [installed[..], "doctor"][..], "", e.root[..])
+        if d2.stdout[..].find("portable:    yes") == null { failures.append(format("examples: the portable marker was not reported:\n{}{}", .{d2.stdout, d2.stderr})) }
+    }
+    fs.remove_all(inst_dir[..]) catch { }
     // nx upgrade --check asks GitHub, so only online (CI is); offline it must still fail cleanly
     let up = nx(e, ["upgrade", "--check"][..])
     if os.env("NX_ONLINE") != null {

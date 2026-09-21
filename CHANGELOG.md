@@ -18,6 +18,13 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   before replacing its files (Restart Manager; it is not started again),
   and keep a log of the run as `install.log` next to the program. The
   uninstaller takes `/LOG="path"` for a log of its own.
+- Portable mode: a file named `portable` beside the executable keeps
+  Zig's global cache beside it (`cache/`), so a copy on a USB stick leaves
+  nothing on the host, and `nx doctor` says so. `nx install [DIR]` puts
+  the copy in the user's place (`%LocalAppData%\Programs\Nexium`, or
+  `~/.nexium` with `bin/` and `share/`) with the zig, examples, std and
+  docs beside it, and adds the directory to the user's PATH unless
+  `NEXIUM_NO_MODIFY_PATH=1`: the portable zip installing itself.
 - `nx upgrade` installs the latest release in place of the running
   executable: the archive for the machine, verified against the release's
   `SHA256SUMS.txt`, unpacked with `tar`, moved over `nx` (set aside as

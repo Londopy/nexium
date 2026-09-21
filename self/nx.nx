@@ -65,7 +65,7 @@ fn usage() {
     eprintln("       nx fmt <file.nx>... [--check] | nx fix <file.nx>...", .{})
     eprintln("       nx doc <file.nx> [-o <dir>]", .{})
     eprintln("       nx ship <file.nx> [--mode m] [--target t]   produce the declared artifacts", .{})
-    eprintln("       nx version | nx doctor | nx upgrade [--check] | nx lsp | nx repl", .{})
+    eprintln("       nx version | nx doctor | nx upgrade [--check] | nx install [DIR] | nx lsp | nx repl", .{})
     eprintln("       nx -e CODE | nx -p EXPR                    run a line as at the prompt; -p prints the value", .{})
     eprintln("       nx init [name] | nx add <name> --git URL [--tag TAG] [--dir SUB] | --path DIR | nx fetch | nx update [name...]", .{})
     eprintln("  -o <path>          output file", .{})
@@ -176,6 +176,155 @@ fn system_cc() -> ?String {
     if is_windows_target("") { return null }
     for n in ["cc", "gcc", "clang"] { if found_on_path(n) { return String.from(n) } }
     return null
+}
+
+/// A file named `portable` beside the executable makes the copy leave
+/// nothing on the machine: Zig's global cache goes under `<dir>/cache` (its
+/// local cache is under the output directory already). The directory, or ""
+/// when the copy is not portable.
+fn portable_dir() -> String {
+    let exe = os.exe_path()
+    if exe.len == 0 { return String.new() }
+    let dir = dir_of(exe[..])
+    if io.file_kind(format("{}/portable", .{dir})[..]) == 1 { return String.from(dir) }
+    return String.new()
+}
+
+fn apply_portable() {
+    let dir = portable_dir()
+    if dir.len == 0 or os.env("ZIG_GLOBAL_CACHE_DIR") != null { return }
+    let cache = format("{}/cache/zig", .{dir})
+    fs.make_dirs(cache[..]) catch { return }
+    os.set_env("ZIG_GLOBAL_CACHE_DIR", cache[..])
+}
+
+/// `nx install [DIR]`: this copy of nx, with the zig, examples, std and docs
+/// beside it, into the user's place (`%LocalAppData%\Programs\Nexium`, or
+/// `~/.nexium` with `bin/` and `share/`), and that directory on the user's
+/// PATH unless NEXIUM_NO_MODIFY_PATH=1. What the portable zip does for
+/// itself, in one command.
+fn cmd_install(dest_arg: []u8) -> i32 {
+    let exe = os.exe_path()
+    if exe.len == 0 {
+        eprintln("error: cannot find the running executable", .{})
+        return 1
+    }
+    let src = String.from(dir_of(exe[..]))
+    let windows = is_windows_target("")
+    var dest = String.from(dest_arg)
+    if dest.len == 0 {
+        if windows {
+            let la = os.env("LOCALAPPDATA") orelse {
+                eprintln("error: LOCALAPPDATA is not set; name the directory: nx install DIR", .{})
+                return 1
+            }
+            dest = format("{}\\Programs\\Nexium", .{la})
+        } else {
+            let home = os.env("HOME") orelse {
+                eprintln("error: HOME is not set; name the directory: nx install DIR", .{})
+                return 1
+            }
+            dest = format("{}/.nexium", .{home})
+        }
+    }
+    let bin = if windows { dest.clone() } else { fs.join(dest[..], "bin") }
+    let share = if windows { dest.clone() } else { fs.join(dest[..], "share") }
+    let name = if windows { "nx.exe" } else { "nx" }
+    let target = fs.join(bin[..], name)
+    if fs.normalize(target[..])[..] == fs.normalize(exe[..])[..] {
+        println("nx is already installed at {}", .{exe})
+        return 0
+    }
+    fs.make_dirs(bin[..]) catch {
+        eprintln("error: cannot create {}", .{bin})
+        return 1
+    }
+    fs.make_dirs(share[..]) catch {
+        eprintln("error: cannot create {}", .{share})
+        return 1
+    }
+    // an nx already there is set aside (a running one may be renamed)
+    if fs.exists(target[..]) {
+        let old = format("{}.old", .{target})
+        fs.remove(old[..]) catch { }
+        fs.rename(target[..], old[..]) catch {
+            eprintln("error: cannot replace {}", .{target})
+            return 1
+        }
+    }
+    if !copy_program(exe[..], target[..]) {
+        eprintln("error: cannot copy nx to {}", .{target})
+        return 1
+    }
+    fs.remove(format("{}.old", .{target})[..]) catch { }
+    // what sits beside the executable: the toolchain next to nx, the rest under share
+    for d in ["zig", "examples", "std", "docs"] {
+        let from = fs.join(src[..], d)
+        if !fs.is_dir(from[..]) { continue }
+        let to = if d == "zig" { fs.join(dest[..], d) } else { fs.join(share[..], d) }
+        fs.remove_all(to[..]) catch { }
+        copy_dir(from[..], to[..]) catch {
+            eprintln("error: cannot copy {} to {}", .{from, to})
+            return 1
+        }
+    }
+    for f in ["README.md", "LICENSE", "CHANGELOG.md", "nexium.ico"] {
+        let from = fs.join(src[..], f)
+        if fs.is_file(from[..]) { fs.copy(from[..], fs.join(share[..], f)[..]) catch { } }
+    }
+    println("installed nx to {}", .{target})
+    if os.env("NEXIUM_NO_MODIFY_PATH") != null {
+        println("the PATH is left alone (NEXIUM_NO_MODIFY_PATH); add {} to it yourself", .{bin})
+    } else if windows {
+        var ps = String.from("$p = [Environment]::GetEnvironmentVariable('Path', 'User'); $parts = @(); if ($p) { $parts = @($p -split ';' | Where-Object { $_ }) }; if ($parts -notcontains '")
+        ps.append(bin[..])
+        ps.append("') { [Environment]::SetEnvironmentVariable('Path', (($parts + '")
+        ps.append(bin[..])
+        ps.append("') -join ';'), 'User'); 'added' } else { 'present' }")
+        let argv: [][]u8 = ["powershell", "-NoProfile", "-Command", ps[..]]
+        let code = os.exec(argv[..], "", "") catch { -1 }
+        if code == 0 and os.last_stdout()[..].find("added") != null { println("added {} to the user PATH; new consoles see it", .{bin}) }
+        else if code == 0 { println("{} is on the user PATH already", .{bin}) }
+        else { println("could not edit the user PATH; add {} to it yourself", .{bin}) }
+    } else {
+        let home = os.env("HOME") orelse ""
+        let line = format("export PATH=\"{}:$PATH\"", .{bin})
+        var added = String.new()
+        var any = false
+        for rc in [".profile", ".bashrc", ".zshrc"] {
+            let path = format("{}/{}", .{home, rc})
+            if !fs.is_file(path[..]) { continue }
+            any = true
+            let text = fs.read(path[..]) catch { continue }
+            if text[..].find(bin[..]) != null { continue }
+            fs.append(path[..], format("\n# Nexium\n{}\n", .{line})[..]) catch { continue }
+            added.append(" ")
+            added.append(rc)
+        }
+        if !any {
+            fs.write(format("{}/.profile", .{home})[..], format("# Nexium\n{}\n", .{line})[..]) catch { }
+            added.append(" .profile")
+        }
+        if added.len > 0 { println("added {} to the PATH in:{}; new shells see it", .{bin, added}) }
+        else { println("{} is on the PATH already", .{bin}) }
+    }
+    println("in a new console: nx doctor", .{})
+    return 0
+}
+
+/// Copy a program, keeping the mode where there is one to keep.
+fn copy_program(from: []u8, to: []u8) -> bool {
+    if is_windows_target("") {
+        fs.copy(from, to) catch { return false }
+        return true
+    }
+    let argv: [][]u8 = ["cp", "-p", from, to]
+    let code = os.exec(argv[..], "", "") catch { -1 }
+    if code == 0 { return true }
+    fs.copy(from, to) catch { return false }
+    let chmod: [][]u8 = ["chmod", "755", to]
+    _ = os.exec(chmod[..], "", "") catch { -1 }
+    return true
 }
 
 /// A Zig installed next to `nx`: `<dir>/zig/zig` (the Windows installer) or
@@ -1127,6 +1276,8 @@ fn cmd_doctor(o: *Opts) -> i32 {
     var exe = os.exe_path()
     if exe.len == 0 { let args = os.args(); exe = absolute(args[0]) }
     println("executable:  {}", .{exe})
+    let portable = portable_dir()
+    if portable.len > 0 { println("portable:    yes; Zig's cache lives under {}/cache, and `nx install` puts this copy in place for the user", .{portable}) }
     var shown = String.new()
     for a, i in o.cc { if i > 0 { shown.append(" ") }; shown.append(a[..]) }
     println("C compiler:  {}  ({})", .{shown, cc_why(o)})
@@ -1522,12 +1673,17 @@ fn cmd_tir(o: *Opts) -> i32 {
 
 fn main() -> u8 {
     var args = os.args()
+    apply_portable()
     // like `python`: no arguments at a terminal opens the REPL
     if args.len == 1 and io.is_terminal(1) {
         var padded = List([]u8).new()
         padded.append(args[0])
         padded.append("repl")
         args = padded[..]
+    }
+    if args.len == 2 and args[1] == "install" or args.len == 3 and args[1] == "install" {
+        let c = cmd_install(if args.len == 3 { args[2] } else { "" })
+        return (if c < 0 or c > 255 { 1 } else { c }) as u8
     }
     if args.len >= 2 and (args[1] == "init" or args[1] == "add" or args[1] == "fetch" or args[1] == "update") {
         let rest = args[2..]

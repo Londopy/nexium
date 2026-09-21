@@ -312,6 +312,7 @@ using arena {
 | `nx size file.nx` | attribute binary bytes to declarations |
 | `nx layout file.nx [Type...]` | offsets, sizes and padding of a struct or enum, and the order by alignment that would shrink it |
 | `nx upgrade` | the latest release in place of this executable, verified; `--check` only reports |
+| `nx install [DIR]` | this copy, with what sits beside it, into the user's place and onto the PATH (the portable zip installing itself) |
 | `nx refcounts file.nx` | every retain and release site |
 | `nx leaks file.nx` | run with allocation tracking and report leaks |
 | `nx lsp` | language server over stdio |
