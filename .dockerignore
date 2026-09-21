@@ -1,0 +1,10 @@
+# the images copy bootstrap/nx.c, examples, std, docs and the root files;
+# nothing built or downloaded belongs in the build context
+.git
+nx-out
+**/nx-out
+**/node_modules
+editors/*/out
+editors/tree-sitter-nexium/build
+site/out
+installers/windows/Output

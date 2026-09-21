@@ -131,6 +131,23 @@ itself to the same C; `nx-out/bootstrap/nx2` is the compiler. `CC` names
 the C compiler for the build (default `zig cc`, `cc` on macOS); `NX_CC` or
 `NX_ZIG` names the one `nx` itself runs. See `bootstrap/README.md`.
 
+## Docker
+
+`ghcr.io/londopy/nexium` is the compiler with its Zig toolchain, the
+standard library, the examples and the docs, on Debian; `:alpine` is the
+same on Alpine. Both come for amd64 and arm64, from `docker/`, built at
+each release by the Docker workflow. The image's entry point is `nx`:
+
+```sh
+docker run --rm -v "$PWD":/work ghcr.io/londopy/nexium run hello.nx
+docker run --rm ghcr.io/londopy/nexium doctor
+docker run --rm -it --entrypoint sh ghcr.io/londopy/nexium    # a shell inside
+```
+
+Tags: `latest` and `debian` (the Debian image), `alpine`, and each with
+the version in front (`1.0.4`, `1.0.4-alpine`). The examples are at
+`/usr/local/share/nexium/examples` inside.
+
 ## In CI
 
 The `Londopy/nexium/.github/actions/setup-nexium` action installs `nx` and Zig

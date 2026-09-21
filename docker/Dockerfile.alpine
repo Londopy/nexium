@@ -1,0 +1,41 @@
+# The Nexium compiler with the Zig toolchain, on Alpine (musl).
+#
+#     docker run --rm -v "$PWD":/work ghcr.io/londopy/nexium:alpine run hello.nx
+#
+# The same shape as docker/Dockerfile: nx built from bootstrap/nx.c by the
+# image's gcc (musl), Zig at /usr/local/zig where nx finds it as bundled.
+# Programs built inside are linked by Zig against Zig's own libc, so the
+# image's musl is not what they link to.
+
+ARG ZIG_VERSION=0.14.1
+
+FROM alpine:3.20 AS build
+ARG ZIG_VERSION
+ARG TARGETARCH
+RUN apk add --no-cache gcc musl-dev curl xz python3 ca-certificates
+WORKDIR /src
+COPY bootstrap/nx.c bootstrap/nx.c
+RUN case "$(uname -m)" in x86_64) march="-march=x86-64" ;; *) march="" ;; esac \
+ && gcc -std=gnu11 -O2 -w -fno-strict-aliasing $march -o nx bootstrap/nx.c -lm -lc -lpthread
+RUN case "$TARGETARCH" in amd64) zarch=x86_64 ;; arm64) zarch=aarch64 ;; *) echo "no zig for $TARGETARCH" && exit 1 ;; esac \
+ && name="zig-$zarch-linux-$ZIG_VERSION" \
+ && curl -fsSL "https://ziglang.org/download/$ZIG_VERSION/$name.tar.xz" -o zig.tar.xz \
+ && curl -fsSL https://ziglang.org/download/index.json -o index.json \
+ && want="$(python3 -c "import json; print(json.load(open('index.json'))['$ZIG_VERSION']['$zarch-linux']['shasum'])")" \
+ && echo "$want  zig.tar.xz" | sha256sum -c - \
+ && mkdir -p /out/zig && tar -xJf zig.tar.xz -C /out/zig --strip-components=1
+
+FROM alpine:3.20
+LABEL org.opencontainers.image.source="https://github.com/Londopy/nexium" \
+      org.opencontainers.image.description="The Nexium language on Alpine: the compiler with its Zig toolchain, the standard library, the examples and the docs" \
+      org.opencontainers.image.licenses="MIT"
+RUN apk add --no-cache ca-certificates curl git
+COPY --from=build /src/nx /usr/local/bin/nx
+COPY --from=build /out/zig /usr/local/zig
+COPY examples /usr/local/share/nexium/examples
+COPY std /usr/local/share/nexium/std
+COPY docs /usr/local/share/nexium/docs
+COPY README.md LICENSE CHANGELOG.md /usr/local/share/nexium/
+WORKDIR /work
+ENTRYPOINT ["nx"]
+CMD ["doctor"]

@@ -18,6 +18,11 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   before replacing its files (Restart Manager; it is not started again),
   and keep a log of the run as `install.log` next to the program. The
   uninstaller takes `/LOG="path"` for a log of its own.
+- `ghcr.io/londopy/nexium`: the compiler with its Zig toolchain, the
+  standard library, the examples and the docs, on Debian (`latest`) and
+  Alpine (`:alpine`), for amd64 and arm64, built from the release's seed
+  at each tag (`docker/`, `.github/workflows/docker.yml`); the entry point
+  is `nx`. CI builds both images and runs hello inside on every push.
 - The Windows installer offers "Open Nexium REPL here" in a folder's
   right-click menu beside the console entry, and a "Nexium REPL" profile
   for Windows Terminal, written as a JSON fragment (per user or for all

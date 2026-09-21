@@ -303,3 +303,22 @@ jobs:
           cl = patchnotes.parse_file("CHANGELOG.md", strict=True)
           print("latest:", cl.latest())
           EOF
+
+  # the compiler images (docker/): built for amd64 without publishing, and
+  # hello runs inside each; docker.yml publishes them at a tag
+  docker:
+    name: docker images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Debian image builds and runs hello
+        run: |
+          docker build -f docker/Dockerfile -t nexium:debian .
+          docker run --rm -v "$PWD/examples:/work" nexium:debian run hello.nx | tee out.txt
+          grep -q "hello, nexium" out.txt
+          docker run --rm nexium:debian doctor | head -5
+      - name: Alpine image builds and runs hello
+        run: |
+          docker build -f docker/Dockerfile.alpine -t nexium:alpine .
+          docker run --rm -v "$PWD/examples:/work" nexium:alpine run hello.nx | tee out.txt
+          grep -q "hello, nexium" out.txt

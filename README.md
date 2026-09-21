@@ -116,6 +116,9 @@ It verifies the download against the release checksums, installs to
 `~/.nexium`, sets up a C compiler (the Xcode tools on macOS; Zig is downloaded
 on Linux when nothing is found), and adds `nx` to your PATH.
 
+**Docker**: `docker run --rm -v "$PWD":/work ghcr.io/londopy/nexium run hello.nx`
+(Debian; `:alpine` too; amd64 and arm64).
+
 **Homebrew and Scoop**: the repository is its own tap and bucket.
 
 ```bash

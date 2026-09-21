@@ -320,6 +320,8 @@ queue in front of them.
 8. An "Open REPL here" folder entry and a Windows Terminal profile from
    the installer. (Done.)
 9. `ghcr.io/londopy/nexium`: the compiler with Zig, on Alpine and Debian.
+   (Done: `docker/`, published by the Docker workflow at each tag, for
+   amd64 and arm64; CI builds and runs both on every push.)
 
 **A day or two each.**
 
