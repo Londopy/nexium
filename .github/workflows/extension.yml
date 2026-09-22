@@ -1,12 +1,16 @@
 name: Extension
 
 # The VS Code extension of a release (the .vsix the Release workflow
-# attached) published to Open VSX and to the Visual Studio Marketplace, for
-# a tag whose release already exists: the first publish after a token
-# arrives, or a retry. The Release workflow publishes each new release
-# itself with the same tokens (OVSX_PAT, VSCE_PAT; editors/vscode/README.md).
+# attached) published to Open VSX and to the Visual Studio Marketplace with
+# the tokens in OVSX_PAT and VSCE_PAT (editors/vscode/README.md). It runs
+# when the Release workflow finishes for a tag, and by hand for a tag whose
+# release already exists: the first publish after a token arrives, or a
+# retry. A registry without a token is skipped, not failed.
 
 on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
   workflow_dispatch:
     inputs:
       tag:
@@ -20,8 +24,20 @@ permissions:
 jobs:
   publish:
     name: publish the extension
+    # a Release run that failed, or one for a branch rather than a tag, publishes nothing
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && startsWith(github.event.workflow_run.head_branch, 'v'))
     runs-on: ubuntu-latest
     steps:
+      - name: The tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ github.event.workflow_run.head_branch }}" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: "22"
@@ -29,7 +45,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download "${{ inputs.tag }}" --repo "${{ github.repository }}" --pattern '*.vsix' --dir dist
+          gh release download "${{ steps.tag.outputs.tag }}" --repo "${{ github.repository }}" --pattern '*.vsix' --dir dist
           ls -l dist
       - name: Publish
         env:

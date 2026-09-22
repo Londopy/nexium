@@ -153,21 +153,18 @@ jobs:
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$ver" "/DSourceDir=$src" installers\windows\nexium.iss
           Copy-Item installers\windows\Output\nexium-$ver-setup-x64.exe .
 
-      # the Chocolatey package wraps the installer just built: packed here,
-      # attached to the release, pushed to chocolatey.org when the key is set
+      # the Chocolatey package wraps the installer just built: packed here
+      # and attached to the release; the Chocolatey workflow pushes it once
+      # the release exists (a registry's refusal must not stop a release)
       - name: Chocolatey package
         if: runner.os == 'Windows'
         shell: pwsh
-        env:
-          CHOCO_API_KEY: ${{ secrets.CHOCO_API_KEY }}
         run: |
           $ver = "${{ github.ref_name }}".TrimStart("v")
           $sha = (Get-FileHash "nexium-$ver-setup-x64.exe" -Algorithm SHA256).Hash.ToLower()
           "$sha  nexium-$ver-setup-x64.exe" | Set-Content sums-win.txt
           python scripts/packaging.py "${{ github.ref_name }}" sums-win.txt --only=chocolatey
           choco pack installers/chocolatey/nexium.nuspec --outputdirectory .
-          if ($env:CHOCO_API_KEY) { choco push "nexium.$ver.nupkg" --source https://push.chocolatey.org/ --api-key $env:CHOCO_API_KEY }
-          else { Write-Host "CHOCO_API_KEY is not set: the package is attached to the release, not pushed" }
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -243,22 +240,12 @@ jobs:
           body_path: notes.md
           files: artifacts/*
 
-      # pip install nexium-lang and npm install nexium-lang are the PyPI and
-      # npm workflows (pypi.yml, npm.yml): each runs when this one finishes
-      # and uploads what was attached above, PyPI through trusted publishing
-      # and npm with the token or, once the packages exist, the same way
-
-      # the VS Code extension on the Marketplace and on Open VSX, when the
-      # publisher tokens are in the repository's secrets (editors/vscode/README.md)
-      - name: Publish the VS Code extension
-        env:
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
-          OVSX_PAT: ${{ secrets.OVSX_PAT }}
-        run: |
-          vsix=$(ls artifacts/nexium-*.vsix | head -n 1)
-          echo "extension: $vsix"
-          if [ -n "$VSCE_PAT" ]; then npx @vscode/vsce publish --packagePath "$vsix" -p "$VSCE_PAT"; else echo "VSCE_PAT is not set: not published to the Marketplace"; fi
-          if [ -n "$OVSX_PAT" ]; then npx ovsx publish "$vsix" -p "$OVSX_PAT"; else echo "OVSX_PAT is not set: not published to Open VSX"; fi
+      # The registries are other workflows, each run when this one finishes
+      # for a tag and taking what was attached above: PyPI (pypi.yml, trusted
+      # publishing), npm (npm.yml), Chocolatey (chocolatey.yml) and the VS
+      # Code extension on Open VSX and the Marketplace (extension.yml). A
+      # registry that says no fails its own run, never the release; each can
+      # be run again by hand for the tag.
 
       # the Homebrew formula, the Scoop manifest, the winget and the
       # Chocolatey manifests for this release, committed to main (this

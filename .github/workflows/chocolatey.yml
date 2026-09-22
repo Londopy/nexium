@@ -1,12 +1,17 @@
 name: Chocolatey
 
 # The Chocolatey package of a release (the .nupkg the Release workflow
-# attached) pushed to chocolatey.org, for a tag whose release already
-# exists: the first push after the key arrives, or a retry. The Release
-# workflow pushes each new release itself with the same key (CHOCO_API_KEY).
-# Chocolatey moderates a package's first version by hand.
+# attached) pushed to chocolatey.org with the key in CHOCO_API_KEY. It runs
+# when the Release workflow finishes for a tag, and by hand for a tag whose
+# release already exists: the first push after the key arrives, or a retry.
+# Chocolatey moderates a package's first version by hand, and until that
+# version is approved it refuses every further version with a 403; a new
+# release made while the first waits is pushed by hand once it is through.
 
 on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
   workflow_dispatch:
     inputs:
       tag:
@@ -20,20 +25,37 @@ permissions:
 jobs:
   push:
     name: push to chocolatey.org
+    # a Release run that failed, or one for a branch rather than a tag, pushes nothing
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && startsWith(github.event.workflow_run.head_branch, 'v'))
     runs-on: windows-latest
     steps:
+      - name: The tag
+        id: tag
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") { "tag=${{ inputs.tag }}" >> $env:GITHUB_OUTPUT }
+          else { "tag=${{ github.event.workflow_run.head_branch }}" >> $env:GITHUB_OUTPUT }
       - name: The package of the release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
-          gh release download "${{ inputs.tag }}" --repo "${{ github.repository }}" --pattern '*.nupkg' --dir dist
+          gh release download "${{ steps.tag.outputs.tag }}" --repo "${{ github.repository }}" --pattern '*.nupkg' --dir dist
           Get-ChildItem dist
       - name: Push
         env:
           CHOCO_API_KEY: ${{ secrets.CHOCO_API_KEY }}
         shell: pwsh
         run: |
-          if (-not $env:CHOCO_API_KEY) { Write-Host "CHOCO_API_KEY is not set"; exit 1 }
+          if (-not $env:CHOCO_API_KEY) { Write-Host "CHOCO_API_KEY is not set: nothing pushed"; exit 0 }
           $pkg = Get-ChildItem dist/*.nupkg | Select-Object -First 1
-          choco push $pkg.FullName --source https://push.chocolatey.org/ --api-key $env:CHOCO_API_KEY
+          $out = choco push $pkg.FullName --source https://push.chocolatey.org/ --api-key $env:CHOCO_API_KEY 2>&1 | Out-String
+          Write-Host $out
+          if ($LASTEXITCODE -ne 0) {
+            if ($out -match "403") {
+              Write-Host "::error::chocolatey.org refused the push (403). A package whose first version is still in moderation takes no further version, and the key must be the maintainer's. Once the earlier version is approved, run this workflow by hand for the tag."
+            }
+            exit 1
+          }

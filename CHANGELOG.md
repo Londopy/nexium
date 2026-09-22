@@ -29,6 +29,13 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Fixed
 
+- The Release workflow pushed to Chocolatey from inside the Windows build and
+  published the extension from the release job, so a registry's refusal
+  failed the build and no release was made (Chocolatey returns 403 for every
+  version after a package's first until that one is approved). The
+  registries are their own workflows now, run when a release finishes:
+  `chocolatey.yml` and `extension.yml` beside `pypi.yml` and `npm.yml`, each
+  failing alone and rerunnable by hand for a tag.
 - Rule V3 reported a view into one field of a struct as stale when another
   field of the same struct grew (`for row in lv.rows { lv.origins.append(..) }`),
   found in Point of Origin's level compiler. An origin remembers the first

@@ -9,8 +9,8 @@ compiler's own language server (`nx lsp`).
 From [Open VSX](https://open-vsx.org/extension/Londopy/nexium) (VSCodium,
 Cursor, Windsurf and the other forks install from it): search for "Nexium"
 (publisher Londopy). On the Visual Studio Marketplace once its publisher
-token is in place (see Publishing below); the release workflow publishes
-each release to both.
+token is in place (see Publishing below); the Extension workflow publishes
+each release to both when its release is made.
 
 From a release file: download `nexium-<version>.vsix` from the
 [Releases](https://github.com/Londopy/nexium/releases) page, then in VS Code
@@ -58,8 +58,10 @@ is `npx vsce publish` with a publisher token.
 
 ## Publishing
 
-The release workflow publishes the `.vsix` to the Visual Studio Marketplace
-and to Open VSX when the repository has the tokens as secrets:
+The Extension workflow (`.github/workflows/extension.yml`, run when a
+release is made or by hand for a tag) publishes the `.vsix` to the Visual
+Studio Marketplace and to Open VSX when the repository has the tokens as
+secrets:
 
 - `VSCE_PAT`: a personal access token from Azure DevOps with the
   Marketplace (Manage) scope, for the publisher `Londopy` created at

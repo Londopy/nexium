@@ -94,9 +94,11 @@ the user's PATH unless `NEXIUM_NO_MODIFY_PATH=1`.
 
 **Chocolatey**: `choco install nexium` from
 [community.chocolatey.org/packages/nexium](https://community.chocolatey.org/packages/nexium)
-(the release workflow pushes each version; Chocolatey's moderators approve
-a package's first version by hand, so 1.2.0 is listed there before it is
-installable); each release also attaches the `.nupkg`, which installs with
+(the Chocolatey workflow pushes each version when its release is made;
+Chocolatey's moderators approve a package's first version by hand, so
+1.2.0 is listed there before it is installable, and until it is approved
+Chocolatey takes no further version, so 1.2.1 follows it through the
+queue); each release also attaches the `.nupkg`, which installs with
 `choco install nexium --source .` from the directory it is in. The package
 runs the installer silently with `nx` added to the PATH.
 
