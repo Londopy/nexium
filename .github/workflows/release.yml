@@ -261,7 +261,7 @@ jobs:
           git fetch --depth=1 origin main
           git checkout -B main origin/main
           python scripts/packaging.py "${{ github.ref_name }}" artifacts/SHA256SUMS.txt
-          git add Formula bucket installers/winget installers/chocolatey
+          git add Formula bucket installers/winget installers/chocolatey installers/aur
           branch="packaging/${{ github.ref_name }}"
           if ! git -c user.name=Londopy -c user.email=Londopy@users.noreply.github.com commit -q -m "packaging: the manifests for ${{ github.ref_name }}"; then
             echo "the manifests were already current"
