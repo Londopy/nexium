@@ -1,0 +1,39 @@
+name: Chocolatey
+
+# The Chocolatey package of a release (the .nupkg the Release workflow
+# attached) pushed to chocolatey.org, for a tag whose release already
+# exists: the first push after the key arrives, or a retry. The Release
+# workflow pushes each new release itself with the same key (CHOCO_API_KEY).
+# Chocolatey moderates a package's first version by hand.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The release tag whose package to push (v1.2.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  push:
+    name: push to chocolatey.org
+    runs-on: windows-latest
+    steps:
+      - name: The package of the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          gh release download "${{ inputs.tag }}" --repo "${{ github.repository }}" --pattern '*.nupkg' --dir dist
+          Get-ChildItem dist
+      - name: Push
+        env:
+          CHOCO_API_KEY: ${{ secrets.CHOCO_API_KEY }}
+        shell: pwsh
+        run: |
+          if (-not $env:CHOCO_API_KEY) { Write-Host "CHOCO_API_KEY is not set"; exit 1 }
+          $pkg = Get-ChildItem dist/*.nupkg | Select-Object -First 1
+          choco push $pkg.FullName --source https://push.chocolatey.org/ --api-key $env:CHOCO_API_KEY
