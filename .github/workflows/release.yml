@@ -205,20 +205,15 @@ jobs:
           body_path: notes.md
           files: artifacts/*
 
-      # pip install nexium-lang / npm install nexium-lang, when the tokens are
-      # in the repository's secrets; the platform packages go first, since
-      # the main npm package depends on them
-      - name: Publish to PyPI and npm
+      # npm install nexium-lang, when the token is in the repository's
+      # secrets; the platform packages go first, since the main npm package
+      # depends on them. PyPI is the PyPI workflow (pypi.yml): it runs when
+      # this one finishes and uploads the wheels attached above through
+      # trusted publishing, no token
+      - name: Publish to npm
         env:
-          PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          if [ -n "$PYPI_TOKEN" ]; then
-            pip install -q twine
-            TWINE_USERNAME=__token__ TWINE_PASSWORD="$PYPI_TOKEN" twine upload --skip-existing --non-interactive artifacts/nexium_lang-*.whl
-          else
-            echo "PYPI_TOKEN is not set: the wheels are attached to the release, not uploaded to PyPI"
-          fi
           if [ -n "$NPM_TOKEN" ]; then
             npm config set //registry.npmjs.org/:_authToken "$NPM_TOKEN"
             for t in artifacts/nexium-lang-*-*-*.tgz; do npm publish "$t" --access public || echo "already published: $t"; done

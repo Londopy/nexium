@@ -114,8 +114,13 @@ and the three lines the script added.
 
 Every release carries the compiler as a wheel and as an npm package, both
 named `nexium-lang` (`nexium` is taken on both registries by unrelated
-projects); the release workflow uploads them when its tokens are set, and
-the files are attached to the release either way.
+projects). The wheels go to PyPI through [trusted
+publishing](https://docs.pypi.org/trusted-publishers/): the `PyPI`
+workflow (`.github/workflows/pypi.yml`) runs when a release is built and
+uploads them with a short-lived token PyPI mints for that run, so there is
+no secret to keep; PyPI knows the workflow by its file name, this
+repository and the `pypi` environment. The npm packages are uploaded when
+`NPM_TOKEN` is set. The files are attached to the release either way.
 
 ```sh
 pip install nexium-lang        # nx on the PATH of the environment

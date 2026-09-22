@@ -1,0 +1,60 @@
+name: PyPI
+
+# pip install nexium-lang: the wheels the Release workflow attached to a
+# release, uploaded to PyPI through trusted publishing (OpenID Connect): no
+# token, no secret. PyPI trusts this file by name (`pypi.yml`), this
+# repository, and the `pypi` environment, all three registered at
+# https://pypi.org/manage/account/publishing/ (docs/install.md).
+#
+# It runs when the Release workflow finishes for a tag, and by hand for a
+# tag whose release already exists (the first publish, or a retry).
+
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The release tag to publish (v1.2.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: publish to PyPI
+    # a Release run that failed, or one for a branch rather than a tag, publishes nothing
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && startsWith(github.event.workflow_run.head_branch, 'v'))
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/nexium-lang/
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: The tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ github.event.workflow_run.head_branch }}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: The wheels of the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist
+          gh release download "${{ steps.tag.outputs.tag }}" --repo "${{ github.repository }}" --pattern 'nexium_lang-*.whl' --dir dist
+          ls -l dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+          skip-existing: true
+          verbose: true

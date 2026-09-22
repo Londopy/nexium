@@ -76,7 +76,11 @@ add a `Fixed` line to the changelog, and land a regression test with it.
 ## Changelog
 
 `CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com/) and is
-validated in CI with [patchnotes](https://pypi.org/project/patchnotes/). Add a
+validated in CI with [patchnotes](https://pypi.org/project/patchnotes/). The
+wheels reach PyPI through the `PyPI` workflow and a trusted publisher
+registered on PyPI (owner `Londopy`, repository `nexium`, workflow
+`pypi.yml`, environment `pypi`); a release whose upload failed is published
+again by running that workflow by hand with the tag. Add a
 line under `Unreleased` in the right category (`Added`, `Changed`,
 `Deprecated`, `Removed`, `Fixed`, `Security`) with your change.
 
