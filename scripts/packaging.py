@@ -226,15 +226,15 @@ write("bucket/nexium.json", json.dumps(scoop, indent=4) + "\n")
 
 # -------------------------------------------------------------------- winget
 ident = "Londopy.Nexium"
-write(f"installers/winget/{ident}.yaml", f'''# yaml-language-server: $schema=https://aka.ms/winget-manifest.version.1.6.0.schema.json
+write(f"installers/winget/{ident}.yaml", f'''# yaml-language-server: $schema=https://aka.ms/winget-manifest.version.1.12.0.schema.json
 # Written by scripts/packaging.py at each release.
 PackageIdentifier: {ident}
 PackageVersion: {version}
 DefaultLocale: en-US
 ManifestType: version
-ManifestVersion: 1.6.0
+ManifestVersion: 1.12.0
 ''')
-write(f"installers/winget/{ident}.installer.yaml", f'''# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+write(f"installers/winget/{ident}.installer.yaml", f'''# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.12.0.schema.json
 PackageIdentifier: {ident}
 PackageVersion: {version}
 InstallerType: inno
@@ -254,9 +254,9 @@ Installers:
     InstallerUrl: {download}/{setup}
     InstallerSha256: {sha(setup).upper()}
 ManifestType: installer
-ManifestVersion: 1.6.0
+ManifestVersion: 1.12.0
 ''')
-write(f"installers/winget/{ident}.locale.en-US.yaml", f'''# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+write(f"installers/winget/{ident}.locale.en-US.yaml", f'''# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.12.0.schema.json
 PackageIdentifier: {ident}
 PackageVersion: {version}
 PackageLocale: en-US
@@ -286,5 +286,5 @@ Tags:
   - programming
 ReleaseNotesUrl: https://github.com/{REPO}/releases/tag/{tag}
 ManifestType: defaultLocale
-ManifestVersion: 1.6.0
+ManifestVersion: 1.12.0
 ''')
