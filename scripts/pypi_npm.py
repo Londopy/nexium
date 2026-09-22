@@ -93,6 +93,10 @@ def absolute_links(readme, tag):
     readme = re.sub(r'href="([^"]+)"', lambda m: f'href="{target(m.group(1))}"', readme)
     return readme
 
+# the Pygments lexer, from the repository's editors/pygments/, shipped as
+# nexium_lang.pygments with an entry point: `pygmentize -l nexium file.nx`
+LEXER_PY = open(os.path.join(root, "editors", "pygments", "nexium_lexer.py"), encoding="utf-8").read()
+
 def record_line(name, data):
     digest = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=").decode()
     return f"{name},sha256={digest},{len(data)}"
@@ -108,15 +112,17 @@ def wheel(target, files):
         "Project-URL: Documentation, https://londopy.github.io/nexium/",
         "Requires-Python: >=3.8", "Classifier: License :: OSI Approved :: MIT License",
         "Classifier: Programming Language :: Other", "Classifier: Topic :: Software Development :: Compilers",
+        "Provides-Extra: highlight", "Requires-Dist: pygments; extra == \"highlight\"",
         "Description-Content-Type: text/markdown", "", absolute_links(files["README.md"].decode("utf-8", "replace"), tag),
     ]) + "\n"
     entries = [
         ("nexium_lang/__init__.py", INIT_PY.encode(), 0o644),
+        ("nexium_lang/pygments.py", LEXER_PY.encode(), 0o644),
         (f"nexium_lang/bin/{binary}", files[binary], 0o755),
         ("nexium_lang/LICENSE", files["LICENSE"], 0o644),
         (f"{dist}/METADATA", metadata.encode(), 0o644),
         (f"{dist}/WHEEL", f"Wheel-Version: 1.0\nGenerator: scripts/pypi_npm.py\nRoot-Is-Purelib: false\nTag: py3-none-{plat}\n".encode(), 0o644),
-        (f"{dist}/entry_points.txt", b"[console_scripts]\nnx = nexium_lang:main\n", 0o644),
+        (f"{dist}/entry_points.txt", b"[console_scripts]\nnx = nexium_lang:main\n\n[pygments.lexers]\nnexium = nexium_lang.pygments:NexiumLexer\n", 0o644),
     ]
     record = "\n".join(record_line(n, d) for n, d, _ in entries) + f"\n{dist}/RECORD,,\n"
     entries.append((f"{dist}/RECORD", record.encode(), 0o644))

@@ -137,6 +137,13 @@ if only == "chocolatey":
 chocolatey()
 
 # ------------------------------------------------------------------ Homebrew
+# the manual page and the completions arrived in 1.2.1; an older binary has no
+# `completions` command and the formula must not call it
+has_completions = tuple(int(x) for x in version.split(".")[:3]) >= (1, 2, 1)
+completions_rb = (
+    '    man1.install "nx.1" if File.exist?("nx.1")\n'
+    '    generate_completions_from_executable(bin/"nx", "completions", shells: [:bash, :zsh, :fish])\n'
+) if has_completions else ""
 write("Formula/nexium.rb", f'''# The Nexium language, for Homebrew. Written by scripts/packaging.py at each
 # release; this repository is the tap:
 #
@@ -180,9 +187,7 @@ class Nexium < Formula
     bin.install "nx"
     pkgshare.install "examples", "std", "docs"
     doc.install "README.md", "CHANGELOG.md"
-    man1.install "nx.1" if File.exist?("nx.1")
-    generate_completions_from_executable(bin/"nx", "completions", shells: [:bash, :zsh, :fish])
-  end
+{completions_rb}  end
 
   def caveats
     <<~EOS
@@ -289,4 +294,67 @@ Tags:
 ReleaseNotesUrl: https://github.com/{REPO}/releases/tag/{tag}
 ManifestType: defaultLocale
 ManifestVersion: 1.12.0
+''')
+
+# ------------------------------------------------------------------ AUR (Arch Linux)
+# nexium-bin: the release build. Published from installers/aur/ by a maintainer
+# with an AUR account (docs/install.md): a clone of ssh://aur@aur.archlinux.org/nexium-bin.git
+# with these two files committed and pushed.
+write("installers/aur/PKGBUILD", f'''# Maintainer: Londopy <https://github.com/Londopy>
+# Written by scripts/packaging.py at each release of https://github.com/{REPO}
+pkgname=nexium-bin
+pkgver={version}
+pkgrel=1
+pkgdesc="The Nexium language: a compiler that emits C and ships libraries, packages and tools"
+arch=('x86_64' 'aarch64')
+url="https://londopy.github.io/nexium/"
+license=('MIT')
+depends=('glibc')
+optdepends=('zig: the C compiler nx uses by default'
+            'gcc: a C compiler nx falls back to when there is no zig')
+provides=('nexium')
+conflicts=('nexium')
+source_x86_64=("{linux_x64}::{download}/{linux_x64}")
+source_aarch64=("{linux_arm}::{download}/{linux_arm}")
+sha256sums_x86_64=('{sha(linux_x64)}')
+sha256sums_aarch64=('{sha(linux_arm)}')
+
+package() {{
+  install -Dm755 nx "$pkgdir/usr/bin/nx"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+  install -Dm644 CHANGELOG.md "$pkgdir/usr/share/doc/$pkgname/CHANGELOG.md"
+  mkdir -p "$pkgdir/usr/share/nexium"
+  cp -r examples docs "$pkgdir/usr/share/nexium/"
+  # the manual page and the completions, from the archive (1.2.1 on) or the binary
+  [ -f nx.1 ] || ./nx man > nx.1 2>/dev/null || true
+  [ -f nx.1 ] && install -Dm644 nx.1 "$pkgdir/usr/share/man/man1/nx.1"
+  for sh in bash zsh fish; do
+    [ -f "completions/nx.$sh" ] || {{ mkdir -p completions; ./nx completions $sh > "completions/nx.$sh" 2>/dev/null || rm -f "completions/nx.$sh"; }}
+  done
+  [ -f completions/nx.bash ] && install -Dm644 completions/nx.bash "$pkgdir/usr/share/bash-completion/completions/nx"
+  [ -f completions/nx.zsh ] && install -Dm644 completions/nx.zsh "$pkgdir/usr/share/zsh/site-functions/_nx"
+  [ -f completions/nx.fish ] && install -Dm644 completions/nx.fish "$pkgdir/usr/share/fish/vendor_completions.d/nx.fish"
+  return 0
+}}
+''')
+write("installers/aur/.SRCINFO", f'''pkgbase = nexium-bin
+\tpkgdesc = The Nexium language: a compiler that emits C and ships libraries, packages and tools
+\tpkgver = {version}
+\tpkgrel = 1
+\turl = https://londopy.github.io/nexium/
+\tarch = x86_64
+\tarch = aarch64
+\tlicense = MIT
+\tdepends = glibc
+\toptdepends = zig: the C compiler nx uses by default
+\toptdepends = gcc: a C compiler nx falls back to when there is no zig
+\tprovides = nexium
+\tconflicts = nexium
+\tsource_x86_64 = {linux_x64}::{download}/{linux_x64}
+\tsha256sums_x86_64 = {sha(linux_x64)}
+\tsource_aarch64 = {linux_arm}::{download}/{linux_arm}
+\tsha256sums_aarch64 = {sha(linux_arm)}
+
+pkgname = nexium-bin
 ''')

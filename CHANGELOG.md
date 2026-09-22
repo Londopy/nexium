@@ -31,6 +31,11 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   github:Londopy/nexium`) built from the one C file, checked in CI; a dev
   container on the Docker image, so the repository opens in a Codespace
   with `nx` ready; mise through its `ubi` backend, documented.
+- A Pygments lexer for Nexium inside the wheel (`pip install nexium-lang`
+  makes `nexium` a language Pygments knows: `pygmentize -l nexium`,
+  Sphinx, MkDocs, Jupyter); the AUR package `nexium-bin`
+  (`installers/aur/`, written at each release); a tldr page
+  (`docs/tldr/nx.md`, submitted to tldr-pages).
 - Signed provenance for every release asset (`gh attestation verify
   <file> --owner Londopy`), the OpenSSF Scorecard workflow and badge, the
   site's `security.txt`, `robots.txt` and `sitemap.xml`, `CITATION.cff`,

@@ -1,0 +1,37 @@
+# Maintainer: Londopy <https://github.com/Londopy>
+# Written by scripts/packaging.py at each release of https://github.com/Londopy/nexium
+pkgname=nexium-bin
+pkgver=1.2.0
+pkgrel=1
+pkgdesc="The Nexium language: a compiler that emits C and ships libraries, packages and tools"
+arch=('x86_64' 'aarch64')
+url="https://londopy.github.io/nexium/"
+license=('MIT')
+depends=('glibc')
+optdepends=('zig: the C compiler nx uses by default'
+            'gcc: a C compiler nx falls back to when there is no zig')
+provides=('nexium')
+conflicts=('nexium')
+source_x86_64=("nx-v1.2.0-x86_64-unknown-linux-gnu.tar.gz::https://github.com/Londopy/nexium/releases/download/v1.2.0/nx-v1.2.0-x86_64-unknown-linux-gnu.tar.gz")
+source_aarch64=("nx-v1.2.0-aarch64-unknown-linux-gnu.tar.gz::https://github.com/Londopy/nexium/releases/download/v1.2.0/nx-v1.2.0-aarch64-unknown-linux-gnu.tar.gz")
+sha256sums_x86_64=('aaee16a68e98c257cccea33ba5f986e526598f4f3e6da05a48a84a4c861808e6')
+sha256sums_aarch64=('a559177c8145bce65fab0dc1b25b73807d4112373624acc2a9aaebd13e684ffc')
+
+package() {
+  install -Dm755 nx "$pkgdir/usr/bin/nx"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+  install -Dm644 CHANGELOG.md "$pkgdir/usr/share/doc/$pkgname/CHANGELOG.md"
+  mkdir -p "$pkgdir/usr/share/nexium"
+  cp -r examples docs "$pkgdir/usr/share/nexium/"
+  # the manual page and the completions, from the archive (1.2.1 on) or the binary
+  [ -f nx.1 ] || ./nx man > nx.1 2>/dev/null || true
+  [ -f nx.1 ] && install -Dm644 nx.1 "$pkgdir/usr/share/man/man1/nx.1"
+  for sh in bash zsh fish; do
+    [ -f "completions/nx.$sh" ] || { mkdir -p completions; ./nx completions $sh > "completions/nx.$sh" 2>/dev/null || rm -f "completions/nx.$sh"; }
+  done
+  [ -f completions/nx.bash ] && install -Dm644 completions/nx.bash "$pkgdir/usr/share/bash-completion/completions/nx"
+  [ -f completions/nx.zsh ] && install -Dm644 completions/nx.zsh "$pkgdir/usr/share/zsh/site-functions/_nx"
+  [ -f completions/nx.fish ] && install -Dm644 completions/nx.fish "$pkgdir/usr/share/fish/vendor_completions.d/nx.fish"
+  return 0
+}

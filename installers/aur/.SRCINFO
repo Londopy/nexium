@@ -1,0 +1,19 @@
+pkgbase = nexium-bin
+	pkgdesc = The Nexium language: a compiler that emits C and ships libraries, packages and tools
+	pkgver = 1.2.0
+	pkgrel = 1
+	url = https://londopy.github.io/nexium/
+	arch = x86_64
+	arch = aarch64
+	license = MIT
+	depends = glibc
+	optdepends = zig: the C compiler nx uses by default
+	optdepends = gcc: a C compiler nx falls back to when there is no zig
+	provides = nexium
+	conflicts = nexium
+	source_x86_64 = nx-v1.2.0-x86_64-unknown-linux-gnu.tar.gz::https://github.com/Londopy/nexium/releases/download/v1.2.0/nx-v1.2.0-x86_64-unknown-linux-gnu.tar.gz
+	sha256sums_x86_64 = aaee16a68e98c257cccea33ba5f986e526598f4f3e6da05a48a84a4c861808e6
+	source_aarch64 = nx-v1.2.0-aarch64-unknown-linux-gnu.tar.gz::https://github.com/Londopy/nexium/releases/download/v1.2.0/nx-v1.2.0-aarch64-unknown-linux-gnu.tar.gz
+	sha256sums_aarch64 = a559177c8145bce65fab0dc1b25b73807d4112373624acc2a9aaebd13e684ffc
+
+pkgname = nexium-bin

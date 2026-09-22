@@ -21,6 +21,7 @@ workflow itself:
 | Debian, Ubuntu | `sudo dpkg -i nexium_<version>_amd64.deb` (also arm64) | [attached to each release](https://github.com/Londopy/nexium/releases/latest) |
 | Fedora, RHEL, SUSE | `sudo rpm -i nexium-<version>.x86_64.rpm` (also aarch64) | [attached to each release](https://github.com/Londopy/nexium/releases/latest) |
 | Nix | `nix run github:Londopy/nexium`, `nix profile install github:Londopy/nexium` | [`flake.nix`](https://github.com/Londopy/nexium/blob/main/flake.nix), built from the one C file |
+| Arch Linux | `yay -S nexium-bin` (or any AUR helper) | [`installers/aur`](https://github.com/Londopy/nexium/tree/main/installers/aur), written at each release; on the AUR once its first push is made |
 | mise, asdf | `mise use -g "ubi:Londopy/nexium[exe=nx]"` | the release binary through mise's `ubi` backend |
 | GitHub Codespaces, dev containers | [open in a Codespace](https://codespaces.new/Londopy/nexium) | [`.devcontainer`](https://github.com/Londopy/nexium/tree/main/.devcontainer) on the Docker image |
 | Open VSX | the VS Code extension, for VSCodium, Cursor and the other forks | [open-vsx.org/extension/Londopy/nexium](https://open-vsx.org/extension/Londopy/nexium) |
@@ -190,6 +191,13 @@ scoop install nexium
 
 or, without adding the bucket,
 `scoop install https://raw.githubusercontent.com/Londopy/nexium/main/bucket/nexium.json`.
+
+**Arch Linux**: the `nexium-bin` package (`installers/aur/PKGBUILD` and
+`.SRCINFO`, written by the release workflow with the release's checksums)
+is published on the AUR by a maintainer with an account there: a clone of
+`ssh://aur@aur.archlinux.org/nexium-bin.git`, the two files copied in,
+committed and pushed. Until then, `makepkg -si` in a checkout's
+`installers/aur/` builds and installs it.
 
 **winget**: `winget install Londopy.Nexium`, once
 [the first submission](https://github.com/microsoft/winget-pkgs/pull/438838)
