@@ -1,0 +1,41 @@
+name: Extension
+
+# The VS Code extension of a release (the .vsix the Release workflow
+# attached) published to Open VSX and to the Visual Studio Marketplace, for
+# a tag whose release already exists: the first publish after a token
+# arrives, or a retry. The Release workflow publishes each new release
+# itself with the same tokens (OVSX_PAT, VSCE_PAT; editors/vscode/README.md).
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The release tag whose extension to publish (v1.2.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: publish the extension
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - name: The extension of the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "${{ inputs.tag }}" --repo "${{ github.repository }}" --pattern '*.vsix' --dir dist
+          ls -l dist
+      - name: Publish
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          vsix=$(ls dist/*.vsix | head -n 1)
+          if [ -n "$OVSX_PAT" ]; then npx ovsx publish "$vsix" -p "$OVSX_PAT"; else echo "OVSX_PAT is not set: not published to Open VSX"; fi
+          if [ -n "$VSCE_PAT" ]; then npx @vscode/vsce publish --packagePath "$vsix" -p "$VSCE_PAT"; else echo "VSCE_PAT is not set: not published to the Marketplace"; fi
