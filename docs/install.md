@@ -3,6 +3,24 @@
 Every way to get `nx` onto a machine, what each one sets up, and how `nx`
 finds its C compiler.
 
+## Where to get it
+
+Every release of `nx` reaches these places, most of them by the release
+workflow itself:
+
+| where | how | page |
+| --- | --- | --- |
+| GitHub | the installer, the archives, checksums, torrents | [releases](https://github.com/Londopy/nexium/releases) |
+| PyPI | `pip install nexium-lang` | [pypi.org/project/nexium-lang](https://pypi.org/project/nexium-lang/) |
+| npm | `npm install -g nexium-lang` | [npmjs.com/package/nexium-lang](https://www.npmjs.com/package/nexium-lang) |
+| Docker | `docker run ghcr.io/londopy/nexium` | [the container image](https://github.com/Londopy/nexium/pkgs/container/nexium) |
+| Homebrew | `brew install londopy/tap/nexium` | [the tap is this repository](https://github.com/Londopy/nexium/tree/main/Formula) |
+| Scoop | `scoop install nexium` | [the bucket is this repository](https://github.com/Londopy/nexium/tree/main/bucket) |
+| Chocolatey | `choco install nexium` | [community.chocolatey.org/packages/nexium](https://community.chocolatey.org/packages/nexium), from its moderators' approval of the first version on |
+| winget | `winget install Londopy.Nexium` | [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs/tree/master/manifests/l/Londopy/Nexium), from the merge of [the first submission](https://github.com/microsoft/winget-pkgs/pull/438838) on |
+| Open VSX | the VS Code extension, for VSCodium, Cursor and the other forks | [open-vsx.org/extension/Londopy/nexium](https://open-vsx.org/extension/Londopy/nexium) |
+| Visual Studio Marketplace | the VS Code extension | pending the publisher's token |
+
 ## Windows: the installer
 
 Download `nexium-<version>-setup-x64.exe` from the
@@ -68,9 +86,11 @@ or `~/.nexium` with `bin/` and `share/`; `nx install DIR` names another),
 with the zig, examples, std and docs beside it, and adds the directory to
 the user's PATH unless `NEXIUM_NO_MODIFY_PATH=1`.
 
-**Chocolatey**: `choco install nexium` once the package is on
-chocolatey.org (the release workflow pushes it when its key is set); each
-release also attaches the `.nupkg`, which installs with
+**Chocolatey**: `choco install nexium` from
+[community.chocolatey.org/packages/nexium](https://community.chocolatey.org/packages/nexium)
+(the release workflow pushes each version; Chocolatey's moderators approve
+a package's first version by hand, so 1.2.0 is listed there before it is
+installable); each release also attaches the `.nupkg`, which installs with
 `choco install nexium --source .` from the directory it is in. The package
 runs the installer silently with `nx` added to the PATH.
 
@@ -166,10 +186,12 @@ scoop install nexium
 or, without adding the bucket,
 `scoop install https://raw.githubusercontent.com/Londopy/nexium/main/bucket/nexium.json`.
 
-**winget**: the manifests for `Londopy.Nexium` are in `installers/winget/`,
-ready for [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs)
-(a new package is a pull request there, made by a person). Until it is
-accepted, a checkout installs them directly:
+**winget**: `winget install Londopy.Nexium`, once
+[the first submission](https://github.com/microsoft/winget-pkgs/pull/438838)
+to [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs) is
+merged (a new package is a pull request there; later versions are one
+`wingetcreate` command). The manifests are in `installers/winget/`, and
+a checkout installs them directly:
 
 ```powershell
 winget settings --enable LocalManifestFiles    # once, as administrator
@@ -269,7 +291,7 @@ directory of the repository has the pieces for each one:
 
 | editor | install |
 | --- | --- |
-| VS Code | the `.vsix` on every release (the Windows installer installs it when `code` is on the PATH); the "Nexium" extension on the Marketplace and on Open VSX once a release has been published there (the release workflow does it when the publisher tokens are set) |
+| VS Code | the "Nexium" extension by Londopy on [Open VSX](https://open-vsx.org/extension/Londopy/nexium) (VSCodium, Cursor, Windsurf and the other forks install from it), on the Visual Studio Marketplace once its publisher token is set, and as the `.vsix` on every release (the Windows installer installs it when `code` is on the PATH) |
 | Vim | `Plug 'Londopy/nexium', { 'rtp': 'editors/vim' }` |
 | Neovim | the `editors/neovim` plugin: tree-sitter, LSP and the Vim files as fallback |
 | Helix | append `editors/helix/languages.toml`, copy its queries, `hx --grammar fetch && hx --grammar build` |

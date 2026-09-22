@@ -48,7 +48,7 @@ cd nexium
 sh bootstrap/build.sh
 ```
 
-The compiler is `nx-out/bootstrap/nx2`. [More ways to install](docs/install.html).
+The compiler is `nx-out/bootstrap/nx2`. Also on [PyPI](https://pypi.org/project/nexium-lang/) (`pip install nexium-lang`), [npm](https://www.npmjs.com/package/nexium-lang), [Docker](https://github.com/Londopy/nexium/pkgs/container/nexium), Homebrew, Scoop, Chocolatey and winget, and the VS Code extension on [Open VSX](https://open-vsx.org/extension/Londopy/nexium): [where to get it](docs/install.html#where-to-get-it).
 
 </div>
 </div>

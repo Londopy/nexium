@@ -22,6 +22,14 @@
 </p>
 
 <p align="center">
+  <a href="https://pypi.org/project/nexium-lang/"><img alt="PyPI" src="https://img.shields.io/pypi/v/nexium-lang?logo=pypi&logoColor=white&label=pip"></a>
+  <a href="https://www.npmjs.com/package/nexium-lang"><img alt="npm" src="https://img.shields.io/npm/v/nexium-lang?logo=npm&logoColor=white&label=npm"></a>
+  <a href="https://open-vsx.org/extension/Londopy/nexium"><img alt="Open VSX" src="https://img.shields.io/open-vsx/v/Londopy/nexium?label=Open%20VSX&color=a60ee5"></a>
+  <a href="https://community.chocolatey.org/packages/nexium"><img alt="Chocolatey" src="https://img.shields.io/chocolatey/v/nexium?label=choco&color=80b5e3"></a>
+  <a href="https://github.com/Londopy/nexium/pkgs/container/nexium"><img alt="Docker" src="https://img.shields.io/badge/docker-ghcr.io%2Flondopy%2Fnexium-2496ed?logo=docker&logoColor=white"></a>
+</p>
+
+<p align="center">
   <b>Nexium is a language complete enough to build everything in, that is also the best thing to adopt for one piece of something else.</b>
 </p>
 
@@ -119,10 +127,12 @@ on Linux when nothing is found), and adds `nx` to your PATH.
 **Windows, from PowerShell**: `irm https://raw.githubusercontent.com/Londopy/nexium/main/installers/install.ps1 | iex`
 (the portable build, verified, on the PATH; no wizard).
 
-**pip or npm**: `pip install nexium-lang` or `npm install -g nexium-lang` (the binary, per platform; a C compiler as usual).
+**pip or npm**: `pip install nexium-lang` ([PyPI](https://pypi.org/project/nexium-lang/)) or `npm install -g nexium-lang` ([npm](https://www.npmjs.com/package/nexium-lang)); the binary, per platform; a C compiler as usual.
 
 **Docker**: `docker run --rm -v "$PWD":/work ghcr.io/londopy/nexium run hello.nx`
 (Debian; `:alpine` too; amd64 and arm64).
+
+**Chocolatey and winget**: `choco install nexium` ([the package](https://community.chocolatey.org/packages/nexium)) and `winget install Londopy.Nexium`, each once its registry has approved the first version ([the status](docs/install.md#where-to-get-it)).
 
 **Homebrew and Scoop**: the repository is its own tap and bucket.
 

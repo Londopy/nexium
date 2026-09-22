@@ -6,9 +6,11 @@ compiler's own language server (`nx lsp`).
 
 ## Install
 
-From the Visual Studio Marketplace or Open VSX: search for "Nexium"
-(publisher Londopy). The release workflow publishes each release there once
-the publisher tokens are in place (see Publishing below).
+From [Open VSX](https://open-vsx.org/extension/Londopy/nexium) (VSCodium,
+Cursor, Windsurf and the other forks install from it): search for "Nexium"
+(publisher Londopy). On the Visual Studio Marketplace once its publisher
+token is in place (see Publishing below); the release workflow publishes
+each release to both.
 
 From a release file: download `nexium-<version>.vsix` from the
 [Releases](https://github.com/Londopy/nexium/releases) page, then in VS Code

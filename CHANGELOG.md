@@ -25,7 +25,11 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   PyPI through trusted publishing (`.github/workflows/pypi.yml`, no token),
   when the Release workflow finishes or by hand for a tag. The npm packages
   have the same workflow (`npm.yml`, with provenance), a token for a
-  package's first publish and npm's trusted publishing after.
+  package's first publish and npm's trusted publishing after. The VS Code
+  extension is on Open VSX and the Chocolatey package in its moderation
+  queue (`extension.yml`, `chocolatey.yml` publish a release's by hand),
+  and `Londopy.Nexium` is submitted to winget. The install doc's "Where
+  to get it" table links every registry; the README carries their badges.
 - The Topo is a course: twenty-five exercises of five kinds (fill in the
   blank, fix the error, write it, make the tests pass, predict the output)
   and four quizzes at the end of chapters 2 to 16, graded by the compiler.
