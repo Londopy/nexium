@@ -69,7 +69,12 @@ jobs:
           if [ -z "$NODE_AUTH_TOKEN" ]; then echo "no NPM_TOKEN: publishing through trusted publishing"; fi
           version="${{ steps.tag.outputs.tag }}"
           version="${version#v}"
-          for t in dist/nexium-lang-*-*-*.tgz; do
-            npm publish "$t" --access public --provenance || echo "not published (already there?): $t"
-          done
-          npm publish "dist/nexium-lang-$version.tgz" --access public --provenance || echo "not published (already there?): nexium-lang"
+          # an absolute path: a bare `dist/x.tgz` reads as a GitHub shorthand to npm
+          publish() {
+            if out=$(npm publish "$1" --access public --provenance 2>&1); then echo "$out" | tail -n 4; return 0; fi
+            if echo "$out" | grep -qi "cannot publish over\|previously published\|EPUBLISHCONFLICT"; then echo "already published: $1"; return 0; fi
+            echo "$out"
+            return 1
+          }
+          for t in "$PWD"/dist/nexium-lang-*-*-*.tgz; do publish "$t" || exit 1; done
+          publish "$PWD/dist/nexium-lang-$version.tgz" || exit 1
