@@ -9,6 +9,8 @@
   "homepage": "https://github.com/Londopy/nexium/tree/main/editors/vscode",
   "bugs": { "url": "https://github.com/Londopy/nexium/issues" },
   "engines": { "vscode": "^1.85.0" },
+  "icon": "icon.png",
+  "galleryBanner": { "color": "#0f1117", "theme": "dark" },
   "categories": ["Programming Languages"],
   "keywords": ["nexium", "nx", "effects", "systems"],
   "main": "./out/extension.js",
