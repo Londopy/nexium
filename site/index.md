@@ -109,6 +109,18 @@ has it wired into VS Code, Vim, Neovim, Helix, Zed, Emacs, Kate,
 JetBrains, Sublime Text, Notepad++ and nano ([the install guide](docs/install.html#an-editor)
 has the one-liners).
 
+## In the wild
+
+- [statusmith](https://github.com/Londopy/statusmith): Discord Rich Presence
+  from the tray; its SDK is a Nexium package ([the page](docs/discord.html)).
+- [Point of Origin](https://github.com/Londopy/point-of-origin): a platformer
+  for a game jam, Odin and Unity underneath, and every build step written in
+  Nexium: the native build, the C# bindings generated from the Odin exports,
+  the levels compiled into the game's JSON, the docs written from them.
+
+Using Nexium somewhere? An issue or a pull request on
+[GitHub](https://github.com/Londopy/nexium) puts it here.
+
 ## Where things are
 
 - [The Topo](topo/01-base-camp.html), the guided route through the language.

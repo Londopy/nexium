@@ -1211,7 +1211,15 @@ decision entry first, an implementation second, and none is promised.
   weakness of the project, not of the language.
 - Third-party packages before the registry: a `packages.md` list of
   packages people can `nx add` from git today, curated, so the ecosystem
-  has a front door before it has infrastructure.
+  has a front door before it has infrastructure. The README's "In the
+  wild" table is the other front door: the programs written in Nexium
+  outside the tree, two today (statusmith's SDK, and Point of Origin,
+  where Nexium is the build language of an Odin and Unity game: the
+  native build, the bindings generated from the Odin exports, the levels
+  compiled to JSON). A second kind of user, the one who writes their
+  tooling in Nexium and their product in something else, is the one the
+  `@cImport`, `nx ship` and `std.process` work serves, and the one to
+  ask what is missing.
 - Translations of the book and the reference (docs/i18n exists for the
   README, language and architecture pages).
 

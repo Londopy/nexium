@@ -293,6 +293,17 @@ using arena {
 - [Decisions](DECISIONS.md): every call made where the specification was open.
 - [Known issues](KNOWN_ISSUES.md): open bugs, gaps and limitations, with repros.
 
+## In the wild
+
+Programs and packages outside this repository that are written in Nexium:
+
+| project | what Nexium does there |
+| --- | --- |
+| [statusmith](https://github.com/Londopy/statusmith), Discord Rich Presence from the tray | its SDK is a Nexium package: `nx add discord_rpc --git https://github.com/Londopy/statusmith --tag sdk-v0.1.0 --dir nexium` sets a presence from any Nexium program ([the page](docs/discord.md)) |
+| [Point of Origin](https://github.com/Londopy/point-of-origin), a platformer where the puzzle is the ground | the whole build is Nexium: `build.nx` drives the Odin simulation's DLL, `tools/bindgen.nx` reads the Odin exports and writes the C# bindings Unity calls so the two sides cannot drift, `tools/levels.nx` compiles the level maps into the JSON the game loads (every level grown by the same simulation, so it is solvable by construction), `tools/chapters.nx` writes the docs from them |
+
+Using Nexium somewhere? Open an issue or a pull request and it goes here.
+
 ## Commands
 
 | command | what it does |
@@ -338,8 +349,9 @@ What 1.0 is not yet, and where each is answered, is the first section of
 until 1.3 makes them errors (`--strict` does now), there are no benchmark
 numbers beyond [the numbers page](docs/numbers.md) (four programs in five
 languages on one runner, regenerated weekly), and the ecosystem is one maintainer, sixteen standard
-library modules and one package from outside the tree (statusmith's
-[Discord Rich Presence SDK](docs/discord.md), `nx add discord_rpc ...`). [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) lists every open bug
+library modules and two projects outside the tree (statusmith's
+[Discord Rich Presence SDK](docs/discord.md) and Point of Origin's build
+tooling, [above](#in-the-wild)). [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) lists every open bug
 with its fix; [`DECISIONS.md`](DECISIONS.md) every call made where the
 specification was open.
 
