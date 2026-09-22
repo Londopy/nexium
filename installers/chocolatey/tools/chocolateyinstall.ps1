@@ -2,8 +2,8 @@ $ErrorActionPreference = 'Stop'
 $packageArgs = @{
     packageName    = 'nexium'
     fileType       = 'exe'
-    url64bit       = 'https://github.com/Londopy/nexium/releases/download/v1.2.0/nexium-1.2.0-setup-x64.exe'
-    checksum64     = 'ea80680806a7f68f4330847b0184f18e1dc6295698e00c54c711d67d95171749'
+    url64bit       = 'https://github.com/Londopy/nexium/releases/download/v1.2.1/nexium-1.2.1-setup-x64.exe'
+    checksum64     = 'd759a51ccef292939dedee88a34836b501302492947c6f63158ba5e1e1567f3f'
     checksumType64 = 'sha256'
     silentArgs     = '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS=addtopath'
     validExitCodes = @(0)

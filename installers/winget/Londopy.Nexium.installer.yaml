@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.12.0.schema.json
 PackageIdentifier: Londopy.Nexium
-PackageVersion: 1.2.0
+PackageVersion: 1.2.1
 InstallerType: inno
 Scope: user
 InstallModes:
@@ -12,10 +12,10 @@ InstallerSwitches:
   SilentWithProgress: /SILENT /SUPPRESSMSGBOXES /NORESTART /TASKS=addtopath
 UpgradeBehavior: install
 ProductCode: '{B7E4C2F1-7A5D-4B7E-9D1C-3E2A9F0C5E11}_is1'
-ReleaseDate: 2026-09-21
+ReleaseDate: 2026-09-22
 Installers:
   - Architecture: x64
-    InstallerUrl: https://github.com/Londopy/nexium/releases/download/v1.2.0/nexium-1.2.0-setup-x64.exe
-    InstallerSha256: EA80680806A7F68F4330847B0184F18E1DC6295698E00C54C711D67D95171749
+    InstallerUrl: https://github.com/Londopy/nexium/releases/download/v1.2.1/nexium-1.2.1-setup-x64.exe
+    InstallerSha256: D759A51CCEF292939DEDEE88A34836B501302492947C6F63158BA5E1E1567F3F
 ManifestType: installer
 ManifestVersion: 1.12.0

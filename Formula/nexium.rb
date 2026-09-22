@@ -10,25 +10,25 @@
 class Nexium < Formula
   desc "Nexium language: a compiler that emits C and ships libraries, packages and tools"
   homepage "https://londopy.github.io/nexium/"
-  url "https://github.com/Londopy/nexium/archive/refs/tags/v1.2.0.tar.gz"
-  sha256 "edd0ff3b005ba9d736350810bf16dc8ec6bae0f0b8792d81276d45738ba98162"
+  url "https://github.com/Londopy/nexium/archive/refs/tags/v1.2.1.tar.gz"
+  sha256 "31ea25beea1e5f5f148d563c274122f31fccd76a16cc046e52dccc9dba42bffa"
   license "MIT"
 
   on_macos do
     on_arm do
-      url "https://github.com/Londopy/nexium/releases/download/v1.2.0/nx-v1.2.0-aarch64-apple-darwin.tar.gz"
-      sha256 "a962a3be3b5b16ad614811806eb192b521a01a4883f0bfb9e802ac5d40e57e8e"
+      url "https://github.com/Londopy/nexium/releases/download/v1.2.1/nx-v1.2.1-aarch64-apple-darwin.tar.gz"
+      sha256 "61402f49a3536bab4731e1643d36b6e393fbe9500b5469e4cf175784764a6ec6"
     end
   end
 
   on_linux do
     on_intel do
-      url "https://github.com/Londopy/nexium/releases/download/v1.2.0/nx-v1.2.0-x86_64-unknown-linux-gnu.tar.gz"
-      sha256 "aaee16a68e98c257cccea33ba5f986e526598f4f3e6da05a48a84a4c861808e6"
+      url "https://github.com/Londopy/nexium/releases/download/v1.2.1/nx-v1.2.1-x86_64-unknown-linux-gnu.tar.gz"
+      sha256 "2938cd36d0a0e3dc59bc8f1efb0f5d33bb3b040b782d8c9f2bb2319527a2e736"
     end
     on_arm do
-      url "https://github.com/Londopy/nexium/releases/download/v1.2.0/nx-v1.2.0-aarch64-unknown-linux-gnu.tar.gz"
-      sha256 "a559177c8145bce65fab0dc1b25b73807d4112373624acc2a9aaebd13e684ffc"
+      url "https://github.com/Londopy/nexium/releases/download/v1.2.1/nx-v1.2.1-aarch64-unknown-linux-gnu.tar.gz"
+      sha256 "0c8641574569b9083ea94f69e43520da102d58b6961c8c1572eb597cfb88dc6c"
     end
   end
 
@@ -41,6 +41,8 @@ class Nexium < Formula
     bin.install "nx"
     pkgshare.install "examples", "std", "docs"
     doc.install "README.md", "CHANGELOG.md"
+    man1.install "nx.1" if File.exist?("nx.1")
+    generate_completions_from_executable(bin/"nx", "completions", shells: [:bash, :zsh, :fish])
   end
 
   def caveats
