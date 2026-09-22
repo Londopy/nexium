@@ -4,6 +4,9 @@
 # publishing on every push, and runs hello inside.
 name: Docker
 
+# A tag pushes the images; a run started by hand on a branch builds both
+# images for both architectures and pushes nothing, which is how a change to
+# the Dockerfiles or to these actions is tried before a release.
 on:
   push:
     tags: ["v*"]
@@ -37,7 +40,7 @@ jobs:
           context: .
           file: docker/Dockerfile
           platforms: linux/amd64,linux/arm64
-          push: true
+          push: ${{ github.ref_type == 'tag' }}
           tags: |
             ghcr.io/londopy/nexium:${{ steps.ver.outputs.version }}
             ghcr.io/londopy/nexium:latest
@@ -49,7 +52,7 @@ jobs:
           context: .
           file: docker/Dockerfile.alpine
           platforms: linux/amd64,linux/arm64
-          push: true
+          push: ${{ github.ref_type == 'tag' }}
           tags: |
             ghcr.io/londopy/nexium:${{ steps.ver.outputs.version }}-alpine
             ghcr.io/londopy/nexium:alpine

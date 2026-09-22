@@ -14,7 +14,8 @@ jobs:
   changelog-line:
     name: changelog has a line
     runs-on: ubuntu-latest
-    if: "!contains(github.event.pull_request.labels.*.name, 'no changelog')"
+    # a dependency bump from Dependabot is tooling, not changelog material
+    if: "!contains(github.event.pull_request.labels.*.name, 'no changelog') && github.actor != 'dependabot[bot]'"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
