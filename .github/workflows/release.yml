@@ -95,6 +95,10 @@ jobs:
             cp cross/$t/nx* dist-cross/
             cp README.md LICENSE CHANGELOG.md dist-cross/
             cp -r examples std docs dist-cross/
+            # the manual page and the completions are the same for every
+            # target: the native build wrote them into dist/ a step ago
+            cp dist/nx.1 dist-cross/
+            cp -r dist/completions dist-cross/
             if [ $t = linux ]; then
               tar -C dist-cross -czf nx-${{ github.ref_name }}-aarch64-unknown-linux-gnu.tar.gz .
             else
