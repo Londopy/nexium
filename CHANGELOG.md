@@ -10,6 +10,15 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ## [Unreleased]
 
+### Fixed
+
+- Rule V3 reported a view into one field of a struct as stale when another
+  field of the same struct grew (`for row in lv.rows { lv.origins.append(..) }`),
+  found in Point of Origin's level compiler. An origin remembers the first
+  field on its path and a change the field it touched; they meet only when
+  one is the whole value or both are the same field (spec case
+  `s5_views_by_field`).
+
 ### Added
 
 - The Topo is a course: twenty-five exercises of five kinds (fill in the

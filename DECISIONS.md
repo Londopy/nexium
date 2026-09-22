@@ -722,7 +722,12 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
 103. **V3 and V4 are events on the storage, matched against when the view
     was taken.** A growth, a clearing or a reassignment of a container and
     a move of a value are recorded with their position, and a read of a
-    view taken before the event is reported. Inside a loop, a change after
+    view taken before the event is reported. Both sides carry the first
+    field on their path from the local (`lv.rows` against
+    `lv.origins.append`), and meet only when one is the whole value or
+    both name the same field: sibling fields of a struct are separate
+    storage, and a level compiler that walks one list while filling
+    another is the common shape. Inside a loop, a change after
     a read of a view taken before the loop is reported at the change,
     because the next pass reads it. A move on the line of the use is not
     an event: a literal or a return that holds the value and the view

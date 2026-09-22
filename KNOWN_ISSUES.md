@@ -26,6 +26,16 @@ Fixed bugs are not listed here; `CHANGELOG.md` and `git log` have them.
   `match p.* {` becomes `match p.*{`. Cosmetic; the tree is formatted that
   way. Fix: treat a brace after `.?` / `.*` like any other token, and
   reformat the tree in the same commit.
+- **`nx fmt` collapses aligned trailing comments.** A struct whose fields
+  carry comments aligned in one column (`kind: u32            // 0
+  playing`) is rewritten with a single space before each comment, losing
+  the alignment the author chose; found on statusmith's `Activity` and
+  Point of Origin's `Level`. Fix: when consecutive lines end in a
+  comment, keep the column of the first (or the widest code) for the
+  run; a tree-wide `--check` guards it.
+- **`nx fmt` writes `! (x)`.** A negated parenthesized condition
+  `if !(a or b)` becomes `if ! (a or b)`: the no-space rule after `!`
+  does not apply before `(`. Fix: `!` followed by `(` is tight, like `!x`.
 - **Formatter bar classification has no unit test.** `nx fmt` tells
   closure bars from bit-or per line (`self/fmt.nx`, `bar_role`); the tree-wide
   `--check` in CI is the only guard. Add cases for `|x| x | 1`, `a | b`,

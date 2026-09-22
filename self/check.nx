@@ -743,6 +743,10 @@ pub struct Origin {
     // `Map` buffer), which moves with the value: a view into a value that the
     // same literal moves in is a view into the literal's own value
     heap: bool
+    // the first field on the view's path from the local (`lv.rows[y]` views
+    // field `rows`), or NONE for the whole value: a change of another field
+    // of the same struct does not touch this storage
+    field: usize
 }
 
 /// A change of a local's storage: where, and the loops it sits in (a view
@@ -750,6 +754,15 @@ pub struct Origin {
 pub struct Change {
     pos: usize
     loops: List(usize)
+    // the first field of the place that changed (`lv.origins.append` changes
+    // field `origins`), or NONE for the whole value
+    field: usize
+}
+
+/// Do a view's origin and a change of its local meet? The whole value meets
+/// everything; two fields meet when they are the same one.
+fn fields_meet(a: usize, b: usize) -> bool {
+    return a == NONE or b == NONE or a == b
 }
 
 /// The caller's storage (a parameter's), a global's or a literal's, a temporary's.
@@ -3339,7 +3352,7 @@ impl Checker {
             let r = self.place_root(kids[0])
             if r == NONE { return os }
             for o in os {
-                if o.local == ORIGIN_SELF { add_origin_h(&mut out, r, o.taken_at, true) } else { add_origin_h(&mut out, o.local, o.taken_at, o.heap) }
+                if o.local == ORIGIN_SELF { add_origin_h(&mut out, r, o.taken_at, true) } else { add_origin_f(&mut out, o.local, o.taken_at, o.heap, o.field) }
             }
             return out
         }
@@ -3365,7 +3378,7 @@ impl Checker {
                 if btk == TK.Slice or btk == TK.Ptr { return os }
                 heap = btk == TK.List or btk == TK.Str or btk == TK.Map or self.place_through_heap(base)
             }
-            for o in os { add_origin_h(&mut out, o.local, o.taken_at, (heap or o.heap) and o.local < ORIGIN_TEMP) }
+            for o in os { add_origin_f(&mut out, o.local, o.taken_at, (heap or o.heap) and o.local < ORIGIN_TEMP, o.field) }
             return out
         }
         if k == TKind.OptWrap or k == TKind.ErrWrap or k == TKind.Unwrap or k == TKind.Try or k == TKind.Retained or k == TKind.Cast or k == TKind.ErrToUnion or k == TKind.FnToFat or k == TKind.DynFrom {
@@ -3446,7 +3459,7 @@ impl Checker {
                     let ak = self.tys.kind(self.tys.shallow(self.tys.resolve(self.tir.nodes[self.tir.nodes[c].kids[0]].ty, false)))
                     heap = ak == TK.List or ak == TK.Str or ak == TK.Map
                 }
-                for o in os { add_origin_h(&mut out, o.local, o.taken_at, (heap or o.heap) and o.local < ORIGIN_TEMP) }
+                for o in os { add_origin_f(&mut out, o.local, o.taken_at, (heap or o.heap) and o.local < ORIGIN_TEMP, o.field) }
             }
             if !any { add_origin(&mut out, ORIGIN_STATIC, at) }
             return out
@@ -3473,7 +3486,7 @@ impl Checker {
                 add_origins(&mut out, &self.ctx().locals[r].origins)
                 return out
             }
-            add_origin(&mut out, r, at)
+            add_origin_f(&mut out, r, at, false, self.first_field(e))
             return out
         }
         if self.holds_view(self.tir.nodes[e].ty) or self.is_borrowed_view(e) {
@@ -3488,6 +3501,23 @@ impl Checker {
             add_origin(&mut out, t, at)
         }
         return out
+    }
+
+    /// The first field on a place's path from its root local (`lv.rows[y]`
+    /// is field `rows` of `lv`), or NONE when the path starts with an index
+    /// or is the local itself.
+    fn first_field(self: *mut Self, e: usize) -> usize {
+        var cur = e
+        var field = NONE
+        while true {
+            let k = self.tir.nodes[cur].k
+            if k == TKind.Local { return field }
+            if k == TKind.Field or k == TKind.TupleField { field = self.tir.nodes[cur].a }
+            else if k == TKind.Index { field = NONE }
+            else { return NONE }
+            cur = self.tir.nodes[cur].kids[0]
+        }
+        return NONE
     }
 
     /// Does a view of this place point into heap storage its value owns (an
@@ -3519,7 +3549,7 @@ impl Checker {
                     if moved_at >= lo and moved_at <= hi { add_origin(&mut out, ORIGIN_SELF, o.taken_at); continue }
                 }
             }
-            add_origin_h(&mut out, o.local, o.taken_at, o.heap)
+            add_origin_f(&mut out, o.local, o.taken_at, o.heap, o.field)
         }
         return out
     }
@@ -3710,7 +3740,7 @@ impl Checker {
         // the place now carries what it holds
         for r in roots {
             var kept = self.ctx().locals[r].origins.clone()
-            for o in os { if o.local != ORIGIN_TEMP { add_origin_h(&mut kept, o.local, at, o.heap) } }
+            for o in os { if o.local != ORIGIN_TEMP { add_origin_f(&mut kept, o.local, at, o.heap, o.field) } }
             self.ctx().locals[r].origins = kept
         }
     }
@@ -3728,7 +3758,7 @@ impl Checker {
                 self.warn_here(at, format("`{}` keeps a view into a temporary that is released at the end of this statement; bind the temporary with `let` first, or clone the view (rule V2)", .{self.ctx().locals[l].name})[..])
                 continue
             }
-            add_origin_h(&mut kept, o.local, at, o.heap)
+            add_origin_f(&mut kept, o.local, at, o.heap, o.field)
         }
         self.ctx().locals[l].origins = kept
     }
@@ -3754,6 +3784,7 @@ impl Checker {
             }
             var hit = NONE
             for ch in self.ctx().locals[o.local].changes.clone() {
+                if !fields_meet(ch.field, o.field) { continue }
                 if ch.pos > o.taken_at and ch.pos < at { hit = ch.pos; break }
                 for s in ch.loops { if s > o.taken_at and has_local(&self.ctx().loop_starts, s) { hit = ch.pos } }
                 if hit != NONE { break }
@@ -3780,10 +3811,13 @@ impl Checker {
         if self.is_place(src) or self.is_borrowed_view(src) or self.ctx().pat_by_ref != NONE { self.bind_view(l, src, at) } else { self.check_store_local(l, src, at) }
     }
 
-    /// The storage of a local changes here: a growth, a clearing, a reassignment.
-    fn note_change(self: *mut Self, l: usize, at: usize) {
+    /// The storage of a local changes here: a growth, a clearing, a reassignment
+    /// of the whole value (`field` NONE) or of one field of it.
+    fn note_change(self: *mut Self, l: usize, at: usize) { self.note_change_f(l, at, NONE) }
+
+    fn note_change_f(self: *mut Self, l: usize, at: usize, field: usize) {
         if l == NONE { return }
-        self.ctx().locals[l].changes.append(Change{ .pos = at, .loops = self.ctx().loop_starts.clone() })
+        self.ctx().locals[l].changes.append(Change{ .pos = at, .loops = self.ctx().loop_starts.clone(), .field = field })
         // a view taken before an enclosing loop and read in the loop before this
         // change reads moved storage on the next pass: reported here, at the change
         if self.ctx().loop_starts.len == 0 { return }
@@ -3792,7 +3826,7 @@ impl Checker {
         while w < self.ctx().locals.len {
             var taken = NONE
             for o in self.ctx().locals[w].origins.clone() {
-                if o.local != l { continue }
+                if o.local != l or !fields_meet(o.field, field) { continue }
                 let used = self.ctx().locals[w].last_use
                 for s in self.ctx().loop_starts.clone() { if o.taken_at < s and used > s and used < at { taken = o.taken_at } }
             }
@@ -6565,13 +6599,21 @@ fn name_index(names: *List(String), name: []u8) -> ?usize {
 /// An origin joins a list once.
 fn add_origin(out: *mut List(Origin), local: usize, at: usize) { add_origin_h(out, local, at, false) }
 
-fn add_origin_h(out: *mut List(Origin), local: usize, at: usize, heap: bool) {
-    for o in out.*{ if o.local == local { return } }
-    out.append(Origin{ .local = local, .taken_at = at, .heap = heap })
+fn add_origin_h(out: *mut List(Origin), local: usize, at: usize, heap: bool) { add_origin_f(out, local, at, heap, NONE) }
+
+fn add_origin_f(out: *mut List(Origin), local: usize, at: usize, heap: bool, field: usize) {
+    for i in 0..out.len {
+        if out[i].local == local {
+            // the same local through another field: the whole value from now on
+            if out[i].field != field { out[i].field = NONE }
+            return
+        }
+    }
+    out.append(Origin{ .local = local, .taken_at = at, .heap = heap, .field = field })
 }
 
 fn add_origins(out: *mut List(Origin), more: *List(Origin)) {
-    for o in more.*{ add_origin_h(out, o.local, o.taken_at, o.heap) }
+    for o in more.*{ add_origin_f(out, o.local, o.taken_at, o.heap, o.field) }
 }
 
 fn has_local(xs: *List(usize), v: usize) -> bool {
@@ -9232,7 +9274,7 @@ impl Checker {
         }
         // the methods that may move or release the storage a view points into (V3)
         if method == "append" or method == "append_char" or method == "push_byte" or method == "extend" or method == "insert" or method == "put" or method == "reserve" or method == "clear" {
-            self.note_change(self.place_root(recv), at)
+            self.note_change_f(self.place_root(recv), at, self.first_field(recv))
         }
     }
 

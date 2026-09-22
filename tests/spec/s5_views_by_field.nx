@@ -1,0 +1,21 @@
+// SPEC 5.6, rule V3 by field: a view into one field of a struct is not
+// stale when another field of the same struct grows. The shape of every
+// level compiler: walk the rows, collect what they hold into sibling lists.
+struct Level { rows: List(String), origins: List((i64, i64)), rock: List((i64, i64)) }
+
+fn main() {
+    var lv = Level{ .rows = List(String).new(), .origins = List((i64, i64)).new(), .rock = List((i64, i64)).new() }
+    lv.rows.append(String.from("#.o"))
+    lv.rows.append(String.from("o.#"))
+    for row, y in lv.rows {
+        for c, x in row[..] {
+            if c == 'o' { lv.origins.append((x as i64, y as i64)) }
+            if c == '#' { lv.rock.append((x as i64, y as i64)) }
+        }
+    }
+    println("{} origins, {} rock", .{lv.origins.len, lv.rock.len})
+    // the same field: still reported (compile-fail view_after_growth covers it)
+    let first = lv.rows[0][..]
+    lv.origins.append((9, 9))
+    println("{} {}", .{first, lv.origins.len})
+}
