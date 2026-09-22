@@ -31,6 +31,11 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   github:Londopy/nexium`) built from the one C file, checked in CI; a dev
   container on the Docker image, so the repository opens in a Codespace
   with `nx` ready; mise through its `ubi` backend, documented.
+- The site's API: `api/latest.json` (the current release and every
+  asset's URL), `api/releases.json`, `api/std.json` (every module and
+  public function with its doc), `api/topo.json`, `api/commands.json` and
+  `api/index.json`, written by the site builder at each deploy
+  (`docs/api.md`).
 - A Pygments lexer for Nexium inside the wheel (`pip install nexium-lang`
   makes `nexium` a language Pygments knows: `pygmentize -l nexium`,
   Sphinx, MkDocs, Jupyter); the AUR package `nexium-bin`

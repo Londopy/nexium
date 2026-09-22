@@ -127,4 +127,5 @@ Using Nexium somewhere? An issue or a pull request on
 - [The language reference](docs/language.html) and [the standard library](docs/std.html).
 - [The specification](docs/spec.html), [the roadmap](docs/roadmap.html) and [the decisions](docs/decisions.html) that shaped the language.
 - [Contributing](docs/contributing.html), [the changelog](docs/changelog.html), [release names](docs/release-names.html).
+- [The site's API](docs/api.html): the current release, every release, the standard library, the Topo and the commands, as JSON.
 - The source, on [GitHub](https://github.com/Londopy/nexium).

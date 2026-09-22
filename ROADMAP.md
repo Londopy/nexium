@@ -1132,6 +1132,12 @@ share URL.
   light/dark toggle beside the system setting, docs per release (`/1.0/`,
   `/latest/`), a printable Topo (one page, and a PDF and an EPUB built by
   CI), and "edit this page" on every page.
+- The site's API (`docs/api.md`; done: `latest`, `releases`, `std`,
+  `topo`, `commands` as JSON under `/api/`, written at each deploy). To
+  come: the search index as a document, the diagnostics index of the
+  error pages, per-release documents (`/api/1.2/`), and `nx doctor`
+  reading `latest.json` instead of GitHub's API where the rate limit bit
+  before.
 
 **`std.tui`** (1.4).
 

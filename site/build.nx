@@ -15,6 +15,7 @@
 
 import std.fs
 import std.strings
+import std.json
 
 const REPO = "https://github.com/Londopy/nexium"
 const SITE_TITLE = "Nexium"
@@ -50,7 +51,7 @@ fn plan() -> List(Page) {
     let docs = [
         ("docs/install.md", "install"), ("docs/language.md", "language"), ("docs/std.md", "std"), ("docs/repl.md", "repl"),
         ("docs/packages.md", "packages"), ("docs/discord.md", "discord"), ("docs/gui.md", "gui"), ("docs/embedding.md", "embedding"),
-        ("docs/numbers.md", "numbers"),
+        ("docs/numbers.md", "numbers"), ("docs/api.md", "api"),
         ("docs/releasing-your-program.md", "releasing-your-program"), ("docs/architecture.md", "architecture"),
         ("docs/stability.md", "stability"), ("docs/platforms.md", "platforms"), ("docs/release-names.md", "release-names"),
     ]
@@ -932,6 +933,230 @@ fn footer(out: *mut String, src: []u8) {
     out.append("</main>\n</div>\n</body>\n</html>\n")
 }
 
+// ----- the API: JSON documents from the tree --------------------------------------
+
+/// The value of `const NAME = "..."` in a source file, or "".
+fn const_str(text: []u8, name: []u8) -> String {
+    let key = format("const {} = \"", .{name})
+    let at = text.find(key[..]) orelse return String.new()
+    let rest = text[at + key.len..]
+    let end = rest.find("\"") orelse return String.new()
+    return String.from(rest[..end])
+}
+
+/// A JSON string of a slice.
+fn js(s: []u8) -> json.Json { return json.string(s) }
+
+/// The current release: version, name, date and every asset's URL.
+fn api_latest(version: []u8, name: []u8, date: []u8) -> json.Json {
+    var doc = json.object()
+    json.set(&mut doc, "version", js(version))
+    json.set(&mut doc, "name", js(name))
+    json.set(&mut doc, "date", js(date))
+    let tag = format("v{}", .{version})
+    json.set(&mut doc, "tag", js(tag[..]))
+    json.set(&mut doc, "release", js(format("{}/releases/tag/{}", .{REPO, tag})[..]))
+    let base = format("{}/releases/download/{}", .{REPO, tag})
+    var downloads = json.object()
+    json.set(&mut downloads, "windows-x64-installer", js(format("{}/nexium-{}-setup-x64.exe", .{base, version})[..]))
+    for t in ["x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"] {
+        json.set(&mut downloads, t, js(format("{}/nx-{}-{}.zip", .{base, tag, t})[..]))
+    }
+    for t in ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "aarch64-apple-darwin"] {
+        json.set(&mut downloads, t, js(format("{}/nx-{}-{}.tar.gz", .{base, tag, t})[..]))
+    }
+    json.set(&mut downloads, "one-c-file", js(format("https://raw.githubusercontent.com/Londopy/nexium/{}/bootstrap/nx.c", .{tag})[..]))
+    json.set(&mut downloads, "vscode-extension", js(format("{}/nexium-{}.vsix", .{base, tag})[..]))
+    json.set(&mut downloads, "deb-amd64", js(format("{}/nexium_{}_amd64.deb", .{base, version})[..]))
+    json.set(&mut downloads, "deb-arm64", js(format("{}/nexium_{}_arm64.deb", .{base, version})[..]))
+    json.set(&mut downloads, "rpm-x86_64", js(format("{}/nexium-{}-1.x86_64.rpm", .{base, version})[..]))
+    json.set(&mut downloads, "rpm-aarch64", js(format("{}/nexium-{}-1.aarch64.rpm", .{base, version})[..]))
+    json.set(&mut doc, "downloads", downloads)
+    json.set(&mut doc, "checksums", js(format("{}/SHA256SUMS.txt", .{base})[..]))
+    var registries = json.object()
+    json.set(&mut registries, "pypi", js("nexium-lang"))
+    json.set(&mut registries, "npm", js("nexium-lang"))
+    json.set(&mut registries, "docker", js("ghcr.io/londopy/nexium"))
+    json.set(&mut registries, "homebrew", js("londopy/tap/nexium"))
+    json.set(&mut registries, "scoop", js("https://raw.githubusercontent.com/Londopy/nexium/main/bucket/nexium.json"))
+    json.set(&mut registries, "chocolatey", js("nexium"))
+    json.set(&mut registries, "winget", js("Londopy.Nexium"))
+    json.set(&mut registries, "aur", js("nexium-bin"))
+    json.set(&mut registries, "nix", js("github:Londopy/nexium"))
+    json.set(&mut registries, "open-vsx", js("Londopy.nexium"))
+    json.set(&mut doc, "registries", registries)
+    json.set(&mut doc, "docs", js(SITE_URL))
+    return doc
+}
+
+/// Every release of the changelog: `## [x.y.z] - date`, then its name line.
+fn api_releases() -> json.Json {
+    var out = json.array()
+    let text = fs.read("CHANGELOG.md") catch { String.new() }
+    var lines = List([]u8).new()
+    for l in text[..].lines() { lines.append(l) }
+    for l, i in lines {
+        if !l.starts_with("## [") { continue }
+        let close = l.find("]") orelse continue
+        let version = l[4..close]
+        if version == "Unreleased" { continue }
+        var date: []u8 = ""
+        if let d = strings.strip_prefix(l[close + 1..], " - ") { date = d.trim() }
+        var name = String.new()
+        var j = i + 1
+        while j < lines.len and j < i + 4 {
+            let t = lines[j].trim()
+            if t.starts_with("*") {
+                let rest = t[1..]
+                if let e = rest.find("*") { name = String.from(rest[..e]) }
+                break
+            }
+            j += 1
+        }
+        var r = json.object()
+        json.set(&mut r, "version", js(version))
+        json.set(&mut r, "name", js(name[..]))
+        json.set(&mut r, "date", js(date))
+        json.set(&mut r, "release", js(format("{}/releases/tag/v{}", .{REPO, version})[..]))
+        json.push(&mut out, r)
+    }
+    var doc = json.object()
+    json.set(&mut doc, "releases", out)
+    return doc
+}
+
+/// The standard library: every module, every public function with its
+/// signature and the doc comment above it.
+fn api_std() -> json.Json {
+    var modules = json.array()
+    let names = fs.list("std") catch { List(String).new() }
+    for nm in names {
+        if !nm[..].ends_with(".nx") { continue }
+        let text = fs.read(fs.join("std", nm[..])[..]) catch { continue }
+        var m = json.object()
+        json.set(&mut m, "name", js(fs.stem(nm[..])))
+        json.set(&mut m, "source", js(format("{}/blob/main/std/{}", .{REPO, nm})[..]))
+        var about = String.new()
+        var functions = json.array()
+        var doc = List([]u8).new()
+        var in_head = true
+        for l in text[..].lines() {
+            let t = l.trim()
+            if in_head and t.starts_with("//!") {
+                if about.len > 0 { about.append(" ") }
+                about.append(t[3..].trim())
+                continue
+            }
+            in_head = false
+            if t.starts_with("///") { doc.append(t[3..].trim()); continue }
+            if t.starts_with("pub fn ") {
+                var sig = t
+                if let b = t.find(" {") { sig = t[..b] }
+                let name_end = sig.find("(") orelse sig.len
+                var f = json.object()
+                json.set(&mut f, "name", js(sig[7..name_end]))
+                json.set(&mut f, "signature", js(sig))
+                json.set(&mut f, "doc", js(strings.join(doc[..], " ")[..]))
+                json.push(&mut functions, f)
+            }
+            if !t.starts_with("///") and !t.starts_with("pub fn ") { doc.clear() }
+        }
+        json.set(&mut m, "about", js(about[..]))
+        json.set(&mut m, "functions", functions)
+        json.push(&mut modules, m)
+    }
+    var out = json.object()
+    json.set(&mut out, "modules", modules)
+    return out
+}
+
+/// The Topo: the chapters with their pages and their exercises.
+fn api_topo(pages: *List(Page)) -> json.Json {
+    var chapters = json.array()
+    var n: usize = 0
+    for p in pages.*{
+        if p.section[..] != "topo" { continue }
+        n += 1
+        let stem = fs.stem(p.src[..])
+        var c = json.object()
+        json.set(&mut c, "number", json.number(n as f64))
+        json.set(&mut c, "slug", js(stem))
+        json.set(&mut c, "title", js(p.title[..]))
+        json.set(&mut c, "page", js(format("{}{}", .{SITE_URL, p.out})[..]))
+        var exercises = json.array()
+        for f in exercise_files(stem) {
+            let name = fs.stem(f[..])
+            var e = json.object()
+            json.set(&mut e, "name", js(name))
+            json.set(&mut e, "kind", js(kind_label(name)))
+            json.set(&mut e, "source", js(format("{}/blob/main/topo/exercises/{}/{}", .{REPO, stem, f})[..]))
+            json.push(&mut exercises, e)
+        }
+        json.set(&mut c, "exercises", exercises)
+        json.set(&mut c, "quiz", json.boolean(fs.exists(fs.join(fs.join("topo/exercises", stem)[..], "quiz.txt")[..])))
+        json.push(&mut chapters, c)
+    }
+    var out = json.object()
+    json.set(&mut out, "chapters", chapters)
+    return out
+}
+
+/// The commands and the options of nx, from the table in self/completions.nx.
+fn api_commands() -> json.Json {
+    let text = fs.read("self/completions.nx") catch { String.new() }
+    var commands = json.array()
+    var options = json.array()
+    for l in text[..].lines() {
+        let t = l.trim()
+        let is_cmd = t.starts_with("out.append(Command{")
+        let is_opt = t.starts_with("out.append(Option{")
+        if !is_cmd and !is_opt { continue }
+        var e = json.object()
+        for key in ["name", "arg", "value", "about"] {
+            let marker = format(".{} = \"", .{key})
+            let at = t.find(marker[..]) orelse continue
+            let rest = t[at + marker.len..]
+            let end = rest.find("\"") orelse continue
+            json.set(&mut e, key, js(rest[..end]))
+        }
+        if is_cmd { json.push(&mut commands, e) } else { json.push(&mut options, e) }
+    }
+    var out = json.object()
+    json.set(&mut out, "commands", commands)
+    json.set(&mut out, "options", options)
+    return out
+}
+
+fn write_api(out_dir: []u8, pages: *List(Page)) -> bool {
+    let dir = fs.join(out_dir, "api")
+    fs.make_dirs(dir[..]) catch { eprintln("error: cannot create {}", .{dir}); return false }
+    let nx = fs.read("self/nx.nx") catch { String.new() }
+    let version = const_str(nx[..], "VERSION")
+    let name = const_str(nx[..], "RELEASE_NAME")
+    let date = const_str(nx[..], "RELEASE_DATE")
+    var index = json.object()
+    var docs = json.array()
+    for d in [("latest.json", "the current release: version, name, date, every asset's URL, the registries"), ("releases.json", "every release: version, name, date"), ("std.json", "the standard library: modules and their public functions"), ("topo.json", "the Topo: chapters and exercises"), ("commands.json", "the commands and options of nx")] {
+        var e = json.object()
+        json.set(&mut e, "url", js(format("{}api/{}", .{SITE_URL, d.0})[..]))
+        json.set(&mut e, "about", js(d.1))
+        json.push(&mut docs, e)
+    }
+    json.set(&mut index, "documents", docs)
+    json.set(&mut index, "docs", js(format("{}docs/api.html", .{SITE_URL})[..]))
+    json.set(&mut index, "version", js(version[..]))
+    let latest = api_latest(version[..], name[..], date[..])
+    let releases = api_releases()
+    let std_doc = api_std()
+    let topo = api_topo(pages)
+    let commands = api_commands()
+    let files = [("index.json", &index), ("latest.json", &latest), ("releases.json", &releases), ("std.json", &std_doc), ("topo.json", &topo), ("commands.json", &commands)]
+    for f in files {
+        fs.write(fs.join(dir[..], f.0)[..], json.pretty(f.1, 2)[..]) catch { eprintln("error: cannot write api/{}", .{f.0}); return false }
+    }
+    return true
+}
+
 // ----- main ---------------------------------------------------------------------------
 
 fn main() -> u8 {
@@ -1014,7 +1239,8 @@ fn main() -> u8 {
         fs.write(path[..], html[..]) catch { eprintln("error: cannot write {}", .{path}); return 1 }
         written += 1
     }
-    println("site: {} pages in {}", .{written, out_dir})
+    if !write_api(out_dir[..], &pages) { return 1 }
+    println("site: {} pages and the API in {}", .{written, out_dir})
     return 0
 }
 
