@@ -94,6 +94,9 @@ ordering; the name carries the character.
 | 1.0.1 | Annapurna: Rébuffat | patch (roster 3): the loose ends after the summit; the fixes the tutorial found, the docs site and the Topo, eleven editors |
 | 1.0.2 | Annapurna: Terray | patch (roster 4): the hotfix; the release binaries were built for the build machine's CPU and crashed on others |
 | 1.0.3 | Annapurna: Schatz | patch (roster 6): the long-hidden bugs an outside review found, then the roads in: every way to install and the tools the roadmap's quick wins named |
+| 1.1.0 | Annapurna: Dutch Rib | the safer line that became the everyday route: the ergonomics the compiler wanted (`?.`, tuple destructuring, `derive(Clone)`, iterators, slice patterns, guard facts, named format arguments, the intrinsics) |
+| 1.2.0 | Annapurna: South Face | the great wall climbed by siege: memory safety without a garbage collector, the view rules |
+| 1.2.1 | Annapurna: de Noyelle | patch (roster 9): the liaison officer, permits and diplomacy; the roads in: every registry and package format, completions and a manual page, provenance on every asset, the Topo as a course |
 
 ## The plan
 
@@ -103,8 +106,6 @@ fits and the pencilled one goes back in the pool.
 
 | version | name | why |
 | --- | --- | --- |
-| 1.1.0 | Annapurna: Dutch Rib | minor: the safer line that became the everyday route, the ergonomics the compiler wanted (`?.`, tuple destructuring, `derive(Clone)`, iterators, slice patterns, guard facts, named format arguments, the intrinsics) |
-| 1.2.0 | Annapurna: South Face | the great wall climbed by siege: memory safety without a garbage collector, the view rules |
 | 1.3.0 | Annapurna: North Face | the original line completed: the toolchain grown up, incremental builds, the semantic language server |
 | 1.4.0 | Annapurna: the Sanctuary | the basin that holds everything and supplies every route: a standard library people stop supplementing |
 | 1.5.0 | Annapurna: East Ridge | the long traverse over several summits: one source, many platforms |
@@ -173,7 +174,7 @@ summiters lost fingers and toes on the descent.
 | Schatz | found the summit party in the crevasse the morning after | finds a long-hidden bug (used: 1.0.3) |
 | Oudot | the doctor; amputations on the march out | removes something to save the rest |
 | Ichac | the filmmaker | is all documentation, examples, screenshots |
-| de Noyelle | liaison officer; permits and diplomacy | packaging, licensing, distribution channels |
+| de Noyelle | liaison officer; permits and diplomacy | packaging, licensing, distribution channels (used: 1.2.1) |
 | Ang Tharkey | the sirdar; declined the summit and kept the camps supplied | CI and infrastructure, the work that carries everything else |
 | Bonington, Whillans, Haston | 1970, the South Face | repairs the biggest feature of a line |
 | Messner, Kammerlander | 1985, the North-West Face | makes something faster |

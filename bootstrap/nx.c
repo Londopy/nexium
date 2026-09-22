@@ -2457,11 +2457,11 @@ typedef struct nx_sl_m12_Scope { nx_m12_Scope* ptr; size_t len; } nx_sl_m12_Scop
 /* ---- data ---- */
 static const char* const nx_error_names[] = { "(ok)", "OutOfMemory", "Panic", "InvalidRecord", "Truncated", "Overflow", "InvalidUtf8", "NotFound", "IoError", "InvalidInput", "BufferTooSmall", "Timeout", "ConnectionRefused", "TruncatedCoff", "Elf32", "MachO", "Unrecognized", "AlreadyExists", "UnterminatedHeader", "ExpectedLine", "UnterminatedString", "UnterminatedTable", "UnterminatedArray", "ExpectedKeyValue" };
 NX_INLINE const char* nx_error_name(uint32_t e) { return e <= sizeof(nx_error_names)/sizeof(*nx_error_names) - 1 ? nx_error_names[e] : "(unknown error)"; }
-static const char nx_str_0[6] = "1.2.0";
+static const char nx_str_0[6] = "1.2.1";
 static const nx_sl_u8 nxc_VERSION_0 = { (uint8_t*)nx_str_0, 5 };
-static const char nx_str_1[22] = "Annapurna: South Face";
+static const char nx_str_1[22] = "Annapurna: de Noyelle";
 static const nx_sl_u8 nxc_RELEASE_NAME_1 = { (uint8_t*)nx_str_1, 21 };
-static const char nx_str_2[11] = "2026-09-21";
+static const char nx_str_2[11] = "2026-09-22";
 static const nx_sl_u8 nxc_RELEASE_DATE_2 = { (uint8_t*)nx_str_2, 10 };
 static const size_t nxc_NONE_3 = ((size_t)18446744073709551615ULL);
 static const char nx_str_3[5] = "bash";

@@ -1005,8 +1005,8 @@ that easy: stable URLs, checksums, and no post-install step.
   opens the install page on a phone, for Termux, and for the person
   standing at someone else's laptop.
 
-**`nx topo`: the tutorial you can run** (1.4; the runner shipped after
-1.2.0).
+**`nx topo`: the tutorial you can run** (1.4; the runner shipped in
+1.2.1).
 
 Status: `nx topo` is in the compiler (`self/topo.nx`): the route map with
 progress, `nx topo <n>` writing a chapter's exercises to work on, `check`

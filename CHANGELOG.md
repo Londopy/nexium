@@ -10,6 +10,10 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-09-22
+
+*Annapurna: de Noyelle* — the expedition's liaison officer, whose whole job was permits and diplomacy: this patch is the roads in. `pip install nexium-lang` and `npm install nexium-lang` are real, the extension is on Open VSX, the package is on Chocolatey and submitted to winget, every release attaches Debian and RPM packages and signed provenance for each asset, a Nix flake and a dev container open the repository anywhere, `nx completions` and `nx man` come from the compiler, the site has an API, and the Topo is a course of twenty-five exercises graded by the compiler. The workflows are pinned to commits and their tokens are read-only outside the publishing jobs. The seed is regenerated from the final sources.
+
 ### Security
 
 - Every GitHub Action the workflows use is pinned to a commit, with its
@@ -1307,7 +1311,8 @@ First public release.
   Korean, French, and German; the language reference and architecture tour in
   Spanish, Chinese, and Japanese.
 
-[Unreleased]: https://github.com/Londopy/nexium/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/Londopy/nexium/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/Londopy/nexium/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/Londopy/nexium/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/Londopy/nexium/compare/v1.0.3...v1.1.0
 [1.0.3]: https://github.com/Londopy/nexium/compare/v1.0.2...v1.0.3

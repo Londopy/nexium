@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "The release tag whose package to push (v1.2.0)"
+        description: "The release tag whose package to push (v1.2.1)"
         required: true
         type: string
 

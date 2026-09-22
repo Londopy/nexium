@@ -2,7 +2,7 @@
 
 ;; Author: Londopy
 ;; URL: https://github.com/Londopy/nexium
-;; Version: 1.2.0
+;; Version: 1.2.1
 ;; Package-Requires: ((emacs "27.1"))
 ;; Keywords: languages
 ;; SPDX-License-Identifier: MIT
