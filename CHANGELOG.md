@@ -23,7 +23,9 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 - `pip install nexium-lang` is real: the wheels every release builds reach
   PyPI through trusted publishing (`.github/workflows/pypi.yml`, no token),
-  when the Release workflow finishes or by hand for a tag.
+  when the Release workflow finishes or by hand for a tag. The npm packages
+  have the same workflow (`npm.yml`, with provenance), a token for a
+  package's first publish and npm's trusted publishing after.
 - The Topo is a course: twenty-five exercises of five kinds (fill in the
   blank, fix the error, write it, make the tests pass, predict the output)
   and four quizzes at the end of chapters 2 to 16, graded by the compiler.

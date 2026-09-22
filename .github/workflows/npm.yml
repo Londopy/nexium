@@ -1,0 +1,75 @@
+name: npm
+
+# npm install -g nexium-lang: the packages the Release workflow attached to
+# a release (five platform packages under @nexium-lang, then nexium-lang
+# itself, which depends on them), published to npm with provenance. The
+# first publish of a package needs NPM_TOKEN in the repository's secrets;
+# once a package exists, its settings page on npmjs.com can trust this
+# workflow instead (owner Londopy, repository nexium, workflow npm.yml),
+# and the token step below is skipped when the secret is gone
+# (docs/install.md).
+#
+# It runs when the Release workflow finishes for a tag, and by hand for a
+# tag whose release already exists (the first publish, or a retry).
+
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The release tag to publish (v1.2.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: publish to npm
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && startsWith(github.event.workflow_run.head_branch, 'v'))
+    runs-on: ubuntu-latest
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/nexium-lang
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: The tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ github.event.workflow_run.head_branch }}" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+      - name: The packages of the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist
+          gh release download "${{ steps.tag.outputs.tag }}" --repo "${{ github.repository }}" --pattern 'nexium-lang-*.tgz' --dir dist
+          ls -l dist
+      # a token when the repository has one (the first publish of a package),
+      # the workflow's own identity otherwise (npm's trusted publishing)
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          npm install -g npm@latest
+          if [ -z "$NODE_AUTH_TOKEN" ]; then echo "no NPM_TOKEN: publishing through trusted publishing"; fi
+          version="${{ steps.tag.outputs.tag }}"
+          version="${version#v}"
+          for t in dist/nexium-lang-*-*-*.tgz; do
+            npm publish "$t" --access public --provenance || echo "not published (already there?): $t"
+          done
+          npm publish "dist/nexium-lang-$version.tgz" --access public --provenance || echo "not published (already there?): nexium-lang"

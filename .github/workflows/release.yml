@@ -205,22 +205,10 @@ jobs:
           body_path: notes.md
           files: artifacts/*
 
-      # npm install nexium-lang, when the token is in the repository's
-      # secrets; the platform packages go first, since the main npm package
-      # depends on them. PyPI is the PyPI workflow (pypi.yml): it runs when
-      # this one finishes and uploads the wheels attached above through
-      # trusted publishing, no token
-      - name: Publish to npm
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if [ -n "$NPM_TOKEN" ]; then
-            npm config set //registry.npmjs.org/:_authToken "$NPM_TOKEN"
-            for t in artifacts/nexium-lang-*-*-*.tgz; do npm publish "$t" --access public || echo "already published: $t"; done
-            npm publish artifacts/nexium-lang-${{ steps.ver.outputs.version }}.tgz --access public || echo "already published: nexium-lang"
-          else
-            echo "NPM_TOKEN is not set: the npm packages are attached to the release, not published"
-          fi
+      # pip install nexium-lang and npm install nexium-lang are the PyPI and
+      # npm workflows (pypi.yml, npm.yml): each runs when this one finishes
+      # and uploads what was attached above, PyPI through trusted publishing
+      # and npm with the token or, once the packages exist, the same way
 
       # the VS Code extension on the Marketplace and on Open VSX, when the
       # publisher tokens are in the repository's secrets (editors/vscode/README.md)

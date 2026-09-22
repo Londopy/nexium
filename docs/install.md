@@ -119,8 +119,12 @@ publishing](https://docs.pypi.org/trusted-publishers/): the `PyPI`
 workflow (`.github/workflows/pypi.yml`) runs when a release is built and
 uploads them with a short-lived token PyPI mints for that run, so there is
 no secret to keep; PyPI knows the workflow by its file name, this
-repository and the `pypi` environment. The npm packages are uploaded when
-`NPM_TOKEN` is set. The files are attached to the release either way.
+repository and the `pypi` environment. The npm packages go the same way
+through the `npm` workflow (`.github/workflows/npm.yml`) with provenance:
+`NPM_TOKEN` for a package's first publish, the trusted publisher
+configured on each package's settings page after that (owner `Londopy`,
+repository `nexium`, workflow `npm.yml`). The files are attached to the
+release either way.
 
 ```sh
 pip install nexium-lang        # nx on the PATH of the environment
