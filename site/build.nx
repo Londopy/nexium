@@ -978,7 +978,7 @@ fn api_latest(version: []u8, name: []u8, date: []u8) -> json.Json {
     json.set(&mut registries, "npm", js("nexium-lang"))
     json.set(&mut registries, "docker", js("ghcr.io/londopy/nexium"))
     json.set(&mut registries, "homebrew", js("londopy/tap/nexium"))
-    json.set(&mut registries, "scoop", js("https://raw.githubusercontent.com/Londopy/nexium/main/bucket/nexium.json"))
+    json.set(&mut registries, "scoop", js("londopy/nexium (scoop bucket add londopy https://github.com/Londopy/scoop-bucket)"))
     json.set(&mut registries, "chocolatey", js("nexium"))
     json.set(&mut registries, "winget", js("Londopy.Nexium"))
     json.set(&mut registries, "aur", js("nexium-bin"))

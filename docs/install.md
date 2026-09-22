@@ -15,7 +15,7 @@ workflow itself:
 | npm | `npm install -g nexium-lang` | [npmjs.com/package/nexium-lang](https://www.npmjs.com/package/nexium-lang) |
 | Docker | `docker run ghcr.io/londopy/nexium` | [the container image](https://github.com/Londopy/nexium/pkgs/container/nexium) |
 | Homebrew | `brew install londopy/tap/nexium` | [the tap is this repository](https://github.com/Londopy/nexium/tree/main/Formula) |
-| Scoop | `scoop install nexium` | [the bucket is this repository](https://github.com/Londopy/nexium/tree/main/bucket) |
+| Scoop | `scoop bucket add londopy https://github.com/Londopy/scoop-bucket`, then `scoop install nexium` | [Londopy/scoop-bucket](https://github.com/Londopy/scoop-bucket), kept current by Scoop's own updater; the manifest is also [in this repository](https://github.com/Londopy/nexium/tree/main/bucket) |
 | Chocolatey | `choco install nexium` | [community.chocolatey.org/packages/nexium](https://community.chocolatey.org/packages/nexium), from its moderators' approval of the first version on |
 | winget | `winget install Londopy.Nexium` | [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs/tree/master/manifests/l/Londopy/Nexium), from the merge of [the first submission](https://github.com/microsoft/winget-pkgs/pull/438838) on |
 | Debian, Ubuntu | `sudo dpkg -i nexium_<version>_amd64.deb` (also arm64) | [attached to each release](https://github.com/Londopy/nexium/releases/latest) |
@@ -185,12 +185,15 @@ brew install londopy/tap/nexium
 beside it, or let `nx doctor` tell you what it found):
 
 ```powershell
-scoop bucket add nexium https://github.com/Londopy/nexium
+scoop bucket add londopy https://github.com/Londopy/scoop-bucket
 scoop install nexium
 ```
 
-or, without adding the bucket,
-`scoop install https://raw.githubusercontent.com/Londopy/nexium/main/bucket/nexium.json`.
+The bucket's own updater reads the manifest's `checkver` and `autoupdate`
+and moves it to each new release. Without adding a bucket,
+`scoop install https://raw.githubusercontent.com/Londopy/nexium/main/bucket/nexium.json`
+installs from the copy in this repository, which the release workflow
+writes.
 
 **Arch Linux**: the `nexium-bin` package (`installers/aur/PKGBUILD` and
 `.SRCINFO`, written by the release workflow with the release's checksums)

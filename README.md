@@ -147,7 +147,7 @@ brew tap londopy/tap https://github.com/Londopy/nexium && brew install londopy/t
 ```
 
 ```powershell
-scoop install https://raw.githubusercontent.com/Londopy/nexium/main/bucket/nexium.json
+scoop bucket add londopy https://github.com/Londopy/scoop-bucket && scoop install nexium
 ```
 
 Then, in a new console, `nx doctor` shows what will be used. All the details,
