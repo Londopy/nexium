@@ -11,7 +11,7 @@
 
 ARG ZIG_VERSION=0.14.1
 
-FROM debian:bookworm-slim AS build
+FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251 AS build
 ARG ZIG_VERSION
 ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev curl xz-utils ca-certificates python3 && rm -rf /var/lib/apt/lists/*
@@ -28,7 +28,7 @@ RUN case "$TARGETARCH" in amd64) zarch=x86_64 ;; arm64) zarch=aarch64 ;; *) echo
  && echo "$want  zig.tar.xz" | sha256sum -c - \
  && mkdir -p /out/zig && tar -xJf zig.tar.xz -C /out/zig --strip-components=1
 
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
 LABEL org.opencontainers.image.source="https://github.com/Londopy/nexium" \
       org.opencontainers.image.description="The Nexium language: the compiler with its Zig toolchain, the standard library, the examples and the docs" \
       org.opencontainers.image.licenses="MIT"

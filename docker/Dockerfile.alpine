@@ -9,7 +9,7 @@
 
 ARG ZIG_VERSION=0.14.1
 
-FROM alpine:3.20 AS build
+FROM alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc AS build
 ARG ZIG_VERSION
 ARG TARGETARCH
 RUN apk add --no-cache gcc musl-dev curl xz python3 ca-certificates
@@ -25,7 +25,7 @@ RUN case "$TARGETARCH" in amd64) zarch=x86_64 ;; arm64) zarch=aarch64 ;; *) echo
  && echo "$want  zig.tar.xz" | sha256sum -c - \
  && mkdir -p /out/zig && tar -xJf zig.tar.xz -C /out/zig --strip-components=1
 
-FROM alpine:3.20
+FROM alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
 LABEL org.opencontainers.image.source="https://github.com/Londopy/nexium" \
       org.opencontainers.image.description="The Nexium language on Alpine: the compiler with its Zig toolchain, the standard library, the examples and the docs" \
       org.opencontainers.image.licenses="MIT"

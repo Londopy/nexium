@@ -10,6 +10,19 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ## [Unreleased]
 
+### Security
+
+- Every GitHub Action the workflows use is pinned to a commit, with its
+  version in a comment that Dependabot keeps current, and the Docker base
+  images to a digest, so a moved tag cannot change what a workflow runs.
+  Each workflow's token is read-only except in the one job that publishes
+  (the release, the images, the numbers branch, the CLA signatures).
+  `install.sh` checks a downloaded Zig against checksums it carries rather
+  than ones fetched beside the archive. The VS Code extension's packaging
+  tool moved to `@vscode/vsce` 3.9, whose `markdown-it` and `linkify-it`
+  carry the fixes for their quadratic-time advisories (a build-time
+  dependency; nothing shipped was affected).
+
 ### Fixed
 
 - Rule V3 reported a view into one field of a struct as stale when another

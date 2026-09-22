@@ -1,6 +1,14 @@
+# Dependabot keeps the pins current: every action under .github/ is pinned to
+# a commit SHA with its version in a trailing comment, and the Docker base
+# images to a digest, so nothing moves under the workflows between our own
+# commits. It opens a pull request when a pinned thing has a newer release.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
+    schedule:
+      interval: monthly
+  - package-ecosystem: docker
+    directory: /docker
     schedule:
       interval: monthly

@@ -3,8 +3,12 @@
 ## Reporting a vulnerability
 
 Please do not open a public issue for a security problem. Use GitHub's
-private vulnerability reporting on this repository ("Security" tab, "Report a
-vulnerability"), or contact the maintainer (Londopy) through GitHub.
+private vulnerability reporting on this repository:
+<https://github.com/Londopy/nexium/security/advisories/new> ("Security"
+tab, "Report a vulnerability"), or contact the maintainer,
+[Londopy](https://github.com/Londopy), through GitHub. The site's
+[security.txt](https://londopy.github.io/nexium/.well-known/security.txt)
+says the same.
 
 Include what you can: the compiler version (`nx version`), the platform, a
 minimal `.nx` program that triggers the problem, and what you expected. You
@@ -42,6 +46,14 @@ Packages cannot run build scripts (spec 17.2); compile-time evaluation is
 restricted to pure computation and declared build inputs. The compiler has no
 dependencies: a C compiler is all it needs, and it is built from a C seed
 that its own sources regenerate.
+
+The repository's own workflows pin every GitHub Action to a commit and the
+Docker base images to a digest, so nothing they run can be swapped under
+them by a moved tag; Dependabot proposes the updates as pull requests. Each
+workflow's token is read-only except in the job that publishes. Every
+release asset carries a signed build provenance (`gh attestation verify
+<file> --owner Londopy`), and the [OpenSSF Scorecard](https://securityscorecards.dev/viewer/?uri=github.com/Londopy/nexium)
+audits these practices on every push.
 
 ## Supported versions
 

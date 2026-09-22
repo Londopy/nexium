@@ -121,22 +121,28 @@ elif have zig; then compiler="zig on PATH"
 elif have cc || have gcc || have clang; then compiler="the system compiler on the PATH"
 fi
 if [ -z "$compiler" ] && [ "${NEXIUM_NO_ZIG:-}" != "1" ]; then
+  # The checksums of the 0.14.1 archives, from ziglang.org/download/index.json,
+  # kept here so the download is checked against a number this script
+  # carries rather than one fetched from the same host at the same moment.
+  zsum=""
   case "$target" in
-    x86_64-unknown-linux-gnu) zig_name="zig-x86_64-linux-$ZIG_VERSION" ;;
-    aarch64-unknown-linux-gnu) zig_name="zig-aarch64-linux-$ZIG_VERSION" ;;
-    aarch64-apple-darwin) zig_name="zig-aarch64-macos-$ZIG_VERSION" ;;
+    x86_64-unknown-linux-gnu) zig_name="zig-x86_64-linux-$ZIG_VERSION"; zsum="24aeeec8af16c381934a6cd7d95c807a8cb2cf7df9fa40d359aa884195c4716c" ;;
+    aarch64-unknown-linux-gnu) zig_name="zig-aarch64-linux-$ZIG_VERSION"; zsum="f7a654acc967864f7a050ddacfaa778c7504a0eca8d2b678839c21eea47c992b" ;;
+    aarch64-apple-darwin) zig_name="zig-aarch64-macos-$ZIG_VERSION"; zsum="39f3dc5e79c22088ce878edc821dedb4ca5a1cd9f5ef915e9b3cc3053e8faefa" ;;
   esac
+  [ "$ZIG_VERSION" = "0.14.1" ] || zsum=""
   say "no C compiler found; downloading Zig $ZIG_VERSION into $HOME_DIR/zig"
   curl -fsSL "https://ziglang.org/download/$ZIG_VERSION/$zig_name.tar.xz" -o "$tmp/zig.tar.xz"
-  if have python3; then
+  if [ -z "$zsum" ] && have python3; then
+    # another version: the index is the only source of its checksum
     zsum="$(curl -fsSL https://ziglang.org/download/index.json | python3 -c 'import json,sys; d=json.load(sys.stdin)["'"$ZIG_VERSION"'"]; want={"x86_64-unknown-linux-gnu":"x86_64-linux","aarch64-unknown-linux-gnu":"aarch64-linux","aarch64-apple-darwin":"aarch64-macos"}["'"$target"'"]; print(d[want]["shasum"])' 2>/dev/null || true)"
-    if [ -n "$zsum" ]; then
-      if have sha256sum; then zact="$(sha256sum "$tmp/zig.tar.xz" | awk '{print $1}')"; else zact="$(shasum -a 256 "$tmp/zig.tar.xz" | awk '{print $1}')"; fi
-      [ "$zact" = "$zsum" ] || die "checksum mismatch for the Zig download"
-      say "zig checksum ok"
-    else
-      say "warning: could not verify the Zig download (index.json unavailable)"
-    fi
+  fi
+  if [ -n "$zsum" ]; then
+    if have sha256sum; then zact="$(sha256sum "$tmp/zig.tar.xz" | awk '{print $1}')"; else zact="$(shasum -a 256 "$tmp/zig.tar.xz" | awk '{print $1}')"; fi
+    [ "$zact" = "$zsum" ] || die "checksum mismatch for the Zig download"
+    say "zig checksum ok"
+  else
+    say "warning: could not verify the Zig download (no checksum for Zig $ZIG_VERSION on $target)"
   fi
   rm -rf "$HOME_DIR/zig"
   mkdir -p "$HOME_DIR/zig"
