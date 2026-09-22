@@ -18,7 +18,7 @@ release attaches them; the release job uploads them to PyPI and npm when
 `PYPI_TOKEN` and `NPM_TOKEN` are set. The names follow decision 91:
 `nexium` is taken on both registries by unrelated projects.
 """
-import base64, hashlib, io, json, os, shutil, subprocess, sys, tarfile, zipfile
+import base64, hashlib, io, json, os, re, shutil, subprocess, sys, tarfile, zipfile
 
 REPO = "Londopy/nexium"
 tag, art_dir = sys.argv[1], sys.argv[2]
@@ -78,6 +78,21 @@ if __name__ == "__main__":
     main()
 '''
 
+def absolute_links(readme, tag):
+    """The README for PyPI: every relative link points at GitHub at the
+    release's tag (`blob` for a file, `tree` for a directory); web links,
+    mail links and in-page anchors stay. Images are absolute already."""
+    base = f"https://github.com/{REPO}"
+    def target(path):
+        if re.match(r"^(https?:|mailto:|#)", path):
+            return path
+        clean = path.split("#")[0].rstrip("/")
+        kind = "tree" if os.path.isdir(os.path.join(root, clean)) else "blob"
+        return f"{base}/{kind}/{tag}/{path}"
+    readme = re.sub(r"\]\(([^)\s]+)\)", lambda m: f"]({target(m.group(1))})", readme)
+    readme = re.sub(r'href="([^"]+)"', lambda m: f'href="{target(m.group(1))}"', readme)
+    return readme
+
 def record_line(name, data):
     digest = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=").decode()
     return f"{name},sha256={digest},{len(data)}"
@@ -89,10 +104,11 @@ def wheel(target, files):
     metadata = "\n".join([
         "Metadata-Version: 2.1", "Name: nexium-lang", f"Version: {version}", f"Summary: {summary}",
         f"Home-page: https://londopy.github.io/nexium/", "Author: Londopy", "License: MIT",
-        f"Project-URL: Source, https://github.com/{REPO}", f"Project-URL: Changelog, https://github.com/{REPO}/blob/main/CHANGELOG.md",
+        f"Project-URL: Source, https://github.com/{REPO}", f"Project-URL: Changelog, https://github.com/{REPO}/blob/{tag}/CHANGELOG.md",
+        "Project-URL: Documentation, https://londopy.github.io/nexium/",
         "Requires-Python: >=3.8", "Classifier: License :: OSI Approved :: MIT License",
         "Classifier: Programming Language :: Other", "Classifier: Topic :: Software Development :: Compilers",
-        "Description-Content-Type: text/markdown", "", files["README.md"].decode("utf-8", "replace"),
+        "Description-Content-Type: text/markdown", "", absolute_links(files["README.md"].decode("utf-8", "replace"), tag),
     ]) + "\n"
     entries = [
         ("nexium_lang/__init__.py", INIT_PY.encode(), 0o644),
