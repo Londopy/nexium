@@ -18,6 +18,11 @@ workflow itself:
 | Scoop | `scoop install nexium` | [the bucket is this repository](https://github.com/Londopy/nexium/tree/main/bucket) |
 | Chocolatey | `choco install nexium` | [community.chocolatey.org/packages/nexium](https://community.chocolatey.org/packages/nexium), from its moderators' approval of the first version on |
 | winget | `winget install Londopy.Nexium` | [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs/tree/master/manifests/l/Londopy/Nexium), from the merge of [the first submission](https://github.com/microsoft/winget-pkgs/pull/438838) on |
+| Debian, Ubuntu | `sudo dpkg -i nexium_<version>_amd64.deb` (also arm64) | [attached to each release](https://github.com/Londopy/nexium/releases/latest) |
+| Fedora, RHEL, SUSE | `sudo rpm -i nexium-<version>.x86_64.rpm` (also aarch64) | [attached to each release](https://github.com/Londopy/nexium/releases/latest) |
+| Nix | `nix run github:Londopy/nexium`, `nix profile install github:Londopy/nexium` | [`flake.nix`](https://github.com/Londopy/nexium/blob/main/flake.nix), built from the one C file |
+| mise, asdf | `mise use -g "ubi:Londopy/nexium[exe=nx]"` | the release binary through mise's `ubi` backend |
+| GitHub Codespaces, dev containers | [open in a Codespace](https://codespaces.new/Londopy/nexium) | [`.devcontainer`](https://github.com/Londopy/nexium/tree/main/.devcontainer) on the Docker image |
 | Open VSX | the VS Code extension, for VSCodium, Cursor and the other forks | [open-vsx.org/extension/Londopy/nexium](https://open-vsx.org/extension/Londopy/nexium) |
 | Visual Studio Marketplace | the VS Code extension | pending the publisher's token |
 
@@ -305,6 +310,26 @@ directory of the repository has the pieces for each one:
 
 Each directory has a README with the details.
 
+## Completions and the manual page
+
+`nx completions bash|zsh|fish|powershell` prints the completion script for
+a shell, generated from the compiler's own table of commands and options,
+and `nx man` prints the manual page. Homebrew installs both; the install
+script puts them under `~/.nexium/share/` (`man ~/.nexium/share/man/man1/nx.1`)
+and copies the bash and fish scripts into place when those directories
+exist; the release archives carry them as `nx.1` and `completions/`. By
+hand:
+
+```bash
+nx completions bash > ~/.local/share/bash-completion/completions/nx
+nx completions zsh > ~/.zsh/completions/_nx          # with that directory in fpath
+nx completions fish > ~/.config/fish/completions/nx.fish
+```
+
+```powershell
+Add-Content $PROFILE 'nx completions powershell | Out-String | Invoke-Expression'
+```
+
 ## Upgrading
 
 `nx doctor` says when a newer release exists, and `nx upgrade` installs it
@@ -345,6 +370,23 @@ stays reachable through a client when a direct download is slow or
 blocked. The release notes list the magnet links (they carry the same web
 seed) with a QR code of each, for a phone or a machine without a browser
 on the page.
+
+## Provenance
+
+Every asset of a release (the archives, the installer, the wheels, the npm
+packages, the `.deb` and `.rpm`, the extension, the Chocolatey package)
+carries a signed provenance statement, made by GitHub when the release
+workflow built it, that names the repository, the commit and the workflow
+run. Verify one with the GitHub CLI:
+
+```bash
+gh attestation verify nx-v1.2.0-x86_64-unknown-linux-gnu.tar.gz --owner Londopy
+```
+
+It fails for a file that was not built by this repository's workflow, or
+that was changed since. The wheels and the npm packages carry the same
+kind of statement on PyPI and npm (`npm audit signatures`, PyPI's
+"Verified details" box).
 
 ## Verifying downloads
 

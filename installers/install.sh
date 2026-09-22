@@ -102,6 +102,13 @@ else
   install -m 755 "$tmp/nx" "$HOME_DIR/bin/nx"
   for f in README.md LICENSE CHANGELOG.md; do [ -f "$tmp/$f" ] && cp "$tmp/$f" "$HOME_DIR/share/"; done
   for d in examples std docs; do [ -d "$tmp/$d" ] && { rm -rf "$HOME_DIR/share/$d"; cp -R "$tmp/$d" "$HOME_DIR/share/$d"; }; done
+  # the manual page and the completions: where man and the shells look in a home directory
+  if [ -f "$tmp/nx.1" ]; then mkdir -p "$HOME_DIR/share/man/man1" && cp "$tmp/nx.1" "$HOME_DIR/share/man/man1/nx.1"; fi
+  if [ -d "$tmp/completions" ]; then
+    mkdir -p "$HOME_DIR/share/completions" && cp "$tmp/completions/"* "$HOME_DIR/share/completions/"
+    [ -d "$HOME/.local/share/bash-completion/completions" ] && cp "$tmp/completions/nx.bash" "$HOME/.local/share/bash-completion/completions/nx" 2>/dev/null
+    [ -d "$HOME/.config/fish/completions" ] && cp "$tmp/completions/nx.fish" "$HOME/.config/fish/completions/nx.fish" 2>/dev/null
+  fi
   say "installed nx $VERSION to $HOME_DIR/bin/nx"
 fi
 
@@ -157,4 +164,5 @@ say ""
 say "done. Open a new shell (or run: $line) and try:"
 say "  nx doctor"
 say "  nx run $HOME_DIR/share/examples/hello.nx"
+say "completions: nx completions bash|zsh|fish (copies are in $HOME_DIR/share/completions); the manual page: man $HOME_DIR/share/man/man1/nx.1"
 "$HOME_DIR/bin/nx" doctor || true

@@ -21,6 +21,20 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Added
 
+- `nx completions bash|zsh|fish|powershell` and `nx man`, generated from
+  one table of the commands and the options. The release archives carry
+  `nx.1` and `completions/`, the install script and the Homebrew formula
+  put them in place, the Debian, RPM and Nix packages install them.
+- Debian and RPM packages (`nexium_<version>_<arch>.deb`, `.rpm`, amd64
+  and arm64) attached to every release, built by nfpm and installed in
+  the release job as their test; a Nix flake (`nix run
+  github:Londopy/nexium`) built from the one C file, checked in CI; a dev
+  container on the Docker image, so the repository opens in a Codespace
+  with `nx` ready; mise through its `ubi` backend, documented.
+- Signed provenance for every release asset (`gh attestation verify
+  <file> --owner Londopy`), the OpenSSF Scorecard workflow and badge, the
+  site's `security.txt`, `robots.txt` and `sitemap.xml`, `CITATION.cff`,
+  and `.pre-commit-hooks.yaml` with `nx fmt` and `nx check` hooks.
 - `pip install nexium-lang` is real: the wheels every release builds reach
   PyPI through trusted publishing (`.github/workflows/pypi.yml`, no token),
   when the Release workflow finishes or by hand for a tag. The npm packages

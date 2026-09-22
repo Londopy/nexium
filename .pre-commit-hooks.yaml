@@ -1,0 +1,33 @@
+# Hooks for pre-commit (https://pre-commit.com) in any repository that has nx
+# installed. In its .pre-commit-config.yaml:
+#
+#     repos:
+#       - repo: https://github.com/Londopy/nexium
+#         rev: v1.2.0
+#         hooks:
+#           - id: nx-fmt
+#           - id: nx-check
+#
+# `language: system` runs the nx on the PATH, so the hooks follow whatever
+# version the machine has, the same one the editor uses.
+- id: nx-fmt
+  name: nx fmt
+  description: Formats Nexium sources in place (nx fmt).
+  entry: nx fmt
+  language: system
+  files: \.nx$
+  pass_filenames: true
+- id: nx-fmt-check
+  name: nx fmt --check
+  description: Reports Nexium sources that are not canonically formatted.
+  entry: nx fmt --check
+  language: system
+  files: \.nx$
+  pass_filenames: true
+- id: nx-check
+  name: nx check
+  description: Type-checks each Nexium program (nx check, one file at a time).
+  entry: sh -c 'for f in "$@"; do nx check "$f" || exit 1; done' --
+  language: system
+  files: \.nx$
+  pass_filenames: true

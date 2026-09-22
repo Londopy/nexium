@@ -1,0 +1,14 @@
+{
+  "name": "Nexium",
+  "image": "ghcr.io/londopy/nexium:latest",
+  "overrideCommand": true,
+  "workspaceFolder": "/workspaces/nexium",
+  "customizations": {
+    "vscode": {
+      "extensions": ["Londopy.nexium"],
+      "settings": { "files.associations": { "*.nx": "nexium" } }
+    }
+  },
+  "postCreateCommand": "nx doctor && nx run examples/hello.nx",
+  "remoteUser": "root"
+}

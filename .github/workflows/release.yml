@@ -71,10 +71,13 @@ jobs:
       - name: Package (unix)
         if: runner.os != 'Windows'
         run: |
-          mkdir -p dist
+          mkdir -p dist dist/completions
           cp build/nx dist/
           cp README.md LICENSE CHANGELOG.md dist/
           cp -r examples std docs dist/
+          # the manual page and the shell completions, from the binary itself
+          build/nx man > dist/nx.1
+          for sh in bash zsh fish powershell; do build/nx completions $sh > "dist/completions/nx.$sh"; done
           tar -C dist -czf nx-${{ github.ref_name }}-${{ matrix.target }}.tar.gz .
 
       # ---- tier 2: aarch64 Linux and Windows on ARM, cross-compiled from the
@@ -133,6 +136,9 @@ jobs:
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item build/nx.exe, README.md, LICENSE, CHANGELOG.md dist/
           Copy-Item -Recurse examples, std, docs dist/
+          New-Item -ItemType Directory -Force dist/completions | Out-Null
+          build/nx.exe man | Set-Content -NoNewline -Encoding utf8 dist/nx.1
+          foreach ($sh in "bash", "zsh", "fish", "powershell") { build/nx.exe completions $sh | Set-Content -NoNewline -Encoding utf8 "dist/completions/nx.$sh" }
           Compress-Archive -Path dist/* -DestinationPath nx-${{ github.ref_name }}-${{ matrix.target }}.zip
 
       - name: Build the installer (Inno Setup)
@@ -175,6 +181,10 @@ jobs:
   release:
     needs: [build]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
@@ -191,6 +201,34 @@ jobs:
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
       - name: Wheels and npm packages
         run: python scripts/pypi_npm.py "${{ github.ref_name }}" artifacts
+
+      # Debian and RPM packages from the Linux archives, by nfpm; the amd64
+      # .deb is installed here and nx run once, which is the package's test
+      - name: Debian and RPM packages
+        run: |
+          curl -fsSL https://github.com/goreleaser/nfpm/releases/download/v2.47.0/nfpm_2.47.0_Linux_x86_64.tar.gz | tar -xz nfpm
+          ver="${{ steps.ver.outputs.version }}"
+          for pair in "x86_64-unknown-linux-gnu:amd64" "aarch64-unknown-linux-gnu:arm64"; do
+            target="${pair%%:*}"; arch="${pair##*:}"
+            rm -rf "pkg-$arch" && mkdir -p "pkg-$arch"
+            tar -xzf "artifacts/nx-${{ github.ref_name }}-$target.tar.gz" -C "pkg-$arch"
+            for fmt in deb rpm; do
+              (cd "pkg-$arch" && NX_VERSION="$ver" NX_ARCH="$arch" ../nfpm package -p "$fmt" -f ../installers/nfpm.yaml -t ../artifacts/)
+            done
+          done
+          ls -l artifacts/*.deb artifacts/*.rpm
+          sudo dpkg -i artifacts/nexium_${ver}_amd64.deb
+          nx version && nx run examples/hello.nx --out-dir /tmp/nx-deb
+          man -w nx && ls /usr/share/bash-completion/completions/nx
+
+      # signed provenance for every asset: gh attestation verify <file> --owner Londopy
+      - uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: |
+            artifacts/nx-*
+            artifacts/nexium-*
+            artifacts/nexium_*
+            artifacts/nexium.*
 
       - name: Release notes and checksums
         id: notes

@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+message: "If you use Nexium in your work, cite it as below."
+title: "Nexium: a systems language that compiles to C, with ownership without a borrow checker and a checked effect system"
+type: software
+authors:
+  - name: Londopy
+    website: https://github.com/Londopy
+version: 1.2.0
+date-released: 2026-09-21
+license: MIT
+repository-code: https://github.com/Londopy/nexium
+url: https://londopy.github.io/nexium/
+abstract: >-
+  Nexium is a programming language whose compiler, written in Nexium and
+  bootstrapped from one C file, emits C and drives a C compiler. The language
+  has ownership with move semantics and reference counting instead of a
+  garbage collector or a borrow checker, view rules that keep a reference
+  from outliving its storage, a checked effect system that says whether a
+  function allocates, blocks or can panic, binary patterns, compile-time
+  evaluation, and one compiler that turns a source tree into a binary, a C
+  library, a Python wheel, a Rust crate or an npm package.
+keywords:
+  - programming language
+  - compiler
+  - effect system
+  - ownership
+  - C

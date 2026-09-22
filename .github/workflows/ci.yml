@@ -317,6 +317,31 @@ jobs:
 
   # the compiler images (docker/): built for amd64 without publishing, and
   # hello runs inside each; docker.yml publishes them at a tag
+  packages:
+    name: nix flake and a .deb
+    # the flake builds nx from the seed and runs the hello check; nfpm packs
+    # the same tree as a Debian package, which is installed and run
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v31
+      - name: nix flake check
+        run: |
+          nix flake check --print-build-logs
+          nix run . -- version
+      - name: A Debian package from this tree
+        run: |
+          curl -fsSL https://github.com/goreleaser/nfpm/releases/download/v2.47.0/nfpm_2.47.0_Linux_x86_64.tar.gz | tar -xz nfpm
+          mkdir -p pkg/completions
+          nix build .#nexium -o result
+          cp result/bin/.nx-wrapped pkg/nx 2>/dev/null || cp result/bin/nx pkg/nx
+          cp -r examples docs README.md CHANGELOG.md LICENSE pkg/
+          pkg/nx man > pkg/nx.1
+          for sh in bash zsh fish; do pkg/nx completions $sh > pkg/completions/nx.$sh; done
+          (cd pkg && NX_VERSION=0.0.0 NX_ARCH=amd64 ../nfpm package -p deb -f ../installers/nfpm.yaml -t ..)
+          sudo dpkg -i nexium_0.0.0_amd64.deb
+          nx version && man -w nx
+
   docker:
     name: docker images
     runs-on: ubuntu-latest

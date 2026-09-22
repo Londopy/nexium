@@ -180,6 +180,8 @@ class Nexium < Formula
     bin.install "nx"
     pkgshare.install "examples", "std", "docs"
     doc.install "README.md", "CHANGELOG.md"
+    man1.install "nx.1" if File.exist?("nx.1")
+    generate_completions_from_executable(bin/"nx", "completions", shells: [:bash, :zsh, :fish])
   end
 
   def caveats

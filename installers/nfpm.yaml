@@ -1,0 +1,50 @@
+# The Debian and RPM packages of a release, built by nfpm from the Linux
+# archives (the release workflow runs it per architecture):
+#
+#     cd <the unpacked archive> && NX_VERSION=1.2.0 NX_ARCH=amd64 nfpm package -p deb -f ../installers/nfpm.yaml -t ..
+#
+# (run from the directory that holds nx, nx.1, completions/, examples/, docs/
+# and the three text files: the source paths below are relative to it)
+#
+# nx needs a C compiler to build programs; the package recommends gcc and
+# nx doctor says what it found. The standard library is embedded in nx.
+name: nexium
+arch: ${NX_ARCH}
+platform: linux
+version: ${NX_VERSION}
+section: devel
+priority: optional
+maintainer: Londopy <https://github.com/Londopy>
+vendor: Londopy
+homepage: https://londopy.github.io/nexium/
+license: MIT
+description: |
+  The Nexium language: a compiler that emits C and ships libraries, packages and tools.
+  Ownership without a borrow checker, a checked effect system, binary patterns,
+  compile-time evaluation, and one compiler that turns a source tree into a
+  binary, a C library, a Python wheel, a Rust crate or an npm package.
+recommends:
+  - gcc
+contents:
+  - src: nx
+    dst: /usr/bin/nx
+    file_info:
+      mode: 0755
+  - src: nx.1
+    dst: /usr/share/man/man1/nx.1
+  - src: completions/nx.bash
+    dst: /usr/share/bash-completion/completions/nx
+  - src: completions/nx.zsh
+    dst: /usr/share/zsh/site-functions/_nx
+  - src: completions/nx.fish
+    dst: /usr/share/fish/vendor_completions.d/nx.fish
+  - src: examples
+    dst: /usr/share/nexium/examples
+  - src: docs
+    dst: /usr/share/nexium/docs
+  - src: README.md
+    dst: /usr/share/doc/nexium/README.md
+  - src: CHANGELOG.md
+    dst: /usr/share/doc/nexium/CHANGELOG.md
+  - src: LICENSE
+    dst: /usr/share/doc/nexium/copyright

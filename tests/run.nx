@@ -315,6 +315,20 @@ fn suite_examples(e: *Env, failures: *mut List(String)) {
         failures.append(format("examples: NX_NO_UPDATE_CHECK=1 did not silence the update notice:\n{}", .{n3.stderr}))
     }
     fs.write(cache[..], format("checked {}\nnoticed {}\nlatest {}\n", .{stamp, stamp, "0.0.0"})[..]) catch { }
+    // the completions and the manual page come out of the command table
+    for sh in ["bash", "zsh", "fish", "powershell"] {
+        let c = nx(e, ["completions", sh][..])
+        let marker = if sh == "bash" { "_nx()" } else if sh == "zsh" { "#compdef nx" } else if sh == "fish" { "complete -c nx" } else { "Register-ArgumentCompleter" }
+        if c.code != 0 or c.stdout[..].find(marker) == null or c.stdout[..].find("emit-c") == null or c.stdout[..].find("strict") == null {
+            failures.append(format("examples: nx completions {} (exit {}):\n{}{}", .{sh, c.code, c.stdout[0..(if c.stdout.len < 400 { c.stdout.len } else { 400 })], c.stderr}))
+        }
+    }
+    let bad = nx(e, ["completions", "tcsh"][..])
+    if bad.code == 0 { failures.append(String.from("examples: nx completions accepted an unknown shell")) }
+    let man = nx(e, ["man"][..])
+    if man.code != 0 or man.stdout[..].find(".TH NX 1") == null or man.stdout[..].find(".SH COMMANDS") == null or man.stdout[..].find("NX_STRICT") == null {
+        failures.append(format("examples: nx man (exit {}):\n{}", .{man.code, man.stderr}))
+    }
     // an early `return` out of a `using arena` block ends the arena: nothing
     // is still live at exit under `nx leaks`
     let arena_lk = nx(e, ["leaks", "tests/spec/s5_arena_escape.nx", "--out-dir", "nx-out/harness/leaks"][..])

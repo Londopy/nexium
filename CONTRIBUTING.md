@@ -76,7 +76,10 @@ add a `Fixed` line to the changelog, and land a regression test with it.
 ## Changelog
 
 `CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com/) and is
-validated in CI with [patchnotes](https://pypi.org/project/patchnotes/). The
+validated in CI with [patchnotes](https://pypi.org/project/patchnotes/).
+Repositories that use [pre-commit](https://pre-commit.com) can run `nx fmt`
+and `nx check` on every commit through the hooks in
+`.pre-commit-hooks.yaml`; `CITATION.cff` is how to cite the language. The
 wheels reach PyPI through the `PyPI` workflow and a trusted publisher
 registered on PyPI (owner `Londopy`, repository `nexium`, workflow
 `pypi.yml`, environment `pypi`); a release whose upload failed is published

@@ -27,6 +27,8 @@
   <a href="https://open-vsx.org/extension/Londopy/nexium"><img alt="Open VSX" src="https://img.shields.io/open-vsx/v/Londopy/nexium?label=Open%20VSX&color=a60ee5"></a>
   <a href="https://community.chocolatey.org/packages/nexium"><img alt="Chocolatey" src="https://img.shields.io/chocolatey/v/nexium?label=choco&color=80b5e3"></a>
   <a href="https://github.com/Londopy/nexium/pkgs/container/nexium"><img alt="Docker" src="https://img.shields.io/badge/docker-ghcr.io%2Flondopy%2Fnexium-2496ed?logo=docker&logoColor=white"></a>
+  <a href="https://codespaces.new/Londopy/nexium"><img alt="Open in GitHub Codespaces" src="https://img.shields.io/badge/codespaces-open-24292f?logo=github"></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/Londopy/nexium"><img alt="OpenSSF Scorecard" src="https://api.scorecard.dev/projects/github.com/Londopy/nexium/badge"></a>
 </p>
 
 <p align="center">
@@ -133,6 +135,10 @@ on Linux when nothing is found), and adds `nx` to your PATH.
 (Debian; `:alpine` too; amd64 and arm64).
 
 **Chocolatey and winget**: `choco install nexium` ([the package](https://community.chocolatey.org/packages/nexium)) and `winget install Londopy.Nexium`, each once its registry has approved the first version ([the status](docs/install.md#where-to-get-it)).
+
+**Debian, RPM, Nix, mise**: every release attaches `.deb` and `.rpm` packages (`sudo dpkg -i nexium_1.2.0_amd64.deb`); `nix run github:Londopy/nexium` builds it from the one C file; `mise use -g "ubi:Londopy/nexium[exe=nx]"` installs the release binary. Every asset carries signed provenance: `gh attestation verify nx --owner Londopy`. [All the roads](docs/install.md#where-to-get-it).
+
+**In the browser**: [open the repository in a Codespace](https://codespaces.new/Londopy/nexium) and `nx run examples/hello.nx` runs in a minute, nothing installed.
 
 **Homebrew and Scoop**: the repository is its own tap and bucket.
 

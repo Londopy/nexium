@@ -1,0 +1,314 @@
+//! `nx completions <shell>` and `nx man`: the shell completions and the
+//! manual page, generated from one table of the commands and the options,
+//! so they cannot drift from what `nx` accepts. The release archives carry
+//! `nx.1` and `completions/`; the install script, the Homebrew formula and
+//! the packages put them where the shell and `man` look.
+
+/// A command: its name, what follows it (a file, or nothing), one line.
+pub struct Command { name: []u8, arg: []u8, about: []u8 }
+
+/// An option: its spelling, its value's name ("" for a flag), one line.
+pub struct Option { name: []u8, value: []u8, about: []u8 }
+
+pub fn commands() -> List(Command) {
+    var out = List(Command).new()
+    out.append(Command{ .name = "build", .arg = "file", .about = "compile a program (or a library, without main) to a binary" })
+    out.append(Command{ .name = "run", .arg = "file", .about = "build and run; arguments after -- go to the program" })
+    out.append(Command{ .name = "test", .arg = "file", .about = "run the test blocks; a filter narrows them" })
+    out.append(Command{ .name = "check", .arg = "file", .about = "type-check without building" })
+    out.append(Command{ .name = "effects", .arg = "file", .about = "the effects of every function" })
+    out.append(Command{ .name = "audit", .arg = "file", .about = "unsafe blocks and mutable globals; --lock and --check keep an effects lockfile" })
+    out.append(Command{ .name = "refcounts", .arg = "file", .about = "where reference counts change" })
+    out.append(Command{ .name = "leaks", .arg = "file", .about = "run with allocation tracking and report what is still live" })
+    out.append(Command{ .name = "size", .arg = "file", .about = "the binary's size by declaration" })
+    out.append(Command{ .name = "layout", .arg = "file", .about = "the memory layout of the named types" })
+    out.append(Command{ .name = "emit-c", .arg = "file", .about = "print the generated C" })
+    out.append(Command{ .name = "tir", .arg = "file", .about = "print the typed intermediate representation" })
+    out.append(Command{ .name = "explain", .arg = "file", .about = "why a function has an effect, as a tree: nx explain FILE FUNCTION EFFECT" })
+    out.append(Command{ .name = "fmt", .arg = "files", .about = "format sources in place; --check reports instead" })
+    out.append(Command{ .name = "fix", .arg = "files", .about = "apply the compiler's mechanical fixes" })
+    out.append(Command{ .name = "doc", .arg = "file", .about = "render the documentation comments as HTML" })
+    out.append(Command{ .name = "ship", .arg = "file", .about = "produce the artifacts the file declares: C, Python, Rust, npm, installers" })
+    out.append(Command{ .name = "init", .arg = "name", .about = "start a package here" })
+    out.append(Command{ .name = "add", .arg = "name", .about = "add a dependency: --git URL [--tag TAG] [--dir SUB], or --path DIR" })
+    out.append(Command{ .name = "fetch", .arg = "", .about = "fetch the dependencies of the lockfile" })
+    out.append(Command{ .name = "update", .arg = "", .about = "update dependencies to the manifest's newest" })
+    out.append(Command{ .name = "topo", .arg = "", .about = "the Topo's exercises in the terminal: a chapter number, check, hint, solution, quiz, reset" })
+    out.append(Command{ .name = "repl", .arg = "", .about = "an interactive session (also nx with no arguments at a terminal)" })
+    out.append(Command{ .name = "lsp", .arg = "", .about = "the language server, over stdio" })
+    out.append(Command{ .name = "doctor", .arg = "", .about = "the installation: which C compiler, whether it works, the latest release" })
+    out.append(Command{ .name = "upgrade", .arg = "", .about = "install the latest release in place; --check only asks" })
+    out.append(Command{ .name = "install", .arg = "dir", .about = "copy this nx into place (the user's directory, or DIR) and onto the PATH" })
+    out.append(Command{ .name = "completions", .arg = "shell", .about = "print the completion script for bash, zsh, fish or powershell" })
+    out.append(Command{ .name = "man", .arg = "", .about = "print the manual page (roff)" })
+    out.append(Command{ .name = "version", .arg = "", .about = "the version and its release name" })
+    return out
+}
+
+pub fn options() -> List(Option) {
+    var out = List(Option).new()
+    out.append(Option{ .name = "-o", .value = "path", .about = "the output file" })
+    out.append(Option{ .name = "--out-dir", .value = "dir", .about = "where the C and the binaries go (nx-out)" })
+    out.append(Option{ .name = "--mode", .value = "mode", .about = "debug (default), safe, fast or small" })
+    out.append(Option{ .name = "--target", .value = "triple", .about = "cross-compile for a target zig cc knows" })
+    out.append(Option{ .name = "--cpu", .value = "name", .about = "baseline (default), native, or a CPU name" })
+    out.append(Option{ .name = "--cc", .value = "command", .about = "the C compiler (zig cc by default)" })
+    out.append(Option{ .name = "--std", .value = "dir", .about = "standard library sources instead of the embedded copies" })
+    out.append(Option{ .name = "--keep-c", .value = "", .about = "keep the generated C" })
+    out.append(Option{ .name = "--watch", .value = "", .about = "run or test again whenever a file of the program changes" })
+    out.append(Option{ .name = "--strict", .value = "", .about = "warnings are errors" })
+    out.append(Option{ .name = "--check", .value = "", .about = "fmt: report files that would change; audit and upgrade: only ask" })
+    out.append(Option{ .name = "--lock", .value = "", .about = "audit: write the effects lockfile" })
+    out.append(Option{ .name = "--sigs", .value = "", .about = "tir: signatures only" })
+    out.append(Option{ .name = "-D", .value = "name", .about = "define a C macro for the build" })
+    out.append(Option{ .name = "-I", .value = "dir", .about = "an include directory for @cImport" })
+    return out
+}
+
+const SHELLS = ["bash", "zsh", "fish", "powershell"]
+
+fn quoted(s: []u8) -> String {
+    var out = String.new()
+    for c in s { if c == '\'' { out.append("'\\''") } else { out.push_byte(c) } }
+    return out
+}
+
+/// A single-quoted PowerShell string: a quote inside is doubled.
+fn ps_quoted(s: []u8) -> String {
+    var out = String.new()
+    for c in s { if c == '\'' { out.append("''") } else { out.push_byte(c) } }
+    return out
+}
+
+fn command_names() -> String {
+    var out = String.new()
+    for c, i in commands() {
+        if i > 0 { out.append(" ") }
+        out.append(c.name)
+    }
+    return out
+}
+
+fn option_names() -> String {
+    var out = String.new()
+    for o, i in options() {
+        if i > 0 { out.append(" ") }
+        out.append(o.name)
+    }
+    return out
+}
+
+fn bash() -> String {
+    var s = String.new()
+    s.append("# bash completion for nx, written by `nx completions bash`\n")
+    s.append("# install: nx completions bash > ~/.local/share/bash-completion/completions/nx\n")
+    s.append("_nx() {\n")
+    s.append("    local cur prev cmds opts\n")
+    s.append("    COMPREPLY=()\n")
+    s.append("    cur=\"${COMP_WORDS[COMP_CWORD]}\"\n")
+    s.append("    prev=\"${COMP_WORDS[COMP_CWORD-1]}\"\n")
+    s.append(format("    cmds=\"{}\"\n", .{command_names()})[..])
+    s.append(format("    opts=\"{}\"\n", .{option_names()})[..])
+    s.append("    if [ \"$COMP_CWORD\" -eq 1 ]; then\n")
+    s.append("        COMPREPLY=( $(compgen -W \"$cmds\" -- \"$cur\") )\n")
+    s.append("        return 0\n")
+    s.append("    fi\n")
+    s.append("    case \"$prev\" in\n")
+    s.append("        --mode) COMPREPLY=( $(compgen -W \"debug safe fast small\" -- \"$cur\") ); return 0 ;;\n")
+    s.append("        completions) COMPREPLY=( $(compgen -W \"bash zsh fish powershell\" -- \"$cur\") ); return 0 ;;\n")
+    s.append("        --out-dir|--std|-I|install) COMPREPLY=( $(compgen -d -- \"$cur\") ); return 0 ;;\n")
+    s.append("        -o|--cc|--target|--cpu|-D) return 0 ;;\n")
+    s.append("    esac\n")
+    s.append("    if [[ \"$cur\" == -* ]]; then\n")
+    s.append("        COMPREPLY=( $(compgen -W \"$opts\" -- \"$cur\") )\n")
+    s.append("        return 0\n")
+    s.append("    fi\n")
+    s.append("    case \"${COMP_WORDS[1]}\" in\n")
+    s.append("        topo) COMPREPLY=( $(compgen -W \"check hint solution quiz reset list\" -- \"$cur\") ); return 0 ;;\n")
+    s.append("        fetch|update|repl|lsp|doctor|upgrade|version|man) return 0 ;;\n")
+    s.append("    esac\n")
+    s.append("    local IFS=$'\\n'\n")
+    s.append("    COMPREPLY=( $(compgen -f -X '!*.nx' -- \"$cur\") $(compgen -d -S / -- \"$cur\") )\n")
+    s.append("    return 0\n")
+    s.append("}\n")
+    s.append("complete -o nospace -o filenames -F _nx nx\n")
+    return s
+}
+
+fn zsh() -> String {
+    var s = String.new()
+    s.append("#compdef nx\n")
+    s.append("# zsh completion for nx, written by `nx completions zsh`\n")
+    s.append("# install: nx completions zsh > ~/.zsh/completions/_nx  (with that directory in fpath)\n")
+    s.append("_nx() {\n")
+    s.append("    local -a cmds opts\n")
+    s.append("    cmds=(\n")
+    for c in commands() { s.append(format("        '{}:{}'\n", .{c.name, quoted(c.about)})[..]) }
+    s.append("    )\n")
+    s.append("    opts=(\n")
+    for o in options() {
+        if o.value.len > 0 {
+            s.append(format("        '{}[{}]:{}:", .{o.name, quoted(o.about), o.value})[..])
+            if o.name == "--mode" { s.append("(debug safe fast small)'\n") }
+            else if o.name == "--out-dir" or o.name == "--std" or o.name == "-I" { s.append("_files -/'\n") }
+            else if o.name == "-o" { s.append("_files'\n") }
+            else { s.append(" '\n") }
+        } else {
+            s.append(format("        '{}[{}]'\n", .{o.name, quoted(o.about)})[..])
+        }
+    }
+    s.append("    )\n")
+    s.append("    if (( CURRENT == 2 )); then\n")
+    s.append("        _describe -t commands 'nx command' cmds\n")
+    s.append("        return\n")
+    s.append("    fi\n")
+    s.append("    case \"${words[2]}\" in\n")
+    s.append("        completions) _values 'shell' bash zsh fish powershell; return ;;\n")
+    s.append("        topo) _values 'topo' check hint solution quiz reset list; return ;;\n")
+    s.append("        fetch|update|repl|lsp|doctor|upgrade|version|man) _arguments $opts; return ;;\n")
+    s.append("    esac\n")
+    s.append("    _arguments $opts '*:Nexium file:_files -g \"*.nx\"'\n")
+    s.append("}\n")
+    s.append("_nx \"$@\"\n")
+    return s
+}
+
+fn fish() -> String {
+    var s = String.new()
+    s.append("# fish completion for nx, written by `nx completions fish`\n")
+    s.append("# install: nx completions fish > ~/.config/fish/completions/nx.fish\n")
+    s.append("complete -c nx -f\n")
+    for c in commands() {
+        s.append(format("complete -c nx -n '__fish_use_subcommand' -a {} -d '{}'\n", .{c.name, quoted(c.about)})[..])
+    }
+    s.append("complete -c nx -n '__fish_seen_subcommand_from completions' -a 'bash zsh fish powershell'\n")
+    s.append("complete -c nx -n '__fish_seen_subcommand_from topo' -a 'check hint solution quiz reset list'\n")
+    s.append("complete -c nx -n 'not __fish_seen_subcommand_from fetch update repl lsp doctor upgrade version man completions topo' -k -a '(__fish_complete_suffix .nx)'\n")
+    for o in options() {
+        let long = o.name.starts_with("--")
+        var spec = String.new()
+        if long { spec.append(format("-l {}", .{o.name[2..]})[..]) } else { spec.append(format("-o {}", .{o.name[1..]})[..]) }
+        if o.name == "--mode" { s.append(format("complete -c nx {} -r -a 'debug safe fast small' -d '{}'\n", .{spec, quoted(o.about)})[..]) }
+        else if o.name == "--out-dir" or o.name == "--std" or o.name == "-I" { s.append(format("complete -c nx {} -r -a '(__fish_complete_directories)' -d '{}'\n", .{spec, quoted(o.about)})[..]) }
+        else if o.value.len > 0 { s.append(format("complete -c nx {} -r -d '{}'\n", .{spec, quoted(o.about)})[..]) }
+        else { s.append(format("complete -c nx {} -d '{}'\n", .{spec, quoted(o.about)})[..]) }
+    }
+    return s
+}
+
+fn powershell() -> String {
+    var s = String.new()
+    s.append("# PowerShell completion for nx, written by `nx completions powershell`\n")
+    s.append("# install: add to your profile:  nx completions powershell | Out-String | Invoke-Expression\n")
+    s.append("Register-ArgumentCompleter -Native -CommandName nx -ScriptBlock {\n")
+    s.append("    param($wordToComplete, $commandAst, $cursorPosition)\n")
+    s.append("    $commands = @(\n")
+    for c in commands() { s.append(format("        @{{ n = '{}'; d = '{}' }}\n", .{c.name, ps_quoted(c.about)})[..]) }
+    s.append("    )\n")
+    s.append("    $options = @(\n")
+    for o in options() { s.append(format("        @{{ n = '{}'; d = '{}' }}\n", .{o.name, ps_quoted(o.about)})[..]) }
+    s.append("    )\n")
+    s.append("    $words = @($commandAst.CommandElements | ForEach-Object { $_.Extent.Text })\n")
+    s.append("    # the elements before the word being completed; $words[0] is nx\n")
+    s.append("    $before = if ($wordToComplete -ne '' -and $words.Count -ge 2) { @($words[0..($words.Count - 2)]) } else { $words }\n")
+    s.append("    $prev = if ($before.Count -ge 2) { $before[-1] } else { '' }\n")
+    s.append("    $sub = if ($before.Count -ge 2) { $before[1] } else { '' }\n")
+    s.append("    $items = @()\n")
+    s.append("    if ($before.Count -le 1) { $items = $commands }\n")
+    s.append("    elseif ($prev -eq '--mode') { $items = 'debug', 'safe', 'fast', 'small' | ForEach-Object { @{ n = $_; d = 'build mode' } } }\n")
+    s.append("    elseif ($prev -eq 'completions') { $items = 'bash', 'zsh', 'fish', 'powershell' | ForEach-Object { @{ n = $_; d = 'shell' } } }\n")
+    s.append("    elseif ($sub -eq 'topo') { $items = 'check', 'hint', 'solution', 'quiz', 'reset', 'list' | ForEach-Object { @{ n = $_; d = 'topo' } } }\n")
+    s.append("    elseif ($wordToComplete.StartsWith('-')) { $items = $options }\n")
+    s.append("    else { $items = Get-ChildItem -Path \"$wordToComplete*\" -Include *.nx -Recurse:$false -ErrorAction SilentlyContinue | ForEach-Object { @{ n = $_.Name; d = 'Nexium file' } } }\n")
+    s.append("    $items | Where-Object { $_.n -like \"$wordToComplete*\" } | ForEach-Object {\n")
+    s.append("        [System.Management.Automation.CompletionResult]::new($_.n, $_.n, 'ParameterValue', $_.d)\n")
+    s.append("    }\n")
+    s.append("}\n")
+    return s
+}
+
+/// The completion script for a shell, or null for a shell this does not know.
+pub fn script(shell: []u8) -> ?String {
+    if shell == "bash" { return bash() }
+    if shell == "zsh" { return zsh() }
+    if shell == "fish" { return fish() }
+    if shell == "powershell" or shell == "pwsh" { return powershell() }
+    return null
+}
+
+pub fn shells() -> [][]u8 { return SHELLS[..] }
+
+fn roff(s: []u8) -> String {
+    // a leading dot or quote would be a request; a backslash is an escape
+    var out = String.new()
+    for c, i in s {
+        if c == '\\' { out.append("\\\\") }
+        else if i == 0 and (c == '.' or c == '\'') { out.append("\\&"); out.push_byte(c) }
+        else { out.push_byte(c) }
+    }
+    return out
+}
+
+/// The manual page, in the roff `man` macros.
+pub fn man(version: []u8, release_name: []u8, date: []u8) -> String {
+    var s = String.new()
+    s.append(format(".TH NX 1 \"{}\" \"nx {}\" \"Nexium\"\n", .{date, version})[..])
+    s.append(".SH NAME\n")
+    s.append("nx \\- the Nexium compiler and its tools\n")
+    s.append(".SH SYNOPSIS\n")
+    s.append(".B nx\n")
+    s.append("\\fIcommand\\fR [\\fIfile.nx\\fR] [\\fIoptions\\fR] [\\-\\- \\fIargs\\fR]\n")
+    s.append(".br\n")
+    s.append(".B nx\n")
+    s.append("\\-e \\fICODE\\fR | \\-p \\fIEXPR\\fR\n")
+    s.append(".SH DESCRIPTION\n")
+    s.append("Nexium is a systems language that compiles to C. It has ownership without a\n")
+    s.append("borrow checker, reference counting for shared objects, a checked effect\n")
+    s.append("system (whether a function allocates, blocks, panics), binary patterns,\n")
+    s.append("compile-time evaluation, and one compiler that turns a source tree into a\n")
+    s.append("binary, a C library, a Python wheel, a Rust crate or an npm package.\n")
+    s.append(".B nx\n")
+    s.append("is that compiler: it emits C and drives a C compiler (zig cc by default;\n")
+    s.append("gcc, clang or cc when there is no zig). With no arguments at a terminal it\n")
+    s.append("opens the REPL.\n")
+    s.append(".SH COMMANDS\n")
+    for c in commands() {
+        s.append(".TP\n")
+        if c.arg.len > 0 { s.append(format(".B {} \\fI{}\\fR\n", .{c.name, c.arg})[..]) } else { s.append(format(".B {}\n", .{c.name})[..]) }
+        s.append(roff(c.about)[..])
+        s.append("\n")
+    }
+    s.append(".TP\n.B \\-e \\fICODE\\fR, \\-p \\fIEXPR\\fR\nrun a line as at the prompt; \\-p prints the value\n")
+    s.append(".SH OPTIONS\n")
+    for o in options() {
+        s.append(".TP\n")
+        if o.value.len > 0 { s.append(format(".B {} \\fI{}\\fR\n", .{roff(o.name), o.value})[..]) } else { s.append(format(".B {}\n", .{roff(o.name)})[..]) }
+        s.append(roff(o.about)[..])
+        s.append("\n")
+    }
+    s.append(".SH ENVIRONMENT\n")
+    for e in [
+        ("NX_CC", "the C compiler command, when \\-\\-cc is not given"),
+        ("NX_ZIG", "the zig executable to use as the C compiler"),
+        ("NX_CPU", "the CPU to build for, as \\-\\-cpu"),
+        ("NX_STRICT", "set: warnings are errors, as \\-\\-strict"),
+        ("NX_NO_UPDATE_CHECK", "set: never mention a newer release"),
+        ("NX_OFFLINE", "set: never ask the network (the release check, nx doctor)"),
+        ("NX_UPDATE_CACHE", "where the daily release check keeps its answer"),
+        ("NX_TOPO_PROGRESS", "where nx topo keeps what is done"),
+        ("NX_PLAIN", "set: the REPL reads plain lines, without its line editor"),
+    ] {
+        s.append(format(".TP\n.B {}\n{}\n", .{e.0, e.1})[..])
+    }
+    s.append(".SH FILES\n")
+    s.append(".TP\n.I nexium.toml\nthe package manifest of a project; \\fInexium.lock\\fR pins its dependencies\n")
+    s.append(".TP\n.I nx-out/\nwhere the generated C and the binaries go\n")
+    s.append(".TP\n.I ~/.nexium/\nthe user's installation (\\fIbin/\\fR, \\fIshare/\\fR) and the caches; \\fI%LocalAppData%\\\\Nexium\\fR on Windows\n")
+    s.append(".SH EXAMPLES\n")
+    s.append(".nf\nnx run hello.nx\nnx test std/strings.nx\nnx build main.nx \\-\\-mode fast \\-o main\nnx ship lib.nx\nnx fmt src/*.nx \\-\\-check\nnx topo 5\n.fi\n")
+    s.append(".SH SEE ALSO\n")
+    s.append("The Topo and the reference at\n.I https://londopy.github.io/nexium/\nand the source at\n.I https://github.com/Londopy/nexium\n")
+    s.append(".SH AUTHOR\n")
+    s.append(format("Londopy. This page describes nx {} ({}); \\fBnx man\\fR prints the one for the nx you have.\n", .{version, release_name})[..])
+    return s
+}

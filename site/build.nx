@@ -974,6 +974,15 @@ fn main() -> u8 {
         fs.copy(fs.join("assets", a)[..], fs.join(fs.join(out_dir[..], "assets")[..], a)[..]) catch { eprintln("warning: cannot copy assets/{}", .{a}) }
     }
     fs.write(fs.join(out_dir[..], ".nojekyll")[..], "") catch { }
+    // the standard files a site is expected to have: where to report a
+    // vulnerability (RFC 9116), what crawlers may index, and the page list
+    fs.make_dirs(fs.join(out_dir[..], ".well-known")[..]) catch { }
+    fs.write(fs.join(out_dir[..], ".well-known/security.txt")[..], format("Contact: https://github.com/Londopy/nexium/security/advisories/new\nContact: https://github.com/Londopy\nExpires: 2027-09-22T00:00:00.000Z\nPreferred-Languages: en\nCanonical: {}.well-known/security.txt\nPolicy: {}docs/security.html\n", .{SITE_URL, SITE_URL})[..]) catch { }
+    fs.write(fs.join(out_dir[..], "robots.txt")[..], format("User-agent: *\nAllow: /\nSitemap: {}sitemap.xml\n", .{SITE_URL})[..]) catch { }
+    var sitemap = String.from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n")
+    for p in pages { sitemap.append(format("  <url><loc>{}{}</loc></url>\n", .{SITE_URL, p.out})[..]) }
+    sitemap.append("</urlset>\n")
+    fs.write(fs.join(out_dir[..], "sitemap.xml")[..], sitemap[..]) catch { }
     fs.make_dirs(fs.join(out_dir[..], "topo/img")[..]) catch { }
     for img in fs.list("topo/img") catch { List(String).new() } {
         fs.copy(fs.join("topo/img", img[..])[..], fs.join(fs.join(out_dir[..], "topo/img")[..], img[..])[..]) catch { eprintln("warning: cannot copy topo/img/{}", .{img}) }
