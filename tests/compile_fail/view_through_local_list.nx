@@ -1,0 +1,10 @@
+// EXPECT: this returns a slice into `s`, which views `mine`, released when the function returns (rule V1)
+// the loop walks the function's own List: its buffers go with it
+fn first() -> []u8 {
+    var mine = List(String).new()
+    mine.append(String.from("gone"))
+    for s in mine { return s[..] }
+    return ""
+}
+
+fn main() { }

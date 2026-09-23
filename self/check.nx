@@ -764,6 +764,8 @@ pub struct Local {
     if_let: bool
     // a name of `let (a, b) = place` or `for (k, v) in items`: a view of the element
     tuple_view: bool
+    // a name a pattern binds over a place (a `match` arm's): a view of what it matched
+    pat_view: bool = false
     // where the value points when it holds a view (section 5.6): the locals it
     // borrows from, or ORIGIN_PARAM, ORIGIN_STATIC, ORIGIN_TEMP
     origins: List(Origin)

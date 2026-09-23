@@ -219,7 +219,7 @@ impl Checker {
         if r != NONE {
             if self.ctx().locals[r].is_param and !self.ctx().locals[r].owned { check.add_origin(&mut out, ORIGIN_PARAM, at); return out }
             // a binding that views a value stands for that value's storage
-            if self.ctx().locals[r].loop_item or self.ctx().locals[r].if_let or self.ctx().locals[r].tuple_view {
+            if self.is_element_binding(r) {
                 check.add_origins(&mut out, &self.ctx().locals[r].origins)
                 return out
             }
@@ -229,6 +229,9 @@ impl Checker {
         if self.holds_view(self.tir.nodes[e].ty) or self.is_borrowed_view(e) {
             let os = self.origins_of(e)
             if os.len > 0 { return os }
+            // a place reached through a pointer or a slice (`p.*`, `p.items`,
+            // `xs[i]`) is storage the pointer or slice points into
+            if let via = self.pointed_storage(e) { return via }
             if self.is_borrowed_view(e) { return out }
         }
         // a temporary is released at the end of the block that made it: it is
@@ -238,6 +241,23 @@ impl Checker {
             check.add_origin(&mut out, t, at)
         }
         return out
+    }
+
+    /// The storage a place reached through a pointer or a slice lives in: the
+    /// origins of that pointer or slice (`p.items` in `p`'s, `xs[i].name` in
+    /// `xs`'s). Null when the place does not go through one.
+    fn pointed_storage(self: *mut Self, e: usize) -> ?List(Origin) {
+        var cur = e
+        while true {
+            let k = self.tir.nodes[cur].k
+            if k == TKind.Deref { return self.origins_of(self.tir.nodes[cur].kids[0]) }
+            if k != TKind.Field and k != TKind.TupleField and k != TKind.Index { return null }
+            let base = self.tir.nodes[cur].kids[0]
+            let bk = self.tys.kind(self.tys.shallow(self.tys.resolve(self.tir.nodes[base].ty, false)))
+            if bk == TK.Slice or bk == TK.Ptr { return self.origins_of(base) }
+            cur = base
+        }
+        return null
     }
 
     /// The first field on a place's path from its root local (`lv.rows[y]`
@@ -579,7 +599,12 @@ impl Checker {
         let src = self.ctx().pat_source
         if src == NONE { return }
         let at = self.ctx().locals[l].start
-        if self.is_place(src) or self.is_borrowed_view(src) or self.ctx().pat_by_ref != NONE { self.bind_view(l, src, at) } else { self.check_store_local(l, src, at) }
+        if self.is_place(src) or self.is_borrowed_view(src) or self.ctx().pat_by_ref != NONE {
+            self.bind_view(l, src, at)
+            self.ctx().locals[l].pat_view = true
+        } else {
+            self.check_store_local(l, src, at)
+        }
     }
 
     /// The storage of a local changes here: a growth, a clearing, a reassignment
@@ -632,22 +657,116 @@ impl Checker {
             }
             return
         }
+        self.check_escaping_slice(te, at)
+    }
+
+    /// A binding that copies an element rather than owning storage: a loop
+    /// item, an `if let` binding, a tuple or pattern binding over a place.
+    fn is_element_binding(self: *mut Self, l: usize) -> bool {
+        let x = &self.ctx().locals[l]
+        return x.loop_item or x.if_let or x.tuple_view or x.pat_view
+    }
+
+    /// Whether a view goes through a `String` or `List` heap buffer (`s[..]`,
+    /// `s.items[1..]`), rather than into the storage of the place itself (an
+    /// array's elements, `&x`).
+    fn through_heap_buffer(self: *mut Self, e: usize) -> bool {
+        let k = self.tir.nodes[e].k
+        if k == TKind.ListToSlice or k == TKind.StrToSlice { return true }
+        if k == TKind.SliceOp {
+            let base = self.tir.nodes[e].kids[0]
+            let bk = self.tir.nodes[base].k
+            if bk == TKind.ListToSlice or bk == TKind.StrToSlice { return true }
+            let bt = self.tys.kind(self.tys.shallow(self.tys.resolve(self.tir.nodes[base].ty, false)))
+            return bt == TK.List or bt == TK.Str
+        }
+        return false
+    }
+
+    /// Rules R1 and V1 for a returned slice or pointer: every value the
+    /// expression can be (each branch of an `if` or a `match`) is judged by
+    /// the local it points into.
+    fn check_escaping_slice(self: *mut Self, e: usize, at: usize) {
+        let k = self.tir.nodes[e].k
+        let kids = self.tir.nodes[e].kids.clone()
+        if k == TKind.OptWrap or k == TKind.ErrWrap {
+            self.check_escaping_slice(kids[0], at)
+            return
+        }
+        if k == TKind.BlockExpr {
+            let tail = self.tir.nodes[kids[0]].a
+            if tail != NONE { self.check_escaping_slice(tail, at) }
+            return
+        }
+        if k == TKind.Block {
+            let tail = self.tir.nodes[e].a
+            if tail != NONE { self.check_escaping_slice(tail, at) }
+            return
+        }
+        if k == TKind.If or k == TKind.IfCapture {
+            var i: usize = 1
+            while i < kids.len {
+                self.check_escaping_slice(kids[i], at)
+                i += 1
+            }
+            return
+        }
+        if k == TKind.Match {
+            var i: usize = 1
+            while i < kids.len {
+                let ak = self.tir.nodes[kids[i]].kids.clone()
+                if ak.len > 0 { self.check_escaping_slice(ak[ak.len - 1], at) }
+                i += 1
+            }
+            return
+        }
         var what: []u8 = ""
-        let local = self.view_root(te, &mut what)
+        let local = self.view_root(e, &mut what)
         if local == NONE { return }
+        let name = self.ctx().locals[local].name.clone()
         if self.ctx().locals[local].is_param {
             // an `own` parameter is the callee's, released at return unless moved on
             if self.ctx().locals[local].owned and !self.ctx().moved.contains(local) {
-                self.fail_here(at, format("this returns a {} into `{}`, an `own` parameter that is released when the function returns (rule V1); return an owned value (`{}` itself, or a copy) instead of the view", .{what, self.ctx().locals[local].name, self.ctx().locals[local].name})[..])
+                self.fail_here(at, format("this returns a {} into `{}`, an `own` parameter that is released when the function returns (rule V1); return an owned value (`{}` itself, or a copy) instead of the view", .{what, name, name})[..])
             }
             return
+        }
+        // a binding that copies an element: a view through the element's heap
+        // buffer points where the element lives, which the binding's origins
+        // say; one into the copy itself (`&s`, an array field) is R1's
+        if self.is_element_binding(local) and self.through_heap_buffer(e) {
+            let origins = self.ctx().locals[local].origins.clone()
+            var bad = origins.len == 0
+            var whose = String.new()
+            var temp = false
+            for o in origins {
+                if bad { break }
+                if o.local == ORIGIN_TEMP {
+                    bad = true
+                    temp = true
+                    whose = String.from("a temporary")
+                } else if o.local < ORIGIN_TEMP and (!self.ctx().locals[o.local].is_param or self.ctx().locals[o.local].owned) {
+                    bad = true
+                    temp = self.is_temp_local(o.local)
+                    whose = self.origin_name(o.local)
+                }
+            }
+            if !bad { return }
+            if temp {
+                // a map's entries or keys, a call's result: gone before the caller looks
+                self.fail_here(at, format("this returns a {} into `{}`, which views {} that is released before the caller sees it (rule V1); return an owned value (a `String`, a `List`) instead of the view", .{what, name, whose})[..])
+                return
+            }
+            if whose.len > 0 {
+                self.fail_here(at, format("this returns a {} into `{}`, which views {}, released when the function returns (rule V1); return an owned value (a `String`, a `List`) instead of the view", .{what, name, whose})[..])
+                return
+            }
         }
         let lt = self.tys.shallow(self.tys.resolve(self.ctx().locals[local].ty, false))
         let lk = self.tys.kind(lt)
         let owns = lk == TK.Array or lk == TK.List or lk == TK.Str or lk == TK.Map or lk == TK.Struct or lk == TK.Tuple or lk == TK.Enum
             or lk == TK.Int or lk == TK.Float or lk == TK.Bool or lk == TK.Char
         if !owns { return }
-        let name = self.ctx().locals[local].name.clone()
         self.fail_here(at, format("this returns a {} into `{}`, a local that is released when the function returns (region rule R1)", .{what, name})[..])
     }
 

@@ -1,0 +1,8 @@
+// EXPECT: this returns a slice into `s`, which views `names`, released when the function returns (rule V1)
+// an `own` parameter is the callee's: its elements go when it returns
+fn first(own names: List(String)) -> []u8 {
+    for s in names { return s[..] }
+    return ""
+}
+
+fn main() { }

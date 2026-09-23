@@ -1,0 +1,11 @@
+// EXPECT: this returns a slice into `a`, a local that is released when the function returns (region rule R1)
+// every arm's value is judged, not only the first branch's
+fn pick(n: i32) -> []u8 {
+    let a: [3]u8 = [65, 66, 67]
+    return match n {
+        0 => a[..],
+        _ => "x",
+    }
+}
+
+fn main() { }

@@ -1,0 +1,92 @@
+// SPEC 5.6: a slice through the heap buffer of a binding that copies an
+// element (a loop item, an `if let`, a tuple or pattern binding) points
+// where the element lives. When that is the caller's storage (a borrowed
+// parameter), the slice may be returned; rule R1 is about the function's
+// own storage, and the copy's buffer is not that. (A map's entries are
+// copies the loop owns: compile-fail view_of_map_entry.)
+
+struct Section {
+    title: String
+    items: List(String)
+}
+
+struct Doc {
+    sections: List(Section)
+    note: ?String
+}
+
+impl Doc {
+    fn titled(self: *Self, want: []u8) -> ?[]u8 {
+        for s in self.sections {
+            if s.title == want { return s.title[..] }
+        }
+        return null
+    }
+
+    fn note_text(self: *Self) -> []u8 {
+        if let n = self.note { return n[..] }
+        return ""
+    }
+
+    fn rest_of(self: *Self, i: usize) -> []String {
+        for s, k in self.sections {
+            if k == i { return s.items[1..] }
+        }
+        return self.sections[0].items[0..0]
+    }
+}
+
+enum Named {
+    Anon,
+    Called(String),
+}
+
+fn first(xs: []String) -> []u8 {
+    for s in xs { return s[..] }
+    return ""
+}
+
+fn label(n: Named) -> []u8 {
+    match n {
+        Named.Called(s) => return s[..],
+        Named.Anon => return "anon",
+    }
+}
+
+fn cell(rows: []List(String), r: usize, c: usize) -> []u8 {
+    for row, i in rows {
+        if i != r { continue }
+        for x, j in row {
+            if j == c { return x[..] }
+        }
+    }
+    return ""
+}
+
+fn main() {
+    var names = List(String).new()
+    names.append(String.from("ada"))
+    names.append(String.from("brian"))
+    println("{}", .{first(names[..])})
+
+    var items = List(String).new()
+    items.append(String.from("one"))
+    items.append(String.from("two"))
+    items.append(String.from("three"))
+    var sections = List(Section).new()
+    sections.append(Section{ .title = String.from("intro"), .items = items })
+    let doc = Doc{ .sections = sections, .note = String.from("draft") }
+    println("{}", .{doc.titled("intro") orelse "none"})
+    println("{}", .{doc.note_text()})
+    println("{}", .{doc.rest_of(0).len})
+
+    let n = Named.Called(String.from("grace"))
+    println("{}", .{label(n)})
+
+    var grid = List(List(String)).new()
+    var row = List(String).new()
+    row.append(String.from("a1"))
+    row.append(String.from("a2"))
+    grid.append(row)
+    println("{}", .{cell(grid[..], 0, 1)})
+}

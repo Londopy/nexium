@@ -1,0 +1,13 @@
+// EXPECT: this returns a slice into `r`, a local that is released when the function returns (region rule R1)
+// an array field is inline in the loop's copy of the element: a slice of
+// it points into the copy, not into the caller's storage
+struct Rec {
+    tag: [4]u8
+}
+
+fn tag_of(recs: []Rec) -> []u8 {
+    for r in recs { return r.tag[..] }
+    return ""
+}
+
+fn main() { }

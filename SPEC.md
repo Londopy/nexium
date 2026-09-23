@@ -225,7 +225,13 @@ view rules replace them.
   temporaries or its `own` parameters, nor a value holding one. Views into
   borrowed parameters are allowed: the caller owns that storage. The direct
   case, a returned slice or pointer into a local, has been an error since
-  1.0 as rule R1.
+  1.0 as rule R1. A binding that copies an element (a loop item, an `if
+  let`, a tuple or pattern binding) is judged by where the element lives:
+  a view through its `String` or `List` buffer (`for s in xs { return
+  s[..] }`) points into the caller's storage when the element does, while
+  one into the copy itself (`&s`, an array field) is into a local. Each
+  value the returned expression can take, every branch of an `if` or a
+  `match`, is judged.
 - **V2.** A view stored into a place (a variable, a field, an element, a
   global, a closure capture, the caller's storage through a pointer
   parameter) must not outlive the storage it points into: `out = s[..]`

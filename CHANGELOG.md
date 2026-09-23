@@ -99,6 +99,23 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Fixed
 
+- Rule R1 rejected a slice into a loop item's buffer over the caller's
+  storage: `for s in xs { return s[..] }` with `xs: []String` a parameter,
+  `return s.title` in `for s in self.sections` in a method, an `if let`
+  over a field, a `match` binding over a borrowed parameter, nested loops.
+  A binding that copies an element is now judged by where the element
+  lives (its origins, traced through pointers and slices), so those are
+  accepted, while `&s`, a slice of an array field of `s`, and a loop over
+  the function's own `List` or an `own` parameter stay errors (a map's
+  `for (k, v)` walks copies it frees, so a view of `v` stays one too).
+  R1 also judged only one branch of a returned `if` and no arm of a
+  `match`: `return match n { 0 => a[..], _ => "x" }` with `a` a local
+  array returned a dangling slice, and so did an `else` whose `then` was
+  safe; every branch is judged now (spec `s5_views_through_bindings`,
+  compile-fail `view_into_loop_copy`, `view_into_binding_array`,
+  `view_through_local_list`, `view_through_own_param`,
+  `view_of_map_entry`, `view_in_match_arm`, `view_in_else_branch`).
+  Found while writing QNI.
 - `nx fmt` took a function's body brace after a return type that is a
   slice, an array or a `*mut` of a named type (`-> []T {`, `-> *mut Json
   {`) for a struct literal and wrote `-> []T{`; `std.lists`, `std.json`,

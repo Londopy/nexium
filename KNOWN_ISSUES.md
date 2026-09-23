@@ -10,20 +10,6 @@ Fixed bugs are not listed here; `CHANGELOG.md` and `git log` have them.
 
 ## Compiler
 
-- **R1 rejects a slice into a loop item's buffer over borrowed storage.**
-  `for s in xs { return s }` with `xs: []String` a parameter (or
-  `return s.text` in `for s in self.sections` in a `self: *Self` method,
-  found while writing QNI) fails: "this returns a slice into `s`, a local
-  that is released when the function returns (region rule R1)". The slice
-  is into the caller's element's heap buffer and outlives the call;
-  `return self.sections[i].text` and `let t: []u8 = s.text; return t`
-  pass. `if let` over a place, `for (k, v) in` and a `match` arm over a
-  by-value parameter fail the same way. Fix: in `check_escaping_view`
-  (self/check_views.nx), when `view_root` lands on a binding that views a
-  value (`loop_item`, `if_let`, `tuple_view`; a pattern binding has no
-  flag yet) and the view goes through a `String`, `List` or `Map` buffer,
-  judge the binding's origins as the V1 branch does. Keep the error for
-  `&x` or `s.arr[..]`: the binding is a stack copy, so those do dangle.
 
 ## Self-hosting
 

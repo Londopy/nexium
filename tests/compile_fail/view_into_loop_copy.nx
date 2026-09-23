@@ -1,0 +1,8 @@
+// EXPECT: this returns a pointer into `s`, a local that is released when the function returns (region rule R1)
+// the loop's `s` is a copy of the element: a pointer to it dangles
+fn first(xs: []String) -> *String {
+    for s in xs { return &s }
+    return &xs[0]
+}
+
+fn main() { }
