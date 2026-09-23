@@ -328,8 +328,8 @@ using arena {
 Opciones: `--mode debug|safe|fast|small`, `--target x86_64-linux-gnu`
 (cualquier destino que `zig cc` conozca), `--cpu baseline|native|<nombre>`
 (baseline por defecto, para que un binario corra en cualquier máquina de su
-arquitectura), `--out-dir`, `--keep-c`, `--cc`, `--strict` (los avisos de las
-reglas de vistas son errores), y para la interoperabilidad
+arquitectura), `--out-dir`, `--keep-c`, `--cc`, `--strict` (los avisos son
+errores), y para la interoperabilidad
 con C `-I`, `--link`, `--link-path`, `--c-source`.
 
 ## Estado
@@ -341,7 +341,7 @@ la especificación y cada programa del tutorial se ejecuta en CI en tres
 plataformas, bajo los sanitizadores y el fuzzer. Lo que 1.0 todavía no es, y
 dónde se responde cada punto, es la primera sección de [la hoja de
 ruta](../../../ROADMAP.md): la seguridad de memoria son las reglas de vistas
-de 1.2, avisos hasta que 1.3 las convierta en errores (`--strict` ya lo hace),
+de 1.2, errores desde 1.3 (`nx fix` hace las correcciones mecánicas),
 no hay cifras de rendimiento más allá de [la página de cifras](../../numbers.md)
 (cuatro programas en cinco lenguajes en un mismo runner, regenerada cada semana),
 y el ecosistema es un solo mantenedor, dieciséis módulos de la biblioteca

@@ -327,7 +327,7 @@ using arena {
 Optionen: `--mode debug|safe|fast|small`, `--target x86_64-linux-gnu` (jedes
 Ziel, das `zig cc` kennt), `--cpu baseline|native|<name>` (standardmäßig
 baseline, damit ein Binary auf jeder Maschine seiner Architektur läuft),
-`--out-dir`, `--keep-c`, `--cc`, `--strict` (Warnungen der Sichtregeln sind
+`--out-dir`, `--keep-c`, `--cc`, `--strict` (Warnungen sind
 Fehler), und für die C-Interoperabilität `-I`, `--link`,
 `--link-path`, `--c-source`.
 
@@ -340,7 +340,7 @@ jeder Spezifikationsfall und jedes Tutorial-Programm läuft in CI auf drei
 Plattformen, unter den Sanitizern und dem Fuzzer. Was 1.0 noch nicht ist,
 und wo jeder Punkt beantwortet wird, ist der erste Abschnitt der
 [Roadmap](../../../ROADMAP.md): Speichersicherheit sind die Sichtregeln von
-1.2, Warnungen, bis 1.3 sie zu Fehlern macht (`--strict` tut es jetzt schon),
+1.2, seit 1.3 Fehler (`nx fix` erledigt die mechanischen Korrekturen),
 es gibt keine Benchmark-Zahlen über [die Zahlenseite](../../numbers.md) hinaus
 (vier Programme in fünf Sprachen auf einem Runner, wöchentlich neu erzeugt),
 und das Ökosystem besteht aus einem Maintainer, sechzehn Modulen der

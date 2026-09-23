@@ -1,4 +1,4 @@
-// STRICT
+// a warning in 1.2 (under --strict an error), an error since 1.3
 // EXPECT: this returns a value holding a view into `s`, which is released when the function returns (rule V1)
 struct Holder { data: []u8 }
 

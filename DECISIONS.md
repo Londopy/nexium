@@ -832,3 +832,21 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     name is an error at the second definition, a generic `impl(T)`
     conflicting with every instance of its head and `impl Pair(i32)` with
     `impl Pair(i32)` but not with `impl Pair(f64)`.
+111. **`nx fix` keeps an edit only when the checker, run on the edited
+    program, reports fewer errors and none it did not report before.**
+    With the view rules errors in 1.3, the promise of 1.2 was that `nx fix`
+    would insert `.clone()` where that is the fix. Where it is is narrower
+    than the old advice suggested: a view's clone is the same view, so the
+    only clone that fixes a view is of the value it points into, and that
+    changes the view's type unless it is made where the value moves (rule
+    V4: `take(s)` becomes `take(s.clone())`, and every type stays). Rule
+    V5 has the other type-preserving edit, `@escape(...)` around the value
+    kept past its arena. The checker offers these edits with the errors
+    (`check.Fix`), and rather than trust each offer, `nx fix` tries it on
+    the program in memory and keeps it only when the error count falls and
+    no new error appears, then takes the next offer from a fresh check of
+    the edited program. An offer that would not type-check, a clone of a
+    struct that does not derive `Clone` for one, is dropped silently, and
+    whatever is left is reported by count. V1, V2 and V3 get no edit: their
+    fixes change a type or need a binding in the right scope, which is a
+    decision for the programmer; the errors say what to do.

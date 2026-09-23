@@ -1,0 +1,137 @@
+// self/fix.nx: `nx fix`. The checker offers an edit with some of its
+// errors (`check.Fix`): rule V4's `.clone()` where a value moves out from
+// under a view of it, rule V5's `@escape(...)` around a value kept past its
+// arena. Each edit is tried on the program in memory and kept only when the
+// checker then reports fewer errors and none it did not report before, so
+// `nx fix` never makes a program worse; then the next is tried against the
+// edited program. The deprecation migrations of docs/stability.md join
+// these edits when there are deprecations; there are none yet.
+
+import check
+
+/// A program checked with some of its files stood in for by edited texts.
+struct Trial {
+    errors: List(String)
+    fixes: List(check.Fix)
+    // by module: where it was read from, its text, and whether it is one of
+    // the program's own files (not std, a package or a C header)
+    paths: List(String)
+    sources: List(String)
+    own: List(bool)
+}
+
+fn trial(root: []u8, texts: *Map(String, String), std_dir: []u8, cc: *List(String), target: []u8) -> ?Trial {
+    let mods = check.load_with_texts(root, texts, std_dir) catch { return null }
+    var c = check.new_checker(mods)
+    c.cc = cc.clone()
+    c.target = String.from(target)
+    c.collect()
+    c.reserve_errors()
+    c.check_program()
+    var t = Trial{ .errors = c.errors.clone(), .fixes = c.fixes.clone(), .paths = List(String).new(), .sources = List(String).new(), .own = List(bool).new() }
+    let n = c.mods.len
+    for m in 0..n {
+        t.paths.append(c.mods[m].path.clone())
+        t.sources.append(c.mods[m].source.clone())
+        let name = c.mods[m].name[..]
+        t.own.append(c.mods[m].pkg.len == 0 and !name.starts_with("std.") and !name.starts_with("cimport:") and !c.mods[m].path[..].starts_with("<std>"))
+    }
+    return t
+}
+
+/// What an error says, without where: its first line.
+fn head(e: []u8) -> String {
+    for l in e.lines() { return String.from(l) }
+    return String.new()
+}
+
+/// `after` has fewer errors than `before`, and each of them is one `before`
+/// reported too (the edits keep lines, so the words match).
+fn better(before: *List(String), after: *List(String)) -> bool {
+    if after.len >= before.len { return false }
+    var pool = List(String).new()
+    for e in before.* { pool.append(head(e[..])) }
+    for e in after.* {
+        let h = head(e[..])
+        var found = false
+        let n = pool.len
+        for i in 0..n {
+            if pool[i] == h {
+                _ = pool.remove(i)
+                found = true
+                break
+            }
+        }
+        if !found { return false }
+    }
+    return true
+}
+
+fn line_of(src: []u8, at: usize) -> usize {
+    var line: usize = 1
+    var i: usize = 0
+    while i < at and i < src.len {
+        if src[i] == '\n' { line += 1 }
+        i += 1
+    }
+    return line
+}
+
+/// `nx fix FILE... [--check]`: each file is a program's root; its own files
+/// are edited in place, and `--check` only reports what would change (and
+/// fails when something would). Fails when errors remain.
+pub fn run(files: *List(String), std_dir: []u8, cc: *List(String), target: []u8, check_only: bool) -> i32 {
+    var changed: usize = 0
+    var left: usize = 0
+    for f in files.* {
+        var texts = Map(String, String).new()
+        var before = trial(f[..], &texts, std_dir, cc, target) orelse return 1
+        // edits that did not help, not tried again
+        var tried = Map(String, bool).new()
+        var done = List(String).new()
+        var progress = true
+        while progress {
+            progress = false
+            for fx in before.fixes.clone() {
+                if fx.module >= before.own.len or !before.own[fx.module] { continue }
+                let path = before.paths[fx.module].clone()
+                let src = before.sources[fx.module].clone()
+                let key = format("{}:{}:{}:{}", .{path, fx.start, fx.end, fx.text})
+                if tried.contains(key[..]) or fx.end > src.len { continue }
+                tried.put(key.clone(), true)
+                var edited = String.from(src[0..fx.start])
+                edited.append(fx.text[..])
+                edited.append(src[fx.end..])
+                var next = texts.clone()
+                next.put(path.clone(), edited)
+                let after = trial(f[..], &next, std_dir, cc, target) orelse continue
+                if !better(&before.errors, &after.errors) { continue }
+                done.append(format("{}:{}: {}", .{path, line_of(src[..], fx.start), fx.what}))
+                texts = next
+                before = after
+                progress = true
+                // the offsets of the other edits moved: take them from the new check
+                break
+            }
+        }
+        for d in done { println("{}{}", .{if check_only { "would fix " } else { "fixed " }, d}) }
+        if !check_only {
+            for p in texts.keys() {
+                if let t = texts.get(p[..]) {
+                    io.write_file(p[..], t[..]) catch {
+                        eprintln("error: cannot write {}", .{p})
+                        return 1
+                    }
+                }
+            }
+        }
+        changed += done.len
+        if before.errors.len > 0 {
+            println("{}: {} error(s) left that nx fix has no edit for; `nx check {}` shows them", .{f, before.errors.len, f})
+            left += before.errors.len
+        }
+    }
+    if changed == 0 and left == 0 { println("nothing to fix: {} file(s) check clean, and no deprecations to migrate", .{files.len}) }
+    if left > 0 or (check_only and changed > 0) { return 1 }
+    return 0
+}

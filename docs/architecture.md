@@ -139,11 +139,15 @@ exhaustiveness checking for enums and bools. **Binary patterns** turn
 `<<len:16/little, payload:len*8, rest:bytes>>` into a sequence of checked
 bit reads whose sizes may depend on earlier bindings.
 
-**Views** are tracked by their origins (`self/check_views.nx`): every local knows the storage the views it holds point into and
-when they were taken, and the rules V1 to V5 of `SPEC.md` 5.6 and 5.7 are
-checked at the use that would read released storage, as warnings in 1.2
-(`--strict` makes them errors). Returning a slice or pointer into a local
-of the function (rule R1) has been an error since 1.0.
+**Views** are tracked by their origins (`self/check_views.nx`): every
+local knows the storage the views it holds point into and when they were
+taken, and the rules V1 to V5 of `SPEC.md` 5.6 and 5.7 are checked at the
+use that would read released storage, as errors since 1.3 (warnings in
+1.2). Where the fix is mechanical the checker offers `nx fix` an edit
+(`check.Fix`: V4's `.clone()` at the move, V5's `@escape`), which
+`self/fix.nx` keeps only when checking the edited program leaves fewer
+errors and no new one. Returning a slice or pointer into a local of the
+function (rule R1) has been an error since 1.0.
 
 **Trait objects** get a vtable per (trait, type) pair, generated as thunks
 that adapt the receiver; `dyn Shape !allocates` is a distinct type and every

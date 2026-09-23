@@ -316,7 +316,7 @@ using arena {
 
 选项：`--mode debug|safe|fast|small`、`--target x86_64-linux-gnu`（`zig cc` 认识的
 任何目标）、`--cpu baseline|native|<名称>`（默认 baseline，这样二进制能在同架构的
-任何机器上运行）、`--out-dir`、`--keep-c`、`--cc`、`--strict`（视图规则的警告即
+任何机器上运行）、`--out-dir`、`--keep-c`、`--cc`、`--strict`（警告即
 错误），以及用于 C 互操作的 `-I`、`--link`、
 `--link-path`、`--c-source`。
 
@@ -325,8 +325,8 @@ using arena {
 **1.0：语言已稳定，生态尚在早期。** 语言只按[稳定性策略](../../stability.md)以增添的
 方式变化；编译器用 Nexium 写成并能构建自身；每个示例、规范用例和教程程序都在 CI 中于
 三个平台上、在 sanitizer 和 fuzzer 之下运行。1.0 还不是什么、每一点在哪里得到回答，
-是[路线图](../../../ROADMAP.md)的第一节：内存安全是 1.2 的视图规则，在 1.3 把
-它们变成错误之前是警告（`--strict` 现在就能变成错误），除[数字页](../../numbers.md)（五种语言的四个
+是[路线图](../../../ROADMAP.md)的第一节：内存安全是 1.2 的视图规则，自 1.3 起是
+错误（机械性的修正由 `nx fix` 完成），除[数字页](../../numbers.md)（五种语言的四个
 程序在同一台 runner 上，每周重新生成）之外还没有基准数字，生态只有一位维护者、
 十六个标准库模块和一个来自树外的包（statusmith 的 [Discord Rich Presence SDK](../../discord.md)，
 `nx add discord_rpc ...`）。[`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md) 列出每个未修复的缺陷

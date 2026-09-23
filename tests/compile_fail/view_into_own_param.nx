@@ -1,4 +1,4 @@
-// STRICT
+// a warning in 1.2 (under --strict an error), an error since 1.3
 // EXPECT: this returns a slice into `s`, an `own` parameter that is released when the function returns (rule V1)
 fn first(own s: String) -> []u8 {
     return s[..]

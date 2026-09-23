@@ -1,4 +1,4 @@
-// STRICT
+// a warning in 1.2 (under --strict an error), an error since 1.3
 // EXPECT: `out` keeps a view into `s`, which is released at the end of its block on line 6, while `out` lives on (rule V2)
 fn main() {
     var out: []u8 = ""

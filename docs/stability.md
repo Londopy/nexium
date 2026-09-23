@@ -57,8 +57,9 @@ Undefined behaviour was never promised. A program that has it under
 become an error in a minor as the checker learns to see it; such a rule
 arrives as a warning in one release and an error in the next, so the
 program gets a release to run `nx fix`. 1.2 did this for the view rules
-V1 to V5 (`SPEC.md` 5.6 and 5.7): they warn, `--strict` or `NX_STRICT=1`
-makes them errors, and 1.3 makes them errors for everyone.
+V1 to V5 (`SPEC.md` 5.6 and 5.7): they warned, `--strict` or `NX_STRICT=1`
+made them errors, and since 1.3 they are errors for everyone. `--strict`
+stays: it makes any warning an error, a deprecation's included.
 
 ## Deprecation
 
@@ -73,11 +74,16 @@ A feature that has to go is deprecated first:
 
 ## `nx fix`
 
-`nx fix FILE...` rewrites source for the deprecations the running compiler
-knows how to migrate, in place, and reports what it changed. It never
-changes meaning and never touches what it cannot migrate mechanically; those
-uses stay as warnings. At 1.0 there are no deprecations, and `nx fix` says
-so.
+`nx fix FILE...` rewrites source in place and reports what it changed:
+the deprecations the running compiler knows how to migrate, and the edits
+the checker offers for its errors where the fix is mechanical: rule V4's
+`.clone()` where a value moves out from under a view of it, rule V5's
+`@escape(...)` around a value kept past its arena. Each edit is tried on
+the program first and kept only when the checker then reports fewer
+errors and none it did not report before; what it cannot fix
+mechanically it leaves, and says how many errors remain. `--check`
+reports without writing. It never changes what a correct program means.
+There are no deprecations yet.
 
 ## Not covered
 

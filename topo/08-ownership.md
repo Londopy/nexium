@@ -74,20 +74,19 @@ into one for free. Two rules keep views honest:
 - A loop variable in `for w in c`, and the binding of `if let v = opt`
   over a stored optional, are views of the element: you may read them and
   clone them, not move them out. The message names the fix.
-- Since 1.2 the compiler also warns when a view is kept past its storage:
-  stored into a variable that outlives the local it points into, read
-  after the `List` or `String` it points into grew, or after the value it
-  points into moved away (rules V2 to V4 in `SPEC.md` 5.6). The warning
-  names the storage and the line it died on; `.clone()` is the usual fix.
-  `nx check --strict` makes these warnings errors, as 1.3 will.
+- The compiler also refuses a view kept past its storage: stored into a
+  variable that outlives the local it points into, read after the `List`
+  or `String` it points into grew, or after the value it points into
+  moved away (rules V2 to V4 in `SPEC.md` 5.6; warnings in 1.2, errors
+  since 1.3). The error names the storage, the line it died on, and the
+  fix: take the view later, keep an owned copy (`.clone()` of the `String`
+  or `List` itself; a view's clone is the same view), or move a clone
+  instead of the value. `nx fix` makes that last edit for you.
 
 Views into parameters may be returned, because the caller owns their
-storage. Views stored into variables that outlive their storage, or kept
-across a `List` growing, are not caught by the 1.0 compiler; the roadmap's
-1.2 closes those cases, and until then they are the one place where the
-programmer, not the compiler, keeps the promise. A debug build fills freed
-memory with a fixed byte so such a mistake fails loudly rather than
-quietly.
+storage. What the rules cannot see, a `*mut` obtained in `unsafe` code,
+stays the programmer's promise; a debug build fills freed memory with a
+fixed byte so such a mistake fails loudly rather than quietly.
 
 ## `own`: taking a value on purpose
 

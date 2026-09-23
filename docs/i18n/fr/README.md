@@ -326,7 +326,7 @@ using arena {
 Options : `--mode debug|safe|fast|small`, `--target x86_64-linux-gnu` (toute
 cible connue de `zig cc`), `--cpu baseline|native|<nom>` (baseline par défaut,
 pour qu'un binaire tourne sur toute machine de son architecture), `--out-dir`,
-`--keep-c`, `--cc`, `--strict` (les avertissements des règles de vues sont des
+`--keep-c`, `--cc`, `--strict` (les avertissements sont des
 erreurs), et pour l'interopérabilité C `-I`, `--link`, `--link-path`,
 `--c-source`.
 
@@ -339,8 +339,7 @@ la spécification et chaque programme du tutoriel s'exécute en CI sur trois
 plateformes, sous les sanitizers et le fuzzer. Ce que 1.0 n'est pas encore,
 et où chaque point trouve sa réponse, est la première section de [la feuille
 de route](../../../ROADMAP.md) : la sûreté mémoire, ce sont les règles de vues
-de 1.2, des avertissements jusqu'à ce que 1.3 en fasse des erreurs (`--strict`
-le fait dès maintenant), il n'y
+de 1.2, des erreurs depuis 1.3 (`nx fix` fait les corrections mécaniques), il n'y
 a pas de chiffres de performance au-delà de [la page des chiffres](../../numbers.md)
 (quatre programmes en cinq langages sur un même runner, régénérée chaque
 semaine), et l'écosystème se résume à un seul mainteneur, seize modules de

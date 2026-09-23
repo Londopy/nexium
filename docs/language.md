@@ -400,9 +400,10 @@ A function may not return a slice or pointer into one of its own locals
 because the caller owns them. 1.2 adds the view rules V1 to V5 (`SPEC.md`
 5.6 and 5.7): a view stored past the storage it points into, a view used
 after its container grew or its value moved, a value holding a view
-returned, a value kept past its `using arena` block. They are warnings in
-1.2 and errors in 1.3; `nx check --strict` (or `NX_STRICT=1`) makes them
-errors now. `@escape(v)` copies a value out of an arena block.
+returned, a value kept past its `using arena` block. They were warnings in
+1.2 and are errors since 1.3; each error names the fix, and `nx fix` makes
+the mechanical ones (a `.clone()` where the value moves, an `@escape`).
+`@escape(v)` copies a value out of an arena block.
 
 ## Not implemented yet
 

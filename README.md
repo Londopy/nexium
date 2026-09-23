@@ -352,7 +352,7 @@ Using Nexium somewhere? Open an issue or a pull request and it goes here.
 Options: `--mode debug|safe|fast|small`, `--target x86_64-linux-gnu` (any
 target `zig cc` knows), `--cpu baseline|native|<name>` (baseline by default,
 so a binary runs on any machine of its architecture), `--out-dir`,
-`--keep-c`, `--cc`, `--strict` (the view rules' warnings are errors),
+`--keep-c`, `--cc`, `--strict` (warnings are errors),
 and for C interop `-I`, `--link`, `--link-path`, `--c-source`.
 
 ## Status
@@ -362,8 +362,8 @@ addition under the [stability policy](docs/stability.md); the compiler is
 written in Nexium and builds itself; every example, spec case and tutorial
 program runs in CI on three platforms, under the sanitizers and the fuzzer.
 What 1.0 is not yet, and where each is answered, is the first section of
-[the roadmap](ROADMAP.md): memory safety is the view rules of 1.2, warnings
-until 1.3 makes them errors (`--strict` does now), there are no benchmark
+[the roadmap](ROADMAP.md): memory safety is the view rules of 1.2, errors
+since 1.3 (`nx fix` makes the mechanical fixes), there are no benchmark
 numbers beyond [the numbers page](docs/numbers.md) (four programs in five
 languages on one runner, regenerated weekly), and the ecosystem is one maintainer, sixteen standard
 library modules and two projects outside the tree (statusmith's

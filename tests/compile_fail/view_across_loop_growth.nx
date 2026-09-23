@@ -1,4 +1,4 @@
-// STRICT
+// a warning in 1.2 (under --strict an error), an error since 1.3
 // EXPECT: `xs` changes here inside a loop, while `v`, a view into it taken before the loop on line 6, is read in the loop; the next pass reads moved storage (rule V3)
 fn main() {
     var xs = List(i32).new()

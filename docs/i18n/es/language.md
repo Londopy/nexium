@@ -288,8 +288,8 @@ porque el llamador es su dueño. 1.2 añade las reglas de vistas V1 a V5
 (`SPEC.md` 5.6 y 5.7): una vista guardada más allá de su almacenamiento, una
 vista usada después de que su contenedor creció o su valor se movió, un valor
 que contiene una vista devuelto, un valor conservado más allá de su bloque
-`using arena`. Son avisos en 1.2 y errores en 1.3; `nx check --strict` (o
-`NX_STRICT=1`) los convierte en errores ya. `@escape(v)` copia un valor fuera
+`using arena`. Fueron avisos en 1.2 y son errores desde 1.3; cada error nombra
+el arreglo, y `nx fix` hace los mecánicos. `@escape(v)` copia un valor fuera
 de un bloque de arena.
 
 ## Aún no implementado

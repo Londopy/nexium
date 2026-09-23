@@ -1,4 +1,4 @@
-// STRICT
+// a warning in 1.2 (under --strict an error), an error since 1.3
 // EXPECT: this returns a value made inside a `using arena` block, whose storage is freed with the arena when the block ends (rule V5)
 fn make() -> String {
     using arena {

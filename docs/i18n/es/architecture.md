@@ -118,7 +118,7 @@ pueden depender de ligaduras anteriores.
 **Las vistas** se rastrean por sus orígenes (`self/check_views.nx`): cada local
 sabe a qué almacenamiento apuntan las vistas que contiene, y las reglas V1 a
 V5 de `SPEC.md` 5.6 y 5.7 se comprueban en el uso que leería almacenamiento
-liberado, como avisos en 1.2 (`--strict` los hace errores). Devolver un slice
+liberado, como errores desde 1.3 (avisos en 1.2). Devolver un slice
 o puntero a un local de la función (regla R1) es un error desde 1.0.
 
 **Los objetos de trait** reciben una vtable por par (trait, tipo), generada

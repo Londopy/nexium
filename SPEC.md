@@ -212,8 +212,9 @@ A view (a slice, a pointer, a closure, or a value holding one) points into
 storage it does not own. The checker knows where every view points (its
 *origins*: locals, a parameter's storage, a literal, a temporary, the
 value's own heap storage) and enforces five rules over them (**decided**,
-100 to 104). In 1.2 they are warnings; `--strict` (or `NX_STRICT=1`) makes
-them errors, and 1.3 makes them errors for everyone (`docs/stability.md`).
+100 to 104). They were warnings in 1.2 and are errors since 1.3
+(`docs/stability.md`); `nx fix` makes the edit where one is mechanical
+(V4, V5).
 The archived region rules R2 to R4 are not adopted (**decided**, 88); the
 view rules replace them.
 
@@ -243,7 +244,9 @@ the same literal moves in is a view into the literal's value: it travels
 with the value, and V3 and V4 then apply to that value. The rules report
 at the use that would read released storage, naming the storage and the
 moment it was released; a view that is not used again is not reported.
-`.clone()` makes an independent copy where a view was kept. A `*mut`
+An owned copy is independent of the storage a view points into: `.clone()`
+of the `String`, `List` or `Map` itself, not of the view, whose clone is
+another view of the same storage. A `*mut`
 obtained inside `unsafe` stays the programmer's responsibility. A debug
 build fills freed storage with a fixed byte (`0xDD`), so a use the rules
 miss reads garbage or panics on a length instead of yielding the old

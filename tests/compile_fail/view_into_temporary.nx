@@ -1,4 +1,4 @@
-// STRICT
+// a warning in 1.2 (under --strict an error), an error since 1.3
 // EXPECT: `out` keeps a view into a temporary of line 7, which is released at the end of that block while `out` lives on (rule V2)
 fn word() -> String { return String.from("gone") }
 

@@ -1,4 +1,4 @@
-// STRICT
+// a warning in 1.2 (under --strict an error), an error since 1.3
 // EXPECT: `first` is a view into `xs`, which changed on line 7 after the view was taken; its storage may have moved (rule V3)
 fn main() {
     var xs = List(i32).new()

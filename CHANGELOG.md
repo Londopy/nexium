@@ -12,6 +12,18 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Changed
 
+- The view rules V1 to V5 (specification 5.6 and 5.7) are errors, as 1.2
+  said they would be: a warning in one release, an error in the next
+  (docs/stability.md). No program in this repository had one left.
+  `--strict` and `NX_STRICT=1` stay and make any warning an error; nothing
+  warns now, and a deprecation will. The compile-fail cases that needed
+  `--strict` fail without it.
+- The view rules' advice names a fix that works. "Clone the view" and
+  "clone it" could not: a view's clone is another view of the same
+  storage. The errors say to take the view later, keep an owned value (a
+  `String`, a `List`; `.clone()` of the value itself), move `s.clone()`
+  instead of `s`, or return an owned value, as the case is; the
+  specification says the same (5.6).
 - The rules for methods are written down (decision 110): a method is
   visible wherever its type is, as a field is, and `pub` on it marks the
   documented interface; a type's `impl` blocks may sit in several modules.
@@ -33,6 +45,15 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Added
 
+- `nx fix` makes the edits the checker offers for its errors (decision
+  111): rule V4's `.clone()` where a value moves out from under a view of
+  it, rule V5's `@escape(...)` around a value kept past its `using arena`
+  block. Each edit is tried on the program in memory, in whichever of the
+  program's own files it falls, and kept only when the checker then
+  reports fewer errors and none it did not report before; `--check`
+  reports without writing. An error with an edit on offer ends with
+  "note: `nx fix FILE` can try an edit for N of these". The loader takes
+  stand-in texts for any of the program's files (`load_with_texts`).
 - The playground: the Topo's exercises and every example on the site run in
   the page. The compiler is built as WebAssembly (`site/play_build.sh`: the
   C of the current sources for `wasm32-wasi`, 2.8 MB, under 1 MB

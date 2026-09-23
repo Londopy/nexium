@@ -500,6 +500,15 @@ pub fn load(root: []u8, std_dir: []u8) -> !List(Mod) {
 /// `load`, with `root_text` standing in for the root file's contents when
 /// it is not empty (an editor's unsaved buffer).
 pub fn load_with_text(root: []u8, root_text: []u8, std_dir: []u8) -> !List(Mod) {
+    var texts = Map(String, String).new()
+    if root_text.len > 0 { texts.put(String.from(root), String.from(root_text)) }
+    return load_with_texts(root, &texts, std_dir)
+}
+
+/// `load`, with `texts` standing in for the contents of the files it names
+/// by path, as the modules name them (`Mod.path`): `nx fix` checks a trial
+/// edit to any of the program's files this way.
+pub fn load_with_texts(root: []u8, texts: *Map(String, String), std_dir: []u8) -> !List(Mod) {
     var mods = List(Mod).new()
     let root_dir = dir_of(root)
     let root_name = stem_of(root)
@@ -522,7 +531,7 @@ pub fn load_with_text(root: []u8, root_text: []u8, std_dir: []u8) -> !List(Mod) 
         let pkg = queue_pkgs.pop() orelse break
         if seen.contains(name[..]) { continue }
         seen.put(name.clone(), true)
-        let text = if mods.len == 0 and root_text.len > 0 { String.from(root_text) } else {
+        let text = if let t = texts.get(path[..]) { t.clone() } else {
             io.read_file(path[..]) catch {
                 eprintln("error: cannot read {}", .{path})
                 return error.NotFound
@@ -813,6 +822,18 @@ pub struct Witness {
     why: String
 }
 
+/// An edit `nx fix` may make for an error: `start..end` of a module's
+/// source becomes `text`. The checker offers it; `nx fix` keeps it only
+/// when checking the edited program leaves fewer errors and no new one.
+pub struct Fix derive(Clone) {
+    module: usize
+    start: usize
+    end: usize
+    text: String
+    // what the edit does, for nx fix's report
+    what: String
+}
+
 /// A diagnostic as data: where, what, and whether it is a note on the
 /// error before it (the language server reads these).
 pub struct Diag {
@@ -821,6 +842,7 @@ pub struct Diag {
     msg: String
     note: bool
     // a warning (or a note on one): reported, not fatal, unless `--strict`
+    // (nothing warns in 1.3; a deprecation will)
     warn: bool
 }
 
@@ -961,6 +983,8 @@ pub struct Checker {
     errors: List(String)
     // warnings, rendered like errors; `--strict` turns them into errors
     warnings: List(String)
+    // the edits offered for errors, for `nx fix`
+    fixes: List(Fix)
     // per type: 1 when it cannot hold a view, 2 when it can (section 5.6)
     view_cache: Map(usize, u8)
     // a closure instance's captured locals, for the views it carries
@@ -1088,8 +1112,9 @@ impl Checker {
     }
 
     /// A warning: reported like an error, fatal only under `--strict`. The
-    /// view rules of 1.2 arrive this way (docs/stability.md: a warning in one
-    /// release, an error in the next).
+    /// view rules of 1.2 arrived this way and are errors since 1.3
+    /// (docs/stability.md: a warning in one release, an error in the next);
+    /// a deprecation will warn so.
     fn warn(self: *mut Self, module: usize, at: usize, msg: []u8) {
         self.warnings.append(format("{}\n{}", .{msg, self.render_at(module, at)}))
         self.diags.append(Diag{ .module = module, .at = at, .msg = String.from(msg), .note = false, .warn = true })
@@ -1098,6 +1123,16 @@ impl Checker {
     fn warn_here(self: *mut Self, at: usize, msg: []u8) {
         let m = self.cur_module()
         self.warn(m, at, msg)
+    }
+
+    /// Offer `nx fix` an edit for the error just reported: `start..end` of
+    /// the module's source becomes `text`. An edit already offered (another
+    /// instance of a generic function) is offered once.
+    fn offer_fix(self: *mut Self, module: usize, start: usize, end: usize, text: []u8, what: []u8) {
+        for f in self.fixes {
+            if f.module == module and f.start == start and f.end == end and f.text[..] == text { return }
+        }
+        self.fixes.append(Fix{ .module = module, .start = start, .end = end, .text = String.from(text), .what = String.from(what) })
     }
 
     /// A note attached to the warning just reported.
@@ -3624,7 +3659,7 @@ pub fn new_checker(own mods: List(Mod)) -> Checker {
         .structs = List(StructDef).new(), .enums = List(EnumDef).new(), .traits = List(TraitDef).new(),
         .impls = List(ImplDef).new(), .fns = List(FnDef).new(), .consts = List(ConstDef).new(),
         .globals = List(GlobalDef).new(), .aliases = List(AliasDef).new(), .error_sets = List(ErrorSetDef).new(),
-        .errors = List(String).new(), .warnings = List(String).new(), .view_cache = Map(usize, u8).new(), .closure_caps = Map(usize, List(usize)).new(), .diags = List(Diag).new(), .error_names = List(String).new(), .error_ids = Map(String, usize).new(),
+        .errors = List(String).new(), .warnings = List(String).new(), .fixes = List(Fix).new(), .view_cache = Map(usize, u8).new(), .closure_caps = Map(usize, List(usize)).new(), .diags = List(Diag).new(), .error_names = List(String).new(), .error_ids = Map(String, usize).new(),
         .insts = List(Inst).new(), .inst_map = Map(String, usize).new(), .queue = List(usize).new(), .tir = Tir{ .nodes = List(T).new() },
         .ctxs = List(FnCtx).new(), .main_inst = NONE, .tests = List(usize).new(),
         .env_names = List(String).new(), .env_tys = List(usize).new(),

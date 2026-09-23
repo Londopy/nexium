@@ -1,4 +1,4 @@
-// STRICT
+// a warning in 1.2 (under --strict an error), an error since 1.3
 // EXPECT: `kept` lives past this `using arena` block, but the value stored in it was made inside the block and its storage is freed with the arena at the end (rule V5)
 fn main() {
     var kept = List(String).new()

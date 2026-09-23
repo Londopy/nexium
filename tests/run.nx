@@ -229,7 +229,8 @@ fn run_case(e: *Env, c: *Case) -> ?String {
         var expects = List(String).new()
         for l in text[..].lines() { if let rest = strings.strip_prefix(l, "// EXPECT:") { expects.append(String.from(rest.trim())) } }
         if expects.len == 0 { return format("{} has no // EXPECT: line", .{path}) }
-        // `// STRICT`: the case fails only because warnings are errors under --strict
+        // `// STRICT`: the case fails only because warnings are errors under
+        // --strict (none since 1.3 made the view rules errors; a deprecation would)
         let strict = text[..].find("// STRICT") != null
         let out = if strict { nx(e, ["check", path, "--strict"][..]) } else { nx(e, ["check", path][..]) }
         if out.code == 0 { return format("{} was accepted but should fail", .{path}) }
@@ -366,6 +367,24 @@ fn suite_examples(e: *Env, failures: *mut List(String)) {
         if page[..].find(want) == null { failures.append(format("examples: nx doc does not show `{}` (exit {}):\n{}{}", .{want, dg.code, dg.stderr, page})) }
     }
     if page[..].find("hidden") != null { failures.append(String.from("examples: nx doc lists a method that is not pub")) }
+    // nx fix makes rule V4's `.clone()` and rule V5's `@escape`, and the
+    // program then checks clean; `--check` writes nothing; a V3 error has no
+    // edit and is left; `--strict` is still accepted
+    let fx_src = fs.join(e.root[..], "nx-out/cases/fixable.nx")
+    let fixable = "fn keep(own s: String) -> usize { return s.len }\n\nfn make() -> String {\n    using arena {\n        let s = String.from(\"arena\")\n        return s\n    }\n    return String.new()\n}\n\nfn main() {\n    let a = String.from(\"first\")\n    let va = a[..]\n    let n = keep(a)\n    println(\"{} {} {}\", .{va, n, make()})\n}\n"
+    fs.write(fx_src[..], fixable) catch { }
+    let fck = nx(e, ["fix", fx_src[..], "--check"][..])
+    let untouched = fs.read(fx_src[..]) catch { String.new() }
+    if fck.code == 0 or fck.stdout[..].find("would fix") == null or untouched[..] != fixable { failures.append(format("examples: nx fix --check (exit {}) should report and write nothing:\n{}{}", .{fck.code, fck.stdout, fck.stderr})) }
+    let fxd = nx(e, ["fix", fx_src[..]][..])
+    let fixed = fs.read(fx_src[..]) catch { String.new() }
+    if fxd.code != 0 or fixed[..].find("keep(a.clone())") == null or fixed[..].find("return @escape(s)") == null { failures.append(format("examples: nx fix (exit {}) did not make the V4 and V5 edits:\n{}{}{}", .{fxd.code, fxd.stdout, fxd.stderr, fixed})) }
+    let fcl = nx(e, ["check", fx_src[..], "--strict"][..])
+    if fcl.code != 0 { failures.append(format("examples: the program nx fix edited does not check clean:\n{}", .{fcl.stderr})) }
+    let v3_src = fs.join(e.root[..], "nx-out/cases/unfixable.nx")
+    fs.write(v3_src[..], "fn main() {\n    var xs = List(i32).new()\n    xs.append(1)\n    let v = xs[..]\n    xs.append(2)\n    println(\"{}\", .{v.len})\n}\n") catch { }
+    let fun = nx(e, ["fix", v3_src[..]][..])
+    if fun.code == 0 or fun.stdout[..].find("1 error(s) left that nx fix has no edit for") == null { failures.append(format("examples: nx fix on a V3 error (exit {}):\n{}{}", .{fun.code, fun.stdout, fun.stderr})) }
     // the effects lockfile: the shipped example's is committed and must match;
     // a function that starts printing gains `blocks`, and --check says so
     let lk = nx(e, ["audit", "examples/ropesim.nx", "--check"][..])

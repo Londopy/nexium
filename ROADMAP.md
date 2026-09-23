@@ -437,7 +437,9 @@ warnings (decisions 100 to 104), `--strict` makes them errors, `@escape(v)` is h
 arena block, every `unsafe` block in `self/` and `std/` carries its
 reason, and the fuzzer runs mutants in debug mode. Left for 1.3: the
 warnings become errors, and `nx fix` inserts `.clone()` where that is the
-fix. The rules found three bugs in the compiler on their first run
+fix. (Done in 1.3: the rules are errors, and `nx fix` makes V4's
+`.clone()` and V5's `@escape`, each kept only when a check of the edited
+program agrees, decision 111.) The rules found three bugs in the compiler on their first run
 (changelog, `Fixed`).
 
 The promise of section 12, no undefined behaviour in safe code, has four
@@ -529,7 +531,10 @@ luck.
   rename backed by the checker's typed IR, not the parser (decision 84 was
   syntactic on purpose, for 0.5).
 - `nx fix` applies the compiler's own hints: `+%`/`+|` where the note
-  suggests it, `.clone()`, `_ =`, the view rules' fixes from 1.2.
+  suggests it, `.clone()`, `_ =`, the view rules' fixes from 1.2. (The view
+  rules' are in, decision 111: the checker offers an edit with an error and
+  `nx fix` keeps it when a check of the edited program agrees; the other
+  hints join the same way.)
 - `nx bench`: `bench "name" { }` blocks with warmup, iterations and
   medians, in the same file as tests.
 - `nx build --sanitize address,undefined` through the C compiler, and
