@@ -685,6 +685,23 @@ footer { margin-top: 3rem; color: var(--muted); font-size: 0.85rem; }
 .card h3 { margin: 0 0 0.4rem; }
 .card p { margin: 0; color: var(--muted); font-size: 0.93rem; }
 .two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1rem; }
+.play-bar { display: flex; align-items: center; gap: 0.5rem; margin: -0.6rem 0 0.8rem; flex-wrap: wrap; }
+.play-bar button, .play-guess button { font: inherit; font-size: 0.85rem; padding: 0.25rem 0.9rem; border-radius: 6px; border: 1px solid var(--line); background: var(--side); color: var(--fg); cursor: pointer; }
+.play-bar button.play-run { background: var(--accent); border-color: var(--accent); color: #fff; }
+.play-bar button:disabled { opacity: 0.6; cursor: progress; }
+.play-status { font-size: 0.85rem; color: var(--muted); }
+pre.code code[contenteditable] { outline: none; display: block; min-height: 1.5em; caret-color: var(--accent); }
+pre.code code.edited span { color: inherit; font-weight: inherit; font-style: inherit; }
+pre.code:focus-within { border-color: var(--accent); }
+.play-out { margin: 0 0 1rem; }
+.play-out pre { margin: 0 0 0.4rem; padding: 0.6rem 0.9rem; border-radius: 6px; border: 1px dashed var(--line); background: var(--bg); white-space: pre-wrap; font-size: 0.85em; }
+.play-out pre.play-stderr { color: var(--b); }
+.play-out pre.play-empty { color: var(--muted); }
+.play-verdict { margin: 0.3rem 0; font-weight: 600; }
+.play-ok { color: var(--accent-2); }
+.play-no { color: var(--b); }
+.play-guess { margin: 0 0 0.8rem; }
+.play-guess textarea { display: block; width: 100%; font-family: ui-monospace, Consolas, monospace; font-size: 0.85em; padding: 0.5rem 0.7rem; border: 1px solid var(--line); border-radius: 6px; background: var(--code-bg); color: var(--fg); margin-bottom: 0.4rem; }
 .menu-toggle, .menu-label { display: none; }
 .brand-row { display: flex; align-items: center; justify-content: space-between; }
 @media (max-width: 900px) {
@@ -715,7 +732,7 @@ fn page_head(out: *mut String, title: []u8, root: []u8, description: []u8) {
     // the card a link to the page gets on social sites and in chats
     out.append(format("<meta property=\"og:title\" content=\"{}\">\n<meta property=\"og:type\" content=\"website\">\n<meta property=\"og:image\" content=\"{}assets/social-preview.png\">\n<meta name=\"twitter:card\" content=\"summary_large_image\">\n", .{esc(title), SITE_URL})[..])
     if description.len > 0 { out.append(format("<meta property=\"og:description\" content=\"{}\">\n", .{esc(description)})[..]) }
-    out.append(format("<link rel=\"icon\" href=\"{}assets/logo.svg\">\n<link rel=\"stylesheet\" href=\"{}style.css\">\n</head>\n<body>\n<input type=\"checkbox\" id=\"menu\" class=\"menu-toggle\">\n<div class=\"layout\">\n", .{root, root})[..])
+    out.append(format("<link rel=\"icon\" href=\"{}assets/logo.svg\">\n<link rel=\"stylesheet\" href=\"{}style.css\">\n<script src=\"{}play.js\" data-wasm=\"play/nx.wasm\" defer></script>\n</head>\n<body>\n<input type=\"checkbox\" id=\"menu\" class=\"menu-toggle\">\n<div class=\"layout\">\n", .{root, root, root})[..])
 }
 
 fn nav_link(out: *mut String, root: []u8, p: *Page, current: bool, number: usize) {
@@ -816,7 +833,7 @@ fn exercises_section(out: *mut String, stem: []u8, links: *Links, page: *Page) {
     let has_quiz = fs.exists(quiz_path[..])
     if files.len == 0 and !has_quiz { return }
     out.append("<h2 id=\"exercises\">Exercises<a class=\"anchor\" href=\"#exercises\">#</a></h2>\n")
-    out.append(format("<p>The compiler grades these: <code>nx topo {}</code> writes them into a directory, <code>nx topo check</code> runs them. Or read them here, think, and open the solution.</p>\n", .{chapter_number(stem)})[..])
+    out.append(format("<p>The compiler grades these: <code>nx topo {}</code> writes them into a directory, <code>nx topo check</code> runs them. Or do them here: the code is editable, <b>Run</b> runs it with the compiler in the page (it loads on the first run and never sends your code anywhere), <b>Check</b> grades it as <code>nx topo check</code> would, and <b>Reset</b> puts the exercise back. Ctrl+Enter runs.</p>\n", .{chapter_number(stem)})[..])
     for f in files {
         let name = fs.stem(f[..])
         let path = fs.join(dir[..], f[..])
@@ -825,7 +842,10 @@ fn exercises_section(out: *mut String, stem: []u8, links: *Links, page: *Page) {
         var hints = List(String).new()
         let code = split_exercise(source[..], &mut task, &mut hints)
         let key = format("{}/{}", .{stem, name})
-        out.append(format("<div class=\"exercise\" id=\"{}\">\n<h3>{}<span class=\"kind\">{}</span></h3>\n", .{esc(name[..]), esc(name[..]), kind_label(name[..])})[..])
+        let kind = if name[..].starts_with("fill_") { "fill" } else if name[..].starts_with("fix_") { "fix" } else if name[..].starts_with("predict_") { "predict" } else if name[..].starts_with("write_") { "write" } else { "test" }
+        let expected_attr = fs.read(fs.join(dir[..], format("{}.expected", .{name})[..])[..]) catch { String.new() }
+        let data = if expected_attr.len > 0 { format(" data-expected=\"{}\"", .{esc(expected_attr[..])}) } else { String.new() }
+        out.append(format("<div class=\"exercise\" id=\"{}\" data-kind=\"{}\"{}>\n<h3>{}<span class=\"kind\">{}</span></h3>\n", .{esc(name[..]), esc(kind), data, esc(name[..]), kind_label(name[..])})[..])
         for t in task { out.append(format("<p>{}</p>\n", .{inline(t[..], links, page)})[..]) }
         out.append(format("<div class=\"included\"><span class=\"file\">{}.nx</span>", .{esc(name[..])})[..])
         code_block(out, "nexium", code[..])
@@ -1195,6 +1215,8 @@ fn main() -> u8 {
     fs.make_dirs(fs.join(out_dir[..], "topo")[..]) catch { }
     fs.make_dirs(fs.join(out_dir[..], "assets")[..]) catch { }
     fs.write(fs.join(out_dir[..], "style.css")[..], CSS) catch { eprintln("error: cannot write the stylesheet", .{}); return 1 }
+    // the playground's page half; the compiler (play/nx.wasm) is built by the Pages workflow
+    fs.copy("site/play.js", fs.join(out_dir[..], "play.js")[..]) catch { eprintln("error: cannot copy site/play.js", .{}); return 1 }
     for a in ["logo.svg", "banner.svg", "icon-256.png", "social-preview.png"] {
         fs.copy(fs.join("assets", a)[..], fs.join(fs.join(out_dir[..], "assets")[..], a)[..]) catch { eprintln("warning: cannot copy assets/{}", .{a}) }
     }

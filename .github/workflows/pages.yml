@@ -43,6 +43,12 @@ jobs:
         run: |
           export NX_ZIG=zig
           nx-out/bootstrap/nx2 run site/build.nx
+      # the playground: the compiler of this commit as WebAssembly, fetched by
+      # site/play.js on a reader's first Run, and checked through that script
+      - name: The playground's compiler
+        run: |
+          sh site/play_build.sh nx-out/bootstrap/nx2 site/out/play/nx.wasm
+          node site/play_test.mjs site/out/play/nx.wasm
       - uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4.0.0
         with:
           path: site/out

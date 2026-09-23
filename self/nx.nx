@@ -76,6 +76,7 @@ fn usage() {
     eprintln("       nx version | nx doctor | nx upgrade [--check] | nx install [DIR] | nx lsp | nx repl", .{})
     eprintln("       nx completions <bash|zsh|fish|powershell> | nx man     the shell completions, the manual page", .{})
     eprintln("       nx -e CODE | nx -p EXPR                    run a line as at the prompt; -p prints the value", .{})
+    eprintln("       nx play [file.nx]                          check a program and run it in the interpreter (stdin when no file)", .{})
     eprintln("       nx init [name] | nx add <name> --git URL [--tag TAG] [--dir SUB] | --path DIR | nx fetch | nx update [name...]", .{})
     eprintln("  -o <path>          output file", .{})
     eprintln("  --out-dir <dir>    where C and binaries go (default nx-out)", .{})
@@ -93,7 +94,7 @@ fn usage() {
 
 fn parse_opts(args: [][]u8) -> ?Opts {
     if args.len < 3 {
-        if args.len == 2 and (args[1] == "version" or args[1] == "--version" or args[1] == "-V" or args[1] == "doctor" or args[1] == "lsp" or args[1] == "repl" or args[1] == "upgrade" or args[1] == "topo" or args[1] == "man") {
+        if args.len == 2 and (args[1] == "version" or args[1] == "--version" or args[1] == "-V" or args[1] == "doctor" or args[1] == "lsp" or args[1] == "repl" or args[1] == "play" or args[1] == "upgrade" or args[1] == "topo" or args[1] == "man") {
             var padded = List([]u8).new()
             for a in args { padded.append(a) }
             padded.append("")
@@ -1942,7 +1943,7 @@ fn main() -> u8 {
     }
     // the commands that do work get the daily word on a newer release; the
     // ones that are about the release, the editor's server and the one-liners do not
-    let quiet = o.command == "upgrade" or o.command == "doctor" or o.command == "lsp" or o.command == "repl" or o.command == "-e" or o.command == "-p" or o.command == "version" or o.command == "--version" or o.command == "-V" or o.command == "topo" or o.command == "completions" or o.command == "man"
+    let quiet = o.command == "upgrade" or o.command == "doctor" or o.command == "lsp" or o.command == "repl" or o.command == "play" or o.command == "-e" or o.command == "-p" or o.command == "version" or o.command == "--version" or o.command == "-V" or o.command == "topo" or o.command == "completions" or o.command == "man"
     var code: i32 = 0
     if o.command == "build" {
         var out = String.new()
@@ -2009,6 +2010,8 @@ fn main() -> u8 {
         code = repl.run(VERSION, compiler_summary(&o)[..], host_os()[..], o.std_dir[..], &o.cc, newer[..])
     } else if o.command == "-e" or o.command == "-p" {
         code = repl.eval(o.file[..], o.command == "-p", o.std_dir[..], &o.cc)
+    } else if o.command == "play" {
+        code = repl.play(o.file[..], o.std_dir[..], &o.cc, o.strict)
     } else if o.command == "upgrade" {
         code = cmd_upgrade(o.file[..] == "--check")
     } else if o.command == "completions" {

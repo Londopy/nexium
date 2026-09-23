@@ -2948,18 +2948,22 @@ impl Gen {
         } else if k == check.TK.Float {
             self.line(format("nx_w_float({}, (double)({}), {}, {}, {}, {});", .{sink, v, prec, exp, width, left})[..])
         } else if k == check.TK.Bool {
-            self.line(format("nx_w_bool({}, {});", .{sink, v})[..])
+            if width != "0" { self.line(format("nx_w_pad({}, ({}) ? \"true\" : \"false\", ({}) ? 4 : 5, {}, {});", .{sink, v, v, width, left})[..]) }
+            else { self.line(format("nx_w_bool({}, {});", .{sink, v})[..]) }
         } else if k == check.TK.Slice {
             if width != "0" { self.line(format("nx_w_pad({}, (const char*)({}).ptr, ({}).len, {}, {});", .{sink, v, v, width, left})[..]) }
             else { self.line(format("nx_w_sl({}, {});", .{sink, v})[..]) }
         } else if k == check.TK.Str {
-            self.line(format("nx_w_sl({}, nx_str_slice({}));", .{sink, v})[..])
+            if width != "0" { self.line(format("nx_w_pad({}, (const char*)({}).ptr, ({}).len, {}, {});", .{sink, v, v, width, left})[..]) }
+            else { self.line(format("nx_w_sl({}, nx_str_slice({}));", .{sink, v})[..]) }
         } else if k == check.TK.ErrorSet {
-            self.line(format("nx_w_cstr({}, nx_error_name({}));", .{sink, v})[..])
+            if width != "0" { self.line(format("{{ const char* nx_n = nx_error_name({}); nx_w_pad({}, nx_n, strlen(nx_n), {}, {}); }}", .{v, sink, width, left})[..]) }
+            else { self.line(format("nx_w_cstr({}, nx_error_name({}));", .{sink, v})[..]) }
         } else if k == check.TK.Enum {
             let names = self.enum_names_table(t)
             let n = self.c.enums[self.c.tys.list[t].def].variants.len
-            self.line(format("nx_w_cstr({}, ({}).tag < {} ? {}[({}).tag] : \"?\");", .{sink, v, n, names, v})[..])
+            if width != "0" { self.line(format("{{ const char* nx_n = ({}).tag < {} ? {}[({}).tag] : \"?\"; nx_w_pad({}, nx_n, strlen(nx_n), {}, {}); }}", .{v, n, names, v, sink, width, left})[..]) }
+            else { self.line(format("nx_w_cstr({}, ({}).tag < {} ? {}[({}).tag] : \"?\");", .{sink, v, n, names, v})[..]) }
         } else if k == check.TK.Opt {
             let tmp = self.tmp()
             let cn = self.cty(t)

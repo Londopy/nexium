@@ -338,8 +338,10 @@ take a literal format string with placeholders `{}` `{x}` `{X}` `{b}` `{o}`
 With named arguments, `.{ .name = value, ... }`, every placeholder names
 one, `{name}` or `{name:spec}`, an argument may be written more than
 once, every argument must be used, and a width may come from an
-integer argument: `{v:>w}` with `.w = 8`. Formatting is compiled: each
-placeholder becomes a typed write.
+integer argument: `{v:>w}` with `.w = 8`. A width pads any value written
+as text: numbers, strings, booleans, and enum and error names; a char is
+written as it is. Formatting is compiled: each placeholder becomes a typed
+write.
 
 ## 7. Patterns
 

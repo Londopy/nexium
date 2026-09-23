@@ -851,6 +851,90 @@ fn suite_repl(e: *Env, failures: *mut List(String)) {
     println("repl: a session, :effects, :undo and :save; nx -e and nx -p", .{})
 }
 
+/// What `nx play` says when a program needs a compiled run: those programs
+/// are refused, which the playground shows, rather than run differently.
+fn play_refused(stderr: []u8) -> bool {
+    for m in ["the interpreter cannot run this program", "has no `main`", "call depth", "step budget", "C preprocessor failed"] {
+        if stderr.find(m) != null { return true }
+    }
+    return false
+}
+
+/// `nx play`, the playground's command, against the recorded outputs. Every
+/// spec case, example and Topo program with an `.expected` is interpreted
+/// instead of compiled and must print what the compiled program printed, or
+/// be refused; it never prints something else. Every fill and fix exercise of
+/// chapters 2 to 15 runs in the page, so its solution must print its
+/// recorded output from stdin with no refusal, and a fix starter must fail
+/// with the compiler's diagnostics, as `nx topo check` grades them.
+fn suite_play(e: *Env, failures: *mut List(String)) {
+    var same: usize = 0
+    var refused: usize = 0
+    var files = List(String).new()
+    for dir in ["tests/spec", "examples", "topo/code"] {
+        for f in tree_files(dir) { files.append(f.clone()) }
+    }
+    for f in files {
+        let expected_path = fs.with_extension(f[..], "expected")
+        let expected = fs.read(expected_path[..]) catch { continue }
+        let out = nx(e, ["play", f[..]][..])
+        if play_refused(out.stderr[..]) {
+            refused += 1
+            continue
+        }
+        var got = normalize(out.stdout[..])
+        got.append(normalize(out.stderr[..])[..])
+        if let d = same_text(normalize(expected[..])[..].trim(), got[..].trim(), format("nx play of {} differs from the compiled run", .{f})[..]) {
+            failures.append(d)
+        } else {
+            same += 1
+        }
+    }
+    var graded: usize = 0
+    let chapters = fs.list("topo/exercises") catch { List(String).new() }
+    for ch in chapters {
+        let num = ch[..].split("-")[0].parse_int(u32) catch { continue }
+        if num < 2 or num > 15 { continue }
+        let dir = fs.join("topo/exercises", ch[..])
+        let names = fs.list(dir[..]) catch { continue }
+        for n in names {
+            if ! (n[..].starts_with("fill_") or n[..].starts_with("fix_")) { continue }
+            let path = fs.join(dir[..], n[..])
+            if n[..].ends_with(".solution.nx") {
+                let stem = fs.stem(fs.stem(n[..])[..])
+                let want = fs.read(fs.join(dir[..], format("{}.expected", .{stem})[..])[..]) catch { continue }
+                let text = fs.read(path[..]) catch { String.new() }
+                let out = nx_in(e, ["play"][..], text[..], e.root[..])
+                if out.code != 0 {
+                    failures.append(format("nx play: the solution {} does not run in the page (exit {}):\n{}", .{path, out.code, out.stderr}))
+                } else if let d = same_text(normalize(want[..])[..].trim(), normalize(out.stdout[..])[..].trim(), format("nx play of {}", .{path})[..]) {
+                    failures.append(d)
+                }
+                graded += 1
+            } else if n[..].starts_with("fix_") and n[..].ends_with(".nx") {
+                let text = fs.read(path[..]) catch { String.new() }
+                let out = nx_in(e, ["play"][..], text[..], e.root[..])
+                if out.code != 1 or out.stderr[..].find("error") == null {
+                    failures.append(format("nx play: the starter {} must fail with diagnostics (exit {}):\n{}", .{path, out.code, out.stderr}))
+                }
+                graded += 1
+            }
+        }
+    }
+    // the exit codes: main's own, 1 after an error, 2 after a panic
+    let code = nx_in(e, ["play"][..], "fn main() -> u8 {\n    return 7\n}\n", e.root[..])
+    if code.code != 7 { failures.append(format("nx play: main returning 7 exited with {}", .{code.code})) }
+    let pan = nx_in(e, ["play"][..], "fn main() {\n    let xs = [1, 2]\n    var i: usize = 4\n    println(\"{}\", .{xs[i]})\n}\n", e.root[..])
+    if pan.code != 2 or pan.stderr[..].find("panic: index 4 out of bounds for length 2") == null or pan.stderr[..].find("at main.nx:4") == null {
+        failures.append(format("nx play: a panic exited with {}:\n{}", .{pan.code, pan.stderr}))
+    }
+    let spin = nx_in(e, ["play"][..], "fn main() {\n    var n: u64 = 0\n    while true { n += 1 }\n}\n", e.root[..])
+    if spin.code != 2 or spin.stderr[..].find("step budget") == null {
+        failures.append(format("nx play: an endless loop was not stopped by the step budget (exit {}):\n{}", .{spin.code, spin.stderr}))
+    }
+    println("play: {} programs as compiled, {} refused, {} exercises graded", .{same, refused, graded})
+}
+
 fn frame(body: []u8) -> String {
     return format("Content-Length: {}\r\n\r\n{}", .{body.len, body})
 }
@@ -945,7 +1029,7 @@ fn main() -> u8 {
     }
     // the compiler under test runs the C compiler this host has
     if macos { os.set_env("NX_CC", "cc") } else { os.set_env("NX_ZIG", "zig") }
-    let all = ["bootstrap", "examples", "spec", "compile_fail", "fmt", "std", "gui", "packages", "ship", "installer", "repl", "lsp", "topo"]
+    let all = ["bootstrap", "examples", "spec", "compile_fail", "fmt", "std", "gui", "packages", "ship", "installer", "repl", "play", "lsp", "topo"]
     for w in wanted {
         var known = false
         for s in all { if w[..] == s { known = true } }
@@ -975,6 +1059,7 @@ fn main() -> u8 {
         else if s == "ship" { suite_ship(&e, &mut failures) }
         else if s == "installer" { suite_installer(&e, &mut failures) }
         else if s == "repl" { suite_repl(&e, &mut failures) }
+        else if s == "play" { suite_play(&e, &mut failures) }
         else if s == "lsp" { suite_lsp(&e, &mut failures) }
         else if s == "topo" { suite_topo(&e, &mut failures) }
         if failures.len > before { println("{}: {} failure(s)", .{s, failures.len - before}) }

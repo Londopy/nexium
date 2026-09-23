@@ -10,6 +10,53 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ## [Unreleased]
 
+### Added
+
+- The playground: the Topo's exercises and every example on the site run in
+  the page. The compiler is built as WebAssembly (`site/play_build.sh`: the
+  C of the current sources for `wasm32-wasi`, 2.8 MB, under 1 MB
+  compressed) and fetched on a reader's first *Run*; `site/play.js` runs it
+  in a worker with its own WASI layer, so nothing is sent anywhere and a
+  long program never freezes the page. An exercise's code is editable, with
+  *Run*, *Check* (graded against the recorded output, as `nx topo check`
+  grades it, ticking the exercise's box) and *Reset*; a prediction takes
+  the reader's guess before showing the output; every other code block
+  with a `main` gets *Run*. The runtime compiles as `NX_WASM` on WASI: no
+  processes, sockets, terminal or `setjmp`, each failing as the operating
+  system would refuse.
+- `nx play [FILE]`: a whole program, from the file or from stdin, checked
+  as `nx check` checks it and run from `main` by the interpreter, nothing
+  compiled. It is the playground's command and works the same in a
+  terminal; the exit code is `main`'s own, 1 after diagnostics or an error
+  from `main`, 2 after a panic or a program the interpreter cannot run,
+  which it says at the line of the program that led there.
+- The interpreter runs closures (captures by copy and by reference), trait
+  objects (`dyn`), binary construction (`<<...>> into buf`), `@bitCast`,
+  ordering comparisons of byte slices, and slice builtins on `xs[..]`
+  (`sort`, `fill`, `reverse`). The Topo's chapters 2 to 15 run in the page.
+- The `play` suite of the harness runs every spec case, example and Topo
+  program through `nx play` and holds it to the compiled output, and runs
+  every fill and fix exercise of chapters 2 to 15; the CI job `playground`
+  runs them through the WebAssembly build and the page's script.
+
+### Fixed
+
+- The interpreter (the REPL, `nx -e`, and now `nx play`) printed some
+  programs differently from their compiled selves; running every recorded
+  program through it found them all. Format specs were ignored (`{:.2}`,
+  `{x}`, widths); an enum printed as `variant 0` and an error as `?`
+  instead of their names; writes through a `[]mut T` argument or a local
+  `[]mut` view of an array were lost; `errdefer` never ran; `lines()` kept
+  an empty last line after a final newline; `@refCount` answered 1; and a
+  `ref class` value was copied rather than shared, so an alias did not see
+  a write through another. Each is fixed (spec cases `s6_format_widths`,
+  `s6_mut_slices`, `s5_ref_class_shared`), and the REPL keeps its `ref
+  class` objects shared across lines.
+- A format width did not pad a `String`, a boolean, or an enum or error
+  name in a compiled program (`{>8}` padded numbers and `[]u8` only); it
+  pads every value written as text now.
+
+
 ## [1.2.1] - 2026-09-22
 
 *Annapurna: de Noyelle* — the expedition's liaison officer, whose whole job was permits and diplomacy: this patch is the roads in. `pip install nexium-lang` and `npm install nexium-lang` are real, the extension is on Open VSX, the package is on Chocolatey and submitted to winget, every release attaches Debian and RPM packages and signed provenance for each asset, a Nix flake and a dev container open the repository anywhere, `nx completions` and `nx man` come from the compiler, the site has an API, and the Topo is a course of twenty-five exercises graded by the compiler. The workflows are pinned to commits and their tokens are read-only outside the publishing jobs. The seed is regenerated from the final sources.

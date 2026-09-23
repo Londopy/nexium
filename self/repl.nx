@@ -30,6 +30,8 @@ struct Session {
     hist_values: List(List(check.CV))
     hist_shown: List(List(String))
     hist_types: List(List(String))
+    // the `ref class` objects the bindings name, shared across lines
+    heap: List(check.CV)
 }
 
 fn new_session() -> Session {
@@ -38,7 +40,7 @@ fn new_session() -> Session {
         .names = List(String).new(), .values = List(check.CV).new(), .shown = List(String).new(), .types = List(String).new(),
         .kinds = List(u8).new(), .printed = List(bool).new(),
         .hist_names = List(List(String)).new(), .hist_values = List(List(check.CV)).new(),
-        .hist_shown = List(List(String)).new(), .hist_types = List(List(String)).new(),
+        .hist_shown = List(List(String)).new(), .hist_types = List(List(String)).new(), .heap = List(check.CV).new(),
     }
 }
 
@@ -173,7 +175,7 @@ fn repl_checker(text: []u8, std_dir: []u8, cc: *List(String)) -> ?check.Checker 
 /// errors, which have been printed.
 fn repl_check(text: []u8, start: usize, s: *Session, std_dir: []u8, cc: *List(String)) -> ?check.ReplOutcome {
     var c = repl_checker(text, std_dir, cc) orelse return null
-    return c.run_repl(start, &s.names, &s.values)
+    return c.run_repl(start, &s.names, &s.values, &s.heap)
 }
 
 /// The first line of an item, for `:items`.
@@ -233,6 +235,7 @@ fn accept(s: *mut Session, own input: String, std_dir: []u8, cc: *List(String), 
     }
     s.names = names
     s.values = values
+    s.heap = out.heap.clone()
     s.shown = shown
     s.types = types
     if out.has_printed and echo { println("{}: {}", .{out.printed_ty, out.printed_val}) }
@@ -272,6 +275,72 @@ pub fn eval(code: []u8, print_last: bool, std_dir: []u8, cc: *List(String)) -> i
         println("{}", .{last.value})
     }
     return 0
+}
+
+/// `nx play [FILE]`: a whole program, from FILE or else from stdin, checked
+/// the way `nx check` checks it and run from `main` by the interpreter, so
+/// nothing is compiled. It is the playground's command (the site runs the
+/// compiler as WebAssembly, where there is no C compiler) and works the same
+/// in a terminal. The interpreter runs the language and the standard
+/// library's pure parts; foreign calls, threads, sockets, processes, mutable
+/// globals and `@refCount` need a compiled program, and say so. The exit code: `main`'s own, 1 after
+/// diagnostics or an error returned from `main`, 2 after a panic or a
+/// statement the interpreter cannot run.
+pub fn play(file: []u8, std_dir: []u8, cc: *List(String), strict: bool) -> i32 {
+    var text = String.new()
+    var name: []u8 = "main.nx"
+    if file.len > 0 {
+        text = io.read_file(file) catch {
+            eprintln("error: cannot read {}", .{file})
+            return 1
+        }
+        name = file
+    } else {
+        while true {
+            let line = io.read_line() orelse break
+            text.append(line[..])
+            text.append("\n")
+        }
+    }
+    let mods = check.load_with_text(name, text[..], std_dir) catch { return 1 }
+    var c = check.new_checker(mods)
+    c.cc = cc.clone()
+    c.play_mode = true
+    // the page runs on the browser's stack, which holds fewer nested calls
+    if let d = os.env("NX_PLAY_DEPTH") {
+        let n = d.parse_int(usize) catch { 0 }
+        if n > 0 { c.it_depth_limit = n }
+    }
+    c.collect()
+    c.reserve_errors()
+    c.check_program()
+    if c.warnings.len > 0 { check.print_warnings(&c.warnings, strict) }
+    if c.errors.len > 0 {
+        check.print_errors(&c.errors)
+        return 1
+    }
+    if strict and c.warnings.len > 0 { return 1 }
+    if !c.has_main() {
+        eprintln("error: the program has no `main` to run", .{})
+        return 1
+    }
+    let r = c.run_main()
+    if r.kind == check.PLAY_ERROR {
+        eprintln("error: {}", .{r.message})
+        return 1
+    }
+    if r.kind == check.PLAY_PANIC {
+        eprintln("panic: {}", .{r.message})
+        if r.at.len > 0 { eprintln("  at {}", .{r.at}) }
+        return 2
+    }
+    if r.kind == check.PLAY_UNSUPPORTED {
+        var at = String.new()
+        if r.own_at.len > 0 { at = format(" (at {}, inside {})", .{r.own_at, r.at}) } else if r.at.len > 0 { at = format(" (at {})", .{r.at}) }
+        eprintln("error: the interpreter cannot run this program{}: foreign calls, threads, sockets, processes, mutable globals and @refCount need a compiled program (nx run)", .{at})
+        return 2
+    }
+    return r.code
 }
 
 // ----- the line editor at the prompt ------------------------------------------------

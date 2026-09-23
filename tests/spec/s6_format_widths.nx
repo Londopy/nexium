@@ -1,0 +1,18 @@
+// SPEC 6.5: every placeholder spec, and a width pads any value written as text
+// (numbers, strings, booleans, enum and error names).
+enum Color { Red, Green, Blue }
+error Parse { Empty, Bad }
+
+fn main() {
+    println("[{x}] [{X}] [{b}] [{o}] [{c}]", .{255, 255, 5, 8, 65})
+    println("[{x}] [{}]", .{-255, -7})
+    println("[{:.0}] [{:.3}] [{e}] [{}]", .{2.5, 3.14159, 12345.678, 0.1})
+    println("[{>6}] [{<6}] [{>6}] [{<7}]", .{42, 42, "ab", true})
+    let s = String.from("xyz")
+    println("[{>5}] [{<5}]", .{s, s})
+    let c = Color.Green
+    println("{} [{>7}] [{<6}]", .{c, Color.Red, Color.Blue})
+    let e: Parse = error.Bad
+    println("{} [{<6}] [{>6}]", .{e, e, false})
+    println("[{v:>w}] [{v:<w}]", .{ .v = 7, .w = 4 })
+}

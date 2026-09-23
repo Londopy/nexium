@@ -16,7 +16,19 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+/* NX_WASM: built for wasm32-wasi, the playground. The platform has no
+   processes, sockets, terminal or setjmp; those parts fail with the error a
+   program would see when the operating system refuses. */
+#if defined(__wasi__) && !defined(NX_WASM)
+#define NX_WASM 1
+#endif
+#if defined(NX_WASM)
+typedef int jmp_buf[1];
+#define setjmp(b) ((void)(b), 0)
+#define longjmp(b, v) ((void)(b), (void)(v), abort())
+#else
 #include <setjmp.h>
+#endif
 #include <errno.h>
 #include <sys/stat.h>
 #include <math.h>
@@ -32,6 +44,12 @@
 #include <io.h>
 #include <fcntl.h>
 #include <direct.h>
+#elif defined(NX_WASM)
+#include <sys/time.h>
+#include <unistd.h>
+#include <dirent.h>
+#include <fcntl.h>
+extern char** environ;
 #else
 #include <sys/time.h>
 #include <unistd.h>
@@ -879,6 +897,13 @@ NX_INLINE double nx_random_float(nx_ctx* c) { return (double)(nx_rng_next(c) >> 
 
 /* process.run: spawn argv[0] with the given arguments (searching PATH), wait,
  * and return its exit code. False when the process could not be started. */
+#if defined(NX_WASM)
+NX_INLINE bool nx_run(nx_ctx* c, const nx_sl_u8* argv, size_t argc, int* code) {
+    (void)c; (void)argv; (void)argc; (void)code;
+    errno = ENOSYS;
+    return false;
+}
+#else
 NX_INLINE bool nx_run(nx_ctx* c, const nx_sl_u8* argv, size_t argc, int* code) {
     if (argc == 0) return false;
     fflush(stdout); fflush(stderr);
@@ -939,6 +964,7 @@ NX_INLINE bool nx_run(nx_ctx* c, const nx_sl_u8* argv, size_t argc, int* code) {
     return true;
 #endif
 }
+#endif
 NX_INLINE bool nx_cpath(nx_sl_u8 path, char* buf, size_t cap) {
     if (path.len >= cap) return false;
     memcpy(buf, path.ptr, path.len); buf[path.len] = 0;
@@ -977,6 +1003,14 @@ static DWORD WINAPI nx_win_drain_thread(LPVOID p) {
     return 0;
 }
 #endif
+#if defined(NX_WASM)
+NX_INLINE bool nx_run_capture(nx_ctx* c, const nx_sl_u8* argv, size_t argc, nx_sl_u8 input, nx_sl_u8 cwd, int* code) {
+    (void)c; (void)argv; (void)argc; (void)input; (void)cwd; (void)code;
+    nx_cap_reset(c);
+    errno = ENOSYS;
+    return false;
+}
+#else
 NX_INLINE bool nx_run_capture(nx_ctx* c, const nx_sl_u8* argv, size_t argc, nx_sl_u8 input, nx_sl_u8 cwd, int* code) {
     if (argc == 0) return false;
     fflush(stdout); fflush(stderr);
@@ -1085,6 +1119,7 @@ NX_INLINE bool nx_run_capture(nx_ctx* c, const nx_sl_u8* argv, size_t argc, nx_s
     return true;
 #endif
 }
+#endif
 NX_INLINE bool nx_read_file(nx_ctx* c, nx_sl_u8 path, nx_string* out) {
     char p[4096];
     if (path.len >= sizeof p) return false;
@@ -1419,6 +1454,11 @@ NX_INLINE int32_t nx_net_code(void) {
     return 4;
 }
 NX_INLINE void nx_net_blocking(nx_sock s, bool on) { u_long mode = on ? 0 : 1; ioctlsocket(s, FIONBIO, &mode); }
+#elif defined(NX_WASM)
+typedef int nx_sock;
+#define NX_BAD_SOCK (-1)
+#define nx_closesock(s) ((void)(s), 0)
+NX_INLINE void nx_net_init(void) {}
 #else
 typedef int nx_sock;
 #define NX_BAD_SOCK (-1)
@@ -1434,6 +1474,21 @@ NX_INLINE void nx_net_blocking(nx_sock s, bool on) {
     if (fl >= 0) fcntl(s, F_SETFL, on ? (fl & ~O_NONBLOCK) : (fl | O_NONBLOCK));
 }
 #endif
+#if defined(NX_WASM)
+/* no sockets in the playground: every call fails as "any other failure" */
+NX_INLINE int32_t nx_tcp_connect(nx_sl_u8 host, uint16_t port, int64_t timeout_ms, int64_t* out) { (void)host; (void)port; (void)timeout_ms; (void)out; return 4; }
+NX_INLINE int32_t nx_tcp_listen(nx_sl_u8 host, uint16_t port, int64_t* out) { (void)host; (void)port; (void)out; return 4; }
+NX_INLINE int32_t nx_tcp_accept(int64_t l, int64_t timeout_ms, int64_t* out) { (void)l; (void)timeout_ms; (void)out; return 4; }
+NX_INLINE int32_t nx_net_send(int64_t h, nx_sl_u8 data) { (void)h; (void)data; return 4; }
+NX_INLINE int32_t nx_net_recv(nx_ctx* c, int64_t h, size_t n, int64_t timeout_ms, nx_string* out) { (void)c; (void)h; (void)n; (void)timeout_ms; (void)out; return 4; }
+NX_INLINE int32_t nx_net_close(int64_t h) { (void)h; return 4; }
+NX_INLINE int32_t nx_net_name(nx_ctx* c, int64_t h, bool local, nx_string* out) { (void)c; (void)h; (void)local; (void)out; return 4; }
+NX_INLINE int32_t nx_net_resolve(nx_ctx* c, nx_sl_u8 host, nx_rawlist* out) { (void)c; (void)host; (void)out; return 4; }
+NX_INLINE int32_t nx_udp_bind(nx_sl_u8 host, uint16_t port, int64_t* out) { (void)host; (void)port; (void)out; return 4; }
+NX_INLINE int32_t nx_udp_send_to(int64_t h, nx_sl_u8 host, uint16_t port, nx_sl_u8 data) { (void)h; (void)host; (void)port; (void)data; return 4; }
+NX_INLINE int32_t nx_udp_recv_from(nx_ctx* c, int64_t h, size_t n, int64_t timeout_ms, nx_string* out) { (void)c; (void)h; (void)n; (void)timeout_ms; (void)out; return 4; }
+NX_INLINE nx_string nx_net_last_peer(nx_ctx* c) { nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena; return s; }
+#else
 static char nx_net_peer_buf[128];
 
 NX_INLINE struct addrinfo* nx_net_lookup(nx_sl_u8 host, uint16_t port, int socktype, bool passive) {
@@ -1664,6 +1719,7 @@ NX_INLINE nx_string nx_net_last_peer(nx_ctx* c) {
     nx_str_append(c, &s, (const uint8_t*)nx_net_peer_buf, strlen(nx_net_peer_buf));
     return s;
 }
+#endif
 
 /* ------------------------------------------------------------- threads */
 /* A spawned thread runs a Nexium function value `fn(*mut X)` with its own
@@ -1791,6 +1847,8 @@ NX_INLINE bool nx_raw_mode(bool on) {
     SetConsoleMode(hout, om | ENABLE_VIRTUAL_TERMINAL_PROCESSING | ENABLE_PROCESSED_OUTPUT);
     return true;
 }
+#elif defined(NX_WASM)
+NX_INLINE bool nx_raw_mode(bool on) { (void)on; return false; }
 #else
 static struct termios nx_saved_termios;
 static bool nx_raw_saved;
@@ -1907,6 +1965,8 @@ NX_INLINE void nx_run_on_stack(uint64_t bytes, void (*f)(void*), void* arg) {
 #if defined(_WIN32)
     HANDLE h = CreateThread(NULL, (SIZE_T)bytes, nx_stack_entry, &c, STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);
     if (h) { WaitForSingleObject(h, INFINITE); CloseHandle(h); return; }
+#elif defined(NX_WASM)
+    (void)nx_stack_entry;
 #else
     pthread_attr_t attr; pthread_t t;
     if (pthread_attr_init(&attr) == 0) {

@@ -980,6 +980,8 @@ pub struct Checker {
     values: List(CV)
     // `nx repl`: unused values in `main` are printed, and the interpreter may talk to the world
     repl_mode: bool
+    // `nx play`: the interpreter may talk to the world, as in the REPL; the program is checked as written
+    play_mode: bool
     // the bindings of the `?.` chains being checked, innermost last (ChainSelf reads the top)
     chain_locals: List(usize)
     // statements a statement expands to after itself (`let (a, b) = e` is one `let` per name), drained by the block
@@ -996,6 +998,17 @@ pub struct Checker {
     it_pending_label: usize
     it_pending_val: CV
     it_failed_at: usize
+    // the module of the function that panicked or could not be evaluated, NONE when unknown
+    it_where: usize
+    // where an evaluation that failed left the program's own file (module 0), NONE until it does
+    it_root_at: usize
+    // the last call's `[]mut T` parameters at its return (VK_NONE for the others)
+    it_kept: List(CV)
+    // nested calls allowed (CALL_DEPTH; less where the stack is smaller, as in the playground)
+    it_depth_limit: usize
+    // the `ref class` objects the interpreter made, by VK_REF index (never freed:
+    // a run is exercise-sized and bounded by the step budget)
+    it_heap: List(CV)
     frames: List(Frame)
     it_cur_fn: usize
     it_out: CV
@@ -9798,6 +9811,15 @@ const VK_NEVER: u8 = 21
 // a pointer to a place: frame `ival`, local `b`, and a path of field or
 // element indices into it
 const VK_PTR: u8 = 22
+/// a `[]mut T` local that views another place: frame (`ival`), local (`b`),
+/// path, and the first index and the length (`items`, two integers). Only
+/// a local's slot holds one; reading the local copies the elements out.
+const VK_VIEW: u8 = 23
+/// a trait object: the data pointer (`items[0]`) and its vtable (`ival`)
+const VK_DYN: u8 = 24
+/// a `ref class` object: its index in the interpreter's heap (`ival`);
+/// copies of the value share the object
+const VK_REF: u8 = 25
 
 /// A compile-time value, the Rust `Value`.
 pub struct CV derive(Clone) {
@@ -9823,11 +9845,20 @@ fn cv_err(id: usize) -> CV { var c = cv(VK_ERR); c.ival = id as i128; return c }
 fn cv_seq(kind: u8, own items: List(CV)) -> CV { var c = cv(kind); c.items = items; return c }
 fn cv_wrap(kind: u8, own inner: CV) -> CV { var c = cv(kind); c.items.append(inner); return c }
 fn cv_ptr(fi: usize, l: usize, own path: List(usize)) -> CV { var c = cv(VK_PTR); c.ival = fi as i128; c.b = l; c.path = path; return c }
+fn cv_view(fi: usize, l: usize, own path: List(usize), start: usize, len: usize) -> CV {
+    var c = cv_ptr(fi, l, path)
+    c.kind = VK_VIEW
+    c.items.append(cv_int(start as i128))
+    c.items.append(cv_int(len as i128))
+    return c
+}
+fn view_start(v: *CV) -> usize { return v.items[0].ival as usize }
+fn view_len(v: *CV) -> usize { return v.items[1].ival as usize }
 
 /// A value that can be carried to the next REPL line: no compile-time-only handles.
 pub fn cv_keepable(v: *CV) -> bool {
     let k = v.kind
-    if k == VK_TYPE or k == VK_FN or k == VK_PTR { return false }
+    if k == VK_TYPE or k == VK_FN or k == VK_PTR or k == VK_VIEW { return false }
     for it in v.items { if !cv_keepable(&it) { return false } }
     return true
 }
@@ -9850,6 +9881,39 @@ fn cv_bytes(v: *CV) -> ?[]u8 {
     if v.kind == VK_STR or v.kind == VK_OWNED_STR { return v.text[..] }
     return null
 }
+/// Bytes as a String, from a byte string or from an array or list of
+/// integers (a `[N]u8` buffer); an element never set counts as zero.
+fn cv_byte_text(v: *CV) -> ?String {
+    if v.kind == VK_STR or v.kind == VK_OWNED_STR { return v.text.clone() }
+    if v.kind != VK_ARRAY and v.kind != VK_LIST { return null }
+    var out = String.new()
+    for it in v.items { out.push_byte(((cv_as_int(&it) orelse 0) & 0xFF) as u8) }
+    return out
+}
+
+/// `nx_bswap`: the low `nbytes` bytes of `v` in the opposite order.
+fn bswap_bytes(v: u64, nbytes: usize) -> u64 {
+    var r: u64 = 0
+    for i in 0..nbytes { r |= ((v >> ((i * 8) as u32)) & 0xFF) << (((nbytes - 1 - i) * 8) as u32) }
+    return r
+}
+
+/// `nx_bits_write`: the low `n` bits of `v` into `p` from bit `bit` on,
+/// most significant first.
+fn bits_write(own p: String, bit: usize, n: usize, v: u64) -> String {
+    var q = p
+    if bit % 8 == 0 and n % 8 == 0 {
+        for i in 0..n / 8 { q[bit / 8 + i] = ((v >> (((n / 8 - 1 - i) * 8) as u32)) & 0xFF) as u8 }
+        return q
+    }
+    for i in 0..n {
+        let b = bit + i
+        let mask = (0x80 >> ((b % 8) as u8)) as u8
+        if ((v >> ((n - 1 - i) as u32)) & 1) == 1 { q[b / 8] = q[b / 8] | mask } else { q[b / 8] = q[b / 8] & ~mask }
+    }
+    return q
+}
+
 fn cv_seq_len(v: *CV) -> ?usize {
     if v.kind == VK_ARRAY or v.kind == VK_LIST { return v.items.len }
     if v.kind == VK_STR or v.kind == VK_OWNED_STR { return v.text.len }
@@ -9973,6 +10037,99 @@ fn cv_format(v: *CV) -> String {
     return String.from("?")
 }
 
+/// An integer in base 2, 8, 10 or 16 as the compiled `nx_w_int` writes it:
+/// the magnitude's digits, with `-` in front of a negative number.
+fn int_in_base(v: i128, base: i128, upper: bool) -> String {
+    if base == 10 { return format("{}", .{v}) }
+    let digits: []u8 = if upper { "0123456789ABCDEF" } else { "0123456789abcdef" }
+    var m = if v < 0 { -v } else { v }
+    if m == 0 { return String.from("0") }
+    var rev = List(u8).new()
+    while m > 0 {
+        rev.append(digits[(m % base) as usize])
+        m = m / base
+    }
+    var out = String.new()
+    if v < 0 { out.push_byte('-') }
+    var i = rev.len
+    while i > 0 {
+        i -= 1
+        out.push_byte(rev[i])
+    }
+    return out
+}
+
+/// `{:.N}` of a float as the compiled writer does it (C's `%.*f`). `format`
+/// takes a precision only as a literal, so each one is its own call; a
+/// precision past 20 writes 20 digits.
+fn float_fixed(x: f64, prec: i32) -> String {
+    return match prec {
+        0 => format("{:.0}", .{x}), 1 => format("{:.1}", .{x}), 2 => format("{:.2}", .{x}),
+        3 => format("{:.3}", .{x}), 4 => format("{:.4}", .{x}), 5 => format("{:.5}", .{x}),
+        6 => format("{:.6}", .{x}), 7 => format("{:.7}", .{x}), 8 => format("{:.8}", .{x}),
+        9 => format("{:.9}", .{x}), 10 => format("{:.10}", .{x}), 11 => format("{:.11}", .{x}),
+        12 => format("{:.12}", .{x}), 13 => format("{:.13}", .{x}), 14 => format("{:.14}", .{x}),
+        15 => format("{:.15}", .{x}), 16 => format("{:.16}", .{x}), 17 => format("{:.17}", .{x}),
+        18 => format("{:.18}", .{x}), 19 => format("{:.19}", .{x}),
+        _ => format("{:.20}", .{x}),
+    }
+}
+
+/// `nx_w_pad`: the text right-aligned in `width` bytes, or left-aligned,
+/// and never cut.
+fn pad_text(own text: String, width: i128, left: bool) -> String {
+    if width <= 0 or text.len as i128 >= width { return text }
+    var n = (width - text.len as i128) as usize
+    var out = String.new()
+    if left { out.append(text[..]) }
+    while n > 0 {
+        out.push_byte(' ')
+        n -= 1
+    }
+    if !left { out.append(text[..]) }
+    return out
+}
+
+/// One value under a placeholder's spec (`x`, `X`, `b`, `o`, `c`, `e`, `.N`,
+/// `>N`, `<N`, `>#i` for a width from argument `i`), written as the compiled
+/// writers write it: bases and characters for integers, precision and
+/// exponent for floats, a width for numbers, text and booleans.
+fn it_format_one(v: *CV, spec: []u8, vs: *List(CV)) -> String {
+    if spec.len == 0 { return cv_format(v) }
+    if v.kind == VK_SOME and v.items.len > 0 { return it_format_one(&v.items[0], spec, vs) }
+    var width: i128 = 0
+    var left = false
+    if spec[0] == '>' or spec[0] == '<' {
+        left = spec[0] == '<'
+        if spec.len > 1 and spec[1] == '#' {
+            let wi = spec[2..].parse_int(usize) catch { 0 }
+            if 1 + wi < vs.len { width = cv_as_int(&vs[1 + wi]) orelse 0 }
+        } else {
+            width = spec[1..].parse_int(i128) catch { 0 }
+        }
+    }
+    let k = v.kind
+    if k == VK_INT {
+        if spec == "c" {
+            let ch = cv_char(v.ival)
+            return cv_format(&ch)
+        }
+        var base: i128 = 10
+        if spec == "x" or spec == "X" { base = 16 } else if spec == "b" { base = 2 } else if spec == "o" { base = 8 }
+        return pad_text(int_in_base(v.ival, base, spec == "X"), width, left)
+    }
+    if k == VK_FLOAT {
+        if spec == "e" { return format("{e}", .{v.fval}) }
+        if spec[0] == '.' {
+            let prec = spec[1..].parse_int(i32) catch { -1 }
+            if prec >= 0 { return float_fixed(v.fval, prec) }
+        }
+        return pad_text(cv_format(v), width, left)
+    }
+    if k == VK_STR or k == VK_OWNED_STR or k == VK_BOOL { return pad_text(cv_format(v), width, left) }
+    return cv_format(v)
+}
+
 /// `format`'s output for a format string and its arguments; null when the
 /// string is not a literal or an argument is missing.
 fn it_format_values(vs: *List(CV)) -> ?String {
@@ -9997,7 +10154,11 @@ fn it_format_values(vs: *List(CV)) -> ?String {
                 ai += 1
             }
             if idx >= vs.len { return null }
-            out.append(cv_format(&vs[idx])[..])
+            // the spec after the index: `{#0:.2}`, `{#1:>8}`
+            var q = i + 1
+            while q < j and fmt[q] != ':' { q += 1 }
+            let spec = if q < j { fmt[q + 1..j] } else { fmt[j..j] }
+            out.append(it_format_one(&vs[idx], spec, vs)[..])
             i = j + 1
         } else if fmt[i] == '}' and i + 1 < fmt.len and fmt[i + 1] == '}' {
             out.push_byte('}')
@@ -10236,6 +10397,15 @@ pub struct Frame derive(Clone) {
     vals: List(CV)
 }
 
+/// A `[]mut T` argument's place, written back when the call returns.
+struct SliceBack {
+    arg: usize
+    fi: usize
+    l: usize
+    path: List(usize)
+    start: usize
+}
+
 /// What one REPL line produced: every binding of the synthetic `main` by
 /// name (later declarations winning), the same bindings rendered with their
 /// types, the value of a trailing expression, or a panic.
@@ -10250,7 +10420,27 @@ pub struct ReplOutcome {
     has_printed: bool
     panic: String
     has_panic: bool
+    // the `ref class` objects after the line, for the next one
+    heap: List(CV)
 }
+
+/// How `nx play` ended: `main` returned (`code` is its exit code), returned
+/// an error, panicked, or reached something only a compiled program can run.
+pub struct PlayOutcome {
+    kind: u8
+    code: i32
+    // the error's name, or the panic's message
+    message: String
+    // `file:line` of the panic or of what could not run, "" when unknown
+    at: String
+    // for what could not run: the line of the program's own file that led there
+    own_at: String
+}
+
+pub const PLAY_RETURNED: u8 = 0
+pub const PLAY_ERROR: u8 = 1
+pub const PLAY_PANIC: u8 = 2
+pub const PLAY_UNSUPPORTED: u8 = 3
 
 /// The interpreter state of an outer evaluation while an inner one runs
 /// (checking a callee's body on demand can evaluate a constant of its own).
@@ -10496,6 +10686,7 @@ impl Checker {
         self.it_panic = String.from(msg)
         self.it_panic_at = at
         self.it_has_panic = true
+        self.it_where = if self.it_cur_fn != NONE { self.insts[self.it_cur_fn].module } else { NONE }
     }
 
     fn it_fail_panic(self: *mut Self, msg: []u8, at: usize) {
@@ -10534,13 +10725,70 @@ impl Checker {
         return cv(VK_UNDEFINED)
     }
 
+    /// Whether the program declares a `main`.
+    pub fn has_main(self: *Self) -> bool {
+        return self.main_inst != NONE
+    }
+
+    /// `nx play`: run the program's `main` in the interpreter, with the REPL's
+    /// access to the world (`play_mode`): printing, input, the clock.
+    pub fn run_main(self: *mut Self) -> PlayOutcome {
+        var out = PlayOutcome{ .kind = PLAY_RETURNED, .code = 0, .message = String.new(), .at = String.new(), .own_at = String.new() }
+        let saved = self.it_enter()
+        self.it_where = NONE
+        self.it_root_at = NONE
+        let r = self.it_call(self.main_inst, List(CV).new())
+        if self.it_has_panic {
+            out.kind = PLAY_PANIC
+            out.message = self.it_panic.clone()
+            out.at = self.play_where(self.it_panic_at)
+        } else if self.it_budget {
+            out.kind = PLAY_PANIC
+            out.message = format("the program ran past the interpreter's step budget ({} steps); is a loop unbounded?", .{STEP_BUDGET})
+        } else if r == null {
+            out.kind = PLAY_UNSUPPORTED
+            out.at = self.play_where(self.it_failed_at)
+            if self.it_root_at != NONE and self.it_where != 0 {
+                let full = self.location(0, self.it_root_at)
+                var cut = full.len
+                while cut > 0 and full[cut - 1] != ':' { cut -= 1 }
+                out.own_at = if cut > 0 { String.from(full[0..cut - 1]) } else { full }
+            }
+        } else {
+            var v = r.?
+            if v.kind == VK_OK and v.items.len > 0 { v = v.items[0].clone() }
+            if v.kind == VK_ERR {
+                out.kind = PLAY_ERROR
+                out.message = self.error_names[(v.ival - 1) as usize].clone()
+            } else if let n = cv_as_int(&v) {
+                out.code = n as i32
+            }
+        }
+        self.it_leave(&saved)
+        return out
+    }
+
+    /// The location of a position in the module the interpreter stopped in,
+    /// `file:line` as a compiled program's panic writes it.
+    fn play_where(self: *Self, at: usize) -> String {
+        if at == NONE or self.it_where == NONE { return String.new() }
+        let full = self.location(self.it_where, at)
+        var cut = full.len
+        while cut > 0 and full[cut - 1] != ':' { cut -= 1 }
+        if cut == 0 { return full }
+        return String.from(full[0..cut - 1])
+    }
+
     /// `nx repl`: run the statements of the synthetic `main` from `start`,
     /// with the bindings of earlier lines seeded by name, and report every
-    /// binding afterwards and the value of a trailing expression.
-    pub fn run_repl(self: *mut Self, start: usize, names: *List(String), vals: *List(CV)) -> ReplOutcome {
+    /// binding afterwards and the value of a trailing expression. `heap` is
+    /// the session's `ref class` objects, which the earlier bindings name.
+    pub fn run_repl(self: *mut Self, start: usize, names: *List(String), vals: *List(CV), heap: *List(CV)) -> ReplOutcome {
+        self.it_heap = heap.clone()
         var out = ReplOutcome{
             .names = List(String).new(), .values = List(CV).new(), .shown = List(String).new(),
             .types = List(String).new(), .printed_ty = String.new(), .printed_val = String.new(), .has_printed = false, .panic = String.new(), .has_panic = false,
+            .heap = List(CV).new(),
         }
         let inst = self.main_inst
         if inst == NONE { return out }
@@ -10591,7 +10839,7 @@ impl Checker {
             } else if flow == FL_FAIL {
                 var at = String.new()
                 if self.it_failed_at != NONE { at = format(" (at {})", .{self.location(self.insts[inst].module, self.it_failed_at)}) }
-                out.panic = format("this statement cannot be evaluated by the interpreter{}; foreign calls, parallel loops, and arenas need a compiled program", .{at})
+                out.panic = format("this statement cannot be evaluated by the interpreter{}; foreign calls, threads, sockets, processes, mutable globals and @refCount need a compiled program", .{at})
                 failed = true
             }
             if failed {
@@ -10602,6 +10850,7 @@ impl Checker {
             }
             if flow != FL_NEXT { break }
         }
+        out.heap = self.it_heap.clone()
         // bindings afterwards, later declarations winning
         let fi = self.frames.len - 1
         for st in stmts {
@@ -10757,12 +11006,149 @@ impl Checker {
         return false
     }
 
+    /// `<<segments>> into buf`, as the compiled writer does it: a bit cursor
+    /// through the buffer, byte segments copied at byte boundaries, numbers
+    /// written most significant bit first (`/little` and `/native` swap the
+    /// bytes of the value first), floats by their bits. The bytes land in
+    /// the buffer's place; the result is the whole bytes written, or
+    /// `BufferTooSmall` when a segment does not fit.
+    fn it_bin_construct(self: *mut Self, e: usize) -> ?CV {
+        let kids = self.tir.nodes[e].kids.clone()
+        let target = kids[kids.len - 1]
+        let tv = self.it_eval(target) orelse return null
+        var buf = cv_byte_text(&tv) orelse return null
+        let total = buf.len * 8
+        var bit: usize = 0
+        var failed = false
+        var i: usize = 0
+        while i + 1 < kids.len {
+            let seg = kids[i]
+            i += 1
+            let desc = self.tir.nodes[seg].name.clone()
+            let skids = self.tir.nodes[seg].kids.clone()
+            // "value size=bits 16 endian=little signed=false float=false utf8=false"
+            let words = Checker.split_words(desc[..])
+            var wi: usize = 1
+            let size_word = words[wi].clone()
+            let v = self.it_eval(skids[0]) orelse return null
+            var sz: usize = 0
+            if size_word == "size=bits" {
+                sz = words[wi + 1][..].parse_int(usize) catch { 0 }
+                wi += 2
+            } else if size_word == "size=expr" {
+                let sv = self.it_eval(skids[skids.len - 1]) orelse return null
+                sz = (cv_as_int(&sv) orelse return null) as usize
+                wi += 1
+            } else {
+                sz = (cv_byte_text(&v) orelse return null).len * 8
+                wi += 1
+            }
+            let endian = words[wi].clone()
+            let float = words[wi + 2] == "float=true"
+            if bit + sz > total { failed = true; break }
+            let is_bytes = self.tys.kind(self.tys.shallow(self.tir.nodes[seg].ty)) == TK.Slice or size_word == "size=rest"
+            if is_bytes {
+                let src = cv_byte_text(&v) orelse return null
+                if bit % 8 != 0 or sz > src.len * 8 { failed = true; break }
+                for j in 0..sz / 8 { buf[bit / 8 + j] = src[j] }
+            } else {
+                var raw: u64 = 0
+                if float {
+                    raw = if size_word == "size=bits" and sz == 32 { @bitCast(u32, v.fval as f32) as u64 } else { @bitCast(u64, v.fval) }
+                } else {
+                    let n = cv_as_int(&v) orelse return null
+                    raw = (n & 0xFFFFFFFFFFFFFFFF) as u64
+                }
+                if endian == "endian=little" or endian == "endian=native" { raw = bswap_bytes(raw, sz / 8) }
+                buf = bits_write(buf, bit, sz, raw)
+            }
+            bit += sz
+        }
+        // what was written lands in the buffer's place, even before a failure
+        var b = SliceBack{ .arg = 0, .fi = NONE, .l = NONE, .path = List(usize).new(), .start = 0 }
+        if self.it_slice_place(target, &mut b) {
+            let seq = self.it_walk(b.fi, b.l, &b.path)
+            if seq.kind == VK_OWNED_STR or seq.kind == VK_STR {
+                for c, j in buf { if b.start + j < seq.text.len { seq.text[b.start + j] = c } }
+            } else if seq.kind == VK_ARRAY or seq.kind == VK_LIST {
+                for c, j in buf { if b.start + j < seq.items.len { seq.items[b.start + j] = cv_int(c as i128) } }
+            }
+        }
+        if failed { return cv_err(self.error_id("BufferTooSmall")) }
+        return cv_wrap(VK_OK, cv_str(buf[0..bit / 8]))
+    }
+
+    /// Whether a type is `[]mut T`.
+    fn is_mut_slice(self: *Self, ty: usize) -> bool {
+        let t = self.tys.shallow(ty)
+        return self.tys.kind(t) == TK.Slice and self.tys.list[t].flag
+    }
+
+    /// Where a `[]mut T` argument's elements live: an array, a list or a
+    /// string place (`xs[..]`, `xs[2..5]`, a `[]mut` local), with the first
+    /// element's index. False for a slice with no place of its own.
+    fn it_slice_place(self: *mut Self, e: usize, b: *mut SliceBack) -> bool {
+        var x = e
+        var start: usize = 0
+        if self.tir.nodes[x].k == TKind.SliceOp {
+            if self.tir.nodes[x].flag {
+                let sv = self.it_eval(self.tir.nodes[x].kids[1]) orelse return false
+                start = (cv_as_int(&sv) orelse return false) as usize
+            }
+            x = self.tir.nodes[x].kids[0]
+        }
+        if let vw = self.it_view_of(x) {
+            b.fi = vw.ival as usize
+            b.l = vw.b
+            b.path = vw.path.clone()
+            b.start = view_start(&vw) + start
+            return true
+        }
+        if !self.it_place_path(x, &mut b.fi, &mut b.l, &mut b.path) { return false }
+        b.start = start
+        return true
+    }
+
+    /// A call whose `[]mut T` arguments come back. The interpreter passes a
+    /// slice as a copy of its elements, so each one taken from a place is
+    /// written back there when the call returns: the callee's writes through
+    /// the slice reach the caller, as they do in a compiled program.
+    fn it_call_back(self: *mut Self, inst: usize, nodes: []usize, own vs: List(CV), own env: List(CV)) -> ?CV {
+        var backs = List(SliceBack).new()
+        for x, i in nodes {
+            if !self.is_mut_slice(self.tir.nodes[x].ty) { continue }
+            var b = SliceBack{ .arg = i, .fi = NONE, .l = NONE, .path = List(usize).new(), .start = 0 }
+            if self.it_slice_place(x, &mut b) { backs.append(b) }
+        }
+        if backs.len == 0 { return self.it_call_env(inst, vs, env) }
+        let r = self.it_call_env(inst, vs, env)
+        if r == null { return null }
+        let kept = self.it_kept.clone()
+        for b in backs {
+            if b.arg >= kept.len or kept[b.arg].kind == VK_NONE { continue }
+            let seq = self.it_walk(b.fi, b.l, &b.path)
+            if seq.kind == VK_ARRAY or seq.kind == VK_LIST {
+                for item, j in kept[b.arg].items { if b.start + j < seq.items.len { seq.items[b.start + j] = item.clone() } }
+            } else if seq.kind == VK_OWNED_STR or seq.kind == VK_STR {
+                for c, j in kept[b.arg].text { if b.start + j < seq.text.len { seq.text[b.start + j] = c } }
+            }
+        }
+        return r
+    }
+
     fn it_call(self: *mut Self, inst: usize, own args: List(CV)) -> ?CV {
+        return self.it_call_env(inst, args, List(CV).new())
+    }
+
+    /// A call; `env` is a closure's captures, bound to its capture
+    /// parameters (the parameters past the declared ones, in order).
+    fn it_call_env(self: *mut Self, inst: usize, own args: List(CV), own env: List(CV)) -> ?CV {
         if !self.it_step() { return null }
         if !self.it_ensure_body(inst) { return null }
         if self.insts[inst].is_extern { return null }
-        if self.frames.len >= CALL_DEPTH {
-            self.it_panic_at(format("compile-time evaluation exceeded the call depth ({} nested calls); is the recursion unbounded?", .{CALL_DEPTH})[..], self.insts[inst].start)
+        if self.frames.len >= self.it_depth_limit {
+            let what = if self.play_mode { "the program" } else { "compile-time evaluation" }
+            self.it_panic_at(format("{} exceeded the call depth ({} nested calls); is the recursion unbounded?", .{what, self.it_depth_limit})[..], self.insts[inst].start)
             return null
         }
         var fr = Frame{ .vals = List(CV).new() }
@@ -10770,12 +11156,34 @@ impl Checker {
         for i in 0..nlocals { fr.vals.append(cv(VK_NONE)) }
         let params = self.insts[inst].params.clone()
         for a, i in args { if i < params.len { fr.vals[params[i]] = a.clone() } }
+        if env.len > 0 {
+            var ci: usize = 0
+            for loc, li in self.insts[inst].locals {
+                if !loc.is_param { continue }
+                var declared = false
+                for pp in params { if pp == li { declared = true } }
+                if declared { continue }
+                if ci < env.len { fr.vals[li] = env[ci].clone() }
+                ci += 1
+            }
+        }
         self.frames.append(fr)
         let outer = self.it_cur_fn
         self.it_cur_fn = inst
         let body = self.insts[inst].body
         let flow = self.it_exec_block(body)
         self.it_cur_fn = outer
+        // the final value of each `[]mut T` parameter, for the caller to take back
+        var kept = List(CV).new()
+        let top = self.frames.len - 1
+        for pl in params {
+            if self.is_mut_slice(self.insts[inst].locals[pl].ty) and pl < self.frames[top].vals.len and self.frames[top].vals[pl].kind != VK_VIEW {
+                kept.append(self.frames[top].vals[pl].clone())
+            } else {
+                kept.append(cv(VK_NONE))
+            }
+        }
+        self.it_kept = kept
         _ = self.frames.pop()
         if flow == FL_FAIL { return null }
         if flow == FL_RETURN { return self.it_flow_val.clone() }
@@ -10787,7 +11195,46 @@ impl Checker {
         let fi = self.frames.len - 1
         if l >= self.frames[fi].vals.len { return cv(VK_UNDEFINED) }
         if self.frames[fi].vals[l].kind == VK_NONE { return cv(VK_UNDEFINED) }
+        if self.frames[fi].vals[l].kind == VK_VIEW {
+            let vw = self.frames[fi].vals[l].clone()
+            return self.it_view_read(&vw)
+        }
         return self.frames[fi].vals[l].clone()
+    }
+
+    /// The elements a view sees now, as a slice value.
+    fn it_view_read(self: *mut Self, vw: *CV) -> CV {
+        let seq = self.it_walk(vw.ival as usize, vw.b, &vw.path)
+        let st = view_start(vw)
+        let n = view_len(vw)
+        if (seq.kind == VK_ARRAY or seq.kind == VK_LIST) and st + n <= seq.items.len {
+            var items = List(CV).new()
+            for i in st..st + n { items.append(seq.items[i].clone()) }
+            return cv_seq(VK_ARRAY, items)
+        }
+        if (seq.kind == VK_OWNED_STR or seq.kind == VK_STR) and st + n <= seq.text.len { return cv_str(seq.text[st..st + n]) }
+        return cv(VK_UNDEFINED)
+    }
+
+    /// The view a local holds, when it holds one.
+    fn it_view_of(self: *mut Self, e: usize) -> ?CV {
+        if self.tir.nodes[e].k != TKind.Local { return null }
+        let fi = self.frames.len - 1
+        let l = self.tir.nodes[e].a
+        if l >= self.frames[fi].vals.len or self.frames[fi].vals[l].kind != VK_VIEW { return null }
+        return self.frames[fi].vals[l].clone()
+    }
+
+    /// What a `[]mut T` local bound to `init` (whose value is `v`) holds: a
+    /// view of the place the slice was taken from, so writes through the
+    /// local land in that place as they do in a compiled program; the value
+    /// itself when the slice has no place of its own.
+    fn it_bind_slice(self: *mut Self, init: usize, own v: CV) -> CV {
+        if !self.is_mut_slice(self.tir.nodes[init].ty) { return v }
+        var b = SliceBack{ .arg = 0, .fi = NONE, .l = NONE, .path = List(usize).new(), .start = 0 }
+        if !self.it_slice_place(init, &mut b) { return v }
+        let n = cv_seq_len(&v) orelse return v
+        return cv_view(b.fi, b.l, b.path.clone(), b.start, n)
     }
 
     fn it_env_set(self: *mut Self, l: usize, own v: CV) {
@@ -10803,12 +11250,17 @@ impl Checker {
         let tail = self.tir.nodes[b].a
         let label = self.tir.nodes[b].b
         var defers = List(usize).new()
+        // whether each deferred statement is an `errdefer`
+        var on_error = List(bool).new()
         var flow = FL_NEXT
         var decided = false
         for s in stmts {
             let k = self.tir.nodes[s].k
-            if k == TKind.SDefer { defers.append(self.tir.nodes[s].kids[0]); continue }
-            if k == TKind.SErrDefer { continue }
+            if k == TKind.SDefer or k == TKind.SErrDefer {
+                defers.append(self.tir.nodes[s].kids[0])
+                on_error.append(k == TKind.SErrDefer)
+                continue
+            }
             let f = self.it_exec_stmt(s)
             if f == FL_FAIL { return FL_FAIL }
             if f != FL_NEXT { flow = f; decided = true; break }
@@ -10827,12 +11279,15 @@ impl Checker {
                 value = cv(VK_NONE)
             }
         }
-        // the flow's payload survives the defers
+        // the flow's payload survives the defers; an `errdefer` runs only when
+        // the block is left by returning an error
         let fval = self.it_flow_val.clone()
         let flabel = self.it_flow_label
+        let failing = flow == FL_RETURN and fval.kind == VK_ERR
         var i = defers.len
         while i > 0 {
             i -= 1
+            if on_error[i] and !failing { continue }
             if self.it_exec_stmt(defers[i]) == FL_FAIL { return FL_FAIL }
         }
         self.it_flow_val = fval
@@ -10873,6 +11328,7 @@ impl Checker {
                     v = self.it_default_value(self.tir.nodes[init].ty)
                 } else {
                     v = self.it_eval(init) orelse return FL_FAIL
+                    v = self.it_bind_slice(init, v)
                 }
             }
             self.it_env_set(a, v)
@@ -10896,6 +11352,8 @@ impl Checker {
                 }
                 let cur = self.it_eval(target) orelse return FL_FAIL
                 v = self.it_binop(sym[..], mode[..], cur, v, self.tir.nodes[target].ty, self.tir.nodes[s].start) orelse return FL_FAIL
+            } else if self.tir.nodes[target].k == TKind.Local {
+                v = self.it_bind_slice(kids[1], v)
             }
             if !self.it_assign(target, v) { return FL_FAIL }
             return FL_NEXT
@@ -11027,6 +11485,19 @@ impl Checker {
         if k == TKind.Index {
             let iv = self.it_eval(kids[1]) orelse return false
             let i = cv_as_int(&iv) orelse return false
+            if let vw = self.it_view_of(kids[0]) {
+                let n = view_len(&vw)
+                if i < 0 or i as usize >= n {
+                    self.it_fail_panic(format("index {} out of bounds for length {}", .{i, n})[..], self.tir.nodes[e].start)
+                    return false
+                }
+                fi.*= vw.ival as usize
+                l.*= vw.b
+                path.clear()
+                for x in vw.path { path.append(x) }
+                path.append(view_start(&vw) + i as usize)
+                return true
+            }
             if !self.it_place_path(kids[0], fi, l, path) { return false }
             path.append(i as usize)
             return true
@@ -11041,6 +11512,7 @@ impl Checker {
             return true
         }
         if k == TKind.ListToSlice or k == TKind.ArrayToSlice or k == TKind.StrToSlice { return self.it_place_path(kids[0], fi, l, path) }
+        if k == TKind.SliceOp and !self.tir.nodes[e].flag and !self.tir.nodes[e].flag2 { return self.it_place_path(kids[0], fi, l, path) }
         return false
     }
 
@@ -11070,6 +11542,11 @@ impl Checker {
         var cur: *mut CV = &mut self.frames[fi].vals[l]
         if cur.kind == VK_NONE { return &mut self.cv_bad }
         for step in path {
+            if cur.kind == VK_REF {
+                let hi = cur.ival as usize
+                if hi >= self.it_heap.len { return &mut self.cv_bad }
+                cur = &mut self.it_heap[hi]
+            }
             let k = cur.kind
             if k == VK_ARRAY or k == VK_LIST or k == VK_STRUCT or k == VK_TUPLE or k == VK_ENUM {
                 if step >= cur.items.len { return &mut self.cv_bad }
@@ -11080,12 +11557,18 @@ impl Checker {
                 return &mut self.cv_bad
             }
         }
+        // the place a write lands in is the object a reference names
+        if cur.kind == VK_REF and (cur.ival as usize) < self.it_heap.len { return &mut self.it_heap[cur.ival as usize] }
         return cur
     }
 
     fn it_read_path(self: *mut Self, root: *CV, path: []usize) -> ?CV {
         var cur: *CV = root
         for step in path {
+            if cur.kind == VK_REF {
+                if (cur.ival as usize) >= self.it_heap.len { return null }
+                cur = &self.it_heap[cur.ival as usize]
+            }
             let k = cur.kind
             if k == VK_ARRAY or k == VK_LIST or k == VK_STRUCT or k == VK_TUPLE or k == VK_ENUM {
                 if step >= cur.items.len { return null }
@@ -11146,8 +11629,13 @@ impl Checker {
 
     fn it_eval(self: *mut Self, e: usize) -> ?CV {
         let r = self.it_eval_inner(e)
-        if r == null and !self.it_has_panic and !self.it_budget and self.it_failed_at == NONE {
-            self.it_failed_at = self.tir.nodes[e].start
+        if r == null and !self.it_has_panic and !self.it_budget {
+            if self.it_failed_at == NONE {
+                self.it_failed_at = self.tir.nodes[e].start
+                self.it_where = if self.it_cur_fn != NONE { self.insts[self.it_cur_fn].module } else { NONE }
+            }
+            // the first expression of the program's own file on the way out
+            if self.it_root_at == NONE and self.it_cur_fn != NONE and self.insts[self.it_cur_fn].module == 0 { self.it_root_at = self.tir.nodes[e].start }
         }
         return r
     }
@@ -11264,14 +11752,14 @@ impl Checker {
         if k == TKind.Call {
             var vs = List(CV).new()
             for x in kids { vs.append(self.it_eval(x) orelse return null) }
-            return self.it_call(a, vs)
+            return self.it_call_back(a, kids[..], vs, List(CV).new())
         }
         if k == TKind.CallPtr {
             let f = self.it_eval(kids[0]) orelse return null
             var vs = List(CV).new()
             for x, i in kids { if i > 0 { vs.append(self.it_eval(x) orelse return null) } }
             if f.kind != VK_FN { return null }
-            return self.it_call(f.ival as usize, vs)
+            return self.it_call_back(f.ival as usize, kids[1..], vs, f.items.clone())
         }
         if k == TKind.Builtin { return self.it_eval_builtin(e) }
         if k == TKind.Unary {
@@ -11426,6 +11914,12 @@ impl Checker {
             var vals = List(CV).new()
             for i in 0..n { vals.append(cv(VK_UNDEFINED)) }
             for f, i in kids { vals[idxs[i]] = self.it_eval(f) orelse return null }
+            if k == TKind.RefNew {
+                self.it_heap.append(cv_seq(VK_STRUCT, vals))
+                var r = cv(VK_REF)
+                r.ival = (self.it_heap.len - 1) as i128
+                return r
+            }
             return cv_seq(VK_STRUCT, vals)
         }
         if k == TKind.EnumLit {
@@ -11496,13 +11990,42 @@ impl Checker {
             if v.kind == VK_OWNED_STR or v.kind == VK_STR { v.kind = VK_STR; return v }
             return null
         }
-        if k == TKind.Closure { return null }
+        if k == TKind.Closure {
+            // a function value carrying its captures: copies, or pointers into this frame
+            var f = cv(VK_FN)
+            f.ival = a as i128
+            let caps = self.tir.nodes[e].kids2.clone()
+            let fi = self.frames.len - 1
+            for l, i in caps {
+                if kids[i] == 1 { f.items.append(cv_ptr(fi, l, List(usize).new())) } else { f.items.append(self.it_env_get(l)) }
+            }
+            return f
+        }
+        if k == TKind.DynFrom {
+            let ptr = self.it_eval(kids[0]) orelse return null
+            var d = cv(VK_DYN)
+            d.ival = a as i128
+            d.items.append(ptr)
+            return d
+        }
+        if k == TKind.DynCall {
+            // the method in the object's vtable, with the data pointer as `self`
+            let recv = self.it_eval(kids[0]) orelse return null
+            if recv.kind != VK_DYN or recv.items.len == 0 { return null }
+            let vt = recv.ival as usize
+            if vt >= self.vtables.len or a >= self.vtables[vt].insts.len { return null }
+            let inst = self.vtables[vt].insts[a]
+            var vs = List(CV).new()
+            vs.append(recv.items[0].clone())
+            for x, i in kids { if i > 0 { vs.append(self.it_eval(x) orelse return null) } }
+            return self.it_call_back(inst, kids[..], vs, List(CV).new())
+        }
         if k == TKind.Unreachable {
             self.it_fail_panic("reached `unreachable`", at)
             return null
         }
         if k == TKind.Undefined { return cv(VK_UNDEFINED) }
-        if k == TKind.BinConstruct { return null }
+        if k == TKind.BinConstruct { return self.it_bin_construct(e) }
         if k == TKind.TypeVal {
             var v = cv(VK_TYPE)
             v.ival = a as i128
@@ -11800,6 +12323,8 @@ impl Checker {
                 r = 0
             } else if (a.kind == VK_SOME or a.kind == VK_NULL) and (b.kind == VK_SOME or b.kind == VK_NULL) {
                 r = -1
+            } else if a.kind == VK_REF and b.kind == VK_REF {
+                r = if a.ival == b.ival { 0 } else { 2 }
             } else if a.kind == VK_ENUM and b.kind == VK_ENUM {
                 r = if a.ival < b.ival { -1 } else if a.ival > b.ival { 1 } else { 0 }
             } else if a.kind == VK_ERR and b.kind == VK_ERR {
@@ -11871,7 +12396,9 @@ impl Checker {
         }
         if mode == "checked" {
             if r < lo or r > hi {
-                self.it_fail_panic(format("integer overflow: {} {} {} does not fit", .{x, op, y})[..], at)
+                // `nx play` says what a compiled program says; compile time says more
+                let msg = if self.play_mode { format("integer overflow in `{}`", .{op}) } else { format("integer overflow: {} {} {} does not fit", .{x, op, y}) }
+                self.it_fail_panic(msg[..], at)
                 return null
             }
             return cv_int(r)
@@ -11888,6 +12415,34 @@ impl Checker {
         let at = self.tir.nodes[e].start
         var vs = List(CV).new()
         for x in args { vs.append(self.it_eval(x) orelse return null) }
+        // `{}` of an enum or an error writes its name, which only the type knows
+        if name == "Format" or name == "Println" or name == "Print" or name == "Eprintln" {
+            for x, i in args { if i > 0 { self.it_name_value(self.tir.nodes[x].ty, &mut vs[i]) } }
+        }
+        if name == "BitCast" {
+            // one scalar's bits read as another's, both of the same size
+            let from = self.tys.shallow(tys[1])
+            let to = self.tys.shallow(tys[0])
+            let nbytes = self.size_of(from)
+            var raw: u64 = 0
+            if vs[0].kind == VK_FLOAT {
+                raw = if nbytes == 4 { @bitCast(u32, vs[0].fval as f32) as u64 } else { @bitCast(u64, vs[0].fval) }
+            } else {
+                let n = cv_as_int(&vs[0]) orelse return null
+                raw = (n & 0xFFFFFFFFFFFFFFFF) as u64
+            }
+            if nbytes < 8 { raw = raw & ((1 << ((nbytes * 8) as u32)) - 1) }
+            let tk = self.tys.kind(to)
+            if tk == TK.Float { return cv_float(if nbytes == 4 { f32_from_bits(raw as u32) } else { f64_from_bits(raw) }) }
+            if tk == TK.Bool { return cv_bool(raw != 0) }
+            if tk == TK.Char { return cv_char(raw as i128) }
+            var bits: u32 = 64
+            var signed = false
+            _ = self.it_bits_of(to, &mut bits, &mut signed)
+            if signed and bits < 64 and (raw >> ((bits - 1) as u32)) & 1 == 1 { return cv_int(raw as i128 - (1 << (bits as u32)) as i128) }
+            if signed and bits == 64 { return cv_int(@bitCast(i64, raw) as i128) }
+            return cv_int(raw as i128)
+        }
         if name == "Len" {
             if vs[0].kind == VK_MAP { return cv_int((vs[0].items.len / 2) as i128) }
             let n = cv_seq_len(&vs[0]) orelse return null
@@ -11954,6 +12509,8 @@ impl Checker {
         if name == "SliceFind" {
             let hay = cv_bytes(&vs[0]) orelse return null
             let needle = cv_bytes(&vs[1]) orelse return null
+            // with two types it is `<`, `>`... on byte slices: a three-way comparison
+            if tys.len == 2 { return cv_int(cmp_bytes(hay, needle) as i128) }
             if needle.len == 0 { return cv_wrap(VK_SOME, cv_int(0)) }
             if let i = find_sub(hay, needle) { return cv_wrap(VK_SOME, cv_int(i as i128)) }
             return cv(VK_NULL)
@@ -11993,6 +12550,8 @@ impl Checker {
                 if i == s.len or s[i] == '\n' {
                     var end = i
                     if end > start and s[end - 1] == '\r' { end -= 1 }
+                    // a newline at the end of the text starts no line of its own
+                    if i == s.len and end == start and s.len > 0 { break }
                     out.append(cv_owned(s[start..end]))
                     start = i + 1
                 }
@@ -12060,7 +12619,9 @@ impl Checker {
             if vs[0].kind == VK_SOME or vs[0].kind == VK_NULL { return vs[0].clone() }
             return cv_wrap(VK_SOME, vs[0].clone())
         }
-        if name == "RefCount" { return cv_int(1) }
+        // the interpreter keeps no reference counts: a constant would be a guess,
+        // so a program that prints one needs a compiled run
+        if name == "RefCount" { return if self.repl_mode or self.play_mode { null } else { cv_int(1) } }
         if name == "RefEq" { return cv_bool(cv_key_eq(&vs[0], &vs[1])) }
         if name == "ListNew" or name == "ListWithCapacity" { return cv_seq(VK_LIST, List(CV).new()) }
         if name == "ListFromSlice" {
@@ -12220,7 +12781,7 @@ impl Checker {
             return cv(VK_NULL)
         }
         if name == "Format" { return cv_owned((it_format_values(&vs) orelse return null)[..]) }
-        if self.repl_mode {
+        if self.repl_mode or self.play_mode {
             let r = self.it_repl_builtin(name[..], &vs)
             if r != null { return r }
         }
@@ -12248,6 +12809,30 @@ impl Checker {
             return cv(VK_NULL)
         }
         return null
+    }
+
+    /// An enum or an error value replaced by its name, as the compiled
+    /// writers print them (an optional's value too).
+    fn it_name_value(self: *mut Self, ty: usize, v: *mut CV) {
+        let t = self.tys.shallow(ty)
+        let k = self.tys.kind(t)
+        if k == TK.Opt and v.kind == VK_SOME and v.items.len > 0 {
+            self.it_name_value(self.tys.list[t].args[0], &mut v.items[0])
+            return
+        }
+        if k == TK.Enum and v.kind == VK_ENUM {
+            let d = self.tys.list[t].def
+            let tag = v.ival as usize
+            if tag < self.enums[d].variants.len {
+                let vn = self.node(self.enums[d].module, self.enums[d].variants[tag]).name.clone()
+                v.*= cv_owned(vn[..])
+            }
+            return
+        }
+        if v.kind == VK_ERR and v.ival >= 1 and (v.ival as usize) <= self.error_names.len {
+            let en = self.error_names[(v.ival - 1) as usize].clone()
+            v.*= cv_owned(en[..])
+        }
     }
 
     /// In a REPL the program may talk to the world, which `comptime` never
@@ -14279,9 +14864,9 @@ pub fn new_checker(own mods: List(Mod)) -> Checker {
         .record_new_mode = false, .vtables = List(VTable).new(), .obligations = List(Obligation).new(),
         .parallel_calls = List(Obligation).new(), .global_uses = List(Obligation).new(), .global_use_fns = List(String).new(), .artifact_kinds = List(String).new(), .wild_pat_node = NONE,
         .cc = List(String).new(), .target = String.new(), .cimport_headers = List(String).new(), .cimport_system = List(bool).new(), .cimport_unsupported = Map(String, String).new(),
-        .values = List(CV).new(), .repl_mode = false, .chain_locals = List(usize).new(), .pending_stmts = List(usize).new(), .clone_seen = List(usize).new(),
+        .values = List(CV).new(), .repl_mode = false, .play_mode = false, .chain_locals = List(usize).new(), .pending_stmts = List(usize).new(), .clone_seen = List(usize).new(),
         .it_steps = 0, .it_panic = String.new(), .it_panic_at = NONE, .it_has_panic = false, .it_budget = false,
-        .it_pending = 0, .it_pending_label = NONE, .it_pending_val = cv_none(), .it_failed_at = NONE,
+        .it_pending = 0, .it_pending_label = NONE, .it_pending_val = cv_none(), .it_failed_at = NONE, .it_where = NONE, .it_root_at = NONE, .it_kept = List(CV).new(), .it_heap = List(CV).new(), .it_depth_limit = CALL_DEPTH,
         .frames = List(Frame).new(), .it_cur_fn = NONE, .it_out = cv_none(), .it_flow_val = cv_none(), .it_flow_label = NONE,
         .cv_bad = cv_none(),
     }

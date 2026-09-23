@@ -317,6 +317,25 @@ jobs:
 
   # the compiler images (docker/): built for amd64 without publishing, and
   # hello runs inside each; docker.yml publishes them at a tag
+  playground:
+    name: playground
+    # the compiler of this commit as WebAssembly, run through the page's own
+    # WASI layer (site/play.js): every fill and fix exercise of chapters 2 to
+    # 15 grades as `nx topo check` grades it, and every recorded program prints
+    # what it prints compiled, or is refused
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: Build nx from the seed
+        run: sh bootstrap/build.sh
+      - name: The compiler as WebAssembly
+        run: sh site/play_build.sh nx-out/bootstrap/nx2 nx-out/play/nx.wasm
+      - name: The exercises through the page's WASI layer
+        run: node site/play_test.mjs nx-out/play/nx.wasm
+
   packages:
     name: nix flake and a .deb
     # the flake builds nx from the seed and runs the hello check; nfpm packs

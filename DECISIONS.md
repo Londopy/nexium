@@ -782,3 +782,23 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     synchronized: nothing to sign into, and the site never sees the
     reader. The `???` hole is the marker because it is not Nexium: a
     starter with one cannot compile by accident.
+108. **The playground runs the compiler's interpreter, not its C backend,
+    and never prints what a compiled program would not.** A page on GitHub
+    Pages has no server, so the compiler itself runs in the browser: the C
+    of the current sources builds for `wasm32-wasi` with the runtime's
+    `NX_WASM` branch (no processes, sockets, terminal or `setjmp`; each
+    fails as a refusing operating system would), and `nx play` checks a
+    program and runs `main` in the interpreter the REPL already had. A
+    C compiler in the page is 1.5's work. The rule that makes the
+    playground trustworthy is parity: a program prints exactly what its
+    compiled self prints, or is refused with the line that needs a compiled
+    run; a different answer is a bug. The harness enforces it over every
+    recorded program, and holding the interpreter to it found eight places
+    it was wrong, all fixed rather than listed as limits. What the
+    interpreter cannot know (`@refCount`, the machine's target) it refuses
+    rather than guesses; what it models differently but equivalently (a
+    `for parallel` loop in order, a `[]mut` argument copied in and written
+    back, `ref class` objects in a heap of their own) it keeps only where
+    no program can tell. The page gives the interpreter a smaller call
+    depth than a native thread, because the browser's stack holds fewer
+    frames, so a deep recursion gets the interpreter's own message.

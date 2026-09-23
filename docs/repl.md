@@ -74,14 +74,39 @@ the way a shell expects. The interpreter runs them, so nothing is
 compiled; the exit code is 1 when a line does not check or the value is
 missing.
 
+## A whole program: `nx play`
+
+```sh
+nx play examples/hello.nx
+nx play < program.nx
+```
+
+`nx play` checks a whole program the way `nx check` does, then runs its
+`main` in the same interpreter, so nothing is compiled and no C compiler
+is needed. It is the command the site's playground runs: the compiler is
+built as WebAssembly (`site/play_build.sh`), and the page hands it the
+code of an exercise or an example on stdin and shows what comes back.
+The exit code is `main`'s own, 1 after diagnostics or an error returned
+from `main`, and 2 after a panic or a program the interpreter cannot run.
+
+A program prints the same interpreted as compiled, or says it cannot be
+interpreted; it never prints something different. The harness holds it to
+that: every spec case, example and Topo program runs both ways (the `play`
+suite), and CI runs every exercise through the WebAssembly build and the
+page's own script (`site/play_test.mjs`).
+
 ## Limits
 
-The interpreter covers the language but not the platform: `@cImport`
-calls, `for parallel`, `using arena`, and artifacts need a compiled program
-(`nx run`); the message names the expression that could not be evaluated.
-Values that only exist at compile time (function values, pointers) are not
-kept between lines. Speed is interpreted speed; measure
-with `nx run`.
+The interpreter covers the language but not the platform: foreign calls
+(`@cImport`, `extern`), threads, sockets, processes, mutable globals and
+`@refCount` need a compiled program (`nx run`), and the message names the
+line of your program that led there. `for parallel` runs its iterations
+in order. Values that only exist at compile time (function values,
+pointers) are not kept between lines. Speed is interpreted speed, and a
+run stops after 20 million steps; measure with `nx run`. In the page, a
+recursion stops at 400 nested calls (the browser's stack is smaller than
+a native thread's), there are no files to read, and `time.sleep` waits a
+second at most.
 
 In the session the program may do I/O (`println`, `io.read_file`,
 `io.read_line`, `os.env`, `time.now`, `time.sleep`), which `comptime` in a

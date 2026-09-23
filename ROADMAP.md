@@ -1052,6 +1052,14 @@ is a file in the repository the harness runs, so the course cannot rot:
 **The playground, light: the compiler in the page without the C backend**
 (next, before the rest of the course; the full wasm target stays in 1.5).
 
+Status: done (decision 108). `nx play`, the `NX_WASM` runtime and
+`site/play.js` are in; every fill and fix exercise of chapters 2 to 15
+grades in the page, and every other code block with a `main` runs. The
+exit check runs every exercise through the WebAssembly build and the
+page's own WASI layer in Node (CI's `playground` job and the Pages
+workflow) rather than a headless browser; the harness's `play` suite
+holds the interpreter to the compiled output of every recorded program.
+
 The site is static files on GitHub Pages, so running code there means
 the compiler itself runs in the browser. Two things make that possible
 now rather than in 1.5: the compiler is one C file with no dependencies

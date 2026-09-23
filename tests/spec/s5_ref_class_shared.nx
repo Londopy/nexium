@@ -1,0 +1,27 @@
+// SPEC 5.4: a `ref class` value is shared: every copy of it, an argument, a
+// list element and a field all name the one object.
+ref class Counter { n: i32 }
+
+fn bump(c: Counter) {
+    c.n += 1
+}
+
+struct Holder { c: Counter }
+
+fn main() {
+    let a = Counter{ .n = 1 }
+    let b = a
+    b.n = 5
+    println("a {} b {}", .{a.n, b.n})
+    bump(a)
+    println("after bump {}", .{b.n})
+    var list = List(Counter).new()
+    list.append(a)
+    list[0].n = 40
+    println("through the list {}", .{a.n})
+    let h = Holder{ .c = b }
+    h.c.n += 2
+    println("through the holder {}", .{a.n})
+    let other = Counter{ .n = 42 }
+    println("same object {} {}", .{a == b, a == other})
+}

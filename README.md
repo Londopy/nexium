@@ -346,6 +346,7 @@ Using Nexium somewhere? Open an issue or a pull request and it goes here.
 | `nx lsp` | language server over stdio |
 | `nx doctor` | which C compiler will be used, and whether the installation works |
 | `nx repl`, or just `nx` | an interactive session: type code, see values, keep bindings |
+| `nx play [file.nx]` | check a whole program and run it in the interpreter, nothing compiled; stdin when no file (the command the site's playground runs) |
 | `nx topo [<chapter>\|check\|hint\|solution\|quiz]` | the Topo's exercises in the terminal, graded by the compiler, progress kept |
 
 Options: `--mode debug|safe|fast|small`, `--target x86_64-linux-gnu` (any

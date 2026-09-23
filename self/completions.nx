@@ -35,6 +35,7 @@ pub fn commands() -> List(Command) {
     out.append(Command{ .name = "update", .arg = "", .about = "update dependencies to the manifest's newest" })
     out.append(Command{ .name = "topo", .arg = "", .about = "the Topo's exercises in the terminal: a chapter number, check, hint, solution, quiz, reset" })
     out.append(Command{ .name = "repl", .arg = "", .about = "an interactive session (also nx with no arguments at a terminal)" })
+    out.append(Command{ .name = "play", .arg = "file", .about = "check a program and run it in the interpreter, nothing compiled; stdin when no file (the playground's command)" })
     out.append(Command{ .name = "lsp", .arg = "", .about = "the language server, over stdio" })
     out.append(Command{ .name = "doctor", .arg = "", .about = "the installation: which C compiler, whether it works, the latest release" })
     out.append(Command{ .name = "upgrade", .arg = "", .about = "install the latest release in place; --check only asks" })
