@@ -928,6 +928,10 @@ fn suite_play(e: *Env, failures: *mut List(String)) {
     if pan.code != 2 or pan.stderr[..].find("panic: index 4 out of bounds for length 2") == null or pan.stderr[..].find("at main.nx:4") == null {
         failures.append(format("nx play: a panic exited with {}:\n{}", .{pan.code, pan.stderr}))
     }
+    let empty = nx_in(e, ["play"][..], "  ", e.root[..])
+    if empty.code != 1 or empty.stderr[..].find("the program is empty") == null {
+        failures.append(format("nx play: an empty program answered (exit {}):\n{}", .{empty.code, empty.stderr}))
+    }
     let spin = nx_in(e, ["play"][..], "fn main() {\n    var n: u64 = 0\n    while true { n += 1 }\n}\n", e.root[..])
     if spin.code != 2 or spin.stderr[..].find("step budget") == null {
         failures.append(format("nx play: an endless loop was not stopped by the step budget (exit {}):\n{}", .{spin.code, spin.stderr}))

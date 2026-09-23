@@ -302,6 +302,11 @@ pub fn play(file: []u8, std_dir: []u8, cc: *List(String), strict: bool) -> i32 {
             text.append("\n")
         }
     }
+    // an empty text would send the loader to a file of that name
+    if text[..].trim().len == 0 {
+        eprintln("error: the program is empty; write a `fn main()` to run", .{})
+        return 1
+    }
     let mods = check.load_with_text(name, text[..], std_dir) catch { return 1 }
     var c = check.new_checker(mods)
     c.cc = cc.clone()
