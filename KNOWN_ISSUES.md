@@ -25,20 +25,6 @@ Fixed bugs are not listed here; `CHANGELOG.md` and `git log` have them.
   `let z: u8 = 300` does); and range-check literals that fall back to
   `i64`, taking `-lit` as one literal so that
   `let y = -9223372036854775808` (a run-time panic today) is accepted.
-- **A panic standing for a struct-typed value emits invalid C.**
-  `enum Kind { A, B }` with `fn k() -> Kind { panic("unknown") }` (found
-  while writing QNI, in a test helper) passes `nx check` but does not
-  build: `zig cc` rejects `nx_Kind _t1 = 0;` (incompatible type `int`).
-  Every type that is a struct in C fails alike (a struct, an enum, a
-  slice, `String`, `?T`, `!T`), as the tail, in `return panic(..)`, in
-  `let x: T = panic(..)` or as a `match` arm `_ => panic(..)`; scalars,
-  `unreachable` and a braced `{ panic(..) }` compile. `builtin` in
-  `self/cgen.nx` gives `Panic` the value `0`. Fix: return `((T){0})` there
-  when the type is not void, as `expr` does for `unreachable`. A call to a
-  `-> never` function in value position fails for every non-void type,
-  scalars too (the C function returns `void`); the `Call` case of `expr`
-  should emit the call as a statement and yield the same zero. Add a spec
-  case for each form.
 - **R1 rejects a slice into a loop item's buffer over borrowed storage.**
   `for s in xs { return s }` with `xs: []String` a parameter (or
   `return s.text` in `for s in self.sections` in a `self: *Self` method,

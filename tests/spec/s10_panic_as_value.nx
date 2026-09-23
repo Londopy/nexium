@@ -1,0 +1,92 @@
+// `never` coerces to any type (specification 2): `panic(..)`, `unreachable`
+// and a call to a `-> never` function may stand where a value of any type
+// is expected, a struct or an enum as well as a scalar. The paths below
+// that would panic are not taken; s10_never_call_panics takes one.
+
+struct Point { x: i32, y: i32 }
+enum Kind { A, B }
+enum Shape { Dot, Line(i32) }
+
+fn fail(msg: []u8) -> never { panic(msg) }
+
+fn kind(s: []u8) -> Kind {
+    if s == "a" { return Kind.A }
+    if s == "b" { return Kind.B }
+    panic("unknown kind")
+}
+
+fn point(n: i32) -> Point {
+    if n >= 0 { return Point{ .x = n, .y = n * 2 } }
+    return panic("negative")
+}
+
+fn shape(n: i32) -> Shape {
+    return match n {
+        0 => Shape.Dot,
+        1 => Shape.Line(7),
+        _ => fail("no such shape"),
+    }
+}
+
+fn name(n: i32) -> String {
+    if n == 1 { return String.from("one") }
+    fail("not one")
+}
+
+fn items(n: usize) -> List(i32) {
+    if n < 3 {
+        var xs = List(i32).new()
+        for i in 0..n { xs.append(i as i32) }
+        return xs
+    }
+    unreachable
+}
+
+fn bytes(s: []u8) -> []u8 {
+    let out: []u8 = if s.len > 0 { s } else { panic("empty") }
+    return out
+}
+
+fn maybe(n: i32) -> ?i32 {
+    if n > 0 { return n }
+    return fail("not positive")
+}
+
+fn parse(n: i32) -> !i32 {
+    if n != 0 { return n * 10 }
+    fail("zero")
+}
+
+fn pair(n: i32) -> (i32, bool) {
+    let p: (i32, bool) = if n > 0 { (n, true) } else { fail("pair") }
+    return p
+}
+
+fn count(n: i32) -> i32 {
+    let c: i32 = if n > 0 { n } else { fail("count") }
+    return c
+}
+
+fn main() {
+    let k = kind("b")
+    println("{}", .{k == Kind.B})
+    let p = point(3)
+    println("{} {}", .{p.x, p.y})
+    let s = shape(1)
+    match s {
+        Shape.Dot => println("dot", .{}),
+        Shape.Line(len) => println("line {}", .{len}),
+    }
+    println("{}", .{name(1)})
+    println("{}", .{items(2).len})
+    println("{}", .{bytes("xyz")})
+    println("{}", .{maybe(4).?})
+    let v = parse(5) catch { 0 }
+    println("{}", .{v})
+    let t = pair(9)
+    println("{} {}", .{t.0, t.1})
+    println("{}", .{count(11)})
+    let die: fn([]u8) -> never = fail
+    let q: Point = if p.x > 0 { p } else { die("unreachable here") }
+    println("{}", .{q.y})
+}

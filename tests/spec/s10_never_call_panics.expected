@@ -1,0 +1,3 @@
+before
+panic: a negative point
+  at tests/spec/s10_never_call_panics.nx:7

@@ -358,6 +358,15 @@ impl Gen {
         return k == check.TK.Void or k == check.TK.Never
     }
 
+    /// The value an expression that never finishes (a panic, `unreachable`,
+    /// a call to a `-> never` function) stands for: never read, but a C
+    /// value of the expression's type, an aggregate as well as a scalar.
+    fn never_value(self: *mut Self, ety: usize) -> String {
+        let cn = self.cty(ety)
+        if cn == "void" { return String.from("0") }
+        return format("(({}){{0}})", .{cn})
+    }
+
     fn is_ref(self: *mut Self, t: usize) -> bool {
         let r = self.res(t)
         if self.c.tys.kind(r) != check.TK.Struct { return false }
@@ -2051,6 +2060,12 @@ impl Gen {
             let name = self.fn_c_name(inst)
             let call = format("{}({})", .{name, join_strings(&args, ", ")})
             if self.is_void(ety) { return call }
+            // a function that never returns stands for a value of any type:
+            // the call is a statement, and the value is never read
+            if self.c.tys.kind(self.res(self.c.insts[inst].ret)) == check.TK.Never {
+                self.line(format("{};", .{call})[..])
+                return self.never_value(ety)
+            }
             return self.bind_tmp(call[..], ety)
         }
         if k == check.TKind.CallPtr {
@@ -2061,6 +2076,14 @@ impl Gen {
             for x, i in kids { if i > 0 { args.append(self.simple(x)) } }
             let call = format("{}.fn({})", .{f, join_strings(&args, ", ")})
             if self.is_void(ety) { return call }
+            let ft = self.res(self.c.tir.nodes[kids[0]].ty)
+            if self.c.tys.kind(ft) == check.TK.Fn {
+                let fargs = self.c.tys.list[ft].args.clone()
+                if fargs.len > 0 and self.c.tys.kind(self.res(fargs[fargs.len - 1])) == check.TK.Never {
+                    self.line(format("{};", .{call})[..])
+                    return self.never_value(ety)
+                }
+            }
             return self.bind_tmp(call[..], ety)
         }
         if k == check.TKind.Builtin { return self.builtin(e) }
@@ -2409,11 +2432,7 @@ impl Gen {
         if k == check.TKind.Unreachable {
             let loc = self.node_loc(e)
             self.line(format("nx_panic(\"reached unreachable code\", {});", .{loc})[..])
-            // never runs, but must be a value of the expression's type when that
-            // type is an aggregate (an error union, a struct) rather than a scalar
-            let cn = self.cty(ety)
-            if cn == "void" { return String.from("0") }
-            return format("(({}){{0}})", .{cn})
+            return self.never_value(ety)
         }
         if k == check.TKind.Undefined {
             let cn = self.cty(ety)
@@ -3118,7 +3137,7 @@ impl Gen {
         if name == "Panic" {
             let m = self.simple(args[0])
             self.line(format("{{ char _pb[256]; snprintf(_pb, sizeof _pb, \"%.*s\", (int)({}.len > 255 ? 255 : {}.len), (const char*){}.ptr); nx_panic(_pb, {}); }}", .{m, m, m, loc})[..])
-            return String.from("0")
+            return self.never_value(ety)
         }
         if name == "Len" {
             let t = self.res(self.c.tir.nodes[args[0]].ty)

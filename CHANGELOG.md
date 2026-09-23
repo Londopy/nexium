@@ -99,6 +99,16 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Fixed
 
+- `panic(..)` standing for a value whose C type is a struct (a struct, an
+  enum, a slice, `String`, `List`, `?T`, `!T`, a tuple), as a tail, in
+  `return`, in a typed `let` or as a `match` arm, passed `nx check` and
+  failed in the C compiler (`nx_Kind _t1 = 0;`), and a call to a
+  `-> never` function in value position failed for every type, scalars
+  too (its C function returns `void`). Both now stand for a zero of the
+  expression's type after the call, as `unreachable` already did, and a
+  call through a `fn(..) -> never` value does the same (spec
+  `s10_panic_as_value`, and `s10_never_call_panics`, which takes the
+  panicking path). Found while writing QNI.
 - A `while` condition that made an owned temporary (`while
   short(format("n{}", .{k}))`, `while format(...).len < 4`, a `List`
   returned by a call) passed `nx check` and failed in the C compiler: the
