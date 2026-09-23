@@ -8,3 +8,7 @@ nexium_modules/
 installers/windows/Output/
 site/out/
 nx-out-san-nx0
+
+# Python bytecode caches (editors/pygments, linguist)
+__pycache__/
+*.pyc
