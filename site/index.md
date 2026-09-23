@@ -117,6 +117,13 @@ has the one-liners).
   for a game jam, Odin and Unity underneath, and every build step written in
   Nexium: the native build, the C# bindings generated from the Odin exports,
   the levels compiled into the game's JSON, the docs written from them.
+- [QNI](https://github.com/Londopy/qni): net reminders, check-in help and a
+  net control tutorial for the Cal Poly Amateur Radio Club's Discord
+  (W6BHZ), all Nexium; every request's Ed25519 signature is checked with
+  nxtls before anything else is read.
+- [nxtls](https://github.com/Londopy/nxtls): SHA-2, HMAC, HKDF and Ed25519
+  verification in pure Nexium, no C and no `unsafe`, tested against the
+  published vectors; a package ([the catalogue](docs/packages.html)).
 
 Using Nexium somewhere? An issue or a pull request on
 [GitHub](https://github.com/Londopy/nexium) puts it here.

@@ -45,6 +45,10 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Added
 
+- The package catalogue (`docs/packages.md`) lists nxtls, cryptography
+  in pure Nexium, and "In the wild" (the README, the site) lists it and
+  QNI, the Discord helper built on it. Both pass their tests with the
+  compiler on main.
 - `nx fix` makes the edits the checker offers for its errors (decision
   111): rule V4's `.clone()` where a value moves out from under a view of
   it, rule V5's `@escape(...)` around a value kept past its `using arena`

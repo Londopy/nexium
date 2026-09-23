@@ -1237,10 +1237,11 @@ decision entry first, an implementation second, and none is promised.
   packages people can `nx add` from git today, curated, so the ecosystem
   has a front door before it has infrastructure. The README's "In the
   wild" table is the other front door: the programs written in Nexium
-  outside the tree, two today (statusmith's SDK, and Point of Origin,
-  where Nexium is the build language of an Odin and Unity game: the
-  native build, the bindings generated from the Odin exports, the levels
-  compiled to JSON). A second kind of user, the one who writes their
+  outside the tree, four today (statusmith's SDK; Point of Origin, where
+  Nexium is the build language of an Odin and Unity game: the native
+  build, the bindings generated from the Odin exports, the levels
+  compiled to JSON; QNI, a ham radio club's Discord helper; and nxtls,
+  the cryptography package QNI checks Discord's signatures with). A second kind of user, the one who writes their
   tooling in Nexium and their product in something else, is the one the
   `@cImport`, `nx ship` and `std.process` work serves, and the one to
   ask what is missing.

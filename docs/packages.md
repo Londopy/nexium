@@ -91,6 +91,7 @@ nx add words --git https://github.com/Londopy/nexium --tag v1.2.1
 | `words` (in this repository, `topo/code/pkg/words`) | the Topo's example package: a few functions over words, the layout to copy | a `path` dependency on a checkout, or copy the two files |
 | `app` (in this repository, `topo/code/pkg/app`) | the program that depends on `words`; the shape of a program with dependencies | the same |
 | `discord_rpc` ([statusmith](https://github.com/Londopy/statusmith), its `nexium/` directory) | Discord Rich Presence over the local pipe: `connect`, `set_activity`, `clear`, `close`; Windows; [the page](discord.html) | `nx add discord_rpc --git https://github.com/Londopy/statusmith --tag sdk-v0.1.0 --dir nexium` |
+| `nxtls` ([nxtls](https://github.com/Londopy/nxtls)) | cryptography in pure Nexium, no C and no `unsafe`: `sha2` (SHA-256, -384, -512), `hmac` (constant-time `verify`), `hkdf` (with TLS 1.3's `expand_label` and `derive_secret`), `ed25519.verify` (as strict as libsodium), `ct`; tested against the published vectors; early, and a TLS 1.3 client is the plan | `nx add nxtls --git https://github.com/Londopy/nxtls --tag v0.1.0` |
 
 The standard library's next modules land in `std/`, not here; the packages
 people write are still mostly in their programs.
