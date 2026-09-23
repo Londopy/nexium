@@ -657,12 +657,14 @@ impl Gen {
         return name
     }
 
-    /// Define every type that so far only has a forward declaration.
+    /// Define every type that so far only has a forward declaration. `cty`
+    /// defines a type it finds on the list and takes it off; the removal after
+    /// it only guarantees the loop ends.
     fn define_forwarded(self: *mut Self) {
         while self.forward_only.len > 0 {
             let t = self.forward_only[0]
-            _ = self.forward_only.remove(0)
             _ = self.cty(t)
+            list_remove_usize(&mut self.forward_only, t)
         }
     }
 
@@ -4886,10 +4888,11 @@ impl Gen {
         for h, i in self.c.cimport_headers {
             if self.c.cimport_system[i] { out.append(format("#include <{}>\n", .{h})[..]) } else { out.append(format("#include \"{}\"\n", .{h})[..]) }
         }
+        // defining what was only declared can declare more, so it comes first
+        self.define_forwarded()
         out.append("\n/* ---- forward declarations ---- */\n")
         out.append(self.fwd_out[..])
         out.append("\n/* ---- types ---- */\n")
-        self.define_forwarded()
         var seen = Map(String, bool).new()
         let type_lines = self.types_out[..].lines()
         for line, li in type_lines {

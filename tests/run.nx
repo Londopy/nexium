@@ -355,7 +355,17 @@ fn suite_examples(e: *Env, failures: *mut List(String)) {
         failures.append(format("examples: nx explain (exit {}):\n{}{}", .{ex.code, ex.stdout, ex.stderr}))
     }
     let exn = nx(e, ["explain", ex_src[..], "twice", "blocks"][..])
-    if exn.code != 0 or exn.stdout[..].find("does not blocks") == null { failures.append(format("examples: nx explain on an effect a function lacks:\n{}{}", .{exn.stdout, exn.stderr})) }
+    if exn.code != 0 or exn.stdout[..].find("-> i32  !blocks") == null { failures.append(format("examples: nx explain on an effect a function lacks:\n{}{}", .{exn.stdout, exn.stderr})) }
+    // nx doc lists a type's pub methods from all its impl blocks, with their
+    // effects and doc comments, and an impl of one instance says which
+    let doc_src = fs.join(e.root[..], "nx-out/cases/methods.nx")
+    fs.write(doc_src[..], "pub struct Box { n: i32 }\nimpl Box {\n    /// Twice the number.\n    pub fn double(self: *Self) -> i32 { return self.n * 2 }\n    fn hidden(self: *Self) -> i32 { return 0 }\n}\nimpl Box {\n    pub fn show(self: *Self) { println(\"{}\", .{self.n}) }\n}\npub struct Pair(T) { a: T, b: T }\nimpl(T) Pair(T) {\n    pub fn first(self: *Self) -> T { return self.a }\n}\nimpl Pair(i32) {\n    pub fn sum(self: *Self) -> i32 { return self.a + self.b }\n}\n") catch { }
+    let dg = nx(e, ["doc", doc_src[..], "-o", fs.join(e.root[..], "nx-out/cases/methods-doc")[..]][..])
+    let page = fs.read(fs.join(e.root[..], "nx-out/cases/methods-doc/methods.html")[..]) catch { String.new() }
+    for want in ["pub fn double(self: *Self) -&gt; i32", "Twice the number.", "pub fn show(self: *Self)</pre><div class=\"eff\">effects: blocks", "(generic; inferred per instantiation)", "<code>impl Pair(i32)</code>", "pub fn sum("] {
+        if page[..].find(want) == null { failures.append(format("examples: nx doc does not show `{}` (exit {}):\n{}{}", .{want, dg.code, dg.stderr, page})) }
+    }
+    if page[..].find("hidden") != null { failures.append(String.from("examples: nx doc lists a method that is not pub")) }
     // the effects lockfile: the shipped example's is committed and must match;
     // a function that starts printing gains `blocks`, and --check says so
     let lk = nx(e, ["audit", "examples/ropesim.nx", "--check"][..])
@@ -613,6 +623,13 @@ fn program_found(e: *Env, name: []u8) -> bool {
 /// `nx ship` on a library: the header, the Python package and wheel, the
 /// Rust crate (built when cargo is around), the npm package (run when node is).
 fn suite_ship(e: *Env, failures: *mut List(String)) {
+    // a struct reached only through `self` pointers of trait methods, in a
+    // library with no `main`, is defined, not left an incomplete type
+    fs.make_dirs(fs.join(e.root[..], "nx-out/cases")[..]) catch { }
+    let plib = fs.join(e.root[..], "nx-out/cases/ptr_only.nx")
+    fs.write(plib[..], "trait Shape {\n    fn area(self: *Self) -> f64\n}\n\nstruct Square { side: f64 }\n\nimpl Shape for Square {\n    fn area(self: *Self) -> f64 { return self.side * self.side }\n}\n") catch { }
+    let pb = nx(e, ["build", plib[..], "--out-dir", fs.join(e.root[..], "nx-out/cases/ptr_only")[..]][..])
+    if pb.code != 0 { failures.append(format("ship: a library whose struct is used only through pointers does not build:\n{}", .{pb.stderr})) }
     let out_dir = fs.join(e.root[..], "nx-out/ship-test")
     fs.remove_all(out_dir[..]) catch { }
     let out = nx(e, ["ship", "examples/ropesim.nx", "--out-dir", out_dir[..]][..])

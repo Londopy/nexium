@@ -1,0 +1,18 @@
+// EXPECT: `first` is already a method of this type
+struct Pair(T) {
+    a: T
+    b: T
+}
+
+impl(T) Pair(T) {
+    fn first(self: *Self) -> T { return self.a }
+}
+
+impl Pair(i32) {
+    fn first(self: *Self) -> i32 { return 0 }
+}
+
+fn main() {
+    let p = Pair(i32){ .a = 1, .b = 2 }
+    println("{}", .{p.first()})
+}

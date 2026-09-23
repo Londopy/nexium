@@ -2443,6 +2443,7 @@ impl Checker {
     }
 
     fn check_program(self: *mut Self) {
+        self.check_duplicate_methods()
         let n = self.consts.len
         for i in 0..n { _ = self.resolve_const(i) }
         self.resolve_globals()
@@ -8953,6 +8954,78 @@ impl Checker {
         self.env_restore(&saved_env)
         while self.errors.len > saved { _ = self.errors.pop() }
         return self.tys.resolve(pt, true) == t
+    }
+
+    /// What inherent impl `i` is for: the type definition it names (`head`)
+    /// and, when the impl is not generic, the exact type (`exact`; "" for a
+    /// generic impl, which covers every instance of its head). False when its
+    /// target does not resolve, which is reported where the impl is checked.
+    fn impl_key(self: *mut Self, i: usize, head: *mut String, exact: *mut String) -> bool {
+        let m = self.impls[i].module
+        let target = self.impls[i].target
+        let n = self.node(m, target)
+        if n.k != parser.NodeKind.TName { return false }
+        let errors_before = self.errors.len
+        var t = NONE
+        if self.impls[i].tparams.len == 0 {
+            t = self.tys.shallow(self.resolve_type(m, target, NONE))
+        } else if n.words.len == 1 {
+            // a generic impl: the definition its head names
+            if let r = self.lookup(m, n.words[0][..]) {
+                if r.kind == ItemKind.Struct or r.kind == ItemKind.Enum {
+                    head.* = format("{}:{}", .{if r.kind == ItemKind.Struct { "struct" } else { "enum" }, r.id})
+                    exact.* = String.new()
+                    return true
+                }
+            }
+            return false
+        } else {
+            return false
+        }
+        // resolving a target a second time must not report its errors twice
+        let failed = self.errors.len > errors_before
+        while self.errors.len > errors_before { _ = self.errors.pop() }
+        if failed { return false }
+        let k = self.tys.kind(t)
+        head.* = if k == TK.Struct { format("struct:{}", .{self.tys.list[t].def}) } else if k == TK.Enum { format("enum:{}", .{self.tys.list[t].def}) } else { format("t:{}", .{t}) }
+        exact.* = format("t:{}", .{t})
+        return true
+    }
+
+    /// A type has one method of a name: two inherent impls of the same type
+    /// (in one module or two) may not both define it, since a call could only
+    /// ever reach the first.
+    fn check_duplicate_methods(self: *mut Self) {
+        let n = self.impls.len
+        var heads = List(String).new()
+        var exacts = List(String).new()
+        var keyed = List(bool).new()
+        for i in 0..n {
+            var h = String.new()
+            var x = String.new()
+            let ok = !self.impls[i].has_trait and self.impl_key(i, &mut h, &mut x)
+            heads.append(h)
+            exacts.append(x)
+            keyed.append(ok)
+        }
+        for j in 0..n {
+            if !keyed[j] { continue }
+            for i in 0..j {
+                if !keyed[i] or heads[i] != heads[j] { continue }
+                if exacts[i].len > 0 and exacts[j].len > 0 and exacts[i] != exacts[j] { continue }
+                for fj in self.impls[j].methods.clone() {
+                    let jm = self.fns[fj].node_module
+                    let jname = self.node(jm, self.fns[fj].node).name.clone()
+                    let jat = self.node(jm, self.fns[fj].node).start
+                    for fi in self.impls[i].methods.clone() {
+                        let im = self.fns[fi].node_module
+                        if self.node(im, self.fns[fi].node).name != jname { continue }
+                        let first = self.location(im, self.node(im, self.fns[fi].node).start)
+                        self.fail(jm, jat, format("`{}` is already a method of this type (at {}); a type has one method of a name", .{jname, first})[..])
+                    }
+                }
+            }
+        }
     }
 
     /// A method of an inherent impl first, then of a trait impl, for type `t`;

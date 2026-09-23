@@ -93,7 +93,11 @@ import std.json                             // a std module embedded in the comp
 ```
 
 Visibility: `pub` items of an imported module are reached as
-`module.item`. Fields are visible to any code that can see the struct.
+`module.item`. Fields are visible to any code that can see the struct,
+and so are methods: `pub` on a method marks the type's documented
+interface. A type's inherent methods may be declared in several `impl`
+blocks, in any module that can see the type; a type has one method of a
+name, so two blocks may not both define it.
 Struct fields are separated by commas or newlines and may carry defaults
 (`verbose: u8 = 0`). A struct literal's initializers are evaluated in the
 order written, then the defaults of the fields it leaves out.

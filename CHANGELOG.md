@@ -10,6 +10,18 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ## [Unreleased]
 
+### Changed
+
+- The rules for methods are written down (decision 110): a method is
+  visible wherever its type is, as a field is, and `pub` on it marks the
+  documented interface; a type's `impl` blocks may sit in several modules.
+  The compiler behaved so already.
+- `nx doc` lists a public struct's or enum's `pub` methods under it, from
+  every `impl` block of the type in any module, each with its signature,
+  inferred effects and doc comment; for a generic type, the methods of an
+  impl of one instance (`impl Pair(i32)`) are headed by it. Methods were
+  missing from the page before, doc comments and all.
+
 ### Added
 
 - The playground: the Topo's exercises and every example on the site run in
@@ -53,6 +65,19 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Fixed
 
+- A method defined twice for one type, in two `impl` blocks of a module or
+  in two modules, was accepted, and every call reached the first; it is an
+  error at the second definition (compile-fail cases `duplicate_method`,
+  `duplicate_method_generic`). A generic `impl(T) Pair(T)` conflicts with
+  every instance of `Pair`; `impl Pair(i32)` and `impl Pair(f64)` may both
+  define a method.
+- A struct reached only through pointers, such as the `self` of a trait's
+  methods in a library with no `main`, was declared in the generated C but
+  never defined, and the C compiler refused it as an incomplete type. The
+  fuzzer found it; the ship suite now builds such a library.
+- `nx explain FILE f effect` on a function without the effect printed
+  `fn f(...)  does not blocks`; it prints the absence as a signature
+  bounds it, `fn f(...)  !blocks`.
 - The interpreter (the REPL, `nx -e`, and now `nx play`) printed some
   programs differently from their compiled selves; running every recorded
   program through it found them all. Format specs were ignored (`{:.2}`,

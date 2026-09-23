@@ -817,3 +817,18 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     met with the compiler's words, in the terminal (`nx topo quiz`) and on
     the page, where a click on a choice is graded at once. A question
     without `ask:` is an answer key as before; the two kinds mix in one quiz.
+110. **A method is visible wherever its type is, a type's `impl` blocks may
+    sit in any module that sees it, and a type has one method of a name.**
+    Methods followed fields (visible to any code that can see the struct)
+    in the implementation from the start, and an `impl` of a type from
+    another module worked, but neither was written down, and a method
+    defined twice, in two blocks of one module or in two modules, was
+    accepted with the first definition silently winning every call. The
+    rules are now the specification's: `pub` on a method marks the type's
+    documented interface (`nx doc` lists it) rather than guarding it; the
+    inherent methods of one type may be spread over blocks and modules,
+    which is how a large type such as the compiler's `Checker` is split by
+    responsibility without widening anything; and a second method of a
+    name is an error at the second definition, a generic `impl(T)`
+    conflicting with every instance of its head and `impl Pair(i32)` with
+    `impl Pair(i32)` but not with `impl Pair(f64)`.

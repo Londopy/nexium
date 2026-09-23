@@ -1,0 +1,17 @@
+// EXPECT: `double` is already a method of this type
+struct Box {
+    n: i32
+}
+
+impl Box {
+    fn double(self: *Self) -> i32 { return self.n * 2 }
+}
+
+impl Box {
+    fn double(self: *Self) -> i32 { return 0 }
+}
+
+fn main() {
+    let b = Box{ .n = 5 }
+    println("{}", .{b.double()})
+}
