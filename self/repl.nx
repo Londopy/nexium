@@ -8,6 +8,7 @@
 
 import lexer
 import check
+import check_interp
 import lsp
 
 const ITEM_KEYWORDS = ["fn", "pub", "struct", "enum", "record", "ref", "trait", "impl", "import", "type", "error", "test", "extern", "artifact", "comptime"]
@@ -18,7 +19,7 @@ struct Session {
     // the kept bindings, by name, the same rendered with their types, and
     // the types alone (for `:effects`, which passes them as parameters)
     names: List(String)
-    values: List(check.CV)
+    values: List(check_interp.CV)
     shown: List(String)
     types: List(String)
     // what each accepted input was, for `:undo`: 0 an item, 1 a statement
@@ -27,20 +28,20 @@ struct Session {
     printed: List(bool)
     // the bindings before each statement, for `:undo`
     hist_names: List(List(String))
-    hist_values: List(List(check.CV))
+    hist_values: List(List(check_interp.CV))
     hist_shown: List(List(String))
     hist_types: List(List(String))
     // the `ref class` objects the bindings name, shared across lines
-    heap: List(check.CV)
+    heap: List(check_interp.CV)
 }
 
 fn new_session() -> Session {
     return Session{
         .items = List(String).new(), .stmts = List(String).new(),
-        .names = List(String).new(), .values = List(check.CV).new(), .shown = List(String).new(), .types = List(String).new(),
+        .names = List(String).new(), .values = List(check_interp.CV).new(), .shown = List(String).new(), .types = List(String).new(),
         .kinds = List(u8).new(), .printed = List(bool).new(),
-        .hist_names = List(List(String)).new(), .hist_values = List(List(check.CV)).new(),
-        .hist_shown = List(List(String)).new(), .hist_types = List(List(String)).new(), .heap = List(check.CV).new(),
+        .hist_names = List(List(String)).new(), .hist_values = List(List(check_interp.CV)).new(),
+        .hist_shown = List(List(String)).new(), .hist_types = List(List(String)).new(), .heap = List(check_interp.CV).new(),
     }
 }
 
@@ -173,7 +174,7 @@ fn repl_checker(text: []u8, std_dir: []u8, cc: *List(String)) -> ?check.Checker 
 
 /// Check the synthetic program and run its new statements. Null after
 /// errors, which have been printed.
-fn repl_check(text: []u8, start: usize, s: *Session, std_dir: []u8, cc: *List(String)) -> ?check.ReplOutcome {
+fn repl_check(text: []u8, start: usize, s: *Session, std_dir: []u8, cc: *List(String)) -> ?check_interp.ReplOutcome {
     var c = repl_checker(text, std_dir, cc) orelse return null
     return c.run_repl(start, &s.names, &s.values, &s.heap)
 }
@@ -214,7 +215,7 @@ fn accept(s: *mut Session, own input: String, std_dir: []u8, cc: *List(String), 
     }
     // the bindings before this statement, for `:undo`
     s.hist_names.append(s.names.clone())
-    var before = List(check.CV).new()
+    var before = List(check_interp.CV).new()
     for i in 0..s.values.len { before.append(s.values[i].clone()) }
     s.hist_values.append(before)
     s.hist_shown.append(s.shown.clone())
@@ -223,11 +224,11 @@ fn accept(s: *mut Session, own input: String, std_dir: []u8, cc: *List(String), 
     s.kinds.append(1)
     s.printed.append(out.has_printed)
     var names = List(String).new()
-    var values = List(check.CV).new()
+    var values = List(check_interp.CV).new()
     var shown = List(String).new()
     var types = List(String).new()
     for n, i in out.names {
-        if !check.cv_keepable(&out.values[i]) { continue }
+        if !check_interp.cv_keepable(&out.values[i]) { continue }
         names.append(n.clone())
         values.append(out.values[i].clone())
         shown.append(out.shown[i].clone())
@@ -330,16 +331,16 @@ pub fn play(file: []u8, std_dir: []u8, cc: *List(String), strict: bool) -> i32 {
         return 1
     }
     let r = c.run_main()
-    if r.kind == check.PLAY_ERROR {
+    if r.kind == check_interp.PLAY_ERROR {
         eprintln("error: {}", .{r.message})
         return 1
     }
-    if r.kind == check.PLAY_PANIC {
+    if r.kind == check_interp.PLAY_PANIC {
         eprintln("panic: {}", .{r.message})
         if r.at.len > 0 { eprintln("  at {}", .{r.at}) }
         return 2
     }
-    if r.kind == check.PLAY_UNSUPPORTED {
+    if r.kind == check_interp.PLAY_UNSUPPORTED {
         var at = String.new()
         if r.own_at.len > 0 { at = format(" (at {}, inside {})", .{r.own_at, r.at}) } else if r.at.len > 0 { at = format(" (at {})", .{r.at}) }
         eprintln("error: the interpreter cannot run this program{}: foreign calls, threads, sockets, processes, mutable globals and @refCount need a compiled program (nx run)", .{at})
@@ -699,7 +700,7 @@ pub fn run(version: []u8, compiler: []u8, host: []u8, std_dir: []u8, cc: *List(S
                         let st = session.stmts.pop() orelse String.new()
                         _ = session.printed.pop()
                         session.names = session.hist_names.pop() orelse List(String).new()
-                        session.values = session.hist_values.pop() orelse List(check.CV).new()
+                        session.values = session.hist_values.pop() orelse List(check_interp.CV).new()
                         session.shown = session.hist_shown.pop() orelse List(String).new()
                         session.types = session.hist_types.pop() orelse List(String).new()
                         println("undone: {}", .{first_line(st[..])})

@@ -355,7 +355,7 @@ sh bootstrap/build.sh     # nx.c -> nx0；nx0 构建 self/nx.nx -> nx1；nx1 把
 | --- | --- | --- |
 | 词法分析器 | [`self/lexer.nx`](../../../self/lexer.nx) | 记号 |
 | 语法分析器 | [`self/parser.nx`](../../../self/parser.nx) | id arena 上的语法树 |
-| 检查器 | [`self/check.nx`](../../../self/check.nx)、[`self/cimport.nx`](../../../self/cimport.nx) | 类型、效应、所有权、泛型、编译期解释器、C 头文件导入、每一条诊断 |
+| 检查器 | [`self/check.nx`](../../../self/check.nx)、`self/check_*.nx`、[`self/cimport.nx`](../../../self/cimport.nx) | 类型、效应、所有权、泛型、编译期解释器、C 头文件导入、每一条诊断 |
 | C 生成器 | [`self/cgen.nx`](../../../self/cgen.nx) | 每个程序一个 C 文件 |
 | 驱动 | [`self/nx.nx`](../../../self/nx.nx) | build、run、test、check、emit-c、tir；内嵌标准库 |
 | 工具 | [`self/fmt.nx`](../../../self/fmt.nx)、[`self/doc.nx`](../../../self/doc.nx)、[`self/tools.nx`](../../../self/tools.nx)、[`self/size.nx`](../../../self/size.nx)、[`self/manifest.nx`](../../../self/manifest.nx)、[`self/ship.nx`](../../../self/ship.nx)、[`self/lsp.nx`](../../../self/lsp.nx)、[`self/repl.nx`](../../../self/repl.nx) | 格式化器、文档生成器、各类报告、包管理、`ship`、语言服务器、REPL |

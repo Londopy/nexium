@@ -366,7 +366,7 @@ sh bootstrap/build.sh     # nx.c -> nx0; nx0가 self/nx.nx를 빌드 -> nx1; nx1
 | --- | --- | --- |
 | 렉서 | [`self/lexer.nx`](../../../self/lexer.nx) | 토큰 |
 | 파서 | [`self/parser.nx`](../../../self/parser.nx) | id 아레나 위의 구문 트리 |
-| 검사기 | [`self/check.nx`](../../../self/check.nx), [`self/cimport.nx`](../../../self/cimport.nx) | 타입, 이펙트, 소유권, 제네릭, 컴파일 타임 인터프리터, C 헤더 임포트, 모든 진단 |
+| 검사기 | [`self/check.nx`](../../../self/check.nx), `self/check_*.nx`, [`self/cimport.nx`](../../../self/cimport.nx) | 타입, 이펙트, 소유권, 제네릭, 컴파일 타임 인터프리터, C 헤더 임포트, 모든 진단 |
 | C 생성기 | [`self/cgen.nx`](../../../self/cgen.nx) | 프로그램당 C 파일 하나 |
 | 드라이버 | [`self/nx.nx`](../../../self/nx.nx) | build, run, test, check, emit-c, tir; 표준 라이브러리 내장 |
 | 도구 | [`self/fmt.nx`](../../../self/fmt.nx), [`self/doc.nx`](../../../self/doc.nx), [`self/tools.nx`](../../../self/tools.nx), [`self/size.nx`](../../../self/size.nx), [`self/manifest.nx`](../../../self/manifest.nx), [`self/ship.nx`](../../../self/ship.nx), [`self/lsp.nx`](../../../self/lsp.nx), [`self/repl.nx`](../../../self/repl.nx) | 포매터, 문서 생성기, 각종 보고서, 패키지, `ship`, 언어 서버, REPL |

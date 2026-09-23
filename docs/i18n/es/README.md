@@ -380,7 +380,7 @@ sh bootstrap/build.sh     # nx.c -> nx0; nx0 construye self/nx.nx -> nx1; nx1 se
 | --- | --- | --- |
 | lexer | [`self/lexer.nx`](../../../self/lexer.nx) | tokens |
 | parser | [`self/parser.nx`](../../../self/parser.nx) | un árbol sintáctico en una arena de ids |
-| verificador | [`self/check.nx`](../../../self/check.nx), [`self/cimport.nx`](../../../self/cimport.nx) | tipos, efectos, propiedad, genéricos, el intérprete de tiempo de compilación, la importación de cabeceras C, cada diagnóstico |
+| verificador | [`self/check.nx`](../../../self/check.nx), `self/check_*.nx`, [`self/cimport.nx`](../../../self/cimport.nx) | tipos, efectos, propiedad, genéricos, el intérprete de tiempo de compilación, la importación de cabeceras C, cada diagnóstico |
 | emisor de C | [`self/cgen.nx`](../../../self/cgen.nx) | un archivo C por programa |
 | driver | [`self/nx.nx`](../../../self/nx.nx) | build, run, test, check, emit-c, tir; la biblioteca estándar incrustada |
 | herramientas | [`self/fmt.nx`](../../../self/fmt.nx), [`self/doc.nx`](../../../self/doc.nx), [`self/tools.nx`](../../../self/tools.nx), [`self/size.nx`](../../../self/size.nx), [`self/manifest.nx`](../../../self/manifest.nx), [`self/ship.nx`](../../../self/ship.nx), [`self/lsp.nx`](../../../self/lsp.nx), [`self/repl.nx`](../../../self/repl.nx) | el formateador, el generador de documentación, los informes, los paquetes, `ship`, el servidor de lenguaje, el REPL |

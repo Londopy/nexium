@@ -378,7 +378,7 @@ sh bootstrap/build.sh     # nx.c -> nx0; nx0 baut self/nx.nx -> nx1; nx1 baut si
 | --- | --- | --- |
 | Lexer | [`self/lexer.nx`](../../../self/lexer.nx) | Tokens |
 | Parser | [`self/parser.nx`](../../../self/parser.nx) | ein Syntaxbaum in einer Id-Arena |
-| Prüfer | [`self/check.nx`](../../../self/check.nx), [`self/cimport.nx`](../../../self/cimport.nx) | Typen, Effekte, Besitz, Generics, der Compile-Zeit-Interpreter, C-Header-Import, jede Diagnose |
+| Prüfer | [`self/check.nx`](../../../self/check.nx), `self/check_*.nx`, [`self/cimport.nx`](../../../self/cimport.nx) | Typen, Effekte, Besitz, Generics, der Compile-Zeit-Interpreter, C-Header-Import, jede Diagnose |
 | C-Emitter | [`self/cgen.nx`](../../../self/cgen.nx) | eine C-Datei pro Programm |
 | Treiber | [`self/nx.nx`](../../../self/nx.nx) | build, run, test, check, emit-c, tir; die Standardbibliothek eingebettet |
 | Werkzeuge | [`self/fmt.nx`](../../../self/fmt.nx), [`self/doc.nx`](../../../self/doc.nx), [`self/tools.nx`](../../../self/tools.nx), [`self/size.nx`](../../../self/size.nx), [`self/manifest.nx`](../../../self/manifest.nx), [`self/ship.nx`](../../../self/ship.nx), [`self/lsp.nx`](../../../self/lsp.nx), [`self/repl.nx`](../../../self/repl.nx) | der Formatierer, der Dokumentationsgenerator, die Berichte, Pakete, `ship`, der Language Server, die REPL |

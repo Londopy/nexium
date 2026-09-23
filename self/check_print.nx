@@ -1,0 +1,502 @@
+// self/check_print.nx: the typed IR as text, the S-expressions `nx tir`
+// prints (and check.nx run on its own): the declarations of `--sigs`, then
+// every function instance with its signature, locals and effects and its
+// body as a tree.
+// The methods are the checker's (`impl Checker`, decision 110).
+
+import check
+
+type Checker = check.Checker
+const NONE = check.NONE
+type TKind = check.TKind
+
+// ---------------------------------------------------------------- the printer (nx tir shape)
+
+pub struct Printer {
+    out: String
+    depth: usize
+}
+
+impl Printer {
+    fn line(self: *mut Self, text: []u8) {
+        for k in 0..self.depth {
+            _ = k
+            self.out.append("  ")
+        }
+        self.out.append(text)
+        self.out.append("\n")
+    }
+    fn open(self: *mut Self, text: []u8) {
+        self.line(text)
+        self.depth += 1
+    }
+    fn close(self: *mut Self) {
+        self.depth -= 1
+        self.line(")")
+    }
+}
+
+fn eff_list(mask: u64) -> String {
+    return format("({})", .{check.render_effects(mask)})
+}
+
+impl Checker {
+    fn print_program(self: *mut Self, out: *mut String) {
+        // the declaration sections are shared with --sigs; errors and alias
+        // types are known now
+        var sigs = String.new()
+        self.print_sigs(&mut sigs)
+        // cut the sigs text before its (fns section and rebuild the parts that differ
+        let fns_at = check.find_sub(sigs[..], "  (fns\n") orelse sigs.len
+        let head = String.from(sigs[0..fns_at])
+        // insert (errors after (enums ... ) and alias types
+        var p = Printer{ .out = String.new(), .depth = 0 }
+        let enums_end = check.find_sub(head[..], "  (aliases\n") orelse head.len
+        p.out.append(head[0..enums_end])
+        p.depth = 1
+        p.open("(errors")
+        for e, i in self.error_names { p.line(format("(error {} {})", .{i + 1, e})[..]) }
+        p.close()
+        p.open("(aliases")
+        for a, i in self.aliases {
+            // an alias resolves when first used; an unused one has no type yet
+            let t = self.aliases[i].resolved
+            let tn = if t == NONE { String.from("-") } else { self.ty_name(t) }
+            p.line(format("(alias {} {} @{}:{} distinct={} module={} ty={})", .{i, a.name, a.start, a.end, a.is_distinct, a.module, tn})[..])
+        }
+        p.close()
+        p.depth = 0
+        let aliases_end = check.find_sub(head[..], "  (traits\n") orelse head.len
+        p.out.append(head[aliases_end..])
+        p.depth = 1
+        p.open("(fns")
+        let n = self.insts.len
+        for i in 0..n { self.print_inst(i, &mut p) }
+        p.close()
+        p.depth = 0
+        p.line(")")
+        out.append(p.out[..])
+    }
+
+    fn print_inst(self: *mut Self, i: usize, p: *mut Printer) {
+        let f = &self.insts[i]
+        let ret = self.ty_name(f.ret)
+        let targs = self.ty_list(f.targs[..])
+        p.open(format("(fn {} {} @{}:{} mangled={} module={} ret={} targs=({}) export={} extern={} variadic={} pub={} test={} ctest={} closure={} body={}",
+            .{i, f.name, f.start, f.end, f.mangled, f.module, ret, targs, f.export_name, f.is_extern, f.is_variadic, f.is_pub, f.is_test, f.test_comptime, f.is_closure, check.yes_no(f.body)})[..])
+        var params = String.new()
+        for pi, k in f.params {
+            if k > 0 { params.append(" ") }
+            let l = &f.locals[pi]
+            params.append(format("({} {} own={})", .{l.name, self.ty_name(l.ty), l.owned})[..])
+        }
+        p.line(format("(params {})", .{params})[..])
+        p.line(format("(declared neg={} pos={})", .{eff_list(f.declared_neg), eff_list(f.declared_pos)})[..])
+        p.line(format("(effects own={} all={})", .{eff_list(f.own_effects), eff_list(f.effects)})[..])
+        p.open("(locals")
+        for l, li in f.locals {
+            p.line(format("(local {} {} @{}:{} {} mut={} param={} own={} loop={})", .{li, l.name, l.start, l.end, self.ty_name(l.ty), l.mutable, l.is_param, l.owned, l.loop_item})[..])
+        }
+        p.close()
+        if f.body != NONE { self.print_block(f.body, p) }
+        p.close()
+    }
+
+    fn sp(self: *Self, id: usize) -> String {
+        return format("@{}:{}", .{self.tir.nodes[id].start, self.tir.nodes[id].end})
+    }
+
+    fn print_block(self: *mut Self, b: usize, p: *mut Printer) {
+        let t = self.ty_name(self.tir.nodes[b].ty)
+        let label = self.tir.nodes[b].b
+        let label_text = if label == NONE { String.from("-") } else { format("{}", .{label}) }
+        p.open(format("(block {} :{} label={}", .{self.sp(b), t, label_text})[..])
+        let kids = self.tir.nodes[b].kids.clone()
+        for s in kids { self.print_stmt(s, p) }
+        let tail = self.tir.nodes[b].a
+        if tail != NONE {
+            p.open("(tail")
+            self.print_expr(tail, p)
+            p.close()
+        }
+        p.close()
+    }
+
+    fn print_stmt(self: *mut Self, s: usize, p: *mut Printer) {
+        let k = self.tir.nodes[s].k
+        let kids = self.tir.nodes[s].kids.clone()
+        let a = self.tir.nodes[s].a
+        let b = self.tir.nodes[s].b
+        let sp = self.sp(s)
+        if k == TKind.SLet {
+            p.open(format("(let {} local={}", .{sp, a})[..])
+            for e in kids { self.print_expr(e, p) }
+            p.close()
+        } else if k == TKind.SAssign {
+            p.open(format("(assign {} op={}", .{sp, self.tir.nodes[s].name})[..])
+            self.print_expr(kids[0], p)
+            self.print_expr(kids[1], p)
+            p.close()
+        } else if k == TKind.SExpr {
+            p.open("(expr")
+            self.print_expr(kids[0], p)
+            p.close()
+        } else if k == TKind.SReturn {
+            p.open(format("(return {}", .{sp})[..])
+            for e in kids { self.print_expr(e, p) }
+            p.close()
+        } else if k == TKind.SBreak {
+            p.open(format("(break {} label={}", .{sp, a})[..])
+            for e in kids { self.print_expr(e, p) }
+            p.close()
+        } else if k == TKind.SContinue {
+            p.line(format("(continue {} label={})", .{sp, a})[..])
+        } else if k == TKind.SDefer or k == TKind.SErrDefer {
+            p.open(format("({} {}", .{if k == TKind.SDefer { "defer" } else { "errdefer" }, sp})[..])
+            self.print_stmt(kids[0], p)
+            p.close()
+        } else if k == TKind.SWhile {
+            p.open(format("(while {} label={}", .{sp, a})[..])
+            self.print_expr(kids[0], p)
+            self.print_block(kids[1], p)
+            if kids.len > 2 {
+                p.open("(else")
+                self.print_block(kids[2], p)
+                p.close()
+            }
+            p.close()
+        } else if k == TKind.SForRange {
+            p.open(format("(for_range {} var={} label={}", .{sp, a, b})[..])
+            self.print_expr(kids[0], p)
+            self.print_expr(kids[1], p)
+            if self.tir.nodes[s].flag {
+                p.open("(step")
+                self.print_expr(kids[2], p)
+                p.close()
+            }
+            self.print_block(kids[kids.len - 1], p)
+            p.close()
+        } else if k == TKind.SForSlice {
+            let idx = if a == NONE { String.from("-") } else { format("{}", .{a}) }
+            p.open(format("(for_slice {} index={} label={} parallel={}", .{sp, idx, b, self.tir.nodes[s].flag})[..])
+            let locals = self.tir.nodes[s].kids2.clone()
+            for l, i in locals {
+                p.open(format("(item local={}", .{l})[..])
+                self.print_expr(kids[i], p)
+                p.close()
+            }
+            self.print_block(kids[kids.len - 1], p)
+            p.close()
+        } else if k == TKind.SBlock {
+            self.print_block(kids[0], p)
+        } else if k == TKind.SDrop {
+            p.line(format("(drop {} local={})", .{sp, a})[..])
+        } else if k == TKind.SUsing {
+            p.open(format("(using {} {}", .{sp, self.tir.nodes[s].name})[..])
+            self.print_block(kids[0], p)
+            p.close()
+        }
+    }
+
+    fn head(self: *mut Self, name: []u8, e: usize) -> String {
+        return format("({} {} :{}", .{name, self.sp(e), self.ty_name(self.tir.nodes[e].ty)})
+    }
+
+    fn print_kids(self: *mut Self, e: usize, p: *mut Printer) {
+        let kids = self.tir.nodes[e].kids.clone()
+        for c in kids { self.print_expr(c, p) }
+    }
+
+    fn print_expr(self: *mut Self, e: usize, p: *mut Printer) {
+        let k = self.tir.nodes[e].k
+        let a = self.tir.nodes[e].a
+        let kids = self.tir.nodes[e].kids.clone()
+        if k == TKind.Int { p.line(format("{} {})", .{self.head("int", e), self.tir.nodes[e].ival})[..]); return }
+        if k == TKind.Float { p.line(format("{} {})", .{self.head("float", e), check.rust_float(self.tir.nodes[e].fval)})[..]); return }
+        if k == TKind.Bool { p.line(format("{} {})", .{self.head("bool", e), self.tir.nodes[e].flag})[..]); return }
+        if k == TKind.Char { p.line(format("{} {})", .{self.head("char", e), self.tir.nodes[e].ival})[..]); return }
+        if k == TKind.Str { p.line(format("{} {})", .{self.head("str", e), check.tquote(self.tir.nodes[e].text[..])})[..]); return }
+        if k == TKind.Unit { p.line(format("{})", .{self.head("unit", e)})[..]); return }
+        if k == TKind.Local { p.line(format("{} {})", .{self.head("local", e), a})[..]); return }
+        if k == TKind.Global { p.line(format("{} {})", .{self.head("global", e), a})[..]); return }
+        if k == TKind.Const { p.line(format("{} {})", .{self.head("const", e), a})[..]); return }
+        if k == TKind.FnRef { p.line(format("{} {})", .{self.head("fnref", e), a})[..]); return }
+        if k == TKind.FnToFat { p.line(format("{} {})", .{self.head("fn_to_fat", e), a})[..]); return }
+        if k == TKind.OptNull { p.line(format("{})", .{self.head("null", e)})[..]); return }
+        if k == TKind.ErrVal { p.line(format("{} {})", .{self.head("err_val", e), a})[..]); return }
+        if k == TKind.Unreachable { p.line(format("{})", .{self.head("unreachable", e)})[..]); return }
+        if k == TKind.Undefined { p.line(format("{})", .{self.head("undefined", e)})[..]); return }
+        if k == TKind.TypeVal { p.line(format("{} {})", .{self.head("type_val", e), self.ty_name(a)})[..]); return }
+        if k == TKind.Value { p.line(format("{} {})", .{self.head("value", e), self.value_text(e)})[..]); return }
+        if k == TKind.Closure {
+            var caps = String.new()
+            let locals = self.tir.nodes[e].kids2.clone()
+            for l, i in locals {
+                if i > 0 { caps.append(" ") }
+                caps.append(format("({} ref={})", .{l, kids[i] == 1})[..])
+            }
+            p.line(format("{} {} captures=({}))", .{self.head("closure", e), a, caps})[..])
+            return
+        }
+        if k == TKind.Field or k == TKind.RefField or k == TKind.TupleField {
+            let nm = if k == TKind.Field { "field" } else if k == TKind.RefField { "ref_field" } else { "tuple_field" }
+            p.open(format("{} {}", .{self.head(nm, e), a})[..])
+            self.print_expr(kids[0], p)
+            p.close()
+            return
+        }
+        if k == TKind.Index {
+            p.open(format("{} proven={}", .{self.head("index", e), self.tir.nodes[e].flag})[..])
+            self.print_kids(e, p)
+            p.close()
+            return
+        }
+        if k == TKind.SliceOp {
+            p.open(self.head("slice", e)[..])
+            self.print_expr(kids[0], p)
+            let has_start = self.tir.nodes[e].flag
+            let has_end = self.tir.nodes[e].flag2
+            p.line(format("(start {})", .{if has_start { "yes" } else { "no" }})[..])
+            var next: usize = 1
+            if has_start { self.print_expr(kids[next], p); next += 1 }
+            p.line(format("(end {})", .{if has_end { "yes" } else { "no" }})[..])
+            if has_end { self.print_expr(kids[next], p) }
+            p.close()
+            return
+        }
+        if k == TKind.Deref or k == TKind.Try or k == TKind.OptWrap or k == TKind.ErrWrap or k == TKind.ErrToUnion
+            or k == TKind.ArrayToSlice or k == TKind.ListToSlice or k == TKind.StrToSlice or k == TKind.Retained or k == TKind.BlockExpr{
+            let nm = if k == TKind.Deref { "deref" } else if k == TKind.Try { "try" } else if k == TKind.OptWrap { "opt_wrap" }
+            else if k == TKind.ErrWrap { "err_wrap" } else if k == TKind.ErrToUnion { "err_to_union" } else if k == TKind.ArrayToSlice { "array_to_slice" }
+            else if k == TKind.ListToSlice { "list_to_slice" } else if k == TKind.StrToSlice { "str_to_slice" } else if k == TKind.Retained { "retained" } else { "block_expr" }
+            p.open(self.head(nm, e)[..])
+            if k == TKind.BlockExpr { self.print_block(kids[0], p) } else { self.print_expr(kids[0], p) }
+            p.close()
+            return
+        }
+        if k == TKind.AddrOf {
+            p.open(format("{} mut={}", .{self.head("addr", e), self.tir.nodes[e].flag})[..])
+            self.print_expr(kids[0], p)
+            p.close()
+            return
+        }
+        if k == TKind.Call {
+            p.open(format("{} {}", .{self.head("call", e), a})[..])
+            self.print_kids(e, p)
+            p.close()
+            return
+        }
+        if k == TKind.CallPtr {
+            p.open(self.head("call_ptr", e)[..])
+            self.print_kids(e, p)
+            p.close()
+            return
+        }
+        if k == TKind.Builtin {
+            let tl = self.ty_list(self.tir.nodes[e].kids2[..])
+            p.open(format("{} {} tys=({})", .{self.head("builtin", e), self.tir.nodes[e].name, tl})[..])
+            self.print_kids(e, p)
+            p.close()
+            return
+        }
+        if k == TKind.Unary {
+            p.open(format("{} {} {}", .{self.head("unary", e), self.tir.nodes[e].text, self.tir.nodes[e].name})[..])
+            self.print_expr(kids[0], p)
+            p.close()
+            return
+        }
+        if k == TKind.Binary {
+            p.open(format("{} {} {} proven={}", .{self.head("binary", e), self.tir.nodes[e].text, self.tir.nodes[e].name, self.tir.nodes[e].flag})[..])
+            self.print_kids(e, p)
+            p.close()
+            return
+        }
+        if k == TKind.Logical {
+            p.open(format("{} {}", .{self.head("logical", e), if self.tir.nodes[e].flag { "and" } else { "or" }})[..])
+            self.print_kids(e, p)
+            p.close()
+            return
+        }
+        if k == TKind.Cast {
+            p.open(format("{} {}", .{self.head("cast", e), self.tir.nodes[e].name})[..])
+            self.print_expr(kids[0], p)
+            p.close()
+            return
+        }
+        if k == TKind.If or k == TKind.IfCapture {
+            if k == TKind.If { p.open(self.head("if", e)[..]) } else { p.open(format("{} local={}", .{self.head("if_let", e), a})[..]) }
+            self.print_expr(kids[0], p)
+            self.print_block(kids[1], p)
+            if kids.len > 2 {
+                p.open("(else")
+                self.print_block(kids[2], p)
+                p.close()
+            }
+            p.close()
+            return
+        }
+        if k == TKind.Match {
+            p.open(self.head("match", e)[..])
+            self.print_expr(kids[0], p)
+            var i: usize = 1
+            while i < kids.len {
+                self.print_arm(kids[i], p)
+                i += 1
+            }
+            p.close()
+            return
+        }
+        if k == TKind.StructLit or k == TKind.RefNew {
+            p.open(self.head(if k == TKind.StructLit { "struct_lit" } else { "ref_new" }, e)[..])
+            let idxs = self.tir.nodes[e].kids2.clone()
+            for f, i in kids {
+                p.open(format("(init {}", .{idxs[i]})[..])
+                self.print_expr(f, p)
+                p.close()
+            }
+            p.close()
+            return
+        }
+        if k == TKind.EnumLit {
+            p.open(format("{} {}", .{self.head("enum_lit", e), a})[..])
+            self.print_kids(e, p)
+            p.close()
+            return
+        }
+        if k == TKind.ArrayLit or k == TKind.TupleLit {
+            p.open(self.head(if k == TKind.ArrayLit { "array_lit" } else { "tuple_lit" }, e)[..])
+            self.print_kids(e, p)
+            p.close()
+            return
+        }
+        if k == TKind.ArrayRepeat {
+            p.open(format("{} {}", .{self.head("array_repeat", e), a})[..])
+            self.print_expr(kids[0], p)
+            p.close()
+            return
+        }
+        if k == TKind.Catch {
+            let l = if a == NONE { String.from("-") } else { format("{}", .{a}) }
+            p.open(format("{} err={}", .{self.head("catch", e), l})[..])
+            self.print_kids(e, p)
+            p.close()
+            return
+        }
+        if k == TKind.OrElse {
+            p.open(self.head("orelse", e)[..])
+            self.print_kids(e, p)
+            p.close()
+            return
+        }
+        if k == TKind.Unwrap {
+            p.open(format("{} proven={}", .{self.head("unwrap", e), self.tir.nodes[e].flag})[..])
+            self.print_expr(kids[0], p)
+            p.close()
+            return
+        }
+        if k == TKind.BinConstruct {
+            p.open(self.head("bin_construct", e)[..])
+            var i: usize = 0
+            while i + 1 < kids.len { self.print_seg(kids[i], p); i += 1 }
+            p.open("(into")
+            self.print_expr(kids[kids.len - 1], p)
+            p.close()
+            p.close()
+            return
+        }
+        if k == TKind.RecordCheck {
+            p.open(format("{} as_error={}", .{self.head("record_check", e), self.tir.nodes[e].flag})[..])
+            self.print_expr(kids[0], p)
+            let fields = self.tir.nodes[e].kids2.clone()
+            var i: usize = 1
+            while i < kids.len {
+                let c = kids[i]
+                p.open(format("(check field={} local={}", .{fields[(i - 1) * 2], fields[(i - 1) * 2 + 1]})[..])
+                self.print_expr(c, p)
+                p.close()
+                i += 1
+            }
+            p.close()
+            return
+        }
+        if k == TKind.DynFrom {
+            p.open(format("{} vtable={}", .{self.head("dyn_from", e), a})[..])
+            self.print_expr(kids[0], p)
+            p.close()
+            return
+        }
+        if k == TKind.DynCall {
+            p.open(format("{} method={}", .{self.head("dyn_call", e), a})[..])
+            self.print_kids(e, p)
+            p.close()
+            return
+        }
+        p.line(format("(?unknown {})", .{self.sp(e)})[..])
+    }
+
+    fn print_arm(self: *mut Self, arm: usize, p: *mut Printer) {
+        let kids = self.tir.nodes[arm].kids.clone()
+        let has_guard = self.tir.nodes[arm].flag
+        p.open(format("(arm {} guard={}", .{self.sp(arm), if has_guard { "yes" } else { "no" }})[..])
+        self.print_pat(kids[0], p)
+        var i: usize = 1
+        while i < kids.len { self.print_expr(kids[i], p); i += 1 }
+        p.close()
+    }
+
+    fn print_pat(self: *mut Self, q: usize, p: *mut Printer) {
+        let k = self.tir.nodes[q].k
+        let a = self.tir.nodes[q].a
+        let kids = self.tir.nodes[q].kids.clone()
+        if k == TKind.PWild { p.line("(pat _)"); return }
+        if k == TKind.PBind { p.line(format("(pat bind {})", .{a})[..]); return }
+        if k == TKind.PInt { p.line(format("(pat int {})", .{self.tir.nodes[q].ival})[..]); return }
+        if k == TKind.PFloat { p.line(format("(pat float {})", .{check.rust_float(self.tir.nodes[q].fval)})[..]); return }
+        if k == TKind.PBool { p.line(format("(pat bool {})", .{self.tir.nodes[q].flag})[..]); return }
+        if k == TKind.PStr { p.line(format("(pat str {})", .{check.tquote(self.tir.nodes[q].text[..])})[..]); return }
+        if k == TKind.PChar { p.line(format("(pat char {})", .{self.tir.nodes[q].ival})[..]); return }
+        if k == TKind.PRange { p.line(format("(pat range {} {} inclusive={})", .{self.tir.nodes[q].ival, self.tir.nodes[q].text, self.tir.nodes[q].flag})[..]); return }
+        if k == TKind.PError { p.line(format("(pat error {})", .{a})[..]); return }
+        if k == TKind.PNull { p.line("(pat null)"); return }
+        if k == TKind.PVariant {
+            p.open(format("(pat variant {}", .{a})[..])
+            for c in kids { self.print_pat(c, p) }
+            p.close()
+            return
+        }
+        if k == TKind.PSome or k == TKind.POk or k == TKind.POr or k == TKind.PTuple {
+            let nm = if k == TKind.PSome { "some" } else if k == TKind.POk { "ok" } else if k == TKind.POr { "or" } else { "tuple" }
+            p.open(format("(pat {}", .{nm})[..])
+            for c in kids { self.print_pat(c, p) }
+            p.close()
+            return
+        }
+        if k == TKind.PSlice {
+            p.open(format("(pat slice rest={} total={}", .{a, self.tir.nodes[q].flag})[..])
+            for c in kids { self.print_pat(c, p) }
+            p.close()
+            return
+        }
+        if k == TKind.PRest { p.line(format("(pat rest {})", .{a})[..]); return }
+        if k == TKind.PAt {
+            p.open(format("(pat at {}", .{a})[..])
+            for c in kids { self.print_pat(c, p) }
+            p.close()
+            return
+        }
+        if k == TKind.PBinary {
+            p.open("(pat binary")
+            for c in kids { self.print_seg(c, p) }
+            p.close()
+            return
+        }
+        p.line("(pat ?)")
+    }
+
+    fn print_seg(self: *mut Self, s: usize, p: *mut Printer) {
+        p.open(format("(seg {} :{} {}", .{self.sp(s), self.ty_name(self.tir.nodes[s].ty), self.tir.nodes[s].name})[..])
+        let kids = self.tir.nodes[s].kids.clone()
+        for c in kids { self.print_expr(c, p) }
+        p.close()
+    }
+}

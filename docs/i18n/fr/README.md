@@ -379,7 +379,7 @@ sh bootstrap/build.sh     # nx.c -> nx0 ; nx0 construit self/nx.nx -> nx1 ; nx1 
 | --- | --- | --- |
 | lexer | [`self/lexer.nx`](../../../self/lexer.nx) | jetons |
 | parser | [`self/parser.nx`](../../../self/parser.nx) | un arbre syntaxique dans une arène d'identifiants |
-| vérificateur | [`self/check.nx`](../../../self/check.nx), [`self/cimport.nx`](../../../self/cimport.nx) | types, effets, propriété, génériques, l'interprète à la compilation, l'import d'en-têtes C, chaque diagnostic |
+| vérificateur | [`self/check.nx`](../../../self/check.nx), `self/check_*.nx`, [`self/cimport.nx`](../../../self/cimport.nx) | types, effets, propriété, génériques, l'interprète à la compilation, l'import d'en-têtes C, chaque diagnostic |
 | émetteur C | [`self/cgen.nx`](../../../self/cgen.nx) | un fichier C par programme |
 | pilote | [`self/nx.nx`](../../../self/nx.nx) | build, run, test, check, emit-c, tir ; la bibliothèque standard embarquée |
 | outils | [`self/fmt.nx`](../../../self/fmt.nx), [`self/doc.nx`](../../../self/doc.nx), [`self/tools.nx`](../../../self/tools.nx), [`self/size.nx`](../../../self/size.nx), [`self/manifest.nx`](../../../self/manifest.nx), [`self/ship.nx`](../../../self/ship.nx), [`self/lsp.nx`](../../../self/lsp.nx), [`self/repl.nx`](../../../self/repl.nx) | le formateur, le générateur de documentation, les rapports, les paquets, `ship`, le serveur de langage, le REPL |

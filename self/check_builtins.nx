@@ -1,0 +1,413 @@
+// self/check_builtins.nx: the `@` builtins (`@sizeOf`, `@typeName`,
+// `@embedFile`, `@bitCast`, `@escape`, `@refCount`, ...) and the layout of
+// types, as `@sizeOf`, `@alignOf` and `nx layout` report it.
+// The methods are the checker's (`impl Checker`, decision 110).
+
+import check
+import parser
+
+type Checker = check.Checker
+const EFF_ALLOCATES = check.EFF_ALLOCATES
+const EFF_REFCOUNTS = check.EFF_REFCOUNTS
+const NONE = check.NONE
+type TK = check.TK
+type TKind = check.TKind
+
+// ---------------------------------------------------------------- the @ builtins, and layout
+
+impl Checker {
+    fn check_at_builtin(self: *mut Self, e: usize, expected: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        let name = n.name.clone()
+        let args = n.kids.clone()
+        let start = n.start
+        let end = n.end
+        _ = expected
+        let bytes = self.tys.str_slice()
+        if name == "typeName" or name == "sizeOf" {
+            if !self.args_n(args[..], 1, if name == "typeName" { "@typeName" } else { "@sizeOf" }, start) { return self.error_expr(start, end) }
+            let te = self.check_expr(args[0], NONE)
+            var t = self.tir.nodes[te].ty
+            if self.tir.nodes[te].k == TKind.TypeVal { t = self.tir.nodes[te].a }
+            t = self.tys.resolve(t, true)
+            if name == "typeName" {
+                let r = self.mk(TKind.Str, bytes, start, end)
+                self.tir.nodes[r].text = self.ty_name(t)
+                return r
+            }
+            let u = self.tys.usize_ty()
+            return self.int_node(self.size_of(t) as i128, u, start, end)
+        }
+        if name == "alignOf" {
+            if !self.args_n(args[..], 1, "@alignOf", start) { return self.error_expr(start, end) }
+            let te = self.check_expr(args[0], NONE)
+            var t = self.tir.nodes[te].ty
+            if self.tir.nodes[te].k == TKind.TypeVal { t = self.tir.nodes[te].a }
+            t = self.tys.resolve(t, true)
+            let u = self.tys.usize_ty()
+            return self.int_node(self.align_of(t) as i128, u, start, end)
+        }
+        if name == "min" or name == "max" {
+            let label = if name == "min" { "@min" } else { "@max" }
+            if !self.args_n(args[..], 2, label, start) { return self.error_expr(start, end) }
+            var a = self.check_expr(args[0], NONE)
+            a = self.finalize_expr(a)
+            let t = self.tys.resolve(self.tir.nodes[a].ty, true)
+            let k = self.tys.kind(t)
+            if k != TK.Int and k != TK.Float {
+                self.fail_here(start, format("{} compares numbers but found `{}`", .{label, self.ty_name(t)})[..])
+                return self.error_expr(start, end)
+            }
+            let b2 = self.arg(args[1], t, "operand")
+            let b = self.bnode(if name == "min" { "MathMin" } else { "MathMax" }, a, t, t, start, end)
+            self.tir.nodes[b].kids.append(b2)
+            return b
+        }
+        if name == "bitCast" {
+            if !self.args_n(args[..], 2, "@bitCast", start) { return self.error_expr(start, end) }
+            let te = self.check_expr(args[0], NONE)
+            if self.tir.nodes[te].k != TKind.TypeVal {
+                self.fail_here(start, "the first argument of @bitCast is the target type")
+                return self.error_expr(start, end)
+            }
+            let t = self.tys.resolve(self.tir.nodes[te].a, true)
+            var v = self.check_expr(args[1], NONE)
+            v = self.finalize_expr(v)
+            let vt = self.tys.resolve(self.tir.nodes[v].ty, true)
+            let tk = self.tys.kind(t)
+            let vk = self.tys.kind(vt)
+            let scalar_to = tk == TK.Int or tk == TK.Float or tk == TK.Bool or tk == TK.Char
+            let scalar_from = vk == TK.Int or vk == TK.Float or vk == TK.Bool or vk == TK.Char
+            if !scalar_to or !scalar_from {
+                self.fail_here(start, format("@bitCast reinterprets one scalar as another (integers, floats, chars, bools) but found `{}` to `{}`", .{self.ty_name(vt), self.ty_name(t)})[..])
+                return self.error_expr(start, end)
+            }
+            if self.size_of(t) != self.size_of(vt) {
+                self.fail_here(start, format("@bitCast needs equal sizes: `{}` is {} byte(s), `{}` is {}", .{self.ty_name(vt), self.size_of(vt), self.ty_name(t), self.size_of(t)})[..])
+                return self.error_expr(start, end)
+            }
+            self.tir.nodes[v].ty = vt
+            let b = self.builtin_node("BitCast", t, start, end)
+            self.tir.nodes[b].kids.append(v)
+            self.tir.nodes[b].kids2.append(t)
+            self.tir.nodes[b].kids2.append(vt)
+            return b
+        }
+        if name == "escape" {
+            // a copy made by the allocator outside the innermost `using arena`
+            // block, so the value may leave it (rule V5)
+            if !self.args_n(args[..], 1, "@escape", start) { return self.error_expr(start, end) }
+            if self.ctx().using_depth == 0 {
+                self.fail_here(start, "`@escape` copies a value out of a `using arena` block and is only meaningful inside one")
+                return self.error_expr(start, end)
+            }
+            let v = self.check_expr(args[0], NONE)
+            if !self.is_place(v) {
+                self.fail_here(start, "`@escape` takes a variable, a field or an element; bind the value with `let` first")
+                return self.error_expr(start, end)
+            }
+            let t = self.tys.resolve(self.tir.nodes[v].ty, true)
+            if !self.needs_drop(t) {
+                self.fail_here(start, format("`@escape` copies heap storage out of the arena, but a `{}` owns none; use the value as it is", .{self.ty_name(t)})[..])
+                return self.error_expr(start, end)
+            }
+            self.clone_seen.clear()
+            if let why = self.clone_blocker(t) {
+                self.fail_here(start, format("cannot escape a `{}`: {}", .{self.ty_name(t), why})[..])
+                return self.error_expr(start, end)
+            }
+            self.clone_seen.clear()
+            let eff = self.clone_effects(t)
+            if (eff & EFF_ALLOCATES) != 0 { self.add_effect(EFF_ALLOCATES, start, "escaping a value from an arena allocates") }
+            if (eff & EFF_REFCOUNTS) != 0 { self.add_effect(EFF_REFCOUNTS, start, "escaping a value from an arena retains a reference") }
+            let b = self.builtin_node("Escape", t, start, end)
+            self.tir.nodes[b].kids.append(v)
+            self.tir.nodes[b].kids2.append(t)
+            return b
+        }
+        if name == "target" {
+            if !self.args_n(args[..], 0, "@target", start) { return self.error_expr(start, end) }
+            var parts = List(usize).new()
+            parts.append(bytes)
+            parts.append(bytes)
+            parts.append(self.tys.int("u32"))
+            let tt = self.tys.tuple(parts)
+            return self.builtin_node("Target", tt, start, end)
+        }
+        if name == "truncate" {
+            if !self.args_n(args[..], 2, "@truncate", start) { return self.error_expr(start, end) }
+            let te = self.check_expr(args[0], NONE)
+            if self.tir.nodes[te].k != TKind.TypeVal {
+                self.fail_here(start, "the first argument of @truncate is the target type")
+                return self.error_expr(start, end)
+            }
+            let t = self.tir.nodes[te].a
+            let v = self.check_expr(args[1], NONE)
+            if !self.tys.is_integer(t) or !self.tys.is_integer(self.tir.nodes[v].ty) { self.fail_here(start, "@truncate converts between integer types") }
+            let vt = self.tys.resolve(self.tir.nodes[v].ty, true)
+            self.tir.nodes[v].ty = vt
+            let b = self.builtin_node("Truncate", t, start, end)
+            self.tir.nodes[b].kids.append(v)
+            self.tir.nodes[b].kids2.append(t)
+            return b
+        }
+        if name == "errorName" {
+            if !self.args_n(args[..], 1, "@errorName", start) { return self.error_expr(start, end) }
+            let x = self.check_expr(args[0], NONE)
+            let t = self.tys.shallow(self.tir.nodes[x].ty)
+            if self.tys.kind(t) != TK.ErrorSet { self.fail_here(start, format("@errorName takes an error value but found `{}`", .{self.ty_name(t)})[..]) }
+            let b = self.builtin_node("ErrorName", bytes, start, end)
+            self.tir.nodes[b].kids.append(x)
+            return b
+        }
+        if name == "embedFile" {
+            if !self.args_n(args[..], 1, "@embedFile", start) { return self.error_expr(start, end) }
+            let an = self.node(m, args[0])
+            if ! (an.k == parser.NodeKind.Lit and an.text == "str") {
+                self.fail_here(an.start, "@embedFile takes a string literal path (a declared build input)")
+                return self.error_expr(start, end)
+            }
+            let path = an.name.clone()
+            let dir = self.mods[m].dir.clone()
+            let full = if dir.len == 0 { path.clone() } else { format("{}/{}", .{dir, path}) }
+            let data = io.read_file(full[..]) catch {
+                self.fail_here(start, format("@embedFile: cannot read `{}`", .{full})[..])
+                return self.error_expr(start, end)
+            }
+            let r = self.mk(TKind.Str, bytes, start, end)
+            self.tir.nodes[r].text = data
+            return r
+        }
+        if name == "cstr" {
+            if !self.args_n(args[..], 1, "@cstr", start) { return self.error_expr(start, end) }
+            let an = self.node(m, args[0])
+            if ! (an.k == parser.NodeKind.Lit and an.text == "str") {
+                self.fail_here(an.start, "@cstr takes a string literal and yields a NUL-terminated `*u8` for C")
+                return self.error_expr(start, end)
+            }
+            let u8t = self.tys.u8_ty()
+            let pt = self.tys.wrap(TK.Ptr, u8t, false)
+            let lit = self.mk(TKind.Str, bytes, start, end)
+            self.tir.nodes[lit].text = an.name.clone()
+            let b = self.builtin_node("PtrAdd", pt, start, end)
+            self.tir.nodes[b].kids.append(lit)
+            return b
+        }
+        if name == "weak" or name == "refCount" {
+            if !self.args_n(args[..], 1, if name == "weak" { "@weak" } else { "@refCount" }, start) { return self.error_expr(start, end) }
+            let x = self.check_expr(args[0], NONE)
+            let t = self.tys.resolve(self.tir.nodes[x].ty, true)
+            if !self.is_ref_class(t) {
+                self.fail_here(start, format("@{} takes a `ref class` value", .{name})[..])
+                return self.error_expr(start, end)
+            }
+            if name == "weak" {
+                let wt = self.tys.wrap(TK.Weak, t, false)
+                self.add_effect(EFF_REFCOUNTS, start, "creating a weak reference touches the count")
+                let b = self.builtin_node("Weak", wt, start, end)
+                self.tir.nodes[b].kids.append(x)
+                self.tir.nodes[b].kids2.append(t)
+                return b
+            }
+            let u = self.tys.usize_ty()
+            let b = self.builtin_node("RefCount", u, start, end)
+            self.tir.nodes[b].kids.append(x)
+            return b
+        }
+        self.fail_here(start, format("unknown builtin `@{}`", .{name})[..])
+        for a in args { _ = self.check_expr(a, NONE) }
+        return self.error_expr(start, end)
+    }
+
+    /// `nx layout`: the C layout of the struct or enum `name` of the root
+    /// module. A struct: every field's offset and size, the padding between
+    /// them, the total, and the order by alignment that would shrink it when
+    /// one would (the backend keeps fields in declaration order). An enum:
+    /// the tag, where the payload starts, and each variant's payload. Null
+    /// when there is no such type.
+    pub fn layout_report(self: *mut Self, name: []u8) -> ?String {
+        var out = String.new()
+        for d in 0..self.structs.len {
+            if self.structs[d].module != 0 or self.structs[d].name[..] != name { continue }
+            if self.structs[d].tparams.len > 0 {
+                out.append(format("struct {}: generic; the layout depends on the type arguments\n", .{name})[..])
+                return out
+            }
+            let t = self.tys.of_def(TK.Struct, d, List(usize).new())
+            let m = self.structs[d].module
+            let fields = self.structs[d].fields.clone()
+            let fts = self.struct_field_types(t)
+            var names = List(String).new()
+            for f in fields { names.append(self.node(m, f).name.clone()) }
+            // declaration order, which is the backend's
+            var off: u64 = 0
+            var maxa: u64 = 1
+            var pad: u64 = 0
+            var rows = String.new()
+            for ft, i in fts {
+                let a = self.align_of(ft)
+                let sz = self.size_of(ft)
+                maxa = check.max64(maxa, a)
+                let at = check.round_up(off, a)
+                if at > off {
+                    rows.append(format("  {}  {}  (padding)\n", .{check.lpad(off, 6), check.lpad(at - off, 4)})[..])
+                    pad += at - off
+                }
+                rows.append(format("  {}  {}  {}: {}\n", .{check.lpad(at, 6), check.lpad(sz, 4), names[i], self.ty_name(ft)})[..])
+                off = at + sz
+            }
+            let total = check.round_up(off, maxa)
+            if total > off {
+                rows.append(format("  {}  {}  (padding at the end)\n", .{check.lpad(off, 6), check.lpad(total - off, 4)})[..])
+                pad += total - off
+            }
+            let what = if self.structs[d].kind == "ref" { "ref class (a pointer of 8 bytes; the object behind it)" } else { "struct" }
+            out.append(format("{} {}: {} bytes, alignment {}, {} of padding\n  offset  size  field\n", .{what, name, total, maxa, pad})[..])
+            out.append(rows[..])
+            // the same fields, largest alignment first (stable)
+            var order = List(usize).new()
+            for i in 0..fts.len { order.append(i) }
+            var i: usize = 1
+            while i < order.len {
+                var j = i
+                while j > 0 and self.align_of(fts[order[j - 1]]) < self.align_of(fts[order[j]]) {
+                    let tmp = order[j - 1]
+                    order[j - 1] = order[j]
+                    order[j] = tmp
+                    j -= 1
+                }
+                i += 1
+            }
+            var off2: u64 = 0
+            for k in order { off2 = check.round_up(off2, self.align_of(fts[k])) + self.size_of(fts[k]) }
+            let total2 = check.round_up(off2, maxa)
+            if total2 < total {
+                var seq = String.new()
+                for k in order {
+                    if seq.len > 0 { seq.append(", ") }
+                    seq.append(names[k][..])
+                }
+                out.append(format("reordered by alignment ({}): {} bytes, {} fewer\n", .{seq, total2, total - total2})[..])
+            } else if fts.len > 1 {
+                out.append("reordering by alignment gains nothing\n")
+            }
+            return out
+        }
+        for d in 0..self.enums.len {
+            if self.enums[d].module != 0 or self.enums[d].name[..] != name { continue }
+            if self.enums[d].tparams.len > 0 {
+                out.append(format("enum {}: generic; the layout depends on the type arguments\n", .{name})[..])
+                return out
+            }
+            let t = self.tys.of_def(TK.Enum, d, List(usize).new())
+            let m = self.enums[d].module
+            let variants = self.enums[d].variants.clone()
+            let vtys = self.enum_variant_types(t)
+            var maxs: u64 = 0
+            var maxa: u64 = 4
+            var rows = String.new()
+            for v, i in vtys {
+                var voff: u64 = 0
+                var tys = String.new()
+                for f in v {
+                    let a = self.align_of(f)
+                    maxa = check.max64(maxa, a)
+                    voff = check.round_up(voff, a) + self.size_of(f)
+                    if tys.len > 0 { tys.append(", ") }
+                    tys.append(self.ty_name(f)[..])
+                }
+                maxs = check.max64(maxs, voff)
+                let shown = if tys.len > 0 { format("{}({})", .{self.node(m, variants[i]).name, tys}) } else { self.node(m, variants[i]).name.clone() }
+                rows.append(format("  {}: {} bytes of payload\n", .{shown, voff})[..])
+            }
+            let payload_at = check.round_up(4, maxa)
+            let total = check.round_up(payload_at + maxs, maxa)
+            out.append(format("enum {}: {} bytes, alignment {}; the tag is 4 bytes at 0, the payload starts at {}, {} bytes for the largest variant\n", .{name, total, maxa, payload_at, maxs})[..])
+            out.append(rows[..])
+            return out
+        }
+        return null
+    }
+
+    /// Sizes and alignments of types, as the C backend lays them out.
+    fn size_of(self: *mut Self, t0: usize) -> u64 {
+        let t = self.tys.shallow(t0)
+        let k = self.tys.kind(t)
+        if k == TK.Int { return (check.int_bits(self.tys.list[t].name[..]) / 8) as u64 }
+        if k == TK.Float { return if self.tys.list[t].name == "f32" { 4 } else { 8 } }
+        if k == TK.Bool { return 1 }
+        if k == TK.Char { return 4 }
+        if k == TK.Void or k == TK.Never { return 0 }
+        if k == TK.Array { return self.tys.list[t].n * self.size_of(self.tys.list[t].args[0]) }
+        if k == TK.Slice or k == TK.Fn { return 16 }
+        if k == TK.Ptr or k == TK.Weak { return 8 }
+        if k == TK.Opt {
+            let e = self.tys.list[t].args[0]
+            return check.round_up(self.size_of(e) + 1, self.align_of(e))
+        }
+        if k == TK.ErrUnion {
+            let e = self.tys.list[t].args[0]
+            let a = check.max64(self.align_of(e), 4)
+            return check.round_up(check.round_up(4, self.align_of(e)) + self.size_of(e), a)
+        }
+        if k == TK.Distinct { return self.size_of(self.distinct_underlying(self.tys.list[t].def)) }
+        if k == TK.List or k == TK.Str { return 24 }
+        if k == TK.Map { return 40 }
+        if k == TK.Struct or k == TK.Tuple {
+            if k == TK.Struct and self.is_ref_class(t) { return 8 }
+            let fts = if k == TK.Struct { self.struct_field_types(t) } else { self.tys.list[t].args.clone() }
+            var off: u64 = 0
+            var maxa: u64 = 1
+            for f in fts {
+                let a = self.align_of(f)
+                maxa = check.max64(maxa, a)
+                off = check.round_up(off, a) + self.size_of(f)
+            }
+            return check.round_up(off, maxa)
+        }
+        if k == TK.Enum {
+            let vtys = self.enum_variant_types(t)
+            var maxs: u64 = 0
+            var maxa: u64 = 4
+            for v in vtys {
+                var off: u64 = 0
+                for f in v {
+                    let a = self.align_of(f)
+                    maxa = check.max64(maxa, a)
+                    off = check.round_up(off, a) + self.size_of(f)
+                }
+                maxs = check.max64(maxs, off)
+            }
+            return check.round_up(check.round_up(4, maxa) + maxs, maxa)
+        }
+        return 8
+    }
+
+    fn align_of(self: *mut Self, t0: usize) -> u64 {
+        let t = self.tys.shallow(t0)
+        let k = self.tys.kind(t)
+        if k == TK.Int { return check.min64((check.int_bits(self.tys.list[t].name[..]) / 8) as u64, 16) }
+        if k == TK.Float { return if self.tys.list[t].name == "f32" { 4 } else { 8 } }
+        if k == TK.Bool { return 1 }
+        if k == TK.Char { return 4 }
+        if k == TK.Void or k == TK.Never { return 1 }
+        if k == TK.Array or k == TK.Opt { return self.align_of(self.tys.list[t].args[0]) }
+        if k == TK.ErrUnion { return check.max64(self.align_of(self.tys.list[t].args[0]), 4) }
+        if k == TK.Distinct { return self.align_of(self.distinct_underlying(self.tys.list[t].def)) }
+        if k == TK.Struct or k == TK.Tuple {
+            if k == TK.Struct and self.is_ref_class(t) { return 8 }
+            let fts = if k == TK.Struct { self.struct_field_types(t) } else { self.tys.list[t].args.clone() }
+            var maxa: u64 = 1
+            for f in fts { maxa = check.max64(maxa, self.align_of(f)) }
+            return maxa
+        }
+        if k == TK.Enum {
+            let vtys = self.enum_variant_types(t)
+            var maxa: u64 = 1
+            for v in vtys { for f in v { maxa = check.max64(maxa, self.align_of(f)) } }
+            return check.max64(maxa, 4)
+        }
+        return 8
+    }
+}

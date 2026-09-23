@@ -63,6 +63,7 @@ go in the tracker; open ones the maintainers know about are listed in
 
 The compiler is written in the language this book teaches, and its test
 harness and fuzzer are too. If you want to know how a feature really works,
-`self/check.nx` has the answer, and after these chapters you can read it.
+`self/check.nx` and the `check_*.nx` modules beside it have the answer, and
+after these chapters you can read them.
 
 Thanks for climbing.

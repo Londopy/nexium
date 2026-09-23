@@ -1,0 +1,1060 @@
+// self/check_match.nx: `match` and its patterns, the exhaustiveness check
+// over constructors and slices, and binary patterns and construction.
+// The methods are the checker's (`impl Checker`, decision 110).
+
+import check
+import parser
+
+type Checker = check.Checker
+type ItemKind = check.ItemKind
+const NONE = check.NONE
+type TK = check.TK
+type TKind = check.TKind
+
+// ---------------------------------------------------------------- match and patterns
+
+impl Checker {
+    fn check_match(self: *mut Self, e: usize, expected: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        let scrut_node = n.x
+        let arms = n.kids.clone()
+        let start = n.start
+        let end = n.end
+        let s = self.check_expr(scrut_node, NONE)
+        let st = self.tys.resolve(self.tir.nodes[s].ty, false)
+        self.tir.nodes[s].ty = st
+        // matching through a pointer binds owning payloads by reference
+        var by_ref = NONE
+        if self.tir.nodes[s].k == TKind.Deref {
+            let inner = self.tir.nodes[s].kids[0]
+            let it = self.tys.shallow(self.tir.nodes[inner].ty)
+            if self.tys.kind(it) == TK.Ptr { by_ref = if self.tys.list[it].flag { 1 } else { 0 } }
+        }
+        let saved_by_ref = self.ctx().pat_by_ref
+        self.ctx().pat_by_ref = by_ref
+        let saved_source = self.ctx().pat_source
+        self.ctx().pat_source = s
+        if arms.len == 0 {
+            self.fail_here(start, "`match` needs at least one arm")
+            return self.error_expr(start, end)
+        }
+        let r = self.mk(TKind.Match, NONE, start, end)
+        self.tir.nodes[r].kids.append(s)
+        var hint = expected
+        let moved_before = self.moved_snapshot()
+        var moved_arms = List(List(usize)).new()
+        var bodies = List(usize).new()
+        for a in arms {
+            let an = self.node(m, a)
+            let pat_node = an.x
+            let guard_node = an.y
+            let body_node = an.z
+            let astart = an.start
+            let aend = an.end
+            self.moved_restore(&moved_before)
+            self.push_scope()
+            let pat = self.check_pattern(pat_node, st)
+            var guard = NONE
+            if guard_node != NONE {
+                let bt = self.tys.bool_ty()
+                guard = self.check_expr(guard_node, bt)
+                guard = self.coerce_or_error(guard, bt, "match guard")
+            }
+            var body = self.check_expr(body_node, hint)
+            let bty = self.tys.shallow(self.tir.nodes[body].ty)
+            if hint == NONE and self.tys.kind(bty) != TK.Never { hint = bty }
+            body = self.take_ownership(body)
+            self.pop_scope()
+            let arm = self.mk(TKind.Arm, NONE, astart, aend)
+            self.tir.nodes[arm].flag = guard != NONE
+            self.tir.nodes[arm].kids.append(pat)
+            if guard != NONE { self.tir.nodes[arm].kids.append(guard) }
+            self.tir.nodes[arm].kids.append(body)
+            self.tir.nodes[r].kids.append(arm)
+            bodies.append(body)
+            if self.tys.kind(bty) != TK.Never { moved_arms.append(self.moved_snapshot()) }
+        }
+        self.moved_restore(&moved_before)
+        for ma in moved_arms { self.moved_merge(&ma) }
+        let ty = self.join_exprs(&mut bodies, expected, start)
+        // the coerced bodies replace the arms' last child
+        let arm_nodes = self.tir.nodes[r].kids.clone()
+        for a, i in arm_nodes {
+            if i == 0 { continue }
+            let last = self.tir.nodes[a].kids.len - 1
+            self.tir.nodes[a].kids[last] = bodies[i - 1]
+        }
+        self.check_exhaustive(st, r, start)
+        self.ctx().pat_by_ref = saved_by_ref
+        self.ctx().pat_source = saved_source
+        self.tir.nodes[r].ty = ty
+        return r
+    }
+
+    // ----- exhaustiveness ----------------------------------------------------------
+
+    fn pat_irrefutable(self: *mut Self, p: usize) -> bool {
+        let k = self.tir.nodes[p].k
+        if k == TKind.PWild or k == TKind.PBind { return true }
+        if k == TKind.PTuple {
+            for q in self.tir.nodes[p].kids.clone() { if !self.pat_irrefutable(q) { return false } }
+            return true
+        }
+        if k == TKind.PAt { return self.pat_irrefutable(self.tir.nodes[p].kids[0]) }
+        if k == TKind.PSlice {
+            // total for its type (an array with every element named, a slice that is one rest) and every element irrefutable
+            if !self.tir.nodes[p].flag { return false }
+            for q in self.tir.nodes[p].kids.clone() {
+                if self.tir.nodes[q].k != TKind.PRest and !self.pat_irrefutable(q) { return false }
+            }
+            return true
+        }
+        if k == TKind.POr {
+            for q in self.tir.nodes[p].kids.clone() { if self.pat_irrefutable(q) { return true } }
+            return false
+        }
+        return false
+    }
+
+    fn pat_is_wild(self: *mut Self, p: usize) -> bool {
+        let k = self.tir.nodes[p].k
+        return k == TKind.PWild or k == TKind.PBind
+    }
+
+    /// A wildcard pattern node to stand in for unmatched sub-columns.
+    fn wild_pat(self: *mut Self) -> usize {
+        if self.wild_pat_node == NONE { self.wild_pat_node = self.pat_node(TKind.PWild, 0, 0) }
+        return self.wild_pat_node
+    }
+
+    fn check_exhaustive(self: *mut Self, st: usize, r: usize, at: usize) {
+        let arm_nodes = self.tir.nodes[r].kids.clone()
+        var unguarded = List(usize).new()
+        for a, i in arm_nodes {
+            if i == 0 { continue }
+            if self.tir.nodes[a].flag { continue }
+            unguarded.append(self.tir.nodes[a].kids[0])
+        }
+        for p in unguarded { if self.pat_irrefutable(p) { return } }
+        let t = self.tys.shallow(st)
+        let k = self.tys.kind(t)
+        var flat = List(usize).new()
+        for p in unguarded {
+            if self.tir.nodes[p].k == TKind.POr {
+                for q in self.tir.nodes[p].kids.clone() { flat.append(q) }
+            } else {
+                flat.append(p)
+            }
+        }
+        var rows = List(List(usize)).new()
+        for p in flat {
+            var row = List(usize).new()
+            row.append(p)
+            rows.append(row)
+        }
+        var tys = List(usize).new()
+        tys.append(st)
+        if self.rows_exhaustive(&tys, &rows) { return }
+        if k == TK.Slice and self.slice_arms_exhaustive(&flat) { return }
+        var hint = String.from("; add a catch-all arm `_ =>`")
+        if k == TK.Enum {
+            let d = self.tys.list[t].def
+            let em = self.enums[d].module
+            let variants = self.enums[d].variants.clone()
+            var missing = String.new()
+            for v, i in variants {
+                var covered = false
+                for p in flat {
+                    if self.tir.nodes[p].k != TKind.PVariant or self.tir.nodes[p].a != i { continue }
+                    var all = true
+                    for q in self.tir.nodes[p].kids.clone() { if !self.pat_irrefutable(q) { all = false } }
+                    if all { covered = true }
+                }
+                if covered { continue }
+                if missing.len > 0 { missing.append(", ") }
+                missing.append(".")
+                missing.append(self.node(em, v).name[..])
+            }
+            hint = format("; not covered: {}", .{missing})
+        } else if k == TK.Slice or k == TK.Array {
+            hint = String.from("; add a catch-all arm `_ =>`, or slice arms for every length (`[]` with `[x, rest..]`)")
+        } else if k == TK.Str {
+            hint = String.from("; binary and string matches need a catch-all arm `_ =>` (section 6.2)")
+        } else if k == TK.ErrUnion {
+            hint = String.from("; add `else => ...` to handle the remaining errors")
+        } else if k == TK.Opt {
+            hint = String.from("; cover both `null` and a binding for the value")
+        }
+        self.fail_here(at, format("`match` is not exhaustive{}", .{hint})[..])
+    }
+
+    /// Slice patterns cover every length when the rest-arm with the fewest
+    /// fixed elements leaves no shorter length without an exact arm:
+    /// `[]` and `[x, rest..]`, or `[]`, `[x]` and `[a, b, rest..]`. Only arms
+    /// whose elements are irrefutable count.
+    fn slice_arms_exhaustive(self: *mut Self, flat: *List(usize)) -> bool {
+        var min_rest = NONE
+        var exact = List(usize).new()
+        for p in flat.* {
+            if self.tir.nodes[p].k != TKind.PSlice { continue }
+            let rest = self.tir.nodes[p].a
+            let kids = self.tir.nodes[p].kids.clone()
+            var all = true
+            for q in kids { if self.tir.nodes[q].k != TKind.PRest and !self.pat_irrefutable(q) { all = false } }
+            if !all { continue }
+            let fixed = if rest == NONE { kids.len } else { kids.len - 1 }
+            if rest != NONE {
+                if min_rest == NONE or fixed < min_rest { min_rest = fixed }
+            } else {
+                exact.append(fixed)
+            }
+        }
+        if min_rest == NONE { return false }
+        for l in 0..min_rest {
+            var found = false
+            for e in exact { if e == l { found = true } }
+            if !found { return false }
+        }
+        return true
+    }
+
+    /// The sub-patterns of `p` when it is built with constructor `c` (a
+    /// (kind, index) pair), or null when it is built with another.
+    fn pat_ctor_args(self: *mut Self, p: usize, ck: u8, ci: usize) -> ?List(usize) {
+        let k = self.tir.nodes[p].k
+        var out = List(usize).new()
+        if ck == 0 and k == TKind.PBool {
+            if (if self.tir.nodes[p].flag { 1 } else { 0 }) != ci { return null }
+            return out
+        }
+        if ck == 1 and k == TKind.PVariant {
+            if self.tir.nodes[p].a != ci { return null }
+            for q in self.tir.nodes[p].kids.clone() { out.append(q) }
+            return out
+        }
+        if ck == 2 and k == TKind.PNull { return out }
+        if ck == 3 and k == TKind.PSome { out.append(self.tir.nodes[p].kids[0]); return out }
+        if ck == 4 and k == TKind.POk { out.append(self.tir.nodes[p].kids[0]); return out }
+        if ck == 5 and k == TKind.PError {
+            if self.tir.nodes[p].a != ci { return null }
+            return out
+        }
+        if ck == 6 and k == TKind.PTuple {
+            for q in self.tir.nodes[p].kids.clone() { out.append(q) }
+            return out
+        }
+        return null
+    }
+
+    /// The constructors of a type with their payload types: parallel lists of
+    /// kind (0 bool, 1 variant, 2 null, 3 some, 4 ok, 5 error, 6 tuple),
+    /// index, and payload types; false when there are too many to enumerate.
+    fn constructors(self: *mut Self, t0: usize, kinds: *mut List(u8), idxs: *mut List(usize), payloads: *mut List(List(usize))) -> bool {
+        let t = self.tys.shallow(t0)
+        let k = self.tys.kind(t)
+        if k == TK.Bool {
+            kinds.append(0); idxs.append(1); payloads.append(List(usize).new())
+            kinds.append(0); idxs.append(0); payloads.append(List(usize).new())
+            return true
+        }
+        if k == TK.Enum {
+            let vts = self.enum_variant_types(t)
+            for vt, i in vts {
+                kinds.append(1); idxs.append(i); payloads.append(vt.clone())
+            }
+            return true
+        }
+        if k == TK.Opt {
+            kinds.append(2); idxs.append(0); payloads.append(List(usize).new())
+            var inner = List(usize).new()
+            inner.append(self.tys.list[t].args[0])
+            kinds.append(3); idxs.append(0); payloads.append(inner)
+            return true
+        }
+        if k == TK.Tuple {
+            kinds.append(6); idxs.append(0); payloads.append(self.tys.list[t].args.clone())
+            return true
+        }
+        if k == TK.ErrUnion and self.tys.list[t].flag {
+            var inner = List(usize).new()
+            inner.append(self.tys.list[t].args[0])
+            kinds.append(4); idxs.append(0); payloads.append(inner)
+            for id in self.error_set_ids(self.tys.list[t].def) {
+                kinds.append(5); idxs.append(id); payloads.append(List(usize).new())
+            }
+            return true
+        }
+        return false
+    }
+
+    /// The error ids of an error set's members.
+    fn error_set_ids(self: *mut Self, set: usize) -> List(usize) {
+        var out = List(usize).new()
+        let m = self.error_sets[set].module
+        let items = self.mods[m].parsed.items.clone()
+        for it in items {
+            let n = self.node(m, it)
+            if n.k == parser.NodeKind.ErrorSet and n.name == self.error_sets[set].name {
+                let words = n.words.clone()
+                for w in words { out.append(self.error_id(w[..])) }
+                return out
+            }
+        }
+        return out
+    }
+
+    /// Is every value of the tuple of types `tys` matched by some row? The
+    /// classic matrix algorithm: pick the first column, split on its
+    /// constructors, and recurse on the specialized rows.
+    fn rows_exhaustive(self: *mut Self, tys: *List(usize), rows0: *List(List(usize))) -> bool {
+        if tys.len == 0 { return rows0.len > 0 }
+        // or-patterns in the first column become separate rows
+        var rows = List(List(usize)).new()
+        for r in rows0 { rows.append(r.clone()) }
+        var changed = true
+        while changed {
+            changed = false
+            var next = List(List(usize)).new()
+            for r in rows {
+                if self.tir.nodes[r[0]].k == TKind.POr {
+                    changed = true
+                    for alt in self.tir.nodes[r[0]].kids.clone() {
+                        var nr = List(usize).new()
+                        nr.append(alt)
+                        for x, i in r { if i > 0 { nr.append(x) } }
+                        next.append(nr)
+                    }
+                } else {
+                    next.append(r.clone())
+                }
+            }
+            rows = next
+        }
+        var rest_tys = List(usize).new()
+        for t, i in tys { if i > 0 { rest_tys.append(t) } }
+        var kinds = List(u8).new()
+        var idxs = List(usize).new()
+        var payloads = List(List(usize)).new()
+        if !self.constructors(tys[0], &mut kinds, &mut idxs, &mut payloads) {
+            // integers, strings, ...: only a wildcard covers them
+            var d = List(List(usize)).new()
+            for r in rows {
+                if !self.pat_is_wild(r[0]) { continue }
+                var nr = List(usize).new()
+                for x, i in r { if i > 0 { nr.append(x) } }
+                d.append(nr)
+            }
+            return self.rows_exhaustive(&rest_tys, &d)
+        }
+        let wild = self.wild_pat()
+        for ck, c in kinds {
+            let ci = idxs[c]
+            let sub_tys = payloads[c].clone()
+            var spec = List(List(usize)).new()
+            for r in rows {
+                if self.pat_is_wild(r[0]) {
+                    var nr = List(usize).new()
+                    for i in 0..sub_tys.len { nr.append(wild) }
+                    for x, i in r { if i > 0 { nr.append(x) } }
+                    spec.append(nr)
+                } else if let subs = self.pat_ctor_args(r[0], ck, ci) {
+                    var nr = subs
+                    for x, i in r { if i > 0 { nr.append(x) } }
+                    spec.append(nr)
+                }
+            }
+            var nt = sub_tys.clone()
+            for t in rest_tys { nt.append(t) }
+            if !self.rows_exhaustive(&nt, &spec) { return false }
+        }
+        return true
+    }
+
+    /// A common type for a set of branch expressions; each is coerced to it in place.
+    fn join_exprs(self: *mut Self, exprs: *mut List(usize), expected: usize, at: usize) -> usize {
+        let nev = self.tys.never()
+        let v = self.tys.void()
+        var candidates = List(usize).new()
+        if expected != NONE { candidates.append(expected) }
+        for e in exprs {
+            let t = self.tys.shallow(self.tir.nodes[e].ty)
+            if self.tys.kind(t) != TK.Never { candidates.append(t) }
+        }
+        if candidates.len == 0 { return nev }
+        var target = NONE
+        for cand in candidates {
+            // a probe: no errors, but unification bindings stay (as in the oracle)
+            let saved = self.errors.len
+            var ok = true
+            for e in exprs {
+                let saved_ty = self.tir.nodes[e].ty
+                let c = self.coerce(e, cand)
+                self.tir.nodes[e].ty = saved_ty
+                if c == NONE { ok = false }
+            }
+            while self.errors.len > saved { _ = self.errors.pop() }
+            if ok {
+                target = cand
+                break
+            }
+        }
+        if target == NONE {
+            var all_void = true
+            for e in exprs {
+                let k = self.tys.kind(self.tys.shallow(self.tir.nodes[e].ty))
+                if ! (k == TK.Void or k == TK.Never) { all_void = false }
+            }
+            if all_void {
+                target = v
+            } else {
+                self.fail_here(at, "match arms have incompatible types")
+                target = candidates[0]
+            }
+        }
+        for e, i in exprs { exprs[i] = self.coerce_or_error(e, target, "match arm") }
+        return target
+    }
+
+    /// The type a pattern binding gets: the payload, or a pointer to it when
+    /// matching through a pointer and the payload owns resources.
+    fn pat_bind_ty(self: *mut Self, t: usize) -> usize {
+        let by_ref = self.ctx().pat_by_ref
+        if by_ref != NONE and self.needs_drop(t) { return self.tys.wrap(TK.Ptr, t, by_ref == 1) }
+        return t
+    }
+
+    fn pat_node(self: *mut Self, k: TKind, start: usize, end: usize) -> usize {
+        let v = self.tys.void()
+        return self.tir.add(check.tblank(k, v, start, end))
+    }
+
+    fn pat_wrap(self: *mut Self, k: TKind, inner: usize, start: usize, end: usize) -> usize {
+        let p = self.pat_node(k, start, end)
+        self.tir.nodes[p].kids.append(inner)
+        return p
+    }
+
+    fn check_pattern(self: *mut Self, pat: usize, ty0: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, pat)
+        let k = n.k
+        let start = n.start
+        let end = n.end
+        let ty = self.tys.shallow(ty0)
+        let tk = self.tys.kind(ty)
+        if k == parser.NodeKind.PWild { return self.pat_node(TKind.PWild, start, end) }
+        if k == parser.NodeKind.PBind {
+            let name = n.name.clone()
+            // a bare name on an optional binds its payload; on an error union, the success value
+            if tk == TK.Opt or tk == TK.ErrUnion {
+                let inner = self.tys.list[ty].args[0]
+                let bt = self.pat_bind_ty(inner)
+                let l = self.declare_local(name[..], bt, false, start, end)
+                self.bind_pattern_local(l)
+                let b = self.pat_node(TKind.PBind, start, end)
+                self.tir.nodes[b].a = l
+                return self.pat_wrap(if tk == TK.Opt { TKind.PSome } else { TKind.POk }, b, start, end)
+            }
+            let bt = self.pat_bind_ty(ty)
+            let l = self.declare_local(name[..], bt, false, start, end)
+            self.bind_pattern_local(l)
+            let b = self.pat_node(TKind.PBind, start, end)
+            self.tir.nodes[b].a = l
+            return b
+        }
+        if k == parser.NodeKind.PLit {
+            if tk == TK.Opt or tk == TK.ErrUnion {
+                let inner = self.tys.list[ty].args[0]
+                let p = self.check_pattern(pat, inner)
+                return self.pat_wrap(if tk == TK.Opt { TKind.PSome } else { TKind.POk }, p, start, end)
+            }
+            return self.check_lit_pattern(pat, ty)
+        }
+        if k == parser.NodeKind.PNull {
+            if tk == TK.Opt { return self.pat_node(TKind.PNull, start, end) }
+            self.fail_here(start, format("`null` pattern on a non-optional value of type `{}`", .{self.ty_name(ty)})[..])
+            return self.pat_node(TKind.PWild, start, end)
+        }
+        if k == parser.NodeKind.PError {
+            let name = n.name.clone()
+            let id = self.error_id(name[..])
+            if tk == TK.ErrUnion or tk == TK.ErrorSet {
+                if self.tys.list[ty].flag {
+                    let s = self.tys.list[ty].def
+                    if !self.error_set_has(s, name[..]) {
+                        self.fail_here(start, format("`error.{}` is not a member of error set `{}`", .{name, self.error_sets[s].name})[..])
+                    }
+                }
+                let p = self.pat_node(TKind.PError, start, end)
+                self.tir.nodes[p].a = id
+                return p
+            }
+            self.fail_here(start, format("error pattern on a value of type `{}`, which is not an error union", .{self.ty_name(ty)})[..])
+            return self.pat_node(TKind.PWild, start, end)
+        }
+        if k == parser.NodeKind.PRange {
+            if tk == TK.Opt {
+                let inner = self.tys.list[ty].args[0]
+                let p = self.check_pattern(pat, inner)
+                return self.pat_wrap(TKind.PSome, p, start, end)
+            }
+            if !self.tys.is_integer(ty) and tk != TK.Char {
+                self.fail_here(start, "range patterns apply to integers and chars")
+                return self.pat_node(TKind.PWild, start, end)
+            }
+            let lo_node = n.x
+            let hi_node = n.y
+            let inclusive = n.flag
+            let lo = self.pattern_const_int(m, lo_node) orelse {
+                self.fail_here(start, "range pattern bounds must be compile-time constants")
+                return self.pat_node(TKind.PWild, start, end)
+            }
+            let hi = self.pattern_const_int(m, hi_node) orelse {
+                self.fail_here(start, "range pattern bounds must be compile-time constants")
+                return self.pat_node(TKind.PWild, start, end)
+            }
+            let p = self.pat_node(TKind.PRange, start, end)
+            self.tir.nodes[p].ival = lo
+            self.tir.nodes[p].text = format("{}", .{hi})
+            self.tir.nodes[p].flag = inclusive
+            return p
+        }
+        if k == parser.NodeKind.POr {
+            let alts = n.kids.clone()
+            let p = self.pat_node(TKind.POr, start, end)
+            for a in alts {
+                if self.node(m, a).k == parser.NodeKind.PBind or self.node(m, a).k == parser.NodeKind.PAt { self.fail_here(self.node(m, a).start, "bindings are not allowed inside `|` patterns") }
+                let q = self.check_pattern(a, ty)
+                self.tir.nodes[p].kids.append(q)
+            }
+            return p
+        }
+        if k == parser.NodeKind.PAt {
+            // the whole under a name, then its parts
+            let sub = self.check_pattern(n.x, ty0)
+            let bt = self.pat_bind_ty(ty)
+            let l = self.declare_local(n.name[..], bt, false, start, end)
+            self.bind_pattern_local(l)
+            let p = self.pat_node(TKind.PAt, start, end)
+            self.tir.nodes[p].a = l
+            self.tir.nodes[p].kids.append(sub)
+            return p
+        }
+        if k == parser.NodeKind.PSlice {
+            let elems = n.kids.clone()
+            if tk != TK.Slice and tk != TK.Array {
+                self.fail_here(start, format("slice pattern on a value of type `{}`; slices and arrays match by shape", .{self.ty_name(ty)})[..])
+                return self.pat_node(TKind.PWild, start, end)
+            }
+            let et = self.tys.list[ty].args[0]
+            var rest = NONE
+            var fixed: usize = 0
+            for x, i in elems {
+                if self.node(m, x).k == parser.NodeKind.PRest { rest = i } else { fixed += 1 }
+            }
+            if tk == TK.Array {
+                let count = self.tys.list[ty].n as usize
+                if rest == NONE and fixed != count {
+                    self.fail_here(start, format("array pattern has {} elements but the array has {}", .{fixed, count})[..])
+                    return self.pat_node(TKind.PWild, start, end)
+                }
+                if rest != NONE and fixed > count {
+                    self.fail_here(start, format("array pattern names {} elements but the array has {}", .{fixed, count})[..])
+                    return self.pat_node(TKind.PWild, start, end)
+                }
+            }
+            let p = self.pat_node(TKind.PSlice, start, end)
+            self.tir.nodes[p].a = rest
+            // total for its type: an array with every element named, or a slice that is one rest
+            self.tir.nodes[p].flag = tk == TK.Array or (fixed == 0 and rest != NONE)
+            for x, i in elems {
+                if i == rest {
+                    let q = self.pat_node(TKind.PRest, self.node(m, x).start, self.node(m, x).end)
+                    self.tir.nodes[q].a = NONE
+                    let rn = self.node(m, x).name.clone()
+                    if rn.len > 0 and rn != "_" {
+                        let mu = tk == TK.Slice and self.tys.list[ty].flag
+                        let st = self.tys.wrap(TK.Slice, et, mu)
+                        let l = self.declare_local(rn[..], st, false, start, end)
+                        self.bind_pattern_local(l)
+                        self.tir.nodes[q].a = l
+                    }
+                    self.tir.nodes[p].kids.append(q)
+                } else {
+                    self.tir.nodes[p].kids.append(self.check_pattern(x, et))
+                }
+            }
+            return p
+        }
+        if k == parser.NodeKind.PTuple {
+            let elems = n.kids.clone()
+            if tk != TK.Tuple {
+                self.fail_here(start, format("tuple pattern on a value of type `{}`", .{self.ty_name(ty)})[..])
+                return self.pat_node(TKind.PWild, start, end)
+            }
+            let ts = self.tys.list[ty].args.clone()
+            if ts.len != elems.len {
+                self.fail_here(start, format("tuple pattern has {} elements but the value has {}", .{elems.len, ts.len})[..])
+                return self.pat_node(TKind.PWild, start, end)
+            }
+            let p = self.pat_node(TKind.PTuple, start, end)
+            for x, i in elems {
+                let q = self.check_pattern(x, ts[i])
+                self.tir.nodes[p].kids.append(q)
+            }
+            return p
+        }
+        if k == parser.NodeKind.PBinary {
+            var is_bytes = false
+            if tk == TK.Slice or tk == TK.Array {
+                let es = self.tys.shallow(self.tys.list[ty].args[0])
+                is_bytes = self.tys.kind(es) == TK.Int and self.tys.list[es].name == "u8"
+            }
+            if tk == TK.Str { is_bytes = true }
+            if !is_bytes {
+                self.fail_here(start, format("binary patterns match `[]u8` values, but this value has type `{}`", .{self.ty_name(ty)})[..])
+                return self.pat_node(TKind.PWild, start, end)
+            }
+            return self.check_bin_pattern(pat)
+        }
+        if k == parser.NodeKind.PVariant {
+            if tk == TK.Opt or tk == TK.ErrUnion {
+                let inner = self.tys.list[ty].args[0]
+                let p = self.check_pattern(pat, inner)
+                return self.pat_wrap(if tk == TK.Opt { TKind.PSome } else { TKind.POk }, p, start, end)
+            }
+            let path = n.words.clone()
+            let args = n.kids.clone()
+            if tk == TK.Bool and path.len == 1 and (path[0] == "true" or path[0] == "false") {
+                let p = self.pat_node(TKind.PBool, start, end)
+                self.tir.nodes[p].flag = path[0] == "true"
+                return p
+            }
+            if tk != TK.Enum {
+                if path.len == 1 and args.len == 0 {
+                    self.fail_here(start, format("`.{}` is an enum variant pattern but the value has type `{}`", .{path[0], self.ty_name(ty)})[..])
+                } else {
+                    self.fail_here(start, format("variant pattern `{}` on a value of type `{}`", .{check.join_words(&path, "."), self.ty_name(ty)})[..])
+                }
+                return self.pat_node(TKind.PWild, start, end)
+            }
+            let d = self.tys.list[ty].def
+            let name = path[path.len - 1].clone()
+            if path.len == 2 {
+                var ok = false
+                if let r = self.lookup(m, path[0][..]) { ok = r.kind == ItemKind.Enum and r.id == d }
+                if !ok { self.fail_here(start, format("`{}` is not the enum `{}`", .{path[0], self.enums[d].name})[..]) }
+            } else if path.len > 2 {
+                self.fail_here(start, "variant patterns are `.Variant` or `Enum.Variant`")
+            }
+            let idx = self.enum_variant_index(d, name[..])
+            if idx == NONE {
+                self.fail_here(start, format("enum `{}` has no variant `{}`", .{self.enums[d].name, name})[..])
+                return self.pat_node(TKind.PWild, start, end)
+            }
+            let vtys = self.enum_variant_types(ty)
+            let want = vtys[idx].clone()
+            let p = self.pat_node(TKind.PVariant, start, end)
+            self.tir.nodes[p].a = idx
+            if args.len == 0 and want.len > 0 {
+                // `.Variant` matches any payload
+                for w in want {
+                    _ = w
+                    let q = self.pat_node(TKind.PWild, start, end)
+                    self.tir.nodes[p].kids.append(q)
+                }
+                return p
+            }
+            if args.len != want.len {
+                self.fail_here(start, format("variant `{}.{}` has {} value(s) but the pattern binds {}", .{self.enums[d].name, name, want.len, args.len})[..])
+                return self.pat_node(TKind.PWild, start, end)
+            }
+            for a, i in args {
+                let q = self.check_pattern(a, want[i])
+                self.tir.nodes[p].kids.append(q)
+            }
+            return p
+        }
+        self.fail_here(start, "unsupported pattern")
+        return self.pat_node(TKind.PWild, start, end)
+    }
+
+    fn pattern_const_int(self: *mut Self, m: usize, e: usize) -> ?i128 {
+        let n = self.node(m, e)
+        if n.k == parser.NodeKind.Lit and n.text == "char" {
+            let v = n.name[..].parse_int(i128) catch { return null }
+            return v
+        }
+        if n.k == parser.NodeKind.Unary and n.name == "-" {
+            let inner = n.x
+            let v = self.pattern_const_int(m, inner) orelse return null
+            return -v
+        }
+        return self.const_eval_int(m, e)
+    }
+
+    fn check_lit_pattern(self: *mut Self, pat: usize, ty: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, pat)
+        let kind = n.text.clone()
+        let text = n.name.clone()
+        let negative = n.flag
+        let start = n.start
+        let end = n.end
+        var under = ty
+        if self.tys.kind(ty) == TK.Distinct { under = self.tys.shallow(self.distinct_underlying(self.tys.list[ty].def)) }
+        let uk = self.tys.kind(under)
+        if kind == "int" {
+            var v = text[..].parse_int(i128) catch { 0 }
+            if negative { v = -v }
+            if uk == TK.Int {
+                let name = self.tys.list[under].name.clone()
+                if v < check.int_min(name[..]) or v > check.int_max(name[..]) { self.fail_here(start, format("literal `{}` does not fit in `{}`", .{v, name})[..]) }
+                let p = self.pat_node(TKind.PInt, start, end)
+                self.tir.nodes[p].ival = v
+                return p
+            }
+            if uk == TK.Infer and self.tys.is_integer(ty) {
+                let p = self.pat_node(TKind.PInt, start, end)
+                self.tir.nodes[p].ival = v
+                return p
+            }
+            if uk == TK.Float {
+                let p = self.pat_node(TKind.PFloat, start, end)
+                self.tir.nodes[p].fval = v as f64
+                return p
+            }
+            if uk == TK.Char {
+                let p = self.pat_node(TKind.PChar, start, end)
+                self.tir.nodes[p].ival = v
+                return p
+            }
+            self.fail_here(start, format("integer pattern on a value of type `{}`", .{self.ty_name(ty)})[..])
+            return self.pat_node(TKind.PWild, start, end)
+        }
+        if kind == "float" {
+            if uk == TK.Float {
+                var f = text[..].parse_float() catch { 0.0 }
+                if negative { f = -f }
+                let p = self.pat_node(TKind.PFloat, start, end)
+                self.tir.nodes[p].fval = f
+                return p
+            }
+            self.fail_here(start, format("float pattern on a value of type `{}`", .{self.ty_name(ty)})[..])
+            return self.pat_node(TKind.PWild, start, end)
+        }
+        if kind == "str" or kind == "bytes" {
+            var ok = uk == TK.Str
+            if uk == TK.Slice {
+                let es = self.tys.shallow(self.tys.list[under].args[0])
+                ok = self.tys.kind(es) == TK.Int and self.tys.list[es].name == "u8"
+            }
+            if ok {
+                let p = self.pat_node(TKind.PStr, start, end)
+                self.tir.nodes[p].text = text.clone()
+                return p
+            }
+            self.fail_here(start, format("string pattern on a value of type `{}`", .{self.ty_name(ty)})[..])
+            return self.pat_node(TKind.PWild, start, end)
+        }
+        if kind == "char" {
+            let c = text[..].parse_int(i128) catch { 0 }
+            if uk == TK.Char {
+                let p = self.pat_node(TKind.PChar, start, end)
+                self.tir.nodes[p].ival = c
+                return p
+            }
+            if uk == TK.Int {
+                let name = self.tys.list[under].name.clone()
+                if c > check.int_max(name[..]) { self.fail_here(start, format("character does not fit in `{}`", .{name})[..]) }
+                let p = self.pat_node(TKind.PInt, start, end)
+                self.tir.nodes[p].ival = c
+                return p
+            }
+            self.fail_here(start, format("character pattern on a value of type `{}`", .{self.ty_name(ty)})[..])
+            return self.pat_node(TKind.PWild, start, end)
+        }
+        if kind == "bool" {
+            if uk == TK.Bool {
+                let p = self.pat_node(TKind.PBool, start, end)
+                self.tir.nodes[p].flag = text == "true"
+                return p
+            }
+            self.fail_here(start, format("boolean pattern on a value of type `{}`", .{self.ty_name(ty)})[..])
+            return self.pat_node(TKind.PWild, start, end)
+        }
+        self.fail_here(start, "unknown literal pattern")
+        return self.pat_node(TKind.PWild, start, end)
+    }
+
+    // ----- binary patterns and construction -------------------------------------------------
+
+    /// A segment's modifiers: endian text, signed, float, utf8.
+    fn seg_mods(self: *mut Self, m: usize, seg: usize, signed: *mut bool, float: *mut bool, utf8: *mut bool) -> String {
+        var endian = String.from("big")
+        for w in self.node(m, seg).words.clone() {
+            if w == "big" or w == "little" or w == "native" { endian = w.clone() }
+            if w == "signed" { signed.* = true }
+            if w == "unsigned" { signed.* = false }
+            if w == "float" { float.* = true }
+            if w == "utf8" { utf8.* = true }
+        }
+        return endian
+    }
+
+    /// Size arithmetic runs at pointer width: every identifier is widened to
+    /// `usize` by a synthesized cast, mirroring the oracle's rewrite.
+    fn widen_size_expr(self: *mut Self, m: usize, e: usize) -> usize {
+        // copied out of the node: adding nodes below may move the tree's storage
+        let n = self.node(m, e)
+        let k = n.k
+        let start = n.start
+        let end = n.end
+        let nx = n.x
+        let ny = n.y
+        if k == parser.NodeKind.Ident {
+            var tn = self.blank_node(parser.NodeKind.TName, start, end)
+            tn.words.append(String.from("usize"))
+            let tid = self.mods[m].parsed.tree.add(tn)
+            var c = self.blank_node(parser.NodeKind.Cast, start, end)
+            c.x = e
+            c.y = tid
+            return self.mods[m].parsed.tree.add(c)
+        }
+        if k == parser.NodeKind.Binary {
+            let lhs = self.widen_size_expr(m, nx)
+            let rhs = self.widen_size_expr(m, ny)
+            var b = self.blank_node(parser.NodeKind.Binary, start, end)
+            b.name = self.node(m, e).name.clone()
+            b.x = lhs
+            b.y = rhs
+            return self.mods[m].parsed.tree.add(b)
+        }
+        if k == parser.NodeKind.Unary {
+            let inner = self.widen_size_expr(m, nx)
+            var u = self.blank_node(parser.NodeKind.Unary, start, end)
+            u.name = self.node(m, e).name.clone()
+            u.x = inner
+            return self.mods[m].parsed.tree.add(u)
+        }
+        return e
+    }
+
+    fn blank_node(self: *mut Self, k: parser.NodeKind, start: usize, end: usize) -> parser.Node {
+        return parser.Node{
+            .k = k, .start = start, .end = end, .name = String.new(), .text = String.new(),
+            .flag = false, .flag2 = false, .a = 0, .b = 0,
+            .kids = List(usize).new(), .kids2 = List(usize).new(),
+            .x = NONE, .y = NONE, .z = NONE, .words = List(String).new(), .doc = parser.NONE,
+        }
+    }
+
+    /// A segment's size: `bits` when constant, else a checked `usize`
+    /// expression in `size_expr`. Returns the size text for the dump.
+    fn seg_size(self: *mut Self, m: usize, seg: usize, default_bits: u64, bits: *mut u64, size_expr: *mut usize) -> String {
+        let sz = self.node(m, seg).y
+        if sz == NONE {
+            bits.* = default_bits
+            return format("bits {}", .{default_bits})
+        }
+        if let v = self.const_eval_int(m, sz) {
+            if v <= 0 {
+                self.fail_here(self.node(m, sz).start, "segment size must be positive")
+                bits.* = 8
+                return String.from("bits 8")
+            }
+            bits.* = v as u64
+            return format("bits {}", .{v})
+        }
+        let u = self.tys.usize_ty()
+        let widened = self.widen_size_expr(m, sz)
+        var te = self.check_expr(widened, u)
+        te = self.coerce_or_error(te, u, "segment size")
+        size_expr.* = te
+        return String.from("expr")
+    }
+
+    fn int_type_for_bits(self: *mut Self, bits: u64, signed: bool) -> usize {
+        var nm: []u8 = "u64"
+        if bits <= 8 { nm = if signed { "i8" } else { "u8" } }
+        else if bits <= 16 { nm = if signed { "i16" } else { "u16" } }
+        else if bits <= 32 { nm = if signed { "i32" } else { "u32" } }
+        else if signed { nm = "i64" }
+        return self.tys.named(TK.Int, nm)
+    }
+
+    fn seg_node(self: *mut Self, ty: usize, start: usize, end: usize, kind: []u8, size: []u8, endian: []u8, signed: bool, float: bool, utf8: bool, value: usize, size_expr: usize) -> usize {
+        let r = self.mk(TKind.Seg, ty, start, end)
+        self.tir.nodes[r].name = format("{} size={} endian={} signed={} float={} utf8={}", .{kind, size, endian, signed, float, utf8})
+        if value != NONE { self.tir.nodes[r].kids.append(value) }
+        if size_expr != NONE { self.tir.nodes[r].kids.append(size_expr) }
+        return r
+    }
+
+    fn check_bin_pattern(self: *mut Self, pat: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, pat)
+        let segs = n.kids.clone()
+        let start = n.start
+        let end = n.end
+        let bytes_t = self.tys.str_slice()
+        let p = self.pat_node(TKind.PBinary, start, end)
+        for seg, i in segs {
+            var signed = false
+            var float = false
+            var utf8 = false
+            let endian = self.seg_mods(m, seg, &mut signed, &mut float, &mut utf8)
+            let sn = self.node(m, seg)
+            let text = sn.text.clone()
+            let name = sn.name.clone()
+            let value_node = sn.x
+            let sstart = sn.start
+            let send = sn.end
+            let has_size = sn.y != NONE
+            if text == "rest" {
+                if i != segs.len - 1 { self.fail_here(sstart, "a `bytes` segment consumes the remainder and must be last") }
+                let l = self.declare_local(name[..], bytes_t, false, sstart, send)
+                let r = self.seg_node(bytes_t, sstart, send, format("rest {}", .{l})[..], "rest", endian[..], signed, float, utf8, NONE, NONE)
+                self.tir.nodes[p].kids.append(r)
+                continue
+            }
+            if text == "bind" {
+                let default_bits: u64 = if float { 64 } else { 8 }
+                var bits: u64 = 0
+                var size_expr = NONE
+                let size = self.seg_size(m, seg, default_bits, &mut bits, &mut size_expr)
+                var ty = bytes_t
+                if size_expr == NONE {
+                    if float {
+                        if bits == 32 { ty = self.tys.named(TK.Float, "f32") }
+                        else if bits == 64 { ty = self.tys.named(TK.Float, "f64") }
+                        else {
+                            self.fail_here(sstart, "float segments are 32 or 64 bits")
+                            ty = self.tys.named(TK.Float, "f64")
+                        }
+                    } else if utf8 or bits > 64 {
+                        if bits % 8 != 0 { self.fail_here(sstart, "byte-slice segments need a size that is a multiple of 8 bits") }
+                        ty = bytes_t
+                    } else {
+                        ty = self.int_type_for_bits(bits, signed)
+                    }
+                }
+                let l = self.declare_local(name[..], ty, false, sstart, send)
+                let r = self.seg_node(ty, sstart, send, format("bind {}", .{l})[..], size[..], endian[..], signed, float, utf8, NONE, size_expr)
+                self.tir.nodes[p].kids.append(r)
+                continue
+            }
+            // a literal to match
+            let vn = self.node(m, value_node)
+            if vn.k == parser.NodeKind.Lit and (vn.text == "str" or vn.text == "bytes") {
+                if has_size { self.fail_here(sstart, "string segments take their size from the literal") }
+                let blen = vn.name.len
+                let te = self.check_expr(value_node, NONE)
+                let r = self.seg_node(bytes_t, sstart, send, "value", format("bits {}", .{blen * 8})[..], endian[..], signed, float, utf8, te, NONE)
+                self.tir.nodes[p].kids.append(r)
+                continue
+            }
+            var bits: u64 = 0
+            var size_expr = NONE
+            let size = self.seg_size(m, seg, 8, &mut bits, &mut size_expr)
+            var ty = NONE
+            if size_expr == NONE and float {
+                ty = if bits == 32 { self.tys.named(TK.Float, "f32") } else { self.tys.named(TK.Float, "f64") }
+            } else if size_expr == NONE and bits <= 64 {
+                ty = self.int_type_for_bits(bits, signed)
+            } else {
+                self.fail_here(sstart, "literal segments must be at most 64 bits")
+                ty = self.tys.named(TK.Int, "u64")
+            }
+            var te = self.check_expr(value_node, ty)
+            te = self.coerce_or_error(te, ty, "binary segment literal")
+            if self.tir.nodes[te].k == TKind.Int and size_expr == NONE and bits < 64 and !signed {
+                let v = self.tir.nodes[te].ival
+                if v < 0 or v >= (1 << (bits as u32)) {
+                    self.fail_here(sstart, format("literal `{}` does not fit in {} bits", .{v, bits})[..])
+                }
+            }
+            let r = self.seg_node(ty, sstart, send, "value", size[..], endian[..], signed, float, utf8, te, size_expr)
+            self.tir.nodes[p].kids.append(r)
+        }
+        return p
+    }
+
+    fn check_bin_construct(self: *mut Self, e: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        let segs = n.kids.clone()
+        let target_node = n.x
+        let start = n.start
+        let end = n.end
+        let bytes_t = self.tys.str_slice()
+        let u = self.tys.u8_ty()
+        let mut_bytes = self.tys.wrap(TK.Slice, u, true)
+        var t = self.check_expr(target_node, mut_bytes)
+        t = self.coerce_or_error(t, mut_bytes, "construction target (needs `[]mut u8`)")
+        var out = List(usize).new()
+        for seg in segs {
+            var signed = false
+            var float = false
+            var utf8 = false
+            let endian = self.seg_mods(m, seg, &mut signed, &mut float, &mut utf8)
+            let sn = self.node(m, seg)
+            let text = sn.text.clone()
+            let sstart = sn.start
+            let send = sn.end
+            // a bound name is the identifier of that name
+            var value_node = sn.x
+            if text != "expr" {
+                var id = self.blank_node(parser.NodeKind.Ident, sstart, send)
+                id.name = sn.name.clone()
+                value_node = self.mods[m].parsed.tree.add(id)
+            }
+            var is_rest = text == "rest"
+            for w in self.node(m, seg).words.clone() { if w == "bytes" { is_rest = true } }
+            if is_rest {
+                var te = self.check_expr(value_node, bytes_t)
+                te = self.coerce_or_error(te, bytes_t, "byte segment")
+                out.append(self.seg_node(bytes_t, sstart, send, "value", "rest", endian[..], signed, float, utf8, te, NONE))
+                continue
+            }
+            let vn = self.node(m, value_node)
+            if vn.k == parser.NodeKind.Lit and (vn.text == "str" or vn.text == "bytes") {
+                let blen = vn.name.len
+                let te = self.check_expr(value_node, NONE)
+                out.append(self.seg_node(bytes_t, sstart, send, "value", format("bits {}", .{blen * 8})[..], endian[..], signed, float, utf8, te, NONE))
+                continue
+            }
+            let default_bits: u64 = if float { 64 } else { 8 }
+            var bits: u64 = 0
+            var size_expr = NONE
+            let size = self.seg_size(m, seg, default_bits, &mut bits, &mut size_expr)
+            var te = self.check_expr(value_node, NONE)
+            let vt = self.tys.resolve(self.tir.nodes[te].ty, true)
+            let vk = self.tys.kind(vt)
+            if vk == TK.Int or vk == TK.Char or vk == TK.Bool {
+            } else if vk == TK.Float and self.tys.list[vt].name == "f32" {
+                if ! (size_expr == NONE and bits == 32) and !float { self.fail_here(sstart, "an f32 segment needs `:32/float`") }
+            } else if vk == TK.Float {
+                if !float { self.fail_here(sstart, "float values need the `/float` modifier") }
+            } else if vk == TK.Slice and self.tys.kind(self.tys.shallow(self.tys.list[vt].args[0])) == TK.Int and self.tys.list[self.tys.shallow(self.tys.list[vt].args[0])].name == "u8" {
+                out.append(self.seg_node(bytes_t, sstart, send, "value", size[..], endian[..], signed, float, utf8, te, size_expr))
+                continue
+            } else if vk == TK.Str {
+                var w = check.tblank(TKind.StrToSlice, bytes_t, sstart, send)
+                w.kids.append(te)
+                let te2 = self.tir.add(w)
+                out.append(self.seg_node(bytes_t, sstart, send, "value", size[..], endian[..], signed, float, utf8, te2, size_expr))
+                continue
+            } else {
+                self.fail_here(sstart, format("cannot write a value of type `{}` into a binary; use integers, floats, or `[]u8`", .{self.ty_name(vt)})[..])
+            }
+            out.append(self.seg_node(vt, sstart, send, "value", size[..], endian[..], signed, float, utf8, te, size_expr))
+        }
+        let ret = self.tys.err_union(0, false, bytes_t)
+        let r = self.mk(TKind.BinConstruct, ret, start, end)
+        for o in out { self.tir.nodes[r].kids.append(o) }
+        self.tir.nodes[r].kids.append(t)
+        return r
+    }
+}

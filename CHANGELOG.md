@@ -21,6 +21,15 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   inferred effects and doc comment; for a generic type, the methods of an
   impl of one instance (`impl Pair(i32)`) are headed by it. Methods were
   missing from the page before, doc comments and all.
+- The checker is no longer one file of 15,000 lines. `self/check.nx` keeps
+  its state and core (types, definitions, loading, instances, the passes
+  over the whole program, ownership, unification, ranges; 3,700 lines),
+  and the rest of its methods sit in ten modules, each an `impl Checker`
+  block: `check_stmts`, `check_views`, `check_exprs`, `check_fields`,
+  `check_calls`, `check_match`, `check_builtins`, `check_closures`,
+  `check_print` and `check_interp`. The code moved unchanged: the compiler
+  before and after emits the same C and the same typed IR for every
+  example, spec case, compile-fail case and itself.
 
 ### Added
 

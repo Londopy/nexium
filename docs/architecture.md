@@ -9,11 +9,12 @@ call made where the specification was open is in
 ## One compiler, written in itself
 
 The compiler is written in Nexium under `self/`: `lexer.nx`, `parser.nx`,
-`check.nx` (with `cimport.nx`), `cgen.nx` and the driver `nx.nx`, one file
-per stage below, then the tools (`fmt.nx`, `doc.nx`, `tools.nx`, `size.nx`,
-`manifest.nx`, `ship.nx`, `ship_node.nx`, `installer.nx`, `lsp.nx`,
-`repl.nx`). It builds itself from the C seed in `bootstrap/` (decision 90):
-the first compiler, in Rust, drove the port and left at 1.0.
+the checker (`check.nx` and the `check_*.nx` modules beside it, with
+`cimport.nx`), `cgen.nx` and the driver `nx.nx`, one stage each below, then
+the tools (`fmt.nx`, `doc.nx`, `tools.nx`, `size.nx`, `manifest.nx`,
+`ship.nx`, `ship_node.nx`, `installer.nx`, `lsp.nx`, `repl.nx`, `topo.nx`,
+`completions.nx`). It builds itself from the C seed in `bootstrap/`
+(decision 90): the first compiler, in Rust, drove the port and left at 1.0.
 
 ## The one-paragraph version
 
@@ -62,11 +63,31 @@ The parser is where the continuation rules live: a line that starts with
 `|>`, `.method(`, `catch`, `orelse`, `and`, or `or` joins the previous line,
 and so does a line ending in a binary operator or an open bracket.
 
-### 3. Checker (`self/check.nx`)
+### 3. Checker (`self/check.nx` and `self/check_*.nx`)
 
-The largest part of the compiler, about 12,000 lines. It turns the syntax
+The largest part of the compiler, about 15,000 lines. It turns the syntax
 tree into the typed IR (`Tir`, another id-arena, `TKind` per node) and
-produces every diagnostic. The pieces:
+produces every diagnostic. Its state is one struct, `Checker`, in
+`check.nx`, with the core: types, definitions, loading, instances and the
+passes over the whole program, the generic environment, ownership,
+unification and ranges. The rest of its methods sit in modules of their
+own, each an `impl Checker` block (decision 110), and `check.nx` imports
+them all, which is what makes them part of the program:
+
+| module | what it checks |
+| --- | --- |
+| `check_stmts.nx` | bodies, blocks, statements, loops |
+| `check_views.nx` | views and their origins, the rules V1 to V5 |
+| `check_exprs.nx` | expressions, function calls, `if`, casts |
+| `check_fields.nx` | fields, literals, indexing, `try`, `catch`, `orelse` |
+| `check_calls.nx` | methods, static members, the builtin namespaces |
+| `check_match.nx` | `match`, patterns, exhaustiveness |
+| `check_builtins.nx` | the `@` builtins, layout |
+| `check_closures.nx` | closures |
+| `check_print.nx` | the typed IR as text, for `nx tir` |
+| `check_interp.nx` | the compile-time interpreter (section 4) |
+
+The pieces:
 
 **Types are interned** (`Types`). A type is an index into a table of `Ty`;
 two types are equal exactly when their indices are equal. Inference
@@ -118,8 +139,7 @@ exhaustiveness checking for enums and bools. **Binary patterns** turn
 `<<len:16/little, payload:len*8, rest:bytes>>` into a sequence of checked
 bit reads whose sizes may depend on earlier bindings.
 
-**Views** are tracked by their origins (`self/check.nx`, "views and their
-origins"): every local knows the storage the views it holds point into and
+**Views** are tracked by their origins (`self/check_views.nx`): every local knows the storage the views it holds point into and
 when they were taken, and the rules V1 to V5 of `SPEC.md` 5.6 and 5.7 are
 checked at the use that would read released storage, as warnings in 1.2
 (`--strict` makes them errors). Returning a slice or pointer into a local
@@ -134,16 +154,19 @@ declarations that come out with a small C declaration parser, and injects a
 synthetic module. The generated C uses the header's own type names, so the
 header stays the single source of truth for layout.
 
-### 4. Compile-time evaluation (the `it_*` functions of `self/check.nx`)
+### 4. Compile-time evaluation (`self/check_interp.nx`)
 
-An interpreter over the typed IR, values in `CV`. `comptime expr`, `const`
+An interpreter over the typed IR, values in `CV`. Its `it_*` functions are
+methods of the checker declared in a module of their own (decision 110), so
+the checker calls them as its own and they read its tables directly. `comptime expr`, `const`
 initialisers, `@embedFile`, and `comptime test` blocks run here during
 checking. It allows pure computation, collections, and calls to Nexium
 functions, forbids I/O, clocks, randomness, foreign calls, and globals, and
 has a step budget so a runaway evaluation is a compile error rather than a
 hang. A failing `comptime test` is reported at its `expect` line like any
 other error. The same interpreter runs `nx repl` (`self/repl.nx`), where
-`repl_mode` lets it talk to the world.
+`repl_mode` lets it talk to the world, and `nx play`, the playground's
+runner, where `play_mode` refuses what a page cannot do.
 
 ### 5. C backend (`self/cgen.nx`)
 
@@ -276,8 +299,8 @@ that now drives the suites is itself a Nexium program, `tests/run.nx`.
 | symptom | start here |
 | --- | --- |
 | a program parses but should not, or the reverse | `self/parser.nx`, then `tests/compile_fail/` for the expected message |
-| a type error that seems wrong | `check_expr` and `check_method_call` in `self/check.nx` |
-| an effect that should or should not be there | the witness in `own_effects`; grep `add_effect` in `self/check.nx` |
+| a type error that seems wrong | `check_expr` in `self/check_exprs.nx`, `check_method_call` in `self/check_calls.nx` |
+| an effect that should or should not be there | the witness in `own_effects`; grep `add_effect` in `self/check*.nx` |
 | a leak in `nx leaks` | the scope stack in `self/cgen.nx` (`register_drop`); every owned temporary must be registered |
 | generated C that does not compile | `nx emit-c file.nx --keep-c` and read `nx-out/file.c`; the runtime helper it calls is in `runtime/nx_rt.h` |
 | a crash inside `for parallel` or `using arena` | `parallel_for` in `self/cgen.nx` and the arena section of the runtime |

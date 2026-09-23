@@ -1,0 +1,1467 @@
+// self/check_calls.nx: calls that are not plain function calls. Methods
+// (inherent, trait and `dyn`), each type's methods kept to one per name;
+// static members and calls on types; and the builtin namespaces (`math`,
+// `io`, `os`, ...), whose functions are the NS_FNS table.
+// The methods are the checker's (`impl Checker`, decision 110).
+
+import check
+import parser
+
+type Checker = check.Checker
+const EFF_ALL = check.EFF_ALL
+const EFF_ALLOCATES = check.EFF_ALLOCATES
+const EFF_BLOCKS = check.EFF_BLOCKS
+const EFF_NONDETERMINISTIC = check.EFF_NONDETERMINISTIC
+const EFF_PANICS = check.EFF_PANICS
+const EFF_REFCOUNTS = check.EFF_REFCOUNTS
+const EFF_SHARED_MUTABLE = check.EFF_SHARED_MUTABLE
+type FnDef = check.FnDef
+type ItemKind = check.ItemKind
+const NONE = check.NONE
+const NONE_NAME = check.NONE_NAME
+type TK = check.TK
+type TKind = check.TKind
+type VTable = check.VTable
+
+// ---------------------------------------------------------------- methods, static and namespace calls
+
+/// A builtin namespace function: argument type codes, result type code, the
+/// builtin's name, and the effects it carries.
+pub struct NsFn {
+    ns: []u8
+    name: []u8
+    args: []u8
+    ret: []u8
+    op: []u8
+    effects: u64
+}
+
+const NS_FNS = [
+    NsFn{ .ns = "io", .name = "read_file", .args = "bytes", .ret = "!string", .op = "ReadFile", .effects = EFF_BLOCKS | EFF_ALLOCATES },
+    NsFn{ .ns = "io", .name = "write_file", .args = "bytes bytes", .ret = "!void", .op = "WriteFile", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "io", .name = "read_line", .args = "", .ret = "?string", .op = "ReadLine", .effects = EFF_BLOCKS | EFF_ALLOCATES },
+    NsFn{ .ns = "io", .name = "append_file", .args = "bytes bytes", .ret = "!void", .op = "AppendFile", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "io", .name = "file_kind", .args = "bytes", .ret = "i32", .op = "FsKind", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "io", .name = "file_size", .args = "bytes", .ret = "!u64", .op = "FsSize", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "io", .name = "file_modified", .args = "bytes", .ret = "!i64", .op = "FsModified", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "io", .name = "make_dir", .args = "bytes", .ret = "!void", .op = "FsMkdir", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "io", .name = "remove_file", .args = "bytes", .ret = "!void", .op = "FsRemoveFile", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "io", .name = "remove_dir", .args = "bytes", .ret = "!void", .op = "FsRemoveDir", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "io", .name = "rename", .args = "bytes bytes", .ret = "!void", .op = "FsRename", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "io", .name = "list_dir", .args = "bytes", .ret = "!List(string)", .op = "FsListDir", .effects = EFF_BLOCKS | EFF_ALLOCATES },
+    NsFn{ .ns = "io", .name = "cwd", .args = "", .ret = "!string", .op = "FsCwd", .effects = EFF_ALLOCATES },
+    NsFn{ .ns = "io", .name = "temp_dir", .args = "", .ret = "string", .op = "FsTempDir", .effects = EFF_ALLOCATES },
+    NsFn{ .ns = "io", .name = "open", .args = "bytes bytes", .ret = "!i64", .op = "FileOpen", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "io", .name = "read", .args = "i64 usize", .ret = "!string", .op = "FileRead", .effects = EFF_BLOCKS | EFF_ALLOCATES },
+    NsFn{ .ns = "io", .name = "write", .args = "i64 bytes", .ret = "!void", .op = "FileWrite", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "io", .name = "flush", .args = "i64", .ret = "!void", .op = "FileFlush", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "io", .name = "close", .args = "i64", .ret = "!void", .op = "FileClose", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "io", .name = "is_terminal", .args = "i64", .ret = "bool", .op = "IsTerminal", .effects = 0 },
+    NsFn{ .ns = "io", .name = "raw_mode", .args = "bool", .ret = "bool", .op = "RawMode", .effects = EFF_SHARED_MUTABLE },
+    NsFn{ .ns = "io", .name = "read_key", .args = "", .ret = "?i64", .op = "ReadKey", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "io", .name = "pending_input", .args = "", .ret = "i64", .op = "PendingInput", .effects = 0 },
+    NsFn{ .ns = "os", .name = "args", .args = "", .ret = "[]bytes", .op = "Args", .effects = 0 },
+    NsFn{ .ns = "os", .name = "environ", .args = "", .ret = "List(string)", .op = "Environ", .effects = EFF_NONDETERMINISTIC | EFF_ALLOCATES },
+    NsFn{ .ns = "os", .name = "env", .args = "bytes", .ret = "?bytes", .op = "Env", .effects = EFF_NONDETERMINISTIC },
+    NsFn{ .ns = "os", .name = "set_env", .args = "bytes bytes", .ret = "void", .op = "SetEnv", .effects = EFF_SHARED_MUTABLE },
+    NsFn{ .ns = "os", .name = "exe_path", .args = "", .ret = "string", .op = "ExePath", .effects = EFF_ALLOCATES },
+    NsFn{ .ns = "os", .name = "arch", .args = "", .ret = "bytes", .op = "Arch", .effects = 0 },
+    NsFn{ .ns = "os", .name = "exit", .args = "i32", .ret = "never", .op = "Exit", .effects = 0 },
+    NsFn{ .ns = "os", .name = "exec", .args = "[]bytes bytes bytes", .ret = "!i32", .op = "Exec", .effects = EFF_BLOCKS | EFF_NONDETERMINISTIC | EFF_ALLOCATES },
+    NsFn{ .ns = "os", .name = "last_stdout", .args = "", .ret = "string", .op = "LastStdout", .effects = 0 },
+    NsFn{ .ns = "os", .name = "last_stderr", .args = "", .ret = "string", .op = "LastStderr", .effects = 0 },
+    NsFn{ .ns = "os", .name = "run", .args = "[]bytes", .ret = "!i32", .op = "Run", .effects = EFF_BLOCKS | EFF_NONDETERMINISTIC },
+    NsFn{ .ns = "net", .name = "connect", .args = "bytes u16 i64", .ret = "!i64", .op = "NetConnect", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "net", .name = "listen", .args = "bytes u16", .ret = "!i64", .op = "NetListen", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "net", .name = "udp_bind", .args = "bytes u16", .ret = "!i64", .op = "NetUdpBind", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "net", .name = "accept", .args = "i64 i64", .ret = "!i64", .op = "NetAccept", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "net", .name = "send", .args = "i64 bytes", .ret = "!void", .op = "NetSend", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "net", .name = "recv", .args = "i64 usize i64", .ret = "!string", .op = "NetRecv", .effects = EFF_BLOCKS | EFF_ALLOCATES },
+    NsFn{ .ns = "net", .name = "recv_from", .args = "i64 usize i64", .ret = "!string", .op = "NetRecvFrom", .effects = EFF_BLOCKS | EFF_ALLOCATES },
+    NsFn{ .ns = "net", .name = "close", .args = "i64", .ret = "!void", .op = "NetClose", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "net", .name = "peer", .args = "i64", .ret = "!string", .op = "NetPeer", .effects = EFF_BLOCKS | EFF_ALLOCATES },
+    NsFn{ .ns = "net", .name = "local", .args = "i64", .ret = "!string", .op = "NetLocal", .effects = EFF_BLOCKS | EFF_ALLOCATES },
+    NsFn{ .ns = "net", .name = "resolve", .args = "bytes", .ret = "!List(string)", .op = "NetResolve", .effects = EFF_BLOCKS | EFF_ALLOCATES },
+    NsFn{ .ns = "net", .name = "send_to", .args = "i64 bytes u16 bytes", .ret = "!void", .op = "NetSendTo", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "net", .name = "last_peer", .args = "", .ret = "string", .op = "NetLastPeer", .effects = EFF_BLOCKS | EFF_ALLOCATES },
+    NsFn{ .ns = "thread", .name = "join", .args = "i64", .ret = "void", .op = "ThreadJoin", .effects = EFF_BLOCKS | EFF_PANICS },
+    NsFn{ .ns = "thread", .name = "count", .args = "", .ret = "usize", .op = "ThreadCount", .effects = 0 },
+    NsFn{ .ns = "sync", .name = "mutex_new", .args = "", .ret = "i64", .op = "MutexNew", .effects = EFF_ALLOCATES },
+    NsFn{ .ns = "sync", .name = "cond_new", .args = "", .ret = "i64", .op = "CondNew", .effects = EFF_ALLOCATES },
+    NsFn{ .ns = "sync", .name = "lock", .args = "i64", .ret = "void", .op = "MutexLock", .effects = EFF_BLOCKS | EFF_SHARED_MUTABLE },
+    NsFn{ .ns = "sync", .name = "unlock", .args = "i64", .ret = "void", .op = "MutexUnlock", .effects = EFF_SHARED_MUTABLE },
+    NsFn{ .ns = "sync", .name = "mutex_free", .args = "i64", .ret = "void", .op = "MutexFree", .effects = EFF_SHARED_MUTABLE },
+    NsFn{ .ns = "sync", .name = "signal", .args = "i64", .ret = "void", .op = "CondSignal", .effects = EFF_SHARED_MUTABLE },
+    NsFn{ .ns = "sync", .name = "broadcast", .args = "i64", .ret = "void", .op = "CondBroadcast", .effects = EFF_SHARED_MUTABLE },
+    NsFn{ .ns = "sync", .name = "cond_free", .args = "i64", .ret = "void", .op = "CondFree", .effects = EFF_SHARED_MUTABLE },
+    NsFn{ .ns = "sync", .name = "wait", .args = "i64 i64", .ret = "void", .op = "CondWait", .effects = EFF_BLOCKS | EFF_SHARED_MUTABLE },
+    NsFn{ .ns = "time", .name = "now", .args = "", .ret = "i64", .op = "TimeNow", .effects = EFF_NONDETERMINISTIC },
+    NsFn{ .ns = "time", .name = "monotonic", .args = "", .ret = "u64", .op = "TimeMonotonic", .effects = EFF_NONDETERMINISTIC },
+    NsFn{ .ns = "time", .name = "sleep", .args = "u64", .ret = "void", .op = "Sleep", .effects = EFF_BLOCKS },
+    NsFn{ .ns = "time", .name = "utc_offset", .args = "i64", .ret = "i64", .op = "TimeUtcOffset", .effects = EFF_NONDETERMINISTIC },
+    NsFn{ .ns = "random", .name = "int", .args = "i64 i64", .ret = "i64", .op = "RandomInt", .effects = EFF_NONDETERMINISTIC },
+    NsFn{ .ns = "random", .name = "float", .args = "", .ret = "f64", .op = "RandomFloat", .effects = EFF_NONDETERMINISTIC },
+    NsFn{ .ns = "random", .name = "seed", .args = "u64", .ret = "void", .op = "RandomSeed", .effects = 0 },
+]
+
+impl Checker {
+    /// A type from a short code used by the namespace table.
+    fn code_ty(self: *mut Self, code: []u8) -> usize {
+        if code.len > 0 and code[0] == '!' {
+            let inner = self.code_ty(code[1..])
+            return self.tys.err_union(0, false, inner)
+        }
+        if code.len > 0 and code[0] == '?' {
+            let inner = self.code_ty(code[1..])
+            return self.tys.wrap(TK.Opt, inner, false)
+        }
+        if code.len > 2 and code[0..2] == "[]" {
+            let inner = self.code_ty(code[2..])
+            return self.tys.wrap(TK.Slice, inner, false)
+        }
+        if code.len > 5 and code[0..5] == "List(" {
+            let inner = self.code_ty(code[5..code.len - 1])
+            return self.tys.wrap(TK.List, inner, false)
+        }
+        if code == "bytes" { return self.tys.str_slice() }
+        if code == "string" { return self.tys.string() }
+        if code == "void" { return self.tys.void() }
+        if code == "never" { return self.tys.never() }
+        if code == "bool" { return self.tys.bool_ty() }
+        if code == "f64" { return self.tys.float64() }
+        return self.tys.int(code)
+    }
+
+    fn split_words(codes: []u8) -> List(String) {
+        var out = List(String).new()
+        var cur = String.new()
+        for c in codes {
+            if c == ' ' {
+                if cur.len > 0 { out.append(cur.clone()) }
+                cur.clear()
+            } else {
+                cur.push_byte(c)
+            }
+        }
+        if cur.len > 0 { out.append(cur) }
+        return out
+    }
+
+    fn check_namespace_member(self: *mut Self, ns: []u8, name: []u8, start: usize, end: usize, expected: usize) -> usize {
+        _ = expected
+        let f64t = self.tys.float64()
+        if ns == "math" {
+            if name == "PI" { return self.float_node(3.141592653589793, f64t, start, end) }
+            if name == "E" { return self.float_node(2.718281828459045, f64t, start, end) }
+            if name == "TAU" { return self.float_node(6.283185307179586, f64t, start, end) }
+            if name == "INF" { return self.float_node(1.0 / 0.0, f64t, start, end) }
+            if name == "NAN" { return self.float_node(0.0 / 0.0, f64t, start, end) }
+        }
+        if ns.len > 7 and ns[0..7] == "module:" {
+            let m = ns[7..].parse_int(usize) catch { 0 }
+            let key = check.item_key(m, name)
+            if let item = self.items.get(key[..]) {
+                if item.kind == ItemKind.Fn and !self.node(m, self.fns[item.id].node).flag {
+                    self.fail_here(start, format("function `{}` is private to its module", .{name})[..])
+                }
+                let saved = self.ctx().module
+                self.ctx().module = m
+                let te = self.check_ident(name, start, end)
+                self.ctx().module = saved
+                return te
+            }
+            if let why = self.cimport_unsupported.get(format("{}:{}", .{m, name})[..]) {
+                self.fail_here(start, format("`{}` was imported from `{}` but cannot be used: {}", .{name, self.mods[m].name[8..], why})[..])
+            } else {
+                self.fail_here(start, format("module `{}` has no item `{}`", .{self.mods[m].name, name})[..])
+            }
+            return self.error_expr(start, end)
+        }
+        self.fail_here(start, format("`{}` has no member `{}`", .{ns, name})[..])
+        return self.error_expr(start, end)
+    }
+
+    fn check_namespace_call(self: *mut Self, ns: []u8, name: []u8, args: []usize, expected: usize, start: usize, end: usize) -> usize {
+        if ns.len > 7 and ns[0..7] == "module:" {
+            let m = ns[7..].parse_int(usize) catch { 0 }
+            let key = check.item_key(m, name)
+            if let item = self.items.get(key[..]) {
+                if item.kind == ItemKind.Fn {
+                    if !self.node(m, self.fns[item.id].node).flag { self.fail_here(start, format("function `{}` is private to its module", .{name})[..]) }
+                    return self.call_fn_def(item.id, NONE, args, expected, start, end)
+                }
+            }
+            if let why = self.cimport_unsupported.get(format("{}:{}", .{m, name})[..]) {
+                self.fail_here(start, format("`{}` was imported from `{}` but cannot be called: {}", .{name, self.mods[m].name[8..], why})[..])
+            } else {
+                self.fail_here(start, format("module `{}` has no function `{}`", .{self.mods[m].name, name})[..])
+            }
+            for a in args { _ = self.check_expr(a, NONE) }
+            return self.error_expr(start, end)
+        }
+        if ns == "math" { return self.check_math_call(name, args, expected, start, end) }
+        if ns == "mem" and name == "copy" {
+            if args.len != 2 {
+                self.fail_here(start, format("`mem.copy` takes 2 argument(s) but {} were given", .{args.len})[..])
+                return self.error_expr(start, end)
+            }
+            let d = self.check_expr(args[0], NONE)
+            let dt = self.tys.resolve(self.tir.nodes[d].ty, true)
+            if self.tys.kind(dt) != TK.Slice {
+                self.fail_here(start, "mem.copy takes a `[]mut T` destination")
+                return self.error_expr(start, end)
+            }
+            let e = self.tys.list[dt].args[0]
+            if !self.tys.list[dt].flag { self.fail_here(start, "mem.copy destination must be `[]mut T`") }
+            let st = self.tys.wrap(TK.Slice, e, false)
+            var s = self.check_expr(args[1], st)
+            s = self.coerce_or_error(s, st, "source")
+            self.add_effect(EFF_PANICS, start, "mem.copy panics when the source is longer than the destination")
+            let v = self.tys.void()
+            let b = self.builtin_node("SliceCopy", v, start, end)
+            self.tir.nodes[b].kids.append(d)
+            self.tir.nodes[b].kids.append(s)
+            self.tir.nodes[b].kids2.append(e)
+            return b
+        }
+        if ns == "thread" and name == "start" {
+            if args.len != 2 {
+                self.fail_here(start, format("`thread.start` takes 2 argument(s) but {} were given", .{args.len})[..])
+                return self.error_expr(start, end)
+            }
+            let f = self.check_expr(args[0], NONE)
+            let ft = self.tys.shallow(self.tir.nodes[f].ty)
+            var param = NONE
+            if self.tys.kind(ft) == TK.Fn and self.tys.list[ft].args.len == 2 {
+                let p0 = self.tys.shallow(self.tys.list[ft].args[0])
+                let r0 = self.tys.shallow(self.tys.list[ft].args[1])
+                if self.tys.kind(p0) == TK.Ptr and self.tys.kind(r0) == TK.Void { param = self.tys.list[ft].args[0] }
+            }
+            if param == NONE {
+                self.fail_here(start, "thread.start takes a function value `fn(*mut T) -> void` (a closure without captures or a named function)")
+                return self.error_expr(start, end)
+            }
+            var p = self.check_expr(args[1], param)
+            p = self.coerce_or_error(p, param, "argument")
+            self.add_effect(EFF_NONDETERMINISTIC, start, "threads interleave")
+            self.add_effect(EFF_SHARED_MUTABLE, start, "a thread shares memory with its spawner")
+            let i64t = self.tys.int("i64")
+            let b = self.builtin_node("ThreadStart", i64t, start, end)
+            self.tir.nodes[b].kids.append(f)
+            self.tir.nodes[b].kids.append(p)
+            return b
+        }
+        let lookup_ns = if ns == "process" { "os" } else { ns }
+        for f in NS_FNS {
+            if f.ns != lookup_ns or f.name != name { continue }
+            let codes = Checker.split_words(f.args)
+            if args.len != codes.len {
+                self.fail_here(start, format("`{}.{}` takes {} argument(s) but {} were given", .{ns, name, codes.len, args.len})[..])
+                return self.error_expr(start, end)
+            }
+            let ret = self.code_ty(f.ret)
+            let b = self.builtin_node(f.op, ret, start, end)
+            for a, i in args {
+                let pt = self.code_ty(codes[i][..])
+                var te = self.check_expr(a, pt)
+                te = self.coerce_or_error(te, pt, "argument")
+                self.tir.nodes[b].kids.append(te)
+            }
+            if f.effects != 0 { self.add_effect(f.effects, start, "builtin") }
+            return b
+        }
+        self.fail_here(start, format("`{}` has no function `{}`", .{ns, name})[..])
+        for a in args { _ = self.check_expr(a, NONE) }
+        return self.error_expr(start, end)
+    }
+
+    fn check_math_call(self: *mut Self, name: []u8, args: []usize, expected: usize, start: usize, end: usize) -> usize {
+        var unary = ""
+        if name == "sqrt" { unary = "MathSqrt" }
+        if name == "abs" { unary = "MathAbs" }
+        if name == "floor" { unary = "MathFloor" }
+        if name == "ceil" { unary = "MathCeil" }
+        if name == "round" { unary = "MathRound" }
+        if name == "sin" { unary = "MathSin" }
+        if name == "cos" { unary = "MathCos" }
+        if name == "tan" { unary = "MathTan" }
+        if name == "exp" { unary = "MathExp" }
+        if name == "log" { unary = "MathLog" }
+        if name == "log2" { unary = "MathLog2" }
+        if unary.len > 0 {
+            if args.len != 1 {
+                self.fail_here(start, format("`math.{}` takes 1 argument(s) but {} were given", .{name, args.len})[..])
+                return self.error_expr(start, end)
+            }
+            let x = self.check_expr(args[0], expected)
+            let t = self.tys.resolve(self.tir.nodes[x].ty, true)
+            if name == "abs" {
+                if !self.tys.is_numeric(t) { self.fail_here(start, "math.abs takes a number") }
+            } else if !self.tys.is_float(t) {
+                self.fail_here(start, format("math.{} takes a float but found `{}`; convert with `as f64`", .{name, self.ty_name(t)})[..])
+            }
+            let b = self.builtin_node(unary, t, start, end)
+            self.tir.nodes[b].kids.append(x)
+            self.tir.nodes[b].kids2.append(t)
+            return b
+        }
+        var binary = ""
+        if name == "min" { binary = "MathMin" }
+        if name == "max" { binary = "MathMax" }
+        if name == "pow" { binary = "MathPow" }
+        if name == "atan2" { binary = "MathAtan2" }
+        if binary.len > 0 {
+            if args.len != 2 {
+                self.fail_here(start, format("`math.{}` takes 2 argument(s) but {} were given", .{name, args.len})[..])
+                return self.error_expr(start, end)
+            }
+            let a = self.check_expr(args[0], expected)
+            let at = self.tys.resolve(self.tir.nodes[a].ty, false)
+            var bb = self.check_expr(args[1], at)
+            bb = self.coerce_or_error(bb, at, "second operand")
+            let t = self.tys.resolve(at, true)
+            if !self.tys.is_numeric(t) { self.fail_here(start, format("math.{} takes numbers", .{name})[..]) }
+            if (name == "pow" or name == "atan2") and !self.tys.is_float(t) { self.fail_here(start, format("math.{} takes floats", .{name})[..]) }
+            let b = self.builtin_node(binary, t, start, end)
+            self.tir.nodes[b].kids.append(a)
+            self.tir.nodes[b].kids.append(bb)
+            self.tir.nodes[b].kids2.append(t)
+            return b
+        }
+        if name == "clamp" {
+            if args.len != 3 {
+                self.fail_here(start, format("`math.clamp` takes 3 argument(s) but {} were given", .{args.len})[..])
+                return self.error_expr(start, end)
+            }
+            let a = self.check_expr(args[0], expected)
+            let at = self.tys.resolve(self.tir.nodes[a].ty, false)
+            var lo = self.check_expr(args[1], at)
+            lo = self.coerce_or_error(lo, at, "lower bound")
+            var hi = self.check_expr(args[2], at)
+            hi = self.coerce_or_error(hi, at, "upper bound")
+            let t = self.tys.resolve(at, true)
+            let b = self.builtin_node("MathClamp", t, start, end)
+            self.tir.nodes[b].kids.append(a)
+            self.tir.nodes[b].kids.append(lo)
+            self.tir.nodes[b].kids.append(hi)
+            self.tir.nodes[b].kids2.append(t)
+            return b
+        }
+        self.fail_here(start, format("`math` has no function `{}`", .{name})[..])
+        return self.error_expr(start, end)
+    }
+
+    // ----- static members and calls ------------------------------------------------------------
+
+    fn check_static_member(self: *mut Self, t0: usize, name: []u8, start: usize, end: usize, expected: usize) -> usize {
+        _ = expected
+        let t = self.tys.shallow(t0)
+        let k = self.tys.kind(t)
+        if k == TK.Enum {
+            let d = self.tys.list[t].def
+            let idx = self.enum_variant_index(d, name)
+            if idx == NONE {
+                self.fail_here(start, format("enum `{}` has no variant `{}`", .{self.enums[d].name, name})[..])
+                return self.error_expr(start, end)
+            }
+            let em = self.enums[d].module
+            if self.node(em, self.enums[d].variants[idx]).text != "unit" {
+                self.fail_here(start, format("variant `{}.{}` carries a payload; construct it with `{}.{}(...)`", .{self.enums[d].name, name, self.enums[d].name, name})[..])
+            }
+            let r = self.mk(TKind.EnumLit, t, start, end)
+            self.tir.nodes[r].a = idx
+            return r
+        }
+        if k == TK.ErrorSet and self.tys.list[t].flag {
+            let s = self.tys.list[t].def
+            let id = self.error_id(name)
+            if !self.error_set_has(s, name) {
+                self.fail_here(start, format("error set `{}` has no member `{}`", .{self.error_sets[s].name, name})[..])
+            }
+            let r = self.mk(TKind.ErrVal, t, start, end)
+            self.tir.nodes[r].a = id
+            return r
+        }
+        if k == TK.Struct or k == TK.Distinct {
+            let fid = self.find_inherent_method(t, name)
+            if fid != NONE {
+                if self.fns[fid].is_generic {
+                    self.fail_here(start, format("`{}` is generic; call it directly", .{name})[..])
+                    return self.error_expr(start, end)
+                }
+                if self.fn_takes_own(fid) {
+                    self.fail_here(start, format("`{}` takes `own` parameters and cannot be used as a function value; call it directly", .{name})[..])
+                    return self.error_expr(start, end)
+                }
+                let inst = self.instantiate(fid, List(usize).new())
+                var ps = List(usize).new()
+                for p in self.insts[inst].params { ps.append(self.insts[inst].locals[p].ty) }
+                let r = self.insts[inst].ret
+                let neg = self.insts[inst].declared_neg
+                let ft = self.tys.func(ps, r, EFF_ALL & ~neg)
+                let te = self.mk(TKind.FnToFat, ft, start, end)
+                self.tir.nodes[te].a = inst
+                return te
+            }
+            self.fail_here(start, format("`{}` has no associated item `{}`", .{self.ty_name(t), name})[..])
+            return self.error_expr(start, end)
+        }
+        self.fail_here(start, format("`{}` has no member `{}`", .{self.ty_name(t), name})[..])
+        return self.error_expr(start, end)
+    }
+
+    fn error_set_has(self: *mut Self, set: usize, name: []u8) -> bool {
+        let m = self.error_sets[set].module
+        // the set's names live on its declaration node
+        let items = self.mods[m].parsed.items.clone()
+        for it in items {
+            let n = self.node(m, it)
+            if n.k == parser.NodeKind.ErrorSet and n.name == self.error_sets[set].name {
+                for w in n.words { if w == name { return true } }
+                return false
+            }
+        }
+        return false
+    }
+
+    /// Match an impl's target against a concrete type; the impl's type
+    /// parameters bound in order, or null.
+    fn match_impl_target(self: *mut Self, impl_id: usize, t0: usize) -> ?List(usize) {
+        let t = self.tys.resolve(t0, true)
+        let m = self.impls[impl_id].module
+        let target = self.impls[impl_id].target
+        let tps = self.impls[impl_id].tparams.clone()
+        var names = List(String).new()
+        var bound = List(usize).new()
+        if !self.match_type_pattern(m, target, t, &tps, &mut names, &mut bound) { return null }
+        var out = List(usize).new()
+        for tp in tps {
+            var b = NONE
+            for nm, i in names { if nm == tp { b = bound[i] } }
+            if b == NONE { return null }
+            out.append(b)
+        }
+        return out
+    }
+
+    /// Match a type expression with parameters against a type, binding parameters.
+    fn match_type_pattern(self: *mut Self, m: usize, pat: usize, t0: usize, params: *List(String), names: *mut List(String), bound: *mut List(usize)) -> bool {
+        let t = self.tys.shallow(t0)
+        let n = self.node(m, pat)
+        let k = n.k
+        let tk = self.tys.kind(t)
+        if k == parser.NodeKind.TName and n.words.len == 1 {
+            let name = n.words[0].clone()
+            let args = n.kids.clone()
+            if check.list_has(params, name[..]) and args.len == 0 {
+                for nm, i in names { if nm == name { return bound[i] == t } }
+                names.append(name.clone())
+                bound.append(t)
+                return true
+            }
+            if args.len > 0 {
+                if name == "List" and tk == TK.List and args.len == 1 { return self.match_type_pattern(m, args[0], self.tys.list[t].args[0], params, names, bound) }
+                if name == "Map" and tk == TK.Map and args.len == 2 {
+                    return self.match_type_pattern(m, args[0], self.tys.list[t].args[0], params, names, bound) and self.match_type_pattern(m, args[1], self.tys.list[t].args[1], params, names, bound)
+                }
+                if tk == TK.Struct or tk == TK.Enum {
+                    let d = self.tys.list[t].def
+                    var same = false
+                    if let r = self.lookup(m, name[..]) { same = (r.kind == ItemKind.Struct and tk == TK.Struct or r.kind == ItemKind.Enum and tk == TK.Enum) and r.id == d }
+                    let targs = self.tys.list[t].args.clone()
+                    if !same or targs.len != args.len { return false }
+                    for a, i in args { if !self.match_type_pattern(m, a, targs[i], params, names, bound) { return false } }
+                    return true
+                }
+                return false
+            }
+        }
+        if k == parser.NodeKind.TSlice or k == parser.NodeKind.TPtr {
+            let want = if k == parser.NodeKind.TSlice { TK.Slice } else { TK.Ptr }
+            if tk != want or self.tys.list[t].flag != n.flag { return false }
+            return self.match_type_pattern(m, n.x, self.tys.list[t].args[0], params, names, bound)
+        }
+        if k == parser.NodeKind.TOpt {
+            if tk != TK.Opt { return false }
+            return self.match_type_pattern(m, n.x, self.tys.list[t].args[0], params, names, bound)
+        }
+        if k == parser.NodeKind.TArray {
+            if tk != TK.Array { return false }
+            let want = self.const_eval_int(m, n.x) orelse return false
+            if want != self.tys.list[t].n as i128 { return false }
+            return self.match_type_pattern(m, n.y, self.tys.list[t].args[0], params, names, bound)
+        }
+        // a concrete type: resolve and compare
+        let saved = self.errors.len
+        let saved_env = self.env_save()
+        self.env_set(&List(String).new(), &List(usize).new())
+        let pt = self.resolve_type(m, pat, NONE)
+        self.env_restore(&saved_env)
+        while self.errors.len > saved { _ = self.errors.pop() }
+        return self.tys.resolve(pt, true) == t
+    }
+
+    /// What inherent impl `i` is for: the type definition it names (`head`)
+    /// and, when the impl is not generic, the exact type (`exact`; "" for a
+    /// generic impl, which covers every instance of its head). False when its
+    /// target does not resolve, which is reported where the impl is checked.
+    fn impl_key(self: *mut Self, i: usize, head: *mut String, exact: *mut String) -> bool {
+        let m = self.impls[i].module
+        let target = self.impls[i].target
+        let n = self.node(m, target)
+        if n.k != parser.NodeKind.TName { return false }
+        let errors_before = self.errors.len
+        var t = NONE
+        if self.impls[i].tparams.len == 0 {
+            t = self.tys.shallow(self.resolve_type(m, target, NONE))
+        } else if n.words.len == 1 {
+            // a generic impl: the definition its head names
+            if let r = self.lookup(m, n.words[0][..]) {
+                if r.kind == ItemKind.Struct or r.kind == ItemKind.Enum {
+                    head.* = format("{}:{}", .{if r.kind == ItemKind.Struct { "struct" } else { "enum" }, r.id})
+                    exact.* = String.new()
+                    return true
+                }
+            }
+            return false
+        } else {
+            return false
+        }
+        // resolving a target a second time must not report its errors twice
+        let failed = self.errors.len > errors_before
+        while self.errors.len > errors_before { _ = self.errors.pop() }
+        if failed { return false }
+        let k = self.tys.kind(t)
+        head.* = if k == TK.Struct { format("struct:{}", .{self.tys.list[t].def}) } else if k == TK.Enum { format("enum:{}", .{self.tys.list[t].def}) } else { format("t:{}", .{t}) }
+        exact.* = format("t:{}", .{t})
+        return true
+    }
+
+    /// A type has one method of a name: two inherent impls of the same type
+    /// (in one module or two) may not both define it, since a call could only
+    /// ever reach the first.
+    fn check_duplicate_methods(self: *mut Self) {
+        let n = self.impls.len
+        var heads = List(String).new()
+        var exacts = List(String).new()
+        var keyed = List(bool).new()
+        for i in 0..n {
+            var h = String.new()
+            var x = String.new()
+            let ok = !self.impls[i].has_trait and self.impl_key(i, &mut h, &mut x)
+            heads.append(h)
+            exacts.append(x)
+            keyed.append(ok)
+        }
+        for j in 0..n {
+            if !keyed[j] { continue }
+            for i in 0..j {
+                if !keyed[i] or heads[i] != heads[j] { continue }
+                if exacts[i].len > 0 and exacts[j].len > 0 and exacts[i] != exacts[j] { continue }
+                for fj in self.impls[j].methods.clone() {
+                    let jm = self.fns[fj].node_module
+                    let jname = self.node(jm, self.fns[fj].node).name.clone()
+                    let jat = self.node(jm, self.fns[fj].node).start
+                    for fi in self.impls[i].methods.clone() {
+                        let im = self.fns[fi].node_module
+                        if self.node(im, self.fns[fi].node).name != jname { continue }
+                        let first = self.location(im, self.node(im, self.fns[fi].node).start)
+                        self.fail(jm, jat, format("`{}` is already a method of this type (at {}); a type has one method of a name", .{jname, first})[..])
+                    }
+                }
+            }
+        }
+    }
+
+    /// A method of an inherent impl first, then of a trait impl, for type `t`;
+    /// a trait's default method is materialized as an impl method when first needed.
+    fn find_inherent_method(self: *mut Self, t0: usize, name: []u8) -> usize {
+        let t = self.tys.resolve(t0, true)
+        let n = self.impls.len
+        for pass in 0..2 {
+            for i in 0..n {
+                let has_trait = self.impls[i].has_trait
+                if (pass == 0 and has_trait) or (pass == 1 and !has_trait) { continue }
+                let methods = self.impls[i].methods.clone()
+                let im = self.impls[i].module
+                for fid in methods {
+                    if self.node(self.fns[fid].node_module, self.fns[fid].node).name == name and self.match_impl_target(i, t) != null { return fid }
+                }
+            }
+        }
+        for i in 0..n {
+            if !self.impls[i].has_trait { continue }
+            if self.match_impl_target(i, t) == null { continue }
+            let im = self.impls[i].module
+            let tn = self.impls[i].trait_name.clone()
+            let tr = self.lookup(im, tn[..]) orelse continue
+            if tr.kind != ItemKind.Trait { continue }
+            let tm = self.traits[tr.id].module
+            let methods = self.traits[tr.id].methods.clone()
+            for meth in methods {
+                let mn = self.node(tm, meth)
+                if mn.name == name and mn.y != NONE {
+                    let generic = self.impls[i].tparams.len > 0 or self.fn_is_generic(tm, meth)
+                    self.fns.append(FnDef{ .node = meth, .node_module = tm, .module = im, .impl_id = i, .is_generic = generic, .is_test = false, .test_name = String.new(), .test_comptime = false })
+                    let fid = self.fns.len - 1
+                    self.impls[i].methods.append(fid)
+                    return fid
+                }
+            }
+        }
+        return NONE
+    }
+
+    /// Build (or reuse) the vtable of `trait_id` for the concrete type `t`;
+    /// NONE when `t` does not implement the trait.
+    fn vtable_for(self: *mut Self, trait_id: usize, t0: usize, at: usize) -> usize {
+        let t = self.tys.resolve(t0, true)
+        for v, i in self.vtables { if v.trait_id == trait_id and v.ty == t { return i } }
+        let tname = self.traits[trait_id].name.clone()
+        let tm = self.traits[trait_id].module
+        var has_impl = false
+        let n = self.impls.len
+        for i in 0..n {
+            if self.impls[i].has_trait and self.impls[i].trait_name == tname and self.match_impl_target(i, t) != null { has_impl = true }
+        }
+        if !has_impl { return NONE }
+        var insts = List(usize).new()
+        let methods = self.traits[trait_id].methods.clone()
+        for meth in methods {
+            let mname = self.node(tm, meth).name.clone()
+            let fid = self.find_inherent_method(t, mname[..])
+            if fid == NONE {
+                self.fail_here(at, format("`{}` implements `{}` but has no method `{}`", .{self.ty_name(t), tname, mname})[..])
+                return NONE
+            }
+            if self.fns[fid].is_generic {
+                self.fail_here(at, format("method `{}` is generic and cannot be called through `dyn {}`", .{mname, tname})[..])
+                return NONE
+            }
+            // impl type params from the concrete type
+            var targs = List(usize).new()
+            let impl_id = self.fns[fid].impl_id
+            if impl_id != NONE {
+                if let b = self.match_impl_target(impl_id, t) { targs = b }
+            }
+            insts.append(self.instantiate(fid, targs))
+        }
+        self.vtables.append(VTable{ .trait_id = trait_id, .ty = t, .insts = insts })
+        return self.vtables.len - 1
+    }
+
+    /// The signature of trait method `idx` seen through a trait object:
+    /// parameter types after `self`, the return type, and whether the
+    /// receiver is mutable. `Self` may only appear in receiver position.
+    fn dyn_method_sig(self: *mut Self, trait_id: usize, idx: usize, at: usize, params: *mut List(usize), ret: *mut usize, mutable: *mut bool) -> bool {
+        let tm = self.traits[trait_id].module
+        let tname = self.traits[trait_id].name.clone()
+        let meth = self.traits[trait_id].methods[idx]
+        let mname = self.node(tm, meth).name.clone()
+        let all = self.node(tm, meth).kids.clone()
+        if all.len == 0 or self.node(tm, all[0]).name != "self" { return false }
+        let st_node = self.node(tm, all[0]).x
+        mutable.* = self.node(tm, st_node).k == parser.NodeKind.TPtr and self.node(tm, st_node).flag
+        let placeholder = self.tys.named(TK.Type, "Self")
+        for pn, i in all {
+            if i == 0 { continue }
+            if self.node(tm, pn).flag { continue }
+            let t = self.resolve_type(tm, self.node(tm, pn).x, placeholder)
+            if self.type_mentions(t, placeholder) {
+                self.fail_here(at, format("method `{}` uses `Self` in a parameter and cannot be called through `dyn {}`", .{mname, tname})[..])
+                return false
+            }
+            params.append(t)
+        }
+        let ret_node = self.node(tm, meth).x
+        var r = self.tys.void()
+        if ret_node != NONE { r = self.resolve_type(tm, ret_node, placeholder) }
+        if self.type_mentions(r, placeholder) {
+            self.fail_here(at, format("method `{}` returns `Self` and cannot be called through `dyn {}`", .{mname, tname})[..])
+            return false
+        }
+        ret.* = r
+        return true
+    }
+
+    fn type_mentions(self: *mut Self, t0: usize, needle: usize) -> bool {
+        let t = self.tys.shallow(t0)
+        if t == needle { return true }
+        for a in self.tys.list[t].args.clone() { if self.type_mentions(a, needle) { return true } }
+        return false
+    }
+
+    fn check_static_call(self: *mut Self, t0: usize, name: []u8, args: []usize, expected: usize, start: usize, end: usize) -> usize {
+        let t = self.tys.shallow(t0)
+        let k = self.tys.kind(t)
+        let u = self.tys.usize_ty()
+        let bytes = self.tys.str_slice()
+        if k == TK.List {
+            let e = self.tys.list[t].args[0]
+            if name == "new" {
+                if !self.args_n(args, 0, "List.new", start) { return self.error_expr(start, end) }
+                let b = self.builtin_node("ListNew", t, start, end)
+                self.tir.nodes[b].kids2.append(e)
+                return b
+            }
+            if name == "with_capacity" {
+                if !self.args_n(args, 1, "List.with_capacity", start) { return self.error_expr(start, end) }
+                let n = self.arg(args[0], u, "capacity")
+                self.add_effect(EFF_ALLOCATES, start, "reserving list capacity allocates")
+                let b = self.builtin_node("ListWithCapacity", t, start, end)
+                self.tir.nodes[b].kids.append(n)
+                self.tir.nodes[b].kids2.append(e)
+                return b
+            }
+            if name == "from" {
+                if !self.args_n(args, 1, "List.from", start) { return self.error_expr(start, end) }
+                let st = self.tys.wrap(TK.Slice, e, false)
+                let s = self.arg(args[0], st, "source slice")
+                self.add_effect(EFF_ALLOCATES, start, "copying into a List allocates")
+                let b = self.builtin_node("ListFromSlice", t, start, end)
+                self.tir.nodes[b].kids.append(s)
+                self.tir.nodes[b].kids2.append(e)
+                return b
+            }
+            self.fail_here(start, format("`List` has no associated function `{}`; available: new, with_capacity, from", .{name})[..])
+            return self.error_expr(start, end)
+        }
+        if k == TK.Str {
+            if name == "new" {
+                if !self.args_n(args, 0, "String.new", start) { return self.error_expr(start, end) }
+                return self.builtin_node("StringNew", t, start, end)
+            }
+            if name == "from" {
+                if !self.args_n(args, 1, "String.from", start) { return self.error_expr(start, end) }
+                let s = self.arg(args[0], bytes, "source")
+                self.add_effect(EFF_ALLOCATES, start, "building a String allocates")
+                let b = self.builtin_node("StringFrom", t, start, end)
+                self.tir.nodes[b].kids.append(s)
+                return b
+            }
+            if name == "with_capacity" {
+                if !self.args_n(args, 1, "String.with_capacity", start) { return self.error_expr(start, end) }
+                let n = self.arg(args[0], u, "capacity")
+                self.add_effect(EFF_ALLOCATES, start, "reserving capacity allocates")
+                let b = self.builtin_node("StringWithCapacity", t, start, end)
+                self.tir.nodes[b].kids.append(n)
+                return b
+            }
+            self.fail_here(start, format("`String` has no associated function `{}`; available: new, from, with_capacity", .{name})[..])
+            return self.error_expr(start, end)
+        }
+        if k == TK.Map {
+            if name == "new" {
+                if !self.args_n(args, 0, "Map.new", start) { return self.error_expr(start, end) }
+                let b = self.builtin_node("MapNew", t, start, end)
+                self.tir.nodes[b].kids2.append(self.tys.list[t].args[0])
+                self.tir.nodes[b].kids2.append(self.tys.list[t].args[1])
+                return b
+            }
+            self.fail_here(start, format("`Map` has no associated function `{}`; available: new", .{name})[..])
+            return self.error_expr(start, end)
+        }
+        if k == TK.Enum { return self.check_variant_ctor(t, name, args, start, end) }
+        if k == TK.Struct or k == TK.Distinct {
+            if k == TK.Struct and name == "new" and self.structs[self.tys.list[t].def].kind == "record" {
+                // validated construction: Record.new(.{ ... }) -> !Record
+                let rname = self.structs[self.tys.list[t].def].name.clone()
+                if args.len != 1 {
+                    self.fail_here(start, format("`new` takes 1 argument(s) but {} were given", .{args.len})[..])
+                    return self.error_expr(start, end)
+                }
+                let an = self.node(self.cur_module(), args[0])
+                if an.k != parser.NodeKind.StructLit or an.x != NONE {
+                    self.fail_here(an.start, format("`{}.new` takes an anonymous struct literal: `{}.new(.{{ .field = value }})`", .{rname, rname})[..])
+                    return self.error_expr(start, end)
+                }
+                self.record_new_mode = true
+                let lit = self.check_struct_lit_into(args[0], t)
+                self.record_new_mode = false
+                return self.record_check(lit, t, true, start, end)
+            }
+            let fid = self.find_inherent_method(t, name)
+            if fid != NONE {
+                let fm = self.fns[fid].node_module
+                let params = self.node(fm, self.fns[fid].node).kids.clone()
+                if k == TK.Struct and params.len > 0 and self.node(fm, params[0]).name == "self" {
+                    self.fail_here(start, format("`{}` is a method; call it on a value: `value.{}(...)`", .{name, name})[..])
+                    return self.error_expr(start, end)
+                }
+                return self.call_fn_def(fid, NONE, args, expected, start, end)
+            }
+            self.fail_here(start, format("`{}` has no associated function `{}`", .{self.ty_name(t), name})[..])
+            for a in args { _ = self.check_expr(a, NONE) }
+            return self.error_expr(start, end)
+        }
+        self.fail_here(start, format("`{}` has no associated function `{}`", .{self.ty_name(t), name})[..])
+        for a in args { _ = self.check_expr(a, NONE) }
+        return self.error_expr(start, end)
+    }
+
+    fn args_n(self: *mut Self, args: []usize, n: usize, what: []u8, at: usize) -> bool {
+        if args.len != n {
+            self.fail_here(at, format("`{}` takes {} argument(s) but {} were given", .{what, n, args.len})[..])
+            for a in args { _ = self.check_expr(a, NONE) }
+            return false
+        }
+        return true
+    }
+
+    fn arg(self: *mut Self, e: usize, ty: usize, what: []u8) -> usize {
+        let te = self.check_expr(e, ty)
+        return self.coerce_or_error(te, ty, what)
+    }
+
+    /// `List(i32)`, `Map(K, V)`, `Pair(i32)` in expression position: a type value.
+    fn expr_as_type(self: *mut Self, e: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        let k = n.k
+        let st = self.ctx().self_ty
+        if k == parser.NodeKind.TypeVal { return self.resolve_type(m, n.x, st) }
+        if k == parser.NodeKind.Ident {
+            let name = n.name.clone()
+            return self.named_type(m, name[..], NONE_NAME, List(usize).new(), n.start, st)
+        }
+        if k == parser.NodeKind.FieldE {
+            let base = self.node(m, n.x)
+            if base.k == parser.NodeKind.Ident {
+                return self.named_type(m, n.name.clone()[..], base.name.clone()[..], List(usize).new(), n.start, st)
+            }
+        }
+        if k == parser.NodeKind.Call {
+            let callee = self.node(m, n.x)
+            let args = n.kids.clone()
+            var targs = List(usize).new()
+            for a in args { targs.append(self.expr_as_type(a)) }
+            if callee.k == parser.NodeKind.Ident {
+                return self.named_type(m, callee.name.clone()[..], NONE_NAME, targs, n.start, st)
+            }
+        }
+        if k == parser.NodeKind.MethodCall {
+            // `mod.Type(A)`: a generic type of another module reads as a method call
+            let recv = self.node(m, n.x)
+            if recv.k == parser.NodeKind.Ident {
+                let args = n.kids.clone()
+                var targs = List(usize).new()
+                for a in args { targs.append(self.expr_as_type(a)) }
+                return self.named_type(m, n.name.clone()[..], recv.name.clone()[..], targs, n.start, st)
+            }
+        }
+        if k == parser.NodeKind.TupleLit {
+            let elems = n.kids.clone()
+            var ts = List(usize).new()
+            for a in elems { ts.append(self.expr_as_type(a)) }
+            if ts.len == 0 { return self.tys.void() }
+            return self.tys.tuple(ts)
+        }
+        self.fail_here(n.start, "expected a type argument")
+        return self.tys.void()
+    }
+
+    // ----- method calls -------------------------------------------------------------------------
+
+    fn check_method_call(self: *mut Self, e: usize, expected: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        let recv_node = n.x
+        let method = n.name.clone()
+        let args = n.kids.clone()
+        let start = n.start
+        let end = n.end
+        let recv = self.check_expr_any(recv_node, NONE)
+        if self.is_namespace(recv) {
+            let ns = self.tir.nodes[recv].name.clone()
+            return self.check_namespace_call(ns[..], method[..], args[..], expected, start, end)
+        }
+        let rt = self.tys.shallow(self.tir.nodes[recv].ty)
+        if self.tys.kind(rt) == TK.Type and self.tir.nodes[recv].k == TKind.TypeVal {
+            return self.check_static_call(self.tir.nodes[recv].a, method[..], args[..], expected, start, end)
+        }
+        var base_t = rt
+        while self.tys.kind(base_t) == TK.Ptr { base_t = self.tys.shallow(self.tys.list[base_t].args[0]) }
+        let bk = self.tys.kind(base_t)
+        if bk == TK.Dyn {
+            let recv2 = self.auto_deref_all(recv)
+            let trait_id = self.tys.list[base_t].def
+            let permitted = self.tys.list[base_t].n
+            let tm = self.traits[trait_id].module
+            let tname = self.traits[trait_id].name.clone()
+            let methods = self.traits[trait_id].methods.clone()
+            var idx = NONE
+            for meth, i in methods { if self.node(tm, meth).name == method { idx = i } }
+            if idx == NONE {
+                self.fail_here(start, format("trait `{}` has no method `{}`", .{tname, method})[..])
+                for a in args { _ = self.check_expr(a, NONE) }
+                return self.error_expr(start, end)
+            }
+            var ps = List(usize).new()
+            var ret = NONE
+            var mutable = false
+            if !self.dyn_method_sig(trait_id, idx, start, &mut ps, &mut ret, &mut mutable) { return self.error_expr(start, end) }
+            if mutable and self.is_place(recv2) and !self.place_mutable(recv2) {
+                self.fail_here(start, format("`{}` mutates its receiver, but this trait object is immutable", .{method})[..])
+            }
+            if args.len != ps.len {
+                self.fail_here(start, format("`{}` takes {} argument(s) but {} were given", .{method, ps.len, args.len})[..])
+                return self.error_expr(start, end)
+            }
+            var targs = List(usize).new()
+            for a, i in args { targs.append(self.arg(a, ps[i], "argument")) }
+            // a dynamic call acquires every effect the trait object permits
+            if permitted != 0 {
+                self.add_effect(permitted, start, "calling through a trait object acquires the effects its type permits")
+            }
+            let r = self.mk(TKind.DynCall, ret, start, end)
+            self.tir.nodes[r].a = idx
+            self.tir.nodes[r].kids.append(recv2)
+            for ta in targs { self.tir.nodes[r].kids.append(ta) }
+            return r
+        }
+        if bk == TK.Struct or bk == TK.Enum or bk == TK.Distinct {
+            let fid = self.find_inherent_method(base_t, method[..])
+            if fid != NONE {
+                let fm = self.fns[fid].node_module
+                let params = self.node(fm, self.fns[fid].node).kids.clone()
+                let has_self = params.len > 0 and self.node(fm, params[0]).name == "self"
+                if !has_self {
+                    self.fail_here(start, format("`{}` is an associated function, not a method; call it as `{}.{}(...)`", .{method, self.ty_name(base_t), method})[..])
+                    return self.error_expr(start, end)
+                }
+                return self.call_fn_def(fid, recv, args[..], expected, start, end)
+            }
+            if self.is_ref_class(base_t) and method == "weak" {
+                if !self.args_n(args[..], 0, "weak", start) { return self.error_expr(start, end) }
+                let wt = self.tys.wrap(TK.Weak, base_t, false)
+                self.add_effect(EFF_REFCOUNTS, start, "creating a weak reference")
+                let b = self.builtin_node("Weak", wt, start, end)
+                self.tir.nodes[b].kids.append(recv)
+                self.tir.nodes[b].kids2.append(base_t)
+                return b
+            }
+        }
+        let recv2 = self.auto_deref_all(recv)
+        let t = self.tys.resolve(self.tir.nodes[recv2].ty, true)
+        let r = self.builtin_method(recv2, t, method[..], args[..], start, end)
+        if r != NONE { return r }
+        // `.clone()` on a struct or enum that derives `Clone` (and on tuples,
+        // optionals, arrays and weak references of clonable things): a deep
+        // copy the emitter derives field by field, the way it derives drops
+        if method == "clone" {
+            if !self.args_n(args[..], 0, "clone", start) { return self.error_expr(start, end) }
+            self.clone_seen.clear()
+            if let why = self.clone_blocker(t) {
+                self.fail_here(start, format("cannot clone a `{}`: {}", .{self.ty_name(t), why})[..])
+                return self.error_expr(start, end)
+            }
+            self.clone_seen.clear()
+            let eff = self.clone_effects(t)
+            if (eff & EFF_ALLOCATES) != 0 { self.add_effect(EFF_ALLOCATES, start, "cloning allocates") }
+            if (eff & EFF_REFCOUNTS) != 0 { self.add_effect(EFF_REFCOUNTS, start, "cloning retains a reference") }
+            let b = self.builtin_node("Clone", t, start, end)
+            self.tir.nodes[b].kids.append(recv2)
+            self.tir.nodes[b].kids2.append(t)
+            return b
+        }
+        self.fail_here(start, format("no method `{}` on type `{}`", .{method, self.ty_name(t)})[..])
+        for a in args { _ = self.check_expr(a, NONE) }
+        return self.error_expr(start, end)
+    }
+
+    fn require_mut_recv(self: *mut Self, recv: usize, method: []u8, at: usize) {
+        if self.is_place(recv) and !self.place_mutable(recv) {
+            var what = String.from("the receiver")
+            if self.tir.nodes[recv].k == TKind.Local { what = format("`{}`", .{self.ctx().locals[self.tir.nodes[recv].a].name}) }
+            self.fail_here(at, format("`{}` mutates its receiver, but {} is immutable", .{method, what})[..])
+        }
+        // the methods that may move or release the storage a view points into (V3)
+        if method == "append" or method == "append_char" or method == "push_byte" or method == "extend" or method == "insert" or method == "put" or method == "reserve" or method == "clear" {
+            self.note_change_f(self.place_root(recv), at, self.first_field(recv))
+        }
+    }
+
+    fn bnode(self: *mut Self, op: []u8, recv: usize, ty: usize, ety: usize, start: usize, end: usize) -> usize {
+        let b = self.builtin_node(op, ty, start, end)
+        if recv != NONE { self.tir.nodes[b].kids.append(recv) }
+        if ety != NONE { self.tir.nodes[b].kids2.append(ety) }
+        return b
+    }
+
+    fn is_empty_node(self: *mut Self, recv: usize, start: usize, end: usize) -> usize {
+        let u = self.tys.usize_ty()
+        let bt = self.tys.bool_ty()
+        let len = self.bnode("Len", recv, u, NONE, start, end)
+        let zero = self.int_node(0, u, start, end)
+        return self.binary_node("==", "plain", true, len, zero, bt, start, end)
+    }
+
+    fn builtin_method(self: *mut Self, recv: usize, t: usize, method: []u8, args: []usize, start: usize, end: usize) -> usize {
+        let v = self.tys.void()
+        let bt = self.tys.bool_ty()
+        let u = self.tys.usize_ty()
+        let u8t = self.tys.u8_ty()
+        let bytes = self.tys.str_slice()
+        let string = self.tys.string()
+        let k = self.tys.kind(t)
+        if k == TK.List {
+            let e = self.tys.list[t].args[0]
+            if method == "append" or method == "push" {
+                if !self.args_n(args, 1, "append", start) { return self.error_expr(start, end) }
+                self.require_mut_recv(recv, "append", start)
+                var x = self.arg(args[0], e, "element")
+                x = self.take_ownership(x)
+                self.check_store(recv, x, start)
+                self.add_effect(EFF_ALLOCATES, start, "appending to a List may grow it")
+                let b = self.bnode("ListAppend", recv, v, e, start, end)
+                self.tir.nodes[b].kids.append(x)
+                return b
+            }
+            if method == "pop" {
+                if !self.args_n(args, 0, "pop", start) { return self.error_expr(start, end) }
+                self.require_mut_recv(recv, "pop", start)
+                let o = self.tys.wrap(TK.Opt, e, false)
+                return self.bnode("ListPop", recv, o, e, start, end)
+            }
+            if method == "clear" {
+                if !self.args_n(args, 0, "clear", start) { return self.error_expr(start, end) }
+                self.require_mut_recv(recv, "clear", start)
+                return self.bnode("ListClear", recv, v, e, start, end)
+            }
+            if method == "clone" {
+                if !self.args_n(args, 0, "clone", start) { return self.error_expr(start, end) }
+                self.add_effect(EFF_ALLOCATES, start, "cloning a List allocates")
+                return self.bnode("ListClone", recv, t, e, start, end)
+            }
+            if method == "last" or method == "first" {
+                if !self.args_n(args, 0, method, start) { return self.error_expr(start, end) }
+                let o = self.tys.wrap(TK.Opt, e, false)
+                let s = self.tys.wrap(TK.Slice, e, false)
+                let sl = self.mk(TKind.ListToSlice, s, start, end)
+                self.tir.nodes[sl].kids.append(recv)
+                let idx = self.int_node(if method == "last" { 1 } else { 0 }, u, start, end)
+                let b = self.bnode("ListLast", sl, o, e, start, end)
+                self.tir.nodes[b].kids.append(idx)
+                return b
+            }
+            if method == "insert" {
+                if !self.args_n(args, 2, "insert", start) { return self.error_expr(start, end) }
+                self.require_mut_recv(recv, "insert", start)
+                let i = self.arg(args[0], u, "index")
+                var x = self.arg(args[1], e, "element")
+                x = self.take_ownership(x)
+                self.check_store(recv, x, start)
+                self.add_effect(EFF_ALLOCATES, start, "inserting into a List may grow it")
+                self.add_effect(EFF_PANICS, start, "insert panics when the index is out of range")
+                let b = self.bnode("ListInsert", recv, v, e, start, end)
+                self.tir.nodes[b].kids.append(i)
+                self.tir.nodes[b].kids.append(x)
+                return b
+            }
+            if method == "remove" or method == "swap_remove" {
+                if !self.args_n(args, 1, method, start) { return self.error_expr(start, end) }
+                self.require_mut_recv(recv, method, start)
+                let i = self.arg(args[0], u, "index")
+                self.add_effect(EFF_PANICS, start, "remove panics when the index is out of range")
+                let b = self.bnode(if method == "remove" { "ListRemove" } else { "ListSwapRemove" }, recv, e, e, start, end)
+                self.tir.nodes[b].kids.append(i)
+                return b
+            }
+            if method == "extend" {
+                if !self.args_n(args, 1, "extend", start) { return self.error_expr(start, end) }
+                self.require_mut_recv(recv, "extend", start)
+                let st = self.tys.wrap(TK.Slice, e, false)
+                let s = self.arg(args[0], st, "elements")
+                if self.needs_drop(e) { self.fail_here(start, "`extend` copies elements; the element type owns resources, so append clones instead") }
+                self.check_store(recv, s, start)
+                self.add_effect(EFF_ALLOCATES, start, "extending a List may grow it")
+                let b = self.bnode("ListExtend", recv, v, e, start, end)
+                self.tir.nodes[b].kids.append(s)
+                return b
+            }
+            if method == "reserve" {
+                if !self.args_n(args, 1, "reserve", start) { return self.error_expr(start, end) }
+                self.require_mut_recv(recv, "reserve", start)
+                let n = self.arg(args[0], u, "capacity")
+                self.add_effect(EFF_ALLOCATES, start, "reserving allocates")
+                let b = self.bnode("ListReserve", recv, v, e, start, end)
+                self.tir.nodes[b].kids.append(n)
+                return b
+            }
+            if method == "items" or method == "as_slice" {
+                if !self.args_n(args, 0, method, start) { return self.error_expr(start, end) }
+                let mu = self.place_mutable(recv)
+                let st = self.tys.wrap(TK.Slice, e, mu)
+                let sl = self.mk(TKind.ListToSlice, st, start, end)
+                self.tir.nodes[sl].kids.append(recv)
+                return sl
+            }
+            if method == "is_empty" {
+                if !self.args_n(args, 0, "is_empty", start) { return self.error_expr(start, end) }
+                return self.is_empty_node(recv, start, end)
+            }
+            let mu = self.place_mutable(recv)
+            let st = self.tys.wrap(TK.Slice, e, mu)
+            let sl = self.mk(TKind.ListToSlice, st, start, end)
+            self.tir.nodes[sl].kids.append(recv)
+            return self.slice_method(sl, e, mu, method, args, start, end)
+        }
+        if k == TK.Str {
+            if method == "append" {
+                if !self.args_n(args, 1, "append", start) { return self.error_expr(start, end) }
+                self.require_mut_recv(recv, "append", start)
+                let s = self.arg(args[0], bytes, "text")
+                self.add_effect(EFF_ALLOCATES, start, "appending to a String may grow it")
+                let b = self.bnode("StringAppend", recv, v, NONE, start, end)
+                self.tir.nodes[b].kids.append(s)
+                return b
+            }
+            if method == "append_char" {
+                if !self.args_n(args, 1, "append_char", start) { return self.error_expr(start, end) }
+                self.require_mut_recv(recv, "append_char", start)
+                let ct = self.tys.char_ty()
+                let c = self.arg(args[0], ct, "character")
+                self.add_effect(EFF_ALLOCATES, start, "appending to a String may grow it")
+                let b = self.bnode("StringAppendChar", recv, v, NONE, start, end)
+                self.tir.nodes[b].kids.append(c)
+                return b
+            }
+            if method == "push_byte" {
+                if !self.args_n(args, 1, "push_byte", start) { return self.error_expr(start, end) }
+                self.require_mut_recv(recv, "push_byte", start)
+                let x = self.arg(args[0], u8t, "byte")
+                self.add_effect(EFF_ALLOCATES, start, "appending to a String may grow it")
+                let b = self.bnode("StringPushByte", recv, v, NONE, start, end)
+                self.tir.nodes[b].kids.append(x)
+                return b
+            }
+            if method == "clone" or method == "to_string" {
+                if !self.args_n(args, 0, method, start) { return self.error_expr(start, end) }
+                self.add_effect(EFF_ALLOCATES, start, "cloning a String allocates")
+                return self.bnode("StringClone", recv, string, NONE, start, end)
+            }
+            if method == "clear" {
+                if !self.args_n(args, 0, "clear", start) { return self.error_expr(start, end) }
+                self.require_mut_recv(recv, "clear", start)
+                return self.bnode("StringClear", recv, v, NONE, start, end)
+            }
+            if method == "pop" {
+                if !self.args_n(args, 0, "pop", start) { return self.error_expr(start, end) }
+                self.require_mut_recv(recv, "pop", start)
+                let o = self.tys.wrap(TK.Opt, u8t, false)
+                return self.bnode("StringPop", recv, o, NONE, start, end)
+            }
+            if method == "bytes" or method == "as_slice" {
+                if !self.args_n(args, 0, method, start) { return self.error_expr(start, end) }
+                let sl = self.mk(TKind.StrToSlice, bytes, start, end)
+                self.tir.nodes[sl].kids.append(recv)
+                return sl
+            }
+            let sl = self.mk(TKind.StrToSlice, bytes, start, end)
+            self.tir.nodes[sl].kids.append(recv)
+            return self.slice_method(sl, u8t, false, method, args, start, end)
+        }
+        if k == TK.Map {
+            let kt = self.tys.list[t].args[0]
+            let vt = self.tys.list[t].args[1]
+            var lookup_kt = kt
+            if self.tys.kind(self.tys.shallow(kt)) == TK.Str { lookup_kt = bytes }
+            if method == "put" or method == "insert" {
+                if !self.args_n(args, 2, "put", start) { return self.error_expr(start, end) }
+                self.require_mut_recv(recv, "put", start)
+                var kk = self.arg(args[0], kt, "key")
+                kk = self.take_ownership(kk)
+                var vv = self.arg(args[1], vt, "value")
+                vv = self.take_ownership(vv)
+                self.check_store(recv, kk, start)
+                self.check_store(recv, vv, start)
+                self.add_effect(EFF_ALLOCATES, start, "inserting into a Map may grow it")
+                let b = self.bnode("MapPut", recv, v, kt, start, end)
+                self.tir.nodes[b].kids2.append(vt)
+                self.tir.nodes[b].kids.append(kk)
+                self.tir.nodes[b].kids.append(vv)
+                return b
+            }
+            if method == "get" or method == "contains" or method == "remove" {
+                if !self.args_n(args, 1, method, start) { return self.error_expr(start, end) }
+                if method == "remove" { self.require_mut_recv(recv, "remove", start) }
+                let kk = self.arg(args[0], lookup_kt, "key")
+                let rt = if method == "get" { self.tys.wrap(TK.Opt, vt, false) } else { bt }
+                let op = if method == "get" { "MapGet" } else if method == "contains" { "MapContains" } else { "MapRemove" }
+                let b = self.bnode(op, recv, rt, kt, start, end)
+                self.tir.nodes[b].kids2.append(vt)
+                self.tir.nodes[b].kids.append(kk)
+                return b
+            }
+            if method == "clear" or method == "clone" or method == "keys" or method == "values" {
+                if !self.args_n(args, 0, method, start) { return self.error_expr(start, end) }
+                var rt = v
+                var op = "MapClear"
+                if method == "clear" {
+                    self.require_mut_recv(recv, "clear", start)
+                } else if method == "clone" {
+                    self.add_effect(EFF_ALLOCATES, start, "cloning a Map allocates")
+                    rt = t
+                    op = "MapClone"
+                } else if method == "keys" {
+                    self.add_effect(EFF_ALLOCATES, start, "collecting keys allocates")
+                    rt = self.tys.wrap(TK.List, kt, false)
+                    op = "MapKeys"
+                } else {
+                    self.add_effect(EFF_ALLOCATES, start, "collecting values allocates")
+                    rt = self.tys.wrap(TK.List, vt, false)
+                    op = "MapValues"
+                }
+                let b = self.bnode(op, recv, rt, kt, start, end)
+                self.tir.nodes[b].kids2.append(vt)
+                return b
+            }
+            if method == "is_empty" {
+                if !self.args_n(args, 0, "is_empty", start) { return self.error_expr(start, end) }
+                return self.is_empty_node(recv, start, end)
+            }
+            return NONE
+        }
+        if k == TK.Slice { return self.slice_method(recv, self.tys.list[t].args[0], self.tys.list[t].flag, method, args, start, end) }
+        if k == TK.Array {
+            let e = self.tys.list[t].args[0]
+            let mu = self.place_mutable(recv)
+            let st = self.tys.wrap(TK.Slice, e, mu)
+            let sl = self.mk(TKind.ArrayToSlice, st, start, end)
+            self.tir.nodes[sl].kids.append(recv)
+            return self.slice_method(sl, e, mu, method, args, start, end)
+        }
+        if k == TK.Int {
+            if method == "abs" {
+                if !self.args_n(args, 0, "abs", start) { return self.error_expr(start, end) }
+                self.add_effect(EFF_PANICS, start, "abs overflows for the minimum value")
+                return self.bnode("MathAbs", recv, t, t, start, end)
+            }
+            if method == "min" or method == "max" {
+                if !self.args_n(args, 1, method, start) { return self.error_expr(start, end) }
+                let x = self.arg(args[0], t, "operand")
+                let b = self.bnode(if method == "min" { "MathMin" } else { "MathMax" }, recv, t, t, start, end)
+                self.tir.nodes[b].kids.append(x)
+                return b
+            }
+            if method == "checked_add" or method == "checked_sub" or method == "checked_mul" {
+                if !self.args_n(args, 1, method, start) { return self.error_expr(start, end) }
+                let x = self.arg(args[0], t, "operand")
+                let o = self.tys.wrap(TK.Opt, t, false)
+                let marker = self.int_node(if method == "checked_add" { 0 } else if method == "checked_sub" { 1 } else { 2 }, t, start, end)
+                let b = self.bnode("Hash", recv, o, t, start, end)
+                self.tir.nodes[b].kids.append(x)
+                self.tir.nodes[b].kids.append(marker)
+                return b
+            }
+            if method == "to_string" {
+                if !self.args_n(args, 0, "to_string", start) { return self.error_expr(start, end) }
+                self.add_effect(EFF_ALLOCATES, start, "formatting into a String allocates")
+                return self.bnode("IntToStr", recv, string, t, start, end)
+            }
+            return NONE
+        }
+        if k == TK.Float {
+            var op = ""
+            if method == "abs" { op = "MathAbs" }
+            if method == "sqrt" { op = "MathSqrt" }
+            if method == "floor" { op = "MathFloor" }
+            if method == "ceil" { op = "MathCeil" }
+            if method == "round" { op = "MathRound" }
+            if op.len > 0 {
+                if !self.args_n(args, 0, method, start) { return self.error_expr(start, end) }
+                return self.bnode(op, recv, t, t, start, end)
+            }
+            if method == "min" or method == "max" or method == "pow" {
+                if !self.args_n(args, 1, method, start) { return self.error_expr(start, end) }
+                let x = self.arg(args[0], t, "operand")
+                let b = self.bnode(if method == "min" { "MathMin" } else if method == "max" { "MathMax" } else { "MathPow" }, recv, t, t, start, end)
+                self.tir.nodes[b].kids.append(x)
+                return b
+            }
+            if method == "to_string" {
+                if !self.args_n(args, 0, "to_string", start) { return self.error_expr(start, end) }
+                self.add_effect(EFF_ALLOCATES, start, "formatting into a String allocates")
+                return self.bnode("FloatToStr", recv, string, t, start, end)
+            }
+            return NONE
+        }
+        if k == TK.Char {
+            var op = ""
+            var rt = bt
+            if method == "is_digit" { op = "CharIsDigit" }
+            if method == "is_alpha" { op = "CharIsAlpha" }
+            if method == "is_space" { op = "CharIsSpace" }
+            if method == "to_lower" { op = "CharToLower"; rt = t }
+            if method == "to_upper" { op = "CharToUpper"; rt = t }
+            if op.len > 0 {
+                if !self.args_n(args, 0, method, start) { return self.error_expr(start, end) }
+                return self.bnode(op, recv, rt, NONE, start, end)
+            }
+            if method == "to_digit" {
+                if !self.args_n(args, 0, method, start) { return self.error_expr(start, end) }
+                let u32t = self.tys.int("u32")
+                let o = self.tys.wrap(TK.Opt, u32t, false)
+                return self.bnode("CharToDigit", recv, o, NONE, start, end)
+            }
+            return NONE
+        }
+        if k == TK.Weak {
+            if method == "upgrade" {
+                if !self.args_n(args, 0, "upgrade", start) { return self.error_expr(start, end) }
+                let inner = self.tys.list[t].args[0]
+                let o = self.tys.wrap(TK.Opt, inner, false)
+                self.add_effect(EFF_REFCOUNTS, start, "upgrading a weak reference retains")
+                return self.bnode("Upgrade", recv, o, inner, start, end)
+            }
+            return NONE
+        }
+        if k == TK.Opt {
+            // an optional of a clonable thing clones (the generic path)
+            if method == "clone" { return NONE }
+            self.fail_here(start, format("cannot call `{}` on an optional; unwrap it first with `orelse`, `.?`, or `if let`", .{method})[..])
+            return self.error_expr(start, end)
+        }
+        if k == TK.ErrUnion {
+            self.fail_here(start, format("cannot call `{}` on an error union; use `try` first", .{method})[..])
+            return self.error_expr(start, end)
+        }
+        return NONE
+    }
+
+    fn slice_method(self: *mut Self, recv: usize, e: usize, mutable: bool, method: []u8, args: []usize, start: usize, end: usize) -> usize {
+        let m = self.cur_module()
+        let v = self.tys.void()
+        let bt = self.tys.bool_ty()
+        let u = self.tys.usize_ty()
+        let u8t = self.tys.u8_ty()
+        let bytes = self.tys.str_slice()
+        let string = self.tys.string()
+        let es = self.tys.shallow(e)
+        let is_u8 = self.tys.kind(es) == TK.Int and self.tys.list[es].name == "u8"
+        if method == "fill" {
+            if !self.args_n(args, 1, "fill", start) { return self.error_expr(start, end) }
+            if !mutable { self.fail_here(start, "`fill` needs a mutable slice (`[]mut T`)") }
+            let x = self.arg(args[0], e, "value")
+            let b = self.bnode("SliceFill", recv, v, e, start, end)
+            self.tir.nodes[b].kids.append(x)
+            return b
+        }
+        if method == "reverse" or method == "sort" {
+            if !self.args_n(args, 0, method, start) { return self.error_expr(start, end) }
+            if !mutable { self.fail_here(start, format("`{}` needs a mutable slice (`[]mut T`)", .{method})[..]) }
+            return self.bnode(if method == "reverse" { "SliceReverse" } else { "SliceSort" }, recv, v, e, start, end)
+        }
+        if method == "contains" {
+            if !self.args_n(args, 1, "contains", start) { return self.error_expr(start, end) }
+            let an = self.node(m, args[0])
+            if is_u8 and an.k == parser.NodeKind.Lit and an.text == "str" {
+                let needle = self.arg(args[0], bytes, "needle")
+                let ot = self.tys.wrap(TK.Opt, u, false)
+                let f = self.bnode("SliceFind", recv, ot, e, start, end)
+                self.tir.nodes[f].kids.append(needle)
+                let nul = self.mk(TKind.OptNull, ot, start, end)
+                return self.binary_node("!=", "plain", true, f, nul, bt, start, end)
+            }
+            let x = self.arg(args[0], e, "value")
+            let b = self.bnode("SliceContains", recv, bt, e, start, end)
+            self.tir.nodes[b].kids.append(x)
+            return b
+        }
+        if method == "index_of" {
+            if !self.args_n(args, 1, "index_of", start) { return self.error_expr(start, end) }
+            let x = self.arg(args[0], e, "value")
+            let o = self.tys.wrap(TK.Opt, u, false)
+            let b = self.bnode("SliceIndexOf", recv, o, e, start, end)
+            self.tir.nodes[b].kids.append(x)
+            return b
+        }
+        if method == "copy_from" {
+            if !self.args_n(args, 1, "copy_from", start) { return self.error_expr(start, end) }
+            if !mutable { self.fail_here(start, "`copy_from` needs a mutable slice (`[]mut T`)") }
+            let st = self.tys.wrap(TK.Slice, e, false)
+            let s = self.arg(args[0], st, "source")
+            self.add_effect(EFF_PANICS, start, "copy_from panics when the source is longer than the destination")
+            let b = self.bnode("SliceCopy", recv, v, e, start, end)
+            self.tir.nodes[b].kids.append(s)
+            return b
+        }
+        if method == "is_empty" {
+            if !self.args_n(args, 0, "is_empty", start) { return self.error_expr(start, end) }
+            return self.is_empty_node(recv, start, end)
+        }
+        if method == "to_owned" or method == "to_list" {
+            if !self.args_n(args, 0, method, start) { return self.error_expr(start, end) }
+            self.add_effect(EFF_ALLOCATES, start, "copying into a List allocates")
+            let lt = self.tys.wrap(TK.List, e, false)
+            return self.bnode("ListFromSlice", recv, lt, e, start, end)
+        }
+        if !is_u8 { return NONE }
+        if method == "starts_with" or method == "ends_with" {
+            if !self.args_n(args, 1, method, start) { return self.error_expr(start, end) }
+            let p = self.arg(args[0], bytes, "prefix")
+            let b = self.bnode(if method == "starts_with" { "SliceStartsWith" } else { "SliceEndsWith" }, recv, bt, e, start, end)
+            self.tir.nodes[b].kids.append(p)
+            return b
+        }
+        if method == "find" {
+            if !self.args_n(args, 1, "find", start) { return self.error_expr(start, end) }
+            let needle = self.arg(args[0], bytes, "needle")
+            let o = self.tys.wrap(TK.Opt, u, false)
+            let b = self.bnode("SliceFind", recv, o, e, start, end)
+            self.tir.nodes[b].kids.append(needle)
+            return b
+        }
+        if method == "trim" {
+            if !self.args_n(args, 0, "trim", start) { return self.error_expr(start, end) }
+            return self.bnode("SliceTrim", recv, bytes, e, start, end)
+        }
+        if method == "split" {
+            if !self.args_n(args, 1, "split", start) { return self.error_expr(start, end) }
+            let sep = self.arg(args[0], bytes, "separator")
+            self.add_effect(EFF_ALLOCATES, start, "split collects the pieces into a List")
+            let lt = self.tys.wrap(TK.List, bytes, false)
+            let b = self.bnode("SliceSplit", recv, lt, e, start, end)
+            self.tir.nodes[b].kids.append(sep)
+            return b
+        }
+        if method == "lines" {
+            if !self.args_n(args, 0, "lines", start) { return self.error_expr(start, end) }
+            self.add_effect(EFF_ALLOCATES, start, "lines collects the pieces into a List")
+            let lt = self.tys.wrap(TK.List, bytes, false)
+            return self.bnode("SliceLines", recv, lt, e, start, end)
+        }
+        if method == "to_string" {
+            if !self.args_n(args, 0, "to_string", start) { return self.error_expr(start, end) }
+            self.add_effect(EFF_ALLOCATES, start, "building a String allocates")
+            return self.bnode("StringFrom", recv, string, NONE, start, end)
+        }
+        if method == "parse_int" {
+            if !self.args_n(args, 1, "parse_int", start) { return self.error_expr(start, end) }
+            let tv = self.check_expr(args[0], NONE)
+            if self.tir.nodes[tv].k != TKind.TypeVal {
+                self.fail_here(start, "parse_int takes the integer type to parse, e.g. `s.parse_int(i32)`")
+                return self.error_expr(start, end)
+            }
+            let target = self.tir.nodes[tv].a
+            if !self.tys.is_integer(target) { self.fail_here(start, "parse_int needs an integer type") }
+            let r = self.tys.err_union(0, false, target)
+            return self.bnode("SliceParseInt", recv, r, target, start, end)
+        }
+        if method == "parse_float" {
+            if !self.args_n(args, 0, "parse_float", start) { return self.error_expr(start, end) }
+            let f64t = self.tys.float64()
+            let r = self.tys.err_union(0, false, f64t)
+            return self.bnode("SliceParseFloat", recv, r, f64t, start, end)
+        }
+        if method == "eq_ignore_case" {
+            if !self.args_n(args, 1, "eq_ignore_case", start) { return self.error_expr(start, end) }
+            let o = self.arg(args[0], bytes, "other")
+            let b = self.bnode("SliceEqIgnoreCase", recv, bt, e, start, end)
+            self.tir.nodes[b].kids.append(o)
+            return b
+        }
+        _ = u8t
+        return NONE
+    }
+}

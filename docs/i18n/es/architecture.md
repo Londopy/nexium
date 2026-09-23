@@ -115,7 +115,7 @@ binarios** (`check/binpat.rs`) convierten `<<len:16/little, payload:len*8,
 rest:bytes>>` en una secuencia de lecturas de bits comprobadas cuyos tamaños
 pueden depender de ligaduras anteriores.
 
-**Las vistas** se rastrean por sus orígenes (`self/check.nx`): cada local
+**Las vistas** se rastrean por sus orígenes (`self/check_views.nx`): cada local
 sabe a qué almacenamiento apuntan las vistas que contiene, y las reglas V1 a
 V5 de `SPEC.md` 5.6 y 5.7 se comprueban en el uso que leería almacenamiento
 liberado, como avisos en 1.2 (`--strict` los hace errores). Devolver un slice

@@ -515,7 +515,10 @@ luck.
   ownership and moves, effects, patterns, generics, the compile-time
   interpreter, diagnostics), even while every module still compiles into
   one unit: twelve thousand lines in one file is the ceiling the rest of
-  this theme would otherwise hit.
+  this theme would otherwise hit. (Done: `check.nx` keeps the checker's
+  state and core, 3,700 of 15,000 lines, and ten `check_*.nx` modules hold
+  the rest as `impl Checker` blocks, decision 110; the compiler emits the
+  same C and typed IR for every program before and after.)
 - Incremental builds: one C file per module, compiled separately and
   cached by content hash, so a one-line change does not recompile a
   100k-line translation unit; parallel checking of independent modules.

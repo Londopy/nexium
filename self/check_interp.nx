@@ -1,0 +1,3413 @@
+// self/check_interp.nx: the compile-time interpreter. It runs the typed IR
+// the checker produces: for constants and `comptime`, pure computation,
+// collections and calls to Nexium functions, refusing I/O, clocks,
+// randomness and foreign calls; for the REPL, `nx -e` (`repl_mode`) and
+// `nx play` (`play_mode`), the console and the rest of what those allow.
+// Its methods are the checker's (`impl Checker`, decision 110), so the
+// checker calls them as its own.
+
+import check
+
+type Checker = check.Checker
+type TK = check.TK
+type TKind = check.TKind
+const NONE: usize = check.NONE
+
+// ---------------------------------------------------------------- compile-time values
+
+// value kinds: `kind` picks the meaning of the payload fields
+pub const VK_INT: u8 = 0
+pub const VK_FLOAT: u8 = 1
+pub const VK_BOOL: u8 = 2
+pub const VK_CHAR: u8 = 3
+pub const VK_STR: u8 = 4
+// `VK_NONE` is "no value": an unset local, an absent payload
+pub const VK_NONE: u8 = 5
+pub const VK_VOID: u8 = 6
+pub const VK_ARRAY: u8 = 7
+pub const VK_TUPLE: u8 = 8
+pub const VK_STRUCT: u8 = 9
+// an enum: `ival` is the variant, `items` its payload
+pub const VK_ENUM: u8 = 10
+pub const VK_NULL: u8 = 11
+// some(x) and ok(x): `items[0]`
+pub const VK_SOME: u8 = 12
+// an error: `ival` is its id
+pub const VK_ERR: u8 = 13
+pub const VK_OK: u8 = 14
+// a type value: `ival` is the type
+pub const VK_TYPE: u8 = 15
+pub const VK_UNDEFINED: u8 = 16
+pub const VK_LIST: u8 = 17
+// a map as insertion-ordered pairs: `items` alternates key, value
+pub const VK_MAP: u8 = 18
+pub const VK_OWNED_STR: u8 = 19
+// a function: `ival` is the instance
+pub const VK_FN: u8 = 20
+pub const VK_NEVER: u8 = 21
+// a pointer to a place: frame `ival`, local `b`, and a path of field or
+// element indices into it
+pub const VK_PTR: u8 = 22
+/// a `[]mut T` local that views another place: frame (`ival`), local (`b`),
+/// path, and the first index and the length (`items`, two integers). Only
+/// a local's slot holds one; reading the local copies the elements out.
+pub const VK_VIEW: u8 = 23
+/// a trait object: the data pointer (`items[0]`) and its vtable (`ival`)
+pub const VK_DYN: u8 = 24
+/// a `ref class` object: its index in the interpreter's heap (`ival`);
+/// copies of the value share the object
+pub const VK_REF: u8 = 25
+
+/// A compile-time value, the Rust `Value`.
+pub struct CV derive(Clone) {
+    kind: u8
+    ival: i128
+    fval: f64
+    flag: bool
+    text: String
+    items: List(CV)
+    path: List(usize)
+    b: usize
+}
+
+fn cv(kind: u8) -> CV { return CV{ .kind = kind, .ival = 0, .fval = 0.0, .flag = false, .text = String.new(), .items = List(CV).new(), .path = List(usize).new(), .b = 0 } }
+fn cv_int(v: i128) -> CV { var c = cv(VK_INT); c.ival = v; return c }
+fn cv_float(v: f64) -> CV { var c = cv(VK_FLOAT); c.fval = v; return c }
+fn cv_bool(v: bool) -> CV { var c = cv(VK_BOOL); c.flag = v; return c }
+fn cv_char(v: i128) -> CV { var c = cv(VK_CHAR); c.ival = v; return c }
+fn cv_str(s: []u8) -> CV { var c = cv(VK_STR); c.text = String.from(s); return c }
+fn cv_owned(s: []u8) -> CV { var c = cv(VK_OWNED_STR); c.text = String.from(s); return c }
+pub fn cv_none() -> CV { return cv(VK_NONE) }
+fn cv_err(id: usize) -> CV { var c = cv(VK_ERR); c.ival = id as i128; return c }
+fn cv_seq(kind: u8, own items: List(CV)) -> CV { var c = cv(kind); c.items = items; return c }
+fn cv_wrap(kind: u8, own inner: CV) -> CV { var c = cv(kind); c.items.append(inner); return c }
+fn cv_ptr(fi: usize, l: usize, own path: List(usize)) -> CV { var c = cv(VK_PTR); c.ival = fi as i128; c.b = l; c.path = path; return c }
+fn cv_view(fi: usize, l: usize, own path: List(usize), start: usize, len: usize) -> CV {
+    var c = cv_ptr(fi, l, path)
+    c.kind = VK_VIEW
+    c.items.append(cv_int(start as i128))
+    c.items.append(cv_int(len as i128))
+    return c
+}
+fn view_start(v: *CV) -> usize { return v.items[0].ival as usize }
+fn view_len(v: *CV) -> usize { return v.items[1].ival as usize }
+
+/// A value that can be carried to the next REPL line: no compile-time-only handles.
+pub fn cv_keepable(v: *CV) -> bool {
+    let k = v.kind
+    if k == VK_TYPE or k == VK_FN or k == VK_PTR or k == VK_VIEW { return false }
+    for it in v.items { if !cv_keepable(&it) { return false } }
+    return true
+}
+
+fn cv_as_int(v: *CV) -> ?i128 {
+    if v.kind == VK_INT or v.kind == VK_CHAR { return v.ival }
+    if v.kind == VK_BOOL { return if v.flag { 1 } else { 0 } }
+    return null
+}
+fn cv_as_float(v: *CV) -> ?f64 {
+    if v.kind == VK_FLOAT { return v.fval }
+    if v.kind == VK_INT { return v.ival as f64 }
+    return null
+}
+fn cv_as_bool(v: *CV) -> ?bool {
+    if v.kind == VK_BOOL { return v.flag }
+    return null
+}
+fn cv_bytes(v: *CV) -> ?[]u8 {
+    if v.kind == VK_STR or v.kind == VK_OWNED_STR { return v.text[..] }
+    return null
+}
+/// Bytes as a String, from a byte string or from an array or list of
+/// integers (a `[N]u8` buffer); an element never set counts as zero.
+fn cv_byte_text(v: *CV) -> ?String {
+    if v.kind == VK_STR or v.kind == VK_OWNED_STR { return v.text.clone() }
+    if v.kind != VK_ARRAY and v.kind != VK_LIST { return null }
+    var out = String.new()
+    for it in v.items { out.push_byte(((cv_as_int(&it) orelse 0) & 0xFF) as u8) }
+    return out
+}
+
+/// `nx_bswap`: the low `nbytes` bytes of `v` in the opposite order.
+fn bswap_bytes(v: u64, nbytes: usize) -> u64 {
+    var r: u64 = 0
+    for i in 0..nbytes { r |= ((v >> ((i * 8) as u32)) & 0xFF) << (((nbytes - 1 - i) * 8) as u32) }
+    return r
+}
+
+/// `nx_bits_write`: the low `n` bits of `v` into `p` from bit `bit` on,
+/// most significant first.
+fn bits_write(own p: String, bit: usize, n: usize, v: u64) -> String {
+    var q = p
+    if bit % 8 == 0 and n % 8 == 0 {
+        for i in 0..n / 8 { q[bit / 8 + i] = ((v >> (((n / 8 - 1 - i) * 8) as u32)) & 0xFF) as u8 }
+        return q
+    }
+    for i in 0..n {
+        let b = bit + i
+        let mask = (0x80 >> ((b % 8) as u8)) as u8
+        if ((v >> ((n - 1 - i) as u32)) & 1) == 1 { q[b / 8] = q[b / 8] | mask } else { q[b / 8] = q[b / 8] & ~mask }
+    }
+    return q
+}
+
+fn cv_seq_len(v: *CV) -> ?usize {
+    if v.kind == VK_ARRAY or v.kind == VK_LIST { return v.items.len }
+    if v.kind == VK_STR or v.kind == VK_OWNED_STR { return v.text.len }
+    return null
+}
+/// The elements of an array, list, or byte string as values.
+fn cv_seq_items(v: *CV) -> ?List(CV) {
+    var out = List(CV).new()
+    if v.kind == VK_ARRAY or v.kind == VK_LIST {
+        for it in v.items { out.append(it.clone()) }
+        return out
+    }
+    if v.kind == VK_STR or v.kind == VK_OWNED_STR {
+        for b in v.text { out.append(cv_int(b as i128)) }
+        return out
+    }
+    return null
+}
+
+/// Structural equality: the same kind and the same payload.
+fn cv_eq(a: *CV, b: *CV) -> bool {
+    if a.kind != b.kind { return false }
+    if a.ival != b.ival or a.fval != b.fval or a.flag != b.flag or a.b != b.b { return false }
+    if a.text[..] != b.text[..] { return false }
+    if a.items.len != b.items.len or a.path.len != b.path.len { return false }
+    for x, i in a.path { if x != b.path[i] { return false } }
+    for x, i in a.items { if !cv_eq(&x, &b.items[i]) { return false } }
+    return true
+}
+
+/// Equality that treats a string literal and an owned string alike, and a
+/// list and an array alike.
+fn cv_key_eq(a: *CV, b: *CV) -> bool {
+    let a_str = a.kind == VK_STR or a.kind == VK_OWNED_STR
+    let b_str = b.kind == VK_STR or b.kind == VK_OWNED_STR
+    if a_str and b_str { return a.text[..] == b.text[..] }
+    let a_seq = a.kind == VK_LIST or a.kind == VK_ARRAY
+    let b_seq = b.kind == VK_LIST or b.kind == VK_ARRAY
+    if a_seq and b_seq {
+        if a.items.len != b.items.len { return false }
+        for x, i in a.items { if !cv_key_eq(&x, &b.items[i]) { return false } }
+        return true
+    }
+    return cv_eq(a, b)
+}
+
+/// Ordering for sorting: -1, 0, 1.
+fn cv_cmp(a: *CV, b: *CV) -> i8 {
+    if a.kind == VK_INT and b.kind == VK_INT { return if a.ival < b.ival { -1 } else if a.ival > b.ival { 1 } else { 0 } }
+    if a.kind == VK_FLOAT and b.kind == VK_FLOAT { return if a.fval < b.fval { -1 } else if a.fval > b.fval { 1 } else { 0 } }
+    if a.kind == VK_BOOL and b.kind == VK_BOOL {
+        if a.flag == b.flag { return 0 }
+        return if !a.flag { -1 } else { 1 }
+    }
+    if a.kind == VK_CHAR and b.kind == VK_CHAR { return if a.ival < b.ival { -1 } else if a.ival > b.ival { 1 } else { 0 } }
+    let a_str = a.kind == VK_STR or a.kind == VK_OWNED_STR
+    let b_str = b.kind == VK_STR or b.kind == VK_OWNED_STR
+    if a_str and b_str { return cmp_bytes(a.text[..], b.text[..]) }
+    if (a.kind == VK_STRUCT and b.kind == VK_STRUCT) or (a.kind == VK_TUPLE and b.kind == VK_TUPLE) {
+        for x, i in a.items {
+            if i >= b.items.len { break }
+            let r = cv_cmp(&x, &b.items[i])
+            if r != 0 { return r }
+        }
+        return 0
+    }
+    return 0
+}
+
+/// The `(value ...)` form of the dump.
+fn cv_text(v: *CV) -> String {
+    let k = v.kind
+    if k == VK_INT { return format("(int {})", .{v.ival}) }
+    if k == VK_FLOAT { return format("(float {})", .{check.rust_float(v.fval)}) }
+    if k == VK_BOOL { return format("(bool {})", .{v.flag}) }
+    if k == VK_CHAR { return format("(char {})", .{v.ival}) }
+    if k == VK_STR or k == VK_OWNED_STR { return format("(str {})", .{check.tquote(v.text[..])}) }
+    if k == VK_VOID { return String.from("(void)") }
+    if k == VK_ARRAY or k == VK_LIST or k == VK_TUPLE or k == VK_STRUCT { return format("(seq {})", .{cv_items_text(v)}) }
+    if k == VK_ENUM {
+        let inner = cv_items_text(v)
+        return format("(enum {} {})", .{v.ival, inner})
+    }
+    if k == VK_NULL { return String.from("(null)") }
+    if k == VK_SOME { return format("(some {})", .{cv_text(&v.items[0])}) }
+    if k == VK_OK { return format("(ok {})", .{cv_text(&v.items[0])}) }
+    if k == VK_ERR { return format("(err {})", .{v.ival}) }
+    if k == VK_FN { return format("(fn {})", .{v.ival}) }
+    if k == VK_TYPE { return String.from("(type)") }
+    if k == VK_MAP { return format("(map {})", .{cv_items_text(v)}) }
+    if k == VK_UNDEFINED { return String.from("(undefined)") }
+    if k == VK_NEVER { return String.from("(never)") }
+    if k == VK_PTR { return String.from("(ptr)") }
+    return String.from("(?)")
+}
+
+fn cv_items_text(v: *CV) -> String {
+    var s = String.new()
+    for it, i in v.items {
+        if i > 0 { s.append(" ") }
+        s.append(cv_text(&it)[..])
+    }
+    return s
+}
+
+/// A value as `format` prints it.
+fn cv_format(v: *CV) -> String {
+    let k = v.kind
+    if k == VK_INT { return format("{}", .{v.ival}) }
+    if k == VK_FLOAT { return format_float(v.fval) }
+    if k == VK_BOOL { return format("{}", .{v.flag}) }
+    if k == VK_CHAR {
+        if v.ival < 0 or v.ival > 0x10FFFF { return String.new() }
+        return utf8_encode(v.ival as u32)
+    }
+    if k == VK_STR or k == VK_OWNED_STR { return v.text.clone() }
+    if k == VK_VOID { return String.new() }
+    if k == VK_NULL { return String.from("null") }
+    if k == VK_SOME { return cv_format(&v.items[0]) }
+    if k == VK_ENUM { return format("variant {}", .{v.ival}) }
+    return String.from("?")
+}
+
+/// An integer in base 2, 8, 10 or 16 as the compiled `nx_w_int` writes it:
+/// the magnitude's digits, with `-` in front of a negative number.
+fn int_in_base(v: i128, base: i128, upper: bool) -> String {
+    if base == 10 { return format("{}", .{v}) }
+    let digits: []u8 = if upper { "0123456789ABCDEF" } else { "0123456789abcdef" }
+    var m = if v < 0 { -v } else { v }
+    if m == 0 { return String.from("0") }
+    var rev = List(u8).new()
+    while m > 0 {
+        rev.append(digits[(m % base) as usize])
+        m = m / base
+    }
+    var out = String.new()
+    if v < 0 { out.push_byte('-') }
+    var i = rev.len
+    while i > 0 {
+        i -= 1
+        out.push_byte(rev[i])
+    }
+    return out
+}
+
+/// `{:.N}` of a float as the compiled writer does it (C's `%.*f`). `format`
+/// takes a precision only as a literal, so each one is its own call; a
+/// precision past 20 writes 20 digits.
+fn float_fixed(x: f64, prec: i32) -> String {
+    return match prec {
+        0 => format("{:.0}", .{x}), 1 => format("{:.1}", .{x}), 2 => format("{:.2}", .{x}),
+        3 => format("{:.3}", .{x}), 4 => format("{:.4}", .{x}), 5 => format("{:.5}", .{x}),
+        6 => format("{:.6}", .{x}), 7 => format("{:.7}", .{x}), 8 => format("{:.8}", .{x}),
+        9 => format("{:.9}", .{x}), 10 => format("{:.10}", .{x}), 11 => format("{:.11}", .{x}),
+        12 => format("{:.12}", .{x}), 13 => format("{:.13}", .{x}), 14 => format("{:.14}", .{x}),
+        15 => format("{:.15}", .{x}), 16 => format("{:.16}", .{x}), 17 => format("{:.17}", .{x}),
+        18 => format("{:.18}", .{x}), 19 => format("{:.19}", .{x}),
+        _ => format("{:.20}", .{x}),
+    }
+}
+
+/// `nx_w_pad`: the text right-aligned in `width` bytes, or left-aligned,
+/// and never cut.
+fn pad_text(own text: String, width: i128, left: bool) -> String {
+    if width <= 0 or text.len as i128 >= width { return text }
+    var n = (width - text.len as i128) as usize
+    var out = String.new()
+    if left { out.append(text[..]) }
+    while n > 0 {
+        out.push_byte(' ')
+        n -= 1
+    }
+    if !left { out.append(text[..]) }
+    return out
+}
+
+/// One value under a placeholder's spec (`x`, `X`, `b`, `o`, `c`, `e`, `.N`,
+/// `>N`, `<N`, `>#i` for a width from argument `i`), written as the compiled
+/// writers write it: bases and characters for integers, precision and
+/// exponent for floats, a width for numbers, text and booleans.
+fn it_format_one(v: *CV, spec: []u8, vs: *List(CV)) -> String {
+    if spec.len == 0 { return cv_format(v) }
+    if v.kind == VK_SOME and v.items.len > 0 { return it_format_one(&v.items[0], spec, vs) }
+    var width: i128 = 0
+    var left = false
+    if spec[0] == '>' or spec[0] == '<' {
+        left = spec[0] == '<'
+        if spec.len > 1 and spec[1] == '#' {
+            let wi = spec[2..].parse_int(usize) catch { 0 }
+            if 1 + wi < vs.len { width = cv_as_int(&vs[1 + wi]) orelse 0 }
+        } else {
+            width = spec[1..].parse_int(i128) catch { 0 }
+        }
+    }
+    let k = v.kind
+    if k == VK_INT {
+        if spec == "c" {
+            let ch = cv_char(v.ival)
+            return cv_format(&ch)
+        }
+        var base: i128 = 10
+        if spec == "x" or spec == "X" { base = 16 } else if spec == "b" { base = 2 } else if spec == "o" { base = 8 }
+        return pad_text(int_in_base(v.ival, base, spec == "X"), width, left)
+    }
+    if k == VK_FLOAT {
+        if spec == "e" { return format("{e}", .{v.fval}) }
+        if spec[0] == '.' {
+            let prec = spec[1..].parse_int(i32) catch { -1 }
+            if prec >= 0 { return float_fixed(v.fval, prec) }
+        }
+        return pad_text(cv_format(v), width, left)
+    }
+    if k == VK_STR or k == VK_OWNED_STR or k == VK_BOOL { return pad_text(cv_format(v), width, left) }
+    return cv_format(v)
+}
+
+/// `format`'s output for a format string and its arguments; null when the
+/// string is not a literal or an argument is missing.
+fn it_format_values(vs: *List(CV)) -> ?String {
+    if vs.len == 0 or vs[0].kind != VK_STR { return null }
+    let fmt = vs[0].text.clone()
+    var out = String.new()
+    var ai: usize = 1
+    var i: usize = 0
+    while i < fmt.len {
+        if fmt[i] == '{' {
+            if i + 1 < fmt.len and fmt[i + 1] == '{' { out.push_byte('{'); i += 2; continue }
+            var j = i + 1
+            while j < fmt.len and fmt[j] != '}' { j += 1 }
+            // `{#index...}` from the checker, or a position
+            var idx = ai
+            if i + 1 < j and fmt[i + 1] == '#' {
+                var n: usize = 0
+                var p = i + 2
+                while p < j and fmt[p] >= '0' and fmt[p] <= '9' { n = n * 10 + (fmt[p] - '0') as usize; p += 1 }
+                idx = 1 + n
+            } else {
+                ai += 1
+            }
+            if idx >= vs.len { return null }
+            // the spec after the index: `{#0:.2}`, `{#1:>8}`
+            var q = i + 1
+            while q < j and fmt[q] != ':' { q += 1 }
+            let spec = if q < j { fmt[q + 1..j] } else { fmt[j..j] }
+            out.append(it_format_one(&vs[idx], spec, vs)[..])
+            i = j + 1
+        } else if fmt[i] == '}' and i + 1 < fmt.len and fmt[i + 1] == '}' {
+            out.push_byte('}')
+            i += 2
+        } else {
+            out.push_byte(fmt[i])
+            i += 1
+        }
+    }
+    return out
+}
+
+/// A string the way source code would write it: quoted, with control
+/// characters escaped and other text kept as it is.
+pub fn source_quote(b: []u8) -> String {
+    var s = String.from("\"")
+    for c in b {
+        if c == '"' { s.append("\\\"") }
+        else if c == '\\' { s.append("\\\\") }
+        else if c == '\n' { s.append("\\n") }
+        else if c == '\r' { s.append("\\r") }
+        else if c == '\t' { s.append("\\t") }
+        else if c < 0x20 or c == 0x7f {
+            let hex = "0123456789abcdef"
+            s.append("\\u{")
+            if c >= 0x10 { s.push_byte(hex[(c >> 4) as usize]) }
+            s.push_byte(hex[(c & 15) as usize])
+            s.append("}")
+        }
+        else { s.push_byte(c) }
+    }
+    s.append("\"")
+    return s
+}
+
+/// Rust's `{}` for f64 with a `.0` on whole numbers.
+fn format_float(f: f64) -> String {
+    let whole = f == math.floor(f)
+    if whole and f < 1.0e16 and f > -1.0e16 { return format("{:.1}", .{f}) }
+    return check.rust_float(f)
+}
+
+impl Checker {
+    /// The value of a constant expression, when the stage-2 evaluator knows it:
+    /// literals, unary and binary arithmetic on scalars, casts, and references
+    /// to other constants. Null means "not a scalar the evaluator handles".
+    fn eval_const(self: *mut Self, e: usize) -> ?CV {
+        let k = self.tir.nodes[e].k
+        if k == TKind.Int { return cv_int(self.tir.nodes[e].ival) }
+        if k == TKind.Float { return cv_float(self.tir.nodes[e].fval) }
+        if k == TKind.Bool { return cv_bool(self.tir.nodes[e].flag) }
+        if k == TKind.Char { return cv_char(self.tir.nodes[e].ival) }
+        if k == TKind.Str { return cv_str(self.tir.nodes[e].text[..]) }
+        if k == TKind.Value {
+            let nm = self.tir.nodes[e].name.clone()
+            if nm == "int" { return cv_int(self.tir.nodes[e].ival) }
+            if nm == "float" { return cv_float(self.tir.nodes[e].fval) }
+            if nm == "bool" { return cv_bool(self.tir.nodes[e].flag) }
+            if nm == "char" { return cv_char(self.tir.nodes[e].ival) }
+            if nm == "str" { return cv_str(self.tir.nodes[e].text[..]) }
+            return null
+        }
+        if k == TKind.Const {
+            let id = self.tir.nodes[e].a
+            if self.consts[id].value != NONE { return self.eval_const(self.consts[id].value) }
+            return null
+        }
+        if k == TKind.Cast {
+            let inner = self.eval_const(self.tir.nodes[e].kids[0]) orelse return null
+            let kind = self.tir.nodes[e].name.clone()
+            let tt = self.tys.shallow(self.tir.nodes[e].ty)
+            if kind.len >= 10 and kind[0..10] == "int_to_int" {
+                if inner.kind != 0 and inner.kind != 3 { return null }
+                if self.tys.kind(tt) == TK.Int {
+                    let nm = self.tys.list[tt].name.clone()
+                    if inner.ival < check.int_min(nm[..]) or inner.ival > check.int_max(nm[..]) { return null }
+                }
+                return cv_int(inner.ival)
+            }
+            if kind == "int_to_float" { if inner.kind != 0 { return null }; return cv_float(inner.ival as f64) }
+            if kind == "float_to_float" { if inner.kind != 1 { return null }; return cv_float(inner.fval) }
+            if kind == "float_to_int" { if inner.kind != 1 { return null }; return cv_int(inner.fval as i128) }
+            if kind == "bits" {
+                if self.tys.kind(tt) == TK.Int and inner.kind == 2 { return cv_int(if inner.flag { 1 } else { 0 }) }
+                if self.tys.kind(tt) == TK.Char and inner.kind == 0 { return cv_char(inner.ival) }
+                if self.tys.kind(tt) == TK.Int and inner.kind == 3 { return cv_int(inner.ival) }
+                return inner
+            }
+            return null
+        }
+        if k == TKind.Unary {
+            let inner = self.eval_const(self.tir.nodes[e].kids[0]) orelse return null
+            let op = self.tir.nodes[e].text.clone()
+            if op == "-" {
+                if inner.kind == 0 { return cv_int(-inner.ival) }
+                if inner.kind == 1 { return cv_float(-inner.fval) }
+                return null
+            }
+            if op == "!" { if inner.kind != 2 { return null }; return cv_bool(!inner.flag) }
+            if op == "~" { if inner.kind != 0 { return null }; return cv_int(~inner.ival) }
+            return null
+        }
+        if k == TKind.Logical {
+            let a = self.eval_const(self.tir.nodes[e].kids[0]) orelse return null
+            if a.kind != 2 { return null }
+            let is_and = self.tir.nodes[e].flag
+            if is_and and !a.flag { return cv_bool(false) }
+            if !is_and and a.flag { return cv_bool(true) }
+            let b = self.eval_const(self.tir.nodes[e].kids[1]) orelse return null
+            if b.kind != 2 { return null }
+            return cv_bool(b.flag)
+        }
+        if k == TKind.Binary {
+            let a = self.eval_const(self.tir.nodes[e].kids[0]) orelse return null
+            let b = self.eval_const(self.tir.nodes[e].kids[1]) orelse return null
+            let op = self.tir.nodes[e].text.clone()
+            if a.kind == 0 and b.kind == 0 {
+                let x = a.ival
+                let y = b.ival
+                if op == "+" or op == "+%" or op == "+|" { return cv_int(x + y) }
+                if op == "-" or op == "-%" or op == "-|" { return cv_int(x - y) }
+                if op == "*" or op == "*%" or op == "*|" { return cv_int(x * y) }
+                if op == "/" { if y == 0 { return null }; return cv_int(x / y) }
+                if op == "%" { if y == 0 { return null }; return cv_int(x % y) }
+                if op == "&" { return cv_int(x & y) }
+                if op == "|" { return cv_int(x | y) }
+                if op == "^" { return cv_int(x ^ y) }
+                if op == "<<" { if y < 0 or y > 127 { return null }; return cv_int(x << (y as u32)) }
+                if op == ">>" { if y < 0 or y > 127 { return null }; return cv_int(x >> (y as u32)) }
+                if op == "==" { return cv_bool(x == y) }
+                if op == "!=" { return cv_bool(x != y) }
+                if op == "<" { return cv_bool(x < y) }
+                if op == "<=" { return cv_bool(x <= y) }
+                if op == ">" { return cv_bool(x > y) }
+                if op == ">=" { return cv_bool(x >= y) }
+                return null
+            }
+            if a.kind == 1 and b.kind == 1 {
+                let x = a.fval
+                let y = b.fval
+                if op == "+" { return cv_float(x + y) }
+                if op == "-" { return cv_float(x - y) }
+                if op == "*" { return cv_float(x * y) }
+                if op == "/" { return cv_float(x / y) }
+                if op == "==" { return cv_bool(x == y) }
+                if op == "!=" { return cv_bool(x != y) }
+                if op == "<" { return cv_bool(x < y) }
+                if op == "<=" { return cv_bool(x <= y) }
+                if op == ">" { return cv_bool(x > y) }
+                if op == ">=" { return cv_bool(x >= y) }
+                return null
+            }
+            if a.kind == 2 and b.kind == 2 {
+                if op == "==" { return cv_bool(a.flag == b.flag) }
+                if op == "!=" { return cv_bool(a.flag != b.flag) }
+                if op == "&" { return cv_bool(a.flag and b.flag) }
+                if op == "|" { return cv_bool(a.flag or b.flag) }
+                if op == "^" { return cv_bool(a.flag != b.flag) }
+                return null
+            }
+            if a.kind == 3 and b.kind == 3 {
+                if op == "==" { return cv_bool(a.ival == b.ival) }
+                if op == "!=" { return cv_bool(a.ival != b.ival) }
+                if op == "<" { return cv_bool(a.ival < b.ival) }
+                if op == "<=" { return cv_bool(a.ival <= b.ival) }
+                if op == ">" { return cv_bool(a.ival > b.ival) }
+                if op == ">=" { return cv_bool(a.ival >= b.ival) }
+                return null
+            }
+            return null
+        }
+        return null
+    }
+
+    /// A `(value ...)` node: a scalar lives in the node's own fields, any
+    /// other value in the `values` table (name `agg`, index in `a`).
+    fn value_node(self: *mut Self, v: *CV, ty: usize, start: usize, end: usize) -> usize {
+        let r = self.mk(TKind.Value, ty, start, end)
+        if v.kind > VK_STR {
+            self.tir.nodes[r].name = String.from("agg")
+            self.tir.nodes[r].a = self.values.len
+            self.values.append(v.clone())
+            return r
+        }
+        let names = ["int", "float", "bool", "char", "str"]
+        self.tir.nodes[r].name = String.from(names[v.kind as usize])
+        self.tir.nodes[r].ival = v.ival
+        self.tir.nodes[r].fval = v.fval
+        self.tir.nodes[r].flag = v.flag
+        self.tir.nodes[r].text = v.text.clone()
+        return r
+    }
+
+    /// The value a `(value ...)` node holds.
+    fn value_of_node(self: *mut Self, e: usize) -> CV {
+        let nm = self.tir.nodes[e].name.clone()
+        if nm == "agg" { return self.values[self.tir.nodes[e].a].clone() }
+        if nm == "int" { return cv_int(self.tir.nodes[e].ival) }
+        if nm == "float" { return cv_float(self.tir.nodes[e].fval) }
+        if nm == "bool" { return cv_bool(self.tir.nodes[e].flag) }
+        if nm == "char" { return cv_char(self.tir.nodes[e].ival) }
+        return cv_str(self.tir.nodes[e].text[..])
+    }
+
+    fn value_text(self: *mut Self, e: usize) -> String {
+        let v = self.value_of_node(e)
+        return cv_text(&v)
+    }
+}
+
+// ---------------------------------------------------------------- the compile-time interpreter
+
+// Compile-time evaluation runs the typed IR: pure computation, collections,
+// calls to Nexium functions; no I/O, clocks, randomness or foreign calls.
+// A step budget turns a runaway evaluation into an error.
+
+const STEP_BUDGET: u64 = 20000000
+/// Nested calls the compile-time interpreter allows. It recurses on the
+/// compiler's own stack and its frames are large (about 165 KiB per
+/// nested call: the interpreter's big functions hold every temporary at
+/// function scope), so a runaway recursion must become a diagnostic well
+/// before an 8 MiB stack runs out (KNOWN_ISSUES: the limit rises when the
+/// compiler runs its work on a thread with a stack of its own).
+pub const CALL_DEPTH: usize = 1000
+
+// control flow out of a statement or block
+const FL_NEXT: u8 = 0
+const FL_RETURN: u8 = 1
+const FL_BREAK: u8 = 2
+const FL_CONTINUE: u8 = 3
+const FL_FAIL: u8 = 4
+
+/// One function activation: the values of its locals by id (`VK_NONE` when
+/// unset). Temporaries made for `&rvalue` are appended past the locals.
+pub struct Frame derive(Clone) {
+    vals: List(CV)
+}
+
+/// A `[]mut T` argument's place, written back when the call returns.
+struct SliceBack {
+    arg: usize
+    fi: usize
+    l: usize
+    path: List(usize)
+    start: usize
+}
+
+/// What one REPL line produced: every binding of the synthetic `main` by
+/// name (later declarations winning), the same bindings rendered with their
+/// types, the value of a trailing expression, or a panic.
+pub struct ReplOutcome {
+    names: List(String)
+    values: List(CV)
+    shown: List(String)
+    // the type of each kept binding, "" when no `let` declared it
+    types: List(String)
+    printed_ty: String
+    printed_val: String
+    has_printed: bool
+    panic: String
+    has_panic: bool
+    // the `ref class` objects after the line, for the next one
+    heap: List(CV)
+}
+
+/// How `nx play` ended: `main` returned (`code` is its exit code), returned
+/// an error, panicked, or reached something only a compiled program can run.
+pub struct PlayOutcome {
+    kind: u8
+    code: i32
+    // the error's name, or the panic's message
+    message: String
+    // `file:line` of the panic or of what could not run, "" when unknown
+    at: String
+    // for what could not run: the line of the program's own file that led there
+    own_at: String
+}
+
+pub const PLAY_RETURNED: u8 = 0
+pub const PLAY_ERROR: u8 = 1
+pub const PLAY_PANIC: u8 = 2
+pub const PLAY_UNSUPPORTED: u8 = 3
+
+/// The interpreter state of an outer evaluation while an inner one runs
+/// (checking a callee's body on demand can evaluate a constant of its own).
+pub struct ItSave {
+    steps: u64
+    panic: String
+    panic_at: usize
+    has_panic: bool
+    budget: bool
+    pending: u8
+    pending_label: usize
+    pending_val: CV
+    failed_at: usize
+    frames: List(Frame)
+    cur_fn: usize
+    out: CV
+    flow_val: CV
+    flow_label: usize
+}
+
+fn wrap_to(v: i128, bits: u32, signed: bool) -> i128 {
+    if bits >= 128 { return v }
+    let m: i128 = 1 << bits
+    var r = v % m
+    if r < 0 { r += m }
+    if signed and r >= m / 2 { r -= m }
+    return r
+}
+
+/// IEEE 754 decoding by arithmetic: the language has no bit cast.
+fn f64_from_bits(raw: u64) -> f64 {
+    let sign = (raw >> 63) != 0
+    let exp = ((raw >> 52) & 0x7FF) as i64
+    let mant = raw & 0xFFFFFFFFFFFFF
+    var v: f64 = 0.0
+    if exp == 0x7FF {
+        v = if mant == 0 { 1.0 / 0.0 } else { 0.0 / 0.0 }
+    } else if exp == 0 {
+        v = (mant as f64) * pow2(-1074)
+    } else {
+        v = (1.0 + (mant as f64) / 4503599627370496.0) * pow2(exp - 1023)
+    }
+    return if sign { -v } else { v }
+}
+
+fn f32_from_bits(raw: u32) -> f64 {
+    let sign = (raw >> 31) != 0
+    let exp = ((raw >> 23) & 0xFF) as i64
+    let mant = raw & 0x7FFFFF
+    var v: f64 = 0.0
+    if exp == 0xFF {
+        v = if mant == 0 { 1.0 / 0.0 } else { 0.0 / 0.0 }
+    } else if exp == 0 {
+        v = (mant as f64) * pow2(-149)
+    } else {
+        v = (1.0 + (mant as f64) / 8388608.0) * pow2(exp - 127)
+    }
+    return if sign { -v } else { v }
+}
+
+fn pow2(e: i64) -> f64 {
+    var r: f64 = 1.0
+    var n = e
+    while n > 0 { r *= 2.0; n -= 1 }
+    while n < 0 { r /= 2.0; n += 1 }
+    return r
+}
+
+fn utf8_encode(cp: u32) -> String {
+    var s = String.new()
+    if cp < 0x80 {
+        s.push_byte(cp as u8)
+    } else if cp < 0x800 {
+        s.push_byte((0xC0 | (cp >> 6)) as u8)
+        s.push_byte((0x80 | (cp & 0x3F)) as u8)
+    } else if cp < 0x10000 {
+        s.push_byte((0xE0 | (cp >> 12)) as u8)
+        s.push_byte((0x80 | ((cp >> 6) & 0x3F)) as u8)
+        s.push_byte((0x80 | (cp & 0x3F)) as u8)
+    } else {
+        s.push_byte((0xF0 | (cp >> 18)) as u8)
+        s.push_byte((0x80 | ((cp >> 12) & 0x3F)) as u8)
+        s.push_byte((0x80 | ((cp >> 6) & 0x3F)) as u8)
+        s.push_byte((0x80 | (cp & 0x3F)) as u8)
+    }
+    return s
+}
+
+/// The first scalar of a UTF-8 string, or null when the prefix is malformed.
+fn utf8_first(s: []u8) -> ?u32 {
+    if s.len == 0 { return null }
+    let b0 = s[0] as u32
+    if b0 < 0x80 { return b0 }
+    var n: usize = 0
+    var cp: u32 = 0
+    if b0 >> 5 == 6 { n = 1; cp = b0 & 0x1F }
+    else if b0 >> 4 == 14 { n = 2; cp = b0 & 0x0F }
+    else if b0 >> 3 == 30 { n = 3; cp = b0 & 0x07 }
+    else { return null }
+    if s.len < n + 1 { return null }
+    for i in 0..n {
+        let b = s[i + 1] as u32
+        if b >> 6 != 2 { return null }
+        cp = (cp << 6) | (b & 0x3F)
+    }
+    return cp
+}
+
+fn utf8_valid(s: []u8) -> bool {
+    var i: usize = 0
+    while i < s.len {
+        let cp = utf8_first(s[i..]) orelse return false
+        i += if cp < 0x80 { 1 } else if cp < 0x800 { 2 } else if cp < 0x10000 { 3 } else { 4 }
+    }
+    return true
+}
+
+fn trim_ascii(s: []u8) -> []u8 {
+    var a: usize = 0
+    var b = s.len
+    while a < b and (s[a] == ' ' or s[a] == '\t' or s[a] == '\n' or s[a] == '\r') { a += 1 }
+    while b > a and (s[b - 1] == ' ' or s[b - 1] == '\t' or s[b - 1] == '\n' or s[b - 1] == '\r') { b -= 1 }
+    return s[a..b]
+}
+
+fn lower_ascii(c: u8) -> u8 { return if c >= 'A' and c <= 'Z' { c + 32 } else { c } }
+
+impl Checker {
+    // ----- entry points ------------------------------------------------------------
+
+    fn it_enter(self: *mut Self) -> ItSave {
+        let s = ItSave{
+            .steps = self.it_steps, .panic = self.it_panic.clone(), .panic_at = self.it_panic_at, .has_panic = self.it_has_panic,
+            .budget = self.it_budget, .pending = self.it_pending, .pending_label = self.it_pending_label, .pending_val = self.it_pending_val.clone(),
+            .failed_at = self.it_failed_at, .frames = self.frames.clone(), .cur_fn = self.it_cur_fn, .out = self.it_out.clone(),
+            .flow_val = self.it_flow_val.clone(), .flow_label = self.it_flow_label,
+        }
+        self.it_steps = 0
+        self.it_panic = String.new()
+        self.it_panic_at = NONE
+        self.it_has_panic = false
+        self.it_budget = false
+        self.it_pending = 0
+        self.it_pending_label = NONE
+        self.it_pending_val = cv(VK_NONE)
+        self.it_failed_at = NONE
+        self.frames = List(Frame).new()
+        self.it_cur_fn = NONE
+        self.it_out = cv(VK_NONE)
+        self.it_flow_val = cv(VK_NONE)
+        self.it_flow_label = NONE
+        return s
+    }
+
+    fn it_leave(self: *mut Self, s: *ItSave) {
+        self.it_steps = s.steps
+        self.it_panic = s.panic.clone()
+        self.it_panic_at = s.panic_at
+        self.it_has_panic = s.has_panic
+        self.it_budget = s.budget
+        self.it_pending = s.pending
+        self.it_pending_label = s.pending_label
+        self.it_pending_val = s.pending_val.clone()
+        self.it_failed_at = s.failed_at
+        self.frames = s.frames.clone()
+        self.it_cur_fn = s.cur_fn
+        self.it_out = s.out.clone()
+        self.it_flow_val = s.flow_val.clone()
+        self.it_flow_label = s.flow_label
+    }
+
+    /// Evaluate an expression with no locals; a compile-time panic or an
+    /// exhausted budget is reported as an error.
+    fn eval_const_expr(self: *mut Self, e: usize) -> ?CV {
+        let saved = self.it_enter()
+        var fr = Frame{ .vals = List(CV).new() }
+        self.frames.append(fr)
+        let r = self.it_eval(e)
+        if self.it_has_panic {
+            self.fail_here(self.it_panic_at, format("compile-time evaluation panicked: {}", .{self.it_panic})[..])
+        }
+        if self.it_budget {
+            self.fail_here(self.tir.nodes[e].start, format("compile-time evaluation exceeded the step budget ({} steps)", .{STEP_BUDGET})[..])
+        }
+        self.it_leave(&saved)
+        return r
+    }
+
+    /// Evaluate with one local bound; silent on failure (record constraints).
+    fn eval_with_local(self: *mut Self, e: usize, local: usize, own v: CV) -> ?CV {
+        let saved = self.it_enter()
+        var fr = Frame{ .vals = List(CV).new() }
+        for i in 0..local + 1 { fr.vals.append(cv(VK_NONE)) }
+        fr.vals[local] = v
+        self.frames.append(fr)
+        let r = self.it_eval(e)
+        self.it_leave(&saved)
+        return r
+    }
+
+    /// Run a function instance at compile time. Returns 0 with the value in
+    /// `it_out` on success, 1 when it could not be evaluated, 2 when it
+    /// panicked (message in `it_panic`, location in `it_panic_at`).
+    fn call_instance(self: *mut Self, inst: usize, own args: List(CV)) -> u8 {
+        let saved = self.it_enter()
+        let r = self.it_call(inst, args)
+        var code: u8 = 1
+        var out = cv(VK_NONE)
+        var msg = String.new()
+        var at = NONE
+        if self.it_has_panic {
+            code = 2
+            msg = self.it_panic.clone()
+            at = self.it_panic_at
+        } else if self.it_budget {
+            code = 2
+            msg = format("exceeded the compile-time step budget ({} steps)", .{STEP_BUDGET})
+            at = self.insts[inst].start
+        } else if r != null {
+            code = 0
+            out = r.?
+        }
+        self.it_leave(&saved)
+        self.it_out = out
+        self.it_panic = msg
+        self.it_panic_at = at
+        return code
+    }
+
+    // ----- machinery ---------------------------------------------------------------
+
+    fn it_step(self: *mut Self) -> bool {
+        self.it_steps += 1
+        if self.it_steps > STEP_BUDGET {
+            self.it_budget = true
+            return false
+        }
+        return true
+    }
+
+    /// Record a panic with a location and stop evaluation.
+    fn it_panic_at(self: *mut Self, msg: []u8, at: usize) {
+        self.it_panic = String.from(msg)
+        self.it_panic_at = at
+        self.it_has_panic = true
+        self.it_where = if self.it_cur_fn != NONE { self.insts[self.it_cur_fn].module } else { NONE }
+    }
+
+    fn it_fail_panic(self: *mut Self, msg: []u8, at: usize) {
+        if !self.it_has_panic { self.it_panic_at(msg, at) }
+    }
+
+    /// A zero-initialized value of the given type, for `undefined` locals.
+    fn it_default_value(self: *mut Self, ty0: usize) -> CV {
+        let ty = self.tys.resolve(ty0, true)
+        let k = self.tys.kind(ty)
+        if k == TK.Int { return cv_int(0) }
+        if k == TK.Float { return cv_float(0.0) }
+        if k == TK.Bool { return cv_bool(false) }
+        if k == TK.Char { return cv_char(0) }
+        if k == TK.Array {
+            let n = self.tys.list[ty].n
+            let e = self.tys.list[ty].args[0]
+            var items = List(CV).new()
+            for i in 0..n { items.append(self.it_default_value(e)) }
+            return cv_seq(VK_ARRAY, items)
+        }
+        if k == TK.Tuple {
+            var items = List(CV).new()
+            for t in self.tys.list[ty].args.clone() { items.append(self.it_default_value(t)) }
+            return cv_seq(VK_TUPLE, items)
+        }
+        if k == TK.Struct {
+            var items = List(CV).new()
+            for t in self.struct_field_types(ty) { items.append(self.it_default_value(t)) }
+            return cv_seq(VK_STRUCT, items)
+        }
+        if k == TK.Opt { return cv(VK_NULL) }
+        if k == TK.List { return cv_seq(VK_LIST, List(CV).new()) }
+        if k == TK.Str { return cv_owned("") }
+        if k == TK.Distinct { return self.it_default_value(self.distinct_underlying(self.tys.list[ty].def)) }
+        return cv(VK_UNDEFINED)
+    }
+
+    /// Whether the program declares a `main`.
+    pub fn has_main(self: *Self) -> bool {
+        return self.main_inst != NONE
+    }
+
+    /// `nx play`: run the program's `main` in the interpreter, with the REPL's
+    /// access to the world (`play_mode`): printing, input, the clock.
+    pub fn run_main(self: *mut Self) -> PlayOutcome {
+        var out = PlayOutcome{ .kind = PLAY_RETURNED, .code = 0, .message = String.new(), .at = String.new(), .own_at = String.new() }
+        let saved = self.it_enter()
+        self.it_where = NONE
+        self.it_root_at = NONE
+        let r = self.it_call(self.main_inst, List(CV).new())
+        if self.it_has_panic {
+            out.kind = PLAY_PANIC
+            out.message = self.it_panic.clone()
+            out.at = self.play_where(self.it_panic_at)
+        } else if self.it_budget {
+            out.kind = PLAY_PANIC
+            out.message = format("the program ran past the interpreter's step budget ({} steps); is a loop unbounded?", .{STEP_BUDGET})
+        } else if r == null {
+            out.kind = PLAY_UNSUPPORTED
+            out.at = self.play_where(self.it_failed_at)
+            if self.it_root_at != NONE and self.it_where != 0 {
+                let full = self.location(0, self.it_root_at)
+                var cut = full.len
+                while cut > 0 and full[cut - 1] != ':' { cut -= 1 }
+                out.own_at = if cut > 0 { String.from(full[0..cut - 1]) } else { full }
+            }
+        } else {
+            var v = r.?
+            if v.kind == VK_OK and v.items.len > 0 { v = v.items[0].clone() }
+            if v.kind == VK_ERR {
+                out.kind = PLAY_ERROR
+                out.message = self.error_names[(v.ival - 1) as usize].clone()
+            } else if let n = cv_as_int(&v) {
+                out.code = n as i32
+            }
+        }
+        self.it_leave(&saved)
+        return out
+    }
+
+    /// The location of a position in the module the interpreter stopped in,
+    /// `file:line` as a compiled program's panic writes it.
+    fn play_where(self: *Self, at: usize) -> String {
+        if at == NONE or self.it_where == NONE { return String.new() }
+        let full = self.location(self.it_where, at)
+        var cut = full.len
+        while cut > 0 and full[cut - 1] != ':' { cut -= 1 }
+        if cut == 0 { return full }
+        return String.from(full[0..cut - 1])
+    }
+
+    /// `nx repl`: run the statements of the synthetic `main` from `start`,
+    /// with the bindings of earlier lines seeded by name, and report every
+    /// binding afterwards and the value of a trailing expression. `heap` is
+    /// the session's `ref class` objects, which the earlier bindings name.
+    pub fn run_repl(self: *mut Self, start: usize, names: *List(String), vals: *List(CV), heap: *List(CV)) -> ReplOutcome {
+        self.it_heap = heap.clone()
+        var out = ReplOutcome{
+            .names = List(String).new(), .values = List(CV).new(), .shown = List(String).new(),
+            .types = List(String).new(), .printed_ty = String.new(), .printed_val = String.new(), .has_printed = false, .panic = String.new(), .has_panic = false,
+            .heap = List(CV).new(),
+        }
+        let inst = self.main_inst
+        if inst == NONE { return out }
+        let saved = self.it_enter()
+        if !self.it_ensure_body(inst) { self.it_leave(&saved); return out }
+        var fr = Frame{ .vals = List(CV).new() }
+        let nlocals = self.insts[inst].locals.len
+        for i in 0..nlocals { fr.vals.append(cv(VK_NONE)) }
+        self.frames.append(fr)
+        self.it_cur_fn = inst
+        let body = self.insts[inst].body
+        let stmts = self.tir.nodes[body].kids.clone()
+        // the local each earlier name refers to
+        for st, i in stmts {
+            if i >= start { break }
+            if self.tir.nodes[st].k != TKind.SLet { continue }
+            let l = self.tir.nodes[st].a
+            let lname = self.insts[inst].locals[l].name.clone()
+            for n, j in names { if n == lname { self.it_env_set(l, vals[j].clone()) } }
+        }
+        var last = cv(VK_NONE)
+        var last_ty = NONE
+        var has_last = false
+        var i = start
+        while i < stmts.len {
+            let st = stmts[i]
+            i += 1
+            let k = self.tir.nodes[st].k
+            var flow = FL_NEXT
+            if k == TKind.SExpr {
+                let e = self.tir.nodes[st].kids[0]
+                let r = self.it_eval(e)
+                if r == null { flow = FL_FAIL } else { last = r.?; last_ty = self.tir.nodes[e].ty; has_last = true }
+            } else if k == TKind.SReturn and self.tir.nodes[st].kids.len == 0 {
+                // the synthetic main ends with a bare `return`: the session is done
+                break
+            } else {
+                has_last = false
+                flow = self.it_exec_stmt(st)
+            }
+            var failed = false
+            if self.it_has_panic {
+                out.panic = self.it_panic.clone()
+                failed = true
+            } else if self.it_budget {
+                out.panic = format("exceeded the step budget ({} steps)", .{STEP_BUDGET})
+                failed = true
+            } else if flow == FL_FAIL {
+                var at = String.new()
+                if self.it_failed_at != NONE { at = format(" (at {})", .{self.location(self.insts[inst].module, self.it_failed_at)}) }
+                out.panic = format("this statement cannot be evaluated by the interpreter{}; foreign calls, threads, sockets, processes, mutable globals and @refCount need a compiled program", .{at})
+                failed = true
+            }
+            if failed {
+                out.has_panic = true
+                _ = self.frames.pop()
+                self.it_leave(&saved)
+                return out
+            }
+            if flow != FL_NEXT { break }
+        }
+        out.heap = self.it_heap.clone()
+        // bindings afterwards, later declarations winning
+        let fi = self.frames.len - 1
+        for st in stmts {
+            if self.tir.nodes[st].k != TKind.SLet { continue }
+            let l = self.tir.nodes[st].a
+            if l >= self.frames[fi].vals.len or self.frames[fi].vals[l].kind == VK_NONE { continue }
+            let lname = self.insts[inst].locals[l].name.clone()
+            var idx = NONE
+            for n, j in out.names { if n == lname { idx = j } }
+            if idx == NONE {
+                out.names.append(lname)
+                out.values.append(self.frames[fi].vals[l].clone())
+            } else {
+                out.values[idx] = self.frames[fi].vals[l].clone()
+            }
+        }
+        for n, j in out.names {
+            // the last local declared under the name, for its type
+            var l = NONE
+            for st in stmts {
+                if self.tir.nodes[st].k != TKind.SLet { continue }
+                if self.insts[inst].locals[self.tir.nodes[st].a].name == n { l = self.tir.nodes[st].a }
+            }
+            if l == NONE {
+                out.shown.append(cv_format(&out.values[j]))
+                out.types.append(String.new())
+            } else {
+                let lt = self.tys.resolve(self.insts[inst].locals[l].ty, true)
+                out.shown.append(format("{}: {}", .{self.ty_name(lt), self.render_typed(&out.values[j], lt)}))
+                out.types.append(self.ty_name(lt))
+            }
+        }
+        if has_last {
+            let ty = self.tys.resolve(last_ty, true)
+            let tk = self.tys.kind(self.tys.shallow(ty))
+            if tk != TK.Void and tk != TK.Never {
+                out.printed_ty = self.ty_name(ty)
+                out.printed_val = self.render_typed(&last, ty)
+                out.has_printed = true
+            }
+        }
+        _ = self.frames.pop()
+        self.it_leave(&saved)
+        return out
+    }
+
+    /// A value the way source code would write it, using its type.
+    pub fn render_typed(self: *mut Self, v: *CV, ty: usize) -> String {
+        let t = self.tys.shallow(ty)
+        let k = self.tys.kind(t)
+        let vk = v.kind
+        let is_text = vk == VK_STR or vk == VK_OWNED_STR
+        if k == TK.Str and is_text { return source_quote(v.text[..]) }
+        if k == TK.Slice and is_text {
+            let e = self.tys.shallow(self.tys.list[t].args[0])
+            if self.tys.kind(e) == TK.Int and self.tys.list[e].name == "u8" { return source_quote(v.text[..]) }
+        }
+        if k == TK.Char and vk == VK_CHAR {
+            if v.ival == '\'' as i128 { return String.from("'\\''") }
+            if v.ival == '\\' as i128 { return String.from("'\\\\'") }
+            if v.ival == '\n' as i128 { return String.from("'\\n'") }
+            if v.ival == '\r' as i128 { return String.from("'\\r'") }
+            if v.ival == '\t' as i128 { return String.from("'\\t'") }
+            return format("'{}'", .{cv_format(v)})
+        }
+        if (k == TK.List or k == TK.Slice or k == TK.Array) and (vk == VK_LIST or vk == VK_ARRAY) {
+            let e = self.tys.list[t].args[0]
+            var s = String.from("[")
+            for it, i in v.items {
+                if i > 0 { s.append(", ") }
+                s.append(self.render_typed(&it, e)[..])
+            }
+            s.append("]")
+            return s
+        }
+        if k == TK.Map and vk == VK_MAP {
+            let kt = self.tys.list[t].args[0]
+            let vt = self.tys.list[t].args[1]
+            var s = String.from("{")
+            var i: usize = 0
+            while i + 1 < v.items.len {
+                if i > 0 { s.append(", ") }
+                s.append(format("{}: {}", .{self.render_typed(&v.items[i], kt), self.render_typed(&v.items[i + 1], vt)})[..])
+                i += 2
+            }
+            s.append("}")
+            return s
+        }
+        if k == TK.Tuple and vk == VK_TUPLE {
+            let ts = self.tys.list[t].args.clone()
+            var s = String.from("(")
+            for it, i in v.items {
+                if i > 0 { s.append(", ") }
+                s.append((if i < ts.len { self.render_typed(&it, ts[i]) } else { cv_format(&it) })[..])
+            }
+            s.append(")")
+            return s
+        }
+        if k == TK.Opt and vk == VK_NULL { return String.from("null") }
+        if k == TK.Opt and vk == VK_SOME { return self.render_typed(&v.items[0], self.tys.list[t].args[0]) }
+        if k == TK.ErrUnion and vk == VK_OK { return self.render_typed(&v.items[0], self.tys.list[t].args[0]) }
+        if vk == VK_ERR {
+            let id = v.ival as usize
+            let name = if id >= 1 and id <= self.error_names.len { self.error_names[id - 1].clone() } else { String.from("?") }
+            return format("error.{}", .{name})
+        }
+        if k == TK.Struct and vk == VK_STRUCT {
+            let d = self.tys.list[t].def
+            let dm = self.structs[d].module
+            let fields = self.structs[d].fields.clone()
+            let ftys = self.struct_field_types(t)
+            var s = format("{}{{ ", .{self.structs[d].name})
+            for f, i in fields {
+                if i >= v.items.len { break }
+                if i > 0 { s.append(", ") }
+                let text = if i < ftys.len { self.render_typed(&v.items[i], ftys[i]) } else { cv_format(&v.items[i]) }
+                s.append(format(".{} = {}", .{self.node(dm, f).name, text})[..])
+            }
+            s.append(" }")
+            return s
+        }
+        if k == TK.Enum and vk == VK_ENUM {
+            let d = self.tys.list[t].def
+            let em = self.enums[d].module
+            let vi = v.ival as usize
+            let name = if vi < self.enums[d].variants.len { self.node(em, self.enums[d].variants[vi]).name.clone() } else { format("{}", .{vi}) }
+            if v.items.len == 0 { return format(".{}", .{name}) }
+            let vtys = self.enum_variant_types(t)
+            var s = format(".{}(", .{name})
+            for it, i in v.items {
+                if i > 0 { s.append(", ") }
+                let text = if vi < vtys.len and i < vtys[vi].len { self.render_typed(&it, vtys[vi][i]) } else { cv_format(&it) }
+                s.append(text[..])
+            }
+            s.append(")")
+            return s
+        }
+        if vk == VK_FN { return String.from("<function>") }
+        if vk == VK_PTR { return String.from("<pointer>") }
+        if vk == VK_TYPE { return self.ty_name(v.ival as usize) }
+        return cv_format(v)
+    }
+
+    fn it_ensure_body(self: *mut Self, inst: usize) -> bool {
+        if self.insts[inst].body != NONE { return true }
+        var pos = NONE
+        for q, i in self.queue { if q == inst { pos = i } }
+        if pos != NONE {
+            _ = self.queue.remove(pos)
+            self.check_fn_body(inst)
+            return self.insts[inst].body != NONE
+        }
+        return false
+    }
+
+    /// `<<segments>> into buf`, as the compiled writer does it: a bit cursor
+    /// through the buffer, byte segments copied at byte boundaries, numbers
+    /// written most significant bit first (`/little` and `/native` swap the
+    /// bytes of the value first), floats by their bits. The bytes land in
+    /// the buffer's place; the result is the whole bytes written, or
+    /// `BufferTooSmall` when a segment does not fit.
+    fn it_bin_construct(self: *mut Self, e: usize) -> ?CV {
+        let kids = self.tir.nodes[e].kids.clone()
+        let target = kids[kids.len - 1]
+        let tv = self.it_eval(target) orelse return null
+        var buf = cv_byte_text(&tv) orelse return null
+        let total = buf.len * 8
+        var bit: usize = 0
+        var failed = false
+        var i: usize = 0
+        while i + 1 < kids.len {
+            let seg = kids[i]
+            i += 1
+            let desc = self.tir.nodes[seg].name.clone()
+            let skids = self.tir.nodes[seg].kids.clone()
+            // "value size=bits 16 endian=little signed=false float=false utf8=false"
+            let words = Checker.split_words(desc[..])
+            var wi: usize = 1
+            let size_word = words[wi].clone()
+            let v = self.it_eval(skids[0]) orelse return null
+            var sz: usize = 0
+            if size_word == "size=bits" {
+                sz = words[wi + 1][..].parse_int(usize) catch { 0 }
+                wi += 2
+            } else if size_word == "size=expr" {
+                let sv = self.it_eval(skids[skids.len - 1]) orelse return null
+                sz = (cv_as_int(&sv) orelse return null) as usize
+                wi += 1
+            } else {
+                sz = (cv_byte_text(&v) orelse return null).len * 8
+                wi += 1
+            }
+            let endian = words[wi].clone()
+            let float = words[wi + 2] == "float=true"
+            if bit + sz > total { failed = true; break }
+            let is_bytes = self.tys.kind(self.tys.shallow(self.tir.nodes[seg].ty)) == TK.Slice or size_word == "size=rest"
+            if is_bytes {
+                let src = cv_byte_text(&v) orelse return null
+                if bit % 8 != 0 or sz > src.len * 8 { failed = true; break }
+                for j in 0..sz / 8 { buf[bit / 8 + j] = src[j] }
+            } else {
+                var raw: u64 = 0
+                if float {
+                    raw = if size_word == "size=bits" and sz == 32 { @bitCast(u32, v.fval as f32) as u64 } else { @bitCast(u64, v.fval) }
+                } else {
+                    let n = cv_as_int(&v) orelse return null
+                    raw = (n & 0xFFFFFFFFFFFFFFFF) as u64
+                }
+                if endian == "endian=little" or endian == "endian=native" { raw = bswap_bytes(raw, sz / 8) }
+                buf = bits_write(buf, bit, sz, raw)
+            }
+            bit += sz
+        }
+        // what was written lands in the buffer's place, even before a failure
+        var b = SliceBack{ .arg = 0, .fi = NONE, .l = NONE, .path = List(usize).new(), .start = 0 }
+        if self.it_slice_place(target, &mut b) {
+            let seq = self.it_walk(b.fi, b.l, &b.path)
+            if seq.kind == VK_OWNED_STR or seq.kind == VK_STR {
+                for c, j in buf { if b.start + j < seq.text.len { seq.text[b.start + j] = c } }
+            } else if seq.kind == VK_ARRAY or seq.kind == VK_LIST {
+                for c, j in buf { if b.start + j < seq.items.len { seq.items[b.start + j] = cv_int(c as i128) } }
+            }
+        }
+        if failed { return cv_err(self.error_id("BufferTooSmall")) }
+        return cv_wrap(VK_OK, cv_str(buf[0..bit / 8]))
+    }
+
+    /// Whether a type is `[]mut T`.
+    fn is_mut_slice(self: *Self, ty: usize) -> bool {
+        let t = self.tys.shallow(ty)
+        return self.tys.kind(t) == TK.Slice and self.tys.list[t].flag
+    }
+
+    /// Where a `[]mut T` argument's elements live: an array, a list or a
+    /// string place (`xs[..]`, `xs[2..5]`, a `[]mut` local), with the first
+    /// element's index. False for a slice with no place of its own.
+    fn it_slice_place(self: *mut Self, e: usize, b: *mut SliceBack) -> bool {
+        var x = e
+        var start: usize = 0
+        if self.tir.nodes[x].k == TKind.SliceOp {
+            if self.tir.nodes[x].flag {
+                let sv = self.it_eval(self.tir.nodes[x].kids[1]) orelse return false
+                start = (cv_as_int(&sv) orelse return false) as usize
+            }
+            x = self.tir.nodes[x].kids[0]
+        }
+        if let vw = self.it_view_of(x) {
+            b.fi = vw.ival as usize
+            b.l = vw.b
+            b.path = vw.path.clone()
+            b.start = view_start(&vw) + start
+            return true
+        }
+        if !self.it_place_path(x, &mut b.fi, &mut b.l, &mut b.path) { return false }
+        b.start = start
+        return true
+    }
+
+    /// A call whose `[]mut T` arguments come back. The interpreter passes a
+    /// slice as a copy of its elements, so each one taken from a place is
+    /// written back there when the call returns: the callee's writes through
+    /// the slice reach the caller, as they do in a compiled program.
+    fn it_call_back(self: *mut Self, inst: usize, nodes: []usize, own vs: List(CV), own env: List(CV)) -> ?CV {
+        var backs = List(SliceBack).new()
+        for x, i in nodes {
+            if !self.is_mut_slice(self.tir.nodes[x].ty) { continue }
+            var b = SliceBack{ .arg = i, .fi = NONE, .l = NONE, .path = List(usize).new(), .start = 0 }
+            if self.it_slice_place(x, &mut b) { backs.append(b) }
+        }
+        if backs.len == 0 { return self.it_call_env(inst, vs, env) }
+        let r = self.it_call_env(inst, vs, env)
+        if r == null { return null }
+        let kept = self.it_kept.clone()
+        for b in backs {
+            if b.arg >= kept.len or kept[b.arg].kind == VK_NONE { continue }
+            let seq = self.it_walk(b.fi, b.l, &b.path)
+            if seq.kind == VK_ARRAY or seq.kind == VK_LIST {
+                for item, j in kept[b.arg].items { if b.start + j < seq.items.len { seq.items[b.start + j] = item.clone() } }
+            } else if seq.kind == VK_OWNED_STR or seq.kind == VK_STR {
+                for c, j in kept[b.arg].text { if b.start + j < seq.text.len { seq.text[b.start + j] = c } }
+            }
+        }
+        return r
+    }
+
+    fn it_call(self: *mut Self, inst: usize, own args: List(CV)) -> ?CV {
+        return self.it_call_env(inst, args, List(CV).new())
+    }
+
+    /// A call; `env` is a closure's captures, bound to its capture
+    /// parameters (the parameters past the declared ones, in order).
+    fn it_call_env(self: *mut Self, inst: usize, own args: List(CV), own env: List(CV)) -> ?CV {
+        if !self.it_step() { return null }
+        if !self.it_ensure_body(inst) { return null }
+        if self.insts[inst].is_extern { return null }
+        if self.frames.len >= self.it_depth_limit {
+            let what = if self.play_mode { "the program" } else { "compile-time evaluation" }
+            self.it_panic_at(format("{} exceeded the call depth ({} nested calls); is the recursion unbounded?", .{what, self.it_depth_limit})[..], self.insts[inst].start)
+            return null
+        }
+        var fr = Frame{ .vals = List(CV).new() }
+        let nlocals = self.insts[inst].locals.len
+        for i in 0..nlocals { fr.vals.append(cv(VK_NONE)) }
+        let params = self.insts[inst].params.clone()
+        for a, i in args { if i < params.len { fr.vals[params[i]] = a.clone() } }
+        if env.len > 0 {
+            var ci: usize = 0
+            for loc, li in self.insts[inst].locals {
+                if !loc.is_param { continue }
+                var declared = false
+                for pp in params { if pp == li { declared = true } }
+                if declared { continue }
+                if ci < env.len { fr.vals[li] = env[ci].clone() }
+                ci += 1
+            }
+        }
+        self.frames.append(fr)
+        let outer = self.it_cur_fn
+        self.it_cur_fn = inst
+        let body = self.insts[inst].body
+        let flow = self.it_exec_block(body)
+        self.it_cur_fn = outer
+        // the final value of each `[]mut T` parameter, for the caller to take back
+        var kept = List(CV).new()
+        let top = self.frames.len - 1
+        for pl in params {
+            if self.is_mut_slice(self.insts[inst].locals[pl].ty) and pl < self.frames[top].vals.len and self.frames[top].vals[pl].kind != VK_VIEW {
+                kept.append(self.frames[top].vals[pl].clone())
+            } else {
+                kept.append(cv(VK_NONE))
+            }
+        }
+        self.it_kept = kept
+        _ = self.frames.pop()
+        if flow == FL_FAIL { return null }
+        if flow == FL_RETURN { return self.it_flow_val.clone() }
+        if self.it_out.kind == VK_NONE { return cv(VK_VOID) }
+        return self.it_out.clone()
+    }
+
+    fn it_env_get(self: *mut Self, l: usize) -> CV {
+        let fi = self.frames.len - 1
+        if l >= self.frames[fi].vals.len { return cv(VK_UNDEFINED) }
+        if self.frames[fi].vals[l].kind == VK_NONE { return cv(VK_UNDEFINED) }
+        if self.frames[fi].vals[l].kind == VK_VIEW {
+            let vw = self.frames[fi].vals[l].clone()
+            return self.it_view_read(&vw)
+        }
+        return self.frames[fi].vals[l].clone()
+    }
+
+    /// The elements a view sees now, as a slice value.
+    fn it_view_read(self: *mut Self, vw: *CV) -> CV {
+        let seq = self.it_walk(vw.ival as usize, vw.b, &vw.path)
+        let st = view_start(vw)
+        let n = view_len(vw)
+        if (seq.kind == VK_ARRAY or seq.kind == VK_LIST) and st + n <= seq.items.len {
+            var items = List(CV).new()
+            for i in st..st + n { items.append(seq.items[i].clone()) }
+            return cv_seq(VK_ARRAY, items)
+        }
+        if (seq.kind == VK_OWNED_STR or seq.kind == VK_STR) and st + n <= seq.text.len { return cv_str(seq.text[st..st + n]) }
+        return cv(VK_UNDEFINED)
+    }
+
+    /// The view a local holds, when it holds one.
+    fn it_view_of(self: *mut Self, e: usize) -> ?CV {
+        if self.tir.nodes[e].k != TKind.Local { return null }
+        let fi = self.frames.len - 1
+        let l = self.tir.nodes[e].a
+        if l >= self.frames[fi].vals.len or self.frames[fi].vals[l].kind != VK_VIEW { return null }
+        return self.frames[fi].vals[l].clone()
+    }
+
+    /// What a `[]mut T` local bound to `init` (whose value is `v`) holds: a
+    /// view of the place the slice was taken from, so writes through the
+    /// local land in that place as they do in a compiled program; the value
+    /// itself when the slice has no place of its own.
+    fn it_bind_slice(self: *mut Self, init: usize, own v: CV) -> CV {
+        if !self.is_mut_slice(self.tir.nodes[init].ty) { return v }
+        var b = SliceBack{ .arg = 0, .fi = NONE, .l = NONE, .path = List(usize).new(), .start = 0 }
+        if !self.it_slice_place(init, &mut b) { return v }
+        let n = cv_seq_len(&v) orelse return v
+        return cv_view(b.fi, b.l, b.path.clone(), b.start, n)
+    }
+
+    fn it_env_set(self: *mut Self, l: usize, own v: CV) {
+        let fi = self.frames.len - 1
+        while self.frames[fi].vals.len <= l { self.frames[fi].vals.append(cv(VK_NONE)) }
+        self.frames[fi].vals[l] = v
+    }
+
+    /// A block's flow; its value (the tail's, or a labeled break's) lands in
+    /// `it_out` (`VK_NONE` when there is none).
+    fn it_exec_block(self: *mut Self, b: usize) -> u8 {
+        let stmts = self.tir.nodes[b].kids.clone()
+        let tail = self.tir.nodes[b].a
+        let label = self.tir.nodes[b].b
+        var defers = List(usize).new()
+        // whether each deferred statement is an `errdefer`
+        var on_error = List(bool).new()
+        var flow = FL_NEXT
+        var decided = false
+        for s in stmts {
+            let k = self.tir.nodes[s].k
+            if k == TKind.SDefer or k == TKind.SErrDefer {
+                defers.append(self.tir.nodes[s].kids[0])
+                on_error.append(k == TKind.SErrDefer)
+                continue
+            }
+            let f = self.it_exec_stmt(s)
+            if f == FL_FAIL { return FL_FAIL }
+            if f != FL_NEXT { flow = f; decided = true; break }
+        }
+        var value = cv(VK_NONE)
+        if !decided {
+            if tail != NONE {
+                let v = self.it_eval(tail) orelse return FL_FAIL
+                value = v
+            }
+            if self.it_pending != 0 {
+                flow = self.it_pending
+                self.it_flow_label = self.it_pending_label
+                self.it_flow_val = self.it_pending_val.clone()
+                self.it_pending = 0
+                value = cv(VK_NONE)
+            }
+        }
+        // the flow's payload survives the defers; an `errdefer` runs only when
+        // the block is left by returning an error
+        let fval = self.it_flow_val.clone()
+        let flabel = self.it_flow_label
+        let failing = flow == FL_RETURN and fval.kind == VK_ERR
+        var i = defers.len
+        while i > 0 {
+            i -= 1
+            if on_error[i] and !failing { continue }
+            if self.it_exec_stmt(defers[i]) == FL_FAIL { return FL_FAIL }
+        }
+        self.it_flow_val = fval
+        self.it_flow_label = flabel
+        // labeled block: a break targeting this block yields its value
+        if flow == FL_BREAK and label != NONE and self.it_flow_label == label {
+            self.it_out = self.it_flow_val.clone()
+            return FL_NEXT
+        }
+        self.it_out = value
+        return flow
+    }
+
+    fn it_exec_stmt(self: *mut Self, s: usize) -> u8 {
+        let f = self.it_exec_stmt_inner(s)
+        if f == FL_FAIL { return FL_FAIL }
+        if self.it_pending != 0 {
+            let p = self.it_pending
+            self.it_flow_label = self.it_pending_label
+            self.it_flow_val = self.it_pending_val.clone()
+            self.it_pending = 0
+            return p
+        }
+        return f
+    }
+
+    fn it_exec_stmt_inner(self: *mut Self, s: usize) -> u8 {
+        if !self.it_step() { return FL_FAIL }
+        let k = self.tir.nodes[s].k
+        let kids = self.tir.nodes[s].kids.clone()
+        let a = self.tir.nodes[s].a
+        let b = self.tir.nodes[s].b
+        if k == TKind.SLet {
+            var v = cv(VK_UNDEFINED)
+            if kids.len > 0 {
+                let init = kids[0]
+                if self.tir.nodes[init].k == TKind.Undefined {
+                    v = self.it_default_value(self.tir.nodes[init].ty)
+                } else {
+                    v = self.it_eval(init) orelse return FL_FAIL
+                    v = self.it_bind_slice(init, v)
+                }
+            }
+            self.it_env_set(a, v)
+            return FL_NEXT
+        }
+        if k == TKind.SAssign {
+            let target = kids[0]
+            var v = self.it_eval(kids[1]) orelse return FL_FAIL
+            let op = self.tir.nodes[s].name.clone()
+            if op != "=" {
+                // "+= checked": the operator and the arithmetic mode
+                var sym = String.new()
+                var mode = String.new()
+                var seen_eq = false
+                var after_space = false
+                for c in op {
+                    if after_space { mode.push_byte(c) }
+                    else if c == ' ' { after_space = true }
+                    else if c == '=' and !seen_eq { seen_eq = true }
+                    else { sym.push_byte(c) }
+                }
+                let cur = self.it_eval(target) orelse return FL_FAIL
+                v = self.it_binop(sym[..], mode[..], cur, v, self.tir.nodes[target].ty, self.tir.nodes[s].start) orelse return FL_FAIL
+            } else if self.tir.nodes[target].k == TKind.Local {
+                v = self.it_bind_slice(kids[1], v)
+            }
+            if !self.it_assign(target, v) { return FL_FAIL }
+            return FL_NEXT
+        }
+        if k == TKind.SExpr {
+            _ = self.it_eval(kids[0]) orelse return FL_FAIL
+            return FL_NEXT
+        }
+        if k == TKind.SReturn {
+            var v = cv(VK_VOID)
+            if kids.len > 0 { v = self.it_eval(kids[0]) orelse return FL_FAIL }
+            self.it_flow_val = v
+            return FL_RETURN
+        }
+        if k == TKind.SBreak {
+            var v = cv(VK_NONE)
+            if kids.len > 0 { v = self.it_eval(kids[0]) orelse return FL_FAIL }
+            self.it_flow_val = v
+            self.it_flow_label = a
+            return FL_BREAK
+        }
+        if k == TKind.SContinue {
+            self.it_flow_label = a
+            return FL_CONTINUE
+        }
+        if k == TKind.SDefer { return self.it_exec_stmt(kids[0]) }
+        if k == TKind.SErrDefer { return FL_NEXT }
+        if k == TKind.SWhile {
+            let label = a
+            var broke = false
+            while true {
+                if !self.it_step() { return FL_FAIL }
+                let c = self.it_eval(kids[0]) orelse return FL_FAIL
+                if ! (c.kind == VK_BOOL and c.flag) { break }
+                let f = self.it_exec_block(kids[1])
+                if f == FL_FAIL { return FL_FAIL }
+                if f == FL_NEXT { continue }
+                if f == FL_BREAK and self.it_flow_label == label { broke = true; break }
+                if f == FL_CONTINUE and self.it_flow_label == label { continue }
+                return f
+            }
+            if !broke and kids.len > 2 {
+                return self.it_exec_block(kids[2])
+            }
+            return FL_NEXT
+        }
+        if k == TKind.SForRange {
+            let var_local = a
+            let label = b
+            let sv = self.it_eval(kids[0]) orelse return FL_FAIL
+            let s0 = cv_as_int(&sv) orelse return FL_FAIL
+            let ev = self.it_eval(kids[1]) orelse return FL_FAIL
+            let e0 = cv_as_int(&ev) orelse return FL_FAIL
+            var st: i128 = 1
+            if self.tir.nodes[s].flag {
+                let stv = self.it_eval(kids[2]) orelse return FL_FAIL
+                st = cv_as_int(&stv) orelse return FL_FAIL
+            }
+            if st == 0 {
+                self.it_panic_at("a range step cannot be zero", self.tir.nodes[s].start)
+                return FL_FAIL
+            }
+            let body = kids[kids.len - 1]
+            var i = s0
+            while if st > 0 { i < e0 } else { i > e0 } {
+                if !self.it_step() { return FL_FAIL }
+                self.it_env_set(var_local, cv_int(i))
+                let f = self.it_exec_block(body)
+                if f == FL_FAIL { return FL_FAIL }
+                if f == FL_BREAK and self.it_flow_label == label { break }
+                if f != FL_NEXT and ! (f == FL_CONTINUE and self.it_flow_label == label) { return f }
+                i += st
+            }
+            return FL_NEXT
+        }
+        if k == TKind.SForSlice {
+            let index = a
+            let label = b
+            let locals = self.tir.nodes[s].kids2.clone()
+            let body = kids[kids.len - 1]
+            var seqs = List(CV).new()
+            for l, i in locals {
+                let v = self.it_eval(kids[i]) orelse return FL_FAIL
+                let items = cv_seq_items(&v) orelse return FL_FAIL
+                seqs.append(cv_seq(VK_LIST, items))
+            }
+            var n: usize = 0
+            var first = true
+            var mismatch = false
+            for sq in seqs {
+                if first { n = sq.items.len; first = false }
+                else if sq.items.len != n { mismatch = true }
+            }
+            if mismatch {
+                self.it_fail_panic("parallel iteration over slices of different lengths", self.tir.nodes[body].start)
+                return FL_FAIL
+            }
+            for i in 0..n {
+                if !self.it_step() { return FL_FAIL }
+                for l, j in locals { self.it_env_set(l, seqs[j].items[i].clone()) }
+                if index != NONE { self.it_env_set(index, cv_int(i as i128)) }
+                let f = self.it_exec_block(body)
+                if f == FL_FAIL { return FL_FAIL }
+                if f == FL_BREAK and self.it_flow_label == label { break }
+                if f != FL_NEXT and ! (f == FL_CONTINUE and self.it_flow_label == label) { return f }
+            }
+            return FL_NEXT
+        }
+        if k == TKind.SBlock or k == TKind.SUsing { return self.it_exec_block(kids[0]) }
+        if k == TKind.SDrop { return FL_NEXT }
+        return FL_FAIL
+    }
+
+    /// Resolve a place expression to a frame, a root local and a path of indices.
+    fn it_place_path(self: *mut Self, e: usize, fi: *mut usize, l: *mut usize, path: *mut List(usize)) -> bool {
+        let k = self.tir.nodes[e].k
+        let kids = self.tir.nodes[e].kids.clone()
+        if k == TKind.Local {
+            fi.* = self.frames.len - 1
+            l.* = self.tir.nodes[e].a
+            path.clear()
+            return true
+        }
+        if k == TKind.Field or k == TKind.TupleField or k == TKind.RefField {
+            if !self.it_place_path(kids[0], fi, l, path) { return false }
+            path.append(self.tir.nodes[e].a)
+            return true
+        }
+        if k == TKind.Index {
+            let iv = self.it_eval(kids[1]) orelse return false
+            let i = cv_as_int(&iv) orelse return false
+            if let vw = self.it_view_of(kids[0]) {
+                let n = view_len(&vw)
+                if i < 0 or i as usize >= n {
+                    self.it_fail_panic(format("index {} out of bounds for length {}", .{i, n})[..], self.tir.nodes[e].start)
+                    return false
+                }
+                fi.* = vw.ival as usize
+                l.* = vw.b
+                path.clear()
+                for x in vw.path { path.append(x) }
+                path.append(view_start(&vw) + i as usize)
+                return true
+            }
+            if !self.it_place_path(kids[0], fi, l, path) { return false }
+            path.append(i as usize)
+            return true
+        }
+        if k == TKind.Deref {
+            let p = self.it_eval(kids[0]) orelse return false
+            if p.kind != VK_PTR { return false }
+            fi.* = p.ival as usize
+            l.* = p.b
+            path.clear()
+            for x in p.path { path.append(x) }
+            return true
+        }
+        if k == TKind.ListToSlice or k == TKind.ArrayToSlice or k == TKind.StrToSlice { return self.it_place_path(kids[0], fi, l, path) }
+        if k == TKind.SliceOp and !self.tir.nodes[e].flag and !self.tir.nodes[e].flag2 { return self.it_place_path(kids[0], fi, l, path) }
+        return false
+    }
+
+    /// The place a mutating builtin acts on: the receiver place, following
+    /// any pointer stored there.
+    fn it_recv_place(self: *mut Self, e: usize, fi: *mut usize, l: *mut usize, path: *mut List(usize)) -> bool {
+        if !self.it_place_path(e, fi, l, path) { return false }
+        while true {
+            let cur = self.it_walk(fi.*, l.*, path)
+            if cur.kind == VK_NONE { return false }
+            if cur.kind != VK_PTR { return true }
+            let nfi = cur.ival as usize
+            let nl = cur.b
+            let np = cur.path.clone()
+            fi.* = nfi
+            l.* = nl
+            path.clear()
+            for x in np { path.append(x) }
+        }
+        return true
+    }
+
+    /// Follow a path into a frame's local; `cv_bad` (kind `VK_NONE`) when it
+    /// does not exist.
+    fn it_walk(self: *mut Self, fi: usize, l: usize, path: *List(usize)) -> *mut CV{
+        if fi >= self.frames.len or l >= self.frames[fi].vals.len { return &mut self.cv_bad }
+        var cur: *mut CV = &mut self.frames[fi].vals[l]
+        if cur.kind == VK_NONE { return &mut self.cv_bad }
+        for step in path {
+            if cur.kind == VK_REF {
+                let hi = cur.ival as usize
+                if hi >= self.it_heap.len { return &mut self.cv_bad }
+                cur = &mut self.it_heap[hi]
+            }
+            let k = cur.kind
+            if k == VK_ARRAY or k == VK_LIST or k == VK_STRUCT or k == VK_TUPLE or k == VK_ENUM {
+                if step >= cur.items.len { return &mut self.cv_bad }
+                cur = &mut cur.items[step]
+            } else if (k == VK_SOME or k == VK_OK) and step == 0 {
+                cur = &mut cur.items[0]
+            } else {
+                return &mut self.cv_bad
+            }
+        }
+        // the place a write lands in is the object a reference names
+        if cur.kind == VK_REF and (cur.ival as usize) < self.it_heap.len { return &mut self.it_heap[cur.ival as usize] }
+        return cur
+    }
+
+    fn it_read_path(self: *mut Self, root: *CV, path: []usize) -> ?CV {
+        var cur: *CV = root
+        for step in path {
+            if cur.kind == VK_REF {
+                if (cur.ival as usize) >= self.it_heap.len { return null }
+                cur = &self.it_heap[cur.ival as usize]
+            }
+            let k = cur.kind
+            if k == VK_ARRAY or k == VK_LIST or k == VK_STRUCT or k == VK_TUPLE or k == VK_ENUM {
+                if step >= cur.items.len { return null }
+                cur = &cur.items[step]
+            } else if (k == VK_SOME or k == VK_OK) and step == 0 {
+                cur = &cur.items[0]
+            } else if k == VK_OWNED_STR or k == VK_STR {
+                if step >= cur.text.len { return null }
+                return cv_int(cur.text[step] as i128)
+            } else {
+                return null
+            }
+        }
+        return cur.clone()
+    }
+
+    fn it_assign(self: *mut Self, target: usize, own v: CV) -> bool {
+        var fi = NONE
+        var l = NONE
+        var path = List(usize).new()
+        if !self.it_place_path(target, &mut fi, &mut l, &mut path) { return false }
+        if path.len == 0 {
+            if fi >= self.frames.len { return false }
+            while self.frames[fi].vals.len <= l { self.frames[fi].vals.append(cv(VK_NONE)) }
+            self.frames[fi].vals[l] = v
+            return true
+        }
+        var prefix = List(usize).new()
+        for x, i in path { if i + 1 < path.len { prefix.append(x) } }
+        let last = path[path.len - 1]
+        let parent = self.it_walk(fi, l, &prefix)
+        if parent.kind == VK_NONE { return false }
+        let pk = parent.kind
+        if pk == VK_OWNED_STR {
+            let b = cv_as_int(&v) orelse return false
+            if last >= parent.text.len { return false }
+            parent.text[last] = b as u8
+            return true
+        }
+        if pk == VK_ARRAY or pk == VK_LIST or pk == VK_STRUCT or pk == VK_TUPLE or pk == VK_ENUM {
+            if last >= parent.items.len { return false }
+            parent.items[last] = v
+            return true
+        }
+        if (pk == VK_SOME or pk == VK_OK) and last == 0 {
+            parent.items[0] = v
+            return true
+        }
+        return false
+    }
+
+    fn it_escape(self: *mut Self, flow: u8, label: usize, own v: CV) -> CV {
+        self.it_pending = flow
+        self.it_pending_label = label
+        self.it_pending_val = v
+        return cv(VK_NEVER)
+    }
+
+    fn it_eval(self: *mut Self, e: usize) -> ?CV {
+        let r = self.it_eval_inner(e)
+        if r == null and !self.it_has_panic and !self.it_budget {
+            if self.it_failed_at == NONE {
+                self.it_failed_at = self.tir.nodes[e].start
+                self.it_where = if self.it_cur_fn != NONE { self.insts[self.it_cur_fn].module } else { NONE }
+            }
+            // the first expression of the program's own file on the way out
+            if self.it_root_at == NONE and self.it_cur_fn != NONE and self.insts[self.it_cur_fn].module == 0 { self.it_root_at = self.tir.nodes[e].start }
+        }
+        return r
+    }
+
+    /// A block used as an expression: its value, or an escaping flow.
+    fn it_block_value(self: *mut Self, b: usize) -> ?CV {
+        let f = self.it_exec_block(b)
+        if f == FL_FAIL { return null }
+        if f == FL_NEXT {
+            if self.it_out.kind == VK_NONE { return cv(VK_VOID) }
+            return self.it_out.clone()
+        }
+        return self.it_escape(f, self.it_flow_label, self.it_flow_val.clone())
+    }
+
+    fn it_eval_inner(self: *mut Self, e: usize) -> ?CV {
+        if !self.it_step() { return null }
+        if self.it_pending != 0 { return cv(VK_NEVER) }
+        let k = self.tir.nodes[e].k
+        let kids = self.tir.nodes[e].kids.clone()
+        let a = self.tir.nodes[e].a
+        let ty = self.tir.nodes[e].ty
+        let at = self.tir.nodes[e].start
+        if k == TKind.Int { return cv_int(self.tir.nodes[e].ival) }
+        if k == TKind.Float { return cv_float(self.tir.nodes[e].fval) }
+        if k == TKind.Bool { return cv_bool(self.tir.nodes[e].flag) }
+        if k == TKind.Char { return cv_char(self.tir.nodes[e].ival) }
+        if k == TKind.Str { return cv_str(self.tir.nodes[e].text[..]) }
+        if k == TKind.Unit { return cv(VK_VOID) }
+        if k == TKind.Value { return self.value_of_node(e) }
+        if k == TKind.Local { return self.it_env_get(a) }
+        if k == TKind.Global { return null }
+        if k == TKind.Const {
+            _ = self.resolve_const(a)
+            let init = self.consts[a].value
+            if init == NONE or self.tir.nodes[init].k != TKind.Value { return null }
+            return self.value_of_node(init)
+        }
+        if k == TKind.FnRef or k == TKind.FnToFat {
+            var v = cv(VK_FN)
+            v.ival = a as i128
+            return v
+        }
+        if k == TKind.Field or k == TKind.RefField or k == TKind.TupleField {
+            let bv = self.it_eval(kids[0]) orelse return null
+            var path = List(usize).new()
+            path.append(a)
+            return self.it_read_path(&bv, path[..])
+        }
+        if k == TKind.Index {
+            let bv = self.it_eval(kids[0]) orelse return null
+            let iv = self.it_eval(kids[1]) orelse return null
+            let i = cv_as_int(&iv) orelse return null
+            let len = cv_seq_len(&bv) orelse return null
+            if i < 0 or i as usize >= len {
+                self.it_fail_panic(format("index {} out of bounds for length {}", .{i, len})[..], at)
+                return null
+            }
+            var path = List(usize).new()
+            path.append(i as usize)
+            return self.it_read_path(&bv, path[..])
+        }
+        if k == TKind.SliceOp {
+            let bv = self.it_eval(kids[0]) orelse return null
+            let has_start = self.tir.nodes[e].flag
+            let has_end = self.tir.nodes[e].flag2
+            var next: usize = 1
+            var s: usize = 0
+            if has_start {
+                let sv = self.it_eval(kids[next]) orelse return null
+                s = (cv_as_int(&sv) orelse return null) as usize
+                next += 1
+            }
+            let len = cv_seq_len(&bv) orelse return null
+            var en = len
+            if has_end {
+                let ev = self.it_eval(kids[next]) orelse return null
+                en = (cv_as_int(&ev) orelse return null) as usize
+            }
+            if s > en or en > len {
+                self.it_fail_panic(format("slice bounds {}..{} out of range for length {}", .{s, en, len})[..], at)
+                return null
+            }
+            if bv.kind == VK_ARRAY or bv.kind == VK_LIST {
+                var items = List(CV).new()
+                for i in s..en { items.append(bv.items[i].clone()) }
+                return cv_seq(VK_ARRAY, items)
+            }
+            if bv.kind == VK_STR or bv.kind == VK_OWNED_STR { return cv_str(bv.text[s..en]) }
+            return null
+        }
+        if k == TKind.Deref {
+            let p = self.it_eval(kids[0]) orelse return null
+            if p.kind != VK_PTR { return null }
+            let fi = p.ival as usize
+            let l = p.b
+            if fi >= self.frames.len or l >= self.frames[fi].vals.len { return null }
+            if self.frames[fi].vals[l].kind == VK_NONE { return null }
+            let root = self.frames[fi].vals[l].clone()
+            return self.it_read_path(&root, p.path[..])
+        }
+        if k == TKind.AddrOf {
+            var fi = NONE
+            var l = NONE
+            var path = List(usize).new()
+            if self.it_place_path(kids[0], &mut fi, &mut l, &mut path) { return cv_ptr(fi, l, path) }
+            // the address of a temporary: give the value a slot of its own
+            let v = self.it_eval(kids[0]) orelse return null
+            let cur = self.frames.len - 1
+            let id = self.frames[cur].vals.len
+            self.frames[cur].vals.append(v)
+            return cv_ptr(cur, id, List(usize).new())
+        }
+        if k == TKind.Call {
+            var vs = List(CV).new()
+            for x in kids { vs.append(self.it_eval(x) orelse return null) }
+            return self.it_call_back(a, kids[..], vs, List(CV).new())
+        }
+        if k == TKind.CallPtr {
+            let f = self.it_eval(kids[0]) orelse return null
+            var vs = List(CV).new()
+            for x, i in kids { if i > 0 { vs.append(self.it_eval(x) orelse return null) } }
+            if f.kind != VK_FN { return null }
+            return self.it_call_back(f.ival as usize, kids[1..], vs, f.items.clone())
+        }
+        if k == TKind.Builtin { return self.it_eval_builtin(e) }
+        if k == TKind.Unary {
+            let v = self.it_eval(kids[0]) orelse return null
+            let op = self.tir.nodes[e].text.clone()
+            let mode = self.tir.nodes[e].name.clone()
+            if op == "!" and v.kind == VK_BOOL { return cv_bool(!v.flag) }
+            if op == "-" and v.kind == VK_FLOAT { return cv_float(-v.fval) }
+            if op == "-" and v.kind == VK_INT {
+                let r = -v.ival
+                if mode == "checked" {
+                    var lo: i128 = 0
+                    var hi: i128 = 0
+                    if self.it_int_range(ty, &mut lo, &mut hi) {
+                        if r < lo or r > hi {
+                            self.it_fail_panic("integer overflow in negation", at)
+                            return null
+                        }
+                    }
+                }
+                return cv_int(r)
+            }
+            if op == "~" and v.kind == VK_INT {
+                var bits: u32 = 64
+                var signed = true
+                _ = self.it_bits_of(ty, &mut bits, &mut signed)
+                return cv_int(wrap_to(~v.ival, bits, signed))
+            }
+            if op == "~" and v.kind == VK_BOOL { return cv_bool(!v.flag) }
+            return null
+        }
+        if k == TKind.Binary {
+            let av = self.it_eval(kids[0]) orelse return null
+            let bv = self.it_eval(kids[1]) orelse return null
+            let op = self.tir.nodes[e].text.clone()
+            let mode = self.tir.nodes[e].name.clone()
+            return self.it_binop(op[..], mode[..], av, bv, self.tir.nodes[kids[0]].ty, at)
+        }
+        if k == TKind.Logical {
+            let is_and = self.tir.nodes[e].flag
+            let av = self.it_eval(kids[0]) orelse return null
+            let x = cv_as_bool(&av) orelse return null
+            if is_and and !x { return cv_bool(false) }
+            if !is_and and x { return cv_bool(true) }
+            let bv = self.it_eval(kids[1]) orelse return null
+            let y = cv_as_bool(&bv) orelse return null
+            return cv_bool(y)
+        }
+        if k == TKind.Cast {
+            let v = self.it_eval(kids[0]) orelse return null
+            let kind = self.tir.nodes[e].name.clone()
+            if kind.len >= 10 and kind[0..10] == "int_to_int" {
+                let checked = kind == "int_to_int checked=true"
+                let i = cv_as_int(&v) orelse return null
+                var lo: i128 = 0
+                var hi: i128 = 0
+                if self.it_int_range(ty, &mut lo, &mut hi) {
+                    if i < lo or i > hi {
+                        if checked {
+                            self.it_fail_panic(format("value {} does not fit the target type", .{i})[..], at)
+                            return null
+                        }
+                        var bits: u32 = 64
+                        var signed = true
+                        if !self.it_bits_of(ty, &mut bits, &mut signed) { return null }
+                        return cv_int(wrap_to(i, bits, signed))
+                    }
+                }
+                if self.tys.kind(self.tys.shallow(ty)) == TK.Char { return cv_char(i) }
+                return cv_int(i)
+            }
+            if kind == "int_to_float" { let i = cv_as_int(&v) orelse return null; return cv_float(i as f64) }
+            if kind == "float_to_int" {
+                let f = cv_as_float(&v) orelse return null
+                let i = f as i128
+                var lo: i128 = 0
+                var hi: i128 = 0
+                if self.it_int_range(ty, &mut lo, &mut hi) {
+                    if f != f or f > 1.0e300 or f < -1.0e300 or i < lo or i > hi {
+                        self.it_fail_panic("float to integer cast out of range", at)
+                        return null
+                    }
+                }
+                return cv_int(i)
+            }
+            if kind == "float_to_float" { let f = cv_as_float(&v) orelse return null; return cv_float(f) }
+            if kind == "bits" {
+                if v.kind == VK_BOOL { return cv_int(if v.flag { 1 } else { 0 }) }
+                if v.kind == VK_CHAR { return cv_int(v.ival) }
+                if v.kind == VK_ENUM { return cv_int(v.ival) }
+                return v
+            }
+            return null
+        }
+        if k == TKind.If {
+            let c = self.it_eval(kids[0]) orelse return null
+            let cb = cv_as_bool(&c) orelse return null
+            if cb { return self.it_block_value(kids[1]) }
+            if kids.len > 2 { return self.it_block_value(kids[2]) }
+            return cv(VK_VOID)
+        }
+        if k == TKind.IfCapture {
+            let c = self.it_eval(kids[0]) orelse return null
+            if c.kind == VK_SOME {
+                self.it_env_set(a, c.items[0].clone())
+                return self.it_block_value(kids[1])
+            }
+            if c.kind == VK_NULL {
+                if kids.len > 2 { return self.it_block_value(kids[2]) }
+                return cv(VK_VOID)
+            }
+            return null
+        }
+        if k == TKind.Match {
+            let scrutinee = kids[0]
+            let v = self.it_eval(scrutinee) orelse return null
+            // `match p.*`: payload bindings typed as pointers point into the place
+            var has_place = false
+            var pfi = NONE
+            var pl = NONE
+            var ppath = List(usize).new()
+            if self.tir.nodes[scrutinee].k == TKind.Deref {
+                has_place = self.it_place_path(scrutinee, &mut pfi, &mut pl, &mut ppath)
+            }
+            var i: usize = 1
+            while i < kids.len {
+                let arm = kids[i]
+                let akids = self.tir.nodes[arm].kids.clone()
+                let has_guard = self.tir.nodes[arm].flag
+                let m = self.it_match_pat(akids[0], &v, has_place, pfi, pl, &ppath)
+                if m < 0 { return null }
+                if m == 1 {
+                    var body = akids[1]
+                    if has_guard {
+                        let g = self.it_eval(akids[1]) orelse return null
+                        let gb = cv_as_bool(&g) orelse return null
+                        if !gb { i += 1; continue }
+                        body = akids[2]
+                    }
+                    return self.it_eval(body)
+                }
+                i += 1
+            }
+            self.it_fail_panic("no match arm matched", at)
+            return null
+        }
+        if k == TKind.BlockExpr { return self.it_block_value(kids[0]) }
+        if k == TKind.StructLit or k == TKind.RefNew {
+            let idxs = self.tir.nodes[e].kids2.clone()
+            var n: usize = 0
+            for i in idxs { if i + 1 > n { n = i + 1 } }
+            var vals = List(CV).new()
+            for i in 0..n { vals.append(cv(VK_UNDEFINED)) }
+            for f, i in kids { vals[idxs[i]] = self.it_eval(f) orelse return null }
+            if k == TKind.RefNew {
+                self.it_heap.append(cv_seq(VK_STRUCT, vals))
+                var r = cv(VK_REF)
+                r.ival = (self.it_heap.len - 1) as i128
+                return r
+            }
+            return cv_seq(VK_STRUCT, vals)
+        }
+        if k == TKind.EnumLit {
+            var vals = List(CV).new()
+            for p in kids { vals.append(self.it_eval(p) orelse return null) }
+            var v = cv_seq(VK_ENUM, vals)
+            v.ival = a as i128
+            return v
+        }
+        if k == TKind.ArrayLit or k == TKind.TupleLit {
+            var vals = List(CV).new()
+            for x in kids { vals.append(self.it_eval(x) orelse return null) }
+            return cv_seq(if k == TKind.ArrayLit { VK_ARRAY } else { VK_TUPLE }, vals)
+        }
+        if k == TKind.ArrayRepeat {
+            let v = self.it_eval(kids[0]) orelse return null
+            var vals = List(CV).new()
+            for i in 0..a { vals.append(v.clone()) }
+            return cv_seq(VK_ARRAY, vals)
+        }
+        if k == TKind.Try {
+            let v = self.it_eval(kids[0]) orelse return null
+            if v.kind == VK_OK { return v.items[0].clone() }
+            if v.kind == VK_ERR { return self.it_escape(FL_RETURN, NONE, v) }
+            return v
+        }
+        if k == TKind.Catch {
+            let v = self.it_eval(kids[0]) orelse return null
+            if v.kind == VK_OK { return v.items[0].clone() }
+            if v.kind == VK_ERR {
+                if a != NONE { self.it_env_set(a, v.clone()) }
+                return self.it_eval(kids[1])
+            }
+            return v
+        }
+        if k == TKind.OrElse {
+            let v = self.it_eval(kids[0]) orelse return null
+            if v.kind == VK_SOME { return v.items[0].clone() }
+            if v.kind == VK_NULL { return self.it_eval(kids[1]) }
+            return null
+        }
+        if k == TKind.Unwrap {
+            let v = self.it_eval(kids[0]) orelse return null
+            if v.kind == VK_SOME { return v.items[0].clone() }
+            if v.kind == VK_NULL {
+                self.it_fail_panic("unwrapped a null optional", at)
+                return null
+            }
+            return null
+        }
+        if k == TKind.OptWrap { let v = self.it_eval(kids[0]) orelse return null; return cv_wrap(VK_SOME, v) }
+        if k == TKind.OptNull { return cv(VK_NULL) }
+        if k == TKind.ErrWrap { let v = self.it_eval(kids[0]) orelse return null; return cv_wrap(VK_OK, v) }
+        if k == TKind.ErrToUnion { return self.it_eval(kids[0]) }
+        if k == TKind.ErrVal { return cv_err(a) }
+        if k == TKind.ArrayToSlice {
+            let v = self.it_eval(kids[0]) orelse return null
+            if v.kind == VK_ARRAY or v.kind == VK_STR { return v }
+            return null
+        }
+        if k == TKind.ListToSlice {
+            var v = self.it_eval(kids[0]) orelse return null
+            if v.kind == VK_LIST or v.kind == VK_ARRAY { v.kind = VK_ARRAY; return v }
+            return null
+        }
+        if k == TKind.StrToSlice {
+            var v = self.it_eval(kids[0]) orelse return null
+            if v.kind == VK_OWNED_STR or v.kind == VK_STR { v.kind = VK_STR; return v }
+            return null
+        }
+        if k == TKind.Closure {
+            // a function value carrying its captures: copies, or pointers into this frame
+            var f = cv(VK_FN)
+            f.ival = a as i128
+            let caps = self.tir.nodes[e].kids2.clone()
+            let fi = self.frames.len - 1
+            for l, i in caps {
+                if kids[i] == 1 { f.items.append(cv_ptr(fi, l, List(usize).new())) } else { f.items.append(self.it_env_get(l)) }
+            }
+            return f
+        }
+        if k == TKind.DynFrom {
+            let ptr = self.it_eval(kids[0]) orelse return null
+            var d = cv(VK_DYN)
+            d.ival = a as i128
+            d.items.append(ptr)
+            return d
+        }
+        if k == TKind.DynCall {
+            // the method in the object's vtable, with the data pointer as `self`
+            let recv = self.it_eval(kids[0]) orelse return null
+            if recv.kind != VK_DYN or recv.items.len == 0 { return null }
+            let vt = recv.ival as usize
+            if vt >= self.vtables.len or a >= self.vtables[vt].insts.len { return null }
+            let inst = self.vtables[vt].insts[a]
+            var vs = List(CV).new()
+            vs.append(recv.items[0].clone())
+            for x, i in kids { if i > 0 { vs.append(self.it_eval(x) orelse return null) } }
+            return self.it_call_back(inst, kids[..], vs, List(CV).new())
+        }
+        if k == TKind.Unreachable {
+            self.it_fail_panic("reached `unreachable`", at)
+            return null
+        }
+        if k == TKind.Undefined { return cv(VK_UNDEFINED) }
+        if k == TKind.BinConstruct { return self.it_bin_construct(e) }
+        if k == TKind.TypeVal {
+            var v = cv(VK_TYPE)
+            v.ival = a as i128
+            return v
+        }
+        if k == TKind.RecordCheck {
+            let as_error = self.tir.nodes[e].flag
+            let v = self.it_eval(kids[0]) orelse return null
+            let fields = self.tir.nodes[e].kids2.clone()
+            var i: usize = 1
+            while i < kids.len {
+                let idx = fields[(i - 1) * 2]
+                let local = fields[(i - 1) * 2 + 1]
+                var path = List(usize).new()
+                path.append(idx)
+                let fv = self.it_read_path(&v, path[..]) orelse return null
+                self.it_env_set(local, fv)
+                let okv = self.it_eval(kids[i]) orelse return null
+                let ok = cv_as_bool(&okv) orelse return null
+                if !ok {
+                    if as_error { return cv_err(self.error_id("InvalidRecord")) }
+                    self.it_fail_panic("record constraint violated", at)
+                    return null
+                }
+                i += 1
+            }
+            if as_error { return cv_wrap(VK_OK, v) }
+            return v
+        }
+        if k == TKind.Retained { return self.it_eval(kids[0]) }
+        return null
+    }
+
+    fn it_int_range(self: *mut Self, t0: usize, lo: *mut i128, hi: *mut i128) -> bool {
+        let t = self.tys.shallow(t0)
+        let k = self.tys.kind(t)
+        if k == TK.Int {
+            let nm = self.tys.list[t].name.clone()
+            lo.* = check.int_min(nm[..])
+            hi.* = check.int_max(nm[..])
+            return true
+        }
+        if k == TK.Distinct { return self.it_int_range(self.distinct_underlying(self.tys.list[t].def), lo, hi) }
+        return false
+    }
+
+    fn it_bits_of(self: *mut Self, t0: usize, bits: *mut u32, signed: *mut bool) -> bool {
+        let t = self.tys.shallow(t0)
+        let k = self.tys.kind(t)
+        if k == TK.Int {
+            let nm = self.tys.list[t].name.clone()
+            bits.* = check.int_bits(nm[..])
+            signed.* = check.int_signed(nm[..])
+            return true
+        }
+        if k == TK.Distinct { return self.it_bits_of(self.distinct_underlying(self.tys.list[t].def), bits, signed) }
+        return false
+    }
+
+    /// -1 when evaluation failed, 0 for no match, 1 for a match (bindings set).
+    fn it_match_pat(self: *mut Self, p: usize, v: *CV, has_place: bool, pfi: usize, pl: usize, ppath: *List(usize)) -> i8 {
+        let k = self.tir.nodes[p].k
+        let a = self.tir.nodes[p].a
+        let kids = self.tir.nodes[p].kids.clone()
+        if k == TKind.PWild { return 1 }
+        if k == TKind.PBind {
+            var by_ptr = false
+            if has_place and self.it_cur_fn != NONE {
+                let lt = self.insts[self.it_cur_fn].locals[a].ty
+                by_ptr = self.tys.kind(self.tys.shallow(lt)) == TK.Ptr and v.kind != VK_PTR
+            }
+            if by_ptr { self.it_env_set(a, cv_ptr(pfi, pl, ppath.clone())) }
+            else { self.it_env_set(a, v.clone()) }
+            return 1
+        }
+        if k == TKind.PInt { let i = cv_as_int(v) orelse return 0; return if i == self.tir.nodes[p].ival { 1 } else { 0 } }
+        if k == TKind.PFloat { let f = cv_as_float(v) orelse return 0; return if f == self.tir.nodes[p].fval { 1 } else { 0 } }
+        if k == TKind.PBool { return if v.kind == VK_BOOL and v.flag == self.tir.nodes[p].flag { 1 } else { 0 } }
+        if k == TKind.PChar {
+            if v.kind == VK_CHAR or v.kind == VK_INT { return if v.ival == self.tir.nodes[p].ival { 1 } else { 0 } }
+            return 0
+        }
+        if k == TKind.PStr {
+            if v.kind == VK_STR or v.kind == VK_OWNED_STR { return if v.text[..] == self.tir.nodes[p].text[..] { 1 } else { 0 } }
+            return 0
+        }
+        if k == TKind.PRange {
+            let i = cv_as_int(v) orelse return -1
+            let lo = self.tir.nodes[p].ival
+            let hi = self.tir.nodes[p].text[..].parse_int(i128) catch { 0 }
+            let inclusive = self.tir.nodes[p].flag
+            return if i >= lo and (if inclusive { i <= hi } else { i < hi }) { 1 } else { 0 }
+        }
+        if k == TKind.PVariant {
+            if v.kind != VK_ENUM or v.ival != a as i128 { return 0 }
+            for q, i in kids {
+                if i >= v.items.len { break }
+                var sub = ppath.clone()
+                sub.append(i)
+                let r = self.it_match_pat(q, &v.items[i], has_place, pfi, pl, &sub)
+                if r != 1 { return r }
+            }
+            return 1
+        }
+        if k == TKind.PError { return if v.kind == VK_ERR and v.ival == a as i128 { 1 } else { 0 } }
+        if k == TKind.PNull { return if v.kind == VK_NULL { 1 } else { 0 } }
+        if k == TKind.PSome {
+            if v.kind != VK_SOME { return 0 }
+            var sub = ppath.clone()
+            sub.append(0)
+            return self.it_match_pat(kids[0], &v.items[0], has_place, pfi, pl, &sub)
+        }
+        if k == TKind.POk {
+            if v.kind == VK_OK {
+                var sub = ppath.clone()
+                sub.append(0)
+                return self.it_match_pat(kids[0], &v.items[0], has_place, pfi, pl, &sub)
+            }
+            if v.kind == VK_ERR { return 0 }
+            return self.it_match_pat(kids[0], v, has_place, pfi, pl, ppath)
+        }
+        if k == TKind.POr {
+            for q in kids {
+                let r = self.it_match_pat(q, v, has_place, pfi, pl, ppath)
+                if r != 0 { return r }
+            }
+            return 0
+        }
+        if k == TKind.PTuple {
+            if v.kind != VK_TUPLE or v.items.len != kids.len { return 0 }
+            for q, i in kids {
+                var sub = ppath.clone()
+                sub.append(i)
+                let r = self.it_match_pat(q, &v.items[i], has_place, pfi, pl, &sub)
+                if r != 1 { return r }
+            }
+            return 1
+        }
+        if k == TKind.PAt {
+            var by_ptr = false
+            if has_place and self.it_cur_fn != NONE {
+                let lt = self.insts[self.it_cur_fn].locals[a].ty
+                by_ptr = self.tys.kind(self.tys.shallow(lt)) == TK.Ptr and v.kind != VK_PTR
+            }
+            if by_ptr { self.it_env_set(a, cv_ptr(pfi, pl, ppath.clone())) }
+            else { self.it_env_set(a, v.clone()) }
+            return self.it_match_pat(kids[0], v, has_place, pfi, pl, ppath)
+        }
+        if k == TKind.PSlice {
+            // the elements as values (a string's bytes become integers)
+            var items = List(CV).new()
+            if v.kind == VK_ARRAY or v.kind == VK_LIST { items = v.items.clone() }
+            else if v.kind == VK_STR or v.kind == VK_OWNED_STR { for b in v.text { items.append(cv_int(b as i128)) } }
+            else { return 0 }
+            let rest = a
+            let fixed = if rest == NONE { kids.len } else { kids.len - 1 }
+            if rest == NONE and items.len != fixed { return 0 }
+            if rest != NONE and items.len < fixed { return 0 }
+            for q, i in kids {
+                if i == rest {
+                    let ra = self.tir.nodes[q].a
+                    if ra != NONE {
+                        var part = List(CV).new()
+                        let after = kids.len - 1 - i
+                        for j in i..items.len - after { part.append(items[j].clone()) }
+                        self.it_env_set(ra, cv_seq(VK_ARRAY, part))
+                    }
+                    continue
+                }
+                let idx = if rest == NONE or i < rest { i } else { items.len - (kids.len - i) }
+                var sub = ppath.clone()
+                sub.append(idx)
+                let r = self.it_match_pat(q, &items[idx], has_place, pfi, pl, &sub)
+                if r != 1 { return r }
+            }
+            return 1
+        }
+        if k == TKind.PBinary {
+            var bytes = String.new()
+            if v.kind == VK_STR or v.kind == VK_OWNED_STR { bytes = v.text.clone() }
+            else if v.kind == VK_ARRAY {
+                for x in v.items { bytes.push_byte((cv_as_int(&x) orelse 0) as u8) }
+            } else { return -1 }
+            return self.it_match_binary(kids[..], bytes[..])
+        }
+        return -1
+    }
+
+    fn it_match_binary(self: *mut Self, segs: []usize, bytes: []u8) -> i8 {
+        var bit: usize = 0
+        let total_bits = bytes.len * 8
+        var any_rest = false
+        for seg in segs {
+            let desc = self.tir.nodes[seg].name.clone()
+            let skids = self.tir.nodes[seg].kids.clone()
+            // "bind 5 size=bits 8 endian=big signed=false float=false utf8=false"
+            let words = Checker.split_words(desc[..])
+            let kind = words[0].clone()
+            var wi: usize = 1
+            var local = NONE
+            if kind == "bind" or kind == "rest" { local = words[1][..].parse_int(usize) catch { NONE }; wi = 2 }
+            let size_word = words[wi].clone()
+            var size_bits: usize = 0
+            var value_kid = NONE
+            var size_kid = NONE
+            if kind == "value" { value_kid = skids[0] }
+            if size_word == "size=expr" {
+                size_kid = skids[skids.len - 1]
+                let sv = self.it_eval(size_kid) orelse return -1
+                size_bits = (cv_as_int(&sv) orelse return -1) as usize
+                wi += 1
+            } else if size_word == "size=rest" {
+                size_bits = total_bits - bit
+                any_rest = true
+                wi += 1
+            } else {
+                // "size=bits" "8"
+                size_bits = words[wi + 1][..].parse_int(usize) catch { 0 }
+                wi += 2
+            }
+            let endian = words[wi].clone()
+            let signed = words[wi + 1] == "signed=true"
+            let float = words[wi + 2] == "float=true"
+            if bit + size_bits > total_bits { return 0 }
+            let seg_ty = self.tir.nodes[seg].ty
+            let is_bytes = self.tys.kind(self.tys.shallow(seg_ty)) == TK.Slice or size_word == "size=rest"
+            if is_bytes {
+                if bit % 8 != 0 or size_bits % 8 != 0 { return 0 }
+                let sl = bytes[bit / 8..bit / 8 + size_bits / 8]
+                if kind == "value" {
+                    let want = self.it_eval(value_kid) orelse return -1
+                    if ! (want.kind == VK_STR or want.kind == VK_OWNED_STR) { return -1 }
+                    if want.text[..] != sl { return 0 }
+                } else {
+                    self.it_env_set(local, cv_str(sl))
+                }
+            } else {
+                var raw: u128 = 0
+                for i in 0..size_bits {
+                    let b = bit + i
+                    let bitv = (bytes[b / 8] >> ((7 - (b % 8)) as u8)) & 1
+                    raw = (raw << 1) | (bitv as u128)
+                }
+                if endian == "endian=little" and size_bits % 8 == 0 and size_bits > 8 {
+                    var r: u128 = 0
+                    let nb = size_bits / 8
+                    for i in 0..nb {
+                        r |= ((raw >> ((i * 8) as u32)) & 0xff) << (((nb - 1 - i) * 8) as u32)
+                    }
+                    raw = r
+                }
+                var val = cv(VK_NONE)
+                if float {
+                    val = cv_float(if size_bits == 32 { f32_from_bits(raw as u32) } else { f64_from_bits(raw as u64) })
+                } else if signed and size_bits < 128 {
+                    let m: i128 = 1 << (size_bits as u32)
+                    var r = raw as i128
+                    if r >= m / 2 { r -= m }
+                    val = cv_int(r)
+                } else {
+                    val = cv_int(raw as i128)
+                }
+                if kind == "value" {
+                    let want = self.it_eval(value_kid) orelse return -1
+                    var eq = false
+                    if want.kind == VK_FLOAT and val.kind == VK_FLOAT { eq = want.fval == val.fval }
+                    else {
+                        let wi2 = cv_as_int(&want) orelse return -1
+                        let vi2 = cv_as_int(&val) orelse return -1
+                        eq = wi2 == vi2
+                    }
+                    if !eq { return 0 }
+                } else {
+                    self.it_env_set(local, val)
+                }
+            }
+            bit += size_bits
+        }
+        return if bit == total_bits or any_rest { 1 } else { 0 }
+    }
+
+    fn it_binop(self: *mut Self, op: []u8, mode: []u8, a: CV, b: CV, ty: usize, at: usize) -> ?CV {
+        let is_cmp = op == "==" or op == "!=" or op == "<" or op == "<=" or op == ">" or op == ">="
+        if is_cmp {
+            // -1 less, 0 equal, 1 greater, 2 unordered
+            var r: i8 = 2
+            let a_str = a.kind == VK_STR or a.kind == VK_OWNED_STR
+            let b_str = b.kind == VK_STR or b.kind == VK_OWNED_STR
+            if a.kind == VK_FLOAT and b.kind == VK_FLOAT {
+                if a.fval != a.fval or b.fval != b.fval { r = 2 }
+                else if a.fval < b.fval { r = -1 } else if a.fval > b.fval { r = 1 } else { r = 0 }
+            } else if a_str and b_str {
+                r = cmp_bytes(a.text[..], b.text[..])
+            } else if a.kind == VK_NULL and b.kind == VK_NULL {
+                r = 0
+            } else if (a.kind == VK_SOME or a.kind == VK_NULL) and (b.kind == VK_SOME or b.kind == VK_NULL) {
+                r = -1
+            } else if a.kind == VK_REF and b.kind == VK_REF {
+                r = if a.ival == b.ival { 0 } else { 2 }
+            } else if a.kind == VK_ENUM and b.kind == VK_ENUM {
+                r = if a.ival < b.ival { -1 } else if a.ival > b.ival { 1 } else { 0 }
+            } else if a.kind == VK_ERR and b.kind == VK_ERR {
+                r = if a.ival < b.ival { -1 } else if a.ival > b.ival { 1 } else { 0 }
+            } else if (a.kind == VK_STRUCT and b.kind == VK_STRUCT) or (a.kind == VK_ARRAY and b.kind == VK_ARRAY) {
+                r = if cv_eq(&a, &b) { 0 } else { -1 }
+            } else {
+                let x = cv_as_int(&a) orelse return null
+                let y = cv_as_int(&b) orelse return null
+                r = if x < y { -1 } else if x > y { 1 } else { 0 }
+            }
+            if r == 2 { return cv_bool(op == "!=") }
+            if op == "==" { return cv_bool(r == 0) }
+            if op == "!=" { return cv_bool(r != 0) }
+            if op == "<" { return cv_bool(r == -1) }
+            if op == "<=" { return cv_bool(r != 1) }
+            if op == ">" { return cv_bool(r == 1) }
+            return cv_bool(r != -1)
+        }
+        if a.kind == VK_BOOL and b.kind == VK_BOOL {
+            if op == "&" { return cv_bool(a.flag and b.flag) }
+            if op == "|" { return cv_bool(a.flag or b.flag) }
+            if op == "^" { return cv_bool(a.flag != b.flag) }
+            return null
+        }
+        if mode == "float" {
+            let x = cv_as_float(&a) orelse return null
+            let y = cv_as_float(&b) orelse return null
+            if op == "+" { return cv_float(x + y) }
+            if op == "-" { return cv_float(x - y) }
+            if op == "*" { return cv_float(x * y) }
+            if op == "/" { return cv_float(x / y) }
+            if op == "%" { return cv_float(x % y) }
+            return null
+        }
+        let x = cv_as_int(&a) orelse return null
+        let y = cv_as_int(&b) orelse return null
+        var bits: u32 = 64
+        var signed = true
+        _ = self.it_bits_of(ty, &mut bits, &mut signed)
+        var lo: i128 = -9223372036854775808
+        var hi: i128 = 9223372036854775807
+        _ = self.it_int_range(ty, &mut lo, &mut hi)
+        var raw: ?i128 = null
+        if op == "+" or op == "+%" or op == "+|" { raw = check.checked_add(x, y) }
+        else if op == "-" or op == "-%" or op == "-|" { raw = check.checked_sub(x, y) }
+        else if op == "*" or op == "*%" or op == "*|" { raw = check.checked_mul(x, y) }
+        else if op == "/" {
+            if y == 0 { self.it_fail_panic("division by zero", at); return null }
+            raw = x / y
+        } else if op == "%" {
+            if y == 0 { self.it_fail_panic("remainder by zero", at); return null }
+            raw = x % y
+        } else if op == "&" { raw = x & y }
+        else if op == "|" { raw = x | y }
+        else if op == "^" { raw = x ^ y }
+        else if op == "<<" {
+            if y < 0 or y >= bits as i128 { self.it_fail_panic("shift amount exceeds the bit width", at); return null }
+            raw = wrap_to(x << (y as u32), bits, signed)
+        } else if op == ">>" {
+            if y < 0 or y >= bits as i128 { self.it_fail_panic("shift amount exceeds the bit width", at); return null }
+            raw = x >> (y as u32)
+        } else {
+            return null
+        }
+        let r = raw orelse {
+            self.it_fail_panic("integer overflow", at)
+            return null
+        }
+        if mode == "checked" {
+            if r < lo or r > hi {
+                // `nx play` says what a compiled program says; compile time says more
+                let msg = if self.play_mode { format("integer overflow in `{}`", .{op}) } else { format("integer overflow: {} {} {} does not fit", .{x, op, y}) }
+                self.it_fail_panic(msg[..], at)
+                return null
+            }
+            return cv_int(r)
+        }
+        if mode == "wrap" { return cv_int(wrap_to(r, bits, signed)) }
+        if mode == "sat" { return cv_int(if r < lo { lo } else if r > hi { hi } else { r }) }
+        return cv_int(r)
+    }
+
+    fn it_eval_builtin(self: *mut Self, e: usize) -> ?CV {
+        let name = self.tir.nodes[e].name.clone()
+        let args = self.tir.nodes[e].kids.clone()
+        let tys = self.tir.nodes[e].kids2.clone()
+        let at = self.tir.nodes[e].start
+        var vs = List(CV).new()
+        for x in args { vs.append(self.it_eval(x) orelse return null) }
+        // `{}` of an enum or an error writes its name, which only the type knows
+        if name == "Format" or name == "Println" or name == "Print" or name == "Eprintln" {
+            for x, i in args { if i > 0 { self.it_name_value(self.tir.nodes[x].ty, &mut vs[i]) } }
+        }
+        if name == "BitCast" {
+            // one scalar's bits read as another's, both of the same size
+            let from = self.tys.shallow(tys[1])
+            let to = self.tys.shallow(tys[0])
+            let nbytes = self.size_of(from)
+            var raw: u64 = 0
+            if vs[0].kind == VK_FLOAT {
+                raw = if nbytes == 4 { @bitCast(u32, vs[0].fval as f32) as u64 } else { @bitCast(u64, vs[0].fval) }
+            } else {
+                let n = cv_as_int(&vs[0]) orelse return null
+                raw = (n & 0xFFFFFFFFFFFFFFFF) as u64
+            }
+            if nbytes < 8 { raw = raw & ((1 << ((nbytes * 8) as u32)) - 1) }
+            let tk = self.tys.kind(to)
+            if tk == TK.Float { return cv_float(if nbytes == 4 { f32_from_bits(raw as u32) } else { f64_from_bits(raw) }) }
+            if tk == TK.Bool { return cv_bool(raw != 0) }
+            if tk == TK.Char { return cv_char(raw as i128) }
+            var bits: u32 = 64
+            var signed = false
+            _ = self.it_bits_of(to, &mut bits, &mut signed)
+            if signed and bits < 64 and (raw >> ((bits - 1) as u32)) & 1 == 1 { return cv_int(raw as i128 - (1 << (bits as u32)) as i128) }
+            if signed and bits == 64 { return cv_int(@bitCast(i64, raw) as i128) }
+            return cv_int(raw as i128)
+        }
+        if name == "Len" {
+            if vs[0].kind == VK_MAP { return cv_int((vs[0].items.len / 2) as i128) }
+            let n = cv_seq_len(&vs[0]) orelse return null
+            return cv_int(n as i128)
+        }
+        // ---- lists, mutating through the receiver place
+        if name == "ListClear" or name == "ListInsert" or name == "ListRemove" or name == "ListSwapRemove" or name == "ListExtend"
+            or name == "ListAppend" or name == "ListPop" or name == "StringClear" or name == "StringPop" or name == "MapPut"
+            or name == "MapRemove" or name == "MapClear" or name == "SliceCopy" or name == "SliceFill" or name == "SliceReverse"
+            or name == "SliceSort" or name == "StringAppend" or name == "StringAppendChar" or name == "StringPushByte" {
+            var fi = NONE
+            var l = NONE
+            var path = List(usize).new()
+            if !self.it_recv_place(args[0], &mut fi, &mut l, &mut path) { return null }
+            let cur = self.it_walk(fi, l, &path)
+            if cur.kind == VK_NONE { return null }
+            return self.it_mutating_builtin(name[..], cur, &vs, at)
+        }
+        if name == "ListReserve" { return cv(VK_VOID) }
+        if name == "MapNew" { return cv_seq(VK_MAP, List(CV).new()) }
+        if name == "MapGet" {
+            if vs[0].kind != VK_MAP { return null }
+            var i: usize = 0
+            while i + 1 < vs[0].items.len {
+                if cv_key_eq(&vs[0].items[i], &vs[1]) { return cv_wrap(VK_SOME, vs[0].items[i + 1].clone()) }
+                i += 2
+            }
+            return cv(VK_NULL)
+        }
+        if name == "MapContains" {
+            if vs[0].kind != VK_MAP { return null }
+            var i: usize = 0
+            while i + 1 < vs[0].items.len {
+                if cv_key_eq(&vs[0].items[i], &vs[1]) { return cv_bool(true) }
+                i += 2
+            }
+            return cv_bool(false)
+        }
+        if name == "MapKeys" or name == "MapValues" {
+            if vs[0].kind != VK_MAP { return null }
+            var out = List(CV).new()
+            var i: usize = if name == "MapKeys" { 0 } else { 1 }
+            while i < vs[0].items.len { out.append(vs[0].items[i].clone()); i += 2 }
+            return cv_seq(VK_LIST, out)
+        }
+        if name == "MapEntries" {
+            if vs[0].kind != VK_MAP { return null }
+            var out = List(CV).new()
+            var i: usize = 0
+            while i + 1 < vs[0].items.len {
+                var pair = List(CV).new()
+                pair.append(vs[0].items[i].clone())
+                pair.append(vs[0].items[i + 1].clone())
+                out.append(cv_seq(VK_TUPLE, pair))
+                i += 2
+            }
+            return cv_seq(VK_LIST, out)
+        }
+        if name == "SliceIndexOf" {
+            let items = cv_seq_items(&vs[0]) orelse return null
+            for x, i in items { if cv_key_eq(&x, &vs[1]) { return cv_wrap(VK_SOME, cv_int(i as i128)) } }
+            return cv(VK_NULL)
+        }
+        if name == "SliceFind" {
+            let hay = cv_bytes(&vs[0]) orelse return null
+            let needle = cv_bytes(&vs[1]) orelse return null
+            // with two types it is `<`, `>`... on byte slices: a three-way comparison
+            if tys.len == 2 { return cv_int(cmp_bytes(hay, needle) as i128) }
+            if needle.len == 0 { return cv_wrap(VK_SOME, cv_int(0)) }
+            if let i = check.find_sub(hay, needle) { return cv_wrap(VK_SOME, cv_int(i as i128)) }
+            return cv(VK_NULL)
+        }
+        if name == "SliceTrim" {
+            let s = cv_bytes(&vs[0]) orelse return null
+            return cv_owned(trim_ascii(s))
+        }
+        if name == "SliceSplit" {
+            let s = cv_bytes(&vs[0]) orelse return null
+            let sep = cv_bytes(&vs[1]) orelse return null
+            var out = List(CV).new()
+            if sep.len == 0 {
+                out.append(cv_owned(s))
+            } else {
+                var start: usize = 0
+                var i: usize = 0
+                while i + sep.len <= s.len {
+                    if s[i..i + sep.len] == sep {
+                        out.append(cv_owned(s[start..i]))
+                        i += sep.len
+                        start = i
+                    } else {
+                        i += 1
+                    }
+                }
+                out.append(cv_owned(s[start..]))
+            }
+            return cv_seq(VK_LIST, out)
+        }
+        if name == "SliceLines" {
+            let s = cv_bytes(&vs[0]) orelse return null
+            var out = List(CV).new()
+            var start: usize = 0
+            var i: usize = 0
+            while i <= s.len {
+                if i == s.len or s[i] == '\n' {
+                    var end = i
+                    if end > start and s[end - 1] == '\r' { end -= 1 }
+                    // a newline at the end of the text starts no line of its own
+                    if i == s.len and end == start and s.len > 0 { break }
+                    out.append(cv_owned(s[start..end]))
+                    start = i + 1
+                }
+                i += 1
+            }
+            return cv_seq(VK_LIST, out)
+        }
+        if name == "SliceToOwned" {
+            if vs[0].kind == VK_STR { return cv_owned(vs[0].text[..]) }
+            if vs[0].kind == VK_ARRAY { var v = vs[0].clone(); v.kind = VK_LIST; return v }
+            return vs[0].clone()
+        }
+        if name == "SliceParseInt" {
+            let s = cv_bytes(&vs[0]) orelse return null
+            let v = trim_ascii(s).parse_int(i128) catch { return cv_err(self.error_id("InvalidInput")) }
+            return cv_wrap(VK_OK, cv_int(v))
+        }
+        if name == "SliceParseFloat" {
+            let s = cv_bytes(&vs[0]) orelse return null
+            let v = trim_ascii(s).parse_float() catch { return cv_err(self.error_id("InvalidInput")) }
+            return cv_wrap(VK_OK, cv_float(v))
+        }
+        if name == "SliceEqIgnoreCase" {
+            let x = cv_bytes(&vs[0]) orelse return null
+            let y = cv_bytes(&vs[1]) orelse return null
+            if x.len != y.len { return cv_bool(false) }
+            for c, i in x { if lower_ascii(c) != lower_ascii(y[i]) { return cv_bool(false) } }
+            return cv_bool(true)
+        }
+        // ---- checks and misc
+        if name == "ExpectEq" {
+            if cv_key_eq(&vs[0], &vs[1]) { return cv(VK_VOID) }
+            self.it_panic_at(format("expectation failed: {} != {}", .{cv_format(&vs[0]), cv_format(&vs[1])})[..], at)
+            return null
+        }
+        if name == "Assert" {
+            if vs[0].kind == VK_BOOL and vs[0].flag { return cv(VK_VOID) }
+            self.it_panic_at("assertion failed", at)
+            return null
+        }
+        if name == "Unreachable" {
+            self.it_panic_at("reached unreachable code", at)
+            return null
+        }
+        if name == "TypeName" {
+            if tys.len == 0 { return null }
+            return cv_owned(self.ty_name(tys[0])[..])
+        }
+        if name == "Utf8Validate" { let s = cv_bytes(&vs[0]) orelse return null; return cv_bool(utf8_valid(s)) }
+        if name == "Utf8Encode" {
+            let cp = cv_as_int(&vs[0]) orelse return null
+            if cp < 0 or cp > 0x10FFFF or (cp >= 0xD800 and cp <= 0xDFFF) { return null }
+            return cv_owned(utf8_encode(cp as u32)[..])
+        }
+        if name == "Utf8Decode" {
+            let s = cv_bytes(&vs[0]) orelse return null
+            if !utf8_valid(s) { return cv(VK_NULL) }
+            let cp = utf8_first(s) orelse return cv(VK_NULL)
+            return cv_wrap(VK_SOME, cv_char(cp as i128))
+        }
+        // ---- reference classes are plain values in the interpreter
+        if name == "Retain" or name == "Release" or name == "Drop" { return cv(VK_VOID) }
+        if name == "Weak" { return cv_wrap(VK_SOME, vs[0].clone()) }
+        if name == "Upgrade" {
+            if vs[0].kind == VK_SOME or vs[0].kind == VK_NULL { return vs[0].clone() }
+            return cv_wrap(VK_SOME, vs[0].clone())
+        }
+        // the interpreter keeps no reference counts: a constant would be a guess,
+        // so a program that prints one needs a compiled run
+        if name == "RefCount" { return if self.repl_mode or self.play_mode { null } else { cv_int(1) } }
+        if name == "RefEq" { return cv_bool(cv_key_eq(&vs[0], &vs[1])) }
+        if name == "ListNew" or name == "ListWithCapacity" { return cv_seq(VK_LIST, List(CV).new()) }
+        if name == "ListFromSlice" {
+            if vs[0].kind == VK_ARRAY { var v = vs[0].clone(); v.kind = VK_LIST; return v }
+            if vs[0].kind == VK_STR {
+                var items = List(CV).new()
+                for b in vs[0].text { items.append(cv_int(b as i128)) }
+                return cv_seq(VK_LIST, items)
+            }
+            return null
+        }
+        if name == "ListClone" or name == "StringClone" or name == "MapClone" or name == "Clone" or name == "Escape" { return vs[0].clone() }
+        if name == "ListLast" {
+            let which = cv_as_int(&vs[1]) orelse return null
+            if vs[0].kind != VK_ARRAY { return null }
+            if vs[0].items.len == 0 { return cv(VK_NULL) }
+            if which == 1 { return cv_wrap(VK_SOME, vs[0].items[vs[0].items.len - 1].clone()) }
+            return cv_wrap(VK_SOME, vs[0].items[0].clone())
+        }
+        if name == "ListItems" { return vs[0].clone() }
+        if name == "StringNew" or name == "StringWithCapacity" { return cv_owned("") }
+        if name == "StringFrom" {
+            if vs[0].kind == VK_STR or vs[0].kind == VK_OWNED_STR { return cv_owned(vs[0].text[..]) }
+            return null
+        }
+        if name == "StringBytes" {
+            if vs[0].kind == VK_STR or vs[0].kind == VK_OWNED_STR { return cv_str(vs[0].text[..]) }
+            return null
+        }
+        if name == "SliceEq" {
+            let a_str = vs[0].kind == VK_STR or vs[0].kind == VK_OWNED_STR
+            let b_str = vs[1].kind == VK_STR or vs[1].kind == VK_OWNED_STR
+            if a_str and b_str { return cv_bool(vs[0].text[..] == vs[1].text[..]) }
+            if vs[0].kind == VK_ARRAY and vs[1].kind == VK_ARRAY { return cv_bool(cv_eq(&vs[0], &vs[1])) }
+            return null
+        }
+        if name == "SliceStartsWith" or name == "SliceEndsWith" {
+            let x = cv_bytes(&vs[0]) orelse return null
+            let y = cv_bytes(&vs[1]) orelse return null
+            if y.len > x.len { return cv_bool(false) }
+            if name == "SliceStartsWith" { return cv_bool(x[0..y.len] == y) }
+            return cv_bool(x[x.len - y.len..] == y)
+        }
+        if name == "SliceContains" {
+            if vs[0].kind == VK_ARRAY {
+                for x in vs[0].items { if cv_eq(&x, &vs[1]) { return cv_bool(true) } }
+                return cv_bool(false)
+            }
+            if vs[0].kind == VK_STR {
+                let b = cv_as_int(&vs[1]) orelse return null
+                for c in vs[0].text { if c == b as u8 { return cv_bool(true) } }
+                return cv_bool(false)
+            }
+            return null
+        }
+        if name == "Expect" {
+            if vs[0].kind == VK_BOOL and vs[0].flag { return cv(VK_VOID) }
+            var msg = String.new()
+            if vs.len > 1 and vs[1].kind == VK_STR { msg = vs[1].text.clone() }
+            self.it_fail_panic(format("expectation failed: {}", .{msg})[..], at)
+            return null
+        }
+        if name == "Panic" {
+            var msg = String.from("panic")
+            if vs[0].kind == VK_STR or vs[0].kind == VK_OWNED_STR { msg = vs[0].text.clone() }
+            self.it_fail_panic(msg[..], at)
+            return null
+        }
+        if name == "Truncate" {
+            var bits: u32 = 64
+            var signed = true
+            if !self.it_bits_of(self.tir.nodes[e].ty, &mut bits, &mut signed) { return null }
+            let i = cv_as_int(&vs[0]) orelse return null
+            return cv_int(wrap_to(i, bits, signed))
+        }
+        if name == "BitCast" {
+            // integers reinterpret at compile time; a float's bits are the C build's
+            var bits: u32 = 64
+            var signed = true
+            if !self.it_bits_of(self.tir.nodes[e].ty, &mut bits, &mut signed) { return null }
+            if vs[0].kind != VK_INT and vs[0].kind != VK_CHAR and vs[0].kind != VK_BOOL { return null }
+            let i = cv_as_int(&vs[0]) orelse return null
+            return cv_int(wrap_to(i, bits, signed))
+        }
+        if name == "Target" { return null }
+        if name == "ErrorName" {
+            if vs[0].kind != VK_ERR { return null }
+            return cv_str(self.error_names[(vs[0].ival - 1) as usize][..])
+        }
+        if name == "MathAbs" {
+            if vs[0].kind == VK_INT { return cv_int(if vs[0].ival < 0 { -vs[0].ival } else { vs[0].ival }) }
+            if vs[0].kind == VK_FLOAT { return cv_float(if vs[0].fval < 0.0 { -vs[0].fval } else { vs[0].fval }) }
+            return null
+        }
+        if name == "MathMin" or name == "MathMax" {
+            let is_min = name == "MathMin"
+            if vs[0].kind == VK_INT and vs[1].kind == VK_INT {
+                let x = vs[0].ival
+                let y = vs[1].ival
+                return cv_int(if is_min { if x < y { x } else { y } } else { if x > y { x } else { y } })
+            }
+            if vs[0].kind == VK_FLOAT and vs[1].kind == VK_FLOAT {
+                let x = vs[0].fval
+                let y = vs[1].fval
+                return cv_float(if is_min { if x < y { x } else { y } } else { if x > y { x } else { y } })
+            }
+            return null
+        }
+        if name == "MathClamp" {
+            if vs[0].kind == VK_INT and vs[1].kind == VK_INT and vs[2].kind == VK_INT {
+                let x = vs[0].ival
+                return cv_int(if x < vs[1].ival { vs[1].ival } else if x > vs[2].ival { vs[2].ival } else { x })
+            }
+            if vs[0].kind == VK_FLOAT and vs[1].kind == VK_FLOAT and vs[2].kind == VK_FLOAT {
+                let x = vs[0].fval
+                return cv_float(if x < vs[1].fval { vs[1].fval } else if x > vs[2].fval { vs[2].fval } else { x })
+            }
+            return null
+        }
+        if name == "MathSqrt" or name == "MathFloor" or name == "MathCeil" or name == "MathRound" or name == "MathSin"
+            or name == "MathCos" or name == "MathTan" or name == "MathExp" or name == "MathLog" or name == "MathLog2" {
+            let x = cv_as_float(&vs[0]) orelse return null
+            if name == "MathSqrt" { return cv_float(math.sqrt(x)) }
+            if name == "MathFloor" { return cv_float(math.floor(x)) }
+            if name == "MathCeil" { return cv_float(math.ceil(x)) }
+            if name == "MathRound" { return cv_float(math.round(x)) }
+            if name == "MathSin" { return cv_float(math.sin(x)) }
+            if name == "MathCos" { return cv_float(math.cos(x)) }
+            if name == "MathTan" { return cv_float(math.tan(x)) }
+            if name == "MathExp" { return cv_float(math.exp(x)) }
+            if name == "MathLog" { return cv_float(math.log(x)) }
+            return cv_float(math.log2(x))
+        }
+        if name == "MathPow" {
+            let x = cv_as_float(&vs[0]) orelse return null
+            let y = cv_as_float(&vs[1]) orelse return null
+            return cv_float(math.pow(x, y))
+        }
+        if name == "MathAtan2" {
+            let x = cv_as_float(&vs[0]) orelse return null
+            let y = cv_as_float(&vs[1]) orelse return null
+            return cv_float(math.atan2(x, y))
+        }
+        if name == "Hash" {
+            // check.checked_add/sub/mul encoded with a marker
+            let x = cv_as_int(&vs[0]) orelse return null
+            let y = cv_as_int(&vs[1]) orelse return null
+            let m = cv_as_int(&vs[2]) orelse return null
+            var r: ?i128 = null
+            if m == 0 { r = check.checked_add(x, y) } else if m == 1 { r = check.checked_sub(x, y) } else { r = check.checked_mul(x, y) }
+            var lo: i128 = 0
+            var hi: i128 = 0
+            if !self.it_int_range(self.tir.nodes[args[0]].ty, &mut lo, &mut hi) { return null }
+            if let v = r {
+                if v >= lo and v <= hi { return cv_wrap(VK_SOME, cv_int(v)) }
+            }
+            return cv(VK_NULL)
+        }
+        if name == "Format" { return cv_owned((it_format_values(&vs) orelse return null)[..]) }
+        if self.repl_mode or self.play_mode {
+            let r = self.it_repl_builtin(name[..], &vs)
+            if r != null { return r }
+        }
+        if name == "IntToStr" or name == "FloatToStr" { return cv_owned(cv_format(&vs[0])[..]) }
+        if name == "CharIsDigit" { let c = cv_as_int(&vs[0]) orelse return null; return cv_bool(c >= '0' as i128 and c <= '9' as i128) }
+        if name == "CharIsAlpha" {
+            let c = cv_as_int(&vs[0]) orelse return null
+            return cv_bool((c >= 'a' as i128 and c <= 'z' as i128) or (c >= 'A' as i128 and c <= 'Z' as i128) or c > 127)
+        }
+        if name == "CharIsSpace" {
+            let c = cv_as_int(&vs[0]) orelse return null
+            return cv_bool(c == 32 or c == 9 or c == 10 or c == 13 or c == 11 or c == 12)
+        }
+        if name == "CharToLower" {
+            let c = cv_as_int(&vs[0]) orelse return null
+            return cv_char(if c >= 'A' as i128 and c <= 'Z' as i128 { c + 32 } else { c })
+        }
+        if name == "CharToUpper" {
+            let c = cv_as_int(&vs[0]) orelse return null
+            return cv_char(if c >= 'a' as i128 and c <= 'z' as i128 { c - 32 } else { c })
+        }
+        if name == "CharToDigit" {
+            let c = cv_as_int(&vs[0]) orelse return null
+            if c >= '0' as i128 and c <= '9' as i128 { return cv_wrap(VK_SOME, cv_int(c - '0' as i128)) }
+            return cv(VK_NULL)
+        }
+        return null
+    }
+
+    /// An enum or an error value replaced by its name, as the compiled
+    /// writers print them (an optional's value too).
+    fn it_name_value(self: *mut Self, ty: usize, v: *mut CV) {
+        let t = self.tys.shallow(ty)
+        let k = self.tys.kind(t)
+        if k == TK.Opt and v.kind == VK_SOME and v.items.len > 0 {
+            self.it_name_value(self.tys.list[t].args[0], &mut v.items[0])
+            return
+        }
+        // a `[]u8` taken from a list or an array of bytes is text, as compiled code writes it
+        if k == TK.Slice and (v.kind == VK_ARRAY or v.kind == VK_LIST) {
+            if let bytes = cv_byte_text(v) { v.* = cv_str(bytes[..]) }
+            return
+        }
+        if k == TK.Enum and v.kind == VK_ENUM {
+            let d = self.tys.list[t].def
+            let tag = v.ival as usize
+            if tag < self.enums[d].variants.len {
+                let vn = self.node(self.enums[d].module, self.enums[d].variants[tag]).name.clone()
+                v.* = cv_owned(vn[..])
+            }
+            return
+        }
+        if v.kind == VK_ERR and v.ival >= 1 and (v.ival as usize) <= self.error_names.len {
+            let en = self.error_names[(v.ival - 1) as usize].clone()
+            v.* = cv_owned(en[..])
+        }
+    }
+
+    /// In a REPL the program may talk to the world, which `comptime` never
+    /// may: printing, the console, files, the clock, randomness. Null for
+    /// any other builtin.
+    fn it_repl_builtin(self: *mut Self, name: []u8, vs: *List(CV)) -> ?CV {
+        if name == "Println" or name == "Print" or name == "Eprintln" {
+            let text = it_format_values(vs) orelse return null
+            if name == "Print" { print("{}", .{text}) } else if name == "Eprintln" { eprintln("{}", .{text}) } else { println("{}", .{text}) }
+            return cv(VK_VOID)
+        }
+        if name == "ReadLine" {
+            if let line = io.read_line() { return cv_wrap(VK_SOME, cv_owned(line[..])) }
+            return cv(VK_NULL)
+        }
+        if name == "ReadFile" {
+            let path = cv_bytes(&vs[0]) orelse return null
+            let data = io.read_file(path) catch { return cv_err(self.error_id("IoError")) }
+            return cv_wrap(VK_OK, cv_owned(data[..]))
+        }
+        if name == "WriteFile" or name == "AppendFile" {
+            let path = cv_bytes(&vs[0]) orelse return null
+            let data = cv_bytes(&vs[1]) orelse return null
+            if name == "WriteFile" {
+                io.write_file(path, data) catch { return cv_err(self.error_id("IoError")) }
+            } else {
+                io.append_file(path, data) catch { return cv_err(self.error_id("IoError")) }
+            }
+            return cv_wrap(VK_OK, cv(VK_VOID))
+        }
+        if name == "FsCwd" {
+            let d = io.cwd() catch { return cv_err(self.error_id("IoError")) }
+            return cv_wrap(VK_OK, cv_owned(d[..]))
+        }
+        if name == "FsTempDir" { return cv_owned(io.temp_dir()[..]) }
+        if name == "FsKind" {
+            let path = cv_bytes(&vs[0]) orelse return null
+            return cv_int(io.file_kind(path) as i128)
+        }
+        if name == "FsSize" or name == "FsModified" {
+            let path = cv_bytes(&vs[0]) orelse return null
+            if io.file_kind(path) == 0 { return cv_err(self.error_id("NotFound")) }
+            if name == "FsSize" {
+                let n = io.file_size(path) catch { return cv_err(self.error_id("IoError")) }
+                return cv_wrap(VK_OK, cv_int(n as i128))
+            }
+            let t = io.file_modified(path) catch { return cv_err(self.error_id("IoError")) }
+            return cv_wrap(VK_OK, cv_int(t as i128))
+        }
+        if name == "FsMkdir" or name == "FsRemoveFile" or name == "FsRemoveDir" {
+            let path = cv_bytes(&vs[0]) orelse return null
+            if name == "FsMkdir" {
+                io.make_dir(path) catch { return cv_err(self.error_id("IoError")) }
+            } else if io.file_kind(path) == 0 {
+                return cv_err(self.error_id("NotFound"))
+            } else if name == "FsRemoveFile" {
+                io.remove_file(path) catch { return cv_err(self.error_id("IoError")) }
+            } else {
+                io.remove_dir(path) catch { return cv_err(self.error_id("IoError")) }
+            }
+            return cv_wrap(VK_OK, cv(VK_VOID))
+        }
+        if name == "FsRename" {
+            let a = cv_bytes(&vs[0]) orelse return null
+            let b = cv_bytes(&vs[1]) orelse return null
+            if io.file_kind(a) == 0 { return cv_err(self.error_id("NotFound")) }
+            io.rename(a, b) catch { return cv_err(self.error_id("IoError")) }
+            return cv_wrap(VK_OK, cv(VK_VOID))
+        }
+        if name == "FsListDir" {
+            let path = cv_bytes(&vs[0]) orelse return null
+            if io.file_kind(path) == 0 { return cv_err(self.error_id("NotFound")) }
+            let names = io.list_dir(path) catch { return cv_err(self.error_id("IoError")) }
+            var items = List(CV).new()
+            for n in names { items.append(cv_owned(n[..])) }
+            return cv_wrap(VK_OK, cv_seq(VK_LIST, items))
+        }
+        if name == "Environ" {
+            var items = List(CV).new()
+            for e in os.environ() { items.append(cv_owned(e[..])) }
+            return cv_seq(VK_LIST, items)
+        }
+        if name == "Env" {
+            let n = cv_bytes(&vs[0]) orelse return null
+            if let v = os.env(n) { return cv_wrap(VK_SOME, cv_owned(v)) }
+            return cv(VK_NULL)
+        }
+        if name == "Args" {
+            var items = List(CV).new()
+            items.append(cv_str("nx"))
+            return cv_seq(VK_LIST, items)
+        }
+        if name == "ExePath" { return cv_owned(os.exe_path()[..]) }
+        if name == "Arch" { return cv_str(os.arch()) }
+        if name == "TimeNow" { return cv_int(time.now() as i128) }
+        if name == "TimeMonotonic" { return cv_int(time.monotonic() as i128) }
+        // the interpreter has no time zone database: local time is UTC at the prompt
+        if name == "TimeUtcOffset" { return cv_int(0) }
+        if name == "Sleep" {
+            let ms = cv_as_int(&vs[0]) orelse return null
+            time.sleep((if ms < 0 { 0 } else { ms }) as u64)
+            return cv(VK_VOID)
+        }
+        if name == "Exit" {
+            let code = cv_as_int(&vs[0]) orelse return null
+            os.exit(code as i32)
+        }
+        if name == "RandomSeed" {
+            let v = cv_as_int(&vs[0]) orelse return null
+            random.seed(v as u64)
+            return cv(VK_VOID)
+        }
+        if name == "RandomInt" {
+            let lo = cv_as_int(&vs[0]) orelse return null
+            let hi = cv_as_int(&vs[1]) orelse return null
+            return cv_int(random.int(lo as i64, hi as i64) as i128)
+        }
+        if name == "RandomFloat" { return cv_float(random.float()) }
+        return null
+    }
+
+    /// The builtins that change a value in place; `cur` is the receiver's
+    /// storage.
+    fn it_mutating_builtin(self: *mut Self, name: []u8, cur: *mut CV, vs: *List(CV), at: usize) -> ?CV {
+        let k = cur.kind
+        if name == "ListClear" {
+            if k != VK_LIST { return null }
+            cur.items.clear()
+            return cv(VK_VOID)
+        }
+        if name == "ListInsert" {
+            if k != VK_LIST { return null }
+            let i = (cv_as_int(&vs[1]) orelse return null) as usize
+            if i > cur.items.len {
+                self.it_panic_at("insert index out of range", at)
+                return null
+            }
+            cur.items.insert(i, vs[2].clone())
+            return cv(VK_VOID)
+        }
+        if name == "ListRemove" or name == "ListSwapRemove" {
+            if k != VK_LIST { return null }
+            let i = (cv_as_int(&vs[1]) orelse return null) as usize
+            if i >= cur.items.len {
+                self.it_panic_at("remove index out of range", at)
+                return null
+            }
+            if name == "ListRemove" { return cur.items.remove(i) }
+            return cur.items.swap_remove(i)
+        }
+        if name == "ListExtend" {
+            if k != VK_LIST { return null }
+            let more = cv_seq_items(&vs[1]) orelse return null
+            for x in more { cur.items.append(x.clone()) }
+            return cv(VK_VOID)
+        }
+        if name == "ListAppend" {
+            if k == VK_LIST { cur.items.append(vs[1].clone()); return cv(VK_VOID) }
+            if k == VK_UNDEFINED {
+                var items = List(CV).new()
+                items.append(vs[1].clone())
+                cur.* = cv_seq(VK_LIST, items)
+                return cv(VK_VOID)
+            }
+            return null
+        }
+        if name == "ListPop" {
+            if k != VK_LIST { return null }
+            let v = cur.items.pop() orelse return cv(VK_NULL)
+            return cv_wrap(VK_SOME, v)
+        }
+        if name == "StringClear" {
+            if ! (k == VK_OWNED_STR or k == VK_STR) { return null }
+            cur.text.clear()
+            return cv(VK_VOID)
+        }
+        if name == "StringPop" {
+            if ! (k == VK_OWNED_STR or k == VK_STR) { return null }
+            let b = cur.text.pop() orelse return cv(VK_NULL)
+            return cv_wrap(VK_SOME, cv_int(b as i128))
+        }
+        if name == "MapPut" {
+            if k == VK_MAP {
+                var i: usize = 0
+                while i + 1 < cur.items.len {
+                    if cv_key_eq(&cur.items[i], &vs[1]) {
+                        cur.items[i + 1] = vs[2].clone()
+                        return cv(VK_VOID)
+                    }
+                    i += 2
+                }
+                cur.items.append(vs[1].clone())
+                cur.items.append(vs[2].clone())
+                return cv(VK_VOID)
+            }
+            if k == VK_UNDEFINED {
+                var items = List(CV).new()
+                items.append(vs[1].clone())
+                items.append(vs[2].clone())
+                cur.* = cv_seq(VK_MAP, items)
+                return cv(VK_VOID)
+            }
+            return null
+        }
+        if name == "MapRemove" {
+            if k != VK_MAP { return null }
+            var i: usize = 0
+            while i + 1 < cur.items.len {
+                if cv_key_eq(&cur.items[i], &vs[1]) {
+                    _ = cur.items.remove(i)
+                    _ = cur.items.remove(i)
+                    return cv_bool(true)
+                }
+                i += 2
+            }
+            return cv_bool(false)
+        }
+        if name == "MapClear" {
+            if k != VK_MAP { return null }
+            cur.items.clear()
+            return cv(VK_VOID)
+        }
+        if name == "SliceCopy" {
+            let src = cv_seq_items(&vs[1]) orelse return null
+            if k == VK_LIST or k == VK_ARRAY {
+                for x, i in src { if i < cur.items.len { cur.items[i] = x.clone() } }
+                return cv(VK_VOID)
+            }
+            if k == VK_OWNED_STR or k == VK_STR {
+                for x, i in src {
+                    if i < cur.text.len { cur.text[i] = (cv_as_int(&x) orelse return null) as u8 }
+                }
+                return cv(VK_VOID)
+            }
+            return null
+        }
+        if name == "SliceFill" {
+            if k == VK_LIST or k == VK_ARRAY {
+                let n = cur.items.len
+                for i in 0..n { cur.items[i] = vs[1].clone() }
+                return cv(VK_VOID)
+            }
+            if k == VK_OWNED_STR or k == VK_STR {
+                let b = (cv_as_int(&vs[1]) orelse return null) as u8
+                let n = cur.text.len
+                for i in 0..n { cur.text[i] = b }
+                return cv(VK_VOID)
+            }
+            return null
+        }
+        if name == "SliceReverse" {
+            if k == VK_LIST or k == VK_ARRAY {
+                var i: usize = 0
+                var j = cur.items.len
+                while i + 1 < j {
+                    j -= 1
+                    let t = cur.items[i].clone()
+                    cur.items[i] = cur.items[j].clone()
+                    cur.items[j] = t
+                    i += 1
+                }
+                return cv(VK_VOID)
+            }
+            if k == VK_OWNED_STR or k == VK_STR {
+                var i: usize = 0
+                var j = cur.text.len
+                while i + 1 < j {
+                    j -= 1
+                    let t = cur.text[i]
+                    cur.text[i] = cur.text[j]
+                    cur.text[j] = t
+                    i += 1
+                }
+                return cv(VK_VOID)
+            }
+            return null
+        }
+        if name == "SliceSort" {
+            if k == VK_LIST or k == VK_ARRAY {
+                // insertion sort keeps equal elements in order, like a stable sort
+                let n = cur.items.len
+                var i: usize = 1
+                while i < n {
+                    var j = i
+                    while j > 0 and cv_cmp(&cur.items[j - 1], &cur.items[j]) > 0 {
+                        let t = cur.items[j - 1].clone()
+                        cur.items[j - 1] = cur.items[j].clone()
+                        cur.items[j] = t
+                        j -= 1
+                    }
+                    i += 1
+                }
+                return cv(VK_VOID)
+            }
+            if k == VK_OWNED_STR or k == VK_STR {
+                let n = cur.text.len
+                var i: usize = 1
+                while i < n {
+                    var j = i
+                    while j > 0 and cur.text[j - 1] > cur.text[j] {
+                        let t = cur.text[j - 1]
+                        cur.text[j - 1] = cur.text[j]
+                        cur.text[j] = t
+                        j -= 1
+                    }
+                    i += 1
+                }
+                return cv(VK_VOID)
+            }
+            return null
+        }
+        if name == "StringAppend" or name == "StringAppendChar" or name == "StringPushByte" {
+            var add = String.new()
+            if vs[1].kind == VK_STR or vs[1].kind == VK_OWNED_STR { add = vs[1].text.clone() }
+            else if vs[1].kind == VK_CHAR { add = utf8_encode(vs[1].ival as u32) }
+            else if vs[1].kind == VK_INT { add.push_byte(vs[1].ival as u8) }
+            else { return null }
+            if k == VK_OWNED_STR { cur.text.append(add[..]); return cv(VK_VOID) }
+            if k == VK_UNDEFINED { cur.* = cv_owned(add[..]); return cv(VK_VOID) }
+            return null
+        }
+        return null
+    }
+}
+
+fn cmp_bytes(a: []u8, b: []u8) -> i8 {
+    var i: usize = 0
+    while i < a.len and i < b.len {
+        if a[i] < b[i] { return -1 }
+        if a[i] > b[i] { return 1 }
+        i += 1
+    }
+    if a.len < b.len { return -1 }
+    if a.len > b.len { return 1 }
+    return 0
+}

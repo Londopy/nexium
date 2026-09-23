@@ -1,0 +1,943 @@
+// self/check_fields.nx: reaching into values and building them. Fields,
+// `?.` chains and auto-dereference, enum variants, indexing and slicing with
+// their bounds proofs, struct, array and tuple literals, and the operators
+// that open optionals and error unions: `try`, `catch`, `orelse` and `if`
+// captures.
+// The methods are the checker's (`impl Checker`, decision 110).
+
+import check
+import parser
+import check_interp
+
+type Checker = check.Checker
+const EFF_ALLOCATES = check.EFF_ALLOCATES
+const EFF_PANICS = check.EFF_PANICS
+const EFF_REFCOUNTS = check.EFF_REFCOUNTS
+type ItemKind = check.ItemKind
+const NONE = check.NONE
+type TK = check.TK
+type TKind = check.TKind
+
+// ---------------------------------------------------------------- fields, literals, indexing
+
+impl Checker {
+    /// The resolved payload types of every variant of an enum type.
+    fn enum_variant_types(self: *mut Self, t0: usize) -> List(List(usize)) {
+        let t = self.tys.shallow(t0)
+        var out = List(List(usize)).new()
+        if self.tys.kind(t) != TK.Enum { return out }
+        let d = self.tys.list[t].def
+        let m = self.enums[d].module
+        let variants = self.enums[d].variants.clone()
+        let saved = self.env_save()
+        self.env_set(&self.enums[d].tparams.clone(), &self.tys.list[t].args.clone())
+        for v in variants {
+            let vn = self.node(m, v)
+            var tys = List(usize).new()
+            if vn.text != "unit" {
+                let kids = vn.kids.clone()
+                let is_tuple = vn.text == "tuple"
+                for c in kids {
+                    let ty_node = if is_tuple { c } else { self.node(m, c).x }
+                    tys.append(self.resolve_type(m, ty_node, t))
+                }
+            }
+            out.append(tys)
+        }
+        self.env_restore(&saved)
+        return out
+    }
+
+    fn struct_field_index(self: *mut Self, d: usize, name: []u8) -> usize {
+        let m = self.structs[d].module
+        let fields = self.structs[d].fields.clone()
+        for f, i in fields { if self.node(m, f).name == name { return i } }
+        return NONE
+    }
+
+    fn enum_variant_index(self: *mut Self, d: usize, name: []u8) -> usize {
+        let m = self.enums[d].module
+        let variants = self.enums[d].variants.clone()
+        for v, i in variants { if self.node(m, v).name == name { return i } }
+        return NONE
+    }
+
+    fn auto_deref_all(self: *mut Self, e0: usize) -> usize {
+        var e = e0
+        while true {
+            let t = self.tys.shallow(self.tir.nodes[e].ty)
+            if self.tys.kind(t) != TK.Ptr { return e }
+            let inner = self.tys.list[t].args[0]
+            e = self.wrap_node(TKind.Deref, e, inner)
+        }
+        return e
+    }
+
+    /// `a?.b`, `a?.m(x).c`: null when `a` is, otherwise the tail applied to
+    /// the payload, wrapped as an optional (a result that is an optional
+    /// already is not wrapped twice). Checked as the `if let` it stands for,
+    /// so the emitter and the interpreter see nothing new; the tail reaches
+    /// the binding through its ChainSelf node.
+    fn check_opt_chain(self: *mut Self, e: usize, expected: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        let base_node = n.x
+        let tail_node = n.y
+        let start = n.start
+        let end = n.end
+        let c = self.check_expr(base_node, NONE)
+        let ct = self.tys.shallow(self.tir.nodes[c].ty)
+        if self.tys.kind(ct) != TK.Opt {
+            self.fail_here(self.tir.nodes[c].start, format("`?.` reads through an optional but found `{}`; `.` reaches a value that is always there", .{self.ty_name(ct)})[..])
+            return self.error_expr(start, end)
+        }
+        let payload = self.tys.list[ct].args[0]
+        self.push_scope()
+        let local = self.declare_local(format("__chain{}", .{e})[..], payload, false, start, end)
+        // a chain over a place reads the payload in place; an owned temporary
+        // hands its payload to the binding, dropped with the branch
+        if self.is_place(c) or self.is_borrowed_view(c) {
+            self.ctx().locals[local].if_let = true
+            self.bind_view(local, c, start)
+        } else {
+            self.check_store_local(local, c, start)
+        }
+        var inner_expected = NONE
+        if expected != NONE {
+            let ex = self.tys.shallow(expected)
+            if self.tys.kind(ex) == TK.Opt { inner_expected = self.tys.list[ex].args[0] }
+        }
+        let moved_before = self.moved_snapshot()
+        self.chain_locals.append(local)
+        let inner = self.check_expr(tail_node, inner_expected)
+        _ = self.chain_locals.pop()
+        self.pop_scope()
+        let moved_then = self.moved_snapshot()
+        self.moved_restore(&moved_before)
+        self.moved_merge(&moved_then)
+        let it = self.tys.shallow(self.tir.nodes[inner].ty)
+        let ik = self.tys.kind(it)
+        if ik == TK.Void or ik == TK.Never {
+            self.fail_here(start, "`?.` needs a member with a value; a call that returns nothing cannot become an optional")
+            return self.error_expr(start, end)
+        }
+        let rty = if ik == TK.Opt { it } else { self.tys.wrap(TK.Opt, it, false) }
+        let val = if ik == TK.Opt { inner } else { self.wrap_node(TKind.OptWrap, inner, rty) }
+        let tb = self.mk(TKind.Block, rty, start, end)
+        self.tir.nodes[tb].a = val
+        let nul = self.mk(TKind.OptNull, rty, start, end)
+        let eb = self.mk(TKind.Block, rty, start, end)
+        self.tir.nodes[eb].a = nul
+        let r = self.mk(TKind.IfCapture, rty, start, end)
+        self.tir.nodes[r].a = local
+        self.tir.nodes[r].kids.append(c)
+        self.tir.nodes[r].kids.append(tb)
+        self.tir.nodes[r].kids.append(eb)
+        return r
+    }
+
+    /// The payload of the innermost `?.` chain, where its tail begins.
+    fn check_chain_self(self: *mut Self, e: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        if self.chain_locals.len == 0 {
+            self.fail_here(n.start, "a chain tail outside a `?.` chain")
+            return self.error_expr(n.start, n.end)
+        }
+        let local = self.chain_locals[self.chain_locals.len - 1]
+        let ty = self.ctx().locals[local].ty
+        let r = self.mk(TKind.Local, ty, n.start, n.end)
+        self.tir.nodes[r].a = local
+        return r
+    }
+
+    fn check_field(self: *mut Self, e: usize, expected: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        let base_node = n.x
+        let name = n.name.clone()
+        let start = n.start
+        let end = n.end
+        let b = self.check_expr_any(base_node, NONE)
+        if self.is_namespace(b) {
+            let ns = self.tir.nodes[b].name.clone()
+            return self.check_namespace_member(ns[..], name[..], start, end, expected)
+        }
+        let bt = self.tys.shallow(self.tir.nodes[b].ty)
+        if self.tys.kind(bt) == TK.Type and self.tir.nodes[b].k == TKind.TypeVal {
+            return self.check_static_member(self.tir.nodes[b].a, name[..], start, end, expected)
+        }
+        return self.field_access(b, name[..], start, end)
+    }
+
+    /// Dereference through every pointer, the new nodes spanning the access.
+    /// A namespace value (`io`, `math`, an imported module): a Unit node without a type.
+    fn is_namespace(self: *mut Self, e: usize) -> bool {
+        return self.tir.nodes[e].k == TKind.Unit and self.tir.nodes[e].ty == NONE
+    }
+
+    fn deref_all_at(self: *mut Self, b0: usize, start: usize, end: usize) -> usize {
+        var b = b0
+        var bt = self.tys.shallow(self.tir.nodes[b].ty)
+        while self.tys.kind(bt) == TK.Ptr {
+            let inner = self.tys.list[bt].args[0]
+            let d = self.mk(TKind.Deref, inner, start, end)
+            self.tir.nodes[d].kids.append(b)
+            b = d
+            bt = self.tys.shallow(inner)
+        }
+        return b
+    }
+
+    fn field_access(self: *mut Self, b0: usize, name: []u8, start: usize, end: usize) -> usize {
+        let b = self.deref_all_at(b0, start, end)
+        let bt = self.tys.shallow(self.tir.nodes[b].ty)
+        let k = self.tys.kind(bt)
+        if k == TK.Struct {
+            let d = self.tys.list[bt].def
+            let idx = self.struct_field_index(d, name)
+            if idx != NONE {
+                let ftys = self.struct_field_types(bt)
+                let fty = ftys[idx]
+                let r = self.mk(if self.structs[d].kind == "ref" { TKind.RefField } else { TKind.Field }, fty, start, end)
+                self.tir.nodes[r].a = idx
+                self.tir.nodes[r].kids.append(b)
+                return r
+            }
+            self.fail_here(start, format("`{}` has no field `{}`", .{self.structs[d].name, name})[..])
+            return self.error_expr(start, end)
+        }
+        if k == TK.Tuple {
+            let idx = name.parse_int(usize) catch { NONE }
+            let ts = self.tys.list[bt].args.clone()
+            if idx != NONE and idx < ts.len {
+                let r = self.mk(TKind.TupleField, ts[idx], start, end)
+                self.tir.nodes[r].a = idx
+                self.tir.nodes[r].kids.append(b)
+                return r
+            }
+            self.fail_here(start, format("tuple has no field `{}`", .{name})[..])
+            return self.error_expr(start, end)
+        }
+        if k == TK.Slice or k == TK.Array or k == TK.List or k == TK.Str or k == TK.Map {
+            if name == "len" {
+                let u = self.tys.usize_ty()
+                let r = self.builtin_node("Len", u, start, end)
+                self.tir.nodes[r].kids.append(b)
+                return r
+            }
+            if name == "ptr" and k == TK.Slice {
+                if self.ctx().unsafe_depth == 0 { self.fail_here(start, "`.ptr` of a slice is a raw pointer and requires an `unsafe` block") }
+                let pt = self.tys.wrap(TK.Ptr, self.tys.list[bt].args[0], self.tys.list[bt].flag)
+                let r = self.builtin_node("PtrAdd", pt, start, end)
+                self.tir.nodes[r].kids.append(b)
+                return r
+            }
+            self.fail_here(start, format("`{}` has no field `{}` (methods are called with parentheses)", .{self.ty_name(bt), name})[..])
+            return self.error_expr(start, end)
+        }
+        if k == TK.Opt {
+            self.fail_here(start, format("cannot access field `{}` of optional `{}`; unwrap it first with `orelse`, `.?`, or `if let`", .{name, self.ty_name(bt)})[..])
+            return self.error_expr(start, end)
+        }
+        if k == TK.ErrUnion {
+            self.fail_here(start, format("cannot access field `{}` of `{}`; use `try` first", .{name, self.ty_name(bt)})[..])
+            return self.error_expr(start, end)
+        }
+        if k == TK.Enum {
+            self.fail_here(start, format("`{}` is an enum; use `match` to access variant payloads", .{self.enums[self.tys.list[bt].def].name})[..])
+            return self.error_expr(start, end)
+        }
+        self.fail_here(start, format("`{}` has no field `{}`", .{self.ty_name(bt), name})[..])
+        return self.error_expr(start, end)
+    }
+
+    fn check_implicit_variant(self: *mut Self, e: usize, expected: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        let name = n.name.clone()
+        let args = n.kids.clone()
+        let start = n.start
+        let end = n.end
+        if expected == NONE {
+            self.fail_here(start, format("cannot infer the enum type of `.{}`; write `EnumName.{}`", .{name, name})[..])
+            return self.error_expr(start, end)
+        }
+        let exp = self.tys.shallow(expected)
+        var target = exp
+        var wrap = NONE
+        let ek = self.tys.kind(exp)
+        if ek == TK.Opt or ek == TK.ErrUnion {
+            target = self.tys.shallow(self.tys.list[exp].args[0])
+            wrap = exp
+        }
+        if self.tys.kind(target) != TK.Enum {
+            self.fail_here(start, format("`.{}` needs an enum type from context, but the expected type is `{}`", .{name, self.ty_name(exp)})[..])
+            return self.error_expr(start, end)
+        }
+        let v = self.check_variant_ctor(target, name[..], args[..], start, end)
+        if wrap != NONE { return self.coerce_or_error(v, wrap, "enum value") }
+        return v
+    }
+
+    fn check_variant_ctor(self: *mut Self, enum_ty: usize, name: []u8, args: []usize, start: usize, end: usize) -> usize {
+        let d = self.tys.list[enum_ty].def
+        let vtys = self.enum_variant_types(enum_ty)
+        let idx = self.enum_variant_index(d, name)
+        if idx == NONE {
+            self.fail_here(start, format("enum `{}` has no variant `{}`", .{self.enums[d].name, name})[..])
+            return self.error_expr(start, end)
+        }
+        let want = vtys[idx].clone()
+        if args.len != want.len {
+            self.fail_here(start, format("variant `{}.{}` takes {} value(s) but {} were given", .{self.enums[d].name, name, want.len, args.len})[..])
+            return self.error_expr(start, end)
+        }
+        let r = self.mk(TKind.EnumLit, enum_ty, start, end)
+        self.tir.nodes[r].a = idx
+        for a, i in args {
+            var te = self.check_expr(a, want[i])
+            te = self.coerce_or_error(te, want[i], "enum variant payload")
+            te = self.take_ownership(te)
+            self.tir.nodes[r].kids.append(te)
+        }
+        return r
+    }
+
+    fn check_index(self: *mut Self, e: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        let base_node = n.x
+        let index_node = n.y
+        let start = n.start
+        let end = n.end
+        var b = self.check_expr(base_node, NONE)
+        b = self.deref_all_at(b, start, end)
+        let bt = self.tys.shallow(self.tir.nodes[b].ty)
+        let k = self.tys.kind(bt)
+        var elem = NONE
+        if k == TK.Array or k == TK.Slice or k == TK.List {
+            elem = self.tys.list[bt].args[0]
+        } else if k == TK.Str {
+            elem = self.tys.u8_ty()
+        } else if k == TK.Map {
+            let kt = self.tys.list[bt].args[0]
+            let vt = self.tys.list[bt].args[1]
+            var lk = kt
+            if self.tys.kind(self.tys.shallow(kt)) == TK.Str { lk = self.tys.str_slice() }
+            var key = self.check_expr(index_node, lk)
+            key = self.coerce_or_error(key, lk, "map key")
+            let ot = self.tys.wrap(TK.Opt, vt, false)
+            // the same node `m.get(key)` builds: the key and value types ride in kids2
+            let r = self.builtin_node("MapGet", ot, start, end)
+            self.tir.nodes[r].kids2.append(kt)
+            self.tir.nodes[r].kids2.append(vt)
+            self.tir.nodes[r].kids.append(b)
+            self.tir.nodes[r].kids.append(key)
+            return r
+        } else {
+            self.fail_here(start, format("cannot index a value of type `{}`", .{self.ty_name(bt)})[..])
+            return self.error_expr(start, end)
+        }
+        let u = self.tys.usize_ty()
+        var i = self.check_expr(index_node, u)
+        i = self.coerce_or_error(i, u, "index")
+        let proven = self.index_proven(b, i)
+        if !proven { self.add_effect(EFF_PANICS, start, "index may be out of bounds") }
+        let r = self.mk(TKind.Index, elem, start, end)
+        self.tir.nodes[r].flag = proven
+        self.tir.nodes[r].kids.append(b)
+        self.tir.nodes[r].kids.append(i)
+        return r
+    }
+
+    fn index_proven(self: *mut Self, base: usize, index: usize) -> bool {
+        let bt = self.tys.shallow(self.tir.nodes[base].ty)
+        if self.tys.kind(bt) == TK.Array {
+            if let r = self.expr_range(index) { if r.lo >= 0 and r.hi < self.tys.list[bt].n as i128 { return true } }
+        }
+        if self.tir.nodes[base].k == TKind.Local and self.tir.nodes[index].k == TKind.Local {
+            let bl = self.tir.nodes[base].a
+            let il = self.tir.nodes[index].a
+            if let sl = self.ctx().index_of.get(il) { if sl == bl { return true } }
+        }
+        // a slice with a proven least length and an index below it
+        if self.tir.nodes[base].k == TKind.Local {
+            if let m = self.ctx().min_len.get(self.tir.nodes[base].a) {
+                if let r = self.expr_range(index) { if r.lo >= 0 and r.hi < m.lo { return true } }
+            }
+        }
+        return false
+    }
+
+    fn check_slice_op(self: *mut Self, e: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        let base_node = n.x
+        let start_node = n.y
+        let end_node = n.z
+        let start = n.start
+        let end = n.end
+        var b = self.check_expr(base_node, NONE)
+        b = self.deref_all_at(b, start, end)
+        let bt = self.tys.shallow(self.tir.nodes[b].ty)
+        let k = self.tys.kind(bt)
+        var mutable = false
+        var elem = NONE
+        if k == TK.Array or k == TK.List {
+            mutable = self.place_mutable(b)
+            elem = self.tys.list[bt].args[0]
+        } else if k == TK.Slice {
+            mutable = self.tys.list[bt].flag
+            elem = self.tys.list[bt].args[0]
+        } else if k == TK.Str {
+            mutable = self.place_mutable(b)
+            elem = self.tys.u8_ty()
+        } else {
+            self.fail_here(start, format("cannot slice a value of type `{}`", .{self.ty_name(bt)})[..])
+            return self.error_expr(start, end)
+        }
+        let u = self.tys.usize_ty()
+        let st = self.tys.wrap(TK.Slice, elem, mutable)
+        let r = self.mk(TKind.SliceOp, st, start, end)
+        self.tir.nodes[r].kids.append(b)
+        if start_node != NONE {
+            var s = self.check_expr(start_node, u)
+            s = self.coerce_or_error(s, u, "slice start")
+            self.tir.nodes[r].flag = true
+            self.tir.nodes[r].kids.append(s)
+        }
+        if end_node != NONE {
+            var x = self.check_expr(end_node, u)
+            x = self.coerce_or_error(x, u, "slice end")
+            self.tir.nodes[r].flag2 = true
+            self.tir.nodes[r].kids.append(x)
+        }
+        if !self.slice_op_proven(r) { self.add_effect(EFF_PANICS, start, "slicing checks its bounds and panics when they are out of range") }
+        return r
+    }
+
+    /// `s[a..b]` cannot fail when it has no bounds, or when `s` is a slice with
+    /// a proven least length that `b` (and `a`) stay within, `a` below `b`.
+    fn slice_op_proven(self: *mut Self, r: usize) -> bool {
+        let has_start = self.tir.nodes[r].flag
+        let has_end = self.tir.nodes[r].flag2
+        if !has_start and !has_end { return true }
+        let kids = self.tir.nodes[r].kids.clone()
+        if self.tir.nodes[kids[0]].k != TKind.Local { return false }
+        let m = self.ctx().min_len.get(self.tir.nodes[kids[0]].a) orelse return false
+        var limit = m.lo
+        var idx: usize = 1
+        var start_hi: i128 = 0
+        if has_start {
+            let sr = self.expr_range(kids[idx]) orelse return false
+            if sr.lo < 0 { return false }
+            start_hi = sr.hi
+            idx += 1
+        }
+        if has_end {
+            let er = self.expr_range(kids[idx]) orelse return false
+            if er.hi > m.lo { return false }
+            limit = er.lo
+        }
+        return start_hi <= limit
+    }
+
+    fn check_struct_lit(self: *mut Self, e: usize, expected: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        let ty_node = n.x
+        let inits = n.kids.clone()
+        let start = n.start
+        let end = n.end
+        var t = NONE
+        if ty_node != NONE {
+            // `Enum.Variant{ ... }`: a struct-payload variant
+            let tn = self.node(m, ty_node)
+            if tn.k == parser.NodeKind.TName and tn.words.len == 2 and tn.kids.len == 0 {
+                if let r = self.lookup(m, tn.words[0][..]) {
+                    if r.kind == ItemKind.Enum {
+                        let et = self.tys.of_def(TK.Enum, r.id, List(usize).new())
+                        return self.check_variant_struct_lit(et, tn.words[1].clone()[..], inits[..], start, end)
+                    }
+                }
+            }
+            let st = self.ctx().self_ty
+            t = self.resolve_type(m, ty_node, st)
+        } else {
+            if expected == NONE {
+                self.fail_here(start, "cannot infer the type of this anonymous struct literal; name the type: `Point{ ... }`")
+                return self.error_expr(start, end)
+            }
+            let ex = self.tys.shallow(expected)
+            let ek = self.tys.kind(ex)
+            if ek == TK.Opt or ek == TK.ErrUnion {
+                let inner = self.tys.list[ex].args[0]
+                let v = self.check_struct_lit_into(e, inner)
+                return self.coerce_or_error(v, ex, "struct literal")
+            }
+            t = ex
+        }
+        return self.check_struct_lit_into(e, t)
+    }
+
+    /// A struct literal of a known type.
+    fn check_struct_lit_into(self: *mut Self, e: usize, t0: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        let inits = n.kids.clone()
+        let start = n.start
+        let end = n.end
+        let t = self.tys.shallow(t0)
+        if self.tys.kind(t) != TK.Struct {
+            if inits.len == 0 and self.tys.kind(t) == TK.Void { return self.mk(TKind.Unit, t, start, end) }
+            self.fail_here(start, format("`{}` is not a struct; struct literal syntax does not apply", .{self.ty_name(t)})[..])
+            return self.error_expr(start, end)
+        }
+        let d = self.tys.list[t].def
+        let ftys = self.struct_field_types(t)
+        let n_fields = self.structs[d].fields.len
+        var seen = List(bool).new()
+        for i in 0..n_fields { seen.append(false) }
+        var idxs = List(usize).new()
+        var vals = List(usize).new()
+        for init in inits {
+            let inode = self.node(m, init)
+            let fname = inode.name.clone()
+            let value_node = inode.x
+            let fstart = inode.start
+            let idx = self.struct_field_index(d, fname[..])
+            if idx == NONE {
+                self.fail_here(fstart, format("`{}` has no field `{}`", .{self.structs[d].name, fname})[..])
+                continue
+            }
+            if seen[idx] {
+                self.fail_here(fstart, format("field `{}` is given twice", .{fname})[..])
+                continue
+            }
+            seen[idx] = true
+            var v = self.check_expr(value_node, ftys[idx])
+            v = self.coerce_or_error(v, ftys[idx], format("field `{}`", .{fname})[..])
+            v = self.take_ownership(v)
+            idxs.append(idx)
+            vals.append(v)
+        }
+        let dm = self.structs[d].module
+        let fields = self.structs[d].fields.clone()
+        for f, i in fields {
+            if seen[i] { continue }
+            let fnode = self.node(dm, f)
+            let fname = fnode.name.clone()
+            let dflt = fnode.y
+            if dflt != NONE {
+                // the default is written in the struct's module
+                var v = self.check_expr_in_module(dm, dflt, ftys[i])
+                v = self.coerce_or_error(v, ftys[i], format("default of field `{}`", .{fname})[..])
+                idxs.append(i)
+                vals.append(v)
+            } else {
+                self.fail_here(start, format("missing field `{}` in literal of `{}`", .{fname, self.structs[d].name})[..])
+            }
+        }
+        // in written order (defaults after): the emitter and the interpreter
+        // evaluate the initializers in this order, the order the moves above
+        // were checked in; `kids2` names the field of each
+        let is_ref = self.structs[d].kind == "ref"
+        if is_ref {
+            self.add_effect(EFF_ALLOCATES, start, "constructing a `ref class` allocates")
+            self.add_effect(EFF_REFCOUNTS, start, "a `ref class` value is reference counted")
+        }
+        let lit = self.mk(if is_ref { TKind.RefNew } else { TKind.StructLit }, t, start, end)
+        for x, j in idxs {
+            self.tir.nodes[lit].kids2.append(x)
+            self.tir.nodes[lit].kids.append(vals[j])
+        }
+        if self.structs[d].kind == "record" and !self.record_new_mode {
+            return self.record_check(lit, t, false, start, end)
+        }
+        return lit
+    }
+
+    /// Wrap a record value in its constraint checks; a check that decides at
+    /// compile time is dropped (or reported when it fails).
+    fn record_check(self: *mut Self, lit: usize, t: usize, as_error: bool, start: usize, end: usize) -> usize {
+        if self.tys.kind(t) != TK.Struct { return lit }
+        let d = self.tys.list[t].def
+        let dm = self.structs[d].module
+        let ftys = self.struct_field_types(t)
+        let fields = self.structs[d].fields.clone()
+        var check_fields = List(usize).new()
+        var check_locals = List(usize).new()
+        var check_exprs = List(usize).new()
+        for f, i in fields {
+            let fnode = self.node(dm, f)
+            let c = fnode.z
+            if c == NONE { continue }
+            let fname = fnode.name.clone()
+            let fstart = fnode.start
+            let fend = fnode.end
+            let cstart = self.node(dm, c).start
+            let cend = self.node(dm, c).end
+            self.push_scope()
+            let vl = self.declare_local("value", ftys[i], false, fstart, fend)
+            let bt = self.tys.bool_ty()
+            var ce = self.check_expr_in_module(dm, c, bt)
+            ce = self.coerce_or_error(ce, bt, "record constraint")
+            self.pop_scope()
+            // static evaluation when the field value is a literal
+            var decided = false
+            var holds = false
+            if !as_error and self.tir.nodes[lit].k == TKind.StructLit {
+                let lk = self.tir.nodes[lit].kids.clone()
+                let lf = self.tir.nodes[lit].kids2.clone()
+                for x, j in lf {
+                    if x != i { continue }
+                    if let fv = self.eval_const_expr(lk[j]) {
+                        if let r = self.eval_with_local(ce, vl, fv) {
+                            if r.kind == check_interp.VK_BOOL {
+                                decided = true
+                                holds = r.flag
+                            }
+                        }
+                    }
+                }
+            }
+            if decided and holds { continue }
+            if decided {
+                let csrc = self.source_text(dm, cstart, cend)
+                self.fail_here(start, format("record `{}` constraint violated: field `{}` must satisfy `{}`", .{self.structs[d].name, fname, csrc})[..])
+                continue
+            }
+            check_fields.append(i)
+            check_locals.append(vl)
+            check_exprs.append(ce)
+        }
+        if check_exprs.len == 0 {
+            if as_error {
+                let et = self.tys.err_union(0, false, t)
+                var w = check.tblank(TKind.ErrWrap, et, start, end)
+                w.kids.append(lit)
+                return self.tir.add(w)
+            }
+            return lit
+        }
+        var rt = t
+        if as_error {
+            rt = self.tys.err_union(0, false, t)
+        } else {
+            self.add_effect(EFF_PANICS, start, "a record constraint that cannot be checked at compile time panics at runtime if violated (use `.new(...)` for an error instead)")
+        }
+        let r = self.mk(TKind.RecordCheck, rt, start, end)
+        self.tir.nodes[r].flag = as_error
+        self.tir.nodes[r].kids.append(lit)
+        for ce, j in check_exprs {
+            self.tir.nodes[r].kids.append(ce)
+            self.tir.nodes[r].kids2.append(check_fields[j])
+            self.tir.nodes[r].kids2.append(check_locals[j])
+        }
+        return r
+    }
+
+    /// Check an expression that lives in another module's tree (a field default).
+    fn check_expr_in_module(self: *mut Self, dm: usize, e: usize, expected: usize) -> usize {
+        let saved = self.ctx().module
+        self.ctx().module = dm
+        let r = self.check_expr(e, expected)
+        self.ctx().module = saved
+        return r
+    }
+
+    fn check_variant_struct_lit(self: *mut Self, et: usize, variant: []u8, inits: []usize, start: usize, end: usize) -> usize {
+        let m = self.cur_module()
+        let d = self.tys.list[et].def
+        let idx = self.enum_variant_index(d, variant)
+        if idx == NONE {
+            self.fail_here(start, format("enum `{}` has no variant `{}`", .{self.enums[d].name, variant})[..])
+            return self.error_expr(start, end)
+        }
+        let em = self.enums[d].module
+        let vnode = self.enums[d].variants[idx]
+        if self.node(em, vnode).text != "struct" {
+            self.fail_here(start, format("variant `{}.{}` has no named fields", .{self.enums[d].name, variant})[..])
+            return self.error_expr(start, end)
+        }
+        let field_nodes = self.node(em, vnode).kids.clone()
+        let vtys = self.enum_variant_types(et)
+        let want = vtys[idx].clone()
+        var payload = List(usize).new()
+        for i in 0..want.len { payload.append(NONE) }
+        for init in inits {
+            let inode = self.node(m, init)
+            let fname = inode.name.clone()
+            let value_node = inode.x
+            var fi = NONE
+            for f, i in field_nodes { if self.node(em, f).name == fname { fi = i } }
+            if fi == NONE {
+                self.fail_here(inode.start, format("variant `{}.{}` has no field `{}`", .{self.enums[d].name, variant, fname})[..])
+                continue
+            }
+            var v = self.check_expr(value_node, want[fi])
+            v = self.coerce_or_error(v, want[fi], format("field `{}`", .{fname})[..])
+            v = self.take_ownership(v)
+            payload[fi] = v
+        }
+        let r = self.mk(TKind.EnumLit, et, start, end)
+        self.tir.nodes[r].a = idx
+        for v, i in payload {
+            if v == NONE {
+                self.fail_here(start, format("missing field `{}` in `{}.{}`", .{self.node(em, field_nodes[i]).name, self.enums[d].name, variant})[..])
+                continue
+            }
+            self.tir.nodes[r].kids.append(v)
+        }
+        return r
+    }
+
+    fn check_array_lit(self: *mut Self, e: usize, expected: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        let elems = n.kids.clone()
+        let start = n.start
+        let end = n.end
+        var exp = NONE
+        if expected != NONE { exp = self.tys.shallow(expected) }
+        var elem_hint = NONE
+        var want_slice = false
+        var want_list = false
+        if exp != NONE {
+            let ek = self.tys.kind(exp)
+            if ek == TK.Array {
+                if self.tys.list[exp].n as usize != elems.len {
+                    self.fail_here(start, format("expected an array of {} elements but the literal has {}", .{self.tys.list[exp].n, elems.len})[..])
+                }
+                elem_hint = self.tys.list[exp].args[0]
+            } else if ek == TK.Slice {
+                elem_hint = self.tys.list[exp].args[0]
+                want_slice = true
+            } else if ek == TK.List {
+                elem_hint = self.tys.list[exp].args[0]
+                want_list = true
+            }
+        }
+        let elem_ty = if elem_hint != NONE { elem_hint } else { self.tys.fresh_infer() }
+        var out = List(usize).new()
+        for x in elems {
+            var te = self.check_expr(x, elem_ty)
+            te = self.coerce_or_error(te, elem_ty, "array element")
+            te = self.take_ownership(te)
+            out.append(te)
+        }
+        if elems.len == 0 and elem_hint == NONE {
+            self.fail_here(start, "cannot infer the element type of an empty array literal; annotate it, e.g. `let xs: [0]i32 = []`")
+        }
+        let at = self.tys.array(elems.len as u64, elem_ty)
+        let lit = self.mk(TKind.ArrayLit, at, start, end)
+        self.tir.nodes[lit].kids = out
+        if want_slice {
+            let r = self.mk(TKind.ArrayToSlice, exp, start, end)
+            self.tir.nodes[r].kids.append(lit)
+            return r
+        }
+        if want_list {
+            self.add_effect(EFF_ALLOCATES, start, "building a List allocates")
+            let st = self.tys.wrap(TK.Slice, elem_ty, false)
+            let sl = self.mk(TKind.ArrayToSlice, st, start, end)
+            self.tir.nodes[sl].kids.append(lit)
+            let r = self.builtin_node("ListFromSlice", exp, start, end)
+            self.tir.nodes[r].kids.append(sl)
+            self.tir.nodes[r].kids2.append(elem_ty)
+            return r
+        }
+        return lit
+    }
+
+    fn check_tuple_lit(self: *mut Self, e: usize, expected: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        let elems = n.kids.clone()
+        let start = n.start
+        let end = n.end
+        if elems.len == 0 {
+            let v = self.tys.void()
+            return self.mk(TKind.Unit, v, start, end)
+        }
+        var hints = List(usize).new()
+        for i in 0..elems.len { hints.append(NONE) }
+        if expected != NONE {
+            let ex = self.tys.shallow(expected)
+            if self.tys.kind(ex) == TK.Tuple and self.tys.list[ex].args.len == elems.len { hints = self.tys.list[ex].args.clone() }
+        }
+        var out = List(usize).new()
+        var tys = List(usize).new()
+        for x, i in elems {
+            var te = self.check_expr(x, hints[i])
+            if hints[i] != NONE { te = self.coerce_or_error(te, hints[i], "tuple element") }
+            te = self.take_ownership(te)
+            tys.append(self.tir.nodes[te].ty)
+            out.append(te)
+        }
+        let tt = self.tys.tuple(tys)
+        let r = self.mk(TKind.TupleLit, tt, start, end)
+        self.tir.nodes[r].kids = out
+        return r
+    }
+
+    // ----- error handling, optionals ----------------------------------------------------
+
+    fn check_try(self: *mut Self, e: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        let inner_node = n.x
+        let start = n.start
+        let end = n.end
+        let ret = self.ctx().ret
+        let ret_r = self.tys.shallow(ret)
+        if self.tys.kind(ret_r) != TK.ErrUnion {
+            self.fail_here(start, "`try` is only valid in a function that returns an error union")
+            _ = self.check_expr(inner_node, NONE)
+            return self.error_expr(start, end)
+        }
+        let inner = self.check_expr(inner_node, NONE)
+        let it = self.tys.shallow(self.tir.nodes[inner].ty)
+        if self.tys.kind(it) != TK.ErrUnion {
+            self.fail_here(start, format("`try` requires an error union but found `{}`", .{self.ty_name(it)})[..])
+            return inner
+        }
+        let payload = self.tys.list[it].args[0]
+        let r = self.mk(TKind.Try, payload, start, end)
+        self.tir.nodes[r].kids.append(inner)
+        return r
+    }
+
+    fn check_catch(self: *mut Self, e: usize, expected: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        let inner_node = n.x
+        let handler_node = n.y
+        let binding = n.name.clone()
+        let has_binding = binding != "-"
+        let start = n.start
+        let end = n.end
+        let inner = self.check_expr(inner_node, NONE)
+        let it = self.tys.shallow(self.tir.nodes[inner].ty)
+        if self.tys.kind(it) != TK.ErrUnion {
+            self.fail_here(start, format("`catch` requires an error union but found `{}`", .{self.ty_name(it)})[..])
+            return self.error_expr(start, end)
+        }
+        _ = expected
+        let payload = self.tys.list[it].args[0]
+        let set = self.tys.list[it].def
+        let has_set = self.tys.list[it].flag
+        self.push_scope()
+        var err_local = NONE
+        if has_binding {
+            let et = self.tys.err_set(set, has_set)
+            err_local = self.declare_local(binding[..], et, false, start, end)
+        }
+        let moved_before = self.moved_snapshot()
+        var h = self.check_expr(handler_node, payload)
+        if self.tys.kind(self.tys.shallow(self.tir.nodes[h].ty)) == TK.Never { self.moved_restore(&moved_before) }
+        h = self.coerce_or_error(h, payload, "catch handler")
+        self.pop_scope()
+        let r = self.mk(TKind.Catch, payload, start, end)
+        self.tir.nodes[r].a = err_local
+        self.tir.nodes[r].kids.append(inner)
+        self.tir.nodes[r].kids.append(h)
+        return r
+    }
+
+    fn check_orelse(self: *mut Self, e: usize, expected: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        let inner_node = n.x
+        let default_node = n.y
+        let start = n.start
+        let end = n.end
+        var hint = NONE
+        if expected != NONE { hint = self.tys.wrap(TK.Opt, expected, false) }
+        let inner = self.check_expr(inner_node, hint)
+        let it = self.tys.shallow(self.tir.nodes[inner].ty)
+        if self.tys.kind(it) != TK.Opt {
+            self.fail_here(start, format("`orelse` requires an optional but found `{}`", .{self.ty_name(it)})[..])
+            return self.error_expr(start, end)
+        }
+        let payload = self.tys.list[it].args[0]
+        let moved_before = self.moved_snapshot()
+        var d = self.check_expr(default_node, payload)
+        if self.tys.kind(self.tys.shallow(self.tir.nodes[d].ty)) == TK.Never { self.moved_restore(&moved_before) }
+        d = self.coerce_or_error(d, payload, "orelse default")
+        let p = self.tys.resolve(payload, false)
+        let r = self.mk(TKind.OrElse, p, start, end)
+        self.tir.nodes[r].kids.append(inner)
+        self.tir.nodes[r].kids.append(d)
+        return r
+    }
+
+    fn check_if_capture(self: *mut Self, e: usize, expected: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, e)
+        let cond_node = n.x
+        let then_node = n.y
+        let els_node = n.z
+        let binding = n.name.clone()
+        let start = n.start
+        let end = n.end
+        let c = self.check_expr(cond_node, NONE)
+        let ct = self.tys.shallow(self.tir.nodes[c].ty)
+        if self.tys.kind(ct) != TK.Opt {
+            self.fail_here(self.tir.nodes[c].start, format("`if let v = x` requires an optional but found `{}`", .{self.ty_name(ct)})[..])
+            return self.error_expr(start, end)
+        }
+        let payload = self.tys.list[ct].args[0]
+        self.push_scope()
+        let local = self.declare_local(binding[..], payload, false, start, end)
+        // a binding over a place is a view of the payload (the optional keeps ownership);
+        // only an owned temporary hands its payload to the binding
+        if self.is_place(c) or self.is_borrowed_view(c) {
+            self.ctx().locals[local].if_let = true
+            self.bind_view(local, c, start)
+        } else {
+            self.check_store_local(local, c, start)
+        }
+        let moved_before = self.moved_snapshot()
+        let v = self.tys.void()
+        let then_expected = if els_node != NONE { expected } else { v }
+        let tb = self.check_block(then_node, then_expected, NONE, NONE)
+        self.pop_scope()
+        let moved_then = self.moved_snapshot()
+        let then_ty = self.tir.nodes[tb].ty
+        let then_diverges = self.tys.kind(self.tys.shallow(then_ty)) == TK.Never
+        if then_diverges and els_node == NONE { self.moved_restore(&moved_before) }
+        if els_node == NONE {
+            let tk = self.tys.kind(self.tys.shallow(then_ty))
+            if ! (tk == TK.Void or tk == TK.Never) { self.fail_here(self.tir.nodes[tb].start, "an `if` without `else` produces no value") }
+            let r = self.mk(TKind.IfCapture, v, start, end)
+            self.tir.nodes[r].a = local
+            self.tir.nodes[r].kids.append(c)
+            self.tir.nodes[r].kids.append(tb)
+            return r
+        }
+        self.moved_restore(&moved_before)
+        let hint = if then_diverges { expected } else { then_ty }
+        var eb = NONE
+        if self.node(m, els_node).k == parser.NodeKind.Block {
+            eb = self.check_block(els_node, hint, NONE, NONE)
+        } else {
+            let te = self.check_expr(els_node, hint)
+            eb = self.mk(TKind.Block, self.tir.nodes[te].ty, self.tir.nodes[te].start, self.tir.nodes[te].end)
+            self.tir.nodes[eb].a = te
+        }
+        let else_diverges = self.tys.kind(self.tys.shallow(self.tir.nodes[eb].ty)) == TK.Never
+        let moved_else = self.moved_snapshot()
+        self.moved_restore(&moved_before)
+        if !then_diverges { self.moved_merge(&moved_then) }
+        if !else_diverges { self.moved_merge(&moved_else) }
+        let ty = self.join_branches(tb, eb, expected)
+        let r = self.mk(TKind.IfCapture, ty, start, end)
+        self.tir.nodes[r].a = local
+        self.tir.nodes[r].kids.append(c)
+        self.tir.nodes[r].kids.append(tb)
+        self.tir.nodes[r].kids.append(eb)
+        return r
+    }
+}

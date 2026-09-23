@@ -24,7 +24,7 @@ newer than it, and skips the parts of the `ship` suite whose tools (`cargo`,
 | path | what lives there |
 | --- | --- |
 | `self/lexer.nx`, `self/parser.nx` | syntax |
-| `self/check.nx`, `self/cimport.nx` | name resolution, type checking, monomorphization, effects, the compile-time interpreter, C header import |
+| `self/check.nx`, `self/check_*.nx`, `self/cimport.nx` | the checker: name resolution, type checking, monomorphization, effects, views, the compile-time interpreter (`check.nx` opens with a map of its modules); C header import |
 | `self/cgen.nx` | the C backend |
 | `self/nx.nx` | the `nx` driver: build, run, test, check, emit-c, tir |
 | `self/fmt.nx`, `self/doc.nx`, `self/tools.nx`, `self/size.nx`, `self/manifest.nx`, `self/ship.nx`, `self/lsp.nx`, `self/repl.nx` | the tools: formatter, docs, reports, packages, `ship`, the language server, the REPL |

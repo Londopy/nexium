@@ -1,0 +1,1067 @@
+// self/check_stmts.nx: function bodies, blocks and statements: `let` and
+// its patterns, assignment, `return`, `defer`, `using arena` blocks, labels,
+// `break` and `continue`, and the loops: `while`, and `for` over ranges,
+// collections and iterators.
+// The methods are the checker's (`impl Checker`, decision 110).
+
+import check
+import parser
+
+type Checker = check.Checker
+const EFF_ALLOCATES = check.EFF_ALLOCATES
+const EFF_BLOCKS = check.EFF_BLOCKS
+const EFF_REFCOUNTS = check.EFF_REFCOUNTS
+const EFF_SHARED_MUTABLE = check.EFF_SHARED_MUTABLE
+const NONE = check.NONE
+type Obligation = check.Obligation
+type Range = check.Range
+type TK = check.TK
+type TKind = check.TKind
+type Tir = check.Tir
+
+// ---------------------------------------------------------------- bodies, blocks and statements
+
+impl Checker {
+    fn check_fn_body(self: *mut Self, inst: usize) {
+        let fid = self.insts[inst].def
+        let m = self.fns[fid].node_module
+        let node = self.fns[fid].node
+        let is_test = self.fns[fid].is_test
+        let body = if is_test { self.node(m, node).x } else { self.node(m, node).y }
+        if body == NONE {
+            if !self.insts[inst].is_extern and self.fns[fid].impl_id == NONE {
+                let nm = self.insts[inst].name.clone()
+                self.fail(m, self.insts[inst].start, format("function `{}` has no body", .{nm})[..])
+            }
+            return
+        }
+        let ret = self.insts[inst].ret
+        let saved_env = self.env_save()
+        self.env_set(&self.insts[inst].gen_names.clone(), &self.insts[inst].gen_tys.clone())
+        // where-clause bounds hold for the concrete arguments
+        let wheres = self.node(m, node).kids2.clone()
+        for w in wheres {
+            let wn = self.node(m, w)
+            let pname = wn.name.clone()
+            let bounds = wn.text.clone()
+            let wstart = wn.start
+            let t = self.env_lookup(pname[..])
+            if t == NONE { continue }
+            let names = Checker.split_words(bounds[..])
+            for b in names {
+                if !self.type_satisfies_trait(t, b[..]) {
+                    self.fail(m, wstart, format("type `{}` does not implement trait `{}`", .{self.ty_name(t), b})[..])
+                }
+            }
+        }
+        var ctx = check.new_ctx(ret, m, self.insts[inst].name[..])
+        ctx.self_ty = self.insts[inst].self_ty
+        ctx.locals = self.insts[inst].locals.clone()
+        ctx.scope_marks.append(0)
+        for p in self.insts[inst].params {
+            ctx.scope_names.append(ctx.locals[p].name.clone())
+            ctx.scope_locals.append(p)
+            ctx.scope_deref.append(false)
+        }
+        self.ctxs.append(ctx)
+        let tb = self.check_block(body, ret, NONE, NONE)
+        let tb2 = self.finalize_block_as_body(tb, ret)
+        let done = self.ctxs.pop() orelse return
+        self.env_restore(&saved_env)
+        self.insts[inst].locals = done.locals.clone()
+        self.insts[inst].body = tb2
+        self.insts[inst].own_effects = done.own_effects
+        self.insts[inst].witnesses = done.witnesses.clone()
+        self.insts[inst].callees = done.callees.clone()
+        self.insts[inst].callee_spans = done.callee_spans.clone()
+    }
+
+    fn is_void_like_ret(self: *mut Self, ret: usize) -> bool {
+        let r = self.tys.resolve(ret, true)
+        let k = self.tys.kind(r)
+        if k == TK.Void { return true }
+        if k == TK.ErrUnion {
+            let inner = self.tys.shallow(self.tys.list[r].args[0])
+            return self.tys.kind(inner) == TK.Void
+        }
+        return false
+    }
+
+    fn finalize_block_as_body(self: *mut Self, tb: usize, ret: usize) -> usize {
+        let is_void_ret = self.is_void_like_ret(ret)
+        let tail = self.tir.nodes[tb].a
+        if tail != NONE {
+            self.tir.nodes[tb].a = NONE
+            let tt = self.tys.resolve(self.tir.nodes[tail].ty, false)
+            let tk = self.tys.kind(tt)
+            var tail_is_err_void = false
+            if tk == TK.ErrUnion { tail_is_err_void = self.tys.kind(self.tys.shallow(self.tys.list[tt].args[0])) == TK.Void }
+            let ret_is_err = self.tys.kind(self.tys.resolve(ret, true)) == TK.ErrUnion
+            if is_void_ret and (tk == TK.Void or tk == TK.Never) {
+                let s = self.tir.add(check.tblank(TKind.SExpr, tt, self.tir.nodes[tail].start, self.tir.nodes[tail].end))
+                self.tir.nodes[s].kids.append(tail)
+                self.tir.nodes[tb].kids.append(s)
+            } else if is_void_ret and tail_is_err_void and ret_is_err {
+                // a `!void` tail in a `!void` function is returned, errors and all
+                let start = self.tir.nodes[tail].start
+                let end = self.tir.nodes[tail].end
+                let v = self.coerce_or_error(tail, ret, "return value")
+                let s = self.tir.add(check.tblank(TKind.SReturn, ret, start, end))
+                self.tir.nodes[s].kids.append(v)
+                self.tir.nodes[tb].kids.append(s)
+            } else if is_void_ret {
+                self.fail_here(self.tir.nodes[tail].start, format("this value of type `{}` is unused; the function returns void. Discard it with `_ = ...` or return it", .{self.ty_name(tt)})[..])
+                let s = self.tir.add(check.tblank(TKind.SExpr, tt, self.tir.nodes[tail].start, self.tir.nodes[tail].end))
+                self.tir.nodes[s].kids.append(tail)
+                self.tir.nodes[tb].kids.append(s)
+            } else {
+                let start = self.tir.nodes[tail].start
+                let end = self.tir.nodes[tail].end
+                let v = self.coerce_or_error(tail, ret, "return value")
+                let s = self.tir.add(check.tblank(TKind.SReturn, ret, start, end))
+                self.tir.nodes[s].kids.append(v)
+                self.tir.nodes[tb].kids.append(s)
+            }
+        } else if !is_void_ret and !self.block_diverges(tb) {
+            self.fail_here(self.tir.nodes[tb].start, format("function must return a value of type `{}` on every path; add a `return` or a tail expression", .{self.ty_name(ret)})[..])
+        }
+        return tb
+    }
+
+    fn block_diverges(self: *mut Self, b: usize) -> bool {
+        let tail = self.tir.nodes[b].a
+        if tail != NONE and self.expr_diverges(tail) { return true }
+        let kids = self.tir.nodes[b].kids.clone()
+        for s in kids { if self.stmt_diverges(s) { return true } }
+        return false
+    }
+
+    fn stmt_diverges(self: *mut Self, s: usize) -> bool {
+        let k = self.tir.nodes[s].k
+        if k == TKind.SReturn or k == TKind.SBreak or k == TKind.SContinue { return true }
+        if k == TKind.SExpr { return self.expr_diverges(self.tir.nodes[s].kids[0]) }
+        if k == TKind.SLet {
+            if self.tir.nodes[s].kids.len > 0 { return self.expr_diverges(self.tir.nodes[s].kids[0]) }
+            return false
+        }
+        if k == TKind.SBlock or k == TKind.SUsing { return self.block_diverges(self.tir.nodes[s].kids[self.tir.nodes[s].kids.len - 1]) }
+        if k == TKind.SWhile {
+            let cond = self.tir.nodes[s].kids[0]
+            let always = self.tir.nodes[cond].k == TKind.Bool and self.tir.nodes[cond].flag
+            return always and !self.has_break(self.tir.nodes[s].kids[1], 0)
+        }
+        return false
+    }
+
+    /// Does a loop body break out of the loop at `depth` 0? Nested loops own
+    /// their own breaks.
+    fn has_break(self: *mut Self, b: usize, depth: u32) -> bool {
+        let k = self.tir.nodes[b].k
+        if k == TKind.SBreak { return depth == 0 }
+        if k == TKind.SWhile or k == TKind.SForRange or k == TKind.SForSlice {
+            let kids = self.tir.nodes[b].kids.clone()
+            for c in kids { if self.has_break(c, depth + 1) { return true } }
+            return false
+        }
+        let kids = self.tir.nodes[b].kids.clone()
+        for c in kids { if self.has_break(c, depth) { return true } }
+        let tail = self.tir.nodes[b].a
+        if k == TKind.Block and tail != NONE { return self.has_break(tail, depth) }
+        return false
+    }
+
+    /// Does the expression never yield a value? Its type is `never`, or it
+    /// was `never` before a coercion typed it as what the context wanted
+    /// (`coerce` retypes in place): a panic, `unreachable`, a call to a
+    /// function returning `never`, or a block whose tail diverges.
+    pub fn expr_diverges(self: *mut Self, e: usize) -> bool {
+        let t = self.tys.shallow(self.tir.nodes[e].ty)
+        if self.tys.kind(t) == TK.Never { return true }
+        let k = self.tir.nodes[e].k
+        if k == TKind.Unreachable { return true }
+        if k == TKind.Builtin and self.tir.nodes[e].name[..] == "Panic" { return true }
+        if k == TKind.BlockExpr { return self.block_diverges(self.tir.nodes[e].kids[0]) }
+        if k == TKind.Call {
+            let f = self.tir.nodes[e].a
+            if f != NONE and f < self.insts.len and self.tys.kind(self.tys.shallow(self.insts[f].ret)) == TK.Never { return true }
+        }
+        return false
+    }
+
+    // ----- blocks and statements ----------------------------------------------------
+
+    fn check_block(self: *mut Self, b: usize, expected: usize, label: usize, label_ty: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, b)
+        let stmts = n.kids.clone()
+        let tail_node = n.x
+        let start = n.start
+        let end = n.end
+        self.push_scope()
+        var tb = check.tblank(TKind.Block, NONE, start, end)
+        tb.b = label
+        for s in stmts {
+            let ts = self.check_stmt(s)
+            if ts != NONE { tb.kids.append(ts) }
+            for extra in self.pending_stmts.clone() { tb.kids.append(extra) }
+            self.pending_stmts.clear()
+        }
+        var ty = self.tys.void()
+        var tail = NONE
+        if tail_node != NONE {
+            let want = if expected != NONE { expected } else { label_ty }
+            var te = self.check_expr(tail_node, want)
+            let tt = self.tys.shallow(self.tir.nodes[te].ty)
+            let tk = self.tys.kind(tt)
+            var is_void_expected = false
+            if want != NONE { is_void_expected = self.tys.kind(self.tys.shallow(want)) == TK.Void }
+            if is_void_expected and ! (tk == TK.Void or tk == TK.Never) {
+                self.check_unused(te)
+                let s = self.tir.add(check.tblank(TKind.SExpr, tt, self.tir.nodes[te].start, self.tir.nodes[te].end))
+                self.tir.nodes[s].kids.append(te)
+                tb.kids.append(s)
+            } else if tk == TK.Void {
+                let s = self.tir.add(check.tblank(TKind.SExpr, tt, self.tir.nodes[te].start, self.tir.nodes[te].end))
+                self.tir.nodes[s].kids.append(te)
+                tb.kids.append(s)
+            } else {
+                if want != NONE and !is_void_expected { te = self.coerce_or_error(te, want, "block value") }
+                te = self.take_ownership(te)
+                ty = self.tir.nodes[te].ty
+                tail = te
+            }
+        }
+        if tail == NONE {
+            var diverges = false
+            for s in tb.kids { if self.stmt_diverges(s) { diverges = true } }
+            if diverges {
+                // a labeled block that ends in `break :label v` still yields the value
+                ty = self.tys.never()
+                if label_ty != NONE and !self.tys.contains_infer(self.tys.resolve(label_ty, true)) { ty = label_ty }
+            } else if label_ty != NONE {
+                ty = label_ty
+            }
+        }
+        if label_ty != NONE and tail != NONE { ty = label_ty }
+        self.pop_scope()
+        tb.a = tail
+        tb.ty = ty
+        return self.tir.add(tb)
+    }
+
+    /// A labeled block yields its value through `break :label v`.
+    fn check_block_labeled(self: *mut Self, b: usize, expected: usize) -> usize {
+        let m = self.cur_module()
+        let label = self.node(m, b).name.clone()
+        if label.len == 0 { return self.check_block(b, expected, NONE, NONE) }
+        let ty = if expected != NONE { expected } else { self.tys.fresh_infer() }
+        let lid = self.new_label(label[..], true, false, ty)
+        let tb = self.check_block(b, ty, lid, ty)
+        _ = self.ctx().labels.pop()
+        return tb
+    }
+
+    fn check_unused(self: *mut Self, te: usize) {
+        // the REPL prints the value of a trailing expression, and `:effects`
+        // checks an expression for its effects alone
+        if self.repl_mode and (self.ctx().fn_name == "main" or self.ctx().fn_name == "__nx_effects") { return }
+        let t = self.tys.shallow(self.tir.nodes[te].ty)
+        let k = self.tys.kind(t)
+        if k == TK.Void or k == TK.Never { return }
+        let at = self.tir.nodes[te].start
+        if k == TK.ErrUnion {
+            self.fail_here(at, format("unhandled error: this expression has type `{}`", .{self.ty_name(t)})[..])
+            return
+        }
+        self.fail_here(at, format("unused value of type `{}`", .{self.ty_name(t)})[..])
+    }
+
+    fn stmt_node(self: *mut Self, k: TKind, start: usize, end: usize) -> usize {
+        let v = self.tys.void()
+        return self.tir.add(check.tblank(k, v, start, end))
+    }
+
+    fn check_stmt(self: *mut Self, s: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, s)
+        let k = n.k
+        let start = n.start
+        let end = n.end
+        if k == parser.NodeKind.Let { return self.check_let(s) }
+        if k == parser.NodeKind.Assign { return self.check_assign(s) }
+        if k == parser.NodeKind.Discard {
+            let value_node = n.x
+            let te = self.check_expr(value_node, NONE)
+            let st = self.stmt_node(TKind.SExpr, start, end)
+            self.tir.nodes[st].kids.append(te)
+            return st
+        }
+        if k == parser.NodeKind.ExprStmt {
+            let e = n.x
+            let v = self.tys.void()
+            let te = self.check_expr(e, v)
+            self.check_unused(te)
+            let st = self.stmt_node(TKind.SExpr, start, end)
+            self.tir.nodes[st].kids.append(te)
+            return st
+        }
+        if k == parser.NodeKind.Return { return self.check_return(s) }
+        if k == parser.NodeKind.Break { return self.check_break(s) }
+        if k == parser.NodeKind.Continue {
+            let label = n.name.clone()
+            let has_label = label != "-"
+            let li = self.find_label(label[..], has_label, false, start)
+            if li == NONE { return NONE }
+            let is_loop = self.ctx().labels[li].is_loop
+            let lid = self.ctx().labels[li].id
+            if !is_loop { self.fail_here(start, "`continue` needs a loop label") }
+            let st = self.stmt_node(TKind.SContinue, start, end)
+            self.tir.nodes[st].a = lid
+            return st
+        }
+        if k == parser.NodeKind.Defer or k == parser.NodeKind.ErrDefer {
+            let is_err = k == parser.NodeKind.ErrDefer
+            let body = n.x
+            if is_err {
+                let ret = self.ctx().ret
+                if self.tys.kind(self.tys.shallow(ret)) != TK.ErrUnion {
+                    self.fail_here(start, "`errdefer` is only meaningful in a function that returns an error union")
+                }
+            }
+            let saved = self.ctx().in_defer
+            self.ctx().in_defer = true
+            self.push_scope()
+            let tb = self.check_stmt(body)
+            self.pop_scope()
+            self.ctx().in_defer = saved
+            if self.pending_stmts.len > 0 {
+                self.pending_stmts.clear()
+                self.fail_here(start, "a tuple binding cannot be the body of a `defer`")
+                return NONE
+            }
+            if tb == NONE { return NONE }
+            let st = self.stmt_node(if is_err { TKind.SErrDefer } else { TKind.SDefer }, start, end)
+            self.tir.nodes[st].kids.append(tb)
+            return st
+        }
+        if k == parser.NodeKind.While { return self.check_while(s) }
+        if k == parser.NodeKind.For { return self.check_for(s) }
+        if k == parser.NodeKind.Unsafe {
+            let body = n.x
+            self.ctx().unsafe_depth += 1
+            let v = self.tys.void()
+            let tb = self.check_block(body, v, NONE, NONE)
+            self.ctx().unsafe_depth -= 1
+            let st = self.stmt_node(TKind.SBlock, start, end)
+            self.tir.nodes[st].kids.append(tb)
+            return st
+        }
+        if k == parser.NodeKind.Using {
+            let strategy = n.name.clone()
+            let body = n.x
+            let v = self.tys.void()
+            self.ctx().using_depth += 1
+            let tb = self.check_block(body, v, NONE, NONE)
+            self.ctx().using_depth -= 1
+            let st = self.stmt_node(TKind.SUsing, start, end)
+            st_set_name(&mut self.tir, st, strategy[..])
+            self.tir.nodes[st].kids.append(tb)
+            return st
+        }
+        self.fail_here(start, "unsupported statement (stage 2)")
+        return NONE
+    }
+
+    fn check_let(self: *mut Self, s: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, s)
+        if n.words.len > 0 { return self.check_let_tuple(s) }
+        let name = n.name.clone()
+        let mutable = n.flag
+        let ty_node = n.x
+        let init_node = n.y
+        let start = n.start
+        let end = n.end
+        var declared = NONE
+        if ty_node != NONE {
+            let st = self.ctx().self_ty
+            declared = self.resolve_type(m, ty_node, st)
+        }
+        var init = NONE
+        if init_node != NONE {
+            var te = self.check_expr(init_node, declared)
+            if declared != NONE { te = self.coerce_or_error(te, declared, format("initializer of `{}`", .{name})[..]) }
+            let tt = self.tys.shallow(self.tir.nodes[te].ty)
+            if self.tys.kind(tt) == TK.Void {
+                self.fail_here(self.tir.nodes[te].start, format("`{}` would have type `void`; a `let` must bind a value", .{name})[..])
+            }
+            init = self.take_ownership(te)
+        } else {
+            if declared == NONE { self.fail_here(start, format("`{}` needs a type or an initializer", .{name})[..]) }
+            if !mutable { self.fail_here(start, format("`let {}` without an initializer can never be assigned; use `var`", .{name})[..]) }
+        }
+        var lty = self.tys.void()
+        if declared != NONE { lty = declared } else if init != NONE { lty = self.tir.nodes[init].ty }
+        var has_range = false
+        var range = Range{ .lo = 0, .hi = 0 }
+        if init != NONE {
+            if let r = self.expr_range(init) {
+                has_range = true
+                range = r
+            }
+        }
+        let id = self.declare_local(name[..], lty, mutable, start, end)
+        if init != NONE { self.check_store_local(id, init, start) }
+        if !mutable and has_range { self.ctx().ranges.put(id, range) }
+        if self.is_ref_class(lty) { self.add_effect(EFF_REFCOUNTS, start, "holding a reference releases it at scope exit") }
+        let st = self.stmt_node(TKind.SLet, start, end)
+        self.tir.nodes[st].a = id
+        if init != NONE { self.tir.nodes[st].kids.append(init) }
+        return st
+    }
+
+    /// `let (a, b) = e`: a binding per element, `_` skipping one. Over an
+    /// owned value (a call's result, a literal, a moved local) the names own
+    /// the elements: the tuple lands in a hidden local that drops nothing,
+    /// its elements having moved on. Over a place the names are views of its
+    /// elements, as an `if let` binding is, so the place keeps its value and
+    /// moving out of a name is an error. Each name is one `let` (the first
+    /// returned, the rest pending for the block), so the emitter and the
+    /// interpreter learned nothing new.
+    fn check_let_tuple(self: *mut Self, s: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, s)
+        let names = n.words.clone()
+        let mutable = n.flag
+        let ty_node = n.x
+        let init_node = n.y
+        let start = n.start
+        let end = n.end
+        var declared = NONE
+        if ty_node != NONE {
+            let st = self.ctx().self_ty
+            declared = self.resolve_type(m, ty_node, st)
+        }
+        if init_node == NONE {
+            self.fail_here(start, "a tuple binding needs an initializer")
+            return NONE
+        }
+        var te = self.check_expr(init_node, declared)
+        if declared != NONE { te = self.coerce_or_error(te, declared, "initializer of a tuple binding") }
+        let tt = self.tys.shallow(self.tir.nodes[te].ty)
+        if self.tys.kind(tt) != TK.Tuple {
+            self.fail_here(self.tir.nodes[te].start, format("a tuple binding needs a tuple but found `{}`", .{self.ty_name(tt)})[..])
+            return NONE
+        }
+        let elems = self.tys.list[tt].args.clone()
+        if elems.len != names.len {
+            self.fail_here(start, format("this binding names {} elements but the tuple has {}", .{names.len, elems.len})[..])
+            return NONE
+        }
+        let view = self.is_place(te) or self.is_borrowed_view(te)
+        if view and mutable {
+            self.fail_here(start, "`var` cannot destructure a place, whose elements the names would only view; use `let`, or destructure a `.clone()`")
+            return NONE
+        }
+        var hidden = NONE
+        var first = NONE
+        if view and self.tir.nodes[te].k == TKind.Local {
+            // the names read the local's elements in place
+            hidden = self.tir.nodes[te].a
+        } else {
+            var init = te
+            if !view { init = self.take_ownership(te) }
+            hidden = self.declare_local(format("__tuple{}", .{s})[..], tt, false, start, end)
+            if view { self.ctx().locals[hidden].if_let = true }
+            first = self.stmt_node(TKind.SLet, start, end)
+            self.tir.nodes[first].a = hidden
+            self.tir.nodes[first].kids.append(init)
+            // nothing to drop: the elements move on to the names, or were never owned here
+            self.tir.nodes[first].flag = true
+        }
+        for name, i in names {
+            if view and name == "_" { continue }
+            let st = self.element_let(hidden, tt, i, elems[i], name[..], mutable, view, start, end)
+            if first == NONE { first = st } else { self.pending_stmts.append(st) }
+        }
+        return first
+    }
+
+    /// One name of a tuple binding: `let name = hidden.i`, a view when the
+    /// tuple is; `_` becomes a hidden name that owns (and drops) its element.
+    fn element_let(self: *mut Self, hidden: usize, tt: usize, i: usize, ety: usize, name: []u8, mutable: bool, view: bool, start: usize, end: usize) -> usize {
+        let b = self.mk(TKind.Local, tt, start, end)
+        self.tir.nodes[b].a = hidden
+        let f = self.mk(TKind.TupleField, ety, start, end)
+        self.tir.nodes[f].a = i
+        self.tir.nodes[f].kids.append(b)
+        let lname = if name == "_" { format("__skip{}_{}", .{hidden, i}) } else { String.from(name) }
+        let id = self.declare_local(lname[..], ety, mutable, start, end)
+        if view {
+            self.ctx().locals[id].if_let = true
+            self.ctx().locals[id].tuple_view = true
+        } else if self.is_ref_class(ety) { self.add_effect(EFF_REFCOUNTS, start, "holding a reference releases it at scope exit") }
+        let st = self.stmt_node(TKind.SLet, start, end)
+        self.tir.nodes[st].a = id
+        self.tir.nodes[st].kids.append(f)
+        if view { self.tir.nodes[st].flag = true }
+        if view { self.bind_view(id, f, start) } else { self.check_store_local(id, f, start) }
+        return st
+    }
+
+    /// The names of a `(a,b)` loop binding.
+    fn tuple_pattern_names(self: *mut Self, w: []u8) -> List(String) {
+        var out = List(String).new()
+        var cur = String.new()
+        for ch in w[1..w.len - 1] {
+            if ch == ',' { out.append(cur.clone()); cur.clear() } else { cur.push_byte(ch) }
+        }
+        out.append(cur)
+        return out
+    }
+
+    fn check_assign(self: *mut Self, s: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, s)
+        let op = n.name.clone()
+        let target_node = n.x
+        let value_node = n.y
+        let start = n.start
+        let end = n.end
+        let compound = op != "="
+        let bop = op.clone()
+        if !compound {
+            // naming the target of `x = v` is not a read: a moved local is revived
+            let tn = self.node(m, target_node)
+            if tn.k == parser.NodeKind.Ident {
+                let l = self.lookup_local(tn.name[..])
+                if l != NONE and self.ctx().moved.contains(l) {
+                    _ = self.ctx().moved.remove(l)
+                    self.forget_local(l)
+                }
+                self.ctx().assign_target = l
+            }
+        }
+        let t = self.check_expr(target_node, NONE)
+        self.ctx().assign_target = NONE
+        if !self.is_place(t) {
+            self.fail_here(self.tir.nodes[t].start, "the left side of an assignment must be a variable, field, element, or dereference")
+            _ = self.check_expr(value_node, NONE)
+            return NONE
+        }
+        if !self.place_mutable(t) {
+            let tk = self.tir.nodes[t].k
+            if tk == TKind.Local {
+                let ln = self.ctx().locals[self.tir.nodes[t].a].name.clone()
+                self.fail_here(self.tir.nodes[t].start, format("`{}` is immutable; declare it with `var`", .{ln})[..])
+            } else {
+                self.fail_here(self.tir.nodes[t].start, "cannot assign to an immutable location")
+            }
+        }
+        if self.tir.nodes[t].k == TKind.Global { self.add_effect(EFF_SHARED_MUTABLE, start, "writing a mutable global") }
+        let tt = self.tir.nodes[t].ty
+        let st = self.stmt_node(TKind.SAssign, start, end)
+        if !compound {
+            var v = self.check_expr(value_node, tt)
+            v = self.coerce_or_error(v, tt, "assignment")
+            v = self.take_ownership(v)
+            if self.tir.nodes[t].k == TKind.Local {
+                let l = self.tir.nodes[t].a
+                _ = self.ctx().moved.remove(l)
+                self.forget_local(l)
+                // the local views what the new value views, from here
+                self.ctx().locals[l].origins.clear()
+                self.ctx().locals[l].warned.clear()
+            }
+            // the old storage of a container is released: a change for V3; then V2 for what is stored
+            if self.tir.nodes[t].k == TKind.Local and self.needs_drop(tt) { self.note_change(self.tir.nodes[t].a, start) }
+            self.check_store(t, v, start)
+            st_set_name(&mut self.tir, st, "=")
+            self.tir.nodes[st].kids.append(t)
+            self.tir.nodes[st].kids.append(v)
+            return st
+        }
+        // compound: typed as the binary operation on (target, value)
+        let be = self.check_binary_parts(bop[..], target_node, value_node, tt, start, end)
+        if self.tir.nodes[be].k != TKind.Binary { return NONE }
+        let mode = self.tir.nodes[be].name.clone()
+        let v = self.tir.nodes[be].kids[1]
+        if self.tir.nodes[t].k == TKind.Local {
+            self.forget_local(self.tir.nodes[t].a)
+            if self.needs_drop(tt) { self.note_change(self.tir.nodes[t].a, start) }
+        }
+        st_set_name(&mut self.tir, st, format("{}= {}", .{bop, mode})[..])
+        self.tir.nodes[st].kids.append(t)
+        self.tir.nodes[st].kids.append(v)
+        return st
+    }
+
+    fn check_return(self: *mut Self, s: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, s)
+        let value_node = n.x
+        let start = n.start
+        let end = n.end
+        if self.ctx().in_defer { self.fail_here(start, "`return` is not allowed inside `defer`") }
+        if self.ctx().in_parallel > 0 { self.fail_here(start, "`return` is not allowed inside a `for parallel` body") }
+        let ret = self.ctx().ret
+        let ret_is_void = self.is_void_like_ret(ret)
+        let st = self.stmt_node(TKind.SReturn, start, end)
+        if value_node == NONE {
+            if !ret_is_void { self.fail_here(start, format("`return` without a value in a function returning `{}`", .{self.ty_name(ret)})[..]) }
+            return st
+        }
+        var te = self.check_expr(value_node, ret)
+        let tt = self.tys.shallow(self.tir.nodes[te].ty)
+        if ret_is_void and self.tys.kind(tt) == TK.Void {
+            self.tir.nodes[st].kids.append(te)
+            return st
+        }
+        te = self.coerce_or_error(te, ret, "return value")
+        self.check_escaping_view(te, start)
+        self.check_arena_return(te, start)
+        te = self.take_ownership(te)
+        self.tir.nodes[st].kids.append(te)
+        return st
+    }
+}
+
+// ---------------------------------------------------------------- labels and loops
+
+impl Checker {
+    /// The index into the label stack of the named label (or the innermost loop), or NONE.
+    fn find_label(self: *mut Self, name: []u8, has_name: bool, for_break: bool, at: usize) -> usize {
+        let c = self.ctx()
+        var i = c.labels.len
+        while i > 0 {
+            i -= 1
+            let l = &c.labels[i]
+            if has_name {
+                if l.has_name and l.name == name { return i }
+            } else if l.is_loop {
+                return i
+            }
+        }
+        if has_name {
+            self.fail_here(at, format("cannot find label `{}`", .{name})[..])
+        } else {
+            self.fail_here(at, if for_break { "`break` outside of a loop" } else { "`continue` outside of a loop" })
+        }
+        return NONE
+    }
+
+    fn check_break(self: *mut Self, s: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, s)
+        let label = n.name.clone()
+        let has_label = label != "-"
+        let value_node = n.x
+        let start = n.start
+        let end = n.end
+        if self.ctx().in_parallel > 0 { self.fail_here(start, "`break` is not allowed inside a `for parallel` body (other workers cannot be stopped); use `continue`") }
+        let li = self.find_label(label[..], has_label, true, start)
+        if li == NONE { return NONE }
+        let is_loop = self.ctx().labels[li].is_loop
+        let lid = self.ctx().labels[li].id
+        let break_ty = self.ctx().labels[li].break_ty
+        let st = self.stmt_node(TKind.SBreak, start, end)
+        self.tir.nodes[st].a = lid
+        if value_node != NONE {
+            if is_loop { self.fail_here(start, "loops do not produce values; use a labeled block for `break :label value`") }
+            var te = self.check_expr(value_node, break_ty)
+            if break_ty != NONE { te = self.coerce_or_error(te, break_ty, "break value") }
+            te = self.take_ownership(te)
+            self.tir.nodes[st].kids.append(te)
+        } else if !is_loop and break_ty != NONE {
+            let v = self.tys.void()
+            if !self.unify(break_ty, v) { self.fail_here(start, "this labeled block produces a value; `break :label` needs one") }
+        }
+        return st
+    }
+
+    fn check_while(self: *mut Self, s: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, s)
+        let label = n.name.clone()
+        let cond_node = n.x
+        let body_node = n.y
+        let els_node = n.z
+        let start = n.start
+        let end = n.end
+        let bt = self.tys.bool_ty()
+        var c = self.check_expr(cond_node, bt)
+        c = self.coerce_or_error(c, bt, "while condition")
+        let lid = self.new_label(label[..], label.len > 0, true, NONE)
+        self.ctx().loop_depth += 1
+        self.ctx().loop_starts.append(start)
+        // a loop may change any `var`: their facts end here; the condition's
+        // own facts hold at the top of every pass
+        self.forget_var_facts()
+        let saved = self.facts_save()
+        let body_facts = self.guard_facts(c, false)
+        self.apply_facts(&body_facts)
+        let v = self.tys.void()
+        let tb = self.check_block(body_node, v, NONE, NONE)
+        self.facts_restore(&saved)
+        self.ctx().loop_depth -= 1
+        _ = self.ctx().loop_starts.pop()
+        _ = self.ctx().labels.pop()
+        let st = self.stmt_node(TKind.SWhile, start, end)
+        self.tir.nodes[st].a = lid
+        self.tir.nodes[st].kids.append(c)
+        self.tir.nodes[st].kids.append(tb)
+        if els_node != NONE {
+            // the else runs when the condition turned false
+            let saved_else = self.facts_save()
+            let else_facts = self.guard_facts(c, true)
+            self.apply_facts(&else_facts)
+            let eb = self.check_block(els_node, v, NONE, NONE)
+            self.facts_restore(&saved_else)
+            self.tir.nodes[st].kids.append(eb)
+        }
+        return st
+    }
+
+    fn check_for(self: *mut Self, s: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, s)
+        let label = n.name.clone()
+        let is_range = n.flag
+        let is_parallel = n.flag2
+        let bindings = n.words.clone()
+        let start = n.start
+        let end = n.end
+        let items = n.kids2.clone()
+        let range_start = n.x
+        let range_end = n.y
+        let range_step = n.z
+        let body_node = n.a
+        if is_range {
+            if bindings.len != 1 { self.fail_here(start, "a range loop binds exactly one variable: `for i in a..b`") }
+            let hint = self.tys.usize_ty()
+            var st = self.check_expr(range_start, NONE)
+            let s_ty = self.tys.shallow(self.tir.nodes[st].ty)
+            var en = NONE
+            if self.tys.kind(s_ty) == TK.Infer {
+                // an untyped literal start takes the end's type, defaulting to usize
+                en = self.check_expr(range_end, hint)
+                let et = self.tys.resolve(self.tir.nodes[en].ty, false)
+                st = self.coerce_or_error(st, et, "range start")
+            } else {
+                en = self.check_expr(range_end, s_ty)
+                en = self.coerce_or_error(en, s_ty, "range end")
+            }
+            let it = self.tys.resolve(self.tir.nodes[st].ty, true)
+            if !self.tys.is_integer(it) {
+                self.fail_here(start, format("range bounds must be integers but found `{}`", .{self.ty_name(it)})[..])
+            }
+            var step = NONE
+            if range_step != NONE {
+                step = self.arg(range_step, it, "step")
+                if self.tir.nodes[step].k == TKind.Int {
+                    let sv = self.tir.nodes[step].ival
+                    if sv == 0 { self.fail_here(self.tir.nodes[step].start, "a range step cannot be zero") }
+                    let signed = self.tys.kind(it) == TK.Int and check.int_signed(self.tys.list[it].name[..])
+                    if sv < 0 and !signed {
+                        self.fail_here(self.tir.nodes[step].start, format("a negative step needs a signed loop variable, but this one is `{}`", .{self.ty_name(it)})[..])
+                    }
+                }
+            }
+            self.push_scope()
+            let v = self.declare_local(bindings[0][..], it, false, start, end)
+            // range fact: start <= i < end, for the default step of 1
+            if step == NONE {
+                if let sr = self.expr_range(st) {
+                    if let er = self.expr_range(en) {
+                        if er.hi > sr.lo { self.ctx().ranges.put(v, Range{ .lo = sr.lo, .hi = er.hi - 1 }) }
+                    }
+                }
+            }
+            // `for i in 0..xs.len`: i indexes xs safely
+            if self.tir.nodes[en].k == TKind.Builtin and self.tir.nodes[en].name == "Len" {
+                let arg0 = self.tir.nodes[en].kids[0]
+                if self.tir.nodes[arg0].k == TKind.Local and self.tir.nodes[st].k == TKind.Int and self.tir.nodes[st].ival == 0 and step == NONE {
+                    self.ctx().index_of.put(v, self.tir.nodes[arg0].a)
+                }
+            }
+            let lid = self.new_label(label[..], label.len > 0, true, NONE)
+            self.ctx().loop_depth += 1
+            self.ctx().loop_starts.append(start)
+            self.forget_var_facts()
+            let vt = self.tys.void()
+            let tb = self.check_block(body_node, vt, NONE, NONE)
+            self.ctx().loop_depth -= 1
+            _ = self.ctx().loop_starts.pop()
+            _ = self.ctx().labels.pop()
+            self.pop_scope()
+            if is_parallel { self.fail_here(start, "`for parallel` iterates slices: write `for parallel x, i in items { ... }`") }
+            let node = self.stmt_node(TKind.SForRange, start, end)
+            self.tir.nodes[node].a = v
+            self.tir.nodes[node].b = lid
+            self.tir.nodes[node].kids.append(st)
+            self.tir.nodes[node].kids.append(en)
+            if step != NONE {
+                self.tir.nodes[node].flag = true
+                self.tir.nodes[node].kids.append(step)
+            }
+            self.tir.nodes[node].kids.append(tb)
+            return node
+        }
+        return self.check_for_items(s)
+    }
+}
+
+fn st_set_name(tir: *mut Tir, id: usize, name: []u8) {
+    tir.nodes[id].name = String.from(name)
+}
+
+// ---------------------------------------------------------------- loops over items
+
+impl Checker {
+    /// `for x in it { }` over a value with `next(self: *mut Self) -> ?T`: the
+    /// iterator moves into a hidden mutable local and the loop is the
+    /// `while true { if let x = it.next() { body } else { break } }` it
+    /// stands for, so each yielded value is the binding's own, dropped with
+    /// the pass, and `break`, `continue` and labels work as in any loop.
+    /// Returns the hidden `let`; the loop follows it in the block.
+    fn check_for_iter(self: *mut Self, s: usize, te: usize, fid: usize, binding: []u8, label: []u8, body_node: usize, start: usize, end: usize, at: usize) -> usize {
+        let it = self.tys.shallow(self.tir.nodes[te].ty)
+        let init = self.take_ownership(te)
+        let iter = self.declare_local(format("__iter{}", .{s})[..], it, true, start, end)
+        let decl = self.stmt_node(TKind.SLet, start, end)
+        self.tir.nodes[decl].a = iter
+        self.tir.nodes[decl].kids.append(init)
+        let recv = self.mk(TKind.Local, it, at, at)
+        self.tir.nodes[recv].a = iter
+        let no_args = List(usize).new()
+        let call = self.call_fn_def(fid, recv, no_args[..], NONE, at, at)
+        let ct = self.tys.shallow(self.tir.nodes[call].ty)
+        if self.tys.kind(ct) != TK.Opt {
+            self.fail_here(at, format("`next` of `{}` returns `{}`; an iterator's `next` returns `?T`", .{self.ty_name(it), self.ty_name(ct)})[..])
+            return NONE
+        }
+        let payload = self.tys.list[ct].args[0]
+        let lid = self.new_label(label, label.len > 0, true, NONE)
+        self.ctx().loop_depth += 1
+        self.ctx().loop_starts.append(start)
+        self.forget_var_facts()
+        self.push_scope()
+        let local = self.declare_local(binding, payload, false, start, end)
+        self.check_store_local(local, call, start)
+        let v = self.tys.void()
+        let tb = self.check_block(body_node, v, NONE, NONE)
+        self.pop_scope()
+        self.ctx().loop_depth -= 1
+        _ = self.ctx().loop_starts.pop()
+        _ = self.ctx().labels.pop()
+        let brk = self.stmt_node(TKind.SBreak, start, end)
+        self.tir.nodes[brk].a = lid
+        let eb = self.mk(TKind.Block, self.tys.never(), start, end)
+        self.tir.nodes[eb].kids.append(brk)
+        let cap = self.mk(TKind.IfCapture, v, start, end)
+        self.tir.nodes[cap].a = local
+        self.tir.nodes[cap].kids.append(call)
+        self.tir.nodes[cap].kids.append(tb)
+        self.tir.nodes[cap].kids.append(eb)
+        let cap_st = self.tir.add(check.tblank(TKind.SExpr, v, start, end))
+        self.tir.nodes[cap_st].kids.append(cap)
+        let body = self.mk(TKind.Block, v, start, end)
+        self.tir.nodes[body].kids.append(cap_st)
+        let cond = self.mk(TKind.Bool, self.tys.bool_ty(), start, end)
+        self.tir.nodes[cond].flag = true
+        let wh = self.stmt_node(TKind.SWhile, start, end)
+        self.tir.nodes[wh].a = lid
+        self.tir.nodes[wh].kids.append(cond)
+        self.tir.nodes[wh].kids.append(body)
+        self.pending_stmts.append(wh)
+        return decl
+    }
+
+    fn check_for_items(self: *mut Self, s: usize) -> usize {
+        let m = self.cur_module()
+        let n = self.node(m, s)
+        let label = n.name.clone()
+        let is_parallel = n.flag2
+        let bindings = n.words.clone()
+        let start = n.start
+        let end = n.end
+        let items = n.kids2.clone()
+        let body_node = n.a
+        let n_items = items.len
+        if ! (bindings.len == n_items or bindings.len == n_items + 1) {
+            self.fail_here(start, format("this loop iterates {} value(s) and may bind an index; expected {} or {} names but found {}", .{n_items, n_items, n_items + 1, bindings.len})[..])
+            return NONE
+        }
+        var checked = List(usize).new()
+        var elems = List(usize).new()
+        for it, i in items {
+            let istart = self.node(m, it).start
+            let iend = self.node(m, it).end
+            var te = self.check_expr(it, NONE)
+            te = self.auto_deref_all(te)
+            let t = self.tys.shallow(self.tir.nodes[te].ty)
+            let k = self.tys.kind(t)
+            var elem = NONE
+            if k == TK.Array or k == TK.Slice or k == TK.List {
+                elem = self.tys.list[t].args[0]
+            } else if k == TK.Str {
+                elem = self.tys.u8_ty()
+            } else if k == TK.Struct and self.find_inherent_method(t, "next") != NONE {
+                // an iterator: any value with `next(self: *mut Self) -> ?T`
+                if n_items != 1 {
+                    self.fail_here(istart, "an iterator loop drives one iterator; zip slices, not iterators")
+                    return NONE
+                }
+                if is_parallel {
+                    self.fail_here(start, "a `for parallel` loop needs a slice, not an iterator")
+                    return NONE
+                }
+                if bindings.len != 1 {
+                    self.fail_here(start, "an iterator loop binds one name and takes no index; count in the body")
+                    return NONE
+                }
+                return self.check_for_iter(s, te, self.find_inherent_method(t, "next"), bindings[0][..], label[..], body_node, start, end, istart)
+            } else if k == TK.Map and i < bindings.len and bindings[i].len > 0 and bindings[i][0] == '(' {
+                // `for (k, v) in m`: the entries, collected into an owned List of
+                // pairs the loop walks as a slice, like the keys
+                let kt = self.tys.list[t].args[0]
+                let vt = self.tys.list[t].args[1]
+                var pair_args = List(usize).new()
+                pair_args.append(kt)
+                pair_args.append(vt)
+                let pt = self.tys.tuple(pair_args)
+                let ls = self.tys.wrap(TK.List, pt, false)
+                let b = self.builtin_node("MapEntries", ls, istart, iend)
+                self.tir.nodes[b].kids.append(te)
+                self.tir.nodes[b].kids2.append(kt)
+                self.tir.nodes[b].kids2.append(vt)
+                self.add_effect(EFF_ALLOCATES, istart, "iterating a Map's entries collects them")
+                let st = self.tys.wrap(TK.Slice, pt, false)
+                checked.append(self.wrap_node(TKind.ListToSlice, b, st))
+                elems.append(pt)
+                continue
+            } else if k == TK.Map {
+                let kt = self.tys.list[t].args[0]
+                // the keys are collected into an owned List, a temporary the loop
+                // walks as a slice and drops afterwards, like `for k in m.keys()`
+                let ks = self.tys.wrap(TK.List, kt, false)
+                let b = self.builtin_node("MapKeys", ks, istart, iend)
+                self.tir.nodes[b].kids.append(te)
+                self.tir.nodes[b].kids2.append(kt)
+                self.add_effect(EFF_ALLOCATES, istart, "iterating a Map collects its keys")
+                let st = self.tys.wrap(TK.Slice, kt, false)
+                checked.append(self.wrap_node(TKind.ListToSlice, b, st))
+                elems.append(kt)
+                continue
+            } else {
+                self.fail_here(istart, format("cannot iterate a value of type `{}`; expected an array, slice, List, String, Map, or a value with `next(self: *mut Self) -> ?T`", .{self.ty_name(t)})[..])
+                return NONE
+            }
+            if k == TK.Array {
+                let mu = self.place_mutable(te)
+                let st = self.tys.wrap(TK.Slice, elem, mu)
+                te = self.wrap_node(TKind.ArrayToSlice, te, st)
+            } else if k == TK.List {
+                let mu = self.place_mutable(te)
+                let st = self.tys.wrap(TK.Slice, elem, mu)
+                te = self.wrap_node(TKind.ListToSlice, te, st)
+            } else if k == TK.Str {
+                let st = self.tys.wrap(TK.Slice, elem, false)
+                te = self.wrap_node(TKind.StrToSlice, te, st)
+            }
+            checked.append(te)
+            elems.append(elem)
+        }
+        self.push_scope()
+        var item_locals = List(usize).new()
+        // `for (k, v) in pairs`: the item is a hidden local, the names views of its elements
+        var prologue = List(usize).new()
+        for te, i in checked {
+            let w = bindings[i].clone()
+            if w.len > 0 and w[0] == '(' {
+                let et = self.tys.shallow(elems[i])
+                if self.tys.kind(et) != TK.Tuple {
+                    self.fail_here(start, format("a tuple binding needs tuple items but found `{}`", .{self.ty_name(et)})[..])
+                    return NONE
+                }
+                let parts = self.tuple_pattern_names(w[..])
+                let ets = self.tys.list[et].args.clone()
+                if parts.len != ets.len {
+                    self.fail_here(start, format("this binding names {} elements but the items have {}", .{parts.len, ets.len})[..])
+                    return NONE
+                }
+                let l = self.declare_local(format("__item{}_{}", .{s, i})[..], elems[i], false, start, end)
+                self.ctx().locals[l].loop_item = true
+                self.bind_view(l, te, start)
+                item_locals.append(l)
+                for p, j in parts {
+                    if p == "_" { continue }
+                    prologue.append(self.element_let(l, et, j, ets[j], p[..], false, true, start, end))
+                }
+                continue
+            }
+            let l = self.declare_local(w[..], elems[i], false, start, end)
+            self.ctx().locals[l].loop_item = true
+            self.bind_view(l, te, start)
+            item_locals.append(l)
+        }
+        var index = NONE
+        if bindings.len == n_items + 1 {
+            let u = self.tys.usize_ty()
+            if bindings[n_items].len > 0 and bindings[n_items][0] == '(' {
+                self.fail_here(start, "the loop index is one `usize`, not a tuple binding")
+                return NONE
+            }
+            let l = self.declare_local(bindings[n_items][..], u, false, start, end)
+            for te in checked {
+                var src = te
+                let k = self.tir.nodes[te].k
+                if k == TKind.ListToSlice or k == TKind.ArrayToSlice { src = self.tir.nodes[te].kids[0] }
+                if self.tir.nodes[src].k == TKind.Local { self.ctx().index_of.put(l, self.tir.nodes[src].a) }
+            }
+            index = l
+        }
+        let lid = self.new_label(label[..], label.len > 0, true, NONE)
+        self.ctx().loop_depth += 1
+        self.ctx().loop_starts.append(start)
+        self.forget_var_facts()
+        let v = self.tys.void()
+        // a parallel body must not touch shared mutable state
+        let w_before = self.ctx().witnesses.len
+        let c_before = self.ctx().callees.len
+        if is_parallel { self.ctx().in_parallel += 1 }
+        let tb = self.check_block(body_node, v, NONE, NONE)
+        if prologue.len > 0 {
+            for k in self.tir.nodes[tb].kids.clone() { prologue.append(k) }
+            self.tir.nodes[tb].kids = prologue
+        }
+        if is_parallel {
+            self.ctx().in_parallel -= 1
+            let nw = self.ctx().witnesses.len
+            for wi in w_before..nw {
+                if (self.ctx().witnesses[wi].effects & EFF_SHARED_MUTABLE) != 0 {
+                    let wat = self.ctx().witnesses[wi].at
+                    self.fail_here(wat, "a `for parallel` body must not have the `shared_mutable` effect")
+                }
+            }
+            let nc = self.ctx().callees.len
+            for ci in c_before..nc {
+                let callee = self.ctx().callees[ci]
+                self.parallel_calls.append(Obligation{ .inst = callee, .neg = 0, .at = start, .module = self.cur_module() })
+            }
+            self.add_effect(EFF_BLOCKS, start, "`for parallel` joins its worker threads")
+        }
+        self.ctx().loop_depth -= 1
+        _ = self.ctx().loop_starts.pop()
+        _ = self.ctx().labels.pop()
+        self.pop_scope()
+        let node = self.stmt_node(TKind.SForSlice, start, end)
+        self.tir.nodes[node].a = index
+        self.tir.nodes[node].b = lid
+        self.tir.nodes[node].flag = is_parallel
+        self.tir.nodes[node].kids = checked
+        self.tir.nodes[node].kids2 = item_locals
+        self.tir.nodes[node].kids.append(tb)
+        return node
+    }
+}

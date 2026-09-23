@@ -367,7 +367,7 @@ sh bootstrap/build.sh     # nx.c -> nx0; nx0 が self/nx.nx をビルド -> nx1;
 | --- | --- | --- |
 | 字句解析器 | [`self/lexer.nx`](../../../self/lexer.nx) | トークン |
 | 構文解析器 | [`self/parser.nx`](../../../self/parser.nx) | id アリーナ上の構文木 |
-| 検査器 | [`self/check.nx`](../../../self/check.nx)、[`self/cimport.nx`](../../../self/cimport.nx) | 型、エフェクト、所有権、ジェネリクス、コンパイル時インタプリタ、C ヘッダのインポート、すべての診断 |
+| 検査器 | [`self/check.nx`](../../../self/check.nx)、`self/check_*.nx`、[`self/cimport.nx`](../../../self/cimport.nx) | 型、エフェクト、所有権、ジェネリクス、コンパイル時インタプリタ、C ヘッダのインポート、すべての診断 |
 | C 生成器 | [`self/cgen.nx`](../../../self/cgen.nx) | プログラムごとに 1 つの C ファイル |
 | ドライバ | [`self/nx.nx`](../../../self/nx.nx) | build、run、test、check、emit-c、tir。標準ライブラリを内蔵 |
 | ツール | [`self/fmt.nx`](../../../self/fmt.nx)、[`self/doc.nx`](../../../self/doc.nx)、[`self/tools.nx`](../../../self/tools.nx)、[`self/size.nx`](../../../self/size.nx)、[`self/manifest.nx`](../../../self/manifest.nx)、[`self/ship.nx`](../../../self/ship.nx)、[`self/lsp.nx`](../../../self/lsp.nx)、[`self/repl.nx`](../../../self/repl.nx) | 整形器、ドキュメント生成器、各種レポート、パッケージ、`ship`、言語サーバ、REPL |

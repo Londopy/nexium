@@ -3,6 +3,7 @@
 
 import parser
 import check
+import check_interp
 
 const NONE: usize = 0xFFFFFFFFFFFFFFFF
 
@@ -1084,23 +1085,23 @@ impl Gen {
     }
 
     /// A C static initializer for a compile-time value; "" when it has none.
-    fn static_init(self: *mut Self, v: *check.CV, ty0: usize) -> String {
+    fn static_init(self: *mut Self, v: *check_interp.CV, ty0: usize) -> String {
         let ty = self.res(ty0)
         let k = self.c.tys.kind(ty)
         let vk = v.kind
-        if vk == check.VK_INT and k == check.TK.Int { return int_literal(v.ival, self.c.tys.list[ty].name[..]) }
-        if vk == check.VK_INT and k == check.TK.Char { return format("{}u", .{v.ival}) }
-        if vk == check.VK_INT and k == check.TK.Float { return float_literal(v.ival as f64) }
-        if vk == check.VK_CHAR and k == check.TK.Char { return format("{}u", .{v.ival}) }
-        if vk == check.VK_CHAR and k == check.TK.Int { return int_literal(v.ival, self.c.tys.list[ty].name[..]) }
-        if vk == check.VK_FLOAT and k == check.TK.Float { return float_literal(v.fval) }
-        if vk == check.VK_BOOL and k == check.TK.Bool { return String.from(if v.flag { "true" } else { "false" }) }
+        if vk == check_interp.VK_INT and k == check.TK.Int { return int_literal(v.ival, self.c.tys.list[ty].name[..]) }
+        if vk == check_interp.VK_INT and k == check.TK.Char { return format("{}u", .{v.ival}) }
+        if vk == check_interp.VK_INT and k == check.TK.Float { return float_literal(v.ival as f64) }
+        if vk == check_interp.VK_CHAR and k == check.TK.Char { return format("{}u", .{v.ival}) }
+        if vk == check_interp.VK_CHAR and k == check.TK.Int { return int_literal(v.ival, self.c.tys.list[ty].name[..]) }
+        if vk == check_interp.VK_FLOAT and k == check.TK.Float { return float_literal(v.fval) }
+        if vk == check_interp.VK_BOOL and k == check.TK.Bool { return String.from(if v.flag { "true" } else { "false" }) }
         if k == check.TK.Distinct { return self.static_init(v, self.c.distinct_underlying(self.c.tys.list[ty].def)) }
-        if (vk == check.VK_STR or vk == check.VK_OWNED_STR) and k == check.TK.Slice {
+        if (vk == check_interp.VK_STR or vk == check_interp.VK_OWNED_STR) and k == check.TK.Slice {
             let lit = self.string_literal(v.text[..])
             return format("{{ (uint8_t*){}, {} }}", .{lit, v.text.len})
         }
-        if (vk == check.VK_ARRAY or vk == check.VK_LIST) and k == check.TK.Slice {
+        if (vk == check_interp.VK_ARRAY or vk == check_interp.VK_LIST) and k == check.TK.Slice {
             // the elements live in a static array of their own
             let e = self.c.tys.list[ty].args[0]
             let ecn = self.cty(e)
@@ -1117,7 +1118,7 @@ impl Gen {
             self.data_out.append(format("static const {} {}[{}] = {{ {} }};\n", .{ecn, name, v.items.len, parts})[..])
             return format("{{ ({}*){}, {} }}", .{ecn, name, v.items.len})
         }
-        if vk == check.VK_ARRAY and k == check.TK.Array {
+        if vk == check_interp.VK_ARRAY and k == check.TK.Array {
             let e = self.c.tys.list[ty].args[0]
             var parts = String.new()
             for x, i in v.items {
@@ -1128,7 +1129,7 @@ impl Gen {
             }
             return format("{{ {{ {} }} }}", .{parts})
         }
-        if (vk == check.VK_STR or vk == check.VK_OWNED_STR) and k == check.TK.Array {
+        if (vk == check_interp.VK_STR or vk == check_interp.VK_OWNED_STR) and k == check.TK.Array {
             var parts = String.new()
             for b, i in v.text {
                 if i > 0 { parts.append(", ") }
@@ -1136,7 +1137,7 @@ impl Gen {
             }
             return format("{{ {{ {} }} }}", .{parts})
         }
-        if vk == check.VK_STRUCT and k == check.TK.Struct {
+        if vk == check_interp.VK_STRUCT and k == check.TK.Struct {
             let d = self.c.tys.list[ty].def
             if self.c.structs[d].kind == "ref" { return String.new() }
             let ftys = self.c.struct_field_types(ty)
@@ -1152,7 +1153,7 @@ impl Gen {
             }
             return format("{{ {} }}", .{parts})
         }
-        if vk == check.VK_TUPLE and k == check.TK.Tuple {
+        if vk == check_interp.VK_TUPLE and k == check.TK.Tuple {
             let ts = self.c.tys.list[ty].args.clone()
             var parts = String.new()
             for x, i in v.items {
@@ -1163,7 +1164,7 @@ impl Gen {
             }
             return format("{{ {} }}", .{parts})
         }
-        if vk == check.VK_ENUM and k == check.TK.Enum {
+        if vk == check_interp.VK_ENUM and k == check.TK.Enum {
             let vi = v.ival as usize
             let vtys = self.c.enum_variant_types(ty)
             let tys = vtys[vi].clone()
@@ -1177,23 +1178,23 @@ impl Gen {
             }
             return format("{{ .tag = {}, .u = {{ .v{} = {{ {} }} }} }}", .{vi, vi, parts})
         }
-        if vk == check.VK_NULL and k == check.TK.Opt { return String.from("{ .has = false }") }
-        if vk == check.VK_SOME and k == check.TK.Opt {
+        if vk == check_interp.VK_NULL and k == check.TK.Opt { return String.from("{ .has = false }") }
+        if vk == check_interp.VK_SOME and k == check.TK.Opt {
             let p = self.static_init(&v.items[0], self.c.tys.list[ty].args[0])
             if p.len == 0 { return String.new() }
             return format("{{ .has = true, .val = {} }}", .{p})
         }
-        if vk == check.VK_ERR and k == check.TK.ErrUnion { return format("{{ .err = {} }}", .{v.ival}) }
-        if vk == check.VK_OK and k == check.TK.ErrUnion {
+        if vk == check_interp.VK_ERR and k == check.TK.ErrUnion { return format("{{ .err = {} }}", .{v.ival}) }
+        if vk == check_interp.VK_OK and k == check.TK.ErrUnion {
             let e = self.c.tys.list[ty].args[0]
             if self.is_void(e) { return String.from("{ .err = 0 }") }
             let p = self.static_init(&v.items[0], e)
             if p.len == 0 { return String.new() }
             return format("{{ .err = 0, .val = {} }}", .{p})
         }
-        if vk == check.VK_ERR and k == check.TK.ErrorSet { return format("{}u", .{v.ival}) }
-        if vk == check.VK_VOID { return String.from("0") }
-        if vk == check.VK_UNDEFINED { return String.from("{0}") }
+        if vk == check_interp.VK_ERR and k == check.TK.ErrorSet { return format("{}u", .{v.ival}) }
+        if vk == check_interp.VK_VOID { return String.from("0") }
+        if vk == check_interp.VK_UNDEFINED { return String.from("{0}") }
         self.errors.append(format("cannot emit a compile-time value of type `{}` as static data", .{self.c.ty_name(ty)}))
         return String.new()
     }
@@ -2415,12 +2416,12 @@ impl Gen {
         if k == check.TKind.Value {
             let v = self.c.value_of_node(e)
             let vk = v.kind
-            if vk == check.VK_INT or vk == check.VK_FLOAT or vk == check.VK_BOOL or vk == check.VK_CHAR {
+            if vk == check_interp.VK_INT or vk == check_interp.VK_FLOAT or vk == check_interp.VK_BOOL or vk == check_interp.VK_CHAR {
                 let s = self.static_init(&v, ety)
                 if s.len == 0 { return String.from("0") }
                 return s
             }
-            if vk == check.VK_STR {
+            if vk == check_interp.VK_STR {
                 let lit = self.string_literal(v.text[..])
                 return format("nx_lit({}, {})", .{lit, v.text.len})
             }
