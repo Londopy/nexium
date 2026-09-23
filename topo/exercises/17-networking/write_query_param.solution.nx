@@ -1,0 +1,22 @@
+fn param(query: []u8, name: []u8) -> ?[]u8 {
+    if query.len == 0 { return null }
+    for pair in query.split("&") {
+        if let eq = pair.find("=") {
+            if pair[0..eq] == name { return pair[eq + 1..pair.len] }
+        } else if pair == name {
+            return pair[0..0]
+        }
+    }
+    return null
+}
+
+fn main() {
+    println("{}", .{param("q=nexium&page=2", "page") orelse "none"})
+}
+
+test "the value of a key" { expect_eq(param("q=nexium&page=2", "q") orelse "none", "nexium") }
+test "a later key" { expect_eq(param("q=nexium&page=2", "page") orelse "none", "2") }
+test "a key without a value" { expect_eq(param("debug&q=1", "debug") orelse "none", "") }
+test "a missing key" { expect(param("q=1", "page") == null) }
+test "a prefix is not the key" { expect(param("pages=3", "page") == null) }
+test "an empty query" { expect(param("", "q") == null) }

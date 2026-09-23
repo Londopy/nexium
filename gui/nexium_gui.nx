@@ -59,7 +59,7 @@ pub fn font_h() -> i32 { return FONT[1] as i32 }
 
 // Offset of a glyph's record in the font: one advance byte, then the bitmap.
 fn glyph_base(c: u8) -> usize {
-    return 4 + (c - 32) as usize *(1 + (font_w() * font_h()) as usize)
+    return 4 + (c - 32) as usize * (1 + (font_w() * font_h()) as usize)
 }
 
 // Horizontal advance of a character; unknown characters take a cell.
@@ -468,11 +468,11 @@ impl Ui {
         let x = self.last_x
         let y = self.last_y
         let clicked = self.interact(id, x, y, w, h)
-        if clicked { value.*= !value.*}
+        if clicked { value.* = !value.* }
         let by = y + 4
         self.canvas.fill_rounded(x, by, box, box, if self.hot == id { self.theme.hover } else { self.theme.panel })
         self.canvas.rect(x, by, box, box, self.theme.border)
-        if value.*{ self.canvas.fill_rect(x + 4, by + 4, box - 8, box - 8, self.theme.accent) }
+        if value.* { self.canvas.fill_rect(x + 4, by + 4, box - 8, box - 8, self.theme.accent) }
         self.canvas.text(x + box + self.pad, y + (h - font_h()) / 2, text, self.theme.text)
         return clicked
     }
@@ -493,10 +493,10 @@ impl Ui {
             if t < 0.0 { t = 0.0 }
             if t > 1.0 { t = 1.0 }
             let v = min + (max - min) * t
-            if v != value.*{ changed = true }
-            value.*= v
+            if v != value.* { changed = true }
+            value.* = v
         }
-        var frac = (value.*- min) / (max - min)
+        var frac = (value.* - min) / (max - min)
         if frac < 0.0 { frac = 0.0 }
         if frac > 1.0 { frac = 1.0 }
         let ty = y + h / 2 - 3

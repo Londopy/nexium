@@ -1,0 +1,28 @@
+Q: `nx effects`: which effects does `status` carry?
+| import std.http
+|
+| fn status(url: []u8) -> u16 {
+|     let r = http.get(url) catch { return 0 }
+|     return r.status
+| }
+ask: effects status
+says: allocates: calls get at main.nx:4:13
+says: blocks: calls get at main.nx:4:13
+says: panics: calls get at main.nx:4:13
+- (pure)
+- blocks
+- allocates blocks
+* allocates blocks panics
+> Talking to the network waits (`blocks`) and builds buffers (`allocates`); the standard library's HTTP code can also panic, which the effect says out loud.
+
+Q: A handler is `fn(*Request) -> Response`. How is it tested without a network?
+- it cannot be; a server has to run
+* build a `Request` value and call the router's `handle` on it, a plain function call
+- with a mock socket
+> Handlers are plain functions and the router is plain data, so a test calls them directly (the chapter's exercise does).
+
+Q: What does `server.serve_one(&router, 5000)` do?
+- serves requests forever
+* handles one connection, waiting at most five seconds, and returns
+- serves five thousand requests
+> `serve` loops forever; `serve_one` handles one connection, which is what a self-test or a tool needs.

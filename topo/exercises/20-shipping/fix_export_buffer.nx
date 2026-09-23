@@ -1,0 +1,17 @@
+// topo: fix the error
+// A slice cannot be returned across the C boundary: nothing on the other side would know when
+// to free it. Make `upper` write into the caller's buffer instead and return how many bytes
+// it wrote, so the program prints the recorded output.
+// hint: a `[]mut u8` parameter is the caller's memory; the result can be a `usize`
+// hint: `main` shows how the caller will use it
+fn upper(text: []u8) -> []u8 export(c) {
+    var out = String.new()
+    for b in text { out.push_byte(if b >= 'a' and b <= 'z' { b - 32 } else { b }) }
+    return out[..]
+}
+
+fn main() {
+    var buf: [16]u8 = undefined
+    let n = upper("nexium", buf[..])
+    println("{} {}", .{buf[0..n], n})
+}

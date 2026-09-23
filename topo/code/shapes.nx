@@ -25,12 +25,12 @@ enum Shape {
 }
 
 fn area(s: *Shape) -> f64 {
-    match s.*{
+    match s.* {
         .Circle(r) => math.PI * r * r,
         .Rect(w, h) => w * h,
         .Triangle(a, b, c) => {
             let p = (a + b + c) / 2.0
-            math.sqrt(p *(p - a) *(p - b) *(p - c))
+            math.sqrt(p * (p - a) * (p - b) * (p - c))
         },
         .Empty => 0.0,
     }
@@ -47,7 +47,7 @@ impl Named for Point {
 
 impl Named for Shape {
     fn name(self: *Self) -> String {
-        return match self.*{
+        return match self.* {
             .Circle(_) => String.from("circle"),
             .Rect(_, _) => String.from("rectangle"),
             .Triangle(_, _, _) => String.from("triangle"),

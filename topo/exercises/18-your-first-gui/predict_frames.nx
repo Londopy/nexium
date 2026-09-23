@@ -1,0 +1,30 @@
+// topo: predict the output
+// Write what this prints into predict_frames.guess before you run it.
+// hint: `button` draws and answers in the same call: it is true only in the frame its click lands in
+// hint: a widget exists in a frame only if the code calls it in that frame
+struct Ui {
+    frame: u32
+}
+
+impl Ui {
+    /// The mouse, scripted: `+` is clicked in frame 1, `reset` in frame 3.
+    fn clicked(self: *Self, label: []u8) -> bool {
+        return (self.frame == 1 and label == "+") or (self.frame == 3 and label == "reset")
+    }
+
+    fn button(self: *Self, label: []u8) -> bool {
+        print("[{}] ", .{label})
+        return self.clicked(label)
+    }
+}
+
+fn main() {
+    var ui = Ui{ .frame = 0 }
+    var count: u32 = 0
+    while ui.frame < 5 {
+        if ui.button("+") { count += 1 }
+        if count > 0 and ui.button("reset") { count = 0 }
+        println("frame {}: {}", .{ui.frame, count})
+        ui.frame += 1
+    }
+}

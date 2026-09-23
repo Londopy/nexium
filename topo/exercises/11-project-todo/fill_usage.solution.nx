@@ -1,0 +1,17 @@
+fn run(words: [][]u8, items: *List(String)) -> i32 {
+    if words.len != 2 or words[0] != "show" { return 2 }
+    let n = words[1].parse_int(usize) catch { return 2 }
+    if n == 0 or n > items.len { return 1 }
+    println("#{} {}", .{n, items[n - 1]})
+    return 0
+}
+
+fn main() {
+    var items = List(String).new()
+    items.append(String.from("buy rope"))
+    items.append(String.from("check the weather"))
+    println("exit {}", .{run(["show", "2"][..], &items)})
+    println("exit {}", .{run(["show", "9"][..], &items)})
+    println("exit {}", .{run(["show", "two"][..], &items)})
+    println("exit {}", .{run(["dance"][..], &items)})
+}

@@ -802,3 +802,18 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     no program can tell. The page gives the interpreter a smaller call
     depth than a native thread, because the browser's stack holds fewer
     frames, so a deep recursion gets the interpreter's own message.
+109. **A quiz question can ask the compiler, and then the compiler grades
+    it.** A question in a chapter's `quiz.txt` may carry its program (`| `
+    lines), what is asked of it (`ask: effects NAME`, `ask: output`, `ask:
+    check`) and the compiler's own words for the answer (`says:` lines):
+    for effects, the effect list `nx effects` prints and, per effect, the
+    first reason `nx explain` gives; for a check, the line of the first
+    diagnostic and its message; for output, what the program prints. The
+    words are recorded rather than produced when the page is built, so the
+    site needs no compiler to render a quiz; `nx topo verify` asks the real
+    compiler every such question and fails when the starred choice or the
+    recorded words differ from what it says now, and the harness runs it,
+    so a quiz cannot outlive the language it is about. A wrong answer is
+    met with the compiler's words, in the terminal (`nx topo quiz`) and on
+    the page, where a click on a choice is graded at once. A question
+    without `ask:` is an answer key as before; the two kinds mix in one quiz.

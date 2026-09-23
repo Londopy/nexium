@@ -105,10 +105,10 @@ fn leading_spaces(s: []u8) -> usize { return count_prefix(s, ' ') }
 /// The text after `- `, `* ` or `N. `, or null when the line is not a list item.
 fn list_item(line: []u8, ordered: *mut bool) -> ?[]u8 {
     let t = strings.trim_left(line)
-    if t.len >= 2 and (t[0] == '-' or t[0] == '*') and t[1] == ' ' { ordered.*= false; return t[2..] }
+    if t.len >= 2 and (t[0] == '-' or t[0] == '*') and t[1] == ' ' { ordered.* = false; return t[2..] }
     var i: usize = 0
     while i < t.len and t[i] >= '0' and t[i] <= '9' { i += 1 }
-    if i > 0 and i + 1 < t.len and t[i] == '.' and t[i + 1] == ' ' { ordered.*= true; return t[i + 2..] }
+    if i > 0 and i + 1 < t.len and t[i] == '.' and t[i + 1] == ' ' { ordered.* = true; return t[i + 2..] }
     return null
 }
 
@@ -474,7 +474,7 @@ fn render_markdown(src: []u8, links: *Links, page: *Page, title: *mut String, he
             close_lists(&mut out, &mut list_depths, &mut list_ordered, 0)
             let text = line[hashes + 1..].trim()
             if hashes == 1 and title.len == 0 {
-                title.*= String.from(text)
+                title.* = String.from(text)
             } else {
                 let id = slug(text)
                 headings.append(Heading{ .level = hashes, .text = String.from(text), .id = id.clone() })
@@ -597,7 +597,7 @@ fn table_cells(line: []u8) -> List([]u8) {
 fn flush_para(out: *mut String, para: *mut List([]u8), links: *Links, page: *Page) {
     if para.len == 0 { return }
     var text = String.new()
-    for l, i in para.*{
+    for l, i in para.* {
         if i > 0 { text.append(" ") }
         text.append(l.trim())
     }
@@ -701,6 +701,12 @@ pre.code:focus-within { border-color: var(--accent); }
 .play-ok { color: var(--accent-2); }
 .play-no { color: var(--b); }
 .play-guess { margin: 0 0 0.8rem; }
+.quiz ul[data-right] li { cursor: pointer; padding: 0.1rem 0.4rem; border-radius: 4px; }
+.quiz ul[data-right] li:hover { background: var(--side); }
+.quiz li.q-right { color: var(--accent-2); font-weight: 600; }
+.quiz li.q-right::before { content: '\2713  '; }
+.quiz li.q-wrong { color: var(--b); text-decoration: line-through; }
+.quiz p.says { margin: 0.4rem 0 0.2rem; font-size: 0.85rem; color: var(--muted); }
 .play-guess textarea { display: block; width: 100%; font-family: ui-monospace, Consolas, monospace; font-size: 0.85em; padding: 0.5rem 0.7rem; border: 1px solid var(--line); border-radius: 6px; background: var(--code-bg); color: var(--fg); margin-bottom: 0.4rem; }
 .menu-toggle, .menu-label { display: none; }
 .brand-row { display: flex; align-items: center; justify-content: space-between; }
@@ -752,15 +758,15 @@ fn sidebar(out: *mut String, pages: *List(Page), current: usize, root: []u8) {
     out.append(format("<div class=\"brand-row\"><a class=\"brand\" href=\"{}index.html\"><img src=\"{}assets/logo.svg\" alt=\"\">Nexium</a><label for=\"menu\" class=\"menu-label\">Menu</label></div>\n<div class=\"menu\">\n", .{root, root})[..])
     out.append("<h4>The Topo</h4>\n")
     var num: usize = 0
-    for p, i in pages.*{
+    for p, i in pages.* {
         if p.section[..] != "topo" { continue }
         num += 1
         nav_link(out, root, &p, i == current, num)
     }
     out.append("<h4>Docs</h4>\n")
-    for p, i in pages.*{ if p.section[..] == "docs" { nav_link(out, root, &p, i == current, 0) } }
+    for p, i in pages.* { if p.section[..] == "docs" { nav_link(out, root, &p, i == current, 0) } }
     out.append("<h4>Project</h4>\n")
-    for p, i in pages.*{ if p.section[..] == "project" { nav_link(out, root, &p, i == current, 0) } }
+    for p, i in pages.* { if p.section[..] == "project" { nav_link(out, root, &p, i == current, 0) } }
     out.append(format("<h4>Elsewhere</h4>\n<a href=\"{}\">GitHub</a>\n<a href=\"{}/releases\">Releases</a>\n<a href=\"{}/issues\">Issues</a>\n", .{REPO, REPO, REPO})[..])
     out.append("</div>\n</nav>\n")
     // the menu keeps its scroll position from page to page, and the current
@@ -877,37 +883,60 @@ fn exercises_section(out: *mut String, stem: []u8, links: *Links, page: *Page) {
         out.append("<div class=\"quiz exercise\" id=\"quiz\">\n<h3>Quiz<span class=\"kind\">no peeking</span></h3>\n<ol>\n")
         var open = false
         var right = String.new()
+        var right_at: usize = 0
         var choices = List(String).new()
+        // a question the compiler answers: its program, and the compiler's words
+        var code = String.new()
+        var says = String.new()
         for l in text[..].lines() {
             let t = l.trim()
             if t.len == 0 { continue }
             if let q = strings.strip_prefix(t, "Q:") {
-                if open { flush_quiz(out, &choices, links, page); out.append("</li>\n") }
+                if open { flush_quiz(out, &choices, right_at, links, page); out.append("</li>\n") }
                 out.append(format("<li>{}\n", .{inline(q.trim(), links, page)})[..])
                 open = true
                 right = String.new()
                 choices = List(String).new()
+                code = String.new()
+                says = String.new()
                 continue
             }
-            if let c = strings.strip_prefix(t, "* ") { right = String.from(c); choices.append(String.from(c)); continue }
+            if t == "|" or t.starts_with("| ") {
+                let at = l.find("| ") orelse l.len
+                code.append(if at < l.len { l[at + 2..l.len] } else { "" })
+                code.append("\n")
+                continue
+            }
+            if strings.strip_prefix(t, "ask:") != null { continue }
+            if let w = strings.strip_prefix(t, "says:") { says.append(w.trim()); says.append("\n"); continue }
+            if code.len > 0 and (t.starts_with("* ") or t.starts_with("- ")) {
+                code_block(out, "nexium", code[..])
+                code = String.new()
+            }
+            if let c = strings.strip_prefix(t, "* ") { right = String.from(c); right_at = choices.len; choices.append(String.from(c)); continue }
             if let c = strings.strip_prefix(t, "- ") { choices.append(String.from(c)); continue }
             if let w = strings.strip_prefix(t, ">") {
-                flush_quiz(out, &choices, links, page)
+                flush_quiz(out, &choices, right_at, links, page)
                 choices = List(String).new()
-                out.append(format("<details><summary>Answer</summary><p><b>{}</b>. {}</p></details>\n", .{inline(right[..], links, page), inline(w.trim(), links, page)})[..])
+                out.append(format("<details><summary>Answer</summary><p><b>{}</b>. {}</p>", .{inline(right[..], links, page), inline(w.trim(), links, page)})[..])
+                if says.len > 0 {
+                    out.append("<p class=\"says\">The compiler says:</p>")
+                    code_block(out, "text", says[..])
+                }
+                out.append("</details>\n")
                 right = String.new()
             }
         }
-        if open { flush_quiz(out, &choices, links, page); out.append("</li>\n") }
+        if open { flush_quiz(out, &choices, right_at, links, page); out.append("</li>\n") }
         out.append(format("</ol>\n<label class=\"done\"><input type=\"checkbox\" data-done=\"{}/quiz\"> done</label>\n</div>\n", .{esc(stem)})[..])
     }
 }
 
-/// The choices of a question, once.
-fn flush_quiz(out: *mut String, choices: *List(String), links: *Links, page: *Page) {
+/// The choices of a question, once; the page grades a click against `right`.
+fn flush_quiz(out: *mut String, choices: *List(String), right: usize, links: *Links, page: *Page) {
     if choices.len == 0 { return }
-    out.append("<ul>")
-    for c in choices.*{ out.append(format("<li>{}</li>", .{inline(c[..], links, page)})[..]) }
+    out.append(format("<ul data-right=\"{}\">", .{right})[..])
+    for c in choices.* { out.append(format("<li>{}</li>", .{inline(c[..], links, page)})[..]) }
     out.append("</ul>\n")
 }
 
@@ -923,10 +952,10 @@ fn chapter_number(stem: []u8) -> usize {
 
 fn toc(out: *mut String, headings: *List(Heading), links: *Links, page: *Page) {
     var count: usize = 0
-    for h in headings.*{ if h.level == 2 or h.level == 3 { count += 1 } }
+    for h in headings.* { if h.level == 2 or h.level == 3 { count += 1 } }
     if count < 3 { return }
     out.append("<div class=\"toc\"><h4>On this page</h4>\n")
-    for h in headings.*{
+    for h in headings.* {
         if h.level == 2 { out.append(format("<a href=\"#{}\">{}</a>\n", .{h.id, inline(h.text[..], links, page)})[..]) }
         else if h.level == 3 { out.append(format("<a class=\"l3\" href=\"#{}\">{}</a>\n", .{h.id, inline(h.text[..], links, page)})[..]) }
     }
@@ -937,7 +966,7 @@ fn pager(out: *mut String, pages: *List(Page), current: usize, root: []u8) {
     if pages.*[current].section[..] != "topo" { return }
     var prev = NONE_IDX
     var next = NONE_IDX
-    for p, i in pages.*{
+    for p, i in pages.* {
         if p.section[..] != "topo" { continue }
         if i < current { prev = i }
         if i > current and next == NONE_IDX { next = i }
@@ -1094,7 +1123,7 @@ fn api_std() -> json.Json {
 fn api_topo(pages: *List(Page)) -> json.Json {
     var chapters = json.array()
     var n: usize = 0
-    for p in pages.*{
+    for p in pages.* {
         if p.section[..] != "topo" { continue }
         n += 1
         let stem = fs.stem(p.src[..])

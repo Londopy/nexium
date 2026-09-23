@@ -20,12 +20,6 @@ Fixed bugs are not listed here; `CHANGELOG.md` and `git log` have them.
 
 ## Tools and editors
 
-- **`nx fmt` writes `x.?}` and `x.*{`.** The no-space-after rule for `.?`
-  and `.*` (member access follows them) also applies before a closing or
-  opening brace, so `{ return o.? }` becomes `{ return o.?}` and
-  `match p.* {` becomes `match p.*{`. Cosmetic; the tree is formatted that
-  way. Fix: treat a brace after `.?` / `.*` like any other token, and
-  reformat the tree in the same commit.
 - **`nx fmt` collapses aligned trailing comments.** A struct whose fields
   carry comments aligned in one column (`kind: u32            // 0
   playing`) is rewritten with a single space before each comment, losing

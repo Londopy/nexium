@@ -80,20 +80,36 @@ pub fn exercises() -> List(Exercise) {
     ex(&mut out, 6, "06-functions-and-errors", "write_letter", @embedFile("../topo/exercises/06-functions-and-errors/write_letter.nx"), @embedFile("../topo/exercises/06-functions-and-errors/write_letter.expected"), @embedFile("../topo/exercises/06-functions-and-errors/write_letter.solution.nx"))
     ex(&mut out, 7, "07-structs-enums-traits", "fill_corners", @embedFile("../topo/exercises/07-structs-enums-traits/fill_corners.nx"), @embedFile("../topo/exercises/07-structs-enums-traits/fill_corners.expected"), @embedFile("../topo/exercises/07-structs-enums-traits/fill_corners.solution.nx"))
     ex(&mut out, 7, "07-structs-enums-traits", "write_area", @embedFile("../topo/exercises/07-structs-enums-traits/write_area.nx"), @embedFile("../topo/exercises/07-structs-enums-traits/write_area.expected"), @embedFile("../topo/exercises/07-structs-enums-traits/write_area.solution.nx"))
-    ex(&mut out, 8, "08-ownership", "fix_moved", @embedFile("../topo/exercises/08-ownership/fix_moved.nx"), @embedFile("../topo/exercises/08-ownership/fix_moved.expected"), @embedFile("../topo/exercises/08-ownership/fix_moved.solution.nx"))
     ex(&mut out, 8, "08-ownership", "fill_own", @embedFile("../topo/exercises/08-ownership/fill_own.nx"), @embedFile("../topo/exercises/08-ownership/fill_own.expected"), @embedFile("../topo/exercises/08-ownership/fill_own.solution.nx"))
+    ex(&mut out, 8, "08-ownership", "fix_moved", @embedFile("../topo/exercises/08-ownership/fix_moved.nx"), @embedFile("../topo/exercises/08-ownership/fix_moved.expected"), @embedFile("../topo/exercises/08-ownership/fix_moved.solution.nx"))
     ex(&mut out, 8, "08-ownership", "predict_refcount", @embedFile("../topo/exercises/08-ownership/predict_refcount.nx"), @embedFile("../topo/exercises/08-ownership/predict_refcount.expected"), "")
     ex(&mut out, 9, "09-collections", "fill_counts", @embedFile("../topo/exercises/09-collections/fill_counts.nx"), @embedFile("../topo/exercises/09-collections/fill_counts.expected"), @embedFile("../topo/exercises/09-collections/fill_counts.solution.nx"))
     ex(&mut out, 9, "09-collections", "write_unique", @embedFile("../topo/exercises/09-collections/write_unique.nx"), @embedFile("../topo/exercises/09-collections/write_unique.expected"), @embedFile("../topo/exercises/09-collections/write_unique.solution.nx"))
+    ex(&mut out, 10, "10-project-calculator", "fill_remainder", @embedFile("../topo/exercises/10-project-calculator/fill_remainder.nx"), @embedFile("../topo/exercises/10-project-calculator/fill_remainder.expected"), @embedFile("../topo/exercises/10-project-calculator/fill_remainder.solution.nx"))
+    ex(&mut out, 10, "10-project-calculator", "fix_unknown_name", @embedFile("../topo/exercises/10-project-calculator/fix_unknown_name.nx"), @embedFile("../topo/exercises/10-project-calculator/fix_unknown_name.expected"), @embedFile("../topo/exercises/10-project-calculator/fix_unknown_name.solution.nx"))
+    ex(&mut out, 10, "10-project-calculator", "predict_power", @embedFile("../topo/exercises/10-project-calculator/predict_power.nx"), @embedFile("../topo/exercises/10-project-calculator/predict_power.expected"), "")
+    ex(&mut out, 11, "11-project-todo", "fill_usage", @embedFile("../topo/exercises/11-project-todo/fill_usage.nx"), @embedFile("../topo/exercises/11-project-todo/fill_usage.expected"), @embedFile("../topo/exercises/11-project-todo/fill_usage.solution.nx"))
+    ex(&mut out, 11, "11-project-todo", "write_item_json", @embedFile("../topo/exercises/11-project-todo/write_item_json.nx"), @embedFile("../topo/exercises/11-project-todo/write_item_json.expected"), @embedFile("../topo/exercises/11-project-todo/write_item_json.solution.nx"))
     ex(&mut out, 12, "12-binary-patterns", "fill_frame", @embedFile("../topo/exercises/12-binary-patterns/fill_frame.nx"), @embedFile("../topo/exercises/12-binary-patterns/fill_frame.expected"), @embedFile("../topo/exercises/12-binary-patterns/fill_frame.solution.nx"))
     ex(&mut out, 12, "12-binary-patterns", "predict_nibbles", @embedFile("../topo/exercises/12-binary-patterns/predict_nibbles.nx"), @embedFile("../topo/exercises/12-binary-patterns/predict_nibbles.expected"), "")
-    ex(&mut out, 13, "13-comptime", "fix_fib", @embedFile("../topo/exercises/13-comptime/fix_fib.nx"), @embedFile("../topo/exercises/13-comptime/fix_fib.expected"), @embedFile("../topo/exercises/13-comptime/fix_fib.solution.nx"))
     ex(&mut out, 13, "13-comptime", "fill_table", @embedFile("../topo/exercises/13-comptime/fill_table.nx"), @embedFile("../topo/exercises/13-comptime/fill_table.expected"), @embedFile("../topo/exercises/13-comptime/fill_table.solution.nx"))
+    ex(&mut out, 13, "13-comptime", "fix_fib", @embedFile("../topo/exercises/13-comptime/fix_fib.nx"), @embedFile("../topo/exercises/13-comptime/fix_fib.expected"), @embedFile("../topo/exercises/13-comptime/fix_fib.solution.nx"))
     ex(&mut out, 14, "14-testing", "test_clamp", @embedFile("../topo/exercises/14-testing/test_clamp.nx"), "", @embedFile("../topo/exercises/14-testing/test_clamp.solution.nx"))
     ex(&mut out, 14, "14-testing", "write_is_sorted", @embedFile("../topo/exercises/14-testing/write_is_sorted.nx"), "", @embedFile("../topo/exercises/14-testing/write_is_sorted.solution.nx"))
-    ex(&mut out, 15, "15-effects", "fix_promise", @embedFile("../topo/exercises/15-effects/fix_promise.nx"), @embedFile("../topo/exercises/15-effects/fix_promise.expected"), @embedFile("../topo/exercises/15-effects/fix_promise.solution.nx"))
     ex(&mut out, 15, "15-effects", "fill_bound", @embedFile("../topo/exercises/15-effects/fill_bound.nx"), @embedFile("../topo/exercises/15-effects/fill_bound.expected"), @embedFile("../topo/exercises/15-effects/fill_bound.solution.nx"))
+    ex(&mut out, 15, "15-effects", "fix_promise", @embedFile("../topo/exercises/15-effects/fix_promise.nx"), @embedFile("../topo/exercises/15-effects/fix_promise.expected"), @embedFile("../topo/exercises/15-effects/fix_promise.solution.nx"))
     ex(&mut out, 16, "16-concurrency", "fill_join", @embedFile("../topo/exercises/16-concurrency/fill_join.nx"), @embedFile("../topo/exercises/16-concurrency/fill_join.expected"), @embedFile("../topo/exercises/16-concurrency/fill_join.solution.nx"))
+    ex(&mut out, 17, "17-networking", "fill_greet", @embedFile("../topo/exercises/17-networking/fill_greet.nx"), @embedFile("../topo/exercises/17-networking/fill_greet.expected"), @embedFile("../topo/exercises/17-networking/fill_greet.solution.nx"))
+    ex(&mut out, 17, "17-networking", "write_query_param", @embedFile("../topo/exercises/17-networking/write_query_param.nx"), @embedFile("../topo/exercises/17-networking/write_query_param.expected"), @embedFile("../topo/exercises/17-networking/write_query_param.solution.nx"))
+    ex(&mut out, 18, "18-your-first-gui", "fill_rect", @embedFile("../topo/exercises/18-your-first-gui/fill_rect.nx"), @embedFile("../topo/exercises/18-your-first-gui/fill_rect.expected"), @embedFile("../topo/exercises/18-your-first-gui/fill_rect.solution.nx"))
+    ex(&mut out, 18, "18-your-first-gui", "predict_frames", @embedFile("../topo/exercises/18-your-first-gui/predict_frames.nx"), @embedFile("../topo/exercises/18-your-first-gui/predict_frames.expected"), "")
+    ex(&mut out, 19, "19-packages", "write_newer", @embedFile("../topo/exercises/19-packages/write_newer.nx"), @embedFile("../topo/exercises/19-packages/write_newer.expected"), @embedFile("../topo/exercises/19-packages/write_newer.solution.nx"))
+    ex(&mut out, 20, "20-shipping", "fill_checksum", @embedFile("../topo/exercises/20-shipping/fill_checksum.nx"), @embedFile("../topo/exercises/20-shipping/fill_checksum.expected"), @embedFile("../topo/exercises/20-shipping/fill_checksum.solution.nx"))
+    ex(&mut out, 20, "20-shipping", "fix_export_buffer", @embedFile("../topo/exercises/20-shipping/fix_export_buffer.nx"), @embedFile("../topo/exercises/20-shipping/fix_export_buffer.expected"), @embedFile("../topo/exercises/20-shipping/fix_export_buffer.solution.nx"))
+    ex(&mut out, 21, "21-project-neural-network", "fill_derivative", @embedFile("../topo/exercises/21-project-neural-network/fill_derivative.nx"), @embedFile("../topo/exercises/21-project-neural-network/fill_derivative.expected"), @embedFile("../topo/exercises/21-project-neural-network/fill_derivative.solution.nx"))
+    ex(&mut out, 21, "21-project-neural-network", "fix_keep_input", @embedFile("../topo/exercises/21-project-neural-network/fix_keep_input.nx"), @embedFile("../topo/exercises/21-project-neural-network/fix_keep_input.expected"), @embedFile("../topo/exercises/21-project-neural-network/fix_keep_input.solution.nx"))
+    ex(&mut out, 21, "21-project-neural-network", "write_matvec", @embedFile("../topo/exercises/21-project-neural-network/write_matvec.nx"), @embedFile("../topo/exercises/21-project-neural-network/write_matvec.expected"), @embedFile("../topo/exercises/21-project-neural-network/write_matvec.solution.nx"))
+    ex(&mut out, 23, "23-summit", "write_highest", @embedFile("../topo/exercises/23-summit/write_highest.nx"), @embedFile("../topo/exercises/23-summit/write_highest.expected"), @embedFile("../topo/exercises/23-summit/write_highest.solution.nx"))
     return out
 }
 
@@ -103,7 +119,14 @@ pub fn quizzes() -> List(Quiz) {
     out.append(Quiz{ .chapter = 5, .dir = "05-values-and-types", .text = @embedFile("../topo/exercises/05-values-and-types/quiz.txt") })
     out.append(Quiz{ .chapter = 6, .dir = "06-functions-and-errors", .text = @embedFile("../topo/exercises/06-functions-and-errors/quiz.txt") })
     out.append(Quiz{ .chapter = 8, .dir = "08-ownership", .text = @embedFile("../topo/exercises/08-ownership/quiz.txt") })
+    out.append(Quiz{ .chapter = 10, .dir = "10-project-calculator", .text = @embedFile("../topo/exercises/10-project-calculator/quiz.txt") })
+    out.append(Quiz{ .chapter = 11, .dir = "11-project-todo", .text = @embedFile("../topo/exercises/11-project-todo/quiz.txt") })
     out.append(Quiz{ .chapter = 15, .dir = "15-effects", .text = @embedFile("../topo/exercises/15-effects/quiz.txt") })
+    out.append(Quiz{ .chapter = 17, .dir = "17-networking", .text = @embedFile("../topo/exercises/17-networking/quiz.txt") })
+    out.append(Quiz{ .chapter = 19, .dir = "19-packages", .text = @embedFile("../topo/exercises/19-packages/quiz.txt") })
+    out.append(Quiz{ .chapter = 20, .dir = "20-shipping", .text = @embedFile("../topo/exercises/20-shipping/quiz.txt") })
+    out.append(Quiz{ .chapter = 21, .dir = "21-project-neural-network", .text = @embedFile("../topo/exercises/21-project-neural-network/quiz.txt") })
+    out.append(Quiz{ .chapter = 22, .dir = "22-tools", .text = @embedFile("../topo/exercises/22-tools/quiz.txt") })
     return out
 }
 
@@ -165,7 +188,7 @@ fn load_done(path: []u8) -> List(String) {
 }
 
 fn is_done(done: *List(String), key: []u8) -> bool {
-    for d in done.*{ if d[..] == key { return true } }
+    for d in done.* { if d[..] == key { return true } }
     return false
 }
 
@@ -376,18 +399,35 @@ fn show_solution(path: []u8) -> i32 {
 }
 
 /// One question of a quiz: the text, the choices, which is right, why.
-struct Question { text: String, choices: List(String), right: usize, why: String }
+/// A quiz question. One that asks the compiler carries a program (`| `
+/// lines), what is asked of it (`ask: effects NAME`, `ask: output`, `ask:
+/// check`) and the compiler's own words (`says:`), which `nx topo verify`
+/// holds to what the compiler says now.
+struct Question { text: String, choices: List(String), right: usize, why: String, code: List(String), ask: String, says: List(String) }
+
+fn new_question() -> Question {
+    return Question{ .text = String.new(), .choices = List(String).new(), .right = 0, .why = String.new(), .code = List(String).new(), .ask = String.new(), .says = List(String).new() }
+}
 
 fn parse_quiz(text: []u8) -> List(Question) {
     var out = List(Question).new()
-    var cur = Question{ .text = String.new(), .choices = List(String).new(), .right = 0, .why = String.new() }
+    var cur = new_question()
     for l in text.lines() {
         let t = l.trim()
         if t.len == 0 {
             if cur.text.len > 0 { out.append(cur) }
-            cur = Question{ .text = String.new(), .choices = List(String).new(), .right = 0, .why = String.new() }
+            cur = new_question()
             continue
         }
+        // a line of the question's program, kept as written after the bar
+        if t == "|" { cur.code.append(String.new()); continue }
+        if t.starts_with("| ") {
+            let at = l.find("| ") orelse 0
+            cur.code.append(String.from(l[at + 2..l.len]))
+            continue
+        }
+        if let a = strings.strip_prefix(t, "ask:") { cur.ask = String.from(a.trim()); continue }
+        if let w = strings.strip_prefix(t, "says:") { cur.says.append(String.from(w.trim())); continue }
         if let q = strings.strip_prefix(t, "Q:") { cur.text = String.from(q.trim()); continue }
         if let c = strings.strip_prefix(t, "* ") { cur.right = cur.choices.len; cur.choices.append(String.from(c)); continue }
         if let c = strings.strip_prefix(t, "- ") { cur.choices.append(String.from(c)); continue }
@@ -408,6 +448,7 @@ fn quiz(n: usize, progress: []u8) -> i32 {
     for q, qi in qs {
         println("", .{})
         println("{}. {}", .{qi + 1, q.text})
+        for cl, li in q.code { println("  {>3}| {}", .{li + 1, cl}) }
         for ch, i in q.choices { println("   {}) {}", .{i + 1, ch}) }
         print("> ", .{})
         let line = io.read_line() orelse { println("", .{}); break }
@@ -418,11 +459,104 @@ fn quiz(n: usize, progress: []u8) -> i32 {
         } else {
             println("no: {}) {}. {}", .{q.right + 1, q.choices[q.right], q.why})
         }
+        for w in q.says { println("   the compiler: {}", .{w}) }
     }
     println("", .{})
     println("{} of {} right", .{right, qs.len})
     if right == qs.len { mark_done(progress, format("{}/quiz", .{c.dir})[..]); return 0 }
     return 1
+}
+
+/// A choice as the compiler would write it: the backticks around code dropped.
+fn plain(s: []u8) -> String {
+    var out = String.new()
+    for c in s { if c != '`' { out.push_byte(c) } }
+    return out
+}
+
+/// What the compiler says about a question's program: the answer the starred
+/// choice must read, and its own words. Null, after a message, when it cannot say.
+fn ask_compiler(exe: []u8, q: *Question, dir: []u8) -> ?(String, List(String)) {
+    var program = String.new()
+    for l in q.code { program.append(l[..]); program.append("\n") }
+    fs.write(fs.join(dir, "main.nx")[..], program[..]) catch { eprintln("error: cannot write the question's program", .{}); return null }
+    let opts = process.Options{ .stdin = "", .cwd = dir }
+    var words = List(String).new()
+    let ask = q.ask[..]
+    if let name = strings.strip_prefix(ask, "effects ") {
+        let r = process.run_with([exe, "effects", "main.nx"][..], opts) catch { return null }
+        var effects = String.new()
+        for line in r.stdout[..].lines() {
+            if !line.starts_with(format("fn {}(", .{name.trim()})[..]) { continue }
+            var cut = line.len
+            while cut > 1 and ! (line[cut - 1] == ' ' and line[cut - 2] == ' ') { cut -= 1 }
+            effects = String.from(line[cut..line.len])
+        }
+        if effects.len == 0 { eprintln("error: `nx effects` does not list `{}`:\n{}{}", .{name, r.stdout, r.stderr}); return null }
+        // per effect, the first reason `nx explain` gives: the one in the function itself
+        if effects != "(pure)" {
+            for e in effects[..].split(" ") {
+                let x = process.run_with([exe, "explain", "main.nx", name.trim(), e][..], opts) catch { return null }
+                var first = String.new()
+                for xl, i in x.stdout[..].lines() { if i > 0 and first.len == 0 and xl.trim().len > 0 { first = String.from(xl.trim()) } }
+                words.append(format("{}: {}", .{e, first}))
+            }
+        }
+        return (effects, words)
+    }
+    if ask == "check" {
+        let r = process.run_with([exe, "check", "main.nx"][..], opts) catch { return null }
+        if r.code == 0 { return (String.from("it compiles"), words) }
+        var line = String.new()
+        for dl in r.stderr[..].lines() {
+            if words.len == 0 { if let m = strings.strip_prefix(dl, "error: ") { words.append(String.from(m)) } }
+            if line.len == 0 {
+                if let at = strings.strip_prefix(dl.trim(), "--> main.nx:") { line = format("line {}", .{at.split(":")[0]}) }
+            }
+        }
+        return (line, words)
+    }
+    if ask == "output" {
+        let r = process.run_with([exe, "run", "main.nx", "--out-dir", "out"][..], opts) catch { return null }
+        if r.code != 0 { eprintln("error: the question's program does not run:\n{}", .{r.stderr}); return null }
+        return (String.from(r.stdout[..].trim()), words)
+    }
+    eprintln("error: unknown `ask: {}` (effects NAME, check, output)", .{ask})
+    return null
+}
+
+/// `nx topo verify`: every quiz question that asks the compiler is answered
+/// by it now: its starred choice is the compiler's answer and its `says:`
+/// lines are the compiler's words, so no quiz outlives the language.
+fn verify(exe: []u8) -> i32 {
+    let dir = fs.join(fs.temp_dir()[..], "nexium-topo-quiz")
+    fs.make_dirs(dir[..]) catch { }
+    var asked: usize = 0
+    var wrong: usize = 0
+    for qz in quizzes() {
+        for q, qi in parse_quiz(qz.text) {
+            if q.ask.len == 0 { continue }
+            asked += 1
+            let said = ask_compiler(exe, &q, dir[..]) orelse { wrong += 1; continue }
+            let (answer, words) = said
+            let starred = plain(q.choices[q.right][..])
+            if starred != answer {
+                eprintln("{}/quiz, question {}: the starred choice is `{}`, the compiler says `{}`", .{qz.dir, qi + 1, starred, answer})
+                wrong += 1
+            }
+            var same = words.len == q.says.len
+            if same { for w, i in words { if w != q.says[i] { same = false } } }
+            if !same {
+                eprintln("{}/quiz, question {}: `says:` should read", .{qz.dir, qi + 1})
+                for w in words { eprintln("says: {}", .{w}) }
+                wrong += 1
+            }
+        }
+    }
+    fs.remove_all(dir[..]) catch { }
+    if wrong > 0 { eprintln("{} question(s) disagree with the compiler", .{wrong}); return 1 }
+    println("{} question(s) answered by the compiler, all as the quizzes say", .{asked})
+    return 0
 }
 
 fn list_all() -> i32 {
@@ -438,6 +572,7 @@ fn usage() {
     eprintln("       nx topo hint <file>           the hints of an exercise", .{})
     eprintln("       nx topo solution <file>       its solution", .{})
     eprintln("       nx topo quiz <chapter>        the chapter's questions", .{})
+    eprintln("       nx topo verify                the quizzes' answers against the compiler (for the course's authors)", .{})
     eprintln("       nx topo reset                 forget the progress", .{})
 }
 
@@ -466,6 +601,7 @@ pub fn run(args: [][]u8, exe: []u8, progress: []u8) -> i32 {
         return 0
     }
     if cmd == "list" { return list_all() }
+    if cmd == "verify" { return verify(exe) }
     let n = cmd.parse_int(usize) catch { 0 }
     if n > 0 { return start(n) }
     if cmd == "start" and args.len >= 2 {

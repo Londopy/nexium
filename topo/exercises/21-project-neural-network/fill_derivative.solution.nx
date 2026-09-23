@@ -1,0 +1,17 @@
+fn sigmoid(z: f64) -> f64 {
+    return 1.0 / (1.0 + math.exp(-z))
+}
+
+fn main() {
+    var w = 0.5
+    let x = 1.0
+    let target = 1.0
+    for epoch in 0..4 {
+        let y = sigmoid(w * x)
+        // the loss is (y - target)^2 / 2, so d(loss)/dy is y - target
+        let dy = y - target
+        let dz = dy * y * (1.0 - y)
+        w -= 2.0 * dz * x
+        println("epoch {}: y {:.4}, w {:.4}", .{epoch, y, w})
+    }
+}

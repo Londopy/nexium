@@ -1,0 +1,22 @@
+// topo: fill in the blank
+// One neuron learns: each epoch runs it forward, measures how far it is from the target, and
+// moves its weight against the gradient. Replace ??? with the sigmoid's derivative, written in
+// terms of its output `y`, so the output climbs toward the target.
+// hint: for y = sigmoid(z), dy/dz = y * (1 - y); the chapter's `backward` folds in the same factor
+fn sigmoid(z: f64) -> f64 {
+    return 1.0 / (1.0 + math.exp(-z))
+}
+
+fn main() {
+    var w = 0.5
+    let x = 1.0
+    let target = 1.0
+    for epoch in 0..4 {
+        let y = sigmoid(w * x)
+        // the loss is (y - target)^2 / 2, so d(loss)/dy is y - target
+        let dy = y - target
+        let dz = dy * ???
+        w -= 2.0 * dz * x
+        println("epoch {}: y {:.4}, w {:.4}", .{epoch, y, w})
+    }
+}

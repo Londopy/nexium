@@ -1,0 +1,17 @@
+// topo: fill in the blank
+// FNV-1a multiplies by a prime and lets the product wrap around 32 bits. Replace ??? with the
+// multiply that wraps, so the checksum is the one C, Python and Node compute.
+// hint: a plain `*=` traps when the product overflows, and this one overflows on the first byte
+// hint: chapter 5 has the wrapping operators, `+%` and its family
+fn checksum(data: []u8) -> u32 export(c) {
+    var h: u32 = 2166136261
+    for b in data {
+        h ^= b as u32
+        h ??? 16777619
+    }
+    return h
+}
+
+fn main() {
+    println("{x} {x}", .{checksum("hello"), checksum("")})
+}

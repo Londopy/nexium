@@ -1,0 +1,21 @@
+struct Layer {
+    weights: List(f64)
+    input: List(f64)
+}
+
+impl Layer {
+    fn forward(self: *mut Self, x: []f64) -> f64 {
+        self.input = x.to_owned()
+        var s = 0.0
+        for w, i in self.weights { s += w * x[i] }
+        return s
+    }
+}
+
+fn main() {
+    var layer = Layer{ .weights = List(f64).from([0.5, -1.0, 2.0]), .input = List(f64).new() }
+    var data = [1.0, 2.0, 3.0]
+    let y = layer.forward(data[..])
+    data[0] = 100.0
+    println("{} {}", .{y, layer.input[0]})
+}

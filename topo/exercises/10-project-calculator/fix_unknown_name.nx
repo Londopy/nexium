@@ -1,0 +1,17 @@
+// topo: fix the error
+// The compiler rejects `lookup`; make a missing variable fail the call with `UnknownName`.
+// hint: `orelse` either gives a value or leaves the function, and leaving takes a keyword
+// hint: the chapter's section "Errors, once more" has the idiom
+error Calc { UnknownName }
+
+fn lookup(vars: *Map(String, f64), name: []u8) -> Calc!f64 {
+    let v = vars.get(name) orelse error.UnknownName
+    return v
+}
+
+fn main() {
+    var vars = Map(String, f64).new()
+    vars.put(String.from("pi"), 3.14159)
+    println("{}", .{lookup(&vars, "pi") catch -1.0})
+    println("{}", .{lookup(&vars, "tau") catch -1.0})
+}

@@ -1,0 +1,41 @@
+struct Matrix {
+    rows: usize
+    cols: usize
+    data: List(f64)
+}
+
+fn matvec(m: *Matrix, x: []f64) -> List(f64) {
+    var out = List(f64).new()
+    for r in 0..m.rows {
+        var s = 0.0
+        for c in 0..m.cols { s += m.data[r * m.cols + c] * x[c] }
+        out.append(s)
+    }
+    return out
+}
+
+fn main() {
+    let m = Matrix{ .rows = 2, .cols = 3, .data = List(f64).from([1.0, 2.0, 3.0, 4.0, 5.0, 6.0]) }
+    let y = matvec(&m, [1.0, 0.0, -1.0][..])
+    println("{} {}", .{y[0], y[1]})
+}
+
+test "two rows" {
+    let m = Matrix{ .rows = 2, .cols = 3, .data = List(f64).from([1.0, 2.0, 3.0, 4.0, 5.0, 6.0]) }
+    let y = matvec(&m, [1.0, 0.0, -1.0][..])
+    expect_eq(y.len, 2)
+    expect_eq(y[0], -2.0)
+    expect_eq(y[1], -2.0)
+}
+
+test "the identity changes nothing" {
+    let m = Matrix{ .rows = 2, .cols = 2, .data = List(f64).from([1.0, 0.0, 0.0, 1.0]) }
+    let y = matvec(&m, [3.5, -7.0][..])
+    expect_eq(y[0], 3.5)
+    expect_eq(y[1], -7.0)
+}
+
+test "one row is a dot product" {
+    let m = Matrix{ .rows = 1, .cols = 3, .data = List(f64).from([2.0, 2.0, 2.0]) }
+    expect_eq(matvec(&m, [1.0, 2.0, 3.0][..])[0], 12.0)
+}

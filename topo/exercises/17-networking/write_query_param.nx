@@ -1,0 +1,19 @@
+// topo: write it
+// Fill in `param` so the tests pass: the value of `name` in a query string like `a=1&b=2`,
+// "" for a key written without `=`, and null for a key that is not there.
+// hint: `query.split("&")` gives the pairs; `pair.find("=")` is an optional index
+// hint: a slice of the query is a `[]u8` view, so nothing has to be copied
+fn param(query: []u8, name: []u8) -> ?[]u8 {
+    ???
+}
+
+fn main() {
+    println("{}", .{param("q=nexium&page=2", "page") orelse "none"})
+}
+
+test "the value of a key" { expect_eq(param("q=nexium&page=2", "q") orelse "none", "nexium") }
+test "a later key" { expect_eq(param("q=nexium&page=2", "page") orelse "none", "2") }
+test "a key without a value" { expect_eq(param("debug&q=1", "debug") orelse "none", "") }
+test "a missing key" { expect(param("q=1", "page") == null) }
+test "a prefix is not the key" { expect(param("pages=3", "page") == null) }
+test "an empty query" { expect(param("", "q") == null) }

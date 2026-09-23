@@ -1014,9 +1014,11 @@ grading them with the compiler, `hint`, `solution`, `quiz`, `reset`;
 progress in `topo-progress` beside the update cache. The site shows the
 same exercises at the end of each chapter with the solutions folded away,
 a "done" box per exercise kept in the browser, and the count on the
-chapter list. Twenty-five exercises of five kinds and four quizzes cover
-chapters 2 to 16 (decision 107); the remaining chapters' exercises, the
-compiler-graded quiz answers and the in-page Run are what is left.
+chapter list. Forty-one exercises of five kinds cover chapters 2 to 23
+(decision 107), eleven quizzes grade their questions against the
+compiler where a question asks it (decision 109, `nx topo verify`), and
+the exercises run and grade in the page (decision 108). Left: the more
+chapters listed below, and the playground's share URL (1.5).
 
 - An interactive tutorial runner: opens a chapter, shows its program, lets
   you edit and run it, checks the output against the recorded one, gives

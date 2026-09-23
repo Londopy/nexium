@@ -1,0 +1,38 @@
+error Peaks { BadLine }
+
+fn highest(text: []u8) -> Peaks!?[]u8 {
+    var best: ?[]u8 = null
+    var best_h: u32 = 0
+    for raw in text.lines() {
+        let line = raw.trim()
+        if line.len == 0 { continue }
+        // the height is the last word; everything before it is the name
+        var cut = line.len
+        while cut > 0 and line[cut - 1] != ' ' { cut -= 1 }
+        if cut == 0 { return error.BadLine }
+        let h = line[cut..line.len].parse_int(u32) catch { return error.BadLine }
+        if best == null or h > best_h {
+            best = line[0..cut - 1].trim()
+            best_h = h
+        }
+    }
+    return best
+}
+
+fn main() {
+    let list = "Annapurna 8091\nEverest 8849\n\nK2 8611\n"
+    let top = highest(list) catch { null }
+    println("{}", .{top orelse "none"})
+}
+
+test "the highest of three" { expect_eq((try highest("Annapurna 8091\nEverest 8849\nK2 8611")) orelse "", "Everest") }
+test "blank lines are skipped" { expect_eq((try highest("\nCho Oyu 8188\n\n")) orelse "", "Cho Oyu") }
+test "no peaks at all" { expect(try highest("\n  \n") == null) }
+test "a height that is not a number" {
+    _ = highest("Everest high") catch |e| { expect(e == error.BadLine); return }
+    expect(false)
+}
+test "a name without a height" {
+    _ = highest("Everest") catch |e| { expect(e == error.BadLine); return }
+    expect(false)
+}

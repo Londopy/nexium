@@ -1,0 +1,26 @@
+Q: What does it print?
+| fn sigmoid(z: f64) -> f64 {
+|     return 1.0 / (1.0 + math.exp(-z))
+| }
+|
+| fn main() {
+|     let y = sigmoid(0.0)
+|     println("{} {}", .{y, y * (1.0 - y)})
+| }
+ask: output
+- 0.0 0.0
+* 0.5 0.25
+- 1.0 0.0
+> The sigmoid is 0.5 at zero, where its slope, `y * (1 - y)`, is at its largest.
+
+Q: Why does `forward` copy its input with `to_owned`?
+- slices cannot be read twice
+* the layer keeps the input for `backward`, and a slice is a view of the caller's data, which the layer does not own
+- to make it faster
+> Ownership decides what gets copied: keeping something means owning it, and that is the only copy in the forward pass.
+
+Q: `nx leaks topo/code/nn.nx` reports that every allocation of the run was released. What released them?
+- a garbage collector
+* each value's owner, at the end of its scope, including the lists nested inside lists
+- the operating system at exit
+> Nested owning containers own their contents all the way down and are freed all the way down, with no code written for it.

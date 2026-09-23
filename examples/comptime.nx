@@ -10,7 +10,7 @@ fn area(s: Shape) -> i64 {
     match s {
         .Dot => 0,
         .Line(n) => n,
-        .Box(a, b) => (b.x - a.x) *(b.y - a.y),
+        .Box(a, b) => (b.x - a.x) * (b.y - a.y),
     }
 }
 

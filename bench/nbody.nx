@@ -6,7 +6,7 @@ const DT: f64 = 0.01
 fn energy(x: []f64, y: []f64, z: []f64, vx: []f64, vy: []f64, vz: []f64, m: []f64) -> f64 {
     var e: f64 = 0.0
     for i in 0..N {
-        e += 0.5 * m[i] *(vx[i] * vx[i] + vy[i] * vy[i] + vz[i] * vz[i])
+        e += 0.5 * m[i] * (vx[i] * vx[i] + vy[i] * vy[i] + vz[i] * vz[i])
         for j in i + 1..N {
             let dx = x[i] - x[j]
             let dy = y[i] - y[j]

@@ -1,0 +1,36 @@
+// topo: fill in the blank
+// Replace ??? so `/greet` greets the `name` query parameter, or "stranger" when there is none.
+// hint: `req.param(name)` is an optional; one keyword gives it a default (chapter 6)
+// hint: a router needs no socket: `router.handle(&req)` is a plain call, which is how a handler is tested
+import std.http
+
+fn greet(req: *http.Request) -> http.Response {
+    var body = String.from("hello, ")
+    body.append(req.param("name") ??? "stranger")
+    return http.text(200, body[..])
+}
+
+fn health(req: *http.Request) -> http.Response {
+    _ = req
+    return http.text(200, "ok")
+}
+
+fn get(path: []u8, query: []u8) -> http.Request {
+    return http.Request{
+        .method = String.from("GET"), .path = String.from(path), .query = String.from(query),
+        .headers = List(http.Header).new(), .body = String.new(), .peer = String.from("test"),
+    }
+}
+
+fn main() {
+    var router = http.Router.new()
+    router.get("/greet", greet)
+    router.get("/health", health)
+    let a = get("/greet", "name=Maurice")
+    let b = get("/greet", "")
+    let c = get("/nowhere", "")
+    for req in [a, b, c] {
+        let resp = router.handle(&req)
+        println("{} {} {}", .{req.path, resp.status, resp.body})
+    }
+}

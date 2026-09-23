@@ -18,7 +18,7 @@ fn twice(comptime T: type where T: Clone, x: *T) -> (T, T) {
 }
 
 fn describe(s: *Shape) -> String {
-    match s.*{
+    match s.* {
         .Dot => { return String.from("dot") }
         .Named(n) => { return format("named {}", .{n.*}) }
         .Pair(a, b) => { return format("pair {} {}", .{a.name, b.name}) }

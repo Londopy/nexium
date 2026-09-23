@@ -1,0 +1,12 @@
+fn checksum(data: []u8) -> u32 export(c) {
+    var h: u32 = 2166136261
+    for b in data {
+        h ^= b as u32
+        h *%= 16777619
+    }
+    return h
+}
+
+fn main() {
+    println("{x} {x}", .{checksum("hello"), checksum("")})
+}

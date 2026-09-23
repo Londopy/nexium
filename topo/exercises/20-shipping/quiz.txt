@@ -1,0 +1,32 @@
+Q: `nx effects`: which effects does `mean` carry?
+| fn mean(xs: []f64) -> f64 !panics export(c) {
+|     if xs.len == 0 { return 0.0 }
+|     var t = 0.0
+|     for x in xs { t += x }
+|     return t / xs.len as f64
+| }
+ask: effects mean
+* (pure)
+- panics
+- allocates
+> Float arithmetic cannot trap, and `!panics` is the promise the checker proved; so the header gives `mean` its natural C signature.
+
+Q: And `divide`?
+| error Math { DivideByZero }
+|
+| fn divide(a: i64, b: i64) -> Math!i64 export(c) {
+|     if b == 0 { return error.DivideByZero }
+|     return a / b
+| }
+ask: effects divide
+says: panics: division may divide by zero or overflow at main.nx:5:12
+- (pure)
+* panics
+- allocates panics
+> `a / b` with `b == -1` and `a` at the smallest `i64` overflows, so `divide` returns a status code in C with the value through a pointer.
+
+Q: Why can an exported function not return a slice?
+- slices are slower in C
+* nothing on the other side would know when to free it; the caller passes a `[]mut T` buffer instead
+- C has no pointers
+> The boundary carries scalars, slices of scalars as parameters, and `layout(c)` structs; memory the caller owns is the one way out.

@@ -1,0 +1,27 @@
+// topo: write it
+// A package is published by tagging it. Fill in `newer` so the tests pass: whether tag `a`
+// is a later version than tag `b`, comparing major, minor and patch as numbers.
+// hint: `strings.strip_prefix(tag, "v")` drops the `v`; `split(".")` gives the three parts
+// hint: compare as numbers: "1.10.0" is newer than "1.9.3", though "1" < "9" as text
+import std.strings
+
+fn parts(tag: []u8) -> List(u32) {
+    let t = strings.strip_prefix(tag, "v") orelse tag
+    var out = List(u32).new()
+    for p in t.split(".") { out.append(p.parse_int(u32) catch { 0 }) }
+    return out
+}
+
+fn newer(a: []u8, b: []u8) -> bool {
+    ???
+}
+
+fn main() {
+    println("{} {}", .{newer("v1.10.0", "v1.9.3"), newer("v1.2.0", "v1.2.1")})
+}
+
+test "a later minor" { expect(newer("v1.10.0", "v1.9.3")) }
+test "an earlier patch" { expect(!newer("v1.2.0", "v1.2.1")) }
+test "the same version" { expect(!newer("v1.2.1", "v1.2.1")) }
+test "a later major beats everything" { expect(newer("v2.0.0", "v1.99.99")) }
+test "without the v" { expect(newer("0.10.1", "0.9.0")) }

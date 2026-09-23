@@ -1,0 +1,4 @@
+// EXPECT: which needs `layout(c)` to cross the boundary
+struct Point { x: f64, y: f64 }
+fn origin() -> Point export(c) { return Point{ .x = 0.0, .y = 0.0 } }
+fn main() { _ = origin() }

@@ -1,0 +1,21 @@
+// SPEC 15: an exported function's parameters keep their names in C, whatever
+// they are: the wrapper's own names and the result pointer stay out of their way.
+fn upper(text: []u8, out: []mut u8) -> usize export(c) {
+    var n: usize = 0
+    for b in text {
+        if n == out.len { break }
+        out[n] = if b >= 'a' and b <= 'z' { b - 32 } else { b }
+        n += 1
+    }
+    return n
+}
+
+fn mix(ctx: []u8, r: u8, prev: u8, result: u8) -> usize export(c) {
+    return ctx.len + (r + prev + result) as usize
+}
+
+fn main() {
+    var buf: [8]u8 = undefined
+    let n = upper("summit", buf[..])
+    println("{} {}", .{buf[0..n], mix("abc", 1, 2, 3)})
+}

@@ -59,7 +59,7 @@ impl Layer {
         for _ in 0..self.w.cols { grad_in.append(0.0) }
         for r in 0..self.w.rows {
             let y = self.output[r]
-            let delta = grad_out[r] * y *(1.0 - y) // the sigmoid's derivative
+            let delta = grad_out[r] * y * (1.0 - y) // the sigmoid's derivative
             for c in 0..self.w.cols {
                 grad_in[c] += delta * self.w.at(r, c)
                 self.w.set(r, c, self.w.at(r, c) - lr * delta * self.input[c])

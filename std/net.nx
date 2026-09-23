@@ -282,7 +282,7 @@ test "udp to self" {
     try u.send_to("127.0.0.1", port, "datagram")
     let d = try u.recv_from(64)
     expect_eq(d.data, "datagram")
-    expect(port_of(d.from).?== port)
+    expect(port_of(d.from).? == port)
     u.close()
 }
 

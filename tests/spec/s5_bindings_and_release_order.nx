@@ -4,7 +4,7 @@ fn make(name: []u8) -> Loud { return Loud{ .name = name } }
 fn main() {
     var x: i32 = 1
     let p: *mut i32 = &mut x
-    p.*= 5
+    p.* = 5
     println("{}", .{x})
     {
         let a = String.from("a")

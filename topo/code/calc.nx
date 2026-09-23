@@ -116,7 +116,7 @@ fn unary(s: *Session, c: *mut Cursor) -> Calc!f64 {
 /// atom := number | name | '(' expression ')'
 fn atom(s: *Session, c: *mut Cursor) -> Calc!f64 {
     let t = &c.toks[c.pos]
-    match t.*{
+    match t.* {
         .Num(v) => { c.pos += 1; return v },
         .Name(n) => {
             c.pos += 1

@@ -2483,6 +2483,78 @@ impl Checker {
         self.check_effect_bounds()
         self.check_embedded_constraints()
         self.check_obligations()
+        self.check_export_types()
+    }
+
+    /// Whether a type crosses the C boundary as one C scalar.
+    fn is_c_scalar(self: *mut Self, t0: usize) -> bool {
+        let t = self.tys.shallow(t0)
+        let k = self.tys.kind(t)
+        if k == TK.Int or k == TK.Float or k == TK.Bool or k == TK.Char { return true }
+        if k == TK.Distinct { return self.is_c_scalar(self.distinct_underlying(self.tys.list[t].def)) }
+        return false
+    }
+
+    /// Whether a parameter or result of an exported function can cross the
+    /// C boundary (scalars, slices of scalars as parameters, `layout(c)`
+    /// structs of scalars); the error names what cannot. The words are the
+    /// C generator's, which keeps the same rules as a last line.
+    fn export_crossing(self: *mut Self, t0: usize, what: []u8, fname: []u8, module: usize, at: usize, is_result: bool) {
+        if self.is_c_scalar(t0) { return }
+        let t = self.tys.shallow(t0)
+        let k = self.tys.kind(t)
+        if k == TK.Slice {
+            if is_result {
+                self.fail(module, at, format("export `{}`: returning a slice across the boundary is not allowed (its lifetime cannot be expressed); return through a caller-provided buffer", .{fname})[..])
+            } else if !self.is_c_scalar(self.tys.list[t].args[0]) {
+                self.fail(module, at, format("export `{}`: {} is a slice of a non-scalar type, which has no C representation", .{fname, what})[..])
+            }
+            return
+        }
+        if k == TK.Struct {
+            let d = self.tys.list[t].def
+            if self.structs[d].layout != "c" or self.structs[d].kind == "ref" {
+                self.fail(module, at, format("export `{}`: {} has type `{}`, which needs `layout(c)` to cross the boundary", .{fname, what, self.structs[d].name})[..])
+                return
+            }
+            let ftys = self.struct_field_types(t)
+            let dm = self.structs[d].module
+            for f, i in self.structs[d].fields.clone() {
+                if !self.is_c_scalar(ftys[i]) {
+                    self.fail(module, at, format("export `{}`: field `{}` of `{}` is not a scalar", .{fname, self.node(dm, f).name, self.structs[d].name})[..])
+                    return
+                }
+            }
+            return
+        }
+        self.fail(module, at, format("export `{}`: {} has type `{}`, which has no C representation (use scalars, slices of scalars, or `layout(c)` structs)", .{fname, what, self.ty_name(t)})[..])
+    }
+
+    /// Every exported function's parameters and result can cross the C boundary.
+    fn check_export_types(self: *mut Self) {
+        let n = self.insts.len
+        for i in 0..n {
+            if self.insts[i].export_name == "-" or self.insts[i].is_extern or self.insts[i].body == NONE { continue }
+            let fname = self.insts[i].name.clone()
+            let m = self.insts[i].module
+            let at = self.insts[i].start
+            for pl in self.insts[i].params.clone() {
+                let what = format("parameter `{}`", .{self.insts[i].locals[pl].name})
+                self.export_crossing(self.insts[i].locals[pl].ty, what[..], fname[..], m, at, false)
+                // a slice `p` is `p` and `p_len` in C, and the header shows these names
+                if self.tys.kind(self.tys.shallow(self.insts[i].locals[pl].ty)) == TK.Slice {
+                    let len_name = format("{}_len", .{self.insts[i].locals[pl].name})
+                    for other in self.insts[i].params.clone() {
+                        if self.insts[i].locals[other].name == len_name {
+                            self.fail(m, at, format("export `{}`: parameter `{}` has the name C gives the length of `{}`; rename one", .{fname, len_name, self.insts[i].locals[pl].name})[..])
+                        }
+                    }
+                }
+            }
+            let ret = self.tys.shallow(self.insts[i].ret)
+            let payload = if self.tys.kind(ret) == TK.ErrUnion { self.tys.list[ret].args[0] } else { ret }
+            if self.tys.kind(self.tys.shallow(payload)) != TK.Void { self.export_crossing(payload, "the return value", fname[..], m, at, true) }
+        }
     }
 
     /// Declared negative bounds hold; calls in `for parallel` bodies do not
@@ -3649,7 +3721,7 @@ impl Checker {
             self.warn_here(at, "the caller's storage keeps a value made inside this `using arena` block, whose storage is freed with the arena at the end of the block (rule V5); `@escape` it first")
             return
         }
-        for r in roots.*{
+        for r in roots.* {
             if self.ctx().locals[r].arena_depth < vd {
                 let name = self.ctx().locals[r].name.clone()
                 self.warn_here(at, format("`{}` lives past this `using arena` block, but the value stored in it was made inside the block and its storage is freed with the arena at the end (rule V5); `@escape` it first, or declare `{}` inside the block", .{name, name})[..])
@@ -3681,10 +3753,10 @@ impl Checker {
     /// storage (through a parameter or a pointer into it), or a global.
     fn store_roots(self: *mut Self, t: usize, roots: *mut List(usize), caller: *mut bool, global: *mut bool) {
         let k = self.tir.nodes[t].k
-        if k == TKind.Global { global.*= true; return }
+        if k == TKind.Global { global.* = true; return }
         let r = self.place_root(t)
         if r != NONE {
-            if self.ctx().locals[r].is_param and !self.ctx().locals[r].owned { caller.*= true } else { roots.append(r) }
+            if self.ctx().locals[r].is_param and !self.ctx().locals[r].owned { caller.* = true } else { roots.append(r) }
             return
         }
         // through a pointer or a slice: where its local points
@@ -3695,9 +3767,9 @@ impl Checker {
         }
         if self.tir.nodes[b].k != TKind.Local { return }
         let l = self.tir.nodes[b].a
-        if self.ctx().locals[l].is_param and !self.ctx().locals[l].owned { caller.*= true }
+        if self.ctx().locals[l].is_param and !self.ctx().locals[l].owned { caller.* = true }
         for o in self.ctx().locals[l].origins.clone() {
-            if o.local == ORIGIN_PARAM { caller.*= true }
+            if o.local == ORIGIN_PARAM { caller.* = true }
             else if o.local < ORIGIN_TEMP { roots.append(o.local) }
         }
     }
@@ -3898,17 +3970,17 @@ impl Checker {
         let k = self.tir.nodes[e].k
         let kids = self.tir.nodes[e].kids.clone()
         if k == TKind.ArrayToSlice or k == TKind.ListToSlice or k == TKind.StrToSlice {
-            what.*= "slice"
+            what.* = "slice"
             return self.place_root(kids[0])
         }
         if k == TKind.SliceOp {
-            what.*= "slice"
+            what.* = "slice"
             let bk = self.tir.nodes[kids[0]].k
             if bk == TKind.ArrayToSlice or bk == TKind.ListToSlice or bk == TKind.StrToSlice { return self.place_root(self.tir.nodes[kids[0]].kids[0]) }
             return self.place_root(kids[0])
         }
         if k == TKind.AddrOf {
-            what.*= "pointer"
+            what.* = "pointer"
             return self.place_root(kids[0])
         }
         if k == TKind.OptWrap or k == TKind.ErrWrap { return self.view_root(kids[0], what) }
@@ -6605,7 +6677,7 @@ fn facts_both(l: *Facts, r: *Facts) -> Facts {
 }
 
 fn name_index(names: *List(String), name: []u8) -> ?usize {
-    for n, i in names.*{ if n[..] == name { return i } }
+    for n, i in names.* { if n[..] == name { return i } }
     return null
 }
 
@@ -6626,11 +6698,11 @@ fn add_origin_f(out: *mut List(Origin), local: usize, at: usize, heap: bool, fie
 }
 
 fn add_origins(out: *mut List(Origin), more: *List(Origin)) {
-    for o in more.*{ add_origin_f(out, o.local, o.taken_at, o.heap, o.field) }
+    for o in more.* { add_origin_f(out, o.local, o.taken_at, o.heap, o.field) }
 }
 
 fn has_local(xs: *List(usize), v: usize) -> bool {
-    for x in xs.*{ if x == v { return true } }
+    for x in xs.* { if x == v { return true } }
     return false
 }
 
@@ -8971,7 +9043,7 @@ impl Checker {
         let all = self.node(tm, meth).kids.clone()
         if all.len == 0 or self.node(tm, all[0]).name != "self" { return false }
         let st_node = self.node(tm, all[0]).x
-        mutable.*= self.node(tm, st_node).k == parser.NodeKind.TPtr and self.node(tm, st_node).flag
+        mutable.* = self.node(tm, st_node).k == parser.NodeKind.TPtr and self.node(tm, st_node).flag
         let placeholder = self.tys.named(TK.Type, "Self")
         for pn, i in all {
             if i == 0 { continue }
@@ -8990,7 +9062,7 @@ impl Checker {
             self.fail_here(at, format("method `{}` returns `Self` and cannot be called through `dyn {}`", .{mname, tname})[..])
             return false
         }
-        ret.*= r
+        ret.* = r
         return true
     }
 
@@ -11472,8 +11544,8 @@ impl Checker {
         let k = self.tir.nodes[e].k
         let kids = self.tir.nodes[e].kids.clone()
         if k == TKind.Local {
-            fi.*= self.frames.len - 1
-            l.*= self.tir.nodes[e].a
+            fi.* = self.frames.len - 1
+            l.* = self.tir.nodes[e].a
             path.clear()
             return true
         }
@@ -11491,8 +11563,8 @@ impl Checker {
                     self.it_fail_panic(format("index {} out of bounds for length {}", .{i, n})[..], self.tir.nodes[e].start)
                     return false
                 }
-                fi.*= vw.ival as usize
-                l.*= vw.b
+                fi.* = vw.ival as usize
+                l.* = vw.b
                 path.clear()
                 for x in vw.path { path.append(x) }
                 path.append(view_start(&vw) + i as usize)
@@ -11505,8 +11577,8 @@ impl Checker {
         if k == TKind.Deref {
             let p = self.it_eval(kids[0]) orelse return false
             if p.kind != VK_PTR { return false }
-            fi.*= p.ival as usize
-            l.*= p.b
+            fi.* = p.ival as usize
+            l.* = p.b
             path.clear()
             for x in p.path { path.append(x) }
             return true
@@ -11527,8 +11599,8 @@ impl Checker {
             let nfi = cur.ival as usize
             let nl = cur.b
             let np = cur.path.clone()
-            fi.*= nfi
-            l.*= nl
+            fi.* = nfi
+            l.* = nl
             path.clear()
             for x in np { path.append(x) }
         }
@@ -12064,8 +12136,8 @@ impl Checker {
         let k = self.tys.kind(t)
         if k == TK.Int {
             let nm = self.tys.list[t].name.clone()
-            lo.*= int_min(nm[..])
-            hi.*= int_max(nm[..])
+            lo.* = int_min(nm[..])
+            hi.* = int_max(nm[..])
             return true
         }
         if k == TK.Distinct { return self.it_int_range(self.distinct_underlying(self.tys.list[t].def), lo, hi) }
@@ -12077,8 +12149,8 @@ impl Checker {
         let k = self.tys.kind(t)
         if k == TK.Int {
             let nm = self.tys.list[t].name.clone()
-            bits.*= int_bits(nm[..])
-            signed.*= int_signed(nm[..])
+            bits.* = int_bits(nm[..])
+            signed.* = int_signed(nm[..])
             return true
         }
         if k == TK.Distinct { return self.it_bits_of(self.distinct_underlying(self.tys.list[t].def), bits, signed) }
@@ -12820,18 +12892,23 @@ impl Checker {
             self.it_name_value(self.tys.list[t].args[0], &mut v.items[0])
             return
         }
+        // a `[]u8` taken from a list or an array of bytes is text, as compiled code writes it
+        if k == TK.Slice and (v.kind == VK_ARRAY or v.kind == VK_LIST) {
+            if let bytes = cv_byte_text(v) { v.* = cv_str(bytes[..]) }
+            return
+        }
         if k == TK.Enum and v.kind == VK_ENUM {
             let d = self.tys.list[t].def
             let tag = v.ival as usize
             if tag < self.enums[d].variants.len {
                 let vn = self.node(self.enums[d].module, self.enums[d].variants[tag]).name.clone()
-                v.*= cv_owned(vn[..])
+                v.* = cv_owned(vn[..])
             }
             return
         }
         if v.kind == VK_ERR and v.ival >= 1 and (v.ival as usize) <= self.error_names.len {
             let en = self.error_names[(v.ival - 1) as usize].clone()
-            v.*= cv_owned(en[..])
+            v.* = cv_owned(en[..])
         }
     }
 
@@ -12994,7 +13071,7 @@ impl Checker {
             if k == VK_UNDEFINED {
                 var items = List(CV).new()
                 items.append(vs[1].clone())
-                cur.*= cv_seq(VK_LIST, items)
+                cur.* = cv_seq(VK_LIST, items)
                 return cv(VK_VOID)
             }
             return null
@@ -13032,7 +13109,7 @@ impl Checker {
                 var items = List(CV).new()
                 items.append(vs[1].clone())
                 items.append(vs[2].clone())
-                cur.*= cv_seq(VK_MAP, items)
+                cur.* = cv_seq(VK_MAP, items)
                 return cv(VK_VOID)
             }
             return null
@@ -13151,7 +13228,7 @@ impl Checker {
             else if vs[1].kind == VK_INT { add.push_byte(vs[1].ival as u8) }
             else { return null }
             if k == VK_OWNED_STR { cur.text.append(add[..]); return cv(VK_VOID) }
-            if k == VK_UNDEFINED { cur.*= cv_owned(add[..]); return cv(VK_VOID) }
+            if k == VK_UNDEFINED { cur.* = cv_owned(add[..]); return cv(VK_VOID) }
             return null
         }
         return null
@@ -13360,7 +13437,7 @@ impl Checker {
     fn slice_arms_exhaustive(self: *mut Self, flat: *List(usize)) -> bool {
         var min_rest = NONE
         var exact = List(usize).new()
-        for p in flat.*{
+        for p in flat.* {
             if self.tir.nodes[p].k != TKind.PSlice { continue }
             let rest = self.tir.nodes[p].a
             let kids = self.tir.nodes[p].kids.clone()
@@ -13959,10 +14036,10 @@ impl Checker {
         var endian = String.from("big")
         for w in self.node(m, seg).words.clone() {
             if w == "big" or w == "little" or w == "native" { endian = w.clone() }
-            if w == "signed" { signed.*= true }
-            if w == "unsigned" { signed.*= false }
-            if w == "float" { float.*= true }
-            if w == "utf8" { utf8.*= true }
+            if w == "signed" { signed.* = true }
+            if w == "unsigned" { signed.* = false }
+            if w == "float" { float.* = true }
+            if w == "utf8" { utf8.* = true }
         }
         return endian
     }
@@ -14019,23 +14096,23 @@ impl Checker {
     fn seg_size(self: *mut Self, m: usize, seg: usize, default_bits: u64, bits: *mut u64, size_expr: *mut usize) -> String {
         let sz = self.node(m, seg).y
         if sz == NONE {
-            bits.*= default_bits
+            bits.* = default_bits
             return format("bits {}", .{default_bits})
         }
         if let v = self.const_eval_int(m, sz) {
             if v <= 0 {
                 self.fail_here(self.node(m, sz).start, "segment size must be positive")
-                bits.*= 8
+                bits.* = 8
                 return String.from("bits 8")
             }
-            bits.*= v as u64
+            bits.* = v as u64
             return format("bits {}", .{v})
         }
         let u = self.tys.usize_ty()
         let widened = self.widen_size_expr(m, sz)
         var te = self.check_expr(widened, u)
         te = self.coerce_or_error(te, u, "segment size")
-        size_expr.*= te
+        size_expr.* = te
         return String.from("expr")
     }
 

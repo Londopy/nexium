@@ -1,0 +1,17 @@
+Q: A manifest says `words = { path = "../words" }`. What does a program write to use it?
+* `import words`
+- `import ../words`
+- `use words`
+> The dependency's name in the manifest is the identifier programs import.
+
+Q: A tag you depend on is moved to a new commit. What happens to your build?
+- it changes at once
+* nothing, until you fetch again: `nexium.lock` pins the commit the tag resolved to
+- it fails
+> The lock file records the exact commit; commit it, and a moved tag changes nobody's build until they choose to.
+
+Q: Two packages in the dependency graph are both called `util`. Which one is used?
+- the newer one
+* the first to claim the name, across the whole graph
+- the build fails
+> There are no version ranges to resolve, only tags, so the first claim wins; the packages document says how to rename one.

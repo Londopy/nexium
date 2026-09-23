@@ -1,0 +1,3 @@
+// EXPECT: has the name C gives the length of `data`
+fn sum(data: []u8, data_len: usize) -> usize export(c) { return data.len + data_len }
+fn main() { _ = sum("ab", 1) }

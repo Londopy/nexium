@@ -7,7 +7,7 @@ fn main() {
     m.put(String.from("a"), 1)
     m.put(String.from("c"), 3)
     var total: i32 = 0
-    for k in m { total += m[k[..]].?}
+    for k in m { total += m[k[..]].? }
     println("{} keys, total {}", .{m.len, total})
     let keys = m.keys()
     var names = List([]u8).new()

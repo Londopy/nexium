@@ -291,6 +291,30 @@ if (typeof module !== "undefined" && module.exports) module.exports = { runWasi 
     if (kind === "fill" || kind === "fix") { attach(pre, { expected, done, check: true }); return; }
     if (pre.textContent.includes("fn main")) attach(pre, {});
   });
+  // a quiz: a click on a choice is graded at once and opens the answer; the
+  // quiz's box is ticked when every question has been answered right
+  document.querySelectorAll(".quiz").forEach((quiz) => {
+    const lists = [...quiz.querySelectorAll("ul[data-right]")];
+    const solved = new Set();
+    lists.forEach((ul, qi) => {
+      const right = +ul.dataset.right;
+      [...ul.children].forEach((li, i) => {
+        li.tabIndex = 0;
+        li.setAttribute("role", "button");
+        const pick = () => {
+          li.classList.add(i === right ? "q-right" : "q-wrong");
+          if (i === right) solved.add(qi);
+          let d = ul.nextElementSibling;
+          while (d && d.tagName !== "DETAILS") d = d.nextElementSibling;
+          if (d) d.open = true;
+          const done = quiz.querySelector("input[data-done]");
+          if (solved.size === lists.length && done && !done.checked) { done.checked = true; done.dispatchEvent(new Event("change")); }
+        };
+        li.addEventListener("click", pick);
+        li.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
+      });
+    });
+  });
   document.querySelectorAll("pre.code.lang-nexium").forEach((pre) => {
     if (pre.closest(".exercise") || pre.closest("details")) return;
     if (pre.textContent.includes("fn main")) attach(pre, {});

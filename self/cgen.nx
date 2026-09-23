@@ -79,6 +79,21 @@ pub struct ExportParam {
 }
 
 /// What `nx ship` needs to know about an exported function.
+/// The name of an export's result pointer in C: `out`, or the first of
+/// `result` and `nx_result` no parameter of the C signature is called (a
+/// slice parameter `p` is `p` and `p_len` there).
+pub fn export_out_name(params: *List(ExportParam)) -> String {
+    for cand in ["out", "result", "nx_result"] {
+        var taken = false
+        for p in params.* {
+            if p.name == cand { taken = true }
+            if p.kind == 1 and format("{}_len", .{p.name}) == cand { taken = true }
+        }
+        if !taken { return String.from(cand) }
+    }
+    return String.from("nx_result_")
+}
+
 pub struct ExportInfo {
     name: String
     params: List(ExportParam)
@@ -2577,21 +2592,21 @@ impl Gen {
         let k = self.c.tys.kind(t)
         if k == check.TK.Int {
             let nm = self.c.tys.list[t].name.clone()
-            lo.*= int_literal(check.int_min(nm[..]), "i128")
-            hi.*= int_literal(check.int_max(nm[..]), "i128")
+            lo.* = int_literal(check.int_min(nm[..]), "i128")
+            hi.* = int_literal(check.int_max(nm[..]), "i128")
             return
         }
         if k == check.TK.Char {
-            lo.*= String.from("0")
-            hi.*= String.from("0x10FFFF")
+            lo.* = String.from("0")
+            hi.* = String.from("0x10FFFF")
             return
         }
         if k == check.TK.Distinct {
             self.int_bounds(self.c.distinct_underlying(self.c.tys.list[t].def), lo, hi)
             return
         }
-        lo.*= String.from("0")
-        hi.*= String.from("0")
+        lo.* = String.from("0")
+        hi.* = String.from("0")
     }
 
     fn slice_op(self: *mut Self, e: usize) -> String {
@@ -3912,16 +3927,16 @@ impl Gen {
         let k = self.c.tys.kind(t)
         if k == check.TK.Int {
             let nm = self.c.tys.list[t].name.clone()
-            lo.*= int_literal(check.int_min(nm[..]), "i128")
-            hi.*= int_literal(check.int_max(nm[..]), "i128")
+            lo.* = int_literal(check.int_min(nm[..]), "i128")
+            hi.* = int_literal(check.int_max(nm[..]), "i128")
             return
         }
         if k == check.TK.Distinct {
             self.int_bounds_pub(self.c.distinct_underlying(self.c.tys.list[t].def), lo, hi)
             return
         }
-        lo.*= String.from("0")
-        hi.*= String.from("0")
+        lo.* = String.from("0")
+        hi.* = String.from("0")
     }
 
     fn qsort_cmp(self: *mut Self, t0: usize) -> String {
@@ -4084,8 +4099,8 @@ impl Gen {
                 self.errors.append(format("export `{}`: {} is a slice of a non-scalar type, which has no C representation", .{fname, what}))
                 return 3
             }
-            elem_c.*= ec
-            mutable.*= self.c.tys.list[t].flag
+            elem_c.* = ec
+            mutable.* = self.c.tys.list[t].flag
             return 1
         }
         if k == check.TK.Struct {
@@ -4102,7 +4117,7 @@ impl Gen {
                     return 3
                 }
             }
-            elem_c.*= self.cty(t)
+            elem_c.* = self.cty(t)
             return 2
         }
         let tn = self.type_name_pretty(t)
@@ -4151,7 +4166,7 @@ impl Gen {
         var params = List(String).new()
         var args = List(String).new()
         var info = ExportInfo{ .name = fname.clone(), .params = List(ExportParam).new(), .has_ret = false, .ret = self.export_param("", 0, 3, "", false), .status = false, .effects = String.new(), .doc = List(String).new() }
-        args.append(String.from("&ctx"))
+        args.append(String.from("&_nx_ctx"))
         for p in ps {
             let lname = self.c.insts[inst].locals[p].name.clone()
             let lt = self.c.insts[inst].locals[p].ty
@@ -4205,6 +4220,8 @@ impl Gen {
         if d != check.NONE and self.c.mods[fm].parsed.tree.doc_counts[d] > 0 {
             for line in self.c.mods[fm].parsed.tree.docs[d][..].lines() { info.doc.append(String.from(line)) }
         }
+        // the result pointer's name, chosen while the parameters are at hand
+        let on = export_out_name(&info.params)
         self.exports.append(info)
         let target = self.fn_c_name(inst)
         var out = String.new()
@@ -4214,7 +4231,7 @@ impl Gen {
         if !status {
             let rc = if has_ret { ret_c.clone() } else { String.from("void") }
             out.append(format("NX_EXPORT {} {}({}) {{\n", .{rc, fname, joined})[..])
-            out.append("  nx_ctx ctx = nx_default_ctx(0, NULL);\n")
+            out.append("  nx_ctx _nx_ctx = nx_default_ctx(0, NULL);\n")
             if has_ret {
                 out.append(format("  return ({}){}({});\n", .{rc, target, join_strings(&args, ", ")})[..])
             } else {
@@ -4224,22 +4241,22 @@ impl Gen {
         } else {
             var all = List(String).new()
             for p in params { all.append(p.clone()) }
-            if has_ret { all.append(format("{}* out", .{ret_c})) }
+            if has_ret { all.append(format("{}* {}", .{ret_c, on})) }
             let alljoined = if all.len == 0 { String.from("void") } else { join_strings(&all, ", ") }
             out.append(format("NX_EXPORT int32_t {}({}) {{\n", .{fname, alljoined})[..])
             // the call's context gets a tracker: a panic caught here releases what
             // the call acquired before the status goes back (see nx_export_leave)
-            out.append("  nx_ctx ctx = nx_default_ctx(0, NULL);\n  nx_boundary _nxb; nx_boundary* prev = nx_tls_boundary; nx_tls_boundary = &_nxb;\n  nx_tracker _nxt; nx_export_enter(&ctx, &_nxb, &_nxt);\n")
-            out.append(format("  if (setjmp(_nxb.jb)) {{ nx_export_leave(&ctx, &_nxb, &_nxt, true); nx_tls_boundary = prev; return {}; }}\n", .{panic_id})[..])
+            out.append("  nx_ctx _nx_ctx = nx_default_ctx(0, NULL);\n  nx_boundary _nxb; nx_boundary* _nx_prev = nx_tls_boundary; nx_tls_boundary = &_nxb;\n  nx_tracker _nxt; nx_export_enter(&_nx_ctx, &_nxb, &_nxt);\n")
+            out.append(format("  if (setjmp(_nxb.jb)) {{ nx_export_leave(&_nx_ctx, &_nxb, &_nxt, true); nx_tls_boundary = _nx_prev; return {}; }}\n", .{panic_id})[..])
             if is_eu {
                 let rcn = self.cty(ret_t)
-                out.append(format("  {} r = {}({});\n  nx_export_leave(&ctx, &_nxb, &_nxt, false); nx_tls_boundary = prev;\n  if (r.err) return (int32_t)r.err;\n", .{rcn, target, join_strings(&args, ", ")})[..])
-                if has_ret { out.append("  if (out) *out = r.val;\n") }
+                out.append(format("  {} _nx_r = {}({});\n  nx_export_leave(&_nx_ctx, &_nxb, &_nxt, false); nx_tls_boundary = _nx_prev;\n  if (_nx_r.err) return (int32_t)_nx_r.err;\n", .{rcn, target, join_strings(&args, ", ")})[..])
+                if has_ret { out.append(format("  if ({}) *{} = _nx_r.val;\n", .{on, on})[..]) }
             } else if has_ret {
                 let rcn = self.cty(ret_t)
-                out.append(format("  {} r = {}({});\n  nx_export_leave(&ctx, &_nxb, &_nxt, false); nx_tls_boundary = prev;\n  if (out) *out = r;\n", .{rcn, target, join_strings(&args, ", ")})[..])
+                out.append(format("  {} _nx_r = {}({});\n  nx_export_leave(&_nx_ctx, &_nxb, &_nxt, false); nx_tls_boundary = _nx_prev;\n  if ({}) *{} = _nx_r;\n", .{rcn, target, join_strings(&args, ", "), on, on})[..])
             } else {
-                out.append(format("  {}({});\n  nx_export_leave(&ctx, &_nxb, &_nxt, false); nx_tls_boundary = prev;\n", .{target, join_strings(&args, ", ")})[..])
+                out.append(format("  {}({});\n  nx_export_leave(&_nx_ctx, &_nxb, &_nxt, false); nx_tls_boundary = _nx_prev;\n", .{target, join_strings(&args, ", ")})[..])
             }
             out.append("  return 0;\n}\n")
         }
@@ -4520,18 +4537,18 @@ impl Gen {
     fn seg_info(self: *mut Self, seg: usize, kind: *mut String, local: *mut usize, size: *mut String, bits: *mut u64, endian: *mut String, signed: *mut bool, float: *mut bool, utf8: *mut bool) {
         let desc = self.c.tir.nodes[seg].name.clone()
         let words = check.split_words(desc[..])
-        kind.*= words[0].clone()
+        kind.* = words[0].clone()
         var wi: usize = 1
-        local.*= NONE
-        if words[0] == "bind" or words[0] == "rest" { local.*= words[1][..].parse_int(usize) catch { NONE }; wi = 2 }
+        local.* = NONE
+        if words[0] == "bind" or words[0] == "rest" { local.* = words[1][..].parse_int(usize) catch { NONE }; wi = 2 }
         let sw = words[wi].clone()
-        if sw == "size=expr" { size.*= String.from("expr"); wi += 1 }
-        else if sw == "size=rest" { size.*= String.from("rest"); wi += 1 }
-        else { size.*= String.from("bits"); bits.*= words[wi + 1][..].parse_int(u64) catch { 0 }; wi += 2 }
-        endian.*= String.from(words[wi][7..])
-        signed.*= words[wi + 1] == "signed=true"
-        float.*= words[wi + 2] == "float=true"
-        utf8.*= words[wi + 3] == "utf8=true"
+        if sw == "size=expr" { size.* = String.from("expr"); wi += 1 }
+        else if sw == "size=rest" { size.* = String.from("rest"); wi += 1 }
+        else { size.* = String.from("bits"); bits.* = words[wi + 1][..].parse_int(u64) catch { 0 }; wi += 2 }
+        endian.* = String.from(words[wi][7..])
+        signed.* = words[wi + 1] == "signed=true"
+        float.* = words[wi + 2] == "float=true"
+        utf8.* = words[wi + 3] == "utf8=true"
     }
 
     /// The size expression node of a segment, or NONE.

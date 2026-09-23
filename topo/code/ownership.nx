@@ -3,7 +3,7 @@ struct Token { kind: u8, text: String }
 /// Parameters are borrowed: the caller keeps `words`.
 fn longest(words: *List(String)) -> usize {
     var best: usize = 0
-    for w in words.*{ if w.len > best { best = w.len } }
+    for w in words.* { if w.len > best { best = w.len } }
     return best
 }
 

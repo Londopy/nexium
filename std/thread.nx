@@ -245,7 +245,7 @@ fn bump(b: *mut Bumper) {
     var i: i64 = 0
     while i < b.times {
         let n = b.counter.lock()
-        n.*+= 1
+        n.* += 1
         b.counter.unlock()
         i += 1
     }

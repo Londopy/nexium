@@ -1,0 +1,13 @@
+error Calc { UnknownName }
+
+fn lookup(vars: *Map(String, f64), name: []u8) -> Calc!f64 {
+    let v = vars.get(name) orelse return error.UnknownName
+    return v
+}
+
+fn main() {
+    var vars = Map(String, f64).new()
+    vars.put(String.from("pi"), 3.14159)
+    println("{}", .{lookup(&vars, "pi") catch -1.0})
+    println("{}", .{lookup(&vars, "tau") catch -1.0})
+}

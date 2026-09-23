@@ -1,0 +1,15 @@
+fn upper(text: []u8, out: []mut u8) -> usize export(c) {
+    var n: usize = 0
+    for b in text {
+        if n == out.len { break }
+        out[n] = if b >= 'a' and b <= 'z' { b - 32 } else { b }
+        n += 1
+    }
+    return n
+}
+
+fn main() {
+    var buf: [16]u8 = undefined
+    let n = upper("nexium", buf[..])
+    println("{} {}", .{buf[0..n], n})
+}

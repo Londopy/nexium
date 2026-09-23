@@ -1,0 +1,3 @@
+// EXPECT: which has no C representation
+fn names() -> List(String) export(c) { return List(String).new() }
+fn main() { _ = names() }

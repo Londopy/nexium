@@ -1,0 +1,23 @@
+Q: In a recursive-descent parser, why does `term` call `power` rather than the other way round?
+- `power` is the shorter function
+* each level handles only its own operators and hands tighter-binding ones down, so `*` binds tighter than `+` and `^` tighter than `*`
+- the order does not matter
+> Precedence is the order of the calls: the deeper the level, the tighter its operators bind.
+
+Q: What does this print? Subtraction is handled in a loop, left to right.
+| fn main() {
+|     var v: i64 = 10
+|     for x in [3, 2, 1] { v = v - x }
+|     println("{} {}", .{v, 10 - (3 - (2 - 1))})
+| }
+ask: output
+* 4 8
+- 4 4
+- 8 8
+> A loop groups from the left, as `expression` does; nesting to the right is what `power` does for `^`.
+
+Q: `s.vars.get(n) orelse return error.UnknownName`: what happens when the name is missing?
+- the program panics
+* the whole call returns the error `UnknownName`
+- `get` returns zero
+> `orelse` runs its right side when the optional is `null`, and that right side leaves the function with the error.

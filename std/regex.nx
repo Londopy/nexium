@@ -89,7 +89,7 @@ impl Parser {
             self.pos += 1
             branches.append(try self.parse_cat())
         }
-        if branches.len == 1 { return branches.pop().?}
+        if branches.len == 1 { return branches.pop().? }
         return Node.Alt(branches)
     }
 
@@ -99,7 +99,7 @@ impl Parser {
             items.append(try self.parse_repeat())
         }
         if items.len == 0 { return Node.Empty }
-        if items.len == 1 { return items.pop().?}
+        if items.len == 1 { return items.pop().? }
         return Node.Cat(items)
     }
 
@@ -131,7 +131,7 @@ impl Parser {
                 if self.peek() == ',' {
                     self.pos += 1
                     let hi = self.parse_number()
-                    max = if hi == null { -1 } else { hi.?as i64 }
+                    max = if hi == null { -1 } else { hi.? as i64 }
                 }
                 if self.peek() != '}' { return error.InvalidInput }
                 self.pos += 1
@@ -284,7 +284,7 @@ fn emit(prog: *mut List(Inst), op: u8, a: usize, b: usize) -> usize {
 }
 
 fn compile_node(n: *Node, prog: *mut List(Inst)) {
-    match n.*{
+    match n.* {
         .Empty => { },
         .Lit(c) => { _ = emit(prog, OP_CHAR, c as usize, 0) },
         .Any => { _ = emit(prog, OP_ANY, 0, 0) },

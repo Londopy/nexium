@@ -1,0 +1,34 @@
+// topo: write it
+// Fill in `item_json` so the tests pass: an item as a JSON object with "text" and "done".
+// hint: `json.object()` is an empty object; `json.set(&mut doc, key, value)` adds a member
+// hint: `json.string(s)` and `json.boolean(b)` make the values; `json.stringify(&doc)` writes it compactly
+import std.json
+
+struct Item {
+    text: String
+    done: bool
+}
+
+fn item_json(item: *Item) -> String {
+    ???
+}
+
+fn main() {
+    let item = Item{ .text = String.from("buy rope"), .done = false }
+    println("{}", .{item_json(&item)})
+}
+
+test "an open item" {
+    let item = Item{ .text = String.from("buy rope"), .done = false }
+    expect_eq(item_json(&item)[..], "{\"text\":\"buy rope\",\"done\":false}")
+}
+
+test "a finished item" {
+    let item = Item{ .text = String.from("pack the tent"), .done = true }
+    expect_eq(item_json(&item)[..], "{\"text\":\"pack the tent\",\"done\":true}")
+}
+
+test "quotes are escaped" {
+    let item = Item{ .text = String.from("say \"hi\""), .done = false }
+    expect_eq(item_json(&item)[..], "{\"text\":\"say \\\"hi\\\"\",\"done\":false}")
+}

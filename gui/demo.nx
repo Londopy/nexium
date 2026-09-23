@@ -66,7 +66,7 @@ fn main() -> !void {
             for i in 0..n {
                 let phase = ui.time as f32 * speed + i as f32 * 0.35
                 let s = math.sin(phase as f64) as f32
-                let hgt = ((bottom - top - 16) as f32 *(0.5 + 0.45 * s)) as i32
+                let hgt = ((bottom - top - 16) as f32 * (0.5 + 0.45 * s)) as i32
                 let x = ui.margin + 4 + i as i32 * bw
                 let c = nexium_gui.mix(color, ui.theme.text, i as f32 / n as f32 * 0.6)
                 ui.canvas.fill_rect(x, bottom - 8 - hgt, bw - 3, hgt, c)

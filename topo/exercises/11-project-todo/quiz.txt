@@ -1,0 +1,23 @@
+Q: `fn main() -> !u8`: what is the exit code when `main` returns an error?
+- 0
+* 1, and the error's name is printed
+- 2
+> A `u8` result chooses the code; an error from `!` is reported by name with code 1.
+
+Q: `nx check`: which line does the compiler reject?
+| fn main() -> u8 {
+|     let n = "12".parse_int(u8)
+|     return n
+| }
+ask: check
+says: type mismatch in return value: expected `u8` but found `!u8`
+- it compiles
+- line 2
+* line 3
+> `parse_int` returns an error union; `main` promises a plain `u8`, so the error has to be handled (`catch`, `try`) before the value is returned.
+
+Q: Why does `run` return an `i32` status *and* have `!` on its result?
+* the status is the decision it made (usage mistake, no such item), the error is what it could not decide (the file failed to load)
+- an `i32` cannot hold an error
+- `!` is required on every function that reads a file
+> Expected outcomes are values; failures are errors. The split keeps `main` short.

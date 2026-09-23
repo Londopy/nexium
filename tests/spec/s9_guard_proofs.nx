@@ -24,7 +24,7 @@ fn pick(xs: []u32, i: usize) -> u32 !panics {
 }
 
 fn get(o: ?i32) -> i32 !panics {
-    if o != null { return o.?}
+    if o != null { return o.? }
     return -1
 }
 

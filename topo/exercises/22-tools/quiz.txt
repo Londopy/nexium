@@ -1,0 +1,54 @@
+Q: `nx effects` on this file: which effects does `total` carry?
+| fn total(xs: []i64) -> i64 {
+|     var t: i64 = 0
+|     for x in xs { t += x }
+|     return t
+| }
+ask: effects total
+says: panics: arithmetic may overflow (use `+%` to wrap or `+|` to saturate) at main.nx:3:19
+- (pure)
+* panics
+- allocates panics
+> `nx explain file.nx total panics` shows the line that brings the effect in; `+%=` would make `total` pure.
+
+Q: And `names`?
+| fn names() -> List(String) {
+|     var out = List(String).new()
+|     out.append(String.from("Herzog"))
+|     return out
+| }
+ask: effects names
+says: allocates: building a String allocates at main.nx:3:16
+* allocates
+- allocates panics
+- (pure)
+> Building the list and the string allocates; appending to a list that owns its growth cannot fail any other way.
+
+Q: `nx check` on this program: which line does the compiler reject?
+| fn consume(own s: String) -> usize {
+|     return s.len
+| }
+|
+| fn main() {
+|     let s = String.from("summit")
+|     let n = consume(s)
+|     println("{} {}", .{n, s})
+| }
+- it compiles
+- line 7
+* line 8
+- line 2
+ask: check
+says: use of `s` after it was moved
+> `own` moves `s` into `consume` on line 7; line 8 reads it afterwards, which is the error, not the call.
+
+Q: `nx run`: what does it print?
+| fn main() {
+|     let small: u8 = 250
+|     println("{} {}", .{small +% 10, small +| 10})
+| }
+ask: output
+- 260 260
+* 4 255
+- 4 4
+> `+%` wraps around 256 and `+|` stops at the largest `u8`; neither can panic, so `main` has no `panics` from them.

@@ -320,8 +320,9 @@ fn needs_space(toks: *List(lexer.Token), ctx: *Line, i: usize) -> bool {
     }
     // `name @ pattern` keeps its spaces; `@builtin` has none after the sign
     if a == lexer.Kind.At and arm_line and kind_is(pp, lexer.Kind.Ident) { return true }
-    // openers and member access never have a space after them
-    if a == lexer.Kind.LParen or a == lexer.Kind.LBracket or a == lexer.Kind.Dot or a == lexer.Kind.DotStar or a == lexer.Kind.DotQuestion or a == lexer.Kind.QuestionDot or a == lexer.Kind.At { return false }
+    // openers and member access never have a space after them (`.*` and `.?`
+    // are postfix operators: what follows them is spaced as after any operand)
+    if a == lexer.Kind.LParen or a == lexer.Kind.LBracket or a == lexer.Kind.Dot or a == lexer.Kind.QuestionDot or a == lexer.Kind.At { return false }
     if a == lexer.Kind.Pipe and b == lexer.Kind.LBracket { return false }
     // closers and separators never have a space before them
     if b == lexer.Kind.RParen or b == lexer.Kind.RBracket or b == lexer.Kind.Comma or b == lexer.Kind.Semi or b == lexer.Kind.DotStar or b == lexer.Kind.DotQuestion or b == lexer.Kind.QuestionDot { return false }
@@ -354,7 +355,9 @@ fn needs_space(toks: *List(lexer.Token), ctx: *Line, i: usize) -> bool {
     if b == lexer.Kind.LParen {
         if is_kw(ta, "impl") or is_kw(ta, "fn") or is_kw(ta, "export") or is_kw(ta, "derive") or is_kw(ta, "layout") { return false }
         if a == lexer.Kind.RParen and closes_control_head(toks, ctx, i - 1) { return true }
-        return ! (ends_operand(toks, ctx.toks[i - 1]) or a == lexer.Kind.Question or a == lexer.Kind.Star)
+        // `*(A, B)` is a pointer type, but after an operand `*` multiplies: `x * (y)`
+        let sigil = a == lexer.Kind.Star and ! (i >= 2 and ends_operand(toks, ctx.toks[i - 2]))
+        return ! (ends_operand(toks, ctx.toks[i - 1]) or a == lexer.Kind.Question or sigil)
             or is_kw(ta, "return") or is_kw(ta, "if") or is_kw(ta, "while") or is_kw(ta, "for") or is_kw(ta, "match") or is_kw(ta, "and") or is_kw(ta, "or") or is_kw(ta, "in")
     }
     if b == lexer.Kind.LBracket {

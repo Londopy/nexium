@@ -1,0 +1,21 @@
+// topo: predict the output
+// Write what this prints into predict_power.guess before you run it.
+// hint: `power` calls itself for everything to the right of the first number, as the chapter's parser does
+fn power(xs: []i64, i: *mut usize) -> i64 {
+    let base = xs[i.*]
+    i.* += 1
+    if i.* == xs.len { return base }
+    let exp = power(xs, i)
+    var r: i64 = 1
+    for _ in 0..exp { r *= base }
+    return r
+}
+
+fn main() {
+    // 2 ^ 3 ^ 2, and 4 ^ 1 ^ 2
+    var i: usize = 0
+    let a = power([2, 3, 2][..], &mut i)
+    i = 0
+    let b = power([4, 1, 2][..], &mut i)
+    println("{} {}", .{a, b})
+}

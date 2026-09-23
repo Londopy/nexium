@@ -498,11 +498,19 @@ fn suite_fmt(e: *Env, failures: *mut List(String)) {
     let h = nx(e, ["fmt", holes[..]][..])
     let got = normalize((fs.read(holes[..]) catch { String.new() })[..])
     if h.code != 0 or got[..] != want { failures.append(format("fmt: the holes of an exercise moved (exit {}):\n{}{}", .{h.code, got, h.stderr})) }
+    // `.*` and `.?` are postfix: spaced before operators and braces, tight before `.`, `[`, `(`
+    let post = fs.join(e.root[..], "nx-out/cases/postfix.nx")
+    let ptext = "fn f(i: *mut usize, o: ?[]u8, p: *Point) -> usize {\n    i.*+= 1\n    if i.*== 3 { return o.?.len }\n    match p.*{ _ => {} }\n    let q = p.*.x + p.*.y *(q - 1)\n    let s = if q > 0 { o.?} else { \"\" }\n    return s.len\n}\n"
+    let pwant = "fn f(i: *mut usize, o: ?[]u8, p: *Point) -> usize {\n    i.* += 1\n    if i.* == 3 { return o.?.len }\n    match p.* { _ => { } }\n    let q = p.*.x + p.*.y * (q - 1)\n    let s = if q > 0 { o.? } else { \"\" }\n    return s.len\n}\n"
+    fs.write(post[..], ptext) catch { }
+    let pf = nx(e, ["fmt", post[..]][..])
+    let pgot = normalize((fs.read(post[..]) catch { String.new() })[..])
+    if pf.code != 0 or pgot[..] != pwant { failures.append(format("fmt: `.*`, `.?` and `* (` spacing (exit {}):\n{}{}", .{pf.code, pgot, pf.stderr})) }
     println("fmt: {} files", .{files.len})
 }
 
 fn has_str(xs: *List(String), v: []u8) -> bool {
-    for x in xs.*{ if x[..] == v { return true } }
+    for x in xs.* { if x[..] == v { return true } }
     return false
 }
 
@@ -562,6 +570,9 @@ fn suite_exercises(e: *Env, failures: *mut List(String)) {
     for line in l.stdout[..].lines() { if line.trim().len > 0 { embedded.append(String.from(line.trim())) } }
     for k in listed { if !has_str(&embedded, k[..]) { failures.append(format("topo: {} is not embedded in self/topo.nx", .{k})) } }
     for k in embedded { if !has_str(&listed, k[..]) { failures.append(format("topo: self/topo.nx embeds {}, which topo/exercises lacks", .{k})) } }
+    // the quiz questions that ask the compiler are answered by it now
+    let v = nx(e, ["topo", "verify"][..])
+    if v.code != 0 { failures.append(format("topo: the quizzes disagree with the compiler:\n{}{}", .{v.stdout, v.stderr})) }
     // a chapter, walked: the map, the start, the starters failing, the
     // solutions passing, the quiz answered, the progress recorded
     let work = fs.join(e.root[..], "nx-out/cases/topo-course")

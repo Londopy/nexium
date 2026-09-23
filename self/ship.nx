@@ -77,7 +77,7 @@ pub fn c_header(lib: []u8, infos: *List(cgen.ExportInfo)) -> String {
             } else { params.append(format("{} {}", .{p.c_name, p.name})) }
         }
         if info.status {
-            if info.has_ret { params.append(format("{}* out", .{ret_c(&info)})) }
+            if info.has_ret { params.append(format("{}* {}", .{ret_c(&info), cgen.export_out_name(&info.params)})) }
             h.append(format("/* effects: {} */\nint32_t {}({});\n", .{effects_text(&info), info.name, if params.len == 0 { String.from("void") } else { join(&params, ", ") }})[..])
         } else {
             let r = if info.has_ret { ret_c(&info) } else { String.from("void") }
@@ -426,6 +426,6 @@ pub fn build_wheel(name: []u8, version: []u8, tag: []u8, package_files: *List(Zi
     for f in files { rec.append(format("{},sha256=,{}\n", .{f.name, f.data.len})[..]) }
     rec.append(format("{}/RECORD,,\n", .{dist})[..])
     files.append(ZipEntry{ .name = format("{}/RECORD", .{dist}), .data = rec })
-    out_name.*= format("{}-{}-py3-none-{}.whl", .{name, version, tag})
+    out_name.* = format("{}-{}-py3-none-{}.whl", .{name, version, tag})
     return zip_bytes(&files)
 }

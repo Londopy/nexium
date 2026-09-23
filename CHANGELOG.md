@@ -34,6 +34,18 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   objects (`dyn`), binary construction (`<<...>> into buf`), `@bitCast`,
   ordering comparisons of byte slices, and slice builtins on `xs[..]`
   (`sort`, `fill`, `reverse`). The Topo's chapters 2 to 15 run in the page.
+- The rest of the Topo course: sixteen new exercises for chapters 10, 11,
+  17 to 21 and 23 (forty-one in all, from a calculator's `%` to a network
+  handler tested without a network, a framebuffer, a package tag's version,
+  an export through a caller's buffer and a neuron's gradient), and quizzes
+  for chapters 10, 11, 17 and 19 to 22 (eleven in all).
+- Quiz questions the compiler grades (decision 109): a question can carry
+  its program and ask about it (`ask: effects NAME`, `ask: output`, `ask:
+  check`), and a wrong answer is met with the compiler's own words (`says:`,
+  from `nx explain` and the diagnostics). `nx topo verify` asks the compiler
+  every such question and fails when a quiz has fallen behind; the harness
+  runs it. On the site a click on a choice is graded at once and ticks the
+  quiz's box when every question is right.
 - The `play` suite of the harness runs every spec case, example and Topo
   program through `nx play` and holds it to the compiled output, and runs
   every fill and fix exercise of chapters 2 to 15; the CI job `playground`
@@ -51,7 +63,28 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   `ref class` value was copied rather than shared, so an alias did not see
   a write through another. Each is fixed (spec cases `s6_format_widths`,
   `s6_mut_slices`, `s5_ref_class_shared`), and the REPL keeps its `ref
-  class` objects shared across lines.
+  class` objects shared across lines. A `[]u8` taken from a list of bytes
+  printed as `?`; it prints as text, as compiled code writes it.
+- `nx check` accepted an `export(c)` function that `nx build` then refused:
+  which types may cross the C boundary (scalars, slices of scalars as
+  parameters, `layout(c)` structs of scalars, no returned slice) was decided
+  only when C was generated, so the editor and `nx play` said nothing. The
+  checker decides it now, with the same words, and also refuses a parameter
+  named `p_len` beside a slice `p`, which C would see twice (compile-fail
+  cases `export_returns_slice`, `export_list`, `export_struct_layout`,
+  `export_len_name`).
+- An exported function with a parameter named `out`, `ctx`, `r` or `prev`
+  did not compile: the C wrapper named its own things so. They are
+  `_nx_`-prefixed now, and the result pointer of a status-returning export
+  is `out` unless a parameter has the name, then `result` (spec case
+  `s15_export_names`; the header says the same).
+- `nx fmt` took `.*` and `.?` for openers and wrote nothing after them:
+  `i.*+= 1`, `if n.*== 3`, `match p.*{`, `{ o.?}`. They are postfix
+  operators, so what follows gets the space it gets after any operand
+  (`i.* += 1`, `match p.* {`), and member access, indexing and calls stay
+  tight (`p.*.x`, `xs.*[0]`). And a `*` before `(` was always taken for a
+  pointer sigil, so `a * (b - c)` came out as `a *(b - c)`; after an
+  operand it multiplies and keeps its spaces. The tree is reformatted.
 - A format width did not pad a `String`, a boolean, or an enum or error
   name in a compiled program (`{>8}` padded numbers and `[]u8` only); it
   pads every value written as text now.

@@ -59,8 +59,8 @@ fn offset_to_pos(text: []u8, off: usize, line: *mut usize, col: *mut usize) {
         if text[i] == '\n' { l += 1; c = 0 } else { c += 1 }
         i += 1
     }
-    line.*= l
-    col.*= c
+    line.* = l
+    col.* = c
 }
 
 fn byte_offset(text: []u8, line: usize, col: usize) -> usize {
@@ -254,8 +254,8 @@ fn import_parts(m: *EditorMod, it: usize, alias: *mut String, dotted: *mut Strin
         d.append(w[..])
         last = w.clone()
     }
-    alias.*= if n.name == "-" { last } else { n.name.clone() }
-    dotted.*= d
+    alias.* = if n.name == "-" { last } else { n.name.clone() }
+    dotted.* = d
 }
 
 /// The module an import alias refers to.
@@ -483,11 +483,11 @@ fn diag_at(text: []u8, at: usize, width: usize, severity: f64, own message: Stri
 
 /// The offset in an `error at N: message` line from the lexer or parser.
 fn parse_error_offset(e: []u8, msg: *mut String) -> usize {
-    if !e.starts_with("error at ") { msg.*= String.from(e); return 0 }
+    if !e.starts_with("error at ") { msg.* = String.from(e); return 0 }
     let rest = e[9..]
-    let colon = rest.find(":") orelse { msg.*= String.from(e); return 0 }
+    let colon = rest.find(":") orelse { msg.* = String.from(e); return 0 }
     let off = rest[0..colon].parse_int(usize) catch { 0 }
-    msg.*= String.from(rest[colon + 1..].trim())
+    msg.* = String.from(rest[colon + 1..].trim())
     return off
 }
 
@@ -690,10 +690,10 @@ fn loc_of(text: []u8, path: []u8, start: usize, end: usize) -> Loc {
 }
 
 fn position(params: *json.Json, uri: *mut String, line: *mut usize, col: *mut usize) {
-    if let td = json.get(params, "textDocument") { if let u = json.get(td, "uri") { if let s = json.as_str(u) { uri.*= String.from(s) } } }
+    if let td = json.get(params, "textDocument") { if let u = json.get(td, "uri") { if let s = json.as_str(u) { uri.* = String.from(s) } } }
     if let pos = json.get(params, "position") {
-        if let l = json.get(pos, "line") { if let v = json.as_num(l) { line.*= v as usize } }
-        if let ch = json.get(pos, "character") { if let v = json.as_num(ch) { col.*= v as usize } }
+        if let l = json.get(pos, "line") { if let v = json.as_num(l) { line.* = v as usize } }
+        if let ch = json.get(pos, "character") { if let v = json.as_num(ch) { col.* = v as usize } }
     }
 }
 

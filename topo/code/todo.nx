@@ -27,7 +27,7 @@ fn load(path: []u8) -> !List(Item) {
 
 fn save(path: []u8, items: *List(Item)) -> !void {
     var doc = json.array()
-    for it in items.*{
+    for it in items.* {
         var entry = json.object()
         json.set(&mut entry, "text", json.string(it.text[..]))
         json.set(&mut entry, "done", json.boolean(it.done))
@@ -38,7 +38,7 @@ fn save(path: []u8, items: *List(Item)) -> !void {
 
 fn show(items: *List(Item)) {
     if items.len == 0 { println("nothing to do", .{}); return }
-    for it, i in items.*{
+    for it, i in items.* {
         println("{>2}. [{}] {}", .{i + 1, if it.done { "x" } else { " " }, it.text})
     }
 }

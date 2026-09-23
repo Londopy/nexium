@@ -1,0 +1,3 @@
+// EXPECT: returning a slice across the boundary is not allowed
+fn first(text: []u8) -> []u8 export(c) { return text[0..1] }
+fn main() { println("{}", .{first("abc")}) }

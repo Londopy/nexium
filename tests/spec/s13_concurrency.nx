@@ -8,7 +8,7 @@ struct Bumper { counter: *mut thread.Mutex(i64), times: i64 }
 fn bump(b: *mut Bumper) {
     for _ in 0..b.times {
         let n = b.counter.lock()
-        n.*+= 1
+        n.* += 1
         b.counter.unlock()
     }
 }

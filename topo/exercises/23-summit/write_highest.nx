@@ -1,0 +1,31 @@
+// topo: write it
+// The last pitch uses the whole route. Fill in `highest` so the tests pass: the name of the
+// highest peak in lines like "Annapurna 8091", skipping blank lines, null when there is no
+// peak at all, and failing with `BadLine` on a line that is not a name and a height.
+// hint: `text.lines()` and `line.trim()` take the text apart (chapters 3 and 9); the height is
+// hint: the last word, and a name may have a space in it ("Cho Oyu 8188")
+// hint: an optional holds the best so far; it is `null` before the first peak (chapter 6)
+// hint: `parse_int` fails on a height that is not a number, and that failure is a `BadLine` too
+error Peaks { BadLine }
+
+fn highest(text: []u8) -> Peaks!?[]u8 {
+    ???
+}
+
+fn main() {
+    let list = "Annapurna 8091\nEverest 8849\n\nK2 8611\n"
+    let top = highest(list) catch { null }
+    println("{}", .{top orelse "none"})
+}
+
+test "the highest of three" { expect_eq((try highest("Annapurna 8091\nEverest 8849\nK2 8611")) orelse "", "Everest") }
+test "blank lines are skipped" { expect_eq((try highest("\nCho Oyu 8188\n\n")) orelse "", "Cho Oyu") }
+test "no peaks at all" { expect(try highest("\n  \n") == null) }
+test "a height that is not a number" {
+    _ = highest("Everest high") catch |e| { expect(e == error.BadLine); return }
+    expect(false)
+}
+test "a name without a height" {
+    _ = highest("Everest") catch |e| { expect(e == error.BadLine); return }
+    expect(false)
+}

@@ -3,7 +3,7 @@ enum Json { Null, Num(f64), Arr(List(Json)) }
 struct Tree { kids: Map(u8, Tree), v: i32 }
 ref class Node { next: ?Node, v: i32 }
 fn depth(j: *Json) -> i32 {
-    match j.*{
+    match j.* {
         .Arr(items) => {
             var best: i32 = 0
             for it in items { let d = depth(&it); if d > best { best = d } }

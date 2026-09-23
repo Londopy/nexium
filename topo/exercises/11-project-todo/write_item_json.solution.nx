@@ -1,0 +1,33 @@
+import std.json
+
+struct Item {
+    text: String
+    done: bool
+}
+
+fn item_json(item: *Item) -> String {
+    var doc = json.object()
+    json.set(&mut doc, "text", json.string(item.text[..]))
+    json.set(&mut doc, "done", json.boolean(item.done))
+    return json.stringify(&doc)
+}
+
+fn main() {
+    let item = Item{ .text = String.from("buy rope"), .done = false }
+    println("{}", .{item_json(&item)})
+}
+
+test "an open item" {
+    let item = Item{ .text = String.from("buy rope"), .done = false }
+    expect_eq(item_json(&item)[..], "{\"text\":\"buy rope\",\"done\":false}")
+}
+
+test "a finished item" {
+    let item = Item{ .text = String.from("pack the tent"), .done = true }
+    expect_eq(item_json(&item)[..], "{\"text\":\"pack the tent\",\"done\":true}")
+}
+
+test "quotes are escaped" {
+    let item = Item{ .text = String.from("say \"hi\""), .done = false }
+    expect_eq(item_json(&item)[..], "{\"text\":\"say \\\"hi\\\"\",\"done\":false}")
+}

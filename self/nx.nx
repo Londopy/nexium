@@ -428,7 +428,7 @@ fn emit_with(c: *mut check.Checker, o: *Opts, entry: u8, lib_name: []u8, mode: u
         for e in g.errors { eprintln("error: {}", .{e}) }
         return String.new()
     }
-    infos.*= g.exports.clone()
+    infos.* = g.exports.clone()
     return out
 }
 
@@ -553,7 +553,7 @@ fn compile_c(c: *check.Checker, o: *Opts, c_path: []u8, out: []u8, kind: []u8) -
         }
         let err = os.last_stderr()
         if code != 0 and err[..].find("failed to check cache") != null and attempt + 1 < 5 {
-            time.sleep(300 *((attempt as u64) + 1))
+            time.sleep(300 * ((attempt as u64) + 1))
             continue
         }
         if err.len > 0 { eprintln("{}", .{err[..].trim()}) }
@@ -629,7 +629,7 @@ fn cmd_build(o: *Opts, run: bool, out_path: *mut String) -> bool {
     }
     if !compile_c(&c, o, c_path[..], out[..], if has_main { "exe" } else { "object" }) { return false }
     if !o.keep_c { io.remove_file(c_path[..]) catch { } }
-    out_path.*= out
+    out_path.* = out
     return true
 }
 
@@ -1722,9 +1722,9 @@ fn github_api_argv(seconds: []u8, auth: *mut String) -> List([]u8) {
     argv.append("-H")
     argv.append("Accept: application/vnd.github+json")
     if let t = os.env("GITHUB_TOKEN") {
-        auth.*= format("Authorization: Bearer {}", .{t})
+        auth.* = format("Authorization: Bearer {}", .{t})
     } else if let t = os.env("GH_TOKEN") {
-        auth.*= format("Authorization: Bearer {}", .{t})
+        auth.* = format("Authorization: Bearer {}", .{t})
     }
     if auth.len > 0 {
         argv.append("-H")

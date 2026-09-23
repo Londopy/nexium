@@ -15,4 +15,8 @@ fn main() {
     let e: Parse = error.Bad
     println("{} [{<6}] [{>6}]", .{e, e, false})
     println("[{v:>w}] [{v:<w}]", .{ .v = 7, .w = 4 })
+    var bytes = List(u8).new()
+    bytes.append('h')
+    bytes.append('i')
+    println("[{}] [{>4}]", .{bytes[..], bytes[..]})
 }

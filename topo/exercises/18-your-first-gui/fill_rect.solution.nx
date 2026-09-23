@@ -1,0 +1,30 @@
+struct Canvas {
+    w: usize
+    h: usize
+    px: List(u8)
+}
+
+impl Canvas {
+    fn new(w: usize, h: usize) -> Canvas {
+        var px = List(u8).new()
+        for _ in 0..w * h { px.append('.') }
+        return Canvas{ .w = w, .h = h, .px = px }
+    }
+
+    fn fill_rect(self: *mut Self, x: usize, y: usize, w: usize, h: usize, c: u8) {
+        for j in 0..h {
+            for i in 0..w { self.px[(y + j) * self.w + x + i] = c }
+        }
+    }
+
+    fn show(self: *Self) {
+        for r in 0..self.h { println("{}", .{self.px[r * self.w..(r + 1) * self.w]}) }
+    }
+}
+
+fn main() {
+    var canvas = Canvas.new(12, 5)
+    canvas.fill_rect(1, 1, 4, 3, '#')
+    canvas.fill_rect(7, 0, 3, 2, '+')
+    canvas.show()
+}

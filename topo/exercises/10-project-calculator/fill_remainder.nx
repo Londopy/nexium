@@ -1,0 +1,51 @@
+// topo: fill in the blank
+// `term` handles `*` and `/`; replace ??? so it handles `%`, the remainder, at the same level.
+// hint: the other two arms of the same `if` show the shape; `%` is Nexium's remainder too
+struct Cursor {
+    toks: List([]u8)
+    pos: usize
+}
+
+fn number(c: *mut Cursor) -> i64 {
+    let v = c.toks[c.pos].parse_int(i64) catch { 0 }
+    c.pos += 1
+    return v
+}
+
+fn term(c: *mut Cursor) -> i64 {
+    var v = number(c)
+    while c.pos < c.toks.len {
+        let op = c.toks[c.pos]
+        if op == "*" {
+            c.pos += 1
+            v = v * number(c)
+        } else if op == "/" {
+            c.pos += 1
+            v = v / number(c)
+        } else if op == "%" {
+            ???
+        } else {
+            break
+        }
+    }
+    return v
+}
+
+fn expression(c: *mut Cursor) -> i64 {
+    var v = term(c)
+    while c.pos < c.toks.len {
+        let op = c.toks[c.pos]
+        c.pos += 1
+        if op == "+" { v = v + term(c) } else { v = v - term(c) }
+    }
+    return v
+}
+
+fn calc(text: []u8) -> i64 {
+    var c = Cursor{ .toks = text.split(" "), .pos = 0 }
+    return expression(&mut c)
+}
+
+fn main() {
+    println("{} {} {}", .{calc("7 + 10 % 4 * 2"), calc("100 % 7"), calc("20 - 9 % 5")})
+}
