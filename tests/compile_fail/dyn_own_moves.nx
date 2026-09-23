@@ -1,0 +1,15 @@
+// EXPECT: use of `s` after it was moved
+trait Sink {
+    fn put(self: *mut Self, own s: String)
+}
+struct Keep { n: usize }
+impl Sink for Keep {
+    fn put(self: *mut Self, own s: String) { self.n += s.len }
+}
+fn main() {
+    var k = Keep{ .n = 0 }
+    var d: dyn Sink = &mut k
+    let s = String.from("abc")
+    d.put(s)
+    println("{}", .{s})
+}

@@ -511,6 +511,7 @@ impl Checker {
         let n = self.node(m, target)
         if n.k != parser.NodeKind.TName { return false }
         let errors_before = self.errors.len
+        let diags_before = self.diags.len
         var t = NONE
         if self.impls[i].tparams.len == 0 {
             t = self.tys.shallow(self.resolve_type(m, target, NONE))
@@ -530,11 +531,24 @@ impl Checker {
         // resolving a target a second time must not report its errors twice
         let failed = self.errors.len > errors_before
         while self.errors.len > errors_before { _ = self.errors.pop() }
+        while self.diags.len > diags_before { _ = self.diags.pop() }
         if failed { return false }
         let k = self.tys.kind(t)
         head.* = if k == TK.Struct { format("struct:{}", .{self.tys.list[t].def}) } else if k == TK.Enum { format("enum:{}", .{self.tys.list[t].def}) } else { format("t:{}", .{t}) }
         exact.* = format("t:{}", .{t})
         return true
+    }
+
+    /// `resolve_type` for a check that resolves a type a second time: the
+    /// errors it would report again are taken back, and the result is NONE.
+    fn resolve_quietly(self: *mut Self, m: usize, node: usize, self_ty: usize) -> usize {
+        let errors_before = self.errors.len
+        let diags_before = self.diags.len
+        let t = self.resolve_type(m, node, self_ty)
+        if self.errors.len == errors_before { return t }
+        while self.errors.len > errors_before { _ = self.errors.pop() }
+        while self.diags.len > diags_before { _ = self.diags.pop() }
+        return NONE
     }
 
     /// A type has one method of a name: two inherent impls of the same type
@@ -650,37 +664,141 @@ impl Checker {
         return self.vtables.len - 1
     }
 
-    /// The signature of trait method `idx` seen through a trait object:
-    /// parameter types after `self`, the return type, and whether the
-    /// receiver is mutable. `Self` may only appear in receiver position.
-    fn dyn_method_sig(self: *mut Self, trait_id: usize, idx: usize, at: usize, params: *mut List(usize), ret: *mut usize, mutable: *mut bool) -> bool {
+    /// How a method takes `self`: 0 by value, 1 `*Self`, 2 `*mut Self`.
+    fn receiver_kind(self: *mut Self, m: usize, param: usize) -> usize {
+        let tn = self.node(m, param).x
+        if tn == NONE or self.node(m, tn).k != parser.NodeKind.TPtr { return 0 }
+        return if self.node(m, tn).flag { 2 } else { 1 }
+    }
+
+    /// The methods of a trait impl have the signatures the trait declares:
+    /// the receiver, each parameter's type and `own`, the return type, with
+    /// `Self` read as the impl's type. A call through `dyn`, and generic
+    /// code bound by the trait, use the trait's signature, so a method that
+    /// differs would be called with the wrong types (and an `own` it lacks
+    /// would free its argument twice). A generic impl is held to the
+    /// receiver, the parameter count and `own`.
+    fn check_trait_impls(self: *mut Self) {
+        let n = self.impls.len
+        let receivers = ["self: Self", "self: *Self", "self: *mut Self"]
+        for i in 0..n {
+            if !self.impls[i].has_trait { continue }
+            let im = self.impls[i].module
+            let tname = self.impls[i].trait_name.clone()
+            var tr = NONE
+            let nt = self.traits.len
+            for k in 0..nt { if tr == NONE and self.traits[k].name == tname { tr = k } }
+            if tr == NONE { continue }
+            let tm = self.traits[tr].module
+            // the impl's type when it is not generic (NONE when it does not
+            // resolve: that is reported where the impl is checked)
+            var t = NONE
+            if self.impls[i].tparams.len == 0 { t = self.resolve_quietly(im, self.impls[i].target, NONE) }
+            if self.impls[i].tparams.len == 0 and t == NONE { continue }
+            let trait_methods = self.traits[tr].methods.clone()
+            for fid in self.impls[i].methods.clone() {
+                let fm = self.fns[fid].node_module
+                let node = self.fns[fid].node
+                // a default method of the trait has the trait's own signature
+                if fm == tm and check.list_has_usize(&trait_methods, node) { continue }
+                let mname = self.node(fm, node).name.clone()
+                var idx = NONE
+                for meth, k in trait_methods { if idx == NONE and self.node(tm, meth).name == mname { idx = k } }
+                if idx == NONE { continue }
+                let kids = self.node(fm, node).kids.clone()
+                let tkids = self.node(tm, trait_methods[idx]).kids.clone()
+                if kids.len == 0 or self.node(fm, kids[0]).name != "self" or tkids.len == 0 or self.node(tm, tkids[0]).name != "self" { continue }
+                let at = self.node(fm, node).start
+                let want_recv = self.receiver_kind(tm, tkids[0])
+                let got_recv = self.receiver_kind(fm, kids[0])
+                if got_recv != want_recv {
+                    self.fail(fm, at, format("`{}` takes `{}`, but trait `{}` declares `{}`", .{mname, receivers[got_recv], tname, receivers[want_recv]})[..])
+                    continue
+                }
+                // the trait's declaration, `Self` read as the impl's type
+                var ps = List(usize).new()
+                var owns = List(bool).new()
+                var ret = NONE
+                var mutable = false
+                let errors_before = self.errors.len
+                let diags_before = self.diags.len
+                _ = self.trait_method_types(tr, idx, if t == NONE { self.tys.named(TK.Type, "Self") } else { t }, &mut ps, &mut owns, &mut ret, &mut mutable)
+                if self.errors.len > errors_before {
+                    while self.errors.len > errors_before { _ = self.errors.pop() }
+                    while self.diags.len > diags_before { _ = self.diags.pop() }
+                    continue
+                }
+                var params = List(usize).new()
+                for pn, k in kids { if k > 0 and !self.node(fm, pn).flag { params.append(pn) } }
+                if params.len != ps.len {
+                    self.fail(fm, at, format("`{}` takes {} parameter(s) after `self`, but trait `{}` declares {}", .{mname, params.len, tname, ps.len})[..])
+                    continue
+                }
+                for pn, k in params {
+                    let pname = self.node(fm, pn).name.clone()
+                    let pat = self.node(fm, pn).start
+                    if self.node(fm, pn).flag2 and !owns[k] {
+                        self.fail(fm, pat, format("parameter `{}` of `{}` is `own` here but not in trait `{}`", .{pname, mname, tname})[..])
+                    } else if !self.node(fm, pn).flag2 and owns[k] {
+                        self.fail(fm, pat, format("parameter `{}` of `{}` is `own` in trait `{}` but not here", .{pname, mname, tname})[..])
+                    } else if t != NONE {
+                        let pt = self.resolve_quietly(fm, self.node(fm, pn).x, t)
+                        if pt != NONE and self.tys.shallow(pt) != self.tys.shallow(ps[k]) {
+                            self.fail(fm, pat, format("parameter `{}` of `{}` is `{}`, but trait `{}` declares `{}`", .{pname, mname, self.ty_name(pt), tname, self.ty_name(ps[k])})[..])
+                        }
+                    }
+                }
+                if t == NONE { continue }
+                let rn = self.node(fm, node).x
+                let rt = if rn == NONE { self.tys.void() } else { self.resolve_quietly(fm, rn, t) }
+                if rt != NONE and self.tys.shallow(rt) != self.tys.shallow(ret) {
+                    self.fail(fm, at, format("`{}` returns `{}`, but trait `{}` declares `{}`", .{mname, self.ty_name(rt), tname, self.ty_name(ret)})[..])
+                }
+            }
+        }
+    }
+
+    /// The declared signature of trait method `idx`, with `Self` read as
+    /// `self_ty`: the parameter types after `self`, whether each is `own`,
+    /// the return type, and whether the receiver is `*mut Self`. False when
+    /// the method has no `self` receiver.
+    pub fn trait_method_types(self: *mut Self, trait_id: usize, idx: usize, self_ty: usize, params: *mut List(usize), owns: *mut List(bool), ret: *mut usize, mutable: *mut bool) -> bool {
         let tm = self.traits[trait_id].module
-        let tname = self.traits[trait_id].name.clone()
         let meth = self.traits[trait_id].methods[idx]
-        let mname = self.node(tm, meth).name.clone()
         let all = self.node(tm, meth).kids.clone()
         if all.len == 0 or self.node(tm, all[0]).name != "self" { return false }
         let st_node = self.node(tm, all[0]).x
         mutable.* = self.node(tm, st_node).k == parser.NodeKind.TPtr and self.node(tm, st_node).flag
-        let placeholder = self.tys.named(TK.Type, "Self")
         for pn, i in all {
-            if i == 0 { continue }
-            if self.node(tm, pn).flag { continue }
-            let t = self.resolve_type(tm, self.node(tm, pn).x, placeholder)
+            if i == 0 or self.node(tm, pn).flag { continue }
+            params.append(self.resolve_type(tm, self.node(tm, pn).x, self_ty))
+            owns.append(self.node(tm, pn).flag2)
+        }
+        let ret_node = self.node(tm, meth).x
+        ret.* = if ret_node == NONE { self.tys.void() } else { self.resolve_type(tm, ret_node, self_ty) }
+        return true
+    }
+
+    /// The signature of trait method `idx` seen through a trait object:
+    /// parameter types after `self`, which of them are `own`, the return
+    /// type, and whether the receiver is mutable. `Self` may only appear in
+    /// receiver position.
+    fn dyn_method_sig(self: *mut Self, trait_id: usize, idx: usize, at: usize, params: *mut List(usize), owns: *mut List(bool), ret: *mut usize, mutable: *mut bool) -> bool {
+        let tm = self.traits[trait_id].module
+        let tname = self.traits[trait_id].name.clone()
+        let mname = self.node(tm, self.traits[trait_id].methods[idx]).name.clone()
+        let placeholder = self.tys.named(TK.Type, "Self")
+        if !self.trait_method_types(trait_id, idx, placeholder, params, owns, ret, mutable) { return false }
+        for t in params.* {
             if self.type_mentions(t, placeholder) {
                 self.fail_here(at, format("method `{}` uses `Self` in a parameter and cannot be called through `dyn {}`", .{mname, tname})[..])
                 return false
             }
-            params.append(t)
         }
-        let ret_node = self.node(tm, meth).x
-        var r = self.tys.void()
-        if ret_node != NONE { r = self.resolve_type(tm, ret_node, placeholder) }
-        if self.type_mentions(r, placeholder) {
+        if self.type_mentions(ret.*, placeholder) {
             self.fail_here(at, format("method `{}` returns `Self` and cannot be called through `dyn {}`", .{mname, tname})[..])
             return false
         }
-        ret.* = r
         return true
     }
 
@@ -897,9 +1015,10 @@ impl Checker {
                 return self.error_expr(start, end)
             }
             var ps = List(usize).new()
+            var owns = List(bool).new()
             var ret = NONE
             var mutable = false
-            if !self.dyn_method_sig(trait_id, idx, start, &mut ps, &mut ret, &mut mutable) { return self.error_expr(start, end) }
+            if !self.dyn_method_sig(trait_id, idx, start, &mut ps, &mut owns, &mut ret, &mut mutable) { return self.error_expr(start, end) }
             if mutable and self.is_place(recv2) and !self.place_mutable(recv2) {
                 self.fail_here(start, format("`{}` mutates its receiver, but this trait object is immutable", .{method})[..])
             }
@@ -908,7 +1027,12 @@ impl Checker {
                 return self.error_expr(start, end)
             }
             var targs = List(usize).new()
-            for a, i in args { targs.append(self.arg(a, ps[i], "argument")) }
+            for a, i in args {
+                var te = self.arg(a, ps[i], "argument")
+                // an `own` parameter takes the argument, as a direct call does
+                if owns[i] { te = self.take_ownership(te) }
+                targs.append(te)
+            }
             // a dynamic call acquires every effect the trait object permits
             if permitted != 0 {
                 self.add_effect(permitted, start, "calling through a trait object acquires the effects its type permits")

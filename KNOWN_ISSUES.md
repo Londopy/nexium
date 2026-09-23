@@ -55,36 +55,6 @@ Fixed bugs are not listed here; `CHANGELOG.md` and `git log` have them.
   runtime/nx_rt.h, called by `write_value` for `u128`; `check_lit` must
   then reject what it cannot parse rather than use 0, and the interpreter
   needs a `u128` value.
-- **A call through `dyn` ignores `own` parameters.** With `trait Sink {
-  fn put(self: *mut Self, own s: String) }` and `d: dyn Sink`, the calls
-  `d.put(s)` and `d.put(String.from("x"))` hand the String to the callee
-  and still drop it in the caller: a double free, 0xC0000374 on Windows
-  (found while writing QNI). A `ref class` argument is not retained: the
-  callee gets a reference with no count of its own. The checker does not
-  mark `s` moved, so reading it after the call compiles, and an impl
-  whose `own` differs from the trait's is accepted. Fix: have
-  `dyn_method_sig` (self/check_calls.nx) report the trait's `own` flags,
-  call `take_ownership` on those arguments in `check_method_call`, pass
-  them in `dyn_call` (self/cgen.nx) with `expr_owned` for a local or `x.?`
-  on one and `simple_owned` otherwise, not `self.simple(x)`, and have
-  `vtable_for` (which pairs impl and trait methods by name only) reject
-  differing `own`.
-- **A call through `dyn Trait` fails in C when nothing coerces to it.**
-  Declaring or importing a function over a trait object breaks the build
-  when no code converts a value to that `dyn` (found while writing QNI):
-  ```
-  trait Area { fn area(self: *Self) -> i64 }
-  fn g9(d: dyn Area) -> i64 { return d.area() }
-  ```
-  `nx check` passes; `nx build`, `run` and `test` fail in the C compiler
-  unless the method is void and takes no arguments ("incompatible type
-  'void'", or "too many arguments to function call"). `emit_vtable_type`
-  in `self/cgen.nx` takes the field types from a vtable instance and, with
-  none, emits `void (*area)(nx_ctx*, void*)`. Fix: build the fields from
-  the trait's declared signatures, as `dyn_method_sig` in
-  `self/check_calls.nx` does, and check impl methods against the trait so
-  the `vtable_instance` thunks still match (an impl returning `i32` for an
-  `i64` builds today).
 
 ## Self-hosting
 

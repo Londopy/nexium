@@ -418,7 +418,11 @@ Generic structs and impls take parameters the same way: `struct Pair(T)`,
 A trait declares method signatures with receivers `self: *Self` or
 `self: *mut Self`, and may give default bodies. `impl Trait for Type`
 implements it; `impl Type` adds inherent methods; the receiver is the first
-parameter named `self`. Method calls dereference pointers automatically.
+parameter named `self`. An implementation's method has the signature the
+trait declares, with `Self` read as the implementing type: the same
+receiver, the same parameters with the same `own`, the same return type (a
+generic impl is held to the receiver, the parameters' number and `own`).
+Method calls dereference pointers automatically.
 `derive(Eq, Ord)` on a struct synthesizes comparisons over its fields.
 `derive(Clone)` synthesizes `.clone()`, a deep copy field by field, for a
 struct or an enum whose fields and payloads clone: numbers, `String`,
@@ -432,10 +436,12 @@ derive; `where T: Clone` bounds a type parameter the same way.
 
 `dyn Trait` is a fat pointer made by coercing `*T` or `*mut T` where `T`
 implements the trait. Calls dispatch through a vtable generated per (trait,
-type). A call through `dyn Trait` acquires every effect permitted, unless
-the type carries bounds: `dyn Shape !allocates !blocks` is a distinct type
-and only implementations satisfying the bounds coerce into it. A trait used
-as an object may mention `Self` only in receiver position.
+type), and take their arguments as a direct call to the trait's method
+does: an `own` parameter moves its argument. A call through `dyn Trait`
+acquires every effect permitted, unless the type carries bounds: `dyn Shape
+!allocates !blocks` is a distinct type and only implementations satisfying
+the bounds coerce into it. A trait used as an object may mention `Self`
+only in receiver position.
 
 ## 9. Effects
 

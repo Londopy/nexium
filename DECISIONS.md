@@ -850,3 +850,17 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     whatever is left is reported by count. V1, V2 and V3 get no edit: their
     fixes change a type or need a binding in the right scope, which is a
     decision for the programmer; the errors say what to do.
+112. **A trait impl's methods have the signatures the trait declares.**
+    Nothing checked it: impl and trait methods were paired by name only, so
+    an impl could return `i32` where the trait declares `i64`, drop an
+    `own`, or take `*Self` where the trait takes `*mut Self`, and a call
+    through `dyn` or through generic code bound by the trait then ran the
+    impl with the trait's types (a wrong value, or a double free where an
+    `own` went missing). Now each method of `impl Trait for T` must have the
+    trait's receiver, the same parameters with the same `own`, and the same
+    return type, `Self` read as `T`; a generic impl is held to the receiver,
+    the parameters' number and `own` (its types are checked where it is
+    instantiated). This also lets the vtable type come from the trait's
+    declaration alone, so a function over `dyn Trait` compiles in a program
+    that never coerces a value to it. Programs this rejects were already
+    wrong (specification 8.3).

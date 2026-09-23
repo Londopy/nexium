@@ -4011,30 +4011,37 @@ impl Gen {
         self.thunks_by_key.put(key, tname.clone())
         let methods = self.c.traits[tr].methods.clone()
         var fields = String.new()
-        // method signatures are taken from any vtable instance; without one, emit generic pointers
-        var sample = NONE
-        for v, i in self.c.vtables { if sample == NONE and v.trait_id == tr { sample = i } }
         for m, i in methods {
             let mname = sanitize_ident(self.c.node(self.c.traits[tr].module, m).name[..])
-            var sig = String.new()
-            if sample != NONE and i < self.c.vtables[sample].insts.len {
-                let inst = self.c.vtables[sample].insts[i]
-                let ret_t = self.c.insts[inst].ret
-                let ret = if self.is_void(ret_t) { String.from("void") } else { self.cty(ret_t) }
-                var params = String.from("nx_ctx*, void*")
-                for p, k in self.c.insts[inst].params.clone() {
-                    if k == 0 { continue }
-                    let cn = self.cty(self.c.insts[inst].locals[p].ty)
-                    params.append(format(", {}", .{cn})[..])
-                }
-                sig = format("{} (*{})({})", .{ret, mname, params})
-            } else {
-                sig = format("void (*{})(nx_ctx*, void*)", .{mname})
-            }
+            var sig = self.vt_slot(tr, i, mname[..])
+            if sig.len == 0 { sig = format("void (*{})(void)", .{mname}) }
             fields.append(format(" {};", .{sig})[..])
         }
         self.fwd_out.append(format("typedef struct nx_vt_{} nx_vt_{};\ntypedef struct nx_dyn_{} {{ void* data; const nx_vt_{}* vt; }} nx_dyn_{};\n", .{tname, tname, tname, tname, tname})[..])
         self.types_out.append(format("struct nx_vt_{} {{{} }};\n", .{tname, fields})[..])
+    }
+
+    /// The C type of trait method `i`'s vtable slot, from the trait's own
+    /// declaration (so a vtable type exists, and is right, before any value
+    /// is coerced to the trait): `ret (*name)(nx_ctx*, void*, params...)`.
+    /// "" for a method that mentions `Self` beyond its receiver: `dyn`
+    /// cannot call it and each impl's thunk has its own types, so its slot
+    /// is untyped.
+    fn vt_slot(self: *mut Self, tr: usize, i: usize, name: []u8) -> String {
+        let placeholder = self.c.tys.named(check.TK.Type, "Self")
+        var ps = List(usize).new()
+        var owns = List(bool).new()
+        var ret = NONE
+        var mutable = false
+        if !self.c.trait_method_types(tr, i, placeholder, &mut ps, &mut owns, &mut ret, &mut mutable) { return String.new() }
+        if self.c.type_mentions(ret, placeholder) { return String.new() }
+        var params = String.from("nx_ctx*, void*")
+        for p in ps {
+            if self.c.type_mentions(p, placeholder) { return String.new() }
+            params.append(format(", {}", .{self.cty(p)})[..])
+        }
+        let rc = if self.is_void(ret) { String.from("void") } else { self.cty(ret) }
+        return format("{} (*{})({})", .{rc, name, params})
     }
 
     /// The vtable instance for (trait, type): thunks adapt `void* self` to the receiver type.
@@ -4071,7 +4078,11 @@ impl Gen {
             }
             let target = self.fn_c_name(inst)
             self.helpers_out.append(format("static {} {}({}) {{ {}{}({}); }}\n", .{ret, thunk, join_strings(&params, ", "), if ret == "void" { "" } else { "return " }, target, join_strings(&args, ", ")})[..])
-            entries.append(format(".{} = {}", .{sanitize_ident(self.trait_method_name(tr, i)[..]), thunk}))
+            // a typed slot takes the thunk as it is (its types are the
+            // trait's: the checker holds impls to the declaration); an
+            // untyped one, for a method `dyn` cannot call, takes it cast
+            let slot = if self.vt_slot(tr, i, "").len > 0 { thunk.clone() } else { format("(void (*)(void)){}", .{thunk}) }
+            entries.append(format(".{} = {}", .{sanitize_ident(self.trait_method_name(tr, i)[..]), slot}))
         }
         self.helpers_out.append(format("static const nx_vt_{} {} = {{ {} }};\n", .{tname, name, join_strings(&entries, ", ")})[..])
         return name
@@ -4093,11 +4104,25 @@ impl Gen {
         let rt = self.res(self.c.tir.nodes[recv].ty)
         var tr: usize = 0
         if self.c.tys.kind(rt) == check.TK.Dyn { tr = self.c.tys.list[rt].def }
-        let mname = sanitize_ident(self.trait_method_name(tr, self.c.tir.nodes[e].a)[..])
+        let idx = self.c.tir.nodes[e].a
+        let mname = sanitize_ident(self.trait_method_name(tr, idx)[..])
+        // the trait's `own` parameters take their arguments, as a direct call's do
+        var ps = List(usize).new()
+        var owns = List(bool).new()
+        var ret = NONE
+        var mutable = false
+        _ = self.c.trait_method_types(tr, idx, self.c.tys.named(check.TK.Type, "Self"), &mut ps, &mut owns, &mut ret, &mut mutable)
         var args = List(String).new()
         args.append(String.from("c"))
         args.append(format("{}.data", .{r}))
-        for x, i in kids { if i > 0 { args.append(self.simple(x)) } }
+        for x, i in kids {
+            if i == 0 { continue }
+            if i - 1 < owns.len and owns[i - 1] {
+                if self.moves_from_local(x) { args.append(self.expr_owned(x)) } else { args.append(self.simple_owned(x)) }
+            } else {
+                args.append(self.simple(x))
+            }
+        }
         let call = format("{}.vt->{}({})", .{r, mname, join_strings(&args, ", ")})
         if self.is_void(ety) { return call }
         return self.bind_tmp(call[..], ety)

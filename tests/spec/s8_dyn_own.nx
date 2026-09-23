@@ -1,0 +1,65 @@
+// A call through `dyn Trait` hands an `own` parameter's argument over as a
+// direct call does: a local, a temporary and a `.?` payload each end up
+// owned by the callee and are freed once; a reference class argument is
+// retained for it. The vtable type comes from the trait's declaration, so
+// a trait no value is ever coerced to (Area) still compiles.
+
+trait Sink {
+    fn put(self: *mut Self, own s: String)
+    fn total(self: *Self) -> usize
+}
+
+struct Keep {
+    items: List(String)
+}
+
+impl Sink for Keep {
+    fn put(self: *mut Self, own s: String) { self.items.append(s) }
+    fn total(self: *Self) -> usize {
+        var n: usize = 0
+        for s in self.items { n += s.len }
+        return n
+    }
+}
+
+ref class Counter { n: i32 }
+
+trait Holder {
+    fn hold(self: *mut Self, own c: Counter) -> i32
+}
+
+struct Shelf {
+    kept: List(Counter)
+}
+
+impl Holder for Shelf {
+    fn hold(self: *mut Self, own c: Counter) -> i32 {
+        let n = c.n
+        self.kept.append(c)
+        return n
+    }
+}
+
+trait Area {
+    fn area(self: *Self) -> i64
+    fn scaled(self: *Self, by: i64, own label: String) -> String
+}
+
+fn describe(a: dyn Area) -> String { return a.scaled(2, String.from("area")) }
+
+fn main() {
+    var k = Keep{ .items = List(String).new() }
+    var d: dyn Sink = &mut k
+    let s = String.from("abc")
+    d.put(s)
+    d.put(String.from("de"))
+    let m: ?String = String.from("fgh")
+    d.put(m.?)
+    println("{} in {}", .{d.total(), k.items.len})
+
+    var shelf = Shelf{ .kept = List(Counter).new() }
+    var h: dyn Holder = &mut shelf
+    let c = Counter{ .n = 7 }
+    let got = h.hold(c)
+    println("{} {} {}", .{got, @refCount(shelf.kept[0]), shelf.kept[0].n})
+}

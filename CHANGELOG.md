@@ -99,6 +99,27 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Fixed
 
+- A function over `dyn Trait` did not build when nothing in the program
+  coerced a value to that trait (`fn g(d: dyn Area) -> i64 { return
+  d.area() }`): the vtable type took its slots' types from a vtable
+  instance and, with none, declared every slot `void (*)(nx_ctx*, void*)`,
+  so the C compiler refused the call. The slots now come from the trait's
+  declared signatures (`vt_slot`), and a trait impl's methods must match
+  that declaration (decision 112, specification 8.3): the receiver, each
+  parameter's type and `own`, the return type, `Self` read as the
+  implementing type; an impl returning `i32` for a trait's `i64` was
+  accepted and called through the trait with the wrong type. The errors
+  name the method, what it has and what the trait declares (compile-fail
+  `trait_impl_signature`). Found while writing QNI.
+- A call through `dyn Trait` ignored `own` parameters: `d.put(s)` and
+  `d.put(String.from("x"))` handed the value to the callee and still
+  dropped it in the caller, a double free (0xC0000374 on Windows, no
+  message); `s` was not marked moved, so reading it after the call
+  compiled; and a `ref class` argument was not retained. The call now
+  takes ownership as a direct call does (moves a local or a `.?`
+  payload, passes a temporary without dropping it, retains a reference),
+  and reading `s` afterwards is "use of `s` after it was moved" (spec
+  `s8_dyn_own`, compile-fail `dyn_own_moves`). Found while writing QNI.
 - Moving an owning payload out of an optional or error union straight
   into an `own` parameter (`take(x.?)`, `take(x orelse d)`, `take(try r)`,
   a method's or a generic function's `own` parameter too) handed the

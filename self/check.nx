@@ -2295,7 +2295,7 @@ pub fn rust_float(v: f64) -> String {
     return out
 }
 
-fn list_has_usize(xs: *List(usize), x: usize) -> bool {
+pub fn list_has_usize(xs: *List(usize), x: usize) -> bool {
     for y in xs { if y == x { return true } }
     return false
 }
@@ -2578,6 +2578,7 @@ impl Checker {
 
     fn check_program(self: *mut Self) {
         self.check_duplicate_methods()
+        self.check_trait_impls()
         let n = self.consts.len
         for i in 0..n { _ = self.resolve_const(i) }
         self.resolve_globals()
