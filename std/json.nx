@@ -67,7 +67,7 @@ pub fn get(v: *Json, key: []u8) -> ?*Json {
 }
 
 /// The member `key` of an object, mutable, or null.
-pub fn get_mut(v: *mut Json, key: []u8) -> ?*mut Json{
+pub fn get_mut(v: *mut Json, key: []u8) -> ?*mut Json {
     match v.* {
         .Obj(members) => {
             for m, i in members {
@@ -80,7 +80,7 @@ pub fn get_mut(v: *mut Json, key: []u8) -> ?*mut Json{
 }
 
 /// Element `i` of an array, mutable, or null.
-pub fn at_mut(v: *mut Json, i: usize) -> ?*mut Json{
+pub fn at_mut(v: *mut Json, i: usize) -> ?*mut Json {
     match v.* {
         .Arr(items) => {
             if i < items.len { return &mut items[i] }

@@ -2345,7 +2345,7 @@ impl Checker {
 
     // ----- the current function context ----------------------------------------
 
-    fn ctx(self: *mut Self) -> *mut FnCtx{
+    fn ctx(self: *mut Self) -> *mut FnCtx {
         return &mut self.ctxs[self.ctxs.len - 1]
     }
     fn cur_module(self: *Self) -> usize { return self.ctxs[self.ctxs.len - 1].module }

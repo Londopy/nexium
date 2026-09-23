@@ -9,7 +9,7 @@ const cv = @cImport("cvendor.h")
 artifact link { c_sources = ["cvendor.c"] }
 
 // `stdout` is a function-like macro in most libcs and cannot be imported; fflush(NULL) flushes everything
-fn null_file() -> *mut cstdio.FILE{ unsafe { return (0 as usize) as *mut cstdio.FILE } }
+fn null_file() -> *mut cstdio.FILE { unsafe { return (0 as usize) as *mut cstdio.FILE } }
 
 fn main() {
     unsafe {

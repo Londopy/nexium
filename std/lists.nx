@@ -108,12 +108,12 @@ pub fn dedup(comptime T: type where T: Eq, xs: []T) -> List(T) {
 }
 
 /// The first `n` elements (or all when shorter).
-pub fn take(comptime T: type, xs: []T, n: usize) -> []T{
+pub fn take(comptime T: type, xs: []T, n: usize) -> []T {
     return if n < xs.len { xs[0..n] } else { xs }
 }
 
 /// Everything after the first `n` elements.
-pub fn drop(comptime T: type, xs: []T, n: usize) -> []T{
+pub fn drop(comptime T: type, xs: []T, n: usize) -> []T {
     return if n < xs.len { xs[n..] } else { xs[xs.len..] }
 }
 

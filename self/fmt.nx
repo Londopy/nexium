@@ -403,6 +403,13 @@ fn needs_space(toks: *List(lexer.Token), ctx: *Line, i: usize) -> bool {
             // `-> http.Response {`: look back over a dotted path to the arrow
             var k = i - 1
             while k >= 2 and toks[ctx.toks[k - 1]].kind == lexer.Kind.Dot and toks[ctx.toks[k - 2]].kind == lexer.Kind.Ident { k -= 2 }
+            // and over a slice or array prefix and `mut`: `-> []Point {`, `: [4]Cell {`
+            while k >= 2 {
+                if toks[ctx.toks[k - 1]].kind == lexer.Kind.RBracket and toks[ctx.toks[k - 2]].kind == lexer.Kind.LBracket { k -= 2; continue }
+                if k >= 3 and toks[ctx.toks[k - 1]].kind == lexer.Kind.RBracket and toks[ctx.toks[k - 3]].kind == lexer.Kind.LBracket { k -= 3; continue }
+                if is_kw(&toks[ctx.toks[k - 1]], "mut") { k -= 1; continue }
+                break
+            }
             var type_pos = false
             if k >= 1 {
                 let bk = toks[ctx.toks[k - 1]].kind

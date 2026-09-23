@@ -99,6 +99,11 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Fixed
 
+- `nx fmt` took a function's body brace after a return type that is a
+  slice, an array or a `*mut` of a named type (`-> []T {`, `-> *mut Json
+  {`) for a struct literal and wrote `-> []T{`; `std.lists`, `std.json`,
+  `std.thread`, an example and two compiler files carried it. It looks
+  back over `[]`, `[N]` and `mut` to the arrow now (fmt suite case).
 - A `u128` past `i128`'s maximum was written as a negative number by every
   formatting path (`{}`, `{x}`, widths, `format`, `to_string()`, a
   `?u128`), and `0 -% 1` printed -1: the runtime wrote every integer as

@@ -190,7 +190,7 @@ pub fn mutex(comptime T: type, own value: T) -> Mutex(T) {
 
 impl(T) Mutex(T) {
     /// Take the lock; the pointer is valid until `unlock`.
-    pub fn lock(self: *mut Self) -> *mut T{
+    pub fn lock(self: *mut Self) -> *mut T {
         sync.lock(self.lock)
         return &mut self.value
     }

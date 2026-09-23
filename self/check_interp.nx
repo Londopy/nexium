@@ -1791,7 +1791,7 @@ impl Checker {
 
     /// Follow a path into a frame's local; `cv_bad` (kind `VK_NONE`) when it
     /// does not exist.
-    fn it_walk(self: *mut Self, fi: usize, l: usize, path: *List(usize)) -> *mut CV{
+    fn it_walk(self: *mut Self, fi: usize, l: usize, path: *List(usize)) -> *mut CV {
         if fi >= self.frames.len or l >= self.frames[fi].vals.len { return &mut self.cv_bad }
         var cur: *mut CV = &mut self.frames[fi].vals[l]
         if cur.kind == VK_NONE { return &mut self.cv_bad }
