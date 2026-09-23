@@ -67,20 +67,6 @@ Fixed bugs are not listed here; `CHANGELOG.md` and `git log` have them.
   `orelse` and `try` over a local there too (the test `take_ownership`
   in self/check.nx makes), and add the call form to
   `examples/optional_move.nx`.
-- **An owned temporary in a `while` condition is dropped after the loop.**
-  `while short(format("n{}", .{k})) { k += 1 }`, with `short` taking
-  `[]u8`, passes `nx check` and fails in the C compiler: "use of
-  undeclared identifier '_t3'" (found while writing QNI, as
-  `while app.cfg.has_text(format(...))`). `while format(...).len < 4`
-  and a `List` returned by a call fail the same way. The condition is
-  emitted inside the loop's `for (;;)`, but `simple` registers the
-  temporary's drop in the scope around the `while`, so the drop lands
-  after the loop, out of C scope. Workaround: test in the body,
-  `if !short(...) { break }`. Fix: in the `SWhile` branch of `stmt` in
-  self/cgen.nx, give the condition its own `push_scope(false)`, bind its
-  value to a `bool`, then `pop_scope_emit()` and `if (!t) break;`, so
-  each pass frees its own temporaries, as the `Logical` case of `expr`
-  does; add a spec case that tests/run.nx runs under `nx leaks`.
 - **A `u128` above `i128`'s maximum is formatted as a negative number.**
   With `let a: u128 = 0xffffffffffffffff` and `let p = a * a`,
   `println("{} {x}", .{p, p})` prints `-36893488147419103231

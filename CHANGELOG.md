@@ -99,6 +99,14 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Fixed
 
+- A `while` condition that made an owned temporary (`while
+  short(format("n{}", .{k}))`, `while format(...).len < 4`, a `List`
+  returned by a call) passed `nx check` and failed in the C compiler: the
+  temporary's release was emitted after the loop, out of its C scope. The
+  condition now has a scope of its own on every pass, released before the
+  test, so a `continue`, a `break` and the last pass each free it once
+  (spec `s6_while_condition_temporaries`, also run under `nx leaks`).
+  Found while writing QNI.
 - A method defined twice for one type, in two `impl` blocks of a module or
   in two modules, was accepted, and every call reached the first; it is an
   error at the second definition (compile-fail cases `duplicate_method`,

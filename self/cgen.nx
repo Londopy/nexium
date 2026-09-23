@@ -1584,8 +1584,14 @@ impl Gen {
             self.cur.loop_depths.append(depth)
             self.line("for (;;) {")
             self.push_buf()
+            // temporaries the condition creates live in this pass: they are
+            // released before the test, as the right side of `and` does
+            self.push_scope(false)
             let cnd = self.expr(kids[0])
-            self.line(format("if (!({})) break;", .{cnd})[..])
+            let t = self.tmp()
+            self.line(format("bool {} = {};", .{t, cnd})[..])
+            self.pop_scope_emit()
+            self.line(format("if (!{}) break;", .{t})[..])
             self.push_scope(true)
             self.block_stmt(kids[1])
             self.pop_scope_emit()

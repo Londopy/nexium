@@ -336,6 +336,11 @@ fn suite_examples(e: *Env, failures: *mut List(String)) {
     if arena_lk.code != 0 or arena_lk.stderr[..].find("still live at exit") != null {
         failures.append(format("examples: nx leaks on s5_arena_escape (exit {}):\n{}{}", .{arena_lk.code, arena_lk.stdout, arena_lk.stderr}))
     }
+    // a `while` condition's temporaries are released on every pass
+    let while_lk = nx(e, ["leaks", "tests/spec/s6_while_condition_temporaries.nx", "--out-dir", "nx-out/harness/leaks-while"][..])
+    if while_lk.code != 0 or while_lk.stderr[..].find("still live at exit") != null {
+        failures.append(format("examples: nx leaks on s6_while_condition_temporaries (exit {}):\n{}{}", .{while_lk.code, while_lk.stdout, while_lk.stderr}))
+    }
     // --watch: the program runs again after a file changes (a thread rewrites
     // it two seconds in; NX_WATCH_ROUNDS=1 stops after that rerun)
     let wsrc = fs.join(e.root[..], "nx-out/cases/watch.nx")

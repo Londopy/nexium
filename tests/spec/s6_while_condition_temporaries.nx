@@ -1,0 +1,57 @@
+// A `while` condition that makes owned temporaries (a formatted String, a
+// List returned by a call) releases them on every pass, before the test:
+// a `continue`, a `break` and the pass that ends the loop each free them
+// once. tests/run.nx also runs this file under `nx leaks`.
+
+fn short(s: []u8) -> bool { return s.len < 4 }
+
+fn upto(n: usize) -> List(usize) {
+    var xs = List(usize).new()
+    for i in 0..n { xs.append(i) }
+    return xs
+}
+
+fn main() {
+    // a temporary passed to a call in the condition
+    var k = 0
+    while short(format("n{}", .{k})) { k += 1 }
+    println("{}", .{k})
+
+    // a method on a temporary
+    var j = 0
+    while format("{}", .{j}).len < 3 { j += 7 }
+    println("{}", .{j})
+
+    // a List returned by a call, with `continue` and `break` in the body
+    var n: usize = 0
+    var seen: usize = 0
+    while upto(n).len < 10 {
+        n += 1
+        if n % 2 == 0 { continue }
+        seen += 1
+        if n > 7 { break }
+    }
+    println("{} {}", .{n, seen})
+
+    // `and` and `or` around temporaries, and an `else` for the false test
+    var m = 0
+    while short(format("{}", .{m})) and format("m{}", .{m}).len < 5 {
+        m += 250
+    } else {
+        println("ended at {}", .{m})
+    }
+
+    // nested loops, each with its own condition temporaries
+    var total = 0
+    var a = 0
+    while short(format("a{}", .{a})) and a < 3 {
+        var b = 0
+        while format("b{}", .{b}).len < 3 or b < 2 {
+            total += 1
+            b += 1
+            if b > 12 { break }
+        }
+        a += 1
+    }
+    println("{}", .{total})
+}
