@@ -10,21 +10,6 @@ Fixed bugs are not listed here; `CHANGELOG.md` and `git log` have them.
 
 ## Compiler
 
-- **An integer literal under `as` is typed `i64` first, and wraps.**
-  `(0xffffffffffffffff as u128) * (0xffffffffffffffff as u128)` panics
-  "integer overflow in `*`": the literal is emitted as an `int64_t`, so
-  -1, which `as u128` widens to 2^128-1. `0xffffffffffffffff as i128`
-  gives -1 (`as f64` gives -1.0), `-9223372036854775809 as i128` gives
-  9223372036854775807, and `0x1ffffffffffffffff as u128` fails in the C
-  compiler. Found while writing QNI. `check_cast` (self/check_exprs.nx)
-  checks the operand with no expected type, and `Types.resolve`
-  (self/check.nx) defaults the open literal to `i64` with no range check;
-  `let x = 0xffffffffffffffff` prints -1 the same way. Fix: in
-  `check_cast`, check a literal operand, or `-` on one, with the target as
-  its expected type (`300 as u8` then fails to compile, as
-  `let z: u8 = 300` does); and range-check literals that fall back to
-  `i64`, taking `-lit` as one literal so that
-  `let y = -9223372036854775808` (a run-time panic today) is accepted.
 - **R1 rejects a slice into a loop item's buffer over borrowed storage.**
   `for s in xs { return s }` with `xs: []String` a parameter (or
   `return s.text` in `for s in self.sections` in a `self: *Self` method,

@@ -1,0 +1,18 @@
+// SPEC 4 (literals and casts): the operand of `as` gives an integer literal
+// its type, `-lit` is one literal, and an open literal takes the type the
+// program later gives it (here `u64`) rather than being fixed to `i64`.
+
+fn main() {
+    println("{}", .{0xffffffffffffffff as i128})
+    println("{}", .{-9223372036854775809 as i128})
+    println("{}", .{0x1ffffffffffffffff as u128})
+    let y = -9223372036854775808
+    println("{}", .{y})
+    let big: u64 = 0xffffffffffffffff
+    println("{}", .{big})
+    let z = 0xffffffffffffffff
+    let w: u64 = z
+    println("{}", .{w})
+    println("{}", .{5 as i32 + 1})
+    println("{}", .{-128 as i8})
+}

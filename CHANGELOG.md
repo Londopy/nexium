@@ -99,6 +99,20 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Fixed
 
+- An integer literal under `as` was typed `i64` first and then cast:
+  `0xffffffffffffffff as i128` gave -1, `(0xffffffffffffffff as u128) *
+  (0xffffffffffffffff as u128)` panicked with an overflow, and
+  `0x1ffffffffffffffff as u128` failed in the C compiler. The operand of
+  `as` now gives a literal (or `-` on one) its numeric target as its type
+  (specification 4), so those are the literal's values, and `300 as u8`
+  is a compile error as `let z: u8 = 300` is; it always panicked. A
+  literal that does not fit the type it finally has is an error, the
+  `i64` it defaults to included: `let x = 0xffffffffffffffff` printed -1,
+  and says now how to give it a type. `-9223372036854775808` with no type
+  given is one literal, where it panicked at run time (spec
+  `s4_literal_types`, compile-fail `literal_default_i64`,
+  `literal_cast_out_of_range`, `literal_cast_wider_than_target`). Found
+  while writing QNI.
 - A function over `dyn Trait` did not build when nothing in the program
   coerced a value to that trait (`fn g(d: dyn Area) -> i64 { return
   d.area() }`): the vtable type took its slots' types from a vtable

@@ -218,7 +218,11 @@ impl Checker {
                 if ek == TK.Float { return self.float_node(v as f64, exp, start, end) }
                 if let ik = self.tys.infer_kind_of(exp) {
                     if ik == INFER_FLOAT { return self.float_node(v as f64, exp, start, end) }
-                    if ik == INFER_INT { return self.int_node(v, exp, start, end) }
+                    if ik == INFER_INT {
+                        let r = self.int_node(v, exp, start, end)
+                        self.note_open_literal(r)
+                        return r
+                    }
                 }
                 if ek == TK.Distinct {
                     let u = self.distinct_underlying(self.tys.list[exp].def)
@@ -227,7 +231,9 @@ impl Checker {
                 }
             }
             let t = self.tys.int_lit()
-            return self.int_node(v, t, start, end)
+            let r = self.int_node(v, t, start, end)
+            self.note_open_literal(r)
+            return r
         }
         if kind == "float" {
             let f = text[..].parse_float() catch { 0.0 }
@@ -280,6 +286,12 @@ impl Checker {
         }
         self.fail_here(start, "unknown literal")
         return self.error_expr(start, end)
+    }
+
+    /// Whether `t` is a still-open integer literal type.
+    fn open_int(self: *mut Self, t: usize) -> bool {
+        if let ik = self.tys.infer_kind_of(self.tys.shallow(t)) { return ik == INFER_INT }
+        return false
     }
 
     fn int_node(self: *mut Self, v: i128, ty: usize, start: usize, end: usize) -> usize {
@@ -464,6 +476,17 @@ impl Checker {
                     if v < 0 and ln.name == "170141183460469231731687303715884105728" and self.tys.list[et].name == "i128" {
                         return self.int_node(check.int_min("i128"), et, start, end)
                     }
+                }
+            }
+            // with no type expected, `-9223372036854775808` is one open literal
+            // too, range-checked with the others once its type is known
+            if ln.k == parser.NodeKind.Lit and ln.text == "int" and (expected == NONE or self.open_int(expected)) {
+                let v = ln.name[..].parse_int(i128) catch { -1 }
+                if v >= 0 {
+                    let t = if expected == NONE { self.tys.int_lit() } else { self.tys.shallow(expected) }
+                    let r = self.int_node(-v, t, start, end)
+                    self.note_open_literal(r)
+                    return r
                 }
             }
             let inner = self.check_expr(inner_node, expected)
@@ -1753,6 +1776,23 @@ impl Checker {
         for l in ks { if self.ctx().locals[l].mutable { self.forget_local(l) } }
     }
 
+    /// Whether parse node `e` is an integer literal, or `-` on one.
+    fn is_int_literal(self: *mut Self, m: usize, e: usize) -> bool {
+        let n = self.node(m, e)
+        if n.k == parser.NodeKind.Lit { return n.text == "int" }
+        if n.k == parser.NodeKind.Unary and n.name == "-" {
+            let inner = self.node(m, n.x)
+            return inner.k == parser.NodeKind.Lit and inner.text == "int"
+        }
+        return false
+    }
+
+    /// A distinct type's representation, any other type itself.
+    fn numeric_base(self: *mut Self, t: usize) -> usize {
+        if self.tys.kind(t) == TK.Distinct { return self.tys.shallow(self.distinct_underlying(self.tys.list[t].def)) }
+        return t
+    }
+
     fn check_cast(self: *mut Self, e: usize) -> usize {
         let m = self.cur_module()
         let n = self.node(m, e)
@@ -1762,9 +1802,14 @@ impl Checker {
         let end = n.end
         let st = self.ctx().self_ty
         let target = self.resolve_type(m, ty_node, st)
-        let inner = self.check_expr(inner_node, NONE)
-        let from = self.tys.resolve(self.tir.nodes[inner].ty, true)
         let to = self.tys.shallow(target)
+        // a literal operand, or `-` on one, takes a numeric target as its type:
+        // `0xffffffffffffffff as u128` is that value, not an `i64`'s -1
+        // widened, and `300 as u8` fails as `let z: u8 = 300` does
+        var operand_expected = NONE
+        if self.is_int_literal(m, inner_node) and self.tys.is_numeric(self.numeric_base(to)) { operand_expected = to }
+        let inner = self.check_expr(inner_node, operand_expected)
+        let from = self.tys.resolve(self.tir.nodes[inner].ty, true)
         let kf = self.tys.kind(from)
         let kt = self.tys.kind(to)
         var uf = from

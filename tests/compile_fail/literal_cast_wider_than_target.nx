@@ -1,0 +1,5 @@
+// EXPECT: literal `36893488147419103231` does not fit in `u64`
+fn main() {
+    let q = 0x1ffffffffffffffff as u64
+    println("{}", .{q})
+}

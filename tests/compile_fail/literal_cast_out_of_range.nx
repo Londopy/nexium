@@ -1,0 +1,4 @@
+// EXPECT: literal `300` does not fit in `u8` (range 0 to 255)
+fn main() {
+    println("{}", .{300 as u8})
+}

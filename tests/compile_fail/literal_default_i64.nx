@@ -1,0 +1,5 @@
+// EXPECT: literal `18446744073709551615` does not fit in `i64` (range -9223372036854775808 to 9223372036854775807); an integer literal is `i64` unless its context gives it a type
+fn main() {
+    let x = 0xffffffffffffffff
+    println("{}", .{x})
+}

@@ -130,9 +130,12 @@ nominal for structs, enums, records, classes, error sets, and distinct
 types. Generic instantiations with equal arguments are the same type.
 
 **Literals.** Integer literals take the type the context demands and default
-to `i64`; float literals default to `f64`. A char literal is accepted where
-any integer type that can hold it is expected. An integer or float literal
-coerces into `?T`.
+to `i64`; float literals default to `f64`. The operand of `as` is such a
+context: `0xffffffffffffffff as u128` is that value. A literal that does
+not fit its type is an error, the `i64` it defaults to included, and
+`-lit` is one literal (`-9223372036854775808` is an `i64`). A char literal
+is accepted where any integer type that can hold it is expected. An
+integer or float literal coerces into `?T`.
 
 **Casts.** `x as T` converts between numeric types (narrowing is checked at
 run time unless the range analysis proves it fits), between a distinct type

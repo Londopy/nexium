@@ -985,6 +985,10 @@ pub struct Checker {
     warnings: List(String)
     // the edits offered for errors, for `nx fix`
     fixes: List(Fix)
+    // integer literals typed before their type was known (TIR node, module),
+    // range-checked once it is
+    open_lits: List(usize)
+    open_lit_mods: List(usize)
     // per type: 1 when it cannot hold a view, 2 when it can (section 5.6)
     view_cache: Map(usize, u8)
     // a closure instance's captured locals, for the views it carries
@@ -2595,6 +2599,7 @@ impl Checker {
             if self.impls[impl_id].tparams.len == 0 { _ = self.instantiate(fid, List(usize).new()) }
         }
         self.drain_queue()
+        self.check_open_literals()
         // compile-time tests run in the interpreter; a failure is a compile error
         let ni = self.insts.len
         for t in 0..ni {
@@ -2620,6 +2625,30 @@ impl Checker {
         self.check_embedded_constraints()
         self.check_obligations()
         self.check_export_types()
+    }
+
+    /// Note an integer literal whose type was still open when it was typed.
+    fn note_open_literal(self: *mut Self, r: usize) {
+        self.open_lits.append(r)
+        self.open_lit_mods.append(self.cur_module())
+    }
+
+    /// Every integer literal fits the type it finally has: the type the
+    /// program gave it, or `i64`, which an open literal defaults to.
+    /// Checked once every body is, when each literal's type is settled.
+    fn check_open_literals(self: *mut Self) {
+        let n = self.open_lits.len
+        for i in 0..n {
+            let r = self.open_lits[i]
+            let t = self.tys.resolve(self.tir.nodes[r].ty, true)
+            if self.tys.kind(t) != TK.Int { continue }
+            let name = self.tys.list[t].name.clone()
+            let v = self.tir.nodes[r].ival
+            if v >= int_min(name[..]) and v <= int_max(name[..]) { continue }
+            let range = format("range {} to {}", .{int_min(name[..]), int_max(name[..])})
+            let hint = if name == "i64" { "; an integer literal is `i64` unless its context gives it a type, as in `let x: u64 = ...`" } else { "" }
+            self.fail(self.open_lit_mods[i], self.tir.nodes[r].start, format("literal `{}` does not fit in `{}` ({}){}", .{v, name, range, hint})[..])
+        }
     }
 
     /// Whether a type crosses the C boundary as one C scalar.
@@ -3660,7 +3689,7 @@ pub fn new_checker(own mods: List(Mod)) -> Checker {
         .structs = List(StructDef).new(), .enums = List(EnumDef).new(), .traits = List(TraitDef).new(),
         .impls = List(ImplDef).new(), .fns = List(FnDef).new(), .consts = List(ConstDef).new(),
         .globals = List(GlobalDef).new(), .aliases = List(AliasDef).new(), .error_sets = List(ErrorSetDef).new(),
-        .errors = List(String).new(), .warnings = List(String).new(), .fixes = List(Fix).new(), .view_cache = Map(usize, u8).new(), .closure_caps = Map(usize, List(usize)).new(), .diags = List(Diag).new(), .error_names = List(String).new(), .error_ids = Map(String, usize).new(),
+        .errors = List(String).new(), .warnings = List(String).new(), .fixes = List(Fix).new(), .open_lits = List(usize).new(), .open_lit_mods = List(usize).new(), .view_cache = Map(usize, u8).new(), .closure_caps = Map(usize, List(usize)).new(), .diags = List(Diag).new(), .error_names = List(String).new(), .error_ids = Map(String, usize).new(),
         .insts = List(Inst).new(), .inst_map = Map(String, usize).new(), .queue = List(usize).new(), .tir = Tir{ .nodes = List(T).new() },
         .ctxs = List(FnCtx).new(), .main_inst = NONE, .tests = List(usize).new(),
         .env_names = List(String).new(), .env_tys = List(usize).new(),
