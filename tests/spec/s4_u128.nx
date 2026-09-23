@@ -1,0 +1,30 @@
+// SPEC 4: a u128 past i128's maximum is written unsigned by every
+// formatting path ({} {x} {X} {b}, widths, format, to_string, optionals),
+// its literals are read in full, and parse_int reads it. The interpreter
+// cannot hold such a value, so `nx play` refuses this program.
+
+fn main() {
+    let a: u128 = 0xffffffffffffffff
+    let p = a * a
+    println("{} {x} {X}", .{p, p, p})
+    println("{>45}|{<45}|", .{p, p})
+    println("{}", .{format("{}", .{p})})
+    println("{}", .{p.to_string()})
+    let z: u128 = 0
+    println("{}", .{z -% 1})
+    let top: u128 = 340282366920938463463374607431768211455
+    let half: u128 = 170141183460469231731687303715884105728
+    println("{} {}", .{top, half})
+    let o: ?u128 = top
+    println("{}", .{o.?})
+    println("{b}", .{half})
+    let small: u128 = 42
+    println("{} {x}", .{small, small})
+    println("{}", .{0xffffffffffffffffffffffffffffffff as u128})
+    let parsed = "340282366920938463463374607431768211455".parse_int(u128) catch { 0 }
+    println("{}", .{parsed == top})
+    match top {
+        340282366920938463463374607431768211455 => println("max", .{}),
+        _ => println("other", .{}),
+    }
+}

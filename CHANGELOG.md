@@ -99,6 +99,21 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Fixed
 
+- A `u128` past `i128`'s maximum was written as a negative number by every
+  formatting path (`{}`, `{x}`, widths, `format`, `to_string()`, a
+  `?u128`), and `0 -% 1` printed -1: the runtime wrote every integer as
+  signed. Unsigned values are written by `nx_w_uint` now. The literals
+  behind them failed too: 2^128-1 was read as "literal `-1`", and 2^127
+  became 0 with no error, for an `i128` as well; a literal only a `u128`
+  holds is read in full, one no type holds is an error that says so, and
+  a literal past `i128`'s range is an error for `i128`. `parse_int` into
+  an unsigned type reads `u128`'s whole range (`nx_parse_uint`). The
+  interpreter holds integers as `i128`: `nx play` refuses a `u128` past
+  its maximum instead of panicking with a false overflow, and its
+  `parse_int` now fails as the compiled one does (`Overflow` past the
+  target's range, where it returned `300` for `u8`). Spec `s4_u128`,
+  `s11_parse_int_ranges`, compile-fail `literal_past_i128` and
+  `literal_pattern_past_u64`. Found while writing QNI.
 - An integer literal under `as` was typed `i64` first and then cast:
   `0xffffffffffffffff as i128` gave -1, `(0xffffffffffffffff as u128) *
   (0xffffffffffffffff as u128)` panicked with an overflow, and

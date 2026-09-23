@@ -706,11 +706,20 @@ impl Checker {
         if self.tys.kind(ty) == TK.Distinct { under = self.tys.shallow(self.distinct_underlying(self.tys.list[ty].def)) }
         let uk = self.tys.kind(under)
         if kind == "int" {
-            var v = text[..].parse_int(i128) catch { 0 }
+            var big = false
+            var v = check.parse_int_literal(text[..], &mut big) orelse {
+                self.fail_here(start, format("literal `{}` does not fit in any integer type", .{text})[..])
+                return self.pat_node(TKind.PWild, start, end)
+            }
             if negative { v = -v }
             if uk == TK.Int {
                 let name = self.tys.list[under].name.clone()
-                if v < check.int_min(name[..]) or v > check.int_max(name[..]) { self.fail_here(start, format("literal `{}` does not fit in `{}`", .{v, name})[..]) }
+                // a u128 past i128's maximum is its bit pattern
+                if big and (negative or name != "u128") {
+                    self.fail_here(start, format("literal `{}{}` does not fit in `{}`", .{if negative { "-" } else { "" }, text, name})[..])
+                } else if !big and (v < check.int_min(name[..]) or v > check.int_max(name[..])) {
+                    self.fail_here(start, format("literal `{}` does not fit in `{}`", .{v, name})[..])
+                }
                 let p = self.pat_node(TKind.PInt, start, end)
                 self.tir.nodes[p].ival = v
                 return p

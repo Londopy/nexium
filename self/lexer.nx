@@ -156,6 +156,18 @@ fn is_valid_utf8(b: []u8) -> bool {
     return first_code_point(b) != null
 }
 
+/// Whether every character is a digit of the radix, so that only the
+/// value's size can keep `parse_radix` from reading it.
+fn digits_in_radix(text: []u8, radix: u128) -> bool {
+    if text.len == 0 { return false }
+    for c in text {
+        var d: u128 = 0
+        if is_digit(c) { d = (c - '0') as u128 } else if is_hex(c) { d = hex_value(c) as u128 } else { return false }
+        if d >= radix { return false }
+    }
+    return true
+}
+
 fn parse_radix(text: []u8, radix: u128) -> ?u128 {
     if text.len == 0 { return null }
     var v: u128 = 0
@@ -314,6 +326,8 @@ impl Lexer {
         } else {
             if let v = parse_radix(text, radix as u128) {
                 self.push(Kind.Int, start, v.to_string())
+            } else if digits_in_radix(text, radix as u128) {
+                self.err(start, format("integer literal `{}` does not fit in any integer type (the largest, `u128`, holds up to 340282366920938463463374607431768211455)", .{self.src[start..self.pos]}))
             } else {
                 self.err(start, format("malformed integer literal `{}`", .{text}))
             }

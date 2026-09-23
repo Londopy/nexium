@@ -343,7 +343,7 @@ pub fn play(file: []u8, std_dir: []u8, cc: *List(String), strict: bool) -> i32 {
     if r.kind == check_interp.PLAY_UNSUPPORTED {
         var at = String.new()
         if r.own_at.len > 0 { at = format(" (at {}, inside {})", .{r.own_at, r.at}) } else if r.at.len > 0 { at = format(" (at {})", .{r.at}) }
-        eprintln("error: the interpreter cannot run this program{}: foreign calls, threads, sockets, processes, mutable globals and @refCount need a compiled program (nx run)", .{at})
+        eprintln("error: the interpreter cannot run this program{}: foreign calls, threads, sockets, processes, mutable globals, @refCount and u128 values past i128's maximum need a compiled program (nx run)", .{at})
         return 2
     }
     return r.code

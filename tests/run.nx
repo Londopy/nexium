@@ -388,6 +388,12 @@ fn suite_examples(e: *Env, failures: *mut List(String)) {
     if fcl.code != 0 { failures.append(format("examples: the program nx fix edited does not check clean:\n{}", .{fcl.stderr})) }
     let v3_src = fs.join(e.root[..], "nx-out/cases/unfixable.nx")
     fs.write(v3_src[..], "fn main() {\n    var xs = List(i32).new()\n    xs.append(1)\n    let v = xs[..]\n    xs.append(2)\n    println(\"{}\", .{v.len})\n}\n") catch { }
+    // a literal past u128's maximum does not fit any type; it is not malformed
+    // (written here: a file with a lexical error is not one nx fmt reads)
+    let past = fs.join(e.root[..], "nx-out/cases/past_u128.nx")
+    fs.write(past[..], "fn main() {\n    let x: u128 = 340282366920938463463374607431768211456\n    println(\"{}\", .{x})\n}\n") catch { }
+    let pc = nx(e, ["check", past[..]][..])
+    if pc.code == 0 or pc.stderr[..].find("integer literal `340282366920938463463374607431768211456` does not fit in any integer type") == null { failures.append(format("examples: a literal past u128's maximum (exit {}):\n{}", .{pc.code, pc.stderr})) }
     let fun = nx(e, ["fix", v3_src[..]][..])
     if fun.code == 0 or fun.stdout[..].find("1 error(s) left that nx fix has no edit for") == null { failures.append(format("examples: nx fix on a V3 error (exit {}):\n{}{}", .{fun.code, fun.stdout, fun.stderr})) }
     // the effects lockfile: the shipped example's is committed and must match;

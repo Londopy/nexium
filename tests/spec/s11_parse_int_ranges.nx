@@ -1,0 +1,23 @@
+// parse_int reads what the target type holds and says why it failed:
+// `Overflow` past the type's range (a minus sign on an unsigned type is in
+// range only on zero), `InvalidInput` for other text. The interpreter
+// agrees.
+
+fn show(label: []u8, r: !u8) {
+    let v = r catch |e| {
+        println("{} error.{}", .{label, @errorName(e)})
+        return
+    }
+    println("{} {}", .{label, v})
+}
+fn main() {
+    show("255", "255".parse_int(u8))
+    show("300", "300".parse_int(u8))
+    show("-5", "-5".parse_int(u8))
+    show("-0", "-0".parse_int(u8))
+    show("x1", "x1".parse_int(u8))
+    show("0xff", " 0xff ".parse_int(u8))
+    let neg = "-1".parse_int(i64) catch { 7 }
+    println("{}", .{neg})
+    show("wide", "99999999999999999999".parse_int(u8))
+}

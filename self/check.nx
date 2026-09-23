@@ -245,6 +245,19 @@ impl Types {
 }
 
 /// Integer type facts by name.
+/// The value of an integer literal's digits (the lexer's decimal text). A
+/// value only `u128` holds, past `i128`'s maximum, comes back as its bit
+/// pattern with `big` set; null when not even a `u128` holds it.
+pub fn parse_int_literal(text: []u8, big: *mut bool) -> ?i128 {
+    big.* = false
+    let v = text.parse_int(i128) catch {
+        let u = text.parse_int(u128) catch { return null }
+        big.* = true
+        return @truncate(i128, u)
+    }
+    return v
+}
+
 pub fn int_bits(name: []u8) -> u32 {
     if name == "i8" or name == "u8" { return 8 }
     if name == "i16" or name == "u16" { return 16 }
@@ -2644,10 +2657,14 @@ impl Checker {
             if self.tys.kind(t) != TK.Int { continue }
             let name = self.tys.list[t].name.clone()
             let v = self.tir.nodes[r].ival
-            if v >= int_min(name[..]) and v <= int_max(name[..]) { continue }
-            let range = format("range {} to {}", .{int_min(name[..]), int_max(name[..])})
+            // a literal past i128's maximum is its u128 bit pattern
+            let big = self.tir.nodes[r].flag
+            if big and name == "u128" { continue }
+            if !big and v >= int_min(name[..]) and v <= int_max(name[..]) { continue }
+            let range = if name == "u128" { String.from("range 0 to 340282366920938463463374607431768211455") } else { format("range {} to {}", .{int_min(name[..]), int_max(name[..])}) }
+            let shown = if big { format("{}", .{@truncate(u128, v)}) } else { format("{}", .{v}) }
             let hint = if name == "i64" { "; an integer literal is `i64` unless its context gives it a type, as in `let x: u64 = ...`" } else { "" }
-            self.fail(self.open_lit_mods[i], self.tir.nodes[r].start, format("literal `{}` does not fit in `{}` ({}){}", .{v, name, range, hint})[..])
+            self.fail(self.open_lit_mods[i], self.tir.nodes[r].start, format("literal `{}` does not fit in `{}` ({}){}", .{shown, name, range, hint})[..])
         }
     }
 

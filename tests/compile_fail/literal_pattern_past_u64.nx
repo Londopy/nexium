@@ -1,0 +1,13 @@
+// EXPECT: literal `340282366920938463463374607431768211455` does not fit in `u64`
+fn main() {
+    let v: u128 = 5
+    match v {
+        340282366920938463463374607431768211455 => println("max", .{}),
+        _ => println("other", .{}),
+    }
+    let w: u64 = 5
+    match w {
+        340282366920938463463374607431768211455 => println("max", .{}),
+        _ => println("other", .{}),
+    }
+}

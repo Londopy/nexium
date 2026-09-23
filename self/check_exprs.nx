@@ -205,21 +205,30 @@ impl Checker {
         var exp = NONE
         if expected != NONE { exp = self.tys.shallow(expected) }
         if kind == "int" {
-            let v = text[..].parse_int(i128) catch { 0 }
+            var big = false
+            let v = check.parse_int_literal(text[..], &mut big) orelse {
+                self.fail_here(start, format("literal `{}` does not fit in any integer type (the largest, `u128`, holds up to 340282366920938463463374607431768211455)", .{text})[..])
+                return self.error_expr(start, end)
+            }
             if exp != NONE {
                 let ek = self.tys.kind(exp)
                 if ek == TK.Int {
                     let name = self.tys.list[exp].name.clone()
-                    if v < check.int_min(name[..]) or v > check.int_max(name[..]) {
+                    if big and name != "u128" {
+                        self.fail_here(start, format("literal `{}` does not fit in `{}` (range {} to {})", .{text, name, check.int_min(name[..]), check.int_max(name[..])})[..])
+                    } else if !big and (v < check.int_min(name[..]) or v > check.int_max(name[..])) {
                         self.fail_here(start, format("literal `{}` does not fit in `{}` (range {} to {})", .{v, name, check.int_min(name[..]), check.int_max(name[..])})[..])
                     }
-                    return self.int_node(v, exp, start, end)
+                    let r = self.int_node(v, exp, start, end)
+                    self.tir.nodes[r].flag = big
+                    return r
                 }
-                if ek == TK.Float { return self.float_node(v as f64, exp, start, end) }
+                if ek == TK.Float { return self.float_node(if big { @truncate(u128, v) as f64 } else { v as f64 }, exp, start, end) }
                 if let ik = self.tys.infer_kind_of(exp) {
                     if ik == INFER_FLOAT { return self.float_node(v as f64, exp, start, end) }
                     if ik == INFER_INT {
                         let r = self.int_node(v, exp, start, end)
+                        self.tir.nodes[r].flag = big
                         self.note_open_literal(r)
                         return r
                     }
@@ -232,6 +241,7 @@ impl Checker {
             }
             let t = self.tys.int_lit()
             let r = self.int_node(v, t, start, end)
+            self.tir.nodes[r].flag = big
             self.note_open_literal(r)
             return r
         }

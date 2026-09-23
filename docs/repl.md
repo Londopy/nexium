@@ -98,9 +98,10 @@ page's own script (`site/play_test.mjs`).
 ## Limits
 
 The interpreter covers the language but not the platform: foreign calls
-(`@cImport`, `extern`), threads, sockets, processes, mutable globals and
-`@refCount` need a compiled program (`nx run`), and the message names the
-line of your program that led there. `for parallel` runs its iterations
+(`@cImport`, `extern`), threads, sockets, processes, mutable globals,
+`@refCount` and `u128` values past `i128`'s maximum (the interpreter holds
+integers as `i128`) need a compiled program (`nx run`), and the message
+names the line of your program that led there. `for parallel` runs its iterations
 in order. Values that only exist at compile time (function values,
 pointers) are not kept between lines. Speed is interpreted speed, and a
 run stops after 20 million steps; measure with `nx run`. In the page, a

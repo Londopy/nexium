@@ -211,9 +211,11 @@ fn int_literal(v: i128, name: []u8) -> String {
         return format("((nx_i128)(((nx_u128){}ULL << 64) | (nx_u128){}ULL))", .{hi, lo})
     }
     if name == "u128" {
-        if v <= U64_MAX { return format("((nx_u128){}ULL)", .{v}) }
-        let hi = (v >> 64) as u64
-        let lo = @truncate(u64, v)
+        // a u128 past i128's maximum is held as its bit pattern
+        let bits = @truncate(u128, v)
+        if bits <= 18446744073709551615 { return format("((nx_u128){}ULL)", .{bits}) }
+        let hi = (bits >> 64) as u64
+        let lo = @truncate(u64, bits)
         return format("(((nx_u128){}ULL << 64) | (nx_u128){}ULL)", .{hi, lo})
     }
     if name[0] == 'i' {
@@ -3000,6 +3002,9 @@ impl Gen {
         let k = self.c.tys.kind(t)
         if k == check.TK.Int {
             if as_char { self.line(format("nx_w_char({}, (uint32_t)({}));", .{sink, v})[..]) }
+            // an unsigned value is written unsigned: a u128 past i128's
+            // maximum has its top bit set, which a signed write reads as a sign
+            else if !check.int_signed(self.c.tys.list[t].name[..]) { self.line(format("nx_w_uint({}, (nx_u128)({}), {}, {}, {});", .{sink, v, base, width, left})[..]) }
             else { self.line(format("nx_w_int({}, (nx_i128)({}), {}, {}, {});", .{sink, v, base, width, left})[..]) }
         } else if k == check.TK.Char {
             self.line(format("nx_w_char({}, {});", .{sink, v})[..])
@@ -3546,6 +3551,12 @@ impl Gen {
             let t = self.tmp()
             let inv = self.err_id("InvalidInput")
             let ovf = self.err_id("Overflow")
+            // an unsigned type is read unsigned: u128's range passes nx_i128's
+            let umax = self.uint_max_c(tys[0])
+            if umax.len > 0 {
+                self.line(format("{} {}; {{ nx_u128 _v = 0; int _r = nx_parse_uint({}, {}, &_v); {}.err = _r == 0 ? 0 : (_r == 1 ? {}u : {}u); if (_r == 0) {}.val = ({})_v; }}", .{cn, t, av, umax, t, inv, ovf, t, target})[..])
+                return t
+            }
             self.line(format("{} {}; {{ nx_i128 _v = 0; int _r = nx_parse_int({}, {}, {}, &_v); {}.err = _r == 0 ? 0 : (_r == 1 ? {}u : {}u); if (_r == 0) {}.val = ({})_v; }}", .{cn, t, av, lo, hi, t, inv, ovf, t, target})[..])
             return t
         }
@@ -3963,6 +3974,19 @@ impl Gen {
         if kk == check.TK.Slice { return 1 }
         if kk == check.TK.Str { return 2 }
         return 0
+    }
+
+    /// An unsigned integer type's maximum as an `nx_u128` C expression; ""
+    /// for any other type.
+    fn uint_max_c(self: *mut Self, t0: usize) -> String {
+        let t = self.res(t0)
+        let k = self.c.tys.kind(t)
+        if k == check.TK.Distinct { return self.uint_max_c(self.c.distinct_underlying(self.c.tys.list[t].def)) }
+        if k != check.TK.Int { return String.new() }
+        let nm = self.c.tys.list[t].name.clone()
+        if check.int_signed(nm[..]) { return String.new() }
+        if nm == "u128" { return String.from("(~(nx_u128)0)") }
+        return int_literal(check.int_max(nm[..]), "u128")
     }
 
     fn int_bounds_pub(self: *mut Self, t0: usize, lo: *mut String, hi: *mut String) {

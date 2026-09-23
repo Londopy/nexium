@@ -444,7 +444,11 @@ impl Checker {
     /// to other constants. Null means "not a scalar the evaluator handles".
     fn eval_const(self: *mut Self, e: usize) -> ?CV {
         let k = self.tir.nodes[e].k
-        if k == TKind.Int { return cv_int(self.tir.nodes[e].ival) }
+        if k == TKind.Int {
+            // a u128 literal past i128's maximum: its bit pattern, not held
+            if self.tir.nodes[e].flag { return null }
+            return cv_int(self.tir.nodes[e].ival)
+        }
         if k == TKind.Float { return cv_float(self.tir.nodes[e].fval) }
         if k == TKind.Bool { return cv_bool(self.tir.nodes[e].flag) }
         if k == TKind.Char { return cv_char(self.tir.nodes[e].ival) }
@@ -696,6 +700,19 @@ pub struct ItSave {
     out: CV
     flow_val: CV
     flow_label: usize
+}
+
+/// Whether a result the interpreter holds as an i128 is the value it
+/// stands for: a u128 past i128's maximum comes out negative, and the
+/// interpreter refuses it rather than show it so.
+fn held(v: i128, bits: u32, signed: bool) -> bool {
+    return signed or bits < 128 or v >= 0
+}
+
+/// Whether the text reads as a `u128`.
+fn reads_as_u128(text: []u8) -> bool {
+    _ = text.parse_int(u128) catch { return false }
+    return true
 }
 
 fn wrap_to(v: i128, bits: u32, signed: bool) -> i128 {
@@ -1076,7 +1093,7 @@ impl Checker {
             } else if flow == FL_FAIL {
                 var at = String.new()
                 if self.it_failed_at != NONE { at = format(" (at {})", .{self.location(self.insts[inst].module, self.it_failed_at)}) }
-                out.panic = format("this statement cannot be evaluated by the interpreter{}; foreign calls, threads, sockets, processes, mutable globals and @refCount need a compiled program", .{at})
+                out.panic = format("this statement cannot be evaluated by the interpreter{}; foreign calls, threads, sockets, processes, mutable globals, @refCount and u128 values past i128's maximum need a compiled program", .{at})
                 failed = true
             }
             if failed {
@@ -1896,7 +1913,11 @@ impl Checker {
         let a = self.tir.nodes[e].a
         let ty = self.tir.nodes[e].ty
         let at = self.tir.nodes[e].start
-        if k == TKind.Int { return cv_int(self.tir.nodes[e].ival) }
+        if k == TKind.Int {
+            // a u128 literal past i128's maximum: its bit pattern, not held
+            if self.tir.nodes[e].flag { return null }
+            return cv_int(self.tir.nodes[e].ival)
+        }
         if k == TKind.Float { return cv_float(self.tir.nodes[e].fval) }
         if k == TKind.Bool { return cv_bool(self.tir.nodes[e].flag) }
         if k == TKind.Char { return cv_char(self.tir.nodes[e].ival) }
@@ -2023,7 +2044,9 @@ impl Checker {
                 var bits: u32 = 64
                 var signed = true
                 _ = self.it_bits_of(ty, &mut bits, &mut signed)
-                return cv_int(wrap_to(~v.ival, bits, signed))
+                let r = wrap_to(~v.ival, bits, signed)
+                if !held(r, bits, signed) { return null }
+                return cv_int(r)
             }
             if op == "~" and v.kind == VK_BOOL { return cv_bool(!v.flag) }
             return null
@@ -2062,7 +2085,9 @@ impl Checker {
                         var bits: u32 = 64
                         var signed = true
                         if !self.it_bits_of(ty, &mut bits, &mut signed) { return null }
-                        return cv_int(wrap_to(i, bits, signed))
+                        let r = wrap_to(i, bits, signed)
+                        if !held(r, bits, signed) { return null }
+                        return cv_int(r)
                     }
                 }
                 if self.tys.kind(self.tys.shallow(ty)) == TK.Char { return cv_char(i) }
@@ -2627,10 +2652,16 @@ impl Checker {
         } else {
             return null
         }
+        // past i128 a u128 sum or product may still fit its type: refused,
+        // as the interpreter cannot hold it
+        let big_unsigned = bits >= 128 and !signed
         let r = raw orelse {
+            if big_unsigned { return null }
             self.it_fail_panic("integer overflow", at)
             return null
         }
+        if big_unsigned and mode != "checked" and mode != "sat" and r < 0 { return null }
+        if big_unsigned and (op == "<<") and r < 0 { return null }
         if mode == "checked" {
             if r < lo or r > hi {
                 // `nx play` says what a compiled program says; compile time says more
@@ -2802,8 +2833,22 @@ impl Checker {
             return vs[0].clone()
         }
         if name == "SliceParseInt" {
+            // as the compiled parse does: why it failed, and the target's range
             let s = cv_bytes(&vs[0]) orelse return null
-            let v = trim_ascii(s).parse_int(i128) catch { return cv_err(self.error_id("InvalidInput")) }
+            let text = trim_ascii(s)
+            var bits: u32 = 64
+            var signed = true
+            let int_target = tys.len > 0 and self.it_bits_of(tys[0], &mut bits, &mut signed)
+            let v = text.parse_int(i128) catch |err| {
+                // a u128 past i128's maximum reads, but the interpreter cannot hold it
+                if int_target and bits >= 128 and !signed and reads_as_u128(text) { return null }
+                return cv_err(self.error_id(if err == error.Overflow { "Overflow" } else { "InvalidInput" }))
+            }
+            if int_target {
+                var lo: i128 = 0
+                var hi: i128 = 0
+                if self.it_int_range(tys[0], &mut lo, &mut hi) and (v < lo or v > hi) { return cv_err(self.error_id("Overflow")) }
+            }
             return cv_wrap(VK_OK, cv_int(v))
         }
         if name == "SliceParseFloat" {
@@ -2932,7 +2977,9 @@ impl Checker {
             var signed = true
             if !self.it_bits_of(self.tir.nodes[e].ty, &mut bits, &mut signed) { return null }
             let i = cv_as_int(&vs[0]) orelse return null
-            return cv_int(wrap_to(i, bits, signed))
+            let r = wrap_to(i, bits, signed)
+            if !held(r, bits, signed) { return null }
+            return cv_int(r)
         }
         if name == "BitCast" {
             // integers reinterpret at compile time; a float's bits are the C build's
@@ -2941,7 +2988,9 @@ impl Checker {
             if !self.it_bits_of(self.tir.nodes[e].ty, &mut bits, &mut signed) { return null }
             if vs[0].kind != VK_INT and vs[0].kind != VK_CHAR and vs[0].kind != VK_BOOL { return null }
             let i = cv_as_int(&vs[0]) orelse return null
-            return cv_int(wrap_to(i, bits, signed))
+            let r = wrap_to(i, bits, signed)
+            if !held(r, bits, signed) { return null }
+            return cv_int(r)
         }
         if name == "Target" { return null }
         if name == "ErrorName" {

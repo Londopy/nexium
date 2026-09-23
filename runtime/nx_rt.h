@@ -603,6 +603,30 @@ NX_INLINE int nx_parse_int(nx_sl_u8 s, nx_i128 lo, nx_i128 hi, nx_i128* out) {
     *out = v;
     return 0;
 }
+/* nx_parse_int for an unsigned type, whose range can pass nx_i128's:
+ * the same text is read, a minus sign only in range on zero */
+NX_INLINE int nx_parse_uint(nx_sl_u8 s, nx_u128 hi, nx_u128* out) {
+    size_t i = 0; bool neg = false;
+    s = nx_sl_trim(s);
+    if (s.len == 0) return 1;
+    if (s.ptr[0] == '-') { neg = true; i = 1; } else if (s.ptr[0] == '+') { i = 1; }
+    if (i >= s.len) return 1;
+    nx_u128 v = 0; unsigned base = 10;
+    if (i + 1 < s.len && s.ptr[i] == '0' && (s.ptr[i + 1] == 'x' || s.ptr[i + 1] == 'X')) { base = 16; i += 2; }
+    for (; i < s.len; i++) {
+        uint8_t ch = s.ptr[i]; unsigned d;
+        if (ch == '_') continue;
+        if (ch >= '0' && ch <= '9') d = ch - '0';
+        else if (base == 16 && ch >= 'a' && ch <= 'f') d = ch - 'a' + 10;
+        else if (base == 16 && ch >= 'A' && ch <= 'F') d = ch - 'A' + 10;
+        else return 1;
+        if (v > (~(nx_u128)0 - d) / base) return 2;
+        v = v * base + d;
+    }
+    if ((neg && v != 0) || v > hi) return 2;
+    *out = v;
+    return 0;
+}
 NX_INLINE bool nx_parse_float(nx_sl_u8 s, double* out) {
     char buf[64];
     s = nx_sl_trim(s);
@@ -632,6 +656,15 @@ NX_INLINE void nx_w_pad(nx_sink* s, const char* txt, size_t len, int width, bool
     if (width > 0 && (size_t)width > len && !left) { for (size_t i = len; i < (size_t)width; i++) nx_w(s, (const uint8_t*)" ", 1); }
     nx_w(s, (const uint8_t*)txt, len);
     if (width > 0 && (size_t)width > len && left) { for (size_t i = len; i < (size_t)width; i++) nx_w(s, (const uint8_t*)" ", 1); }
+}
+/* base: 10, 16 (lower), 17 (upper), 2, 8; an unsigned value, u128's whole range */
+NX_INLINE void nx_w_uint(nx_sink* s, nx_u128 u, int base, int width, bool left) {
+    char buf[140]; size_t i = sizeof buf;
+    int b = base == 17 ? 16 : base;
+    const char* digits = base == 17 ? "0123456789ABCDEF" : "0123456789abcdef";
+    if (u == 0) buf[--i] = '0';
+    while (u) { buf[--i] = digits[u % b]; u /= b; }
+    nx_w_pad(s, buf + i, sizeof buf - i, width, left);
 }
 /* base: 10, 16 (lower), 17 (upper), 2, 8 */
 NX_INLINE void nx_w_int(nx_sink* s, nx_i128 v, int base, int width, bool left) {

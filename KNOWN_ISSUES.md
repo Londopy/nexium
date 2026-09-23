@@ -24,22 +24,6 @@ Fixed bugs are not listed here; `CHANGELOG.md` and `git log` have them.
   flag yet) and the view goes through a `String`, `List` or `Map` buffer,
   judge the binding's origins as the V1 branch does. Keep the error for
   `&x` or `s.arr[..]`: the binding is a stack copy, so those do dangle.
-- **A `u128` above `i128`'s maximum is formatted as a negative number.**
-  With `let a: u128 = 0xffffffffffffffff` and `let p = a * a`,
-  `println("{} {x}", .{p, p})` prints `-36893488147419103231
-  -1ffffffffffffffff`, and `0 -% 1` prints `-1`; `format`, `to_string()`,
-  widths and `?u128` do the same. Found while writing QNI. `write_value` in
-  self/cgen.nx writes every integer as `nx_w_int(sink, (nx_i128)(v), ...)`,
-  so bit 127 becomes a sign. The lexer (`number`, self/lexer.nx) keeps a
-  literal as its `u128`'s `to_string()`, so 2^128-1 is rejected as
-  "literal `-1`", and 2^127 becomes text that `check_lit`
-  (self/check_exprs.nx) cannot parse, which its `catch { 0 }` turns into 0
-  without an error, for an `i128` too (`check_lit_pattern` in
-  self/check_match.nx has the same `catch`). `nx play` holds integers as
-  `i128`, so `a * a` panics. Fix: an `nx_w_uint` taking an `nx_u128` in
-  runtime/nx_rt.h, called by `write_value` for `u128`; `check_lit` must
-  then reject what it cannot parse rather than use 0, and the interpreter
-  needs a `u128` value.
 
 ## Self-hosting
 
