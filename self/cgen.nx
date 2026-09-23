@@ -1971,6 +1971,19 @@ impl Gen {
         return self.expr(e)
     }
 
+    /// Whether handing `e` over moves a local: the local itself, or the
+    /// payload `.?`, `orelse` or `try` takes out of one (the forms
+    /// `expr_owned` zeroes the source of, as the checker's `take_ownership`
+    /// marks it moved).
+    fn moves_from_local(self: *mut Self, e: usize) -> bool {
+        let k = self.c.tir.nodes[e].k
+        if k == check.TKind.Local { return true }
+        if k == check.TKind.Unwrap or k == check.TKind.OrElse or k == check.TKind.Try {
+            return self.c.tir.nodes[self.c.tir.nodes[e].kids[0]].k == check.TKind.Local
+        }
+        return false
+    }
+
     /// An owned value for a field of a literal, materialized now: a later field
     /// that moves the same local must not zero it before this one reads it.
     fn field_value(self: *mut Self, x: usize) -> String {
@@ -2051,8 +2064,10 @@ impl Gen {
                 var owned_param = false
                 if i < params.len { owned_param = self.c.insts[inst].locals[params[i]].owned }
                 if owned_param {
-                    // handed over: a local is moved (zeroed), a temporary is not dropped here
-                    if self.c.tir.nodes[x].k == check.TKind.Local { args.append(self.expr_owned(x)) } else { args.append(self.simple_owned(x)) }
+                    // handed over: a local, or the payload `.?`, `orelse` or
+                    // `try` takes out of one, is moved (the source zeroed); a
+                    // temporary is not dropped here
+                    if self.moves_from_local(x) { args.append(self.expr_owned(x)) } else { args.append(self.simple_owned(x)) }
                 } else {
                     args.append(self.simple(x))
                 }

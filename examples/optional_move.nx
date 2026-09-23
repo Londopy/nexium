@@ -1,6 +1,7 @@
 // Moving an owning value out of an optional with `.?` (or `orelse`, or `try`
 // on an error union) moves the whole local: the optional is not dropped
-// again afterwards.
+// again afterwards, whether the payload goes to a `let` or to a function
+// or method that takes it `own`.
 
 struct Box {
     items: List(i32)
@@ -18,6 +19,21 @@ fn load(ok: bool) -> !Box {
     return Box{ .items = List(i32).new() }
 }
 
+fn keep(own b: Box) -> usize { return b.items.len }
+
+fn keep_any(comptime T: type, own x: T) -> T { return x }
+
+struct Shelf {
+    count: usize
+}
+
+impl Shelf {
+    fn put(self: *mut Self, own b: Box) { self.count += b.items.len }
+}
+
+// an `own` optional parameter whose payload moves on
+fn pass_on(own m: ?Box) -> usize { return keep(m.?) }
+
 fn main() -> !void {
     var b = Box{ .items = List(i32).new() }
     let maybe = make(3)
@@ -31,4 +47,24 @@ fn main() -> !void {
     let loaded = load(true)
     let got = try loaded
     println("try {}", .{got.items.len})
+
+    // the same three into an `own` parameter
+    let m1 = make(4)
+    println("call .? {}", .{keep(m1.?)})
+    let m2 = make(-1)
+    println("call orelse, default {}", .{keep(m2 orelse make(5).?)})
+    let m3 = make(6)
+    println("call orelse, payload {}", .{keep(m3 orelse make(1).?)})
+    let r = load(true)
+    println("call try {}", .{keep(try r)})
+
+    // a method, a generic function, and an `own` optional parameter
+    var shelf = Shelf{ .count = 0 }
+    let m4 = make(7)
+    shelf.put(m4.?)
+    println("method {}", .{shelf.count})
+    let m5 = make(8)
+    let back = keep_any(Box, m5.?)
+    println("generic {}", .{back.items.len})
+    println("own optional {}", .{pass_on(make(9))})
 }

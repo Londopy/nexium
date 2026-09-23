@@ -99,6 +99,15 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Fixed
 
+- Moving an owning payload out of an optional or error union straight
+  into an `own` parameter (`take(x.?)`, `take(x orelse d)`, `take(try r)`,
+  a method's or a generic function's `own` parameter too) handed the
+  payload over but left the source set, so its scope-end drop freed it
+  again: a double free, which on Windows ended the program with heap
+  corruption and no message. A call now moves those forms as it moves a
+  bare local, zeroing the source, as `let s = x.?` already did
+  (`examples/optional_move.nx` gains the call forms; `nx leaks` finds
+  nothing). Found while writing QNI.
 - `panic(..)` standing for a value whose C type is a struct (a struct, an
   enum, a slice, `String`, `List`, `?T`, `!T`, a tuple), as a tail, in
   `return`, in a typed `let` or as a `match` arm, passed `nx check` and

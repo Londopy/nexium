@@ -1,3 +1,10 @@
 unwrapped 3
 orelse 2
 try 0
+call .? 4
+call orelse, default 5
+call orelse, payload 6
+call try 0
+method 7
+generic 8
+own optional 9

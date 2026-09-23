@@ -39,20 +39,6 @@ Fixed bugs are not listed here; `CHANGELOG.md` and `git log` have them.
   flag yet) and the view goes through a `String`, `List` or `Map` buffer,
   judge the binding's origins as the V1 branch does. Keep the error for
   `&x` or `s.arr[..]`: the binding is a stack copy, so those do dangle.
-- **Moving out of an optional or error union into an `own` parameter
-  frees it twice.** `take(x.?)`, `take(x orelse d)` or `take(try r)`,
-  where `x` or `r` is a local or `own` parameter holding an owning value
-  and `take` (or a method) takes it `own`, hands the payload over but
-  leaves the source set, so its scope-end drop frees it again:
-  `fn f(own x: ?String) -> usize { return take(x.?) }`. On Windows the
-  program dies with heap corruption (0xC0000374) and no message, so
-  `nx run` and `nx test` just exit 1; found while writing QNI
-  (`json.set(&mut o, "data", data.?)`). `let s = x.?`, `xs.append(x.?)`
-  and `return x.?` are fine. Fix: the `TKind.Call` branch of `expr` in
-  self/cgen.nx sends only a bare local to `expr_owned`; send `.?`,
-  `orelse` and `try` over a local there too (the test `take_ownership`
-  in self/check.nx makes), and add the call form to
-  `examples/optional_move.nx`.
 - **A `u128` above `i128`'s maximum is formatted as a negative number.**
   With `let a: u128 = 0xffffffffffffffff` and `let p = a * a`,
   `println("{} {x}", .{p, p})` prints `-36893488147419103231
