@@ -3239,6 +3239,17 @@ pub fn parse_source(src: []u8) -> Parsed {
     return Parsed{ .tree = Tree{ .nodes = p.tree.nodes.clone(), .docs = p.tree.docs.clone(), .doc_counts = p.tree.doc_counts.clone() }, .items = items, .errors = errors }
 }
 
+/// The offset and the message of an `error at N: message` line from the
+/// lexer or the parser; for any other text, 0 and the text itself.
+pub fn error_offset(e: []u8, msg: *mut String) -> usize {
+    if !e.starts_with("error at ") { msg.* = String.from(e); return 0 }
+    let rest = e[9..]
+    let colon = rest.find(":") orelse { msg.* = String.from(e); return 0 }
+    let off = rest[0..colon].parse_int(usize) catch { 0 }
+    msg.* = String.from(rest[colon + 1..].trim())
+    return off
+}
+
 /// Parse `src` and print the tree; errors are returned as text.
 pub fn parse_and_print(src: []u8) -> (String, List(String)) {
     var lx = lexer.new_lexer(src)

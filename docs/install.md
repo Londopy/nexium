@@ -399,11 +399,14 @@ says so once, on stderr:
 nx 1.3.1 is available (this is 1.3.0): `nx upgrade` installs it; https://github.com/Londopy/nexium/releases/latest
 ```
 
-The REPL's banner names it too. The answer is kept in
-`~/.nexium/update-check` (`%LocalAppData%\Nexium\update-check` on
-Windows, `cache/update-check` beside a portable copy, or the file
+The REPL's banner names it too, and says to leave with `:quit` and run
+`nx upgrade` in the terminal: it is a command, not Nexium code. The answer
+is kept in `~/.nexium/update-check` (`%LocalAppData%\Nexium\update-check`
+on Windows, `cache/update-check` beside a portable copy, or the file
 `NX_UPDATE_CACHE` names), so no command waits for more than that one
-question a day, and a machine without `curl` asks once and is quiet.
+question a day, and a machine without `curl` asks once and is quiet. A
+notice can therefore lag a release by up to a day and name the one before
+it; `nx upgrade` asks again and installs the newest.
 `NX_NO_UPDATE_CHECK=1` silences the question and the notice;
 `NX_OFFLINE=1` or a `CI` variable skips the question but not an answer
 already cached. `nx doctor`, `nx upgrade`, `nx lsp` and the one-liners

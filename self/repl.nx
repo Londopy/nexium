@@ -7,9 +7,14 @@
 //! REPL mode the interpreter may perform I/O, which `comptime` never may.
 
 import lexer
+import parser
 import check
 import check_interp
 import lsp
+
+/// The line that opens the synthetic `main`, after the items and before the
+/// statements.
+const MAIN_OPEN = "fn main() -> !void {\n"
 
 const ITEM_KEYWORDS = ["fn", "pub", "struct", "enum", "record", "ref", "trait", "impl", "import", "type", "error", "test", "extern", "artifact", "comptime"]
 
@@ -51,11 +56,22 @@ fn source(s: *Session, extra_item: []u8, extra_stmt: []u8) -> String {
     var out = String.new()
     for it in s.items { out.append(it[..]); out.append("\n") }
     if extra_item.len > 0 { out.append(extra_item); out.append("\n") }
-    out.append("fn main() -> !void {\n")
+    out.append(MAIN_OPEN)
     for st in s.stmts { out.append(st[..]); out.append("\n") }
     if extra_stmt.len > 0 { out.append(extra_stmt); out.append("\n") }
     out.append("    return\n}\n")
     return out
+}
+
+/// Where `source` puts the extra item (`item`) or the extra statement: its
+/// offset in the synthetic program.
+fn input_start(s: *Session, item: bool) -> usize {
+    var n: usize = 0
+    for it in s.items { n += it.len + 1 }
+    if item { return n }
+    n += MAIN_OPEN.len
+    for st in s.stmts { n += st.len + 1 }
+    return n
 }
 
 /// The program `:save` writes: the items and the statements, runnable with
@@ -79,8 +95,9 @@ fn saved_program(s: *Session) -> String {
 
 /// The program `:effects` checks: the expression inside a function of its
 /// own, with the kept bindings it names as owned parameters (rebound as
-/// `var` so it may mutate them), so the function's effects are the expression's.
-fn effects_source(s: *Session, expr: []u8) -> String {
+/// `var` so it may mutate them), so the function's effects are the
+/// expression's. With it, the offset of the expression in the program.
+fn effects_source(s: *Session, expr: []u8) -> (String, usize) {
     var lx = lexer.new_lexer(expr)
     lx.lex()
     var params = String.new()
@@ -99,8 +116,9 @@ fn effects_source(s: *Session, expr: []u8) -> String {
         }
         binds.append(format("    var {} = {}_p\n", .{n, n})[..])
     }
-    let item = format("fn __nx_effects({}) -> !void {{\n{}    {}\n    return\n}}", .{params, binds, expr})
-    return source(s, item[..], "")
+    let head = format("fn __nx_effects({}) -> !void {{\n{}    ", .{params, binds})
+    let item = format("{}{}\n    return\n}}", .{head, expr})
+    return (source(s, item[..], ""), input_start(s, true) + head.len)
 }
 
 /// A type a parameter takes by copy, which `own` may not qualify.
@@ -179,6 +197,45 @@ fn repl_check(text: []u8, start: usize, s: *Session, std_dir: []u8, cc: *List(St
     return c.run_repl(start, &s.names, &s.values, &s.heap)
 }
 
+/// The syntax errors of an input that starts at `start` in the synthetic
+/// program `src`, printed against the input rather than the program around
+/// it: the caret under what was typed (an empty `label`), or at a line of
+/// the file `:load` read (`label` is its path). An input that stops in the
+/// middle of a statement is said to, where the parser would blame the
+/// program's own text after it, and a command for the terminal typed at the
+/// prompt is named as one. True when the input does not parse; the errors
+/// have been printed.
+fn input_syntax_errors(src: []u8, start: usize, input: []u8, item: bool, label: []u8, at_prompt: bool) -> bool {
+    let parsed = parser.parse_source(src)
+    if parsed.errors.len == 0 { return false }
+    if label.len == 0 {
+        var cmd = input.trim()
+        if cmd.starts_with("$ ") { cmd = cmd[2..].trim() }
+        if cmd.starts_with("nx ") {
+            let how = if at_prompt { "; leave with :quit and run it there" } else { "" }
+            eprintln("error: `{}` is a command for the terminal, not Nexium code{}", .{cmd, how})
+            return true
+        }
+    }
+    let end = start + input.len
+    var shown = List(usize).new()
+    for e in parsed.errors {
+        var msg = String.new()
+        var at = parser.error_offset(e[..], &mut msg)
+        if at >= end {
+            at = end
+            msg = String.from(if item { "the input ends in the middle of a declaration" } else { "the input ends in the middle of a statement" })
+        }
+        if at < start { at = start }
+        var again = false
+        for p in shown { if p == at { again = true } }
+        if again { continue }
+        shown.append(at)
+        eprintln("error: {}\n{}", .{msg, check.location_block(label, input, at - start)})
+    }
+    return true
+}
+
 /// The first line of an item, for `:items`.
 fn first_line(text: []u8) -> []u8 {
     for l in text.lines() { return l }
@@ -200,6 +257,7 @@ fn accept(s: *mut Session, own input: String, std_dir: []u8, cc: *List(String), 
     var res = Accepted{ .ok = false, .printed = false, .value = String.new() }
     if is_item(input[..]) {
         let src = source(s, input[..], "")
+        if input_syntax_errors(src[..], input_start(s, true), input[..], true, "", echo) { return res }
         if repl_check(src[..], s.stmts.len, s, std_dir, cc) != null {
             s.items.append(input)
             s.kinds.append(0)
@@ -208,6 +266,7 @@ fn accept(s: *mut Session, own input: String, std_dir: []u8, cc: *List(String), 
         return res
     }
     let src = source(s, "", input[..])
+    if input_syntax_errors(src[..], input_start(s, false), input[..], false, "", echo) { return res }
     let out = repl_check(src[..], s.stmts.len, s, std_dir, cc) orelse return res
     if out.has_panic {
         eprintln("panic: {}", .{out.panic})
@@ -477,7 +536,7 @@ fn complete_at(s: *Session, buf: []u8, cur: usize) -> ?Completed {
         text.append(it[..])
         text.append("\n")
     }
-    text.append("fn main() -> !void {\n")
+    text.append(MAIN_OPEN)
     for st in s.stmts {
         text.append(st[..])
         text.append("\n")
@@ -618,7 +677,7 @@ pub fn run(version: []u8, compiler: []u8, host: []u8, std_dir: []u8, cc: *List(S
     let interactive = io.is_terminal(1)
     if interactive and (host != "windows" or os.env("WT_SESSION") != null) { print("\x1b]0;Nexium {}\x07", .{version}) }
     println("Nexium {} (nx repl, {}) on {}", .{version, compiler, host})
-    if newer.len > 0 { println("nx {} is available: `nx upgrade` installs it.", .{newer}) }
+    if newer.len > 0 { println("nx {} is available; to install it, leave with :quit and run `nx upgrade` in the terminal.", .{newer}) }
     println("Type :help for commands, :quit to exit.", .{})
     var session = new_session()
     var pending = String.new()
@@ -683,6 +742,7 @@ pub fn run(version: []u8, compiler: []u8, host: []u8, std_dir: []u8, cc: *List(S
                         continue
                     }
                     let src = source(&session, text[..], "")
+                    if input_syntax_errors(src[..], input_start(&session, true), text[..], true, path, true) { continue }
                     if repl_check(src[..], session.stmts.len, &session, std_dir, cc) != null {
                         session.items.append(text)
                         session.kinds.append(0)
@@ -726,8 +786,9 @@ pub fn run(version: []u8, compiler: []u8, host: []u8, std_dir: []u8, cc: *List(S
                         println("usage: :effects EXPRESSION", .{})
                         continue
                     }
-                    let src = effects_source(&session, expr)
-                    var c = repl_checker(src[..], std_dir, cc) orelse continue
+                    let prog = effects_source(&session, expr)
+                    if input_syntax_errors(prog.0[..], prog.1, expr, false, "", true) { continue }
+                    var c = repl_checker(prog.0[..], std_dir, cc) orelse continue
                     var found = false
                     for i in 0..c.insts.len {
                         if c.insts[i].name[..] != "__nx_effects" { continue }

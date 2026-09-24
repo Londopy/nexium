@@ -570,7 +570,17 @@ fn suite_compile_fail(e: *Env, failures: *mut List(String)) {
     for f in tree_files("tests/compile_fail") { cases.append(Case{ .kind = String.from("compile_fail"), .path = f.clone() }) }
     if cases.len == 0 { failures.append(String.from("compile_fail: no cases found")); return }
     run_cases(e, &cases, failures)
-    println("compile_fail: {} cases", .{cases.len})
+    // a lexical error cannot be a case in the tree (`nx fmt` refuses the
+    // file): the lexer's complaint and the parser's reading of the same text
+    // are one mistake, reported once, with its location
+    let cut = fs.join(e.root[..], "nx-out/cases/syntax_once.nx")
+    fs.write(cut[..], "fn main() {\n    let s = \"abc\n}\n") catch { }
+    let o = nx(e, ["check", cut[..]][..])
+    let d = normalize(o.stderr[..])
+    if o.code == 0 or strings.count(d[..], "newline in string literal") != 1 or d[..].find("syntax_once.nx:2:13") == null or d[..].find("2 error(s)") == null or d[..].find("error at ") != null {
+        failures.append(format("compile_fail: a lexical error was not reported once with its location (exit {}):\n{}", .{o.code, d}))
+    }
+    println("compile_fail: {} cases, and a lexical error", .{cases.len})
 }
 
 /// The Topo's programs reproduce their recorded output (the site shows
@@ -989,7 +999,7 @@ fn suite_installer(e: *Env, failures: *mut List(String)) {
 
 /// The REPL evaluates lines, keeps bindings, accepts items, reports errors, and prints.
 fn suite_repl(e: *Env, failures: *mut List(String)) {
-    let script = "let x = 2\nx * 21\nfn sq(n: i32) -> i32 { return n * n }\nsq(x)\nprintln(\"hi {}\", .{x})\nimport std.strings\nstrings.to_upper(\"ok\")\nlet s = String.from(\"a\")\ns\nundefined_name\nvar xs = List(i32).new()\nxs.append(7)\nxs\n:effects xs.append(8)\n:effects x\nlet y = 5\n:undo\n:vars\n:save nx-out/repl-session.nx\n:quit\n"
+    let script = "let x = 2\nx * 21\nfn sq(n: i32) -> i32 { return n * n }\nsq(x)\nprintln(\"hi {}\", .{x})\nimport std.strings\nstrings.to_upper(\"ok\")\nlet s = String.from(\"a\")\ns\nundefined_name\nnx upgrade\nlet q = 1 +\nvar xs = List(i32).new()\nxs.append(7)\nxs\n:effects xs.append(8)\n:effects x\nlet y = 5\n:undo\n:vars\n:save nx-out/repl-session.nx\n:quit\n"
     let repl_args = ["repl"]
     let out = nx_in(e, repl_args[..], script, e.root[..])
     if out.code != 0 { failures.append(format("repl: exited with {}:\n{}", .{out.code, out.stderr})); return }
@@ -997,6 +1007,14 @@ fn suite_repl(e: *Env, failures: *mut List(String)) {
         if out.stdout[..].find(want) == null { failures.append(format("repl: missing `{}` in:\n{}", .{want, out.stdout})) }
     }
     if out.stderr[..].find("undefined_name") == null { failures.append(format("repl: the error for an unknown name was not reported:\n{}", .{out.stderr})) }
+    // a command for the terminal is named as one, an input cut short says so,
+    // and nothing points into the program the REPL builds around the input
+    for want in ["`nx upgrade` is a command for the terminal", "the input ends in the middle of a statement"] {
+        if out.stderr[..].find(want) == null { failures.append(format("repl: missing `{}` in:\n{}", .{want, out.stderr})) }
+    }
+    for leak in ["error at ", "<repl>", "`return`"] {
+        if out.stderr[..].find(leak) != null { failures.append(format("repl: `{}` from the synthetic program shown in:\n{}", .{leak, out.stderr})) }
+    }
     // :effects names the effects of an expression with the bindings in scope
     for want in ["effects: allocates", "effects: none"] {
         if out.stdout[..].find(want) == null { failures.append(format("repl: missing `{}` in:\n{}", .{want, out.stdout})) }
@@ -1023,7 +1041,7 @@ fn suite_repl(e: *Env, failures: *mut List(String)) {
     if ev.code != 0 or ev.text() != "f is 7" { failures.append(format("repl: nx -e answered `{}` (exit {}):\n{}", .{ev.text(), ev.code, ev.stderr})) }
     let bad = nx(e, ["-p", "no_such_name"][..])
     if bad.code == 0 { failures.append(String.from("repl: nx -p of an unknown name did not fail")) }
-    println("repl: a session, :effects, :undo and :save; nx -e and nx -p", .{})
+    println("repl: a session and its diagnostics, :effects, :undo and :save; nx -e and nx -p", .{})
 }
 
 /// What `nx play` says when a program needs a compiled run: those programs

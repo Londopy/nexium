@@ -41,11 +41,14 @@ prompt reports exactly what a file would:
 ```
 > let t = twice("no")
 error: type mismatch in argument `x`: expected `i64` but found `[]u8`
-  --> <repl>:14:15
-   |
- 14| let t = twice("no")
+   | let t = twice("no")
    |               ^
 ```
+
+The caret is under what you typed, the way a file's diagnostic points at
+its line; a line that stops in the middle of a statement (`let x = 1 +`)
+says so. `nx` commands belong to the terminal: `nx upgrade` typed at the
+prompt is answered as one, not run.
 
 A line that fails to check is dropped; the session continues with what it
 had. Only the new statements are executed, by the compile-time interpreter

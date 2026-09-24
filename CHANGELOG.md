@@ -48,6 +48,23 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   summit with its route still to climb. The rule, the plan and every
   mountain's range in `docs/release-names.md` follow.
 
+### Fixed
+
+- Syntax errors are reported the way type errors are: the message, then
+  `--> file:line:col`, the line and a caret, where they printed
+  `file: error at 33: message` with a byte offset into the file. A mistake
+  the lexer and the parser both report at one position (a string cut by a
+  newline) is reported once rather than three times.
+- The REPL points at what was typed. A syntax error's caret is under the
+  input rather than at an offset in the program the REPL builds around it,
+  an input that stops in the middle of a statement says so (`let x = 1 +`
+  blamed that program's own `return`), and a diagnostic at the prompt shows
+  the line and the caret without a `--> <repl>:14:15` numbered in that
+  program; a file `:load` reads is named with its own line numbers. `nx
+  upgrade` typed at the prompt is answered as a command for the terminal
+  (it was a parse error), and the banner that names a newer release says to
+  leave and run it there.
+
 ## [1.3.0] - 2026-09-24
 
 *Annapurna: North Face* — the face of the first ascent, the original line followed through: the toolchain grown up. `nx fix` makes the checker's own edits, `nx bench` measures `bench` blocks, `nx debug` stops gdb or lldb at `.nx` lines with formatters for the language's values, `--sanitize` brings AddressSanitizer and UBSan to any build, `if comptime` builds only the branch the target picks, the language server answers from the checker when the program checks, and a large program's debug build is a C file per module, compiled again only where it changed. The view rules are errors, trait impls are held to their traits, and the checker is split by responsibility. The seed is regenerated from the final sources.
