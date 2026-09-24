@@ -354,8 +354,9 @@ Using Nexium somewhere? Open an issue or a pull request and it goes here.
 Options: `--mode debug|safe|fast|small`, `--target x86_64-linux-gnu` (any
 target `zig cc` knows), `--cpu baseline|native|<name>` (baseline by default,
 so a binary runs on any machine of its architecture), `--out-dir`,
-`--keep-c`, `--cc`, `--strict` (warnings are errors),
-and for C interop `-I`, `--link`, `--link-path`, `--c-source`.
+`--keep-c`, `--cc`, `--strict` (warnings are errors), `--sanitize
+address,undefined` (the C compiler's sanitizers; `address` needs gcc or
+clang), and for C interop `-I`, `--link`, `--link-path`, `--c-source`.
 
 ## Status
 

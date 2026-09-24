@@ -327,7 +327,8 @@ Options : `--mode debug|safe|fast|small`, `--target x86_64-linux-gnu` (toute
 cible connue de `zig cc`), `--cpu baseline|native|<nom>` (baseline par défaut,
 pour qu'un binaire tourne sur toute machine de son architecture), `--out-dir`,
 `--keep-c`, `--cc`, `--strict` (les avertissements sont des
-erreurs), et pour l'interopérabilité C `-I`, `--link`, `--link-path`,
+erreurs), `--sanitize address,undefined` (les sanitizers du compilateur C ;
+`address` demande gcc ou clang), et pour l'interopérabilité C `-I`, `--link`, `--link-path`,
 `--c-source`.
 
 ## État

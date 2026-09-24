@@ -20,6 +20,15 @@ checks on), `fast` (optimized, some checks proven away), `small` (size
 first). `--target <triple>` cross-compiles; `--cc clang` names a C
 compiler; `--keep-c` leaves the C file in `nx-out/`.
 
+`--sanitize undefined` builds with the C compiler's checks for undefined
+behaviour, and `--sanitize address` (gcc or clang, through `NX_CC`; `zig cc`
+has no runtime for it) with AddressSanitizer; `address,undefined` asks for
+both. In `fast` mode, which drops the overflow and bounds checks it cannot
+prove away, they put those checks back as a report, and they watch what
+the compiler cannot: the C that `extern` calls and `unsafe` blocks reach.
+`nx test --mode fast --sanitize undefined` is how to test a program that
+ships in fast mode.
+
 ## Looking at a program
 
 **`nx effects`** prints the inferred effects of every function (chapter

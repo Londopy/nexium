@@ -444,6 +444,25 @@ fn suite_examples(e: *Env, failures: *mut List(String)) {
     for want in ["struct P: 24 bytes, alignment 8, 14 of padding", "     8     8  b: u64", "reordered by alignment (b, a, c): 16 bytes, 8 fewer", "enum E: 24 bytes, alignment 8", "Pair(u8, u64): 16 bytes of payload"] {
         if lay.stdout[..].find(want) == null { failures.append(format("examples: nx layout lacks `{}`:\n{}", .{want, lay.stdout})) }
     }
+    // --sanitize: fast mode drops the overflow and bounds checks, and the
+    // sanitizer puts them back; a name it does not know, and `address` with
+    // zig cc (no runtime for it), are refused before anything is built
+    let ovf_src = fs.join(e.root[..], "nx-out/cases/sanitize_overflow.nx")
+    fs.write(ovf_src[..], "fn main() {\n    var x: i32 = 2147483600\n    var i: i32 = 0\n    while i < 100 {\n        x += 1\n        i += 1\n    }\n    println(\"{}\", .{x})\n}\n") catch { }
+    let ovf = nx(e, ["run", ovf_src[..], "--mode", "fast", "--sanitize", "undefined"][..])
+    if ovf.code == 0 or ovf.stderr[..].find("signed integer overflow") == null { failures.append(format("examples: --sanitize undefined missed an overflow in fast mode (exit {}):\n{}{}", .{ovf.code, ovf.stdout, ovf.stderr})) }
+    if !e.macos {
+        let oob_src = fs.join(e.root[..], "nx-out/cases/sanitize_bounds.nx")
+        fs.write(oob_src[..], "fn main() {\n    var xs: [4]i32 = [1, 2, 3, 4]\n    var sum: i32 = 0\n    var i: usize = 0\n    while i < 5 {\n        sum += xs[i]\n        i += 1\n    }\n    println(\"{}\", .{sum})\n}\n") catch { }
+        let oob = nx(e, ["run", oob_src[..], "--mode", "fast", "--sanitize", "undefined"][..])
+        if oob.code == 0 or oob.stderr[..].find("out of bounds") == null { failures.append(format("examples: --sanitize undefined missed a fixed array read past its end in fast mode (exit {}):\n{}{}", .{oob.code, oob.stdout, oob.stderr})) }
+    }
+    let san_test = nx(e, ["test", "std/json.nx", "--sanitize", "undefined"][..])
+    if san_test.code != 0 { failures.append(format("examples: nx test --sanitize undefined failed (exit {}):\n{}{}", .{san_test.code, san_test.stdout, san_test.stderr})) }
+    let bogus = nx(e, ["run", "examples/hello.nx", "--sanitize", "thread"][..])
+    if bogus.code != 2 or bogus.stderr[..].find("takes `address` and `undefined`, not `thread`") == null { failures.append(format("examples: --sanitize thread was not refused (exit {}):\n{}", .{bogus.code, bogus.stderr})) }
+    let asan_zig = nx(e, ["run", "examples/hello.nx", "--cc", "zig", "--sanitize", "address"][..])
+    if asan_zig.code != 2 or asan_zig.stderr[..].find("zig cc has no AddressSanitizer runtime") == null { failures.append(format("examples: --sanitize address with zig cc was not refused (exit {}):\n{}", .{asan_zig.code, asan_zig.stderr})) }
     println("examples: {} programs, and nx doctor", .{cases.len})
 }
 

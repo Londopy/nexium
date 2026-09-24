@@ -58,6 +58,18 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   reports without writing. An error with an edit on offer ends with
   "note: `nx fix FILE` can try an edit for N of these". The loader takes
   stand-in texts for any of the program's files (`load_with_texts`).
+- `--sanitize address,undefined` for `nx build`, `run` and `test`: the C
+  compiler's AddressSanitizer and UBSan, with debug information, the first
+  finding stopping the program. In `fast` mode they put back the overflow
+  and bounds checks the compiler dropped. `zig cc` has no AddressSanitizer
+  runtime, so `address` asks for gcc or clang (`NX_CC`) and says so before
+  anything is built. zig's UBSan reports only in a build not optimised for
+  speed (at `-O2` a finding is a bare trap, the program dying without a
+  word), so through zig a sanitized `safe` or `fast` build is compiled at
+  `-Og`, and it checks a fixed array's bounds too (`-fstrict-flex-arrays=3`:
+  the array is the last member of its struct, which C otherwise takes for a
+  flexible one). The CI job `sanitizers` runs every std module's tests with
+  `nx test --sanitize address,undefined`.
 - The playground: the Topo's exercises and every example on the site run in
   the page. The compiler is built as WebAssembly (`site/play_build.sh`: the
   C of the current sources for `wasm32-wasi`, 2.8 MB, under 1 MB

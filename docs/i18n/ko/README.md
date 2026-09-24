@@ -321,7 +321,8 @@ using arena {
 옵션: `--mode debug|safe|fast|small`, `--target x86_64-linux-gnu`(`zig cc`가 아는 모든
 타깃), `--cpu baseline|native|<이름>`(기본은 baseline, 같은 아키텍처의 어느 기계에서도
 바이너리가 돌도록), `--out-dir`, `--keep-c`, `--cc`, `--strict`(경고를
-오류로), C 연동용 `-I`, `--link`,
+오류로), `--sanitize address,undefined`(C 컴파일러의 새니타이저, `address`는
+gcc나 clang이 필요), C 연동용 `-I`, `--link`,
 `--link-path`, `--c-source`.
 
 ## 현황

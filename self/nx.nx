@@ -59,6 +59,9 @@ pub struct Opts {
     /// (the default: plain x86-64, so a binary runs on any 64-bit x86 machine),
     /// "native" (this machine's; not portable), or a name for -march
     cpu: String
+    /// `--sanitize address,undefined`: the C compiler's sanitizers, in a build
+    /// with debug information
+    sanitize: String
     defines: List(String)
     include_dirs: List(String)
     rest: List(String)
@@ -87,6 +90,7 @@ fn usage() {
     eprintln("  --target <triple>  cross-compile", .{})
     eprintln("  --cpu <name>       baseline (default: runs on any machine of the architecture), native, or a CPU name (NX_CPU too)", .{})
     eprintln("  --keep-c           keep the generated C", .{})
+    eprintln("  --sanitize <list>  build with the C compiler's sanitizers: address, undefined (address needs gcc or clang: NX_CC)", .{})
     eprintln("  --watch            run or test again whenever a file of the program changes", .{})
     eprintln("  --strict           warnings are errors (NX_STRICT=1 too; the view rules are errors since 1.3)", .{})
     eprintln("", .{})
@@ -105,7 +109,7 @@ fn parse_opts(args: [][]u8) -> ?Opts {
     }
     var o = Opts{
         .command = String.from(args[1]), .file = String.from(args[2]), .out = String.new(), .out_dir = String.from("nx-out"), .mode = cgen.MODE_DEBUG,
-        .std_dir = String.from("std"), .cc = List(String).new(), .target = String.new(), .keep_c = false, .watch = false, .strict = os.env("NX_STRICT") != null, .cpu = String.from("baseline"),
+        .std_dir = String.from("std"), .cc = List(String).new(), .target = String.new(), .keep_c = false, .watch = false, .strict = os.env("NX_STRICT") != null, .cpu = String.from("baseline"), .sanitize = String.new(),
         .defines = List(String).new(), .include_dirs = List(String).new(), .rest = List(String).new(), .sigs = false, .cc_source = 0,
     }
     if let v = os.env("NX_CPU") { o.cpu = String.from(v) }
@@ -135,6 +139,7 @@ fn parse_opts(args: [][]u8) -> ?Opts {
         if a == "--watch" { o.watch = true; i += 1; continue }
         if a == "--strict" { o.strict = true; i += 1; continue }
         if a == "--cpu" and i + 1 < args.len { o.cpu = String.from(args[i + 1]); i += 2; continue }
+        if a == "--sanitize" and i + 1 < args.len { o.sanitize = String.from(args[i + 1]); i += 2; continue }
         if a == "--sigs" { o.sigs = true; i += 1; continue }
         if a.len > 2 and a[0..2] == "-D" { o.defines.append(String.from(a[2..])); i += 1; continue }
         if a.len > 2 and a[0..2] == "-I" { o.include_dirs.append(String.from(a[2..])); i += 1; continue }
@@ -493,6 +498,22 @@ fn link_info(c: *check.Checker, o: *Opts, c_sources: *mut List(String), libs: *m
     }
 }
 
+/// Whether `--sanitize` names sanitizers this C compiler can build with:
+/// `address` and `undefined`; zig cc ships no AddressSanitizer runtime.
+fn sanitizers_ok(o: *Opts) -> bool {
+    for s in o.sanitize[..].split(",") {
+        if s != "address" and s != "undefined" {
+            eprintln("error: `--sanitize` takes `address` and `undefined`, not `{}`", .{s})
+            return false
+        }
+        if s == "address" and uses_zig(o) {
+            eprintln("error: zig cc has no AddressSanitizer runtime; build with gcc or clang (NX_CC=gcc or NX_CC=clang), or use `--sanitize undefined`", .{})
+            return false
+        }
+    }
+    return true
+}
+
 /// Run the C compiler on the generated file. Zig's shared cache refuses a
 /// concurrent run now and then: that is retried.
 fn compile_c(c: *check.Checker, o: *Opts, c_path: []u8, out: []u8, kind: []u8) -> bool {
@@ -501,11 +522,24 @@ fn compile_c(c: *check.Checker, o: *Opts, c_path: []u8, out: []u8, kind: []u8) -
     argv.append(String.from("-std=gnu11"))
     if o.mode == cgen.MODE_DEBUG { argv.append(String.from("-O0")); if kind != "sections" { argv.append(String.from("-g")) } }
     else if o.mode == cgen.MODE_SMALL { argv.append(String.from("-Os")) }
+    // zig cc reports a sanitizer's finding only below -O1; at -O2 each check
+    // is a bare trap that stops the program without a word
+    else if o.sanitize.len > 0 and uses_zig(o) { argv.append(String.from("-Og")) }
     else { argv.append(String.from("-O2")) }
     // one section per function and datum, for `nx size`
     if kind == "sections" { argv.append(String.from("-ffunction-sections")); argv.append(String.from("-fdata-sections")) }
     argv.append(String.from("-w"))
     argv.append(String.from("-fno-strict-aliasing"))
+    if o.sanitize.len > 0 {
+        argv.append(format("-fsanitize={}", .{o.sanitize}))
+        argv.append(String.from("-fno-sanitize-recover=all"))
+        argv.append(String.from("-fno-omit-frame-pointer"))
+        // a fixed array is the one member of its struct, and a trailing
+        // array counts as a flexible one unless told otherwise: its bounds
+        // went unchecked (zig's clang knows the flag; an old gcc does not)
+        if uses_zig(o) { argv.append(String.from("-fstrict-flex-arrays=3")) }
+        if o.mode != cgen.MODE_DEBUG { argv.append(String.from("-g")) }
+    }
     for d in o.defines { argv.append(format("-D{}", .{d})) }
     var c_sources = List(String).new()
     var libs = List(String).new()
@@ -876,7 +910,7 @@ fn cmd_audit(o: *Opts) -> i32 {
 fn clone_opts(o: *Opts) -> Opts {
     return Opts{
         .command = o.command.clone(), .file = o.file.clone(), .out = o.out.clone(), .out_dir = o.out_dir.clone(), .mode = o.mode,
-        .std_dir = o.std_dir.clone(), .cc = o.cc.clone(), .target = o.target.clone(), .keep_c = o.keep_c, .watch = o.watch, .strict = o.strict, .cpu = o.cpu.clone(),
+        .std_dir = o.std_dir.clone(), .cc = o.cc.clone(), .target = o.target.clone(), .keep_c = o.keep_c, .watch = o.watch, .strict = o.strict, .cpu = o.cpu.clone(), .sanitize = o.sanitize.clone(),
         .defines = o.defines.clone(), .include_dirs = o.include_dirs.clone(), .rest = o.rest.clone(), .sigs = o.sigs, .cc_source = o.cc_source,
     }
 }
@@ -1939,6 +1973,7 @@ fn main() -> u8 {
         usage()
         return 2
     }
+    if o.sanitize.len > 0 and !sanitizers_ok(&o) { return 2 }
     // the commands that do work get the daily word on a newer release; the
     // ones that are about the release, the editor's server and the one-liners do not
     let quiet = o.command == "upgrade" or o.command == "doctor" or o.command == "lsp" or o.command == "repl" or o.command == "play" or o.command == "-e" or o.command == "-p" or o.command == "version" or o.command == "--version" or o.command == "-V" or o.command == "topo" or o.command == "completions" or o.command == "man"

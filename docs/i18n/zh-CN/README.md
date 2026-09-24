@@ -317,7 +317,8 @@ using arena {
 选项：`--mode debug|safe|fast|small`、`--target x86_64-linux-gnu`（`zig cc` 认识的
 任何目标）、`--cpu baseline|native|<名称>`（默认 baseline，这样二进制能在同架构的
 任何机器上运行）、`--out-dir`、`--keep-c`、`--cc`、`--strict`（警告即
-错误），以及用于 C 互操作的 `-I`、`--link`、
+错误）、`--sanitize address,undefined`（C 编译器的 sanitizer；`address`
+需要 gcc 或 clang），以及用于 C 互操作的 `-I`、`--link`、
 `--link-path`、`--c-source`。
 
 ## 现状

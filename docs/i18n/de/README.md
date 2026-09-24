@@ -328,7 +328,8 @@ Optionen: `--mode debug|safe|fast|small`, `--target x86_64-linux-gnu` (jedes
 Ziel, das `zig cc` kennt), `--cpu baseline|native|<name>` (standardmäßig
 baseline, damit ein Binary auf jeder Maschine seiner Architektur läuft),
 `--out-dir`, `--keep-c`, `--cc`, `--strict` (Warnungen sind
-Fehler), und für die C-Interoperabilität `-I`, `--link`,
+Fehler), `--sanitize address,undefined` (die Sanitizer des C-Compilers;
+`address` braucht gcc oder clang), und für die C-Interoperabilität `-I`, `--link`,
 `--link-path`, `--c-source`.
 
 ## Stand

@@ -212,6 +212,18 @@ jobs:
             elif [ "$code" != "$want" ]; then echo "== $f exit $code (want $want)"; echo "$out" | tail -3; bad=1; fi
           done
           exit $bad
+      - name: nx test --sanitize runs the standard library's tests clean
+        run: |
+          set +e
+          export ASAN_OPTIONS=detect_leaks=0
+          export NX_CC=gcc
+          bad=0
+          for f in std/*.nx; do
+            out=$(./nx-out-san-nx0 test "$f" --sanitize address,undefined --out-dir nx-out/santest 2>&1); code=$?
+            if echo "$out" | grep -q "Sanitizer\|runtime error"; then echo "== $f"; echo "$out" | head -20; bad=1
+            elif [ "$code" != 0 ]; then echo "== $f exit $code"; echo "$out" | tail -5; bad=1; fi
+          done
+          exit $bad
 
   editors:
     name: editor support

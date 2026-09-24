@@ -322,7 +322,8 @@ using arena {
 オプション：`--mode debug|safe|fast|small`、`--target x86_64-linux-gnu`
 （`zig cc` が知るあらゆるターゲット）、`--cpu baseline|native|<名前>`（既定は
 baseline。同じアーキテクチャのどのマシンでも動くバイナリになります）、`--out-dir`、
-`--keep-c`、`--cc`、`--strict`（警告をエラーに）、C 連携用に `-I`、
+`--keep-c`、`--cc`、`--strict`（警告をエラーに）、`--sanitize
+address,undefined`（C コンパイラのサニタイザ。`address` には gcc か clang が必要）、C 連携用に `-I`、
 `--link`、`--link-path`、`--c-source`。
 
 ## 現状

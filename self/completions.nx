@@ -56,6 +56,7 @@ pub fn options() -> List(Option) {
     out.append(Option{ .name = "--cc", .value = "command", .about = "the C compiler (zig cc by default)" })
     out.append(Option{ .name = "--std", .value = "dir", .about = "standard library sources instead of the embedded copies" })
     out.append(Option{ .name = "--keep-c", .value = "", .about = "keep the generated C" })
+    out.append(Option{ .name = "--sanitize", .value = "list", .about = "the C compiler's sanitizers: address, undefined" })
     out.append(Option{ .name = "--watch", .value = "", .about = "run or test again whenever a file of the program changes" })
     out.append(Option{ .name = "--strict", .value = "", .about = "warnings are errors" })
     out.append(Option{ .name = "--check", .value = "", .about = "fmt and fix: report what would change; audit and upgrade: only ask" })

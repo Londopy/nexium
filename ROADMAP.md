@@ -538,7 +538,10 @@ luck.
 - `nx bench`: `bench "name" { }` blocks with warmup, iterations and
   medians, in the same file as tests.
 - `nx build --sanitize address,undefined` through the C compiler, and
-  `nx test --sanitize` in this repository's CI.
+  `nx test --sanitize` in this repository's CI. (Done: `build`, `run` and
+  `test` take it; `address` needs gcc or clang, and through zig a
+  sanitized optimised build is compiled at `-Og`, where zig's UBSan
+  reports rather than traps. CI runs every std module's tests under both.)
 - Conditional compilation: `if comptime @target().os == "windows" { }` in
   std replaces the runtime's `#ifdef`s one by one.
 
