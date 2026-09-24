@@ -26,6 +26,10 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 - `std.set`: `Set(T)` over `Map(T, bool)`: `add` (true when new),
   `contains`, `remove`, `items`, and `union`, `intersection`, `difference`,
   `is_subset`.
+- `std.hash`: `fnv1a64`, `siphash(key, data)` (SipHash-2-4, for tables
+  keyed by untrusted input) and SHA-256 (`sha256`, `sha256_hex`, and
+  `Sha256` for data that arrives in pieces), each checked against its
+  reference vectors.
 - `std.deque`: `Deque(T)`, both ends in O(1) amortized (two Lists back to
   back): `push_front`, `push_back`, `pop_front`, `pop_back`, `get`, `first`,
   `last`.

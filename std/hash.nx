@@ -1,0 +1,280 @@
+// std.hash: hash functions, written in Nexium: FNV-1a (64-bit), SipHash-2-4
+// (keyed: a table whose keys an adversary picks), and SHA-256 (checksums and
+// content addresses).
+//
+// `import std.hash` then:
+//
+//     let h = hash.fnv1a64(name)                    // fast, not keyed
+//     let k = hash.siphash(key16, name)             // keyed with 16 bytes
+//     let sum = hash.sha256_hex(file_text)          // 64 hex digits
+//
+//     var s = hash.Sha256.new()                     // or piece by piece
+//     s.update(part1)
+//     s.update(part2)
+//     let digest = s.finish()                       // 32 bytes
+//
+// `std.bytes` keeps the 32-bit `fnv1a` and `crc32`.
+
+import std.bytes
+
+/// FNV-1a over 64 bits.
+pub fn fnv1a64(data: []u8) -> u64 {
+    var h: u64 = 14695981039346656037
+    for b in data { h = (h ^ (b as u64)) *% 1099511628211 }
+    return h
+}
+
+fn rotl64(x: u64, n: u64) -> u64 {
+    return (x << n) | (x >> (64 - n))
+}
+
+fn le64(data: []u8, at: usize) -> u64 {
+    var v: u64 = 0
+    var i: usize = 8
+    while i > 0 {
+        i -= 1
+        v = (v << 8) | (data[at + i] as u64)
+    }
+    return v
+}
+
+/// SipHash-2-4 of `data` under a 16-byte key (panics on another length):
+/// what a hash table keyed by untrusted input should use.
+pub fn siphash(key: []u8, data: []u8) -> u64 {
+    if key.len != 16 { panic("siphash takes a 16-byte key") }
+    let k0 = le64(key, 0)
+    let k1 = le64(key, 8)
+    var v0: u64 = k0 ^ 0x736f6d6570736575
+    var v1: u64 = k1 ^ 0x646f72616e646f6d
+    var v2: u64 = k0 ^ 0x6c7967656e657261
+    var v3: u64 = k1 ^ 0x7465646279746573
+    let full = data.len - data.len % 8
+    var at: usize = 0
+    while at < full {
+        let m = le64(data, at)
+        v3 ^= m
+        for r in 0..2 {
+            v0 = v0 +% v1
+            v1 = rotl64(v1, 13) ^ v0
+            v0 = rotl64(v0, 32)
+            v2 = v2 +% v3
+            v3 = rotl64(v3, 16) ^ v2
+            v0 = v0 +% v3
+            v3 = rotl64(v3, 21) ^ v0
+            v2 = v2 +% v1
+            v1 = rotl64(v1, 17) ^ v2
+            v2 = rotl64(v2, 32)
+        }
+        v0 ^= m
+        at += 8
+    }
+    // the last block: the rest of the bytes, and the length's low byte on top
+    var last: u64 = ((data.len & 255) as u64) << 56
+    var i = data.len
+    while i > full {
+        i -= 1
+        last |= (data[i] as u64) << (((i - full) * 8) as u64)
+    }
+    v3 ^= last
+    for r in 0..2 {
+        v0 = v0 +% v1
+        v1 = rotl64(v1, 13) ^ v0
+        v0 = rotl64(v0, 32)
+        v2 = v2 +% v3
+        v3 = rotl64(v3, 16) ^ v2
+        v0 = v0 +% v3
+        v3 = rotl64(v3, 21) ^ v0
+        v2 = v2 +% v1
+        v1 = rotl64(v1, 17) ^ v2
+        v2 = rotl64(v2, 32)
+    }
+    v0 ^= last
+    v2 ^= 255
+    for r in 0..4 {
+        v0 = v0 +% v1
+        v1 = rotl64(v1, 13) ^ v0
+        v0 = rotl64(v0, 32)
+        v2 = v2 +% v3
+        v3 = rotl64(v3, 16) ^ v2
+        v0 = v0 +% v3
+        v3 = rotl64(v3, 21) ^ v0
+        v2 = v2 +% v1
+        v1 = rotl64(v1, 17) ^ v2
+        v2 = rotl64(v2, 32)
+    }
+    return v0 ^ v1 ^ v2 ^ v3
+}
+
+// ------------------------------------------------------------------ SHA-256
+
+const K256: [64]u32 = [
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+]
+
+fn rotr32(x: u32, n: u32) -> u32 {
+    return (x >> n) | (x << (32 - n))
+}
+
+/// SHA-256 piece by piece: `update` as the bytes arrive, `finish` once.
+pub struct Sha256 {
+    h: [8]u32
+    // the bytes of a block not yet full
+    pending: String
+    total: u64
+}
+
+impl Sha256 {
+    pub fn new() -> Sha256 {
+        return Sha256{ .h = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19], .pending = String.new(), .total = 0 }
+    }
+
+    pub fn update(self: *mut Self, data: []u8) {
+        self.total += data.len as u64
+        var at: usize = 0
+        // a block begun by an earlier update
+        if self.pending.len > 0 {
+            while self.pending.len < 64 and at < data.len {
+                self.pending.push_byte(data[at])
+                at += 1
+            }
+            if self.pending.len < 64 { return }
+            let block = self.pending.clone()
+            self.compress(block[..])
+            self.pending.clear()
+        }
+        while at + 64 <= data.len {
+            self.compress(data[at..at + 64])
+            at += 64
+        }
+        while at < data.len {
+            self.pending.push_byte(data[at])
+            at += 1
+        }
+    }
+
+    /// The 32-byte digest of everything given to `update`.
+    pub fn finish(self: *mut Self) -> String {
+        let bits = self.total *% 8
+        var tail = self.pending.clone()
+        tail.push_byte(0x80)
+        while tail.len % 64 != 56 { tail.push_byte(0) }
+        var i: u64 = 8
+        while i > 0 {
+            i -= 1
+            tail.push_byte(((bits >> (i * 8)) & 255) as u8)
+        }
+        var at: usize = 0
+        while at < tail.len {
+            self.compress(tail[at..at + 64])
+            at += 64
+        }
+        var out = String.with_capacity(32)
+        for w in self.h {
+            out.push_byte(((w >> 24) & 255) as u8)
+            out.push_byte(((w >> 16) & 255) as u8)
+            out.push_byte(((w >> 8) & 255) as u8)
+            out.push_byte((w & 255) as u8)
+        }
+        return out
+    }
+
+    fn compress(self: *mut Self, block: []u8) {
+        var w: [64]u32 = undefined
+        for i in 0..16 {
+            w[i] = ((block[i * 4] as u32) << 24) | ((block[i * 4 + 1] as u32) << 16) | ((block[i * 4 + 2] as u32) << 8) | (block[i * 4 + 3] as u32)
+        }
+        for i in 16..64 {
+            let s0 = rotr32(w[i - 15], 7) ^ rotr32(w[i - 15], 18) ^ (w[i - 15] >> 3)
+            let s1 = rotr32(w[i - 2], 17) ^ rotr32(w[i - 2], 19) ^ (w[i - 2] >> 10)
+            w[i] = w[i - 16] +% s0 +% w[i - 7] +% s1
+        }
+        var a = self.h[0]
+        var b = self.h[1]
+        var c = self.h[2]
+        var d = self.h[3]
+        var e = self.h[4]
+        var f = self.h[5]
+        var g = self.h[6]
+        var h = self.h[7]
+        for i in 0..64 {
+            let big1 = rotr32(e, 6) ^ rotr32(e, 11) ^ rotr32(e, 25)
+            let choose = (e & f) ^ (~e & g)
+            let t1 = h +% big1 +% choose +% K256[i] +% w[i]
+            let big0 = rotr32(a, 2) ^ rotr32(a, 13) ^ rotr32(a, 22)
+            let majority = (a & b) ^ (a & c) ^ (b & c)
+            let t2 = big0 +% majority
+            h = g
+            g = f
+            f = e
+            e = d +% t1
+            d = c
+            c = b
+            b = a
+            a = t1 +% t2
+        }
+        self.h[0] = self.h[0] +% a
+        self.h[1] = self.h[1] +% b
+        self.h[2] = self.h[2] +% c
+        self.h[3] = self.h[3] +% d
+        self.h[4] = self.h[4] +% e
+        self.h[5] = self.h[5] +% f
+        self.h[6] = self.h[6] +% g
+        self.h[7] = self.h[7] +% h
+    }
+}
+
+/// The SHA-256 digest of `data`: 32 bytes.
+pub fn sha256(data: []u8) -> String {
+    var s = Sha256.new()
+    s.update(data)
+    return s.finish()
+}
+
+/// The SHA-256 digest of `data` as 64 lower-case hex digits.
+pub fn sha256_hex(data: []u8) -> String {
+    let d = sha256(data)
+    return bytes.hex(d[..])
+}
+
+// ------------------------------------------------------------------ tests
+
+test "FNV-1a over 64 bits" {
+    expect(fnv1a64("") == 14695981039346656037)
+    expect(fnv1a64("a") == 0xaf63dc4c8601ec8c)
+    expect(fnv1a64("foobar") == 0x85944171f73967e8)
+}
+
+test "SipHash-2-4, the reference vectors" {
+    var key = String.new()
+    for i in 0..16 { key.push_byte(i as u8) }
+    var msg = String.new()
+    expect(siphash(key[..], msg[..]) == 0x726fdb47dd0e0e31)
+    for i in 0..15 { msg.push_byte(i as u8) }
+    expect(siphash(key[..], msg[..]) == 0xa129ca6149be45e5)
+}
+
+test "SHA-256, the FIPS vectors" {
+    expect(sha256_hex("") == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+    expect(sha256_hex("abc") == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+    expect(sha256_hex("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq") == "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1")
+}
+
+test "SHA-256 in pieces is SHA-256 at once" {
+    var whole = String.new()
+    for i in 0..1000 { whole.push_byte((i % 251) as u8) }
+    var s = Sha256.new()
+    s.update(whole[0..3])
+    s.update(whole[3..70])
+    s.update(whole[70..64 * 9])
+    s.update(whole[64 * 9..])
+    let pieces = s.finish()
+    expect(pieces == sha256(whole[..]))
+    expect(pieces.len == 32)
+}

@@ -16,6 +16,7 @@ by `scripts/std_docs.py` from the doc comments.
 | [`std.bytes`](#stdbytes) | encodings and byte-level utilities, written in Nexium. |
 | [`std.deque`](#stddeque) | a double-ended queue, written in Nexium: two Lists back to |
 | [`std.fs`](#stdfs) | files, directories and paths, written in Nexium. |
+| [`std.hash`](#stdhash) | hash functions, written in Nexium: FNV-1a (64-bit), SipHash-2-4 |
 | [`std.heap`](#stdheap) | a priority queue, written in Nexium: a binary heap over a List, |
 | [`std.http`](#stdhttp) | an HTTP/1.1 client and a small server, written in Nexium over |
 | [`std.json`](#stdjson) | a JSON parser and serializer, written in Nexium. |
@@ -124,6 +125,22 @@ std.fs: files, directories and paths, written in Nexium. `import std.fs` then: i
 | `stem(path: []u8) -> []u8` | The base name without its extension: `a/b.tar.gz` -> `b.tar`. |
 | `with_extension(path: []u8, ext: []u8) -> String` | The path with its extension replaced (or added): `a/b.txt`, `md` -> `a/b.md`. |
 | `normalize(path: []u8) -> String` | Collapse `.` and `..` components and repeated separators: `a/./b/../c//d` -> `a/c/d`. A leading `..` is kept. |
+
+## std.hash
+
+std.hash: hash functions, written in Nexium: FNV-1a (64-bit), SipHash-2-4 (keyed: a table whose keys an adversary picks), and SHA-256 (checksums and content addresses). `import std.hash` then: let h = hash.fnv1a64(name)                    // fast, not keyed let k = hash.siphash(key16, name)             // keyed with 16 bytes let sum = hash.sha256_hex(file_text)          // 64 hex digits var s = hash.Sha256.new()                     // or piece by piece s.update(part1) s.update(part2) let digest = s.finish()                       // 32 bytes `std.bytes` keeps the 32-bit `fnv1a` and `crc32`.
+
+Types: `Sha256`
+
+| function | what it does |
+| --- | --- |
+| `fnv1a64(data: []u8) -> u64` | FNV-1a over 64 bits. |
+| `siphash(key: []u8, data: []u8) -> u64` | SipHash-2-4 of `data` under a 16-byte key (panics on another length): what a hash table keyed by untrusted input should use. |
+| `(method) new() -> Sha256` |  |
+| `(method) update(self: *mut Self, data: []u8)` |  |
+| `(method) finish(self: *mut Self) -> String` | The 32-byte digest of everything given to `update`. |
+| `sha256(data: []u8) -> String` | The SHA-256 digest of `data`: 32 bytes. |
+| `sha256_hex(data: []u8) -> String` | The SHA-256 digest of `data` as 64 lower-case hex digits. |
 
 ## std.heap
 

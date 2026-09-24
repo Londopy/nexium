@@ -581,6 +581,9 @@ own sources, and the language server answers from the checker.
   AppData directories), `std.csv`, `std.toml` (the manifest parser leaves
   Rust), `std.base64`, `std.hash` (FNV, SipHash for `Map`, SHA-256 for
   checksums), `std.uuid`, `std.log` with levels and structured fields.
+  (`std.hash` done: FNV-1a 64, SipHash-2-4, SHA-256; `Map` itself moves to
+  SipHash once the runtime has a secure random key, which `std.uuid` needs
+  too.)
 - `std.http` client with redirects, timeouts and streaming bodies; TLS
   through the platform (SChannel, Security.framework, OpenSSL where the
   system has it) so `https` works without vendoring a library.
