@@ -22,5 +22,5 @@ args = ["lsp"]
 
 [[grammar]]
 name = "nexium"
-# the commit of the 1.0.0 release; any later commit of main works too
-source = { git = "https://github.com/Londopy/nexium", rev = "21c3a2c07be28c25fc833e97085633ac5d804742", subpath = "editors/tree-sitter-nexium" }
+# a commit with the 1.3.0 grammar (`bench` blocks); any later commit of main works too
+source = { git = "https://github.com/Londopy/nexium", rev = "5ed20dc9329be2274e604dcebf3b7e678bd1b2c9", subpath = "editors/tree-sitter-nexium" }

@@ -84,7 +84,7 @@ Open a new terminal and run:
 
 ```bash
 $ nx doctor
-nx 1.2.1 (Annapurna: de Noyelle)
+nx 1.3.0 (Annapurna: North Face)
 executable:  /home/you/.nexium/bin/nx
 C compiler:  zig cc  (zig on PATH)
              0.14.1

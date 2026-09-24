@@ -97,6 +97,7 @@ ordering; the name carries the character.
 | 1.1.0 | Annapurna: Dutch Rib | the safer line that became the everyday route: the ergonomics the compiler wanted (`?.`, tuple destructuring, `derive(Clone)`, iterators, slice patterns, guard facts, named format arguments, the intrinsics) |
 | 1.2.0 | Annapurna: South Face | the great wall climbed by siege: memory safety without a garbage collector, the view rules |
 | 1.2.1 | Annapurna: de Noyelle | patch (roster 9): the liaison officer, permits and diplomacy; the roads in: every registry and package format, completions and a manual page, provenance on every asset, the Topo as a course |
+| 1.3.0 | Annapurna: North Face | the face of the first ascent, the original line followed through: the toolchain grown up; `nx fix`, `nx bench`, `nx debug` and `#line`, `--sanitize`, `if comptime`, the language server from the checker, incremental builds |
 
 ## The plan
 
@@ -106,7 +107,6 @@ fits and the pencilled one goes back in the pool.
 
 | version | name | why |
 | --- | --- | --- |
-| 1.3.0 | Annapurna: North Face | the original line completed: the toolchain grown up, incremental builds, the semantic language server |
 | 1.4.0 | Annapurna: the Sanctuary | the basin that holds everything and supplies every route: a standard library people stop supplementing |
 | 1.5.0 | Annapurna: East Ridge | the long traverse over several summits: one source, many platforms |
 | 1.6.0 | Annapurna: North-West Face | fast and light, no fixed ropes: the runtime release builds deserve |

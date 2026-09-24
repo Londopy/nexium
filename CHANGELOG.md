@@ -10,6 +10,10 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-09-24
+
+*Annapurna: North Face* — the face of the first ascent, the original line followed through: the toolchain grown up. `nx fix` makes the checker's own edits, `nx bench` measures `bench` blocks, `nx debug` stops gdb or lldb at `.nx` lines with formatters for the language's values, `--sanitize` brings AddressSanitizer and UBSan to any build, `if comptime` builds only the branch the target picks, the language server answers from the checker when the program checks, and a large program's debug build is a C file per module, compiled again only where it changed. The view rules are errors, trait impls are held to their traits, and the checker is split by responsibility. The seed is regenerated from the final sources.
+
 ### Changed
 
 - A program that uses `std.thread` or `for parallel` builds for
@@ -1654,7 +1658,8 @@ First public release.
   Korean, French, and German; the language reference and architecture tour in
   Spanish, Chinese, and Japanese.
 
-[Unreleased]: https://github.com/Londopy/nexium/compare/v1.2.1...HEAD
+[Unreleased]: https://github.com/Londopy/nexium/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/Londopy/nexium/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/Londopy/nexium/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/Londopy/nexium/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/Londopy/nexium/compare/v1.0.3...v1.1.0

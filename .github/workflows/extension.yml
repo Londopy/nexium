@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "The release tag whose extension to publish (v1.2.1)"
+        description: "The release tag whose extension to publish (v1.3.0)"
         required: true
         type: string
 

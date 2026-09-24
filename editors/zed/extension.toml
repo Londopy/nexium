@@ -8,8 +8,8 @@ repository = "https://github.com/Londopy/nexium"
 
 [grammars.nexium]
 repository = "https://github.com/Londopy/nexium"
-# the commit of the 1.0.0 release; bump when the grammar changes
-rev = "21c3a2c07be28c25fc833e97085633ac5d804742"
+# a commit with the 1.3.0 grammar (`bench` blocks); bump when the grammar changes
+rev = "5ed20dc9329be2274e604dcebf3b7e678bd1b2c9"
 path = "editors/tree-sitter-nexium"
 
 [language_servers.nexium]

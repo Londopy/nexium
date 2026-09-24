@@ -513,6 +513,12 @@ luck.
 
 ### 1.3: the toolchain grown up
 
+Status: shipped as 1.3.0 on 2026-09-24. Every item below is in; three are
+narrower than written, and their notes say how: `nx fix` makes only the
+edits that keep what a program does (decision 113), std's platform code
+leaves the runtime's `#ifdef`s with 1.5, and the rebuild of "well under a
+second" everywhere waits for checking by module.
+
 - First, `self/check.nx` split by responsibility (declarations, types,
   ownership and moves, effects, patterns, generics, the compile-time
   interpreter, diagnostics), even while every module still compiles into
@@ -800,7 +806,7 @@ changes the language.
 
 **Answers from ownership and layout.**
 
-- `nx layout Type` (1.3): field offsets, sizes, padding bytes and the
+- `nx layout Type` (shipped in 1.0.3): field offsets, sizes, padding bytes and the
   reordering that removes them, for any struct; `layout(c)` structs shown
   as the C compiler will see them.
 - The ownership trace (1.3): `nx run --trace own` prints every move,
@@ -836,9 +842,10 @@ changes the language.
   is a program the REPL recompiles), `:save f.nx` writes it as a script
   with the outputs as comments, `:load f.nx` resumes it, `:effects expr`
   prints the effects an expression carries.
-- Watch mode (1.3): `nx test --watch` reruns on save only the tests whose
-  dependencies changed, from the module graph the incremental build keeps;
-  `nx run --watch` for programs.
+- Watch mode: `nx test --watch` and `nx run --watch` rerun on save
+  (shipped in 1.0.3, polling the program's files); rerunning only the tests
+  whose dependencies changed, from the module graph the split build keeps,
+  is still to come.
 - Snapshot tests (1.4): `expect_snapshot(value)` in `std.testing` writes
   and compares `.snap` files, the mechanism this repository uses for its
   own examples, offered to every project.
