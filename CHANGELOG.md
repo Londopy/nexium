@@ -10,6 +10,26 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ## [Unreleased]
 
+### Added
+
+- `xs.swap(i, j)` on a mutable slice (and a `List`): the two elements
+  exchanged, any element type, a panic on an index out of bounds. It is what
+  the new collections move owned values with.
+- `std.sort`: `by(T, xs, less)` (a heapsort: in place, O(n log n), not
+  stable), `stable_by(T, xs, less)` and `by_key(T, K, xs, key)` (a merge sort
+  of the positions, then each element moved into place along the
+  permutation's cycles: no element copied, any type), `is_sorted`,
+  `is_sorted_by`, and on ascending slices `lower_bound`, `upper_bound` and
+  `binary_search`.
+- `std.heap`: `Heap(T)`, a priority queue by a comparison
+  (`heap.by(T, less)`): `push`, `pop` (the least first), `peek`, `len`.
+- `std.set`: `Set(T)` over `Map(T, bool)`: `add` (true when new),
+  `contains`, `remove`, `items`, and `union`, `intersection`, `difference`,
+  `is_subset`.
+- `std.deque`: `Deque(T)`, both ends in O(1) amortized (two Lists back to
+  back): `push_front`, `push_back`, `pop_front`, `pop_back`, `get`, `first`,
+  `last`.
+
 ## [1.3.0] - 2026-09-24
 
 *Annapurna: North Face* — the face of the first ascent, the original line followed through: the toolchain grown up. `nx fix` makes the checker's own edits, `nx bench` measures `bench` blocks, `nx debug` stops gdb or lldb at `.nx` lines with formatters for the language's values, `--sanitize` brings AddressSanitizer and UBSan to any build, `if comptime` builds only the branch the target picks, the language server answers from the checker when the program checks, and a large program's debug build is a C file per module, compiled again only where it changed. The view rules are errors, trait impls are held to their traits, and the checker is split by responsibility. The seed is regenerated from the final sources.

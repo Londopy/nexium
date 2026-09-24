@@ -1,0 +1,126 @@
+// std.heap: a priority queue, written in Nexium: a binary heap over a List,
+// ordered by a comparison of your own.
+//
+// `import std.heap` then:
+//
+//     var q = heap.by(Job, |a: *Job, b: *Job| -> bool { return a.due < b.due })
+//     q.push(job)
+//     while true {
+//         let next = q.pop() orelse break       // the least by the comparison first
+//         run(next)
+//     }
+//
+// `push` and `pop` are O(log n), `peek` O(1). A heap that pops the greatest
+// first is one whose comparison says `a > b`.
+
+/// A priority queue: `pop` gives the least element by `less` still in it.
+pub struct Heap(T){
+    items: List(T)
+    less: fn(*T, *T) -> bool
+}
+
+/// An empty heap ordered by `less`.
+pub fn by(comptime T: type, less: fn(*T, *T) -> bool) -> Heap(T) {
+    return Heap(T){ .items = List(T).new(), .less = less }
+}
+
+impl(T) Heap(T) {
+    /// Adds `x`.
+    pub fn push(self: *mut Self, own x: T) {
+        let less = self.less
+        self.items.append(x)
+        var i = self.items.len - 1
+        while i > 0 {
+            let parent = (i - 1) / 2
+            if !less(&self.items[i], &self.items[parent]) { break }
+            self.items.swap(i, parent)
+            i = parent
+        }
+    }
+
+    /// Takes out the least element, or null when the heap is empty.
+    pub fn pop(self: *mut Self) -> ?T {
+        let n = self.items.len
+        if n == 0 { return null }
+        self.items.swap(0, n - 1)
+        let top = self.items.pop()
+        let less = self.less
+        let end = n - 1
+        var root: usize = 0
+        while true {
+            var child = 2 * root + 1
+            if child >= end { break }
+            if child + 1 < end and less(&self.items[child + 1], &self.items[child]) { child += 1 }
+            if !less(&self.items[child], &self.items[root]) { break }
+            self.items.swap(root, child)
+            root = child
+        }
+        return top
+    }
+
+    /// The least element, left in place; null when the heap is empty.
+    pub fn peek(self: *Self) -> ?*T {
+        if self.items.len == 0 { return null }
+        return &self.items[0]
+    }
+
+    pub fn len(self: *Self) -> usize {
+        return self.items.len
+    }
+
+    pub fn is_empty(self: *Self) -> bool {
+        return self.items.len == 0
+    }
+
+    pub fn clear(self: *mut Self) {
+        self.items.clear()
+    }
+}
+
+// ------------------------------------------------------------------ tests
+
+struct Job {
+    name: String
+    due: i64
+}
+
+fn sooner(a: *Job, b: *Job) -> bool {
+    return a.due < b.due
+}
+
+fn larger(a: *i64, b: *i64) -> bool {
+    return a.* > b.*
+}
+
+fn job(name: []u8, due: i64) -> Job {
+    return Job{ .name = String.from(name), .due = due }
+}
+
+test "pop gives the least first, owned values and all" {
+    var q = by(Job, sooner)
+    q.push(job("c", 30))
+    q.push(job("a", 10))
+    q.push(job("d", 40))
+    q.push(job("b", 20))
+    expect(q.len() == 4)
+    if let p = q.peek() { expect(p.name == "a") }
+    var order = String.new()
+    while true {
+        let next = q.pop() orelse break
+        order.append(next.name[..])
+    }
+    expect(order == "abcd")
+    expect(q.is_empty())
+    expect(q.pop() == null)
+}
+
+test "the greatest first, with the comparison turned around" {
+    var q = by(i64, larger)
+    for x in [5, 1, 9, 3, 7, 9] { q.push(x) }
+    var out = List(i64).new()
+    while true {
+        let x = q.pop() orelse break
+        out.append(x)
+    }
+    expect(out.len == 6 and out[0] == 9 and out[1] == 9 and out[2] == 7 and out[5] == 1)
+}

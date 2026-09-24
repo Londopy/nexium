@@ -1471,6 +1471,17 @@ impl Checker {
             self.tir.nodes[b].kids.append(x)
             return b
         }
+        if method == "swap" {
+            if !self.args_n(args, 2, "swap", start) { return self.error_expr(start, end) }
+            if !mutable { self.fail_here(start, "`swap` needs a mutable slice (`[]mut T`)") }
+            let i = self.arg(args[0], u, "index")
+            let j = self.arg(args[1], u, "index")
+            self.add_effect(EFF_PANICS, start, "`swap` panics on an index out of bounds")
+            let b = self.bnode("SliceSwap", recv, v, e, start, end)
+            self.tir.nodes[b].kids.append(i)
+            self.tir.nodes[b].kids.append(j)
+            return b
+        }
         if method == "reverse" or method == "sort" {
             if !self.args_n(args, 0, method, start) { return self.error_expr(start, end) }
             if !mutable { self.fail_here(start, format("`{}` needs a mutable slice (`[]mut T`)", .{method})[..]) }

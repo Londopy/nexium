@@ -574,6 +574,9 @@ own sources, and the language server answers from the checker.
 
 - Collections: `Set(T)`, `Deque(T)`, `std.sort` with comparators and
   stable sort, `std.heap` (priority queue), binary search on sorted slices.
+  (Done: `std.set`, `std.deque`, `std.sort` with `lower_bound`,
+  `upper_bound` and `binary_search`, `std.heap`, written in Nexium over the
+  slice's new `swap`.)
 - `std.path` (split off from `std.fs`), `std.env` (config files, XDG and
   AppData directories), `std.csv`, `std.toml` (the manifest parser leaves
   Rust), `std.base64`, `std.hash` (FNV, SipHash for `Map`, SHA-256 for

@@ -14,7 +14,9 @@ by `scripts/std_docs.py` from the doc comments.
 | --- | --- |
 | [`std.args`](#stdargs) | command-line argument parsing, written in Nexium. |
 | [`std.bytes`](#stdbytes) | encodings and byte-level utilities, written in Nexium. |
+| [`std.deque`](#stddeque) | a double-ended queue, written in Nexium: two Lists back to |
 | [`std.fs`](#stdfs) | files, directories and paths, written in Nexium. |
+| [`std.heap`](#stdheap) | a priority queue, written in Nexium: a binary heap over a List, |
 | [`std.http`](#stdhttp) | an HTTP/1.1 client and a small server, written in Nexium over |
 | [`std.json`](#stdjson) | a JSON parser and serializer, written in Nexium. |
 | [`std.lists`](#stdlists) | generic helpers over slices and Lists, written in Nexium. |
@@ -22,6 +24,8 @@ by `scripts/std_docs.py` from the doc comments.
 | [`std.num`](#stdnum) | integer utilities, written in Nexium. |
 | [`std.process`](#stdprocess) | run programs and capture what they print, written in Nexium |
 | [`std.regex`](#stdregex) | regular expressions without backtracking, written in Nexium. |
+| [`std.set`](#stdset) | a set of values, written in Nexium over `Map(T, bool)`: its |
+| [`std.sort`](#stdsort) | sorting by a comparison of your own, stable sorting, and |
 | [`std.stream`](#stdstream) | buffered readers and writers over files and the standard |
 | [`std.strings`](#stdstrings) | text utilities on `[]u8` and `String`, written in Nexium. |
 | [`std.testing`](#stdtesting) | conveniences for `test` blocks, written in Nexium. |
@@ -66,6 +70,26 @@ std.bytes: encodings and byte-level utilities, written in Nexium. `import std.by
 | `write_u32_le(out: *mut String, v: u32)` | Append a little-endian 32-bit value. |
 | `first_difference(a: []u8, b: []u8) -> ?usize` | Bytes that differ, for a compact diff of two buffers. |
 
+## std.deque
+
+std.deque: a double-ended queue, written in Nexium: two Lists back to back, the first kept reversed, so both ends push and pop in O(1) amortized (when one side runs out, half of the other moves over). `import std.deque` then: var q = deque.of(Job) q.push_back(job) q.push_front(urgent) let next = q.pop_front() orelse return if let last = q.last() { ... }                 // a view, left in place
+
+Types: `Deque(T){`
+
+| function | what it does |
+| --- | --- |
+| `of(comptime T: type) -> Deque(T)` | An empty deque. |
+| `(method) push_back(self: *mut Self, own x: T)` |  |
+| `(method) push_front(self: *mut Self, own x: T)` |  |
+| `(method) pop_front(self: *mut Self) -> ?T` | Takes out the first element, or null when empty. |
+| `(method) pop_back(self: *mut Self) -> ?T` | Takes out the last element, or null when empty. |
+| `(method) len(self: *Self) -> usize` |  |
+| `(method) is_empty(self: *Self) -> bool` |  |
+| `(method) get(self: *Self, i: usize) -> ?*T` | The element `i` places from the front, left in place; null past the end. |
+| `(method) first(self: *Self) -> ?*T` |  |
+| `(method) last(self: *Self) -> ?*T` |  |
+| `(method) clear(self: *mut Self)` |  |
+
 ## std.fs
 
 std.fs: files, directories and paths, written in Nexium. `import std.fs` then: if fs.exists("notes.txt") { ... } try fs.make_dirs("out/logs") for name in try fs.list("out") { ... } for path in try fs.walk("src") { ... }        // every file, recursively let cfg = fs.join(fs.parent(argv0), "app.toml") The platform calls are the `io.*` builtins (documented in the language reference); this module adds paths, sorted listings, recursive create and remove, and a walker. Paths are byte strings; `/` and `\` both separate components on every platform, and results use `/` unless the input used `\`.
@@ -100,6 +124,22 @@ std.fs: files, directories and paths, written in Nexium. `import std.fs` then: i
 | `stem(path: []u8) -> []u8` | The base name without its extension: `a/b.tar.gz` -> `b.tar`. |
 | `with_extension(path: []u8, ext: []u8) -> String` | The path with its extension replaced (or added): `a/b.txt`, `md` -> `a/b.md`. |
 | `normalize(path: []u8) -> String` | Collapse `.` and `..` components and repeated separators: `a/./b/../c//d` -> `a/c/d`. A leading `..` is kept. |
+
+## std.heap
+
+std.heap: a priority queue, written in Nexium: a binary heap over a List, ordered by a comparison of your own. `import std.heap` then: var q = heap.by(Job, |a: *Job, b: *Job| -> bool { return a.due < b.due }) q.push(job) while true { let next = q.pop() orelse break       // the least by the comparison first run(next) } `push` and `pop` are O(log n), `peek` O(1). A heap that pops the greatest first is one whose comparison says `a > b`.
+
+Types: `Heap(T){`
+
+| function | what it does |
+| --- | --- |
+| `by(comptime T: type, less: fn(*T, *T) -> bool) -> Heap(T)` | An empty heap ordered by `less`. |
+| `(method) push(self: *mut Self, own x: T)` | Adds `x`. |
+| `(method) pop(self: *mut Self) -> ?T` | Takes out the least element, or null when the heap is empty. |
+| `(method) peek(self: *Self) -> ?*T` | The least element, left in place; null when the heap is empty. |
+| `(method) len(self: *Self) -> usize` |  |
+| `(method) is_empty(self: *Self) -> bool` |  |
+| `(method) clear(self: *mut Self)` |  |
 
 ## std.http
 
@@ -294,6 +334,42 @@ Types: `Regex`, `Match`
 | `(method) find_all(self: *Self, text: []u8) -> List(Match)` | Every non-overlapping match, left to right. |
 | `(method) replace_all(self: *Self, text: []u8, repl: []u8) -> String` | Replace every match. In `repl`, `$0`..`$9` insert groups and `$$` is a dollar sign. |
 | `(method) split(self: *Self, text: []u8) -> List([]u8)` | The pieces of `text` between matches. |
+
+## std.set
+
+std.set: a set of values, written in Nexium over `Map(T, bool)`: its elements are the types a Map takes as keys (integers, bool, char, `[]u8`, `String`). `import std.set` then: var seen = set.of(i64) if seen.add(id) { println("new: {}", .{id}) } let common = set.intersection(i64, &a, &b) `add`, `contains` and `remove` take a value like a Map's key: a copy, or for a `String` set an owned string (`name.clone()` keeps yours).
+
+Types: `Set(T){`
+
+| function | what it does |
+| --- | --- |
+| `of(comptime T: type) -> Set(T)` | An empty set. |
+| `(method) add(self: *mut Self, own x: T) -> bool` | Adds `x`; true when it was not already there. |
+| `(method) contains(self: *Self, x: T) -> bool` |  |
+| `(method) remove(self: *mut Self, x: T) -> bool` | Takes `x` out; true when it was there. |
+| `(method) len(self: *Self) -> usize` |  |
+| `(method) is_empty(self: *Self) -> bool` |  |
+| `(method) clear(self: *mut Self)` |  |
+| `(method) items(self: *Self) -> List(T)` | The elements, in no particular order. |
+| `union(comptime T: type, a: *Set(T), b: *Set(T)) -> Set(T)` | The values in `a` or `b`. |
+| `intersection(comptime T: type, a: *Set(T), b: *Set(T)) -> Set(T)` | The values in both `a` and `b`. |
+| `difference(comptime T: type, a: *Set(T), b: *Set(T)) -> Set(T)` | The values in `a` that are not in `b`. |
+| `is_subset(comptime T: type, a: *Set(T), b: *Set(T)) -> bool` | Whether every value of `a` is in `b`. |
+
+## std.sort
+
+std.sort: sorting by a comparison of your own, stable sorting, and searching sorted slices, written in Nexium over the slice's `swap`. `import std.sort` then: sort.by(Point, points[..], |a: *Point, b: *Point| -> bool { return a.x < b.x }) sort.stable_by(Task, tasks[..], by_priority)     // equal elements keep their order sort.by_key(Point, i64, points[..], |p: *Point| -> i64 { return p.y }) let at = sort.binary_search(i64, xs[..], 42)      // a position of 42, or null `by` is a heapsort: in place, O(n log n) comparisons whatever the input, and not stable. The stable sorts merge-sort the positions and then move each element into place along the cycles of the permutation, so no element is ever copied and any element type sorts. `xs.sort()` sorts by `<` without a comparison.
+
+| function | what it does |
+| --- | --- |
+| `by(comptime T: type, xs: []mut T, less: fn(*T, *T) -> bool)` | Sorts `xs` so that `less(b, a)` holds for no `a` before `b`: ascending by `less`. The order of equal elements is not kept. |
+| `stable_by(comptime T: type, xs: []mut T, less: fn(*T, *T) -> bool)` | Sorts `xs` ascending by `less`, keeping equal elements in the order they had. |
+| `by_key(comptime T: type, comptime K: type where K: Ord, xs: []mut T, key: fn(*T) -> K)` | Sorts `xs` ascending by `key` of each element, keeping elements with equal keys in the order they had; `key` is called once per element. |
+| `is_sorted(comptime T: type where T: Ord, xs: []T) -> bool` | Whether `xs` is ascending by `<`. |
+| `is_sorted_by(comptime T: type, xs: []T, less: fn(*T, *T) -> bool) -> bool` | Whether `xs` is ascending by `less`. |
+| `lower_bound(comptime T: type where T: Ord, xs: []T, x: T) -> usize` | In an ascending `xs`, the first position whose element is not less than `x`: where `x` would go before any equal to it. |
+| `upper_bound(comptime T: type where T: Ord, xs: []T, x: T) -> usize` | In an ascending `xs`, the first position whose element is greater than `x`: where `x` would go after any equal to it. |
+| `binary_search(comptime T: type where T: Ord, xs: []T, x: T) -> ?usize` | In an ascending `xs`, a position holding `x`, or null. |
 
 ## std.stream
 

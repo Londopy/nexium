@@ -2736,7 +2736,7 @@ impl Checker {
         // ---- lists, mutating through the receiver place
         if name == "ListClear" or name == "ListInsert" or name == "ListRemove" or name == "ListSwapRemove" or name == "ListExtend"
             or name == "ListAppend" or name == "ListPop" or name == "StringClear" or name == "StringPop" or name == "MapPut"
-            or name == "MapRemove" or name == "MapClear" or name == "SliceCopy" or name == "SliceFill" or name == "SliceReverse"
+            or name == "MapRemove" or name == "MapClear" or name == "SliceCopy" or name == "SliceFill" or name == "SliceReverse" or name == "SliceSwap"
             or name == "SliceSort" or name == "StringAppend" or name == "StringAppendChar" or name == "StringPushByte" {
             var fi = NONE
             var l = NONE
@@ -3394,6 +3394,33 @@ impl Checker {
                 let b = (cv_as_int(&vs[1]) orelse return null) as u8
                 let n = cur.text.len
                 for i in 0..n { cur.text[i] = b }
+                return cv(VK_VOID)
+            }
+            return null
+        }
+        if name == "SliceSwap" {
+            let i = (cv_as_int(&vs[1]) orelse return null) as usize
+            let j = (cv_as_int(&vs[2]) orelse return null) as usize
+            if k == VK_LIST or k == VK_ARRAY {
+                let n = cur.items.len
+                if i >= n or j >= n {
+                    self.it_fail_panic(format("index {} out of bounds for length {}", .{if i >= n { i } else { j }, n})[..], at)
+                    return null
+                }
+                let t = cur.items[i].clone()
+                cur.items[i] = cur.items[j].clone()
+                cur.items[j] = t
+                return cv(VK_VOID)
+            }
+            if k == VK_OWNED_STR or k == VK_STR {
+                let n = cur.text.len
+                if i >= n or j >= n {
+                    self.it_fail_panic(format("index {} out of bounds for length {}", .{if i >= n { i } else { j }, n})[..], at)
+                    return null
+                }
+                let t = cur.text[i]
+                cur.text[i] = cur.text[j]
+                cur.text[j] = t
                 return cv(VK_VOID)
             }
             return null

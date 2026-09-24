@@ -3636,6 +3636,18 @@ impl Gen {
             self.line(format("for (size_t i = 0; i < {}.len; i++) {}.ptr[i] = {};", .{d, d, v})[..])
             return String.from("0")
         }
+        if name == "SliceSwap" {
+            let en = self.cty(tys[0])
+            let d = self.simple(args[0])
+            let i = self.simple(args[1])
+            let j = self.simple(args[2])
+            if !fast {
+                self.line(format("if ({} >= {}.len) nx_panic_bounds({}, {}.len, {});", .{i, d, i, d, loc})[..])
+                self.line(format("if ({} >= {}.len) nx_panic_bounds({}, {}.len, {});", .{j, d, j, d, loc})[..])
+            }
+            self.line(format("{{ {} _x = {}.ptr[{}]; {}.ptr[{}] = {}.ptr[{}]; {}.ptr[{}] = _x; }}", .{en, d, i, d, i, d, j, d, j})[..])
+            return String.from("0")
+        }
         if name == "SliceReverse" {
             let en = self.cty(tys[0])
             let d = self.simple(args[0])

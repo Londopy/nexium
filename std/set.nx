@@ -1,0 +1,141 @@
+// std.set: a set of values, written in Nexium over `Map(T, bool)`: its
+// elements are the types a Map takes as keys (integers, bool, char, `[]u8`,
+// `String`).
+//
+// `import std.set` then:
+//
+//     var seen = set.of(i64)
+//     if seen.add(id) { println("new: {}", .{id}) }
+//     let common = set.intersection(i64, &a, &b)
+//
+// `add`, `contains` and `remove` take a value like a Map's key: a copy, or
+// for a `String` set an owned string (`name.clone()` keeps yours).
+
+/// A set: each value at most once, in no particular order.
+pub struct Set(T){
+    m: Map(T, bool)
+}
+
+/// An empty set.
+pub fn of(comptime T: type) -> Set(T) {
+    return Set(T){ .m = Map(T, bool).new() }
+}
+
+impl(T) Set(T) {
+    /// Adds `x`; true when it was not already there.
+    pub fn add(self: *mut Self, own x: T) -> bool {
+        if self.m.contains(x) { return false }
+        self.m.put(x, true)
+        return true
+    }
+
+    pub fn contains(self: *Self, x: T) -> bool {
+        return self.m.contains(x)
+    }
+
+    /// Takes `x` out; true when it was there.
+    pub fn remove(self: *mut Self, x: T) -> bool {
+        return self.m.remove(x)
+    }
+
+    pub fn len(self: *Self) -> usize {
+        return self.m.len
+    }
+
+    pub fn is_empty(self: *Self) -> bool {
+        return self.m.len == 0
+    }
+
+    pub fn clear(self: *mut Self) {
+        self.m.clear()
+    }
+
+    /// The elements, in no particular order.
+    pub fn items(self: *Self) -> List(T) {
+        return self.m.keys()
+    }
+}
+
+/// The values in `a` or `b`.
+pub fn union(comptime T: type, a: *Set(T), b: *Set(T)) -> Set(T) {
+    var out = of(T)
+    var ks = a.m.keys()
+    while true {
+        let k = ks.pop() orelse break
+        _ = out.add(k)
+    }
+    var ks2 = b.m.keys()
+    while true {
+        let k = ks2.pop() orelse break
+        _ = out.add(k)
+    }
+    return out
+}
+
+/// The values in both `a` and `b`.
+pub fn intersection(comptime T: type, a: *Set(T), b: *Set(T)) -> Set(T) {
+    var out = of(T)
+    var ks = a.m.keys()
+    while true {
+        let k = ks.pop() orelse break
+        if b.m.contains(k) { _ = out.add(k) }
+    }
+    return out
+}
+
+/// The values in `a` that are not in `b`.
+pub fn difference(comptime T: type, a: *Set(T), b: *Set(T)) -> Set(T) {
+    var out = of(T)
+    var ks = a.m.keys()
+    while true {
+        let k = ks.pop() orelse break
+        if !b.m.contains(k) { _ = out.add(k) }
+    }
+    return out
+}
+
+/// Whether every value of `a` is in `b`.
+pub fn is_subset(comptime T: type, a: *Set(T), b: *Set(T)) -> bool {
+    var ks = a.m.keys()
+    while true {
+        let k = ks.pop() orelse break
+        if !b.m.contains(k) { return false }
+    }
+    return true
+}
+
+// ------------------------------------------------------------------ tests
+
+test "each value once" {
+    var s = of(i64)
+    expect(s.add(3))
+    expect(s.add(5))
+    expect(!s.add(3))
+    expect(s.len() == 2 and s.contains(5) and !s.contains(4))
+    expect(s.remove(3) and !s.remove(3))
+    expect(s.len() == 1)
+    s.clear()
+    expect(s.is_empty())
+}
+
+test "strings, owned by the set" {
+    var s = of(String)
+    let name = String.from("ada")
+    expect(s.add(name.clone()))
+    expect(!s.add(String.from("ada")))
+    expect(s.contains(name.clone()) and name == "ada")
+    expect(s.items().len == 1)
+}
+
+test "union, intersection, difference, subset" {
+    var a = of(i64)
+    var b = of(i64)
+    for x in [1, 2, 3, 4] { _ = a.add(x) }
+    for x in [3, 4, 5] { _ = b.add(x) }
+    let u = union(i64, &a, &b)
+    let i = intersection(i64, &a, &b)
+    let d = difference(i64, &a, &b)
+    expect(u.len() == 5 and i.len() == 2 and d.len() == 2)
+    expect(i.contains(3) and i.contains(4) and d.contains(1) and !d.contains(3))
+    expect(is_subset(i64, &i, &a) and !is_subset(i64, &a, &b))
+}

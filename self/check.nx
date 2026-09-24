@@ -474,7 +474,7 @@ pub struct Mod {
 /// The standard library, embedded: a module's source by name, so a built
 /// compiler needs no `std/` directory beside it.
 /// The embedded standard library modules, in the order the first compiler listed them.
-pub const STD_MODULE_NAMES = "strings, lists, bytes, num, json, args, fs, time, regex, text, testing, stream, net, http, thread, process"
+pub const STD_MODULE_NAMES = "strings, lists, bytes, num, json, args, fs, time, regex, text, testing, stream, net, http, thread, process, sort, heap, set, deque"
 
 pub fn std_source(name: []u8) -> ?[]u8 {
     if name == "args" { return @embedFile("../std/args.nx") }
@@ -493,6 +493,10 @@ pub fn std_source(name: []u8) -> ?[]u8 {
     if name == "text" { return @embedFile("../std/text.nx") }
     if name == "thread" { return @embedFile("../std/thread.nx") }
     if name == "time" { return @embedFile("../std/time.nx") }
+    if name == "sort" { return @embedFile("../std/sort.nx") }
+    if name == "heap" { return @embedFile("../std/heap.nx") }
+    if name == "set" { return @embedFile("../std/set.nx") }
+    if name == "deque" { return @embedFile("../std/deque.nx") }
     return null
 }
 

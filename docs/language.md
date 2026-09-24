@@ -234,7 +234,7 @@ brings it.
 - `Map(K, V)` (keys: integers, bool, char, `[]u8`, `String`): `new`, `put`,
   `get`, `contains`, `remove`, `clear`, `clone`, `keys`, `values`, `len`,
   `m[key]`; `for k in m` iterates keys.
-- Slices: `len`, `fill`, `reverse`, `sort`, `contains`, `index_of`,
+- Slices: `len`, `fill`, `reverse`, `sort`, `swap(i, j)`, `contains`, `index_of`,
   `copy_from`, `to_owned`, `is_empty`; `[]u8` also `starts_with`,
   `ends_with`, `find`, `trim`, `split`, `lines`, `to_string`, `parse_int(T)`,
   `parse_float`, `eq_ignore_case`.

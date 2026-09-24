@@ -1,0 +1,279 @@
+// std.sort: sorting by a comparison of your own, stable sorting, and
+// searching sorted slices, written in Nexium over the slice's `swap`.
+//
+// `import std.sort` then:
+//
+//     sort.by(Point, points[..], |a: *Point, b: *Point| -> bool { return a.x < b.x })
+//     sort.stable_by(Task, tasks[..], by_priority)     // equal elements keep their order
+//     sort.by_key(Point, i64, points[..], |p: *Point| -> i64 { return p.y })
+//     let at = sort.binary_search(i64, xs[..], 42)      // a position of 42, or null
+//
+// `by` is a heapsort: in place, O(n log n) comparisons whatever the input,
+// and not stable. The stable sorts merge-sort the positions and then move
+// each element into place along the cycles of the permutation, so no
+// element is ever copied and any element type sorts. `xs.sort()` sorts by
+// `<` without a comparison.
+
+/// Sorts `xs` so that `less(b, a)` holds for no `a` before `b`: ascending by
+/// `less`. The order of equal elements is not kept.
+pub fn by(comptime T: type, xs: []mut T, less: fn(*T, *T) -> bool) {
+    let n = xs.len
+    if n < 2 { return }
+    var start = n / 2
+    while start > 0 {
+        start -= 1
+        sift_down(T, xs, start, n, less)
+    }
+    var end = n
+    while end > 1 {
+        end -= 1
+        xs.swap(0, end)
+        sift_down(T, xs, 0, end, less)
+    }
+}
+
+// the heap property from `root` down, within `xs[..end]`
+fn sift_down(comptime T: type, xs: []mut T, root0: usize, end: usize, less: fn(*T, *T) -> bool) {
+    var root = root0
+    while true {
+        var child = 2 * root + 1
+        if child >= end { return }
+        if child + 1 < end and less(&xs[child], &xs[child + 1]) { child += 1 }
+        if !less(&xs[root], &xs[child]) { return }
+        xs.swap(root, child)
+        root = child
+    }
+}
+
+/// Sorts `xs` ascending by `less`, keeping equal elements in the order they
+/// had.
+pub fn stable_by(comptime T: type, xs: []mut T, less: fn(*T, *T) -> bool) {
+    let n = xs.len
+    if n < 2 { return }
+    var order = positions(n)
+    var tmp = positions(n)
+    var width: usize = 1
+    while width < n {
+        var lo: usize = 0
+        while lo < n {
+            let mid = if lo + width < n { lo + width } else { n }
+            let hi = if lo + 2 * width < n { lo + 2 * width } else { n }
+            var i = lo
+            var j = mid
+            var k = lo
+            while i < mid and j < hi {
+                // the right one goes first only when strictly less: stable
+                if less(&xs[order[j]], &xs[order[i]]) {
+                    tmp[k] = order[j]
+                    j += 1
+                } else {
+                    tmp[k] = order[i]
+                    i += 1
+                }
+                k += 1
+            }
+            while i < mid {
+                tmp[k] = order[i]
+                i += 1
+                k += 1
+            }
+            while j < hi {
+                tmp[k] = order[j]
+                j += 1
+                k += 1
+            }
+            lo = hi
+        }
+        for p, q in tmp { order[q] = p }
+        width *= 2
+    }
+    permute(T, xs, &order)
+}
+
+/// Sorts `xs` ascending by `key` of each element, keeping elements with
+/// equal keys in the order they had; `key` is called once per element.
+pub fn by_key(comptime T: type, comptime K: type where K: Ord, xs: []mut T, key: fn(*T) -> K) {
+    let n = xs.len
+    if n < 2 { return }
+    var keys = List(K).with_capacity(n)
+    for i in 0..n { keys.append(key(&xs[i])) }
+    var order = positions(n)
+    var tmp = positions(n)
+    var width: usize = 1
+    while width < n {
+        var lo: usize = 0
+        while lo < n {
+            let mid = if lo + width < n { lo + width } else { n }
+            let hi = if lo + 2 * width < n { lo + 2 * width } else { n }
+            var i = lo
+            var j = mid
+            var k = lo
+            while i < mid and j < hi {
+                if keys[order[j]] < keys[order[i]] {
+                    tmp[k] = order[j]
+                    j += 1
+                } else {
+                    tmp[k] = order[i]
+                    i += 1
+                }
+                k += 1
+            }
+            while i < mid {
+                tmp[k] = order[i]
+                i += 1
+                k += 1
+            }
+            while j < hi {
+                tmp[k] = order[j]
+                j += 1
+                k += 1
+            }
+            lo = hi
+        }
+        for p, q in tmp { order[q] = p }
+        width *= 2
+    }
+    permute(T, xs, &order)
+}
+
+fn positions(n: usize) -> List(usize) {
+    var out = List(usize).with_capacity(n)
+    for i in 0..n { out.append(i) }
+    return out
+}
+
+// moves the elements so that position k holds what was at order[k]: each
+// cycle of the permutation by swaps along it
+fn permute(comptime T: type, xs: []mut T, order: *List(usize)) {
+    let n = xs.len
+    var done = List(bool).with_capacity(n)
+    for i in 0..n { done.append(false) }
+    for start in 0..n {
+        if done[start] { continue }
+        var k = start
+        while true {
+            done[k] = true
+            let from = order[k]
+            if from == start { break }
+            xs.swap(k, from)
+            k = from
+        }
+    }
+}
+
+/// Whether `xs` is ascending by `<`.
+pub fn is_sorted(comptime T: type where T: Ord, xs: []T) -> bool {
+    var i: usize = 1
+    while i < xs.len {
+        if xs[i] < xs[i - 1] { return false }
+        i += 1
+    }
+    return true
+}
+
+/// Whether `xs` is ascending by `less`.
+pub fn is_sorted_by(comptime T: type, xs: []T, less: fn(*T, *T) -> bool) -> bool {
+    var i: usize = 1
+    while i < xs.len {
+        if less(&xs[i], &xs[i - 1]) { return false }
+        i += 1
+    }
+    return true
+}
+
+/// In an ascending `xs`, the first position whose element is not less than
+/// `x`: where `x` would go before any equal to it.
+pub fn lower_bound(comptime T: type where T: Ord, xs: []T, x: T) -> usize {
+    var lo: usize = 0
+    var hi = xs.len
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2
+        if xs[mid] < x { lo = mid + 1 } else { hi = mid }
+    }
+    return lo
+}
+
+/// In an ascending `xs`, the first position whose element is greater than
+/// `x`: where `x` would go after any equal to it.
+pub fn upper_bound(comptime T: type where T: Ord, xs: []T, x: T) -> usize {
+    var lo: usize = 0
+    var hi = xs.len
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2
+        if x < xs[mid] { hi = mid } else { lo = mid + 1 }
+    }
+    return lo
+}
+
+/// In an ascending `xs`, a position holding `x`, or null.
+pub fn binary_search(comptime T: type where T: Ord, xs: []T, x: T) -> ?usize {
+    let at = lower_bound(T, xs, x)
+    if at < xs.len and ! (x < xs[at]) { return at }
+    return null
+}
+
+// ------------------------------------------------------------------ tests
+
+struct Task {
+    name: String
+    priority: i64
+}
+
+fn later(a: *i64, b: *i64) -> bool {
+    return a.* > b.*
+}
+
+fn by_priority(a: *Task, b: *Task) -> bool {
+    return a.priority < b.priority
+}
+
+fn priority_of(t: *Task) -> i64 {
+    return t.priority
+}
+
+fn task(name: []u8, priority: i64) -> Task {
+    return Task{ .name = String.from(name), .priority = priority }
+}
+
+test "by sorts with the comparison given" {
+    var xs = [5, 1, 4, 1, 5, 9, 2, 6]
+    by(i64, xs[..], later)
+    expect(xs[0] == 9 and xs[1] == 6 and xs[7] == 1)
+    expect(is_sorted_by(i64, xs[..], later))
+    var one = [7]
+    by(i64, one[..], later)
+    expect(one[0] == 7)
+}
+
+test "stable_by keeps equal elements in order, and moves owned ones" {
+    var ts = List(Task).new()
+    ts.append(task("b", 2))
+    ts.append(task("a", 1))
+    ts.append(task("c", 2))
+    ts.append(task("d", 1))
+    ts.append(task("e", 0))
+    stable_by(Task, ts[..], by_priority)
+    expect(ts[0].name == "e" and ts[1].name == "a" and ts[2].name == "d" and ts[3].name == "b" and ts[4].name == "c")
+}
+
+test "by_key calls the key once per element" {
+    var ts = List(Task).new()
+    ts.append(task("x", 3))
+    ts.append(task("y", 1))
+    ts.append(task("z", 3))
+    ts.append(task("w", 2))
+    by_key(Task, i64, ts[..], priority_of)
+    expect(ts[0].name == "y" and ts[1].name == "w" and ts[2].name == "x" and ts[3].name == "z")
+}
+
+test "searching an ascending slice" {
+    let xs = [1, 3, 3, 3, 7, 9]
+    expect(is_sorted(i64, xs[..]))
+    expect(lower_bound(i64, xs[..], 3) == 1)
+    expect(upper_bound(i64, xs[..], 3) == 4)
+    expect(lower_bound(i64, xs[..], 8) == 5)
+    expect(lower_bound(i64, xs[..], 10) == 6)
+    expect((binary_search(i64, xs[..], 7) orelse 99) == 4)
+    expect(binary_search(i64, xs[..], 4) == null)
+    expect(!is_sorted(i64, [2, 1][..]))
+}

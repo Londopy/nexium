@@ -1,0 +1,139 @@
+// std.deque: a double-ended queue, written in Nexium: two Lists back to
+// back, the first kept reversed, so both ends push and pop in O(1)
+// amortized (when one side runs out, half of the other moves over).
+//
+// `import std.deque` then:
+//
+//     var q = deque.of(Job)
+//     q.push_back(job)
+//     q.push_front(urgent)
+//     let next = q.pop_front() orelse return
+//     if let last = q.last() { ... }                 // a view, left in place
+
+/// A double-ended queue.
+pub struct Deque(T){
+    // the elements before `tail`, reversed: its last is the deque's first
+    head: List(T)
+    tail: List(T)
+}
+
+/// An empty deque.
+pub fn of(comptime T: type) -> Deque(T) {
+    return Deque(T){ .head = List(T).new(), .tail = List(T).new() }
+}
+
+// `src[0..h)` onto the empty `dst`, reversed, for h half of src (rounded
+// up); the rest of src stays in order
+fn move_half(comptime T: type, src: *mut List(T), dst: *mut List(T)) {
+    let n = src.len
+    if n == 0 { return }
+    let h = (n + 1) / 2
+    src[..].reverse()
+    for i in 0..h {
+        let x = src.pop() orelse break
+        dst.append(x)
+    }
+    dst[..].reverse()
+    src[..].reverse()
+}
+
+impl(T) Deque(T) {
+    pub fn push_back(self: *mut Self, own x: T) {
+        self.tail.append(x)
+    }
+
+    pub fn push_front(self: *mut Self, own x: T) {
+        self.head.append(x)
+    }
+
+    /// Takes out the first element, or null when empty.
+    pub fn pop_front(self: *mut Self) -> ?T {
+        if self.head.len == 0 { move_half(T, &mut self.tail, &mut self.head) }
+        return self.head.pop()
+    }
+
+    /// Takes out the last element, or null when empty.
+    pub fn pop_back(self: *mut Self) -> ?T {
+        if self.tail.len == 0 { move_half(T, &mut self.head, &mut self.tail) }
+        return self.tail.pop()
+    }
+
+    pub fn len(self: *Self) -> usize {
+        return self.head.len + self.tail.len
+    }
+
+    pub fn is_empty(self: *Self) -> bool {
+        return self.head.len + self.tail.len == 0
+    }
+
+    /// The element `i` places from the front, left in place; null past the end.
+    pub fn get(self: *Self, i: usize) -> ?*T {
+        let h = self.head.len
+        if i < h { return &self.head[h - 1 - i] }
+        if i - h < self.tail.len { return &self.tail[i - h] }
+        return null
+    }
+
+    pub fn first(self: *Self) -> ?*T {
+        return self.get(0)
+    }
+
+    pub fn last(self: *Self) -> ?*T {
+        let n = self.head.len + self.tail.len
+        if n == 0 { return null }
+        return self.get(n - 1)
+    }
+
+    pub fn clear(self: *mut Self) {
+        self.head.clear()
+        self.tail.clear()
+    }
+}
+
+// ------------------------------------------------------------------ tests
+
+test "a queue: in at the back, out at the front" {
+    var q = of(i64)
+    for x in [1, 2, 3, 4, 5] { q.push_back(x) }
+    expect(q.len() == 5)
+    expect((q.pop_front() orelse 0) == 1)
+    expect((q.pop_front() orelse 0) == 2)
+    q.push_back(6)
+    var rest = List(i64).new()
+    while true {
+        let x = q.pop_front() orelse break
+        rest.append(x)
+    }
+    expect(rest.len == 4 and rest[0] == 3 and rest[3] == 6)
+    expect(q.is_empty() and q.pop_back() == null)
+}
+
+test "both ends, and a view by position" {
+    var q = of(i64)
+    q.push_back(2)
+    q.push_front(1)
+    q.push_back(3)
+    q.push_front(0)
+    if let x = q.get(0) { expect(x.* == 0) }
+    if let x = q.get(3) { expect(x.* == 3) }
+    expect(q.get(4) == null)
+    expect((q.pop_back() orelse 9) == 3)
+    expect((q.pop_back() orelse 9) == 2)
+    expect((q.pop_back() orelse 9) == 1)
+    expect((q.pop_back() orelse 9) == 0)
+}
+
+test "owned values move in and out" {
+    var q = of(String)
+    q.push_back(String.from("b"))
+    q.push_front(String.from("a"))
+    q.push_back(String.from("c"))
+    if let f = q.first() { expect(f.* == "a") }
+    if let l = q.last() { expect(l.* == "c") }
+    var all = String.new()
+    while true {
+        let s = q.pop_back() orelse break
+        all.append(s[..])
+    }
+    expect(all == "cba")
+}
