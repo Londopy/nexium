@@ -356,7 +356,9 @@ one, `{name}` or `{name:spec}`, an argument may be written more than
 once, every argument must be used, and a width may come from an
 integer argument: `{v:>w}` with `.w = 8`. A width pads any value written
 as text: numbers, strings, booleans, and enum and error names; a char is
-written as it is. Formatting is compiled: each placeholder becomes a typed
+written as it is. `{}` writes a float as the shortest text that reads back
+as the same value, an `f32` as an `f32` (`0.3`, not the `f64` it widens
+to). Formatting is compiled: each placeholder becomes a typed
 write.
 
 ## 7. Patterns

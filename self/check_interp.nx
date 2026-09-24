@@ -73,6 +73,9 @@ pub struct CV derive(Clone) {
 fn cv(kind: u8) -> CV { return CV{ .kind = kind, .ival = 0, .fval = 0.0, .flag = false, .text = String.new(), .items = List(CV).new(), .path = List(usize).new(), .b = 0 } }
 fn cv_int(v: i128) -> CV { var c = cv(VK_INT); c.ival = v; return c }
 fn cv_float(v: f64) -> CV { var c = cv(VK_FLOAT); c.fval = v; return c }
+/// An f32: held as the f64 of its f32 rounding, and marked (`flag`) so it is
+/// written as an f32 is.
+fn cv_f32(v: f64) -> CV { var c = cv(VK_FLOAT); c.fval = (v as f32) as f64; c.flag = true; return c }
 fn cv_bool(v: bool) -> CV { var c = cv(VK_BOOL); c.flag = v; return c }
 fn cv_char(v: i128) -> CV { var c = cv(VK_CHAR); c.ival = v; return c }
 fn cv_str(s: []u8) -> CV { var c = cv(VK_STR); c.text = String.from(s); return c }
@@ -260,7 +263,7 @@ fn cv_items_text(v: *CV) -> String {
 fn cv_format(v: *CV) -> String {
     let k = v.kind
     if k == VK_INT { return format("{}", .{v.ival}) }
-    if k == VK_FLOAT { return format_float(v.fval) }
+    if k == VK_FLOAT { return if v.flag { format("{}", .{v.fval as f32}) } else { format_float(v.fval) } }
     if k == VK_BOOL { return format("{}", .{v.flag}) }
     if k == VK_CHAR {
         if v.ival < 0 or v.ival > 0x10FFFF { return String.new() }
@@ -431,11 +434,10 @@ pub fn source_quote(b: []u8) -> String {
     return s
 }
 
-/// Rust's `{}` for f64 with a `.0` on whole numbers.
+/// `{}` of an f64 as a compiled program writes it: the interpreter is one,
+/// so its own `format` is the writer.
 fn format_float(f: f64) -> String {
-    let whole = f == math.floor(f)
-    if whole and f < 1.0e16 and f > -1.0e16 { return format("{:.1}", .{f}) }
-    return check.rust_float(f)
+    return format("{}", .{f})
 }
 
 impl Checker {
@@ -1881,8 +1883,23 @@ impl Checker {
         return cv(VK_NEVER)
     }
 
+    /// Whether values of the type are f32s.
+    fn it_is_f32(self: *mut Self, t0: usize) -> bool {
+        let t = self.tys.shallow(t0)
+        let k = self.tys.kind(t)
+        if k == TK.Float { return self.tys.list[t].name == "f32" }
+        if k == TK.Distinct { return self.it_is_f32(self.distinct_underlying(self.tys.list[t].def)) }
+        return false
+    }
+
     fn it_eval(self: *mut Self, e: usize) -> ?CV {
         let r = self.it_eval_inner(e)
+        // an f32 expression's value is rounded to f32 precision, as a
+        // compiled program's is (each operation's exact f64 result rounds
+        // to the same f32)
+        if let v = r {
+            if v.kind == VK_FLOAT and !v.flag and self.it_is_f32(self.tir.nodes[e].ty) { return cv_f32(v.fval) }
+        }
         if r == null and !self.it_has_panic and !self.it_budget {
             if self.it_failed_at == NONE {
                 self.it_failed_at = self.tir.nodes[e].start

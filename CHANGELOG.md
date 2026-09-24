@@ -99,6 +99,14 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Fixed
 
+- `nx play` wrote a float in exponent form as Rust does (`1e-7`, `1e21`)
+  where the compiled program writes C's (`1e-07`, `1e+21`), and computed
+  `f32` arithmetic in `f64` precision; a compiled program wrote an `f32`
+  as the `f64` it widens to (`0.1` as `0.10000000149011612`). An `f32` is
+  now written as the shortest text that reads back as that `f32` (`0.3`),
+  and the interpreter rounds every `f32` result to `f32` and writes floats
+  with the compiled writer itself (spec `s6_float_format`, `s4_f32`; the
+  play suite compares both).
 - Rule R1 rejected a slice into a loop item's buffer over the caller's
   storage: `for s in xs { return s[..] }` with `xs: []String` a parameter,
   `return s.title` in `for s in self.sections` in a method, an `if let`

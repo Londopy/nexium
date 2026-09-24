@@ -1,0 +1,15 @@
+// SPEC 6.5: `{}` writes a float as the shortest text that reads back as the
+// same value (with `.0` on a whole number, an exponent past 1e16), `{:.N}`
+// and `{e}` as C does; the interpreter (`nx play`) writes the same text.
+
+fn main() {
+    let vs = [0.1, 1.0e-7, 1.0e21, 123456789012345678.0, -2.5e-300, 1.5, 100.0, 18446744073709551615.0, 3.0e16, -0.0, 2.0e-5]
+    for v in vs {
+        println("{} | {:.3} | {e} | {:.2e} | {>12}", .{v, v, v, v, v})
+    }
+    let n = 0.0 / 0.0
+    let i = 1.0 / 0.0
+    println("{} {} {}", .{n, i, -i})
+    let f: f32 = 0.1
+    println("{} {e}", .{f, f})
+}

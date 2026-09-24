@@ -1,0 +1,28 @@
+// SPEC 4: an f32 computes in f32 precision and is written as the shortest
+// text that reads back as that f32 (`0.3`, not the f64 it widens to); the
+// interpreter rounds each f32 result the same way.
+
+fn mean(xs: []f32) -> f32 {
+    var s: f32 = 0.0
+    for x in xs { s += x }
+    return s / (xs.len as f32)
+}
+
+fn main() {
+    let a: f32 = 0.1
+    let b: f32 = 0.2
+    println("{} {}", .{a + b, (a + b) as f64})
+    var acc: f32 = 0.0
+    for i in 0..1000 { acc += 0.001 }
+    println("{}", .{acc})
+    let third: f32 = 1.0 / 3.0
+    println("{} {:.10}", .{third, third})
+    let r: f32 = 2.0
+    println("{}", .{r.sqrt()})
+    let big: f32 = 16777217.0
+    println("{}", .{big})
+    println("{}", .{mean([1.5, 2.25, 3.125][..])})
+    let d: f64 = 0.1
+    println("{} {}", .{d as f32, (d as f32) as f64})
+    println("{}", .{(7 as f32) / 3.0})
+}

@@ -677,7 +677,8 @@ NX_INLINE void nx_w_int(nx_sink* s, nx_i128 v, int base, int width, bool left) {
     if (neg) buf[--i] = '-';
     nx_w_pad(s, buf + i, sizeof buf - i, width, left);
 }
-NX_INLINE void nx_w_float(nx_sink* s, double v, int prec, bool exp, int width, bool left) {
+/* an f32 (`f32` set) is written as the shortest text that reads back as that f32 */
+NX_INLINE void nx_w_float(nx_sink* s, double v, int prec, bool exp, int width, bool left, bool f32) {
     char buf[64];
     if (v != v) { snprintf(buf, sizeof buf, "nan"); }
     else if (isinf(v)) { snprintf(buf, sizeof buf, v > 0 ? "inf" : "-inf"); }
@@ -686,7 +687,10 @@ NX_INLINE void nx_w_float(nx_sink* s, double v, int prec, bool exp, int width, b
     else if (v == floor(v) && fabs(v) < 1e16) { snprintf(buf, sizeof buf, "%.1f", v); }
     else { /* the shortest text that reads back as the same value */
         int p = 1;
-        for (; p <= 17; p++) { snprintf(buf, sizeof buf, "%.*g", p, v); if (strtod(buf, NULL) == v) break; }
+        for (; p <= 17; p++) {
+            snprintf(buf, sizeof buf, "%.*g", p, v);
+            if (f32 ? (float)strtod(buf, NULL) == (float)v : strtod(buf, NULL) == v) break;
+        }
     }
     nx_w_pad(s, buf, strlen(buf), width, left);
 }

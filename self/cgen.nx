@@ -3009,7 +3009,8 @@ impl Gen {
         } else if k == check.TK.Char {
             self.line(format("nx_w_char({}, {});", .{sink, v})[..])
         } else if k == check.TK.Float {
-            self.line(format("nx_w_float({}, (double)({}), {}, {}, {}, {});", .{sink, v, prec, exp, width, left})[..])
+            let is_f32 = self.c.tys.list[t].name == "f32"
+            self.line(format("nx_w_float({}, (double)({}), {}, {}, {}, {}, {});", .{sink, v, prec, exp, width, left, is_f32})[..])
         } else if k == check.TK.Bool {
             if width != "0" { self.line(format("nx_w_pad({}, ({}) ? \"true\" : \"false\", ({}) ? 4 : 5, {}, {});", .{sink, v, v, width, left})[..]) }
             else { self.line(format("nx_w_bool({}, {});", .{sink, v})[..]) }
