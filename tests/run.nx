@@ -481,6 +481,14 @@ fn suite_examples(e: *Env, failures: *mut List(String)) {
     if bb.code != 1 { failures.append(format("examples: nx bench with a failing benchmark exited {}", .{bb.code})) }
     let bf = nx(e, ["bench", bench_src[..], "named", "--quick"][..])
     if bf.code != 0 or bf.stdout[..].find("1 benchmark(s), safe mode (some skipped by filter)") == null { failures.append(format("examples: nx bench with a filter (exit {}):\n{}{}", .{bf.code, bf.stdout, bf.stderr})) }
+    // `if comptime`: the target picks the branch that is built, and the other
+    // is not in the C at all
+    let ct_src = fs.join(e.root[..], "nx-out/cases/comptime_if.nx")
+    fs.write(ct_src[..], "fn main() {\n    let s = if comptime @target().0 == \"windows\" { \"built for windows\" } else { \"built for another\" }\n    println(\"{}\", .{s})\n}\n") catch { }
+    for pick in [["x86_64-windows-gnu", "built for windows", "built for another"], ["x86_64-linux-gnu", "built for another", "built for windows"], ["aarch64-macos", "built for another", "built for windows"]] {
+        let ce = nx(e, ["emit-c", ct_src[..], "--target", pick[0]][..])
+        if ce.code != 0 or ce.stdout[..].find(pick[1]) == null or ce.stdout[..].find(pick[2]) != null { failures.append(format("examples: `if comptime` for {} did not build only `{}` (exit {}):\n{}", .{pick[0], pick[1], ce.code, ce.stderr})) }
+    }
     // `#line`: a debug build's C names the `.nx` lines, each function followed
     // by the directive that gives the C its own lines back; `nx emit-c` has none
     let lines_dir = fs.join(e.root[..], "nx-out/cases/lines")

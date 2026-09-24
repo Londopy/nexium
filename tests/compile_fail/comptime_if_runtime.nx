@@ -1,0 +1,7 @@
+// EXPECT: this expression cannot be evaluated at compile time
+fn main() {
+    let args = os.args()
+    if comptime args.len > 1 {
+        println("arguments", .{})
+    }
+}

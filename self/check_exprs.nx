@@ -1521,6 +1521,25 @@ impl Checker {
         let bt = self.tys.bool_ty()
         var c = self.check_expr(cond_node, bt)
         c = self.coerce_or_error(c, bt, "if condition")
+        // `if comptime C`: C is known now, and only the branch it picks is
+        // checked and built; the other is parsed and never checked, so it may
+        // name what exists only on another platform (decision 114)
+        if self.node(m, cond_node).k == parser.NodeKind.Comptime and self.tir.nodes[c].k == TKind.Value and self.tir.nodes[c].name == "bool" {
+            let v = self.tys.void()
+            var tb = NONE
+            if self.tir.nodes[c].flag {
+                tb = self.check_block(then_node, if els_node != NONE { expected } else { v }, NONE, NONE)
+            } else if els_node == NONE {
+                tb = self.mk(TKind.Block, v, start, end)
+            } else if self.node(m, els_node).k == parser.NodeKind.Block {
+                tb = self.check_block(els_node, expected, NONE, NONE)
+            } else {
+                return self.check_expr(els_node, expected)
+            }
+            let be = self.mk(TKind.BlockExpr, self.tir.nodes[tb].ty, start, end)
+            self.tir.nodes[be].kids.append(tb)
+            return be
+        }
         let then_facts = self.guard_facts(c, false)
         let saved = self.facts_save()
         self.push_scope()

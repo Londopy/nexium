@@ -2213,7 +2213,19 @@ impl Parser {
             has_binding = true
             try self.expect(lexer.Kind.Eq)
         }
-        let cond = try self.parse_expr_no_struct()
+        // `if comptime C`: the whole condition is evaluated at compile time,
+        // and only the branch it picks is checked (decision 114)
+        var comptime_at: usize = NONE
+        if !has_binding and self.at_ident("comptime") {
+            comptime_at = self.start()
+            self.bump()
+        }
+        var cond = try self.parse_expr_no_struct()
+        if comptime_at != NONE {
+            var ct = blank(NodeKind.Comptime, comptime_at, self.end_of(cond))
+            ct.x = cond
+            cond = self.tree.add(ct)
+        }
         if self.at(lexer.Kind.Pipe) and self.peek_at(1) == lexer.Kind.Ident and self.peek_at(2) == lexer.Kind.Pipe {
             return self.fail(self.start(), "`if (opt) |v|` is now written `if let v = opt { ... }`")
         }

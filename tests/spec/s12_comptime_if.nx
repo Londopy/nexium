@@ -1,0 +1,30 @@
+// SPEC 12: `if comptime C { } else { }` evaluates C while checking, and
+// checks and builds only the branch it picks: the other may name what
+// exists on no target at all. `@target()` is known then.
+const SQUARES: bool = true
+
+fn width_name() -> []u8 {
+    if comptime @target().2 == 64 {
+        return "64-bit"
+    } else if comptime @target().2 == 32 {
+        return "32-bit"
+    } else {
+        return missing_width_function()
+    }
+}
+
+fn main() {
+    // a branch never taken is never checked
+    if comptime @target().2 == 16 {
+        sixteen_bit_only()
+    }
+    let kind = if comptime 2 + 2 == 4 { "arithmetic" } else { no_such_value }
+    println("{}", .{kind})
+    let w = width_name()
+    println("{}", .{w == "64-bit" or w == "32-bit"})
+    let (os, _, bits) = comptime @target()
+    println("{} {}", .{os.len > 0, bits == 64 or bits == 32})
+    // the value's type is the taken branch's
+    let n = if comptime SQUARES { 7 * 7 } else { "not a number" }
+    println("{}", .{n + 1})
+}

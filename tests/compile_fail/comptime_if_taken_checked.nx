@@ -1,0 +1,7 @@
+// EXPECT: cannot find function `missing`
+// the branch `if comptime` picks is checked like any other
+fn main() {
+    if comptime 1 < 2 {
+        missing()
+    }
+}

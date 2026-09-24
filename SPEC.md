@@ -562,8 +562,16 @@ reinterprets the bytes of one scalar as another of the same size;
 `@min` and `@max` take two numbers of one type and carry the range of
 their operands; `@target()` is `(os, arch, pointer_bits)` (`"windows"`,
 `"macos"`, `"linux"`, `"bsd"`; `"x86_64"`, `"aarch64"`, ...; 64 or 32),
-a constant of the C build for `if` in platform code, not a value of the
-compile-time interpreter.
+the build's target (`--target`, else the machine compiling), a value of
+the compile-time interpreter as well as of the program.
+
+Conditional compilation: in `if comptime C { A } else { B }` the whole of
+`C` is evaluated while the program is checked, and must be a compile-time
+`bool`. Only the branch it picks is checked and built; the other is parsed
+and never checked, so it may name functions, types and externs that exist
+only on another target (`if comptime @target().0 == "windows" { ... }`).
+`else if comptime` chains; an `if comptime` with a value has the taken
+branch's type.
 
 ## 13. Concurrency
 

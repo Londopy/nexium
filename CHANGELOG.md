@@ -61,6 +61,13 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   which one a program means is the programmer's choice (decision 113). An error with an edit on offer ends with
   "note: `nx fix FILE` can try an edit for N of these". The loader takes
   stand-in texts for any of the program's files (`load_with_texts`).
+- Conditional compilation (decision 114): `if comptime C { } else { }`
+  evaluates the whole condition while checking and checks and builds only
+  the branch it picks, so the other may name functions and externs that
+  exist only on another platform (`if comptime @target().0 == "windows"`).
+  `@target()` is a value of the compile-time interpreter: `--target`'s
+  triple when cross-compiling, else the machine compiling, in the runtime's
+  words. `else if comptime` chains, and a value's type is the taken branch's.
 - `#line` directives in the C of a debug or sanitized build, so a
   debugger steps through `.nx` lines, a sanitizer's report names them, and
   `break file.nx:12` works. Each function is followed by a directive giving

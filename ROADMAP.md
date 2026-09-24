@@ -548,7 +548,10 @@ luck.
   sanitized optimised build is compiled at `-Og`, where zig's UBSan
   reports rather than traps. CI runs every std module's tests under both.)
 - Conditional compilation: `if comptime @target().os == "windows" { }` in
-  std replaces the runtime's `#ifdef`s one by one.
+  std replaces the runtime's `#ifdef`s one by one. (Done for the language,
+  decision 114: `if comptime @target().0 == "windows" { }` builds one
+  branch. Moving the runtime's `#ifdef`s into std goes with 1.5's
+  platforms, whose process, socket and thread code is where they are.)
 
 Exit: a one-line change rebuilds in well under a second on the compiler's
 own sources, and the language server answers from the checker.

@@ -411,6 +411,26 @@ pointers like a forward declaration; that is how `FILE` works on every libc.
 Declarations that cannot be translated at all (unions, function-pointer
 typedefs, function-like macros) are named in the error when used.
 
+## Conditional compilation
+
+`if comptime C { ... } else { ... }` evaluates `C` while the program is
+checked and builds only the branch it picks. The other is never checked,
+so it can call what exists only on another platform:
+
+```nexium
+fn line_ending() -> []u8 {
+    if comptime @target().0 == "windows" {
+        return "\r\n"
+    } else {
+        return "\n"
+    }
+}
+```
+
+`@target()` is `(os, arch, pointer_bits)` of the build, `--target`'s when
+cross-compiling. An `if comptime` with a value has the type of the branch
+taken.
+
 ## Compile-time tests
 
 `comptime test "name" { ... }` runs in the interpreter during checking; a

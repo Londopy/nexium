@@ -3009,7 +3009,14 @@ impl Checker {
             if !held(r, bits, signed) { return null }
             return cv_int(r)
         }
-        if name == "Target" { return null }
+        if name == "Target" {
+            let (os, arch, bits) = self.build_target()
+            var parts = List(CV).new()
+            parts.append(cv_str(os[..]))
+            parts.append(cv_str(arch[..]))
+            parts.append(cv_int(bits as i128))
+            return cv_seq(VK_TUPLE, parts)
+        }
         if name == "ErrorName" {
             if vs[0].kind != VK_ERR { return null }
             return cv_str(self.error_names[(vs[0].ival - 1) as usize][..])

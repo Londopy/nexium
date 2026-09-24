@@ -1161,6 +1161,31 @@ impl Checker {
         self.fixes.append(Fix{ .module = module, .start = start, .end = end, .text = String.from(text), .what = String.from(what) })
     }
 
+    /// `@target()` at compile time: the (os, arch, pointer_bits) of the build,
+    /// from `--target`'s triple or else the machine the compiler runs on, in
+    /// the words the runtime uses for the same build (`nx_host_os`,
+    /// `nx_host_arch`, `NX_PTR_BITS`).
+    pub fn build_target(self: *Self) -> (String, String, u32) {
+        let (hos, harch, hbits) = @target()
+        if self.target.len == 0 { return (String.from(hos), String.from(harch), hbits) }
+        let t = self.target[..]
+        var first = t
+        if let i = t.find("-") { first = t[0..i] }
+        var arch: []u8 = "unknown"
+        if first == "x86_64" or first == "amd64" { arch = "x86_64" }
+        else if first == "aarch64" or first == "arm64" { arch = "aarch64" }
+        else if first == "x86" or first == "i386" or first == "i486" or first == "i586" or first == "i686" { arch = "x86" }
+        else if first.starts_with("arm") or first.starts_with("thumb") { arch = "arm" }
+        else if first == "riscv64" { arch = "riscv64" }
+        var os: []u8 = "unknown"
+        if t.find("windows") != null { os = "windows" }
+        else if t.find("macos") != null or t.find("darwin") != null or t.find("ios") != null { os = "macos" }
+        else if t.find("linux") != null { os = "linux" }
+        else if t.find("freebsd") != null or t.find("openbsd") != null or t.find("netbsd") != null { os = "bsd" }
+        let narrow = arch == "x86" or arch == "arm" or first.starts_with("wasm32") or first == "riscv32"
+        return (String.from(os), String.from(arch), if narrow { 32 } else { 64 })
+    }
+
     /// A note attached to the warning just reported.
     fn warn_note(self: *mut Self, module: usize, at: usize, msg: []u8) {
         self.warnings.append(format("  note: {}\n{}", .{msg, self.render_at(module, at)}))

@@ -880,3 +880,17 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     before. `_ = ` is not offered for an error union (discarding an error
     is a decision too) nor inside an `if` with no `else` whose value is
     wanted, where the missing `else` is the mistake.
+114. **`if comptime C` checks and builds only the branch `C` picks.**
+    Platform code had one tool, `@target()` as a C constant, and with it
+    both branches of an `if` were checked and compiled: a call to an API
+    that one platform lacks failed to link on the others, which is why
+    every platform difference lived in the runtime's `#ifdef`s. Now the
+    whole condition after `if comptime` is evaluated while checking (the
+    compile-time interpreter knows `@target()`: `--target`'s triple, or the
+    machine compiling, in the words the runtime uses), and the branch not
+    taken is parsed but never checked or built. The cost is Zig's: an
+    error in a branch no build takes goes unreported until a build takes
+    it, which is why CI builds for the three platforms. `comptime` after
+    `if` takes the whole condition (`if comptime a == b`), where before it
+    bound as a prefix operator and only folded `a`; nothing in the tree or
+    in the packages known to use Nexium wrote that.
