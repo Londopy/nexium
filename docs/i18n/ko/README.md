@@ -306,6 +306,7 @@ using arena {
 | `nx emit-c file.nx` | 생성된 C 출력 |
 | `nx tir file.nx [--sigs]` | 검사된 프로그램을 S-식으로(컴파일러 자체 테스트가 읽음) |
 | `nx fmt file.nx [--check]` | 표준 서식 |
+| `nx bench file.nx` | `bench "name" { }` 블록을 측정함(최적화 빌드, 반복당 시간의 중앙값) |
 | `nx fix file.nx` | 검사기의 기계적인 수정(`.clone()`, `@escape(...)`, `_ = `)을 적용하고 폐기된 형태를 이전함([docs/stability.md](../../stability.md) 참고) |
 | `nx doc file.nx` | 추론된 이펙트가 담긴 HTML 문서 |
 | `nx size file.nx` | 바이너리의 바이트를 선언별로 귀속 |

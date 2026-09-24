@@ -48,6 +48,7 @@ impl(T) Pair(T) { fn swap(self: *mut Self) { ... } }
 const TABLE: [256]u8 = comptime build_table()
 var counter: u32 = 0                             // mutable global; access needs `unsafe`
 test "name" { ... }
+bench "name" { ... }
 artifact cabi { name = "lib", exports = [f] }
 ```
 
@@ -319,6 +320,28 @@ creates a new one.
 `fn main()`, `fn main() -> !void`, or `fn main() -> u8`. An error from `main`
 prints `error: Name` and exits with 1; a panic prints its location and exits
 with 101. `test "name" { }` blocks run with `nx test`.
+
+## Benchmarks
+
+`bench "name" { ... }` sits beside the tests and runs with `nx bench`, which
+builds the file optimized (`safe` mode unless `--mode` asks for another)
+and measures each block: it calibrates the number of iterations to a 10 ms
+sample (the calibration is the warmup), takes 21 samples and prints the
+median time per iteration, with the fastest and slowest sample:
+
+```
+bench  sum to 1000      187 ns/iter  (min 186 ns, max 193 ns; 21 samples of 64398)
+bench  a list of 100    204 ns/iter  (min 202 ns, max 209 ns; 21 samples of 58241)
+```
+
+The value of the block's last expression is kept, so the work that makes
+it is not optimized away: `bench "sum" { sum_to(1000) }` measures the sum,
+where `_ = sum_to(1000)` might measure nothing. A value that is an error
+union must be `try`'d, so an error fails the benchmark rather than being
+measured. A panic or an error fails it; the others still run. Arguments
+after the file narrow the run to names containing them, and `--quick`
+takes 1 ms samples. `nx test` does not run benchmarks, and `nx check`
+checks them.
 
 ## Recursive types and matching through pointers
 

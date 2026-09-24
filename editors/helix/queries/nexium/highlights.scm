@@ -18,7 +18,7 @@
 ["for" "in" "while" "step" "parallel"] @keyword.control.repeat
 ["return" "break" "continue"] @keyword.control.return
 ["try" "catch" "orelse" "defer" "errdefer"] @keyword.control.exception
-["test" "where" "unsafe"] @keyword
+["test" "bench" "where" "unsafe"] @keyword
 ["as" "into"] @keyword.operator
 (visibility) @keyword.storage.modifier
 

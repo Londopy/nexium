@@ -31,7 +31,7 @@
             <Keywords name="Folders in comment, open"></Keywords>
             <Keywords name="Folders in comment, middle"></Keywords>
             <Keywords name="Folders in comment, close"></Keywords>
-            <Keywords name="Keywords1">fn let var const struct enum record ref class trait impl pub import comptime unsafe type error distinct where into artifact test export as in dyn weak extern derive layout own using and or</Keywords>
+            <Keywords name="Keywords1">fn let var const struct enum record ref class trait impl pub import comptime unsafe type error distinct where into artifact test bench export as in dyn weak extern derive layout own using and or</Keywords>
             <Keywords name="Keywords2">if else match for while step parallel break continue return defer errdefer unreachable try catch orelse</Keywords>
             <Keywords name="Keywords3">true false null undefined</Keywords>
             <Keywords name="Keywords4">i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 isize usize f32 f64 bool char void never Self List String Map</Keywords>

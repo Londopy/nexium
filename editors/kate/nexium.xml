@@ -14,7 +14,7 @@
       <item>struct</item> <item>enum</item> <item>record</item> <item>ref</item> <item>class</item>
       <item>trait</item> <item>impl</item> <item>pub</item> <item>import</item> <item>comptime</item>
       <item>unsafe</item> <item>type</item> <item>distinct</item> <item>where</item> <item>into</item>
-      <item>artifact</item> <item>test</item> <item>export</item> <item>as</item> <item>in</item>
+      <item>artifact</item> <item>test</item> <item>bench</item> <item>export</item> <item>as</item> <item>in</item>
       <item>dyn</item> <item>weak</item> <item>extern</item> <item>derive</item> <item>layout</item>
       <item>own</item> <item>using</item> <item>and</item> <item>or</item>
     </list>

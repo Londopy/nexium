@@ -257,6 +257,14 @@
           }
         },
         {
+          "match": "\\b(bench)\\s+(?=\")",
+          "captures": {
+            "1": {
+              "name": "keyword.other.test.nexium"
+            }
+          }
+        },
+        {
           "match": "\\b(comptime\\s+)?(test)\\s+(?=\")",
           "captures": {
             "1": {

@@ -13,7 +13,7 @@ color brightblue "\<[a-z_][A-Za-z0-9_]*\("
 color brightblue "\<(println|print|eprintln|format|expect|expect_eq|panic)\("
 
 ## keywords
-color brightmagenta "\<(fn|let|var|const|struct|enum|record|ref|class|trait|impl|pub|import|comptime|unsafe|type|distinct|where|into|artifact|test|export|as|in|dyn|weak|extern|derive|layout|own|using|and|or)\>"
+color brightmagenta "\<(fn|let|var|const|struct|enum|record|ref|class|trait|impl|pub|import|comptime|unsafe|type|distinct|where|into|artifact|test|bench|export|as|in|dyn|weak|extern|derive|layout|own|using|and|or)\>"
 color brightmagenta "\<(if|else|match|for|while|step|parallel|break|continue|return|defer|errdefer|unreachable|try|catch|orelse)\>"
 
 ## constants, effects, intrinsics, error names, variants, labels

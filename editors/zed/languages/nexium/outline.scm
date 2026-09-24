@@ -50,3 +50,7 @@
 (test_item
   "test" @context
   name: (string_literal) @name) @item
+
+(bench_item
+  "bench" @context
+  name: (string_literal) @name) @item

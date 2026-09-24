@@ -302,6 +302,7 @@ using arena {
 | `nx emit-c file.nx` | 打印生成的 C |
 | `nx tir file.nx [--sigs]` | 以 S 表达式输出检查后的程序（编译器自己的测试会读取它） |
 | `nx fmt file.nx [--check]` | 规范化格式 |
+| `nx bench file.nx` | 测量 `bench "name" { }` 块：优化构建，每次迭代时间的中位数 |
 | `nx fix file.nx` | 应用检查器的机械修复（`.clone()`、`@escape(...)`、`_ = `）并迁移已弃用写法；见 [docs/stability.md](../../stability.md) |
 | `nx doc file.nx` | 带推断效应的 HTML 文档 |
 | `nx size file.nx` | 把二进制的字节归因到各声明 |

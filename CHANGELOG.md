@@ -61,6 +61,18 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   which one a program means is the programmer's choice (decision 113). An error with an edit on offer ends with
   "note: `nx fix FILE` can try an edit for N of these". The loader takes
   stand-in texts for any of the program's files (`load_with_texts`).
+- `nx bench` and `bench "name" { ... }` blocks beside the tests. The file
+  is built optimized (`safe` unless `--mode` says otherwise) and each block
+  measured: the iterations calibrated to a 10 ms sample, which is the
+  warmup, then 21 samples, the median time per iteration printed with the
+  fastest and slowest (`bench  sum to 1000  187 ns/iter  (min 186 ns, max
+  193 ns; 21 samples of 64398)`). The value of the block's last expression
+  is kept (`nx_bench_keep`), so the work that makes it is not optimized
+  away; an error union must be `try`'d. A panic or an error fails the
+  benchmark and the others run on; a filter narrows the run and `--quick`
+  takes 1 ms samples. `nx test` leaves benchmarks to `nx bench`. `bench`
+  is a keyword only before a string, so it stays a name elsewhere; the
+  tree-sitter grammar and the editor files know it.
 - `--sanitize address,undefined` for `nx build`, `run` and `test`: the C
   compiler's AddressSanitizer and UBSan, with debug information, the first
   finding stopping the program. In `fast` mode they put back the overflow

@@ -22,6 +22,7 @@ syn match nexiumDocComment "//!.*$" contains=nexiumTodo,@Spell
 syn keyword nexiumKeyword fn let var const struct enum record ref class trait impl
 syn keyword nexiumKeyword pub import comptime unsafe type distinct where into
 syn keyword nexiumKeyword artifact test export as in dyn weak extern derive layout own
+syn match nexiumKeyword /\<bench\>\ze\s\+"/
 syn keyword nexiumConditional if else match
 syn keyword nexiumRepeat for while step parallel
 syn keyword nexiumStatement break continue return defer errdefer using unreachable

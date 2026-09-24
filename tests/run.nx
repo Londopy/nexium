@@ -468,6 +468,19 @@ fn suite_examples(e: *Env, failures: *mut List(String)) {
     if san_test.code != 0 { failures.append(format("examples: nx test --sanitize undefined failed (exit {}):\n{}{}", .{san_test.code, san_test.stdout, san_test.stderr})) }
     let bogus = nx(e, ["run", "examples/hello.nx", "--sanitize", "thread"][..])
     if bogus.code != 2 or bogus.stderr[..].find("takes `address` and `undefined`, not `thread`") == null { failures.append(format("examples: --sanitize thread was not refused (exit {}):\n{}", .{bogus.code, bogus.stderr})) }
+    // nx bench: each `bench` block measured, its value kept; `nx test` leaves
+    // them; a panic fails one benchmark and the rest run; a filter narrows
+    let bench_src = fs.join(e.root[..], "nx-out/cases/benches.nx")
+    fs.write(bench_src[..], "fn sum_to(n: i64) -> i64 {\n    var s: i64 = 0\n    var i: i64 = 0\n    while i < n {\n        s += i\n        i += 1\n    }\n    return s\n}\n\nfn bench(n: i64) -> i64 { return n + 1 }\n\ntest \"sums\" {\n    expect(sum_to(4) == 6)\n}\n\nbench \"sum to 1000\" {\n    sum_to(1000)\n}\n\nbench \"a named function\" {\n    bench(41)\n}\n\nbench \"this one panics\" {\n    let xs = [1, 2, 3]\n    var i: usize = 0\n    while i < 4 { i += 1 }\n    xs[i]\n}\n") catch { }
+    let bt = nx(e, ["test", bench_src[..]][..])
+    if bt.code != 0 or bt.stdout[..].find("1 passed, 0 failed") == null or bt.stdout[..].find("sum to") != null { failures.append(format("examples: nx test on a file with benchmarks (exit {}):\n{}{}", .{bt.code, bt.stdout, bt.stderr})) }
+    let bb = nx(e, ["bench", bench_src[..], "--quick"][..])
+    for want in ["bench  sum to 1000       ", "ns/iter  (min ", "21 samples of ", "bench  a named function  ", "FAIL   this one panics", "index 4 out of bounds for length 3", "3 benchmark(s), safe mode, some failed"] {
+        if bb.stdout[..].find(want) == null { failures.append(format("examples: nx bench lacks `{}` (exit {}):\n{}{}", .{want, bb.code, bb.stdout, bb.stderr})) }
+    }
+    if bb.code != 1 { failures.append(format("examples: nx bench with a failing benchmark exited {}", .{bb.code})) }
+    let bf = nx(e, ["bench", bench_src[..], "named", "--quick"][..])
+    if bf.code != 0 or bf.stdout[..].find("1 benchmark(s), safe mode (some skipped by filter)") == null { failures.append(format("examples: nx bench with a filter (exit {}):\n{}{}", .{bf.code, bf.stdout, bf.stderr})) }
     let asan_zig = nx(e, ["run", "examples/hello.nx", "--cc", "zig", "--sanitize", "address"][..])
     if asan_zig.code != 2 or asan_zig.stderr[..].find("zig cc has no AddressSanitizer runtime") == null { failures.append(format("examples: --sanitize address with zig cc was not refused (exit {}):\n{}", .{asan_zig.code, asan_zig.stderr})) }
     println("examples: {} programs, and nx doctor", .{cases.len})

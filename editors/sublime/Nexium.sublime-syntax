@@ -128,6 +128,8 @@ contexts:
         2: variable.other.declaration.nexium
 
   keywords:
+    - match: '\bbench\b(?=\s+")'
+      scope: keyword.other.nexium
     - match: '\b(if|else|for|while|match|break|continue|return|try|catch|defer|errdefer|orelse|unreachable|parallel|using)\b'
       scope: keyword.control.nexium
     - match: '\b(fn|let|var|const|struct|enum|record|ref|class|trait|impl|pub|import|comptime|unsafe|error|type|distinct|where|into|artifact|test|export|as|in|dyn|weak|extern|derive|layout|own)\b'

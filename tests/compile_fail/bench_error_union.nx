@@ -1,0 +1,8 @@
+// EXPECT: the value of this `bench` block is `!i64`; `try` it, so an error fails the benchmark instead of being measured
+fn parse(s: []u8) -> !i64 {
+    return s.parse_int(i64)
+}
+
+bench "parsing" {
+    parse("42")
+}

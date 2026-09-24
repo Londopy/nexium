@@ -64,7 +64,7 @@
 (defconst nexium--keywords
   '("fn" "let" "var" "const" "struct" "enum" "record" "ref" "class" "trait" "impl"
     "pub" "import" "comptime" "unsafe" "type" "distinct" "where" "into"
-    "artifact" "test" "export" "as" "in" "dyn" "weak" "extern" "derive" "layout" "own"
+    "artifact" "test" "bench" "export" "as" "in" "dyn" "weak" "extern" "derive" "layout" "own"
     "if" "else" "match" "for" "while" "step" "parallel"
     "break" "continue" "return" "defer" "errdefer" "using" "unreachable"
     "try" "catch" "orelse" "and" "or"))

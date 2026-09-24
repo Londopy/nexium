@@ -63,6 +63,7 @@ module.exports = grammar({
         $.global_item,
         $.import_item,
         $.test_item,
+        $.bench_item,
         $.artifact_item,
       ),
 
@@ -166,6 +167,8 @@ module.exports = grammar({
     module_path: ($) => seq($.identifier, repeat(seq('.', $.identifier))),
 
     test_item: ($) => seq(optional('comptime'), 'test', field('name', $.string_literal), field('body', $.block)),
+
+    bench_item: ($) => seq('bench', field('name', $.string_literal), field('body', $.block)),
 
     artifact_item: ($) => seq('artifact', field('kind', $.identifier), '{', repeat(seq($.identifier, '=', $.expression, optional(','))), '}'),
 

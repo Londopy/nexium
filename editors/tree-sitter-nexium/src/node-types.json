@@ -174,6 +174,10 @@
         "named": true
       },
       {
+        "type": "bench_item",
+        "named": true
+      },
+      {
         "type": "const_item",
         "named": true
       },
@@ -676,6 +680,32 @@
           "named": true
         }
       ]
+    }
+  },
+  {
+    "type": "bench_item",
+    "named": true,
+    "fields": {
+      "body": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "block",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "string_literal",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {
@@ -3412,6 +3442,10 @@
   },
   {
     "type": "as",
+    "named": false
+  },
+  {
+    "type": "bench",
     "named": false
   },
   {

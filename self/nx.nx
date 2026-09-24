@@ -72,7 +72,7 @@ pub struct Opts {
 }
 
 fn usage() {
-    eprintln("usage: nx <build|run|test|check|effects|audit|refcounts|leaks|size|layout|emit-c|tir> <file.nx> [options] [-- args]", .{})
+    eprintln("usage: nx <build|run|test|bench|check|effects|audit|refcounts|leaks|size|layout|emit-c|tir> <file.nx> [options] [-- args]", .{})
     eprintln("       nx explain <file.nx> <function> <effect>     why the function has the effect, as a tree", .{})
     eprintln("       nx fmt <file.nx>... [--check] | nx fix <file.nx>... [--check]", .{})
     eprintln("       nx doc <file.nx> [-o <dir>]", .{})
@@ -760,7 +760,7 @@ fn cmd_test(o: *Opts) -> i32 {
     if o.watch { return watch_loop(o) }
     var c = check_program(o) orelse return 1
     if c.tests.len == 0 {
-        println("no tests found", .{})
+        if c.benches.len > 0 { println("no tests found; {} benchmark(s), which `nx bench` runs", .{c.benches.len}) } else { println("no tests found", .{}) }
         return 0
     }
     let stem = stem_of(o.file[..])
@@ -772,6 +772,29 @@ fn cmd_test(o: *Opts) -> i32 {
     if !compile_c(&c, o, c_path[..], out[..], "exe") { return 1 }
     if !o.keep_c { io.remove_file(c_path[..]) catch { } }
     return run_program(out[..], &o.rest)
+}
+
+/// `nx bench FILE [filter] [--quick]`: the `bench` blocks, built optimized
+/// (`safe` when no other mode is asked for, as `nx ship` builds) and
+/// measured by the runner cgen writes (`bench_runner`); `--quick` takes
+/// shorter samples. Fails when a benchmark panics or returns an error.
+fn cmd_bench(o: *Opts) -> i32 {
+    var bo = clone_opts(o)
+    if bo.mode == cgen.MODE_DEBUG { bo.mode = cgen.MODE_SAFE }
+    var c = check_program(&bo) orelse return 1
+    if c.benches.len == 0 {
+        println("no benchmarks found", .{})
+        return 0
+    }
+    let stem = stem_of(bo.file[..])
+    let text = emit(&mut c, &bo, cgen.ENTRY_BENCH)
+    if text.len == 0 { return 1 }
+    let bstem = format("{}_bench", .{stem})
+    let c_path = write_c(&bo, bstem[..], text[..]) orelse return 1
+    let out = format("{}/{}", .{bo.out_dir, exe_name(bstem[..], bo.target[..])})
+    if !compile_c(&c, &bo, c_path[..], out[..], "exe") { return 1 }
+    if !bo.keep_c { io.remove_file(c_path[..]) catch { } }
+    return run_program(out[..], &bo.rest)
 }
 
 fn cmd_check(o: *Opts) -> i32 {
@@ -1986,6 +2009,8 @@ fn main() -> u8 {
         code = cmd_run(&o)
     } else if o.command == "test" {
         code = cmd_test(&o)
+    } else if o.command == "bench" {
+        code = cmd_bench(&o)
     } else if o.command == "check" {
         code = cmd_check(&o)
     } else if o.command == "emit-c" {

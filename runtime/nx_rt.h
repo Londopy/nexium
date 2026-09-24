@@ -915,6 +915,63 @@ NX_INLINE void nx_sleep_ms(uint64_t ms) {
     usleep((useconds_t)(ms * 1000));
 #endif
 }
+
+/* ---- `nx bench` ---- */
+/* A value the optimizer must assume is read: what a benchmark computes is
+   kept, so the work that makes it is not removed. */
+NX_INLINE void nx_bench_keep(const void* p) {
+#if defined(__GNUC__) || defined(__clang__)
+    __asm__ __volatile__("" : : "r"(p) : "memory");
+#else
+    static const void* volatile sink; sink = p;
+#endif
+}
+typedef struct nx_bench_result { uint64_t iters; uint32_t samples; uint32_t err; double median_ns, min_ns, max_ns; } nx_bench_result;
+NX_INLINE int nx_bench_cmp(const void* a, const void* b) { double x = *(const double*)a, y = *(const double*)b; return (x > y) - (x < y); }
+#define NX_BENCH_SAMPLES 21
+/* Calibrate (which is the warmup): double the iterations until one sample
+   takes `sample_ns`; then time NX_BENCH_SAMPLES samples of that many and
+   keep the median. A body slower than a sample gets fewer samples (at
+   least 5), so a slow benchmark takes seconds rather than minutes. A body
+   that returns an error stops it, the error in `err`. */
+NX_INLINE void nx_bench_measure(nx_ctx* c, uint32_t (*f)(nx_ctx*), uint64_t sample_ns, nx_bench_result* r) {
+    memset(r, 0, sizeof *r);
+    uint64_t n = 1, dt = 0;
+    for (;;) {
+        uint64_t t0 = nx_time_monotonic_ns();
+        for (uint64_t i = 0; i < n; i++) { uint32_t e = f(c); if (e) { r->err = e; return; } }
+        dt = nx_time_monotonic_ns() - t0;
+        if (dt >= sample_ns || n >= (1ULL << 40)) break;
+        uint64_t next = dt > 0 ? (uint64_t)((double)n * (double)sample_ns / (double)dt * 1.2) : n * 10;
+        if (next > n * 10) next = n * 10;
+        if (next <= n) next = n + 1;
+        n = next;
+    }
+    uint32_t samples = NX_BENCH_SAMPLES;
+    if (n == 1 && dt > sample_ns) {
+        uint64_t fit = (sample_ns * NX_BENCH_SAMPLES) / dt;
+        samples = fit < 5 ? 5 : (uint32_t)fit;
+        if (samples > NX_BENCH_SAMPLES) samples = NX_BENCH_SAMPLES;
+    }
+    double s[NX_BENCH_SAMPLES];
+    for (uint32_t k = 0; k < samples; k++) {
+        uint64_t t0 = nx_time_monotonic_ns();
+        for (uint64_t i = 0; i < n; i++) { uint32_t e = f(c); if (e) { r->err = e; return; } }
+        s[k] = (double)(nx_time_monotonic_ns() - t0) / (double)n;
+    }
+    qsort(s, samples, sizeof(double), nx_bench_cmp);
+    r->iters = n; r->samples = samples;
+    r->median_ns = s[samples / 2]; r->min_ns = s[0]; r->max_ns = s[samples - 1];
+}
+/* `ns` with three significant digits in the unit that suits it. */
+NX_INLINE const char* nx_bench_time(double ns, char* buf, size_t cap) {
+    const char* unit = "ns"; double v = ns;
+    if (ns >= 1e9) { v = ns / 1e9; unit = "s"; }
+    else if (ns >= 1e6) { v = ns / 1e6; unit = "ms"; }
+    else if (ns >= 1e3) { v = ns / 1e3; unit = "\xc2\xb5s"; }
+    snprintf(buf, cap, "%.3g %s", v, unit);
+    return buf;
+}
 NX_INLINE uint64_t nx_rng_next(nx_ctx* c) {
     if (!c->rng_seeded) { c->rng ^= (uint64_t)nx_time_monotonic_ns(); c->rng_seeded = true; }
     /* splitmix64 */

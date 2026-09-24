@@ -12,6 +12,7 @@ compiler's `self/` directory.
 | `nx run file.nx [-- args]` | build and run |
 | `nx build file.nx [-o out]` | build an executable (or an object file when there is no `main`) |
 | `nx test file.nx [--filter s] [--verbose]` | run the `test` blocks |
+| `nx bench file.nx [filter] [--quick]` | measure the `bench` blocks: an optimized build, the median time per iteration |
 | `nx check file.nx` | check without building; the diagnostics only |
 | `nx emit-c file.nx` | print the generated C |
 

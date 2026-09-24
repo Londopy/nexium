@@ -7,7 +7,7 @@
 ; ---------------------------------------------------------------- keywords
 [
   "fn" "let" "var" "const" "struct" "enum" "record" "ref" "class" "trait" "impl"
-  "type" "error" "test" "artifact" "import" "extern" "export" "comptime" "own"
+  "type" "error" "test" "bench" "artifact" "import" "extern" "export" "comptime" "own"
   "distinct" "dyn" "weak" "where" "using" "unsafe" "defer" "errdefer"
 ] @keyword
 

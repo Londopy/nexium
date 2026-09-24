@@ -255,6 +255,7 @@ impl Parser {
         return s == "fn" or s == "pub" or s == "struct" or s == "enum" or s == "record" or s == "ref" or s == "trait"
             or s == "impl" or s == "const" or s == "var" or s == "type" or s == "import" or s == "test"
             or s == "artifact" or s == "error" or s == "extern" or s == "comptime"
+            or (s == "bench" and self.peek_at(1) == lexer.Kind.Str)
     }
     fn recover_item(self: *mut Self) {
         while true {
@@ -370,10 +371,12 @@ impl Parser {
         } else if s == "import" {
             item = try self.parse_import()
         } else if s == "test" {
-            item = try self.parse_test(false)
+            item = try self.parse_test(false, false)
+        } else if s == "bench" and self.peek_at(1) == lexer.Kind.Str {
+            item = try self.parse_test(false, true)
         } else if s == "comptime" and self.ident_at(1, "test") {
             self.bump()
-            item = try self.parse_test(true)
+            item = try self.parse_test(true, false)
         } else if s == "artifact" {
             item = try self.parse_artifact()
         } else {
@@ -859,11 +862,13 @@ impl Parser {
         return self.tree.add(n)
     }
 
-    fn parse_test(self: *mut Self, is_comptime: bool) -> !usize {
-        let start = try self.expect_kw("test")
+    /// `test "name" { }`, `comptime test "name" { }`, and `bench "name" { }`
+    /// (a test node with `flag2`: `nx bench` measures it, `nx test` skips it).
+    fn parse_test(self: *mut Self, is_comptime: bool, is_bench: bool) -> !usize {
+        let start = try self.expect_kw(if is_bench { "bench" } else { "test" })
         if self.peek() != lexer.Kind.Str {
             self.bump()
-            return self.fail(self.prev_start(), "expected a string naming the test")
+            return self.fail(self.prev_start(), if is_bench { "expected a string naming the benchmark" } else { "expected a string naming the test" })
         }
         let name = unhex(self.text())
         self.bump()
@@ -871,6 +876,7 @@ impl Parser {
         var n = blank(NodeKind.Test, start, self.prev_end())
         n.name = name
         n.flag = is_comptime
+        n.flag2 = is_bench
         n.x = body
         return self.tree.add(n)
     }
@@ -2705,7 +2711,7 @@ impl Printer {
             self.line(format("(import {} path={} alias={} names={})", .{sp, path, n.name, names_text}))
         } else if k == NodeKind.Test {
             let n = &self.tree.nodes[id]
-            self.open(format("(test {} name={} comptime={}", .{sp, quote(n.name), bool_text(n.flag)}))
+            self.open(format("({} {} name={} comptime={}", .{if n.flag2 { "bench" } else { "test" }, sp, quote(n.name), bool_text(n.flag)}))
             self.block(n.x)
             self.close()
         } else if k == NodeKind.Artifact {

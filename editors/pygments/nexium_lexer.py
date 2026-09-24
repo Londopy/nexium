@@ -18,7 +18,7 @@ __all__ = ["NexiumLexer"]
 KEYWORDS = (
     "fn", "let", "var", "const", "struct", "enum", "record", "ref", "class", "trait", "impl", "pub", "import",
     "return", "if", "else", "for", "while", "match", "break", "continue", "try", "catch", "defer", "errdefer",
-    "comptime", "unsafe", "error", "type", "distinct", "where", "into", "artifact", "test", "export",
+    "comptime", "unsafe", "error", "type", "distinct", "where", "into", "artifact", "test", "bench", "export",
     "unreachable", "as", "orelse", "in", "dyn", "weak", "parallel", "extern", "using", "own", "step", "derive",
     "layout",
 )

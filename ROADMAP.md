@@ -537,7 +537,9 @@ luck.
   V5's `@escape`, and `_ = `. `+%` and `+|` stay the programmer's choice:
   each changes what the overflowing case computes.)
 - `nx bench`: `bench "name" { }` blocks with warmup, iterations and
-  medians, in the same file as tests.
+  medians, in the same file as tests. (Done: an optimized build, the
+  iterations calibrated to a 10 ms sample, 21 samples, the median with the
+  fastest and slowest; the block's value is kept from the optimizer.)
 - `nx build --sanitize address,undefined` through the C compiler, and
   `nx test --sanitize` in this repository's CI. (Done: `build`, `run` and
   `test` take it; `address` needs gcc or clang, and through zig a

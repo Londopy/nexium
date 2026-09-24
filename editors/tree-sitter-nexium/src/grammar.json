@@ -95,6 +95,10 @@
         },
         {
           "type": "SYMBOL",
+          "name": "bench_item"
+        },
+        {
+          "type": "SYMBOL",
           "name": "artifact_item"
         }
       ]
@@ -1544,6 +1548,31 @@
         {
           "type": "STRING",
           "value": "test"
+        },
+        {
+          "type": "FIELD",
+          "name": "name",
+          "content": {
+            "type": "SYMBOL",
+            "name": "string_literal"
+          }
+        },
+        {
+          "type": "FIELD",
+          "name": "body",
+          "content": {
+            "type": "SYMBOL",
+            "name": "block"
+          }
+        }
+      ]
+    },
+    "bench_item": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "bench"
         },
         {
           "type": "FIELD",

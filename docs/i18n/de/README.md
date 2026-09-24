@@ -312,6 +312,7 @@ using arena {
 | `nx emit-c file.nx` | das erzeugte C ausgeben |
 | `nx tir file.nx [--sigs]` | das geprüfte Programm als S-Ausdrücke (die eigenen Tests des Compilers lesen es) |
 | `nx fmt file.nx [--check]` | kanonische Formatierung |
+| `nx bench file.nx` | die `bench "name" { }`-Blöcke messen: ein optimierter Build, die mittlere Zeit (Median) pro Iteration |
 | `nx fix file.nx` | die mechanischen Korrekturen des Checkers anwenden (`.clone()`, `@escape(...)`, `_ = `) und veraltete Formen migrieren; siehe [docs/stability.md](../../stability.md) |
 | `nx doc file.nx` | HTML-Dokumentation mit inferierten Effekten |
 | `nx size file.nx` | Bytes des Binarys den Deklarationen zuordnen |

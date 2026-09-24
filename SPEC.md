@@ -87,6 +87,7 @@ const TABLE: [256]u8 = comptime build()     // compile-time constant
 var counter: u32 = 0                        // mutable global (needs `unsafe` to touch)
 test "name" { ... }                         // run by `nx test`
 comptime test "name" { ... }                // run by the checker
+bench "name" { ... }                        // measured by `nx bench`
 artifact cabi { name = "lib", exports = [f] }
 import foo.bar                              // foo/bar.nx next to the root file
 import std.json                             // a std module embedded in the compiler

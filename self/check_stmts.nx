@@ -64,7 +64,8 @@ impl Checker {
             ctx.scope_deref.append(false)
         }
         self.ctxs.append(ctx)
-        let tb = self.check_block(body, ret, NONE, NONE)
+        // a bench's value is whatever its last expression is, and it is kept
+        let tb = self.check_block(body, if self.fns[fid].is_bench { NONE } else { ret }, NONE, NONE)
         let tb2 = self.finalize_block_as_body(tb, ret)
         let done = self.ctxs.pop() orelse return
         self.env_restore(&saved_env)
@@ -108,6 +109,13 @@ impl Checker {
                 let v = self.coerce_or_error(tail, ret, "return value")
                 let s = self.tir.add(check.tblank(TKind.SReturn, ret, start, end))
                 self.tir.nodes[s].kids.append(v)
+                self.tir.nodes[tb].kids.append(s)
+            } else if is_void_ret and self.ctx().fn_name[..].starts_with("bench:") {
+                // `nx bench` keeps the value, so the work that makes it is not optimized away
+                if tk == TK.ErrUnion { self.fail_here(self.tir.nodes[tail].start, format("the value of this `bench` block is `{}`; `try` it, so an error fails the benchmark instead of being measured", .{self.ty_name(tt)})[..]) }
+                let s = self.tir.add(check.tblank(TKind.SExpr, tt, self.tir.nodes[tail].start, self.tir.nodes[tail].end))
+                self.tir.nodes[s].kids.append(tail)
+                self.tir.nodes[s].flag = true
                 self.tir.nodes[tb].kids.append(s)
             } else if is_void_ret {
                 self.fail_here(self.tir.nodes[tail].start, format("this value of type `{}` is unused; the function returns void. Discard it with `_ = ...` or return it", .{self.ty_name(tt)})[..])

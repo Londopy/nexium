@@ -402,6 +402,8 @@ pub struct FnDef {
     is_generic: bool
     is_test: bool
     test_name: String
+    // `bench "name" { }`: a test function that `nx bench` measures
+    is_bench: bool = false
     test_comptime: bool
 }
 
@@ -1024,6 +1026,8 @@ pub struct Checker {
     ctxs: List(FnCtx)
     main_inst: usize
     tests: List(usize)
+    // the `bench` blocks, run by `nx bench`
+    benches: List(usize)
     // the generic environment types resolve in: parameter names bound to types
     env_names: List(String)
     env_tys: List(usize)
@@ -1493,7 +1497,7 @@ impl Checker {
             self.collect_import(m, it)
         } else if k == parser.NodeKind.Test {
             let n = self.node(m, it)
-            self.fns.append(FnDef{ .node = it, .node_module = m, .module = m, .impl_id = NONE, .is_generic = false, .is_test = true, .test_name = n.name.clone(), .test_comptime = n.flag })
+            self.fns.append(FnDef{ .node = it, .node_module = m, .module = m, .impl_id = NONE, .is_generic = false, .is_test = true, .test_name = n.name.clone(), .test_comptime = n.flag, .is_bench = n.flag2 })
         } else if k == parser.NodeKind.Artifact {
             self.artifact_kinds.append(self.node(m, it).name.clone())
         }
@@ -2170,7 +2174,7 @@ impl Checker {
         if is_test {
             let tn = self.fns[fid].test_name.clone()
             ctest = self.fns[fid].test_comptime
-            name = format("{}:{}", .{if ctest { "ctest" } else { "test" }, tn})
+            name = format("{}:{}", .{if ctest { "ctest" } else if self.fns[fid].is_bench { "bench" } else { "test" }, tn})
             export_name = String.from("-")
             is_extern = false
             is_pub = false
@@ -2495,7 +2499,7 @@ impl Checker {
         var is_variadic = false
         if is_test {
             test_comptime = self.fns[fid].test_comptime
-            name = format("{}:{}", .{if test_comptime { "ctest" } else { "test" }, self.fns[fid].test_name})
+            name = format("{}:{}", .{if test_comptime { "ctest" } else if self.fns[fid].is_bench { "bench" } else { "test" }, self.fns[fid].test_name})
             let v = self.tys.void()
             ret = self.tys.err_union(0, false, v)
             start = self.node(nm, node).start
@@ -2567,7 +2571,9 @@ impl Checker {
         })
         // a std module's tests belong to the compiler's own suite
         let from_std = self.mods[m].name.len >= 4 and self.mods[m].name[0..4] == "std."
-        if is_test and !test_comptime and ! (from_std and m != 0) { self.tests.append(id) }
+        if is_test and !test_comptime and ! (from_std and m != 0) {
+            if self.fns[fid].is_bench { self.benches.append(id) } else { self.tests.append(id) }
+        }
         self.queue.append(id)
         return id
     }
@@ -3713,7 +3719,7 @@ pub fn new_checker(own mods: List(Mod)) -> Checker {
         .globals = List(GlobalDef).new(), .aliases = List(AliasDef).new(), .error_sets = List(ErrorSetDef).new(),
         .errors = List(String).new(), .warnings = List(String).new(), .fixes = List(Fix).new(), .open_lits = List(usize).new(), .open_lit_mods = List(usize).new(), .view_cache = Map(usize, u8).new(), .closure_caps = Map(usize, List(usize)).new(), .diags = List(Diag).new(), .error_names = List(String).new(), .error_ids = Map(String, usize).new(),
         .insts = List(Inst).new(), .inst_map = Map(String, usize).new(), .queue = List(usize).new(), .tir = Tir{ .nodes = List(T).new() },
-        .ctxs = List(FnCtx).new(), .main_inst = NONE, .tests = List(usize).new(),
+        .ctxs = List(FnCtx).new(), .main_inst = NONE, .tests = List(usize).new(), .benches = List(usize).new(),
         .env_names = List(String).new(), .env_tys = List(usize).new(),
         .record_new_mode = false, .vtables = List(VTable).new(), .obligations = List(Obligation).new(),
         .parallel_calls = List(Obligation).new(), .global_uses = List(Obligation).new(), .global_use_fns = List(String).new(), .artifact_kinds = List(String).new(), .wild_pat_node = NONE,

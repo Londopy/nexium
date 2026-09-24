@@ -15,3 +15,4 @@
 (doc_comment) @comment.inside
 (doc_comment)+ @comment.around
 (test_item) @test.around
+(bench_item) @test.around
