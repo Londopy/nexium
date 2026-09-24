@@ -531,7 +531,9 @@ luck.
   and the CI job `debugger` checks both debuggers.)
 - A semantic language server: hover, diagnostics, go-to-definition and
   rename backed by the checker's typed IR, not the parser (decision 84 was
-  syntactic on purpose, for 0.5).
+  syntactic on purpose, for 0.5). (Done, decision 115: when the program
+  checks, definition, rename across files and hover come from the typed
+  IR; the syntactic answers remain for code that does not check.)
 - `nx fix` applies the compiler's own hints: `+%`/`+|` where the note
   suggests it, `.clone()`, `_ =`, the view rules' fixes from 1.2. (Done,
   decisions 111 and 113: the checker offers an edit with an error and `nx

@@ -894,3 +894,19 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     `if` takes the whole condition (`if comptime a == b`), where before it
     bound as a prefix operator and only folded `a`; nothing in the tree or
     in the packages known to use Nexium wrote that.
+115. **When the program checks, the language server answers from the
+    checker.** Decision 84 made navigation syntactic so it would answer
+    while code is half-written, at the price of guessing: `value.method`
+    went to a method of that name in any `impl`, a field access could not
+    know its struct, and rename edited one file. Now, when the program
+    checks, an index built from the typed IR (`self/lsp_index.nx`) says
+    what each use of a local, function, method or field resolved to, with
+    the span of the declaration's name: definition goes there, hover shows
+    the local's or field's type or the function's signature and effects,
+    and rename edits the declaration and every use in each of the
+    program's own files (never std, a package or a C header). Where the
+    program does not check, and for completion, types, enum variants and
+    constants (which the IR does not keep by name), the syntactic answers
+    of decision 84 stand. Rename sees what the checker checked: a name
+    used only in an `if comptime` branch this build does not take, or in
+    a generic function nothing instantiates, is not reached.

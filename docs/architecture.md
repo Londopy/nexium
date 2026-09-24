@@ -280,7 +280,7 @@ the compiler:
 | `nx refcounts` | every `Retain`/`Release`/`Weak`/`Upgrade` node, with its function |
 | `nx audit` | `unsafe` blocks and globals |
 | `nx doc` | doc comments, signatures, and effects, rendered to HTML |
-| `nx lsp` | diagnostics from a full check on every edit, hover and code lenses (the panic proof from the recorded witness) from the checked instance; definition, completion and rename from the token stream and parsed modules (`self/lsp.nx`), so they answer while the code has errors |
+| `nx lsp` | diagnostics from a full check on every edit; code lenses (the panic proof from the recorded witness) from the checked instances; when the program checks, definition, rename and hover from what the checker resolved each name to (`self/lsp_index.nx`: locals, functions and methods, fields), rename editing every file of the program; otherwise, and for completion, types and constants, from the token stream and parsed modules (`self/lsp.nx`), so they answer while the code has errors |
 | `nx repl` | the interpreter, line by line, over a program that is re-checked whole |
 | `nx size` | section sizes of the object file mapped back to declarations |
 | `nx layout` | the checker's `size_of`/`align_of` walked field by field: offsets, padding, the total, and the reordering by alignment that would shrink a struct |

@@ -302,8 +302,10 @@ the choice, and `os.arch()` tells a program which architecture it runs on.
 ## An editor
 
 Every editor gets the same language server: `nx lsp` speaks LSP over
-stdio and gives diagnostics as you type, hover with inferred effects, go
-to definition, completion and rename. The
+stdio and gives diagnostics as you type, hover with types and inferred
+effects, go to definition, completion and rename; when the program checks,
+definition and rename follow what the checker resolved each name to (the
+`scale` of the right `impl`, a field in every file that names it). The
 [`editors/`](https://github.com/Londopy/nexium/tree/main/editors)
 directory of the repository has the pieces for each one:
 

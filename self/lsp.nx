@@ -8,10 +8,15 @@
 // `var`, parameter or capture before the cursor), then the file's items,
 // then imported modules and the std modules; `alias.name` looks inside the
 // imported module; `value.method` finds a method of that name in any `impl`.
+// When the program checks, definition, rename and hover answer from the
+// checker instead (self/lsp_index.nx, decision 115): the local, function,
+// method or field a name resolved to, and rename edits every file of the
+// program that names it.
 
 import lexer
 import parser
 import check
+import lsp_index
 import manifest
 import std.json
 import std.stream
@@ -528,11 +533,69 @@ fn analyze(path: []u8, text: []u8, std_dir: []u8, cc: *List(String), out: *mut L
     return c
 }
 
-/// Hover: the signature of the function holding `off`, with its inferred
-/// effects; or, when the file does not check, the signature as written.
-fn hover(path: []u8, text: []u8, off: usize, std_dir: []u8, cc: *List(String)) -> ?String {
+/// The checked program and what each of its names refers to, when the
+/// program checks.
+struct Semantic {
+    c: check.Checker
+    refs: List(lsp_index.Ref)
+}
+
+fn semantic(path: []u8, text: []u8, std_dir: []u8, cc: *List(String)) -> ?Semantic {
     var diags = List(LspDiag).new()
-    var c = analyze(path, text, std_dir, cc, &mut diags) orelse return hover_from_syntax(text, off)
+    let c = analyze(path, text, std_dir, cc, &mut diags) orelse return null
+    let refs = lsp_index.build(&c)
+    return Semantic{ .c = c, .refs = refs }
+}
+
+/// Whether a module is one of the program's own files: not std, a package
+/// or a C header, so rename may edit it.
+fn own_module(c: *check.Checker, m: usize) -> bool {
+    let name = c.mods[m].name[..]
+    return c.mods[m].pkg.len == 0 and !name.starts_with("std.") and !name.starts_with("cimport:") and !c.mods[m].path[..].starts_with("<std>")
+}
+
+/// The URI of a module: the editor's own for the file it is editing.
+fn module_uri(c: *check.Checker, m: usize, uri: []u8) -> String {
+    if m == 0 { return String.from(uri) }
+    return path_to_uri(c.mods[m].path[..])
+}
+
+/// What a name the checker resolved is: a local's or a field's type, a
+/// function's signature and effects.
+fn hover_ref(c: *mut check.Checker, r: *lsp_index.Ref) -> String {
+    if r.kind == "local" {
+        let l = &c.insts[r.inst].locals[r.index]
+        let what = if l.is_param { "parameter" } else if l.mutable { "var" } else { "let" }
+        return format("```nexium\n{} {}: {}\n```", .{what, l.name, c.ty_name(r.ty)})
+    }
+    if r.kind == "field" {
+        let m = c.structs[r.inst].module
+        let name = c.mods[m].parsed.tree.nodes[c.structs[r.inst].fields[r.index]].name.clone()
+        return format("```nexium\n{}: {}\n```\nfield of `{}`", .{name, c.ty_name(r.ty), c.structs[r.inst].name})
+    }
+    return fn_hover(c, r.inst)
+}
+
+/// A function's signature with its inferred effects.
+fn fn_hover(c: *mut check.Checker, i: usize) -> String {
+    var params = String.new()
+    for p, pi in c.insts[i].params.clone() {
+        if pi > 0 { params.append(", ") }
+        let l = &c.insts[i].locals[p]
+        params.append(format("{}: {}", .{l.name, c.ty_name(l.ty)})[..])
+    }
+    let ret = c.ty_name(c.insts[i].ret)
+    let eff = if c.insts[i].effects == 0 { String.from("pure (no effects)") } else { format("effects: {}", .{check.render_effects(c.insts[i].effects)}) }
+    return format("```nexium\nfn {}({}) -> {}\n```\n{}", .{c.insts[i].name, params, ret, eff})
+}
+
+/// Hover: what the name at `off` is, when the program checks; else the
+/// signature of the function holding `off`, with its inferred effects; or,
+/// when the file does not check, the signature as written.
+fn hover(path: []u8, text: []u8, off: usize, std_dir: []u8, cc: *List(String)) -> ?String {
+    var sem = semantic(path, text, std_dir, cc) orelse return hover_from_syntax(text, off)
+    if let r = lsp_index.at(&sem.refs, 0, off) { return hover_ref(&mut sem.c, &r) }
+    let c = &mut sem.c
     var best = parser.NONE
     let n = c.insts.len
     for i in 0..n {
@@ -543,15 +606,7 @@ fn hover(path: []u8, text: []u8, off: usize, std_dir: []u8, cc: *List(String)) -
         }
     }
     if best == parser.NONE { return null }
-    var params = String.new()
-    for p, pi in c.insts[best].params.clone() {
-        if pi > 0 { params.append(", ") }
-        let l = &c.insts[best].locals[p]
-        params.append(format("{}: {}", .{l.name, c.ty_name(l.ty)})[..])
-    }
-    let ret = c.ty_name(c.insts[best].ret)
-    let eff = if c.insts[best].effects == 0 { String.from("pure (no effects)") } else { format("effects: {}", .{check.render_effects(c.insts[best].effects)}) }
-    return format("```nexium\nfn {}({}) -> {}\n```\n{}", .{c.insts[best].name, params, ret, eff})
+    return fn_hover(c, best)
 }
 
 /// Code lenses: above every function, the panic proof ("cannot panic", or
@@ -857,7 +912,60 @@ pub fn run(version: []u8, std_dir: []u8, cc: *List(String)) {
             if let t = current {
                 let path = uri_to_path(uri[..])
                 let off = byte_offset(t[..], line, col)
-                if method == "textDocument/definition" {
+                var sem: ?Semantic = null
+                if method == "textDocument/definition" or method == "textDocument/prepareRename" or method == "textDocument/rename" { sem = semantic(path[..], t[..], std_dir, cc) }
+                var answered = false
+                if let s = sem {
+                    if let r = lsp_index.at(&s.refs, 0, off) {
+                        answered = true
+                        let dm = r.decl_module
+                        if method == "textDocument/definition" and !s.c.mods[dm].path[..].starts_with("<std>") {
+                            let dtext = if dm == 0 { t.clone() } else { s.c.mods[dm].source.clone() }
+                            let l = loc_of(dtext[..], s.c.mods[dm].path[..], r.decl_start, r.decl_end)
+                            var loc = json.object()
+                            json.set(&mut loc, "uri", str(module_uri(&s.c, dm, uri[..])[..]))
+                            json.set(&mut loc, "range", range_json(l.line, l.col, l.end_line, l.end_col))
+                            result = loc
+                        } else if method == "textDocument/prepareRename" and own_module(&s.c, dm) {
+                            // the name under the cursor: this use, or the declaration
+                            var ps = r.start
+                            var pe = r.end
+                            if ! (r.module == 0 and r.start <= off and off <= r.end) {
+                                ps = r.decl_start
+                                pe = r.decl_end
+                            }
+                            let l = loc_of(t[..], path[..], ps, pe)
+                            result = range_json(l.line, l.col, l.end_line, l.end_col)
+                        } else if method == "textDocument/rename" and own_module(&s.c, dm) {
+                            var new_name = String.new()
+                            if let n = json.get(&params, "newName") { if let v = json.as_str(n) { new_name = String.from(v) } }
+                            // every file that names it, each with its edits
+                            var changes = json.object()
+                            var files = List(usize).new()
+                            let spans = lsp_index.spans_of(&s.refs, &r)
+                            for sp in spans { if !own_module(&s.c, sp.module) { continue }; var have = false; for f in files { if f == sp.module { have = true } }; if !have { files.append(sp.module) } }
+                            for fm in files {
+                                let ftext = if fm == 0 { t.clone() } else { s.c.mods[fm].source.clone() }
+                                var edits = json.array()
+                                for sp in spans {
+                                    if sp.module != fm { continue }
+                                    let l = loc_of(ftext[..], s.c.mods[fm].path[..], sp.start, sp.end)
+                                    var e = json.object()
+                                    json.set(&mut e, "range", range_json(l.line, l.col, l.end_line, l.end_col))
+                                    json.set(&mut e, "newText", str(new_name[..]))
+                                    json.push(&mut edits, e)
+                                }
+                                json.set(&mut changes, module_uri(&s.c, fm, uri[..])[..], edits)
+                            }
+                            var re = json.object()
+                            json.set(&mut re, "changes", changes)
+                            result = re
+                        }
+                    }
+                }
+                if answered {
+                    // the checker's answer stands
+                } else if method == "textDocument/definition" {
                     let mods = editor_modules(path[..], t[..])
                     if let d = definition(&mods, t[..], off) {
                         // the std sources have no file on disk; nothing to point at

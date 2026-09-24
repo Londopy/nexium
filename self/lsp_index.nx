@@ -1,0 +1,328 @@
+// self/lsp_index.nx: what each name in a checked program refers to, for
+// the language server (decision 115). From the typed IR: every use of a
+// local, a function or method (a call, or the function as a value) and a
+// struct field (an access, or an initializer in a literal), each with the
+// span of the declaration's name it resolves to. Definition, rename and
+// hover answer from it; types, enum variants and constants, which the IR
+// does not keep by name, and programs that do not check are answered by
+// self/lsp.nx from the parse.
+
+import check
+
+const NONE = check.NONE
+type TKind = check.TKind
+
+/// A name as written, and the declaration it names.
+pub struct Ref derive(Clone) {
+    module: usize
+    start: usize
+    end: usize
+    decl_module: usize
+    decl_start: usize
+    decl_end: usize
+    // "local", "fn" or "field"
+    kind: String
+    // for hover: the local's instance and index, the callee, or the field's
+    // struct and index
+    inst: usize
+    index: usize
+    // the type at the use: the local's, the field's (NONE for a call)
+    ty: usize
+}
+
+fn is_word_byte(b: u8) -> bool {
+    return (b >= 'a' and b <= 'z') or (b >= 'A' and b <= 'Z') or (b >= '0' and b <= '9') or b == '_'
+}
+
+fn whole_word(src: []u8, i: usize, name: []u8) -> bool {
+    if i + name.len > src.len or src[i..i + name.len] != name { return false }
+    if i > 0 and is_word_byte(src[i - 1]) { return false }
+    return i + name.len == src.len or !is_word_byte(src[i + name.len])
+}
+
+/// Where `name` is first written as a whole word at or after `from`.
+fn first_word(src: []u8, from: usize, name: []u8) -> ?usize {
+    if name.len == 0 { return null }
+    var i = from
+    while i + name.len <= src.len {
+        if whole_word(src, i, name) { return i }
+        i += 1
+    }
+    return null
+}
+
+/// Where `name` is last written as a whole word in `[from, to)`.
+fn last_word(src: []u8, from: usize, to: usize, name: []u8) -> ?usize {
+    if name.len == 0 or to > src.len or to < from + name.len { return null }
+    var i = to - name.len + 1
+    while i > from {
+        i -= 1
+        if whole_word(src, i, name) { return i }
+    }
+    return null
+}
+
+/// Every use in the program's function bodies, one per span.
+pub fn build(c: *check.Checker) -> List(Ref) {
+    var refs = List(Ref).new()
+    var seen = Map(String, bool).new()
+    let n = c.insts.len
+    for i in 0..n {
+        let body = c.insts[i].body
+        if body == NONE or c.insts[i].is_extern { continue }
+        walk_block(c, i, body, &mut refs, &mut seen)
+    }
+    return refs
+}
+
+fn add(refs: *mut List(Ref), seen: *mut Map(String, bool), own r: Ref) {
+    let key = format("{}:{}:{}", .{r.module, r.start, r.end})
+    if seen.contains(key[..]) { return }
+    seen.put(key, true)
+    refs.append(r)
+}
+
+/// The span of a function's own name, where it is declared.
+fn fn_decl(c: *check.Checker, inst: usize, module: *mut usize, start: *mut usize) -> bool {
+    if inst >= c.insts.len or c.insts[inst].is_closure or c.insts[inst].is_test { return false }
+    let fid = c.insts[inst].def
+    if fid >= c.fns.len { return false }
+    let m = c.fns[fid].node_module
+    let node = &c.mods[m].parsed.tree.nodes[c.fns[fid].node]
+    let at = first_word(c.mods[m].source[..], node.start, node.name[..]) orelse return false
+    module.* = m
+    start.* = at
+    return true
+}
+
+/// The span of a struct field's name, where it is declared.
+fn field_decl(c: *check.Checker, d: usize, idx: usize, start: *mut usize) -> bool {
+    if d >= c.structs.len or idx >= c.structs[d].fields.len { return false }
+    let m = c.structs[d].module
+    let node = &c.mods[m].parsed.tree.nodes[c.structs[d].fields[idx]]
+    let at = first_word(c.mods[m].source[..], node.start, node.name[..]) orelse return false
+    start.* = at
+    return true
+}
+
+fn field_name(c: *check.Checker, d: usize, idx: usize) -> String {
+    if d >= c.structs.len or idx >= c.structs[d].fields.len { return String.new() }
+    let m = c.structs[d].module
+    return c.mods[m].parsed.tree.nodes[c.structs[d].fields[idx]].name.clone()
+}
+
+/// The struct a field access or a literal is of (through pointers).
+fn struct_of(c: *check.Checker, t0: usize) -> usize {
+    var t = c.tys.shallow(t0)
+    while c.tys.kind(t) == check.TK.Ptr { t = c.tys.shallow(c.tys.list[t].args[0]) }
+    if c.tys.kind(t) != check.TK.Struct { return NONE }
+    return c.tys.list[t].def
+}
+
+fn note_local(c: *check.Checker, inst: usize, e: usize, refs: *mut List(Ref), seen: *mut Map(String, bool)) {
+    let l = c.tir.nodes[e].a
+    if l >= c.insts[inst].locals.len { return }
+    let name = c.insts[inst].locals[l].name.clone()
+    if name.len == 0 or name[..].starts_with("__") { return }
+    let m = c.insts[inst].module
+    let src = c.mods[m].source[..]
+    let start = c.tir.nodes[e].start
+    if !whole_word(src, start, name[..]) { return }
+    let d = first_word(src, c.insts[inst].locals[l].start, name[..]) orelse return
+    add(refs, seen, Ref{ .module = m, .start = start, .end = start + name.len, .decl_module = m, .decl_start = d, .decl_end = d + name.len, .kind = String.from("local"), .inst = inst, .index = l, .ty = c.insts[inst].locals[l].ty })
+}
+
+/// Where a receiver or a field's base ends in the source: the checker's
+/// `&x` for a method's `self` and `*p` for a field through a pointer span
+/// the whole expression, so the base is the node inside them.
+fn base_end(c: *check.Checker, n0: usize, whole_end: usize) -> usize {
+    var n = n0
+    while (c.tir.nodes[n].k == TKind.AddrOf or c.tir.nodes[n].k == TKind.Deref) and c.tir.nodes[n].end >= whole_end and c.tir.nodes[n].kids.len > 0 {
+        n = c.tir.nodes[n].kids[0]
+    }
+    return c.tir.nodes[n].end
+}
+
+/// A call or a function value: the callee's name where it is written, the
+/// last time it is written between the call's receiver (or its start) and
+/// its first argument (or its end).
+fn note_call(c: *check.Checker, inst: usize, e: usize, refs: *mut List(Ref), seen: *mut Map(String, bool)) {
+    let callee = c.tir.nodes[e].a
+    var dm: usize = 0
+    var ds: usize = 0
+    if !fn_decl(c, callee, &mut dm, &mut ds) { return }
+    let fid = c.insts[callee].def
+    let name = c.mods[dm].parsed.tree.nodes[c.fns[fid].node].name.clone()
+    let m = c.insts[inst].module
+    let src = c.mods[m].source[..]
+    var from = c.tir.nodes[e].start
+    var to = c.tir.nodes[e].end
+    let kids = c.tir.nodes[e].kids.clone()
+    if c.tir.nodes[e].k == TKind.Call and kids.len > 0 {
+        var first = 0
+        // a receiver starts where the call does: the name follows it
+        if c.tir.nodes[kids[0]].start == from {
+            from = base_end(c, kids[0], to)
+            first = 1
+        }
+        if first < kids.len and c.tir.nodes[kids[first]].start > from { to = c.tir.nodes[kids[first]].start }
+    }
+    let at = last_word(src, from, to, name[..]) orelse return
+    add(refs, seen, Ref{ .module = m, .start = at, .end = at + name.len, .decl_module = dm, .decl_start = ds, .decl_end = ds + name.len, .kind = String.from("fn"), .inst = callee, .index = 0, .ty = NONE })
+}
+
+fn note_field(c: *check.Checker, inst: usize, e: usize, refs: *mut List(Ref), seen: *mut Map(String, bool)) {
+    let kids = c.tir.nodes[e].kids.clone()
+    if kids.len == 0 { return }
+    let d = struct_of(c, c.tir.nodes[kids[0]].ty)
+    let idx = c.tir.nodes[e].a
+    let name = field_name(c, d, idx)
+    var ds: usize = 0
+    if name.len == 0 or !field_decl(c, d, idx, &mut ds) { return }
+    let m = c.insts[inst].module
+    let at = last_word(c.mods[m].source[..], base_end(c, kids[0], c.tir.nodes[e].end), c.tir.nodes[e].end, name[..]) orelse return
+    add(refs, seen, Ref{ .module = m, .start = at, .end = at + name.len, .decl_module = c.structs[d].module, .decl_start = ds, .decl_end = ds + name.len, .kind = String.from("field"), .inst = d, .index = idx, .ty = c.tir.nodes[e].ty })
+}
+
+/// `Point{ .x = 1, .y = 2 }`: each `.name` before its value.
+fn note_literal_fields(c: *check.Checker, inst: usize, e: usize, refs: *mut List(Ref), seen: *mut Map(String, bool)) {
+    let d = struct_of(c, c.tir.nodes[e].ty)
+    if d == NONE { return }
+    let m = c.insts[inst].module
+    let src = c.mods[m].source[..]
+    let kids = c.tir.nodes[e].kids.clone()
+    let idxs = c.tir.nodes[e].kids2.clone()
+    var from = c.tir.nodes[e].start
+    for v, i in kids {
+        if i >= idxs.len { break }
+        let name = field_name(c, d, idxs[i])
+        var ds: usize = 0
+        let vstart = c.tir.nodes[v].start
+        if name.len > 0 and field_decl(c, d, idxs[i], &mut ds) and vstart > from {
+            if let at = last_word(src, from, vstart, name[..]) {
+                add(refs, seen, Ref{ .module = m, .start = at, .end = at + name.len, .decl_module = c.structs[d].module, .decl_start = ds, .decl_end = ds + name.len, .kind = String.from("field"), .inst = d, .index = idxs[i], .ty = c.tir.nodes[v].ty })
+            }
+        }
+        if c.tir.nodes[v].end > from { from = c.tir.nodes[v].end }
+    }
+}
+
+// the walk follows cgen's (walk_block, walk_stmt, walk_expr): a kind's
+// children are expressions unless it says otherwise
+
+fn walk_block(c: *check.Checker, inst: usize, b: usize, refs: *mut List(Ref), seen: *mut Map(String, bool)) {
+    if b >= c.tir.nodes.len { return }
+    for s in c.tir.nodes[b].kids.clone() { walk_stmt(c, inst, s, refs, seen) }
+    let tail = c.tir.nodes[b].a
+    if tail != NONE { walk_expr(c, inst, tail, refs, seen) }
+}
+
+fn walk_stmt(c: *check.Checker, inst: usize, s: usize, refs: *mut List(Ref), seen: *mut Map(String, bool)) {
+    let k = c.tir.nodes[s].k
+    let kids = c.tir.nodes[s].kids.clone()
+    if k == TKind.SLet or k == TKind.SExpr or k == TKind.SReturn or k == TKind.SBreak {
+        if kids.len > 0 { walk_expr(c, inst, kids[0], refs, seen) }
+    } else if k == TKind.SAssign {
+        walk_expr(c, inst, kids[0], refs, seen)
+        walk_expr(c, inst, kids[1], refs, seen)
+    } else if k == TKind.SDefer or k == TKind.SErrDefer {
+        walk_stmt(c, inst, kids[0], refs, seen)
+    } else if k == TKind.SWhile {
+        walk_expr(c, inst, kids[0], refs, seen)
+        walk_block(c, inst, kids[1], refs, seen)
+        if kids.len > 2 { walk_block(c, inst, kids[2], refs, seen) }
+    } else if k == TKind.SForRange {
+        walk_expr(c, inst, kids[0], refs, seen)
+        walk_expr(c, inst, kids[1], refs, seen)
+        if c.tir.nodes[s].flag { walk_expr(c, inst, kids[2], refs, seen) }
+        walk_block(c, inst, kids[kids.len - 1], refs, seen)
+    } else if k == TKind.SForSlice {
+        let n = c.tir.nodes[s].kids2.len
+        for x, i in kids { if i < n { walk_expr(c, inst, x, refs, seen) } }
+        walk_block(c, inst, kids[kids.len - 1], refs, seen)
+    } else if k == TKind.SBlock or k == TKind.SUsing {
+        walk_block(c, inst, kids[0], refs, seen)
+    }
+}
+
+fn walk_expr(c: *check.Checker, inst: usize, e: usize, refs: *mut List(Ref), seen: *mut Map(String, bool)) {
+    if e >= c.tir.nodes.len { return }
+    let k = c.tir.nodes[e].k
+    let kids = c.tir.nodes[e].kids.clone()
+    if k == TKind.Local {
+        note_local(c, inst, e, refs, seen)
+        return
+    }
+    if k == TKind.Call or k == TKind.FnToFat { note_call(c, inst, e, refs, seen) }
+    if k == TKind.Field or k == TKind.RefField { note_field(c, inst, e, refs, seen) }
+    if k == TKind.StructLit or k == TKind.RefNew { note_literal_fields(c, inst, e, refs, seen) }
+    if k == TKind.If or k == TKind.IfCapture {
+        walk_expr(c, inst, kids[0], refs, seen)
+        walk_block(c, inst, kids[1], refs, seen)
+        if kids.len > 2 { walk_block(c, inst, kids[2], refs, seen) }
+        return
+    }
+    if k == TKind.Match {
+        walk_expr(c, inst, kids[0], refs, seen)
+        var i: usize = 1
+        while i < kids.len {
+            let akids = c.tir.nodes[kids[i]].kids.clone()
+            var j: usize = 1
+            while j < akids.len { walk_expr(c, inst, akids[j], refs, seen); j += 1 }
+            i += 1
+        }
+        return
+    }
+    if k == TKind.BlockExpr {
+        walk_block(c, inst, kids[0], refs, seen)
+        return
+    }
+    if k == TKind.Catch {
+        walk_expr(c, inst, kids[0], refs, seen)
+        walk_expr(c, inst, kids[1], refs, seen)
+        return
+    }
+    // a closure's body is its own instance, walked on its own
+    if k == TKind.Closure { return }
+    if k == TKind.RecordCheck {
+        var i: usize = 0
+        while i < kids.len { walk_expr(c, inst, kids[i], refs, seen); i += 1 }
+        return
+    }
+    if k == TKind.BinConstruct {
+        walk_expr(c, inst, kids[kids.len - 1], refs, seen)
+        var i: usize = 0
+        while i + 1 < kids.len {
+            for sk in c.tir.nodes[kids[i]].kids.clone() { walk_expr(c, inst, sk, refs, seen) }
+            i += 1
+        }
+        return
+    }
+    for x in kids { walk_expr(c, inst, x, refs, seen) }
+}
+
+/// The use or declaration at `off` in module `m`: the use itself, or a use
+/// of the declaration written there.
+pub fn at(refs: *List(Ref), m: usize, off: usize) -> ?Ref {
+    for r in refs.* {
+        if r.module == m and r.start <= off and off <= r.end { return r.clone() }
+    }
+    for r in refs.* {
+        if r.decl_module == m and r.decl_start <= off and off <= r.decl_end { return r.clone() }
+    }
+    return null
+}
+
+/// Every span that names the declaration `r` names: its own name and each use.
+pub fn spans_of(refs: *List(Ref), r: *Ref) -> List(Ref) {
+    var out = List(Ref).new()
+    var decl = r.clone()
+    decl.module = r.decl_module
+    decl.start = r.decl_start
+    decl.end = r.decl_end
+    out.append(decl)
+    for x in refs.* {
+        if x.decl_module == r.decl_module and x.decl_start == r.decl_start and x.kind == r.kind { out.append(x.clone()) }
+    }
+    return out
+}

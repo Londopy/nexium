@@ -1154,7 +1154,39 @@ fn suite_lsp(e: *Env, failures: *mut List(String)) {
     // `idx` resolves to its binding in the `for` header on the same line, column 14
     let r7 = response(o, 7)
     if r7.find("\"line\":11") == null or r7.find("\"character\":14") == null { failures.append(format("lsp: definition of the for binding: {}", .{r7})) }
-    println("lsp: an editor session", .{})
+    // a program that checks is answered by the checker (decision 115): the
+    // `scale` of the right `impl`, a field renamed in every file that names
+    // it (its declaration, its accesses, a literal's initializer), a local's type
+    let sdir = fs.join(e.root[..], "nx-out/lsp-sem")
+    fs.make_dirs(sdir[..]) catch { }
+    fs.write(fs.join(sdir[..], "shapes.nx")[..], "pub struct Circle { r: i64 }\npub struct Square { side: i64 }\npub fn area_of(c: Circle) -> i64 { return c.r * c.r * 3 }\n\nimpl Circle { pub fn scale(self: *Self, k: i64) -> i64 { return self.r * k } }\nimpl Square { pub fn scale(self: *Self, k: i64) -> i64 { return self.side * k } }\n") catch { failures.append(String.from("lsp: cannot write shapes.nx")); return }
+    let smain = fs.join(sdir[..], "sem.nx")
+    let stext = "import shapes\n\nfn main() {\n    let c = shapes.Circle{ .r = 2 }\n    let s = shapes.Square{ .side = 3 }\n    let a = c.scale(2)\n    let b = s.scale(2)\n    var total = a + b\n    total += shapes.area_of(c)\n    println(\"{} {}\", .{total, c.r})\n}\n"
+    fs.write(smain[..], stext) catch { failures.append(String.from("lsp: cannot write sem.nx")); return }
+    let suri = format("file:///{}", .{strings.replace(strings.replace(smain[..], "\\", "/")[..], ":", "%3A")})
+    var sin = String.new()
+    sin.append(frame("{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"initialize\",\"params\":{}}")[..])
+    sin.append(frame(format("{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{{\"textDocument\":{{\"uri\":\"{}\",\"languageId\":\"nexium\",\"version\":1,\"text\":\"{}\"}}}}}}", .{suri, json_escape(stext)})[..])[..])
+    let sasks = [(11, "definition", 6, 15), (12, "definition", 8, 22), (13, "hover", 7, 9), (14, "hover", 5, 8)]
+    for a in sasks {
+        sin.append(frame(format("{{\"jsonrpc\":\"2.0\",\"id\":{},\"method\":\"textDocument/{}\",\"params\":{{\"textDocument\":{{\"uri\":\"{}\"}},\"position\":{{\"line\":{},\"character\":{}}}}}}}", .{a.0, a.1, suri, a.2, a.3})[..])[..])
+    }
+    sin.append(frame(format("{{\"jsonrpc\":\"2.0\",\"id\":15,\"method\":\"textDocument/rename\",\"params\":{{\"textDocument\":{{\"uri\":\"{}\"}},\"position\":{{\"line\":9,\"character\":33}},\"newName\":\"radius\"}}}}", .{suri})[..])[..])
+    sin.append(frame("{\"jsonrpc\":\"2.0\",\"id\":99,\"method\":\"shutdown\"}")[..])
+    sin.append(frame("{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}")[..])
+    let sout = nx_in(e, lsp_args[..], sin[..], e.root[..])
+    let so = sout.stdout[..]
+    let s11 = response(so, 11)
+    if s11.find("shapes.nx") == null or s11.find("\"line\":5") == null or s11.find("\"character\":21") == null { failures.append(format("lsp: definition of Square's scale: {}", .{s11})) }
+    let s12 = response(so, 12)
+    if s12.find("shapes.nx") == null or s12.find("\"line\":2") == null { failures.append(format("lsp: definition of shapes.area_of: {}", .{s12})) }
+    let s13 = response(so, 13)
+    if s13.find("var total: i64") == null { failures.append(format("lsp: hover on a var: {}", .{s13})) }
+    let s14 = response(so, 14)
+    if s14.find("let a: i64") == null { failures.append(format("lsp: hover on a let: {}", .{s14})) }
+    let s15 = response(so, 15)
+    if strings.count(s15, "\"newText\":\"radius\"") != 6 or s15.find("shapes.nx") == null or s15.find("sem.nx") == null { failures.append(format("lsp: a field renamed in both files: {}", .{s15})) }
+    println("lsp: an editor session, and one answered by the checker", .{})
 }
 
 // ----- main -------------------------------------------------------------------

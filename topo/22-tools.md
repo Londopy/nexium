@@ -101,7 +101,10 @@ one would be introduced.
 ## The editor and the prompt
 
 **`nx lsp`** is the language server: diagnostics on every edit, hover with
-inferred effects, go to definition, completion and rename. The VS Code
+types and inferred effects, go to definition, completion and rename. When
+the program checks, definition and rename answer from the checker, so
+`p.area()` goes to the `area` of `p`'s own type and renaming a field
+renames it in every file. The VS Code
 extension in the repository starts it; any editor that speaks the protocol
 can. **`nx repl`** (chapter 4) is the prompt.
 

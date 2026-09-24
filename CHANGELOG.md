@@ -61,6 +61,14 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   which one a program means is the programmer's choice (decision 113). An error with an edit on offer ends with
   "note: `nx fix FILE` can try an edit for N of these". The loader takes
   stand-in texts for any of the program's files (`load_with_texts`).
+- The language server answers from the checker when the program checks
+  (decision 115): go to definition follows what each local, function,
+  method and field resolved to, so `s.scale(2)` goes to the `scale` of
+  `s`'s own type; hover shows a local's or field's type (`var total:
+  i64`) or a function's signature and effects; rename edits the
+  declaration and every use in each of the program's own files. Where the
+  program does not check the syntactic answers stand
+  (`self/lsp_index.nx`).
 - Conditional compilation (decision 114): `if comptime C { } else { }`
   evaluates the whole condition while checking and checks and builds only
   the branch it picks, so the other may name functions and externs that
