@@ -379,13 +379,17 @@ specification was open.
 
 ## Release names
 
-A major version is a mountain, in the order the fourteen 8000-metre peaks
-were first climbed; the versions under it are the climb: camps, routes and
-faces for minor versions, the first-ascent expedition's members for
-patches, `Summit` for `X.0.0`. The 0.x line is the approach and the camps
-of Annapurna, the first 8000er climbed (1950), so 1.0.0 is
+Every major version is the summit of a mountain, in the order the fourteen
+8000-metre peaks were first climbed: `X.0.0` is `Mountain: Summit`. The
+climb starts halfway through the line before, at its `.5`, and goes up the
+first-ascent route camp by camp; the minors after a summit, up to `.4`, are
+the mountain's other routes and the way down; patches take the members of
+the first-ascent expedition. The 0.x line was the approach and the camps of
+Annapurna, the first 8000er climbed (1950), so 1.0.0 is
 `Annapurna: Summit`; 0.7.0, where the compiler started building itself, is
-`Annapurna: Camp V`, the last camp before the summit push. The name is in
+`Annapurna: Camp V`, the last camp before the summit push, and from 1.5 the
+releases climb Everest toward 2.0.0.
+The name is in
 the changelog, the release title and `nx version`;
 [docs/release-names.md](docs/release-names.md) has the rule, the ledger,
 and the mountains still to climb.

@@ -354,14 +354,17 @@ où la spécification était ouverte.
 
 ## Noms des versions
 
-Une version majeure est une montagne, dans l'ordre où les quatorze sommets de
-8 000 mètres ont été gravis pour la première fois ; les versions en dessous
-sont l'ascension : camps, voies et faces pour les versions mineures, les
-membres de l'expédition de la première ascension pour les correctifs,
-`Summit` pour `X.0.0`. La ligne 0.x est l'approche et les camps de
-l'Annapurna, le premier 8 000 gravi (1950), donc 1.0.0 est
-`Annapurna: Summit` ; 0.7.0, où le compilateur a commencé à se construire
-lui-même, est `Annapurna: Camp V`, le dernier camp avant l'assaut du sommet.
+Chaque version majeure est le sommet d'une montagne, dans l'ordre où les
+quatorze sommets de 8 000 mètres ont été gravis pour la première fois :
+`X.0.0` est `<Montagne>: Summit`. L'ascension commence au milieu de la ligne
+précédente, à son `.5`, et suit la voie de la première ascension camp par
+camp ; les versions mineures après un sommet, jusqu'à `.4`, sont les autres
+voies de la montagne et la descente ; les correctifs portent les noms des
+membres de l'expédition de la première ascension. La ligne 0.x a été
+l'approche et les camps de l'Annapurna, le premier 8 000 gravi (1950), donc
+1.0.0 est `Annapurna: Summit` ; 0.7.0, où le compilateur a commencé à se
+construire lui-même, est `Annapurna: Camp V`, le dernier camp avant l'assaut
+du sommet, et à partir de 1.5 les versions gravissent l'Everest vers 2.0.0.
 Le nom figure dans le changelog, dans le titre de la release et dans
 `nx version` ; [docs/release-names.md](../../release-names.md) (anglais)
 donne la règle, le registre et les montagnes qu'il reste à gravir.

@@ -356,14 +356,18 @@ la especificación estaba abierta.
 
 ## Nombres de las versiones
 
-Una versión mayor es una montaña, en el orden en que se escalaron por primera
-vez los catorce ochomiles; las versiones que cuelgan de ella son la ascensión:
-campamentos, rutas y caras para las versiones menores, los miembros de la
-expedición del primer ascenso para los parches, `Summit` para `X.0.0`. La
-línea 0.x es la aproximación y los campamentos del Annapurna, el primer
-ochomil escalado (1950), así que 1.0.0 es `Annapurna: Summit`; 0.7.0, donde el
-compilador empezó a construirse a sí mismo, es `Annapurna: Camp V`, el último
-campamento antes del ataque a la cumbre. El nombre está en el changelog, en el
+Cada versión mayor es la cumbre de una montaña, en el orden en que se
+escalaron por primera vez los catorce ochomiles: `X.0.0` es
+`<Montaña>: Summit`. La ascensión empieza a mitad de la línea anterior, en
+su `.5`, y sube la ruta del primer ascenso campamento a campamento; las
+versiones menores después de una cumbre, hasta `.4`, son las otras rutas de
+la montaña y el descenso; los parches llevan los nombres de los miembros de
+la expedición del primer ascenso. La línea 0.x fue la aproximación y los
+campamentos del Annapurna, el primer ochomil escalado (1950), así que 1.0.0
+es `Annapurna: Summit`; 0.7.0, donde el compilador empezó a construirse a sí
+mismo, es `Annapurna: Camp V`, el último campamento antes del ataque a la
+cumbre, y desde 1.5 las versiones suben el Everest hacia 2.0.0.
+El nombre está en el changelog, en el
 título de la release y en `nx version`;
 [docs/release-names.md](../../release-names.md) (inglés) tiene la regla, el
 registro y las montañas que quedan por subir.

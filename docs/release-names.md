@@ -1,56 +1,73 @@
 # Release names
 
-Every Nexium release is a place on a mountain. A major version is a mountain,
-taken in the order the fourteen 8000-metre peaks were first climbed; the
-versions under it are the climb of that mountain: its camps, routes and faces
-for minor versions, the members of its first-ascent expedition for patch
-versions, and `Summit` for `X.0.0`. The 0.x line is the approach and the
-camps of the first mountain, so 1.0.0 is standing on top of the mountain the
-project has been on since 0.1.0. Decision 89 in `DECISIONS.md` records the
-rule; this file is the reference, the ledger, and the plan.
+Every Nexium release is a place on a mountain, and every major version is
+the top of one, taken in the order the fourteen 8000-metre peaks were first
+climbed: `X.0.0` is `Mountain: Summit`. The climb starts halfway through the
+line before, at its `.5`: from 1.5.0 the minor versions go up Everest's
+first-ascent route, camp by camp, to 2.0.0 on its summit. The minors after a
+summit, up to `.4`, are the mountain's other routes, faces, neighbours and
+the way down. Patches take the members of the first-ascent expedition. The
+0.x line was the approach and the camps of the first mountain, so 1.0.0 is
+standing on top of the mountain the project has been on since 0.1.0.
+Decisions 89 and 117 in `DECISIONS.md` record the rule; this file is the
+reference, the ledger, and the plan.
 
 ## How to read a name
 
 ```
 nx 0.7.0 (Annapurna: Camp V)
 nx 1.0.0 (Annapurna: Summit)
-nx 1.1.0 (Annapurna: Dutch Rib)
 nx 1.2.0 (Annapurna: South Face)
+nx 1.5.0 (Everest: Base Camp)
 nx 2.0.0 (Everest: Summit)
-nx 2.1.0 (Everest: Khumbu Icefall)
+nx 2.1.0 (Everest: the Descent)
 ```
 
-The mountain says which major line you are on; the place says how far up it
+The mountain says which summit the line is climbing to or has just stood
+on: a release from `X.5` is on the way up to the next major, one up to
+`X.4` is still on the mountain `X.0.0` topped. The place says how far up it
 is and what kind of release it was. The version number still carries the
 ordering; the name carries the character.
 
 ## The rule
 
-- **Major = mountain.** 0.x and 1.x are Annapurna (first 8000-metre peak
-  climbed, 1950); 2.x Everest (1953), 3.x Nanga Parbat (1953), 4.x K2
-  (1954), 5.x Cho Oyu (1954), 6.x Makalu (1955), 7.x Kangchenjunga (1955),
-  8.x Manaslu (1956), 9.x Lhotse (1956), 10.x Gasherbrum II (1956), 11.x
-  Broad Peak (1957), 12.x Gasherbrum I (1958), 13.x Dhaulagiri (1960), 14.x
-  Shishapangma (1964). After the 8000ers come the Seven Summits, then the
-  great north faces of the Alps; a range after those is a new decision.
+- **A mountain runs from a line's `.5` to the next line's `.4`, and its
+  summit is the major between.** Annapurna (the first 8000-metre peak
+  climbed, 1950) runs from 0.1.0 to 1.4, since the whole 0.x line was its
+  climb; Everest (1953) from 1.5 to 2.4, Nanga Parbat (1953) 2.5 to 3.4, K2
+  (1954) 3.5 to 4.4, Cho Oyu (1954) 4.5 to 5.4, Makalu (1955) 5.5 to 6.4,
+  Kangchenjunga (1955) 6.5 to 7.4, Manaslu (1956) 7.5 to 8.4, Lhotse (1956)
+  8.5 to 9.4, Gasherbrum II (1956) 9.5 to 10.4, Broad Peak (1957) 10.5 to
+  11.4, Gasherbrum I (1958) 11.5 to 12.4, Dhaulagiri (1960) 12.5 to 13.4,
+  Shishapangma (1964) 13.5 to 14.4. After the 8000ers come the Seven
+  Summits, then the great north faces of the Alps; a range after those is a
+  new decision.
 - **`X.0.0` is `Mountain: Summit`.**
-- **Minor = a place on the mountain**: a camp, a route, a face, a col, a
-  feature. Each place below says what kind of release it fits. Short names:
-  `Camp V`, not `the Sickle Glacier Couloir`.
-- **Patch = a person from the mountain's first-ascent expedition.** Roster
-  order by default, so nothing is forced onto a bug-fix release; when a
-  patch plainly fits one person's story (a rescue, a removal, a
-  documentation patch), take that one. When the roster runs out, the later
+- **On the way up** (the `.5` to the major), the minors take the places of
+  the first-ascent route in the order it climbs them: its base camp, the
+  camps, the cruxes, and for the release before the major the last place
+  below the top (a false summit, where there is one, for a candidate). A
+  major that comes late means more camps. If the next major is announced
+  before the `.5` (its first deprecations land earlier), the climb starts at
+  that release, so no major arrives without one.
+- **After the summit** (`.1` to `.4`), the minors take the mountain's other
+  routes and faces, its neighbouring peaks and the descent, whichever fits
+  the release. Short names: `Camp V`, not `the Sickle Glacier Couloir`.
+- **Patch = a person from the first-ascent expedition** of the mountain its
+  minor is on. Roster order by default, so nothing is forced onto a bug-fix
+  release; when a patch plainly fits one person's story (a rescue, a removal,
+  a documentation patch), take that one. When the roster runs out, the later
   climbers of that mountain follow.
-- **0.x** are the approach and the camps of the first climb; if there are
+- **0.x** were the approach and the camps of the first climb; if there are
   more minor releases than camps, the features of the summit route follow.
 - The name fits the release; the release is never shaped to fit a name.
 
 ## How to pick
 
 1. Write the changelog section first. The release's character is in it.
-2. Find the place on the current mountain whose "use it for" matches;
-   two candidates is fine, pick the shorter name.
+2. On the way up, take the next place on the route. After a summit, find
+   the place on the mountain whose "use it for" matches; two candidates is
+   fine, pick the shorter name.
 3. For a patch, take the next unused person on the roster unless one
    clearly fits.
 4. Put the name and one line of why under the version header, update the
@@ -107,18 +124,16 @@ fits and the pencilled one goes back in the pool.
 
 | version | name | why |
 | --- | --- | --- |
-| 1.4.0 | Annapurna: the Sanctuary | the basin that holds everything and supplies every route: a standard library people stop supplementing |
-| 1.5.0 | Annapurna: East Ridge | the long traverse over several summits: one source, many platforms |
-| 1.6.0 | Annapurna: North-West Face | fast and light, no fixed ropes: the runtime release builds deserve |
-| 1.7.0 | Annapurna: Annapurna II | the massif's second summit, joined to the main one by the long ridge: the seam, both ways (Python, Rust and more languages, in and out) |
-| 1.8.0 | Annapurna: Gangapurna | a summit of the same massif, climbed beside the main line: a side theme (the GUI, the registry) |
-| 1.x | Annapurna: Machapuchare | reserved for a release that is only deprecations: it stops short on purpose |
-| 2.0.0 | Everest: Summit | the next mountain; a major, so the first breaking changes since 1.0 |
-| 2.1.0 | Everest: Khumbu Icefall | the dangerous, unglamorous crossing right after the major: migrations, `nx fix`, the fallout |
-| 2.2.0 | Everest: Western Cwm | the quiet valley: consolidation, nothing breaks |
-| 2.3.0 | Everest: Lhotse Face | the long steep grind: performance and hardening |
-| 2.4.0 | Everest: South Col | the last staging camp: everything in place for the next big feature |
-| 2.5.0 | Everest: Hillary Step | the last technical crux of the line |
+| 1.4.0 | Annapurna: the Sanctuary | the basin ringed by the peaks, where the first mountain ends: a standard library people stop supplementing |
+| 1.5.0 | Everest: Base Camp | the climb to 2.0 is staged here: one source, many platforms |
+| 1.6.0 | Everest: Khumbu Icefall | the first dangerous crossing of the climb: the runtime release builds deserve |
+| 1.7.0 | Everest: Western Cwm | the long valley between two walls: the seam, both ways (Python, Rust and more languages, in and out) |
+| 1.8.0 | Everest: Lhotse Face | the face of the neighbouring peak the route climbs: a side theme (the GUI, the registry) |
+| 1.x | Everest: South Col | the last camp before the summit push: the release that deprecates what 2.0 removes, two minors and six months ahead |
+| 1.x | Everest: Hillary Step | the last step below the top: the release before 2.0 |
+| 2.0.0 | Everest: Summit | a major, so the first breaking changes since 1.0 |
+| 2.1.0 | Everest: the Descent | the way down, where most of the danger is: the migrations, `nx fix`, the fallout |
+| 2.5.0 | Nanga Parbat: Fairy Meadows | the base camp meadow under the Rakhiot Face: the climb to 3.0 begins |
 
 ## The pools
 
@@ -135,7 +150,7 @@ decision), **traverse** (many platforms or targets), **side line** (a
 tool or library beside the main one), **recovery** (fixes what the last
 one broke), **candidate** (the release before a major).
 
-### Annapurna, 8,091 m (0.x and 1.x)
+### Annapurna, 8,091 m (0.1.0 to 1.4)
 
 First ascent 3 June 1950 by Maurice Herzog and Louis Lachenal, French
 expedition, by the North Face; the first 8000-metre peak climbed, on the
@@ -155,10 +170,10 @@ summiters lost fingers and toes on the descent.
 | Dutch Rib | the 1977 route on the North Face, now the usual line because it is safer than the Sickle | the release that makes the everyday path easier and safer: ergonomics (1.1.0) |
 | South Face | Bonington's 1970 siege of the great wall; Whillans and Haston to the top; the first big-wall climb in the Himalaya | the biggest minor of a line, climbed the hard way: memory safety (1.2.0) |
 | the Sanctuary | the glacial basin ringed by the Annapurna peaks; the base of every south-side route | the release that supplies everything else: the standard library (planned: 1.4.0) |
-| East Ridge | the long traverse route over the massif's summits (1984) | traverse: many platforms from one source (planned: 1.5.0) |
-| North-West Face | Messner and Kammerlander, 1985, fast and light | performance: fewer instructions, less memory, the same programs (planned: 1.6.0) |
-| Annapurna II | the massif's second summit, 7,937 m, joined to the main one by a ridge that runs the length of the range | the release that joins Nexium to other languages: interop, the seam (planned: 1.7.0) |
-| Gangapurna, Annapurna South, Hiunchuli, Annapurna III, IV | the massif's other summits | side line: the GUI, the registry, a tool beside the compiler (Gangapurna planned: 1.8.0) |
+| East Ridge | the long traverse route over the massif's summits (1984) | traverse: many platforms from one source |
+| North-West Face | Messner and Kammerlander, 1985, fast and light | performance: fewer instructions, less memory, the same programs |
+| Annapurna II | the massif's second summit, 7,937 m, joined to the main one by a ridge that runs the length of the range | the release that joins Nexium to other languages: interop, the seam |
+| Gangapurna, Annapurna South, Hiunchuli, Annapurna III, IV | the massif's other summits | side line: the GUI, the registry, a tool beside the compiler |
 | Machapuchare | the fishtail peak at the mouth of the Sanctuary, sacred and unclimbed by agreement | a release that stops short on purpose: deprecations only, a feature freeze |
 | Fang | the sharp neighbour of Annapurna South | hard crux: one small difficult change |
 | Descent | the retreat through the monsoon after the summit, on frostbitten feet | recovery |
@@ -180,24 +195,25 @@ summiters lost fingers and toes on the descent.
 | Messner, Kammerlander | 1985, the North-West Face | makes something faster |
 | Steck | 2013, the South Face alone in a day | a one-person, one-day fix that changes a lot |
 
-### Everest, 8,849 m (2.x)
+### Everest, 8,849 m (1.5 to 2.4)
 
 First ascent 29 May 1953 by Edmund Hillary and Tenzing Norgay, British
 expedition led by John Hunt, by the South Col route.
 
 | place | what it was | use it for |
 | --- | --- | --- |
-| Base Camp | 5,364 m, on the Khumbu glacier | groundwork right after the major |
-| Khumbu Icefall | the moving icefall every south-side climb crosses first; dangerous and unglamorous | the release after a major that carries the migrations and the fallout (planned: 2.1.0) |
-| Western Cwm | the silent glacier valley above the icefall | consolidation (planned: 2.2.0) |
+| Base Camp | 5,364 m, on the Khumbu glacier | where the climb to the major is staged: the first release on the way up (planned: 1.5.0) |
+| Khumbu Icefall | the moving icefall every south-side climb crosses first; dangerous and unglamorous | the first dangerous crossing of the climb (planned: 1.6.0) |
+| Western Cwm | the silent glacier valley above the icefall, between the walls of Nuptse and Lhotse | a long quiet stretch: consolidation, or a release that joins two sides (planned: 1.7.0) |
 | Camp I to Camp IV | the camps of the standard route | ordinary progress |
-| Lhotse Face | the long steep ice slope | the grind: performance, hardening (planned: 2.3.0) |
+| Lhotse Face | the long steep ice slope of the neighbouring peak, up to the col | the grind, or a side line climbed on the way (planned: 1.8.0) |
 | Geneva Spur, Yellow Band | the rock steps on the way to the col | hard crux |
-| South Col | 7,950 m, the last camp, exposed to the wind | the staging release before the next big feature (planned: 2.4.0) |
+| South Col | 7,950 m, the last camp, exposed to the wind | the last camp before the summit push: the release that deprecates what the major removes |
 | the Balcony | the ledge at 8,400 m where the summit day pauses | a small release that lets the next one breathe |
 | South Summit | the false summit at 8,749 m | candidate |
-| Hillary Step | the last rock step before the top | the last technical crux of the line (planned: 2.5.0) |
+| Hillary Step | the last rock step before the top | the last step below the top: the release before the major |
 | Summit | 29 May 1953 | `X.0.0` |
+| the Descent | Hillary and Tenzing back down to the South Col, where Lowe met them | the release after the major: the migrations, `nx fix`, the fallout (planned: 2.1.0) |
 | Rongbuk, North Col, Second Step, Norton Couloir | the north side, the pre-war British route | the other way up: a second backend, a second implementation |
 | West Ridge, Hornbein Couloir | the 1963 American traverse, up one side and down the other | traverse |
 | Kangshung Face | the east face, avalanche-swept, climbed 1983 | a big subsystem climbed the hard way |
@@ -222,7 +238,7 @@ expedition led by John Hunt, by the South Col route.
 | Messner, Habeler | without oxygen, 1978 | removes a dependency |
 | Hornbein, Unsoeld | the West Ridge traverse, 1963 | crosses platforms |
 
-### Nanga Parbat, 8,126 m (3.x)
+### Nanga Parbat, 8,126 m (2.5 to 3.4)
 
 First ascent 3 July 1953 by Hermann Buhl, alone on the summit day, without
 oxygen, from a German-Austrian expedition led by Karl Herrligkoffer, by the
@@ -230,7 +246,7 @@ Rakhiot Face. Thirty-one people had died on earlier attempts.
 
 | place | what it was | use it for |
 | --- | --- | --- |
-| Fairy Meadows | the base camp meadow under the Rakhiot Face | groundwork |
+| Fairy Meadows | the base camp meadow under the Rakhiot Face | where the climb to the major is staged (planned: 2.5.0) |
 | Rakhiot Face, Rakhiot Peak | the 1953 route and the peak on its ridge | progress on the original line |
 | Silver Saddle, Silver Plateau | the high col and the plateau before the summit pyramid | consolidation at altitude: everything in place, nothing yet used |
 | Moor's Head | the rock outcrop on the ridge | hard crux |
@@ -253,7 +269,7 @@ Rakhiot Face. Thirty-one people had died on earlier attempts.
 | Reinhold and Günther Messner | 1970, the Rupal Face; Günther lost on the descent | a big fix with a cost |
 | Moro, Txikon, Sadpara | the first winter ascent, 2016 | done in the worst conditions: a fix under deadline |
 
-### K2, 8,611 m (4.x)
+### K2, 8,611 m (3.5 to 4.4)
 
 First ascent 31 July 1954 by Lino Lacedelli and Achille Compagnoni, Italian
 expedition led by Ardito Desio, by the Abruzzi Spur. Walter Bonatti and the
@@ -291,7 +307,7 @@ in the open to do it.
 | Diemberger, Tullis | the 1986 storm | recovery after a bad release |
 | Purja, Mingma G | the first winter ascent, 2021 | done in the worst conditions |
 
-### Cho Oyu, 8,188 m (5.x)
+### Cho Oyu, 8,188 m (4.5 to 5.4)
 
 First ascent 19 October 1954 by Herbert Tichy, Joseph Jöchler and Pasang
 Dawa Lama: a three-climber expedition, the first 8000er climbed after the
@@ -314,7 +330,7 @@ before the summit push and he went anyway.
 | Pasang Dawa Lama | went down for supplies and came back up in time to summit | catches up: a backport |
 | Heuberger | the expedition's geographer | measurement, benchmarks |
 
-### Makalu, 8,485 m (6.x)
+### Makalu, 8,485 m (5.5 to 6.4)
 
 First ascent 15 May 1955 by Lionel Terray and Jean Couzy, French expedition
 led by Jean Franco; every member of the team reached the summit over the
@@ -339,7 +355,7 @@ following two days, the first time an 8000er's whole expedition did.
 | Gyalzen Norbu | sirdar; summited here and on Manaslu | infrastructure that carries two projects |
 | Moro, Urubko | the first winter ascent, 2009 | done in the worst conditions |
 
-### Kangchenjunga, 8,586 m (7.x)
+### Kangchenjunga, 8,586 m (6.5 to 7.4)
 
 First ascent 25 May 1955 by Joe Brown and George Band, British expedition
 led by Charles Evans, from the Yalung Glacier. They stopped a few steps
@@ -369,7 +385,7 @@ has done the same: the summit is left untrodden.
 | Dawa Tenzing | sirdar | infrastructure |
 | Boardman, Tasker, Scott | 1979, the North Ridge | removes a dependency |
 
-### Manaslu, 8,163 m (8.x)
+### Manaslu, 8,163 m (7.5 to 8.4)
 
 First ascent 9 May 1956 by Toshio Imanishi and Gyalzen Norbu, Japanese
 expedition led by Yuko Maki; a second pair, Kiichiro Kato and Minoru
@@ -393,7 +409,7 @@ Higeta, followed two days later.
 | Gyalzen Norbu | summiter, sirdar, Makalu the year before | infrastructure |
 | Kato, Higeta | the second pair | the follow-up |
 
-### Lhotse, 8,516 m (9.x)
+### Lhotse, 8,516 m (8.5 to 9.4)
 
 First ascent 18 May 1956 by Ernst Reiss and Fritz Luchsinger, Swiss
 expedition led by Albert Eggler, which made the second and third ascents
@@ -415,7 +431,7 @@ of Everest the same week.
 | Schmied, Marmet | Everest's second ascent | repeat something that worked, on purpose |
 | von Gunten, Reist | Everest's third ascent, the next day | the follow-up |
 
-### Gasherbrum II, 8,035 m (10.x)
+### Gasherbrum II, 8,035 m (9.5 to 10.4)
 
 First ascent 7 July 1956 by Fritz Moravec, Josef Larch and Hans Willenpart,
 Austrian expedition, after an open bivouac at 7,500 m.
@@ -434,7 +450,7 @@ Austrian expedition, after an open bivouac at 7,500 m.
 | Moravec, Larch, Willenpart | the three summiters, after a night out at 7,500 m | a fix that took a night nobody planned |
 | Moro, Urubko, Richards | the first winter ascent of a Karakoram 8000er, 2011 | done in the worst conditions |
 
-### Broad Peak, 8,051 m (11.x)
+### Broad Peak, 8,051 m (10.5 to 11.4)
 
 First ascent 9 June 1957 by Marcus Schmuck, Fritz Wintersteller, Kurt
 Diemberger and Hermann Buhl: four climbers, no oxygen, no high-altitude
@@ -457,7 +473,7 @@ three weeks later on Chogolisa.
 | Bielecki, Małek | the first winter ascent, 2013 | done in the worst conditions |
 | Berbeka, Kowalski | lost on the descent of that ascent | a fix with a cost |
 
-### Gasherbrum I (Hidden Peak), 8,080 m (12.x)
+### Gasherbrum I (Hidden Peak), 8,080 m (11.5 to 12.4)
 
 First ascent 5 July 1958 by Pete Schoening and Andy Kauffman, American
 expedition led by Nick Clinch. In 1975 Reinhold Messner and Peter Habeler
@@ -480,7 +496,7 @@ climbed it in pure alpine style, the first 8000er done that way.
 | Nevison | the expedition doctor | correctness |
 | Messner, Habeler | 1975, alpine style | removes a dependency |
 
-### Dhaulagiri, 8,167 m (13.x)
+### Dhaulagiri, 8,167 m (12.5 to 13.4)
 
 First ascent 13 May 1960 by Kurt Diemberger, Peter Diener, Ernst Forrer,
 Albin Schelbert, Nyima Dorje and Nawang Dorje, Swiss-Austrian expedition
@@ -508,7 +524,7 @@ it first and given up, which is how they came to Annapurna.
 | Saxer, Wick | the pilots | the tool that got you far and broke: a build-tool patch |
 | the Yeti | the aircraft | a patch to a tool, not a person |
 
-### Shishapangma, 8,027 m (14.x)
+### Shishapangma, 8,027 m (13.5 to 14.4)
 
 First ascent 2 May 1964 by a Chinese expedition led by Xu Jing: ten
 climbers on the summit, the last 8000er climbed, and the only one entirely
@@ -529,7 +545,7 @@ inside Tibet.
 | Wang Fuzhou, Zhang Junyan, Sodnam Doje, Migmar Trashi | summiters | land the headline, in order |
 | Scott, MacIntyre, Baxter-Jones | 1982, the South-West Face | removes a dependency |
 
-### After the 8000ers: the Seven Summits (15.x to 20.x)
+### After the 8000ers: the Seven Summits (14.5 to 20.4)
 
 The highest peak on each continent, in this order.
 
@@ -544,10 +560,10 @@ The highest peak on each continent, in this order.
 
 People: Zurbriggen; Stuck, Karstens, Harper (first on the summit), Tatum;
 Meyer, Purtscheller; Khashirov; Grove, Gardiner, Walker, Knubel; Clinch;
-Harrer. Everest is used by 2.x; Mont Blanc, 4,808 m (Paccard and Balmat,
+Harrer. Everest is used by 1.5 to 2.4; Mont Blanc, 4,808 m (Paccard and Balmat,
 1786), opens the Alps.
 
-### After those: the great north faces of the Alps (21.x onward)
+### After those: the great north faces of the Alps (20.5 onward)
 
 | mountain | first ascent of the face | places | use them for |
 | --- | --- | --- | --- |

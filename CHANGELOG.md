@@ -34,6 +34,16 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   back): `push_front`, `push_back`, `pop_front`, `pop_back`, `get`, `first`,
   `last`.
 
+### Changed
+
+- Release names move to the next mountain at the `.5` of each line
+  (decision 117): a major is still a summit, and the climb to it starts
+  halfway through the line before (1.5.0 is `Everest: Base Camp`, 2.0.0
+  `Everest: Summit`), the minors after a summit taking the mountain's other
+  routes and the way down. Before, 2.0.0 would have stood on Everest's
+  summit with its route still to climb. The rule, the plan and every
+  mountain's range in `docs/release-names.md` follow.
+
 ## [1.3.0] - 2026-09-24
 
 *Annapurna: North Face* — the face of the first ascent, the original line followed through: the toolchain grown up. `nx fix` makes the checker's own edits, `nx bench` measures `bench` blocks, `nx debug` stops gdb or lldb at `.nx` lines with formatters for the language's values, `--sanitize` brings AddressSanitizer and UBSan to any build, `if comptime` builds only the branch the target picks, the language server answers from the checker when the program checks, and a large program's debug build is a C file per module, compiled again only where it changed. The view rules are errors, trait impls are held to their traits, and the checker is split by responsibility. The seed is regenerated from the final sources.

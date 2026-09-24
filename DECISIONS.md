@@ -931,3 +931,23 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     program is 0.74, so "well under a second" everywhere waits for checking
     by module. `nx emit-c`, and so the seed, stays one file, as do
     optimized builds, whose optimizer sees across functions.
+117. **A mountain runs from a line's `.5` to the next line's `.4`, and its
+    summit is the major between.** Decision 89 made a major a mountain and
+    its `X.0.0` the summit, which held for the first one only: the whole 0.x
+    line was Annapurna's climb, so 1.0.0 stood on top. From Everest on, the
+    first release on a mountain would have been its summit, and the plan
+    then climbed the route from the bottom (2.1 at the Khumbu Icefall, the
+    foot of the route, after 2.0 at the top). Now a mountain's climb starts
+    at the `.5` of the line before, its minors go up the first-ascent route
+    in order to the last place below the top for the release before the
+    major, `X.0.0` is the summit, and the minors after it, up to `X.4`, take
+    the mountain's other routes, faces, neighbours and descent by fit;
+    patches take the first-ascent team of the mountain their minor is on. A
+    late major means more camps; a major announced before the `.5` (its
+    deprecations land earlier) starts the climb at that release, so none
+    arrives without one. The mountain in a name then says which summit the
+    line is climbing to or has just stood on, where before it said which
+    major: `Everest: Base Camp` is 1.5.0. Every released name already fits
+    (0.x the climb, 1.0.0 the summit, 1.1 to 1.3 Annapurna's other routes);
+    the names pencilled in for 1.5 to 1.8 go back to Annapurna's pool, and
+    Everest's route moves from after 2.0 to before it.

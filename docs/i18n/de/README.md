@@ -355,14 +355,18 @@ getroffen wurde, wo die Spezifikation offen war.
 
 ## Release-Namen
 
-Eine Hauptversion ist ein Berg, in der Reihenfolge, in der die vierzehn
-Achttausender erstbestiegen wurden; die Versionen darunter sind der Aufstieg:
-Lager, Routen und Wände für Nebenversionen, die Mitglieder der
-Erstbesteigungsexpedition für Patches, `Summit` für `X.0.0`. Die 0.x-Linie
-ist der Anmarsch und die Lager der Annapurna, des ersten bestiegenen
-Achttausenders (1950), also ist 1.0.0 `Annapurna: Summit`; 0.7.0, wo der
-Compiler begann, sich selbst zu bauen, ist `Annapurna: Camp V`, das letzte
-Lager vor dem Gipfelgang. Der Name steht im Changelog, im Release-Titel und
+Jede Hauptversion ist der Gipfel eines Berges, in der Reihenfolge, in der
+die vierzehn Achttausender erstbestiegen wurden: `X.0.0` ist
+`<Berg>: Summit`. Der Aufstieg beginnt in der Mitte der Linie davor, bei
+ihrer `.5`, und folgt der Route der Erstbesteigung Lager für Lager; die
+Nebenversionen nach einem Gipfel, bis `.4`, sind die anderen Routen des
+Berges und der Abstieg; Patches tragen die Namen der Mitglieder der
+Erstbesteigungsexpedition. Die 0.x-Linie war der Anmarsch und die Lager der
+Annapurna, des ersten bestiegenen Achttausenders (1950), also ist 1.0.0
+`Annapurna: Summit`; 0.7.0, wo der Compiler begann, sich selbst zu bauen,
+ist `Annapurna: Camp V`, das letzte Lager vor dem Gipfelgang, und ab 1.5
+steigen die Releases auf den Everest, zu 2.0.0.
+Der Name steht im Changelog, im Release-Titel und
 in `nx version`; [docs/release-names.md](../../release-names.md) (Englisch)
 enthält die Regel, das Verzeichnis und die Berge, die noch zu besteigen sind.
 
