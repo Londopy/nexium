@@ -225,6 +225,24 @@ jobs:
           done
           exit $bad
 
+  debugger:
+    name: nx debug
+    # `nx debug` under gdb and lldb: a breakpoint at a `.nx` line (the `#line`
+    # directives) and String, List, slices, Map, optionals and structs shown
+    # as Nexium values by the formatters (runtime/nx_gdb.py, runtime/nx_lldb.py)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: Build nx from the seed
+        run: sh bootstrap/build.sh
+      - name: Install gdb and lldb
+        run: sudo apt-get update -q && sudo apt-get install -y -q gdb lldb
+      - name: gdb and lldb stop at a .nx line and show Nexium's values
+        run: sh tests/debug/check.sh nx-out/bootstrap/nx2
+
   editors:
     name: editor support
     runs-on: ubuntu-latest

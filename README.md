@@ -337,6 +337,7 @@ Using Nexium somewhere? Open an issue or a pull request and it goes here.
 | `nx emit-c file.nx` | print the generated C |
 | `nx tir file.nx [--sigs]` | the checked program as S-expressions (the compiler's own tests read it) |
 | `nx fmt file.nx [--check]` | canonical formatting |
+| `nx debug file.nx` | build for debugging and run under gdb or lldb: `.nx` lines, and formatters for String, List, Map, slices and optionals |
 | `nx bench file.nx` | measure the `bench "name" { }` blocks: an optimized build, the median time per iteration |
 | `nx fix file.nx` | make the checker's mechanical fixes (`.clone()`, `@escape(...)`, `_ = `) and migrate deprecated forms; see [docs/stability.md](docs/stability.md) |
 | `nx doc file.nx` | HTML documentation with inferred effects |

@@ -16,6 +16,7 @@ pub fn commands() -> List(Command) {
     out.append(Command{ .name = "run", .arg = "file", .about = "build and run; arguments after -- go to the program" })
     out.append(Command{ .name = "test", .arg = "file", .about = "run the test blocks; a filter narrows them" })
     out.append(Command{ .name = "bench", .arg = "file", .about = "measure the bench blocks (optimized build; median time per iteration)" })
+    out.append(Command{ .name = "debug", .arg = "file", .about = "build for debugging and run under gdb or lldb, with formatters for Nexium's values" })
     out.append(Command{ .name = "check", .arg = "file", .about = "type-check without building" })
     out.append(Command{ .name = "effects", .arg = "file", .about = "the effects of every function" })
     out.append(Command{ .name = "audit", .arg = "file", .about = "unsafe blocks and mutable globals; --lock and --check keep an effects lockfile" })

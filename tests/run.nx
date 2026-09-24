@@ -481,6 +481,46 @@ fn suite_examples(e: *Env, failures: *mut List(String)) {
     if bb.code != 1 { failures.append(format("examples: nx bench with a failing benchmark exited {}", .{bb.code})) }
     let bf = nx(e, ["bench", bench_src[..], "named", "--quick"][..])
     if bf.code != 0 or bf.stdout[..].find("1 benchmark(s), safe mode (some skipped by filter)") == null { failures.append(format("examples: nx bench with a filter (exit {}):\n{}{}", .{bf.code, bf.stdout, bf.stderr})) }
+    // `#line`: a debug build's C names the `.nx` lines, each function followed
+    // by the directive that gives the C its own lines back; `nx emit-c` has none
+    let lines_dir = fs.join(e.root[..], "nx-out/cases/lines")
+    let lb = nx(e, ["build", "tests/debug/values.nx", "--keep-c", "--out-dir", lines_dir[..]][..])
+    let lc = fs.read(fs.join(lines_dir[..], "values.c")[..]) catch { String.new() }
+    if lb.code != 0 or lc[..].find("#line 21 \"tests/debug/values.nx\"") == null { failures.append(format("examples: a debug build's C lacks the `.nx` line of the println (exit {}):\n{}", .{lb.code, lb.stderr})) }
+    var resets: usize = 0
+    for l, i in lc[..].lines() {
+        if l.starts_with("#line ") and l.ends_with("values.c\"") {
+            resets += 1
+            if !l.starts_with(format("#line {} ", .{i + 2})[..]) { failures.append(format("examples: `{}` is on line {} of the C", .{l, i + 1})) }
+        }
+    }
+    if resets == 0 { failures.append(String.from("examples: a debug build's C never gives the lines back to the C file")) }
+    let lec = nx(e, ["emit-c", "tests/debug/values.nx"][..])
+    if lec.stdout[..].find("#line") != null { failures.append(String.from("examples: nx emit-c printed #line directives")) }
+    // nx debug: the formatters first, then NX_DEBUGGER's own words, then the
+    // program (stand-ins for gdb and lldb print the arguments they were given)
+    for flavor in ["gdb", "lldb"] {
+        let fake_src = fs.join(e.root[..], format("nx-out/cases/fake-{}.nx", .{flavor})[..])
+        fs.write(fake_src[..], "fn main() {\n    for a in os.args() { println(\"[{}]\", .{a}) }\n}\n") catch { }
+        let fake_dir = fs.join(e.root[..], "nx-out/cases/fake-debugger")
+        let fake = fs.join(fake_dir[..], format("fake-{}{}", .{flavor, if e.windows { ".exe" } else { "" }})[..])
+        let fbuild = nx(e, ["build", fake_src[..], "--out-dir", fake_dir[..], "-o", fake[..]][..])
+        if fbuild.code != 0 {
+            failures.append(format("examples: the stand-in {} did not build:\n{}", .{flavor, fbuild.stderr}))
+            continue
+        }
+        os.set_env("NX_DEBUGGER", format("{} --batchy", .{fake})[..])
+        let dg = nx(e, ["debug", "tests/debug/values.nx", "--out-dir", fs.join(e.root[..], "nx-out/cases/debugged")[..], "--", "arg1"][..])
+        os.set_env("NX_DEBUGGER", "")
+        let wants = if flavor == "gdb" { ["[-q]", "[-x]", "nx_gdb.py]", "[--batchy]", "[--args]", "values", "[arg1]"] } else { ["[-o]", "[command script import \"", "nx_lldb.py\"]", "[--batchy]", "[--]", "values", "[arg1]"] }
+        var at: usize = 0
+        for want in wants {
+            if let k = dg.stdout[at..].find(want) { at += k + want.len } else {
+                failures.append(format("examples: nx debug with {} lacks `{}` in order (exit {}):\n{}{}", .{flavor, want, dg.code, dg.stdout, dg.stderr}))
+                break
+            }
+        }
+    }
     let asan_zig = nx(e, ["run", "examples/hello.nx", "--cc", "zig", "--sanitize", "address"][..])
     if asan_zig.code != 2 or asan_zig.stderr[..].find("zig cc has no AddressSanitizer runtime") == null { failures.append(format("examples: --sanitize address with zig cc was not refused (exit {}):\n{}", .{asan_zig.code, asan_zig.stderr})) }
     println("examples: {} programs, and nx doctor", .{cases.len})

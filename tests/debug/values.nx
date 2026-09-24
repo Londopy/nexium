@@ -1,0 +1,23 @@
+// The program the CI job `debugger` runs under gdb and lldb through
+// `nx debug` (tests/debug/check.sh): a breakpoint at the `println`, and
+// each value shown by the formatters as a Nexium value.
+struct Point {
+    x: i64
+    y: i64
+}
+
+fn main() {
+    let name = String.from("nexium")
+    var xs = List(i64).new()
+    xs.append(3)
+    xs.append(4)
+    let view = xs[..]
+    var m = Map(String, i64).new()
+    m.put(String.from("one"), 1)
+    let maybe: ?i64 = 7
+    let none: ?i64 = null
+    let p = Point{ .x = 1, .y = 2 }
+    let arr = [5, 6, 7]
+    println("{} {} {} {} {} {} {}", .{name, xs.len, view.len, m.len, maybe orelse 0, p.x, arr[0]})
+    _ = none
+}

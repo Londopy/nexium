@@ -307,5 +307,5 @@ that now drives the suites is itself a Nexium program, `tests/run.nx`.
 | a type error that seems wrong | `check_expr` in `self/check_exprs.nx`, `check_method_call` in `self/check_calls.nx` |
 | an effect that should or should not be there | the witness in `own_effects`; grep `add_effect` in `self/check*.nx` |
 | a leak in `nx leaks` | the scope stack in `self/cgen.nx` (`register_drop`); every owned temporary must be registered |
-| generated C that does not compile | `nx emit-c file.nx --keep-c` and read `nx-out/file.c`; the runtime helper it calls is in `runtime/nx_rt.h` |
+| generated C that does not compile | `nx emit-c file.nx --keep-c` and read `nx-out/file.c` (`emit-c` writes no `#line`, so the C compiler names lines of the C); the runtime helper it calls is in `runtime/nx_rt.h` |
 | a crash inside `for parallel` or `using arena` | `parallel_for` in `self/cgen.nx` and the arena section of the runtime |

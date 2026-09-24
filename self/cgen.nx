@@ -144,6 +144,33 @@ pub struct Gen {
     line_starts: List(List(u32))
     thunks_by_key: Map(String, String)
     lib_name: String
+    // `#line` directives, so a debugger, a sanitizer or the C compiler names
+    // the `.nx` line (debug and sanitized builds; `nx emit-c` has none)
+    line_dirs: bool = false
+    // per module, its path as a C string for `#line`; empty when the module
+    // has no file (std, a C header)
+    line_files: List(String) = List(String).new()
+}
+
+/// Where a function with `#line` directives ends: the driver turns it into
+/// `#line N "file.c"`, N being the C file's own next line (`resolve_line_resets`).
+pub const LINE_RESET = "/* nx:line-reset */"
+
+/// The C with each `LINE_RESET` line replaced by the `#line` that gives the
+/// lines after it back to the C file at `c_path`.
+pub fn resolve_line_resets(text: []u8, c_path: []u8) -> String {
+    if text.find(LINE_RESET) == null { return String.from(text) }
+    var fixed = String.new()
+    for b in c_path { fixed.push_byte(if b == '\\' { '/' } else { b }) }
+    let file = c_escape_bytes(fixed[..])
+    var out = String.with_capacity(text.len + 1024)
+    var line: usize = 1
+    for l in text.lines() {
+        if l == LINE_RESET { out.append(format("#line {} {}", .{line + 1, file})[..]) } else { out.append(l) }
+        out.append("\n")
+        line += 1
+    }
+    return out
 }
 
 fn c_escape_bytes(b: []u8) -> String {
@@ -478,6 +505,19 @@ impl Gen {
             name = format("nx_dyn_{}", .{self.c.traits[tr].name})
             self.type_names.put(t, name.clone())
             self.emit_vtable_type(tr)
+        } else if k == check.TK.Map and self.line_dirs {
+            // a debug build names each map type and keeps a descriptor of its
+            // key and value types for the debugger's formatters (nx_gdb.py):
+            // `map_K_V` is `nx_dmap_K_V`, its descriptor `nx_dkv_K_V`, named
+            // before the key and value types, which may hold the map, and
+            // through pointers, which need them declared and not complete
+            let kv = self.mangle(t)[4..]
+            name = format("nx_dmap_{}", .{kv})
+            self.type_names.put(t, name.clone())
+            self.types_out.append(format("typedef nx_map {};\n", .{name})[..])
+            let kn = self.cty_ptr_target(self.c.tys.list[t].args[0])
+            let vn = self.cty_ptr_target(self.c.tys.list[t].args[1])
+            self.types_out.append(format("typedef struct nx_dkv_{} {{ {}* key; {}* val; }} nx_dkv_{};\nstatic nx_dkv_{}* const nx_dkeep_{} __attribute__((used)) = 0;\n", .{kv, kn, vn, kv, kv, kv})[..])
         } else if k == check.TK.Map {
             name = String.from("nx_map")
         } else if k == check.TK.Slice {
@@ -1322,7 +1362,14 @@ impl Gen {
             self.pop_scope_emit()
         }
         let code = self.pop_buf()
+        let fm = self.c.insts[inst].module
+        let dirs = self.line_dirs and fm < self.line_files.len and self.line_files[fm].len > 0
+        if dirs { self.funcs_out.append(format("#line {} {}\n", .{self.sm_line(fm, self.c.insts[inst].start), self.line_files[fm]})[..]) }
         self.funcs_out.append(format("{} {{\n{}}}\n\n", .{sig, code})[..])
+        if dirs {
+            self.funcs_out.append(LINE_RESET)
+            self.funcs_out.append("\n")
+        }
         self.cur = empty_fn_state()
     }
 
@@ -1461,7 +1508,21 @@ impl Gen {
         }
     }
 
+    /// `#line` for the statement at `at`, unless the last line written says it.
+    fn mark_line(self: *mut Self, at: usize) {
+        if !self.line_dirs or self.cur.inst == NONE or at == 0 { return }
+        let m = self.c.insts[self.cur.inst].module
+        if m >= self.line_files.len or self.line_files[m].len == 0 { return }
+        let dir = format("#line {} {}", .{self.sm_line(m, at), self.line_files[m]})
+        let last = self.body.len - 1
+        let buf = &self.body[last]
+        let n = buf.len
+        if n > dir.len and buf[n - 1] == '\n' and buf[n - 1 - dir.len..n - 1] == dir[..] { return }
+        self.line(dir[..])
+    }
+
     fn stmt(self: *mut Self, s: usize) {
+        self.mark_line(self.c.tir.nodes[s].start)
         let k = self.c.tir.nodes[s].k
         let kids = self.c.tir.nodes[s].kids.clone()
         let a = self.c.tir.nodes[s].a
@@ -4953,6 +5014,23 @@ impl Gen {
         out.append(format("  printf(\"\\n%d benchmark(s), {} mode%s%s\\n\", ran, failed ? \", some failed\" : \"\", skipped ? \" (some skipped by filter)\" : \"\");\n  return failed ? 1 : 0;\n}}\n", .{mode_name})[..])
         self.entry_tail(&mut out)
         return out
+    }
+
+    /// Turn on `#line` directives: each module with a file gets its path as
+    /// a C string, `/` for `\\` as in panic messages.
+    pub fn use_line_directives(self: *mut Self) {
+        self.line_dirs = true
+        self.line_files = List(String).new()
+        for m in self.c.mods {
+            let std = m.path[..].starts_with("<std>") or m.name[..].starts_with("cimport:")
+            if m.path.len == 0 or std {
+                self.line_files.append(String.new())
+                continue
+            }
+            var fixed = String.new()
+            for b in m.path { fixed.push_byte(if b == '\\' { '/' } else { b }) }
+            self.line_files.append(c_escape_bytes(fixed[..]))
+        }
     }
 
     /// The whole translation unit.

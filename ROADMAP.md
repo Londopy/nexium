@@ -526,7 +526,9 @@ luck.
   100k-line translation unit; parallel checking of independent modules.
 - `#line` directives in the generated C, so a debugger shows `.nx` lines,
   and `nx debug` launching lldb or gdb with formatters for `List`,
-  `String`, `Map`, slices and optionals.
+  `String`, `Map`, slices and optionals. (Done: debug and sanitized builds
+  carry them; the formatters also show arrays, error unions and structs,
+  and the CI job `debugger` checks both debuggers.)
 - A semantic language server: hover, diagnostics, go-to-definition and
   rename backed by the checker's typed IR, not the parser (decision 84 was
   syntactic on purpose, for 0.5).

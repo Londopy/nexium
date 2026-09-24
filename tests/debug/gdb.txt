@@ -1,0 +1,4 @@
+break values.nx:21
+run
+info locals
+kill

@@ -311,6 +311,7 @@ using arena {
 | `nx emit-c file.nx` | affiche le C généré |
 | `nx tir file.nx [--sigs]` | le programme vérifié en S-expressions (les tests du compilateur le lisent) |
 | `nx fmt file.nx [--check]` | formatage canonique |
+| `nx debug file.nx` | compile pour le débogage et lance sous gdb ou lldb : lignes `.nx` et formateurs pour String, List, Map, tranches et optionnels |
 | `nx bench file.nx` | mesure les blocs `bench "name" { }` : une compilation optimisée, le temps médian par itération |
 | `nx fix file.nx` | applique les corrections mécaniques du vérificateur (`.clone()`, `@escape(...)`, `_ = `) et migre les formes dépréciées ; voir [docs/stability.md](../../stability.md) |
 | `nx doc file.nx` | documentation HTML avec les effets inférés |

@@ -1,0 +1,4 @@
+breakpoint set --file values.nx --line 21
+run
+frame variable
+kill

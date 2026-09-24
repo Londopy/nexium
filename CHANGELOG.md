@@ -61,6 +61,21 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   which one a program means is the programmer's choice (decision 113). An error with an edit on offer ends with
   "note: `nx fix FILE` can try an edit for N of these". The loader takes
   stand-in texts for any of the program's files (`load_with_texts`).
+- `#line` directives in the C of a debug or sanitized build, so a
+  debugger steps through `.nx` lines, a sanitizer's report names them, and
+  `break file.nx:12` works. Each function is followed by a directive giving
+  the generated code after it back to the C file's own lines; `nx emit-c`,
+  whose C is the seed's, has none.
+- `nx debug FILE [-- args]`: the program built for debugging and run under
+  gdb, or lldb on macOS (`NX_DEBUGGER` names another; a name with `lldb`
+  in it takes lldb's flags), with formatters written beside the binary
+  (`runtime/nx_gdb.py`, `runtime/nx_lldb.py`): a `String` or `[]u8` as
+  text, a `List`, slice or array as its elements, an optional as its value
+  or `null`, an error union as its value or the error's name, a struct's
+  fields by their names, and a `Map` as its entries, a debug build naming
+  each map type and keeping its key and value types for them. The CI job
+  `debugger` stops gdb and lldb at a `.nx` line of `tests/debug/values.nx`
+  and checks each value they show.
 - `nx bench` and `bench "name" { ... }` blocks beside the tests. The file
   is built optimized (`safe` unless `--mode` says otherwise) and each block
   measured: the iterations calibrated to a 10 ms sample, which is the

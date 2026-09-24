@@ -72,7 +72,7 @@ pub struct Opts {
 }
 
 fn usage() {
-    eprintln("usage: nx <build|run|test|bench|check|effects|audit|refcounts|leaks|size|layout|emit-c|tir> <file.nx> [options] [-- args]", .{})
+    eprintln("usage: nx <build|run|test|bench|debug|check|effects|audit|refcounts|leaks|size|layout|emit-c|tir> <file.nx> [options] [-- args]", .{})
     eprintln("       nx explain <file.nx> <function> <effect>     why the function has the effect, as a tree", .{})
     eprintln("       nx fmt <file.nx>... [--check] | nx fix <file.nx>... [--check]", .{})
     eprintln("       nx doc <file.nx> [-o <dir>]", .{})
@@ -433,6 +433,9 @@ fn emit(c: *mut check.Checker, o: *Opts, entry: u8) -> String {
 /// exported functions' boundary records come back through `infos`.
 fn emit_with(c: *mut check.Checker, o: *Opts, entry: u8, lib_name: []u8, mode: u8, infos: *mut List(cgen.ExportInfo)) -> String {
     var g = cgen.new_gen(c, mode, entry)
+    // the builds a debugger or a sanitizer reads name `.nx` lines; the C
+    // that `nx emit-c` prints (and the seed is) has no `#line`
+    if (mode == cgen.MODE_DEBUG or o.sanitize.len > 0 or o.command == "debug") and o.command != "emit-c" { g.use_line_directives() }
     g.lib_name = String.from(lib_name)
     g.stack_bytes = cli_stack(c) orelse return String.new()
     let out = g.generate()
@@ -448,7 +451,8 @@ fn emit_with(c: *mut check.Checker, o: *Opts, entry: u8, lib_name: []u8, mode: u
 fn write_c(o: *Opts, stem: []u8, text: []u8) -> ?String {
     fs.make_dirs(o.out_dir[..]) catch { }
     let path = format("{}/{}.c", .{o.out_dir, stem})
-    io.write_file(path[..], text) catch {
+    let resolved = cgen.resolve_line_resets(text, path[..])
+    io.write_file(path[..], resolved[..]) catch {
         eprintln("error: cannot write {}", .{path})
         return null
     }
@@ -526,6 +530,7 @@ fn compile_c(c: *check.Checker, o: *Opts, c_path: []u8, out: []u8, kind: []u8) -
     // is a bare trap that stops the program without a word
     else if o.sanitize.len > 0 and uses_zig(o) { argv.append(String.from("-Og")) }
     else { argv.append(String.from("-O2")) }
+    if o.command == "debug" and o.mode != cgen.MODE_DEBUG { argv.append(String.from("-g")) }
     // one section per function and datum, for `nx size`
     if kind == "sections" { argv.append(String.from("-ffunction-sections")); argv.append(String.from("-fdata-sections")) }
     argv.append(String.from("-w"))
@@ -795,6 +800,70 @@ fn cmd_bench(o: *Opts) -> i32 {
     if !compile_c(&c, &bo, c_path[..], out[..], "exe") { return 1 }
     if !bo.keep_c { io.remove_file(c_path[..]) catch { } }
     return run_program(out[..], &bo.rest)
+}
+
+/// The debugger formatters `nx debug` writes beside the binary.
+const GDB_PY = @embedFile("../runtime/nx_gdb.py")
+const LLDB_PY = @embedFile("../runtime/nx_lldb.py")
+
+/// `nx debug FILE [-- args]`: the program built for debugging (debug mode
+/// unless `--mode` says otherwise; `#line` directives, so the debugger steps
+/// through `.nx` lines and `break file.nx:12` works) and run under gdb or
+/// lldb with formatters that show String, slices, List, Map, optionals and
+/// structs as values (runtime/nx_gdb.py, runtime/nx_lldb.py). NX_DEBUGGER
+/// names the debugger (with `lldb` in the name, lldb's flags); otherwise
+/// lldb on macOS and gdb elsewhere, whichever is installed.
+fn cmd_debug(o: *Opts) -> i32 {
+    var exe = String.new()
+    if !cmd_build(o, true, &mut exe) { return 1 }
+    let gdb_py = absolute(format("{}/nx_gdb.py", .{o.out_dir})[..])
+    let lldb_py = absolute(format("{}/nx_lldb.py", .{o.out_dir})[..])
+    io.write_file(gdb_py[..], GDB_PY) catch {
+        eprintln("error: cannot write {}", .{gdb_py})
+        return 1
+    }
+    io.write_file(lldb_py[..], LLDB_PY) catch {
+        eprintln("error: cannot write {}", .{lldb_py})
+        return 1
+    }
+    var words = List(String).new()
+    if let d = os.env("NX_DEBUGGER") {
+        for w in d.split(" ") { if w.len > 0 { words.append(String.from(w)) } }
+    }
+    if words.len == 0 {
+        if is_macos_target("") and found_on_path("lldb") { words.append(String.from("lldb")) }
+        else if found_on_path("gdb") { words.append(String.from("gdb")) }
+        else if found_on_path("lldb") { words.append(String.from("lldb")) }
+    }
+    if words.len == 0 {
+        eprintln("error: no debugger found: install gdb or lldb, or name one in NX_DEBUGGER; {} is built with debug information", .{exe})
+        return 1
+    }
+    // the formatters load first, before any commands NX_DEBUGGER passes
+    let debugger = words[0].clone()
+    let lldb = debugger[..].find("lldb") != null
+    var argv = List([]u8).new()
+    argv.append(debugger[..])
+    let import_cmd = format("command script import \"{}\"", .{lldb_py})
+    if lldb {
+        argv.append("-o")
+        argv.append(import_cmd[..])
+    } else {
+        argv.append("-q")
+        argv.append("-x")
+        argv.append(gdb_py[..])
+    }
+    for w, i in words { if i > 0 { argv.append(w[..]) } }
+    argv.append(if lldb { "--" } else { "--args" })
+    let program = absolute(exe[..])
+    argv.append(program[..])
+    for a in o.rest { argv.append(a[..]) }
+    eprintln("nx debug: {} under {}, with formatters for Nexium's values; `break {}:LINE`, then `run`", .{exe, debugger, o.file})
+    let code = os.run(argv[..]) catch {
+        eprintln("error: cannot run {}", .{debugger})
+        return 1
+    }
+    return code
 }
 
 fn cmd_check(o: *Opts) -> i32 {
@@ -1273,7 +1342,8 @@ fn cmd_ship(o: *Opts) -> i32 {
             return 1
         }
         let c_path = format("{}/{}.c", .{dir, lib_name})
-        io.write_file(c_path[..], text[..]) catch {
+        let resolved = cgen.resolve_line_resets(text[..], c_path[..])
+        io.write_file(c_path[..], resolved[..]) catch {
             eprintln("error: cannot write {}", .{c_path})
             return 1
         }
@@ -2011,6 +2081,8 @@ fn main() -> u8 {
         code = cmd_test(&o)
     } else if o.command == "bench" {
         code = cmd_bench(&o)
+    } else if o.command == "debug" {
+        code = cmd_debug(&o)
     } else if o.command == "check" {
         code = cmd_check(&o)
     } else if o.command == "emit-c" {

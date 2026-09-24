@@ -13,6 +13,7 @@ compiler's `self/` directory.
 | `nx build file.nx [-o out]` | build an executable (or an object file when there is no `main`) |
 | `nx test file.nx [--filter s] [--verbose]` | run the `test` blocks |
 | `nx bench file.nx [filter] [--quick]` | measure the `bench` blocks: an optimized build, the median time per iteration |
+| `nx debug file.nx [-- args]` | build for debugging and run under gdb or lldb |
 | `nx check file.nx` | check without building; the diagnostics only |
 | `nx emit-c file.nx` | print the generated C |
 
@@ -20,6 +21,15 @@ compiler's `self/` directory.
 checks on), `fast` (optimized, some checks proven away), `small` (size
 first). `--target <triple>` cross-compiles; `--cc clang` names a C
 compiler; `--keep-c` leaves the C file in `nx-out/`.
+
+A debug build's C carries `#line` directives, so a debugger, a sanitizer's
+report and the C compiler all name lines of the `.nx` file. **`nx debug
+file.nx`** builds that way and starts gdb (lldb on macOS; `NX_DEBUGGER`
+names another) with formatters that show a `String` as text, a `List` or
+a slice as its elements, a `Map` as its entries, an optional as its value
+or `null`, and a struct's fields by their names: `break file.nx:12`, then
+`run`, then `info locals`. The C compiler numbers the locals (`total_3`
+for `total`), which `info locals` shows.
 
 `--sanitize undefined` builds with the C compiler's checks for undefined
 behaviour, and `--sanitize address` (gcc or clang, through `NX_CC`; `zig cc`
