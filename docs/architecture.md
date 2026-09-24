@@ -144,7 +144,8 @@ local knows the storage the views it holds point into and when they were
 taken, and the rules V1 to V5 of `SPEC.md` 5.6 and 5.7 are checked at the
 use that would read released storage, as errors since 1.3 (warnings in
 1.2). Where the fix is mechanical the checker offers `nx fix` an edit
-(`check.Fix`: V4's `.clone()` at the move, V5's `@escape`), which
+(`check.Fix`: V4's `.clone()` at the move, V5's `@escape`, `_ = ` before
+an unused value), which
 `self/fix.nx` keeps only when checking the edited program leaves fewer
 errors and no new one. Returning a slice or pointer into a local of the
 function (rule R1) has been an error since 1.0.

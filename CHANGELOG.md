@@ -52,10 +52,13 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 - `nx fix` makes the edits the checker offers for its errors (decision
   111): rule V4's `.clone()` where a value moves out from under a view of
   it, rule V5's `@escape(...)` around a value kept past its `using arena`
-  block. Each edit is tried on the program in memory, in whichever of the
-  program's own files it falls, and kept only when the checker then
-  reports fewer errors and none it did not report before; `--check`
-  reports without writing. An error with an edit on offer ends with
+  block, and `_ = ` in front of a value nothing uses (not an error union,
+  and not inside an `if` with no `else` whose value is wanted). Each edit
+  is tried on the program in memory, in whichever of the program's own
+  files it falls, and kept only when the checker then reports fewer
+  errors and none it did not report before; `--check` reports without
+  writing. Wrapping and saturating arithmetic are not edits it makes:
+  which one a program means is the programmer's choice (decision 113). An error with an edit on offer ends with
   "note: `nx fix FILE` can try an edit for N of these". The loader takes
   stand-in texts for any of the program's files (`load_with_texts`).
 - `--sanitize address,undefined` for `nx build`, `run` and `test`: the C

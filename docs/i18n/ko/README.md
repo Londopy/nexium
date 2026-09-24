@@ -306,7 +306,7 @@ using arena {
 | `nx emit-c file.nx` | 생성된 C 출력 |
 | `nx tir file.nx [--sigs]` | 검사된 프로그램을 S-식으로(컴파일러 자체 테스트가 읽음) |
 | `nx fmt file.nx [--check]` | 표준 서식 |
-| `nx fix file.nx` | 컴파일러가 이전할 수 있는 폐기된 형태를 고쳐 씀(1.0에는 없음; [docs/stability.md](../../stability.md) 참고) |
+| `nx fix file.nx` | 검사기의 기계적인 수정(`.clone()`, `@escape(...)`, `_ = `)을 적용하고 폐기된 형태를 이전함([docs/stability.md](../../stability.md) 참고) |
 | `nx doc file.nx` | 추론된 이펙트가 담긴 HTML 문서 |
 | `nx size file.nx` | 바이너리의 바이트를 선언별로 귀속 |
 | `nx layout file.nx [Type...]` | struct나 enum의 오프셋, 크기, 패딩과 그것을 줄일 정렬 순서 |

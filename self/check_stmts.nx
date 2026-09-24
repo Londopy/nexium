@@ -111,6 +111,7 @@ impl Checker {
                 self.tir.nodes[tb].kids.append(s)
             } else if is_void_ret {
                 self.fail_here(self.tir.nodes[tail].start, format("this value of type `{}` is unused; the function returns void. Discard it with `_ = ...` or return it", .{self.ty_name(tt)})[..])
+                self.offer_discard(self.tir.nodes[tail].start)
                 let s = self.tir.add(check.tblank(TKind.SExpr, tt, self.tir.nodes[tail].start, self.tir.nodes[tail].end))
                 self.tir.nodes[s].kids.append(tail)
                 self.tir.nodes[tb].kids.append(s)
@@ -274,6 +275,15 @@ impl Checker {
             return
         }
         self.fail_here(at, format("unused value of type `{}`", .{self.ty_name(t)})[..])
+        self.offer_discard(at)
+    }
+
+    /// `nx fix`'s edit for a value nothing uses: `_ = ` in front of it, as the
+    /// error advises. The value is computed as before; only the error goes.
+    fn offer_discard(self: *mut Self, at: usize) {
+        let m = self.cur_module()
+        if at >= self.mods[m].source.len or self.no_discard_fix { return }
+        self.offer_fix(m, at, at, "_ = ", "`_ = ` in front of a value nothing uses")
     }
 
     fn stmt_node(self: *mut Self, k: TKind, start: usize, end: usize) -> usize {

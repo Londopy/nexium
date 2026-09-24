@@ -78,9 +78,14 @@ so the shape of your code stays yours.
 effects of a file to HTML, one page per file; the [standard library
 reference](../docs/std.html) is built from the same comments.
 
-**`nx fix file.nx`** applies the mechanical migrations the compiler knows;
-there are none in 1.0, and the [stability policy](../docs/stability.html)
-says how one would be introduced.
+**`nx fix file.nx`** makes the edits the checker offers with its errors,
+where the fix is mechanical and keeps what the program does: `.clone()`
+where a value moves out from under a view of it (chapter 8), `@escape(...)`
+around a value kept past its arena, `_ = ` in front of a value nothing
+uses. Each is kept only if the program then checks with fewer errors, and
+`--check` reports without writing. It will also migrate deprecated forms,
+when there are any; the [stability policy](../docs/stability.html) says how
+one would be introduced.
 
 ## The editor and the prompt
 

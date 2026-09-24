@@ -1000,6 +1000,9 @@ pub struct Checker {
     warnings: List(String)
     // the edits offered for errors, for `nx fix`
     fixes: List(Fix)
+    // inside the block of an `if` with no `else` whose value is wanted: the
+    // missing `else` is the mistake there, and `_ =` would only hide it
+    no_discard_fix: bool = false
     // integer literals typed before their type was known (TIR node, module),
     // range-checked once it is
     open_lits: List(usize)

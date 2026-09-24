@@ -864,3 +864,19 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     declaration alone, so a function over `dyn Trait` compiles in a program
     that never coerces a value to it. Programs this rejects were already
     wrong (specification 8.3).
+113. **`nx fix` makes an edit only when it keeps what the program does;
+    `+%` and `+|` are the programmer's to choose.** The 1.3 plan had `nx
+    fix` apply every hint the compiler gives, and one of them names two
+    operators: in a function declared `!panics`, arithmetic that may
+    overflow is met with "use `+%` to wrap or `+|` to saturate". Either
+    edit makes the error go, and so would pass decision 111's test, but
+    each gives the overflowing case a different answer (a hash wants the
+    wrap, a level or a count wants the clamp, and a program that wants
+    neither wants a wider type or a range the checker can prove), so
+    picking one would be `nx fix` deciding what the program computes. The
+    edits it makes keep what the program does and only settle what the
+    checker asks: V4's `.clone()` and V5's `@escape(...)` (111), and `_ = `
+    in front of a value nothing uses, where the value is computed as
+    before. `_ = ` is not offered for an error union (discarding an error
+    is a decision too) nor inside an `if` with no `else` whose value is
+    wanted, where the missing `else` is the mistake.

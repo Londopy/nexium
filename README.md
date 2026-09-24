@@ -337,7 +337,7 @@ Using Nexium somewhere? Open an issue or a pull request and it goes here.
 | `nx emit-c file.nx` | print the generated C |
 | `nx tir file.nx [--sigs]` | the checked program as S-expressions (the compiler's own tests read it) |
 | `nx fmt file.nx [--check]` | canonical formatting |
-| `nx fix file.nx` | rewrite deprecated forms the compiler can migrate (none at 1.0; see [docs/stability.md](docs/stability.md)) |
+| `nx fix file.nx` | make the checker's mechanical fixes (`.clone()`, `@escape(...)`, `_ = `) and migrate deprecated forms; see [docs/stability.md](docs/stability.md) |
 | `nx doc file.nx` | HTML documentation with inferred effects |
 | `nx size file.nx` | attribute binary bytes to declarations |
 | `nx layout file.nx [Type...]` | offsets, sizes and padding of a struct or enum, and the order by alignment that would shrink it |

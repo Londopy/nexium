@@ -307,7 +307,7 @@ using arena {
 | `nx emit-c file.nx` | 生成された C を表示 |
 | `nx tir file.nx [--sigs]` | 検査済みプログラムを S 式で（コンパイラ自身のテストが読む） |
 | `nx fmt file.nx [--check]` | 正規の整形 |
-| `nx fix file.nx` | コンパイラが移行できる非推奨の形を書き換える（1.0 ではなし。[docs/stability.md](../../stability.md) 参照） |
+| `nx fix file.nx` | チェッカーの機械的な修正（`.clone()`、`@escape(...)`、`_ = `）を適用し、非推奨の形を移行する（[docs/stability.md](../../stability.md) 参照） |
 | `nx doc file.nx` | 推論されたエフェクトつきの HTML ドキュメント |
 | `nx size file.nx` | バイナリのバイト数を宣言ごとに帰属 |
 | `nx layout file.nx [Type...]` | struct や enum のオフセット、サイズ、パディングと、小さくできる整列順 |

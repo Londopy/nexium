@@ -311,7 +311,7 @@ using arena {
 | `nx emit-c file.nx` | affiche le C généré |
 | `nx tir file.nx [--sigs]` | le programme vérifié en S-expressions (les tests du compilateur le lisent) |
 | `nx fmt file.nx [--check]` | formatage canonique |
-| `nx fix file.nx` | réécrit les formes dépréciées que le compilateur sait migrer (aucune en 1.0 ; voir [docs/stability.md](../../stability.md)) |
+| `nx fix file.nx` | applique les corrections mécaniques du vérificateur (`.clone()`, `@escape(...)`, `_ = `) et migre les formes dépréciées ; voir [docs/stability.md](../../stability.md) |
 | `nx doc file.nx` | documentation HTML avec les effets inférés |
 | `nx size file.nx` | attribue les octets du binaire aux déclarations |
 | `nx layout file.nx [Type...]` | décalages, tailles et remplissage d'un struct ou d'un enum, et l'ordre par alignement qui le réduirait |

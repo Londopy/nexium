@@ -531,10 +531,11 @@ luck.
   rename backed by the checker's typed IR, not the parser (decision 84 was
   syntactic on purpose, for 0.5).
 - `nx fix` applies the compiler's own hints: `+%`/`+|` where the note
-  suggests it, `.clone()`, `_ =`, the view rules' fixes from 1.2. (The view
-  rules' are in, decision 111: the checker offers an edit with an error and
-  `nx fix` keeps it when a check of the edited program agrees; the other
-  hints join the same way.)
+  suggests it, `.clone()`, `_ =`, the view rules' fixes from 1.2. (Done,
+  decisions 111 and 113: the checker offers an edit with an error and `nx
+  fix` keeps it when a check of the edited program agrees; V4's `.clone()`,
+  V5's `@escape`, and `_ = `. `+%` and `+|` stay the programmer's choice:
+  each changes what the overflowing case computes.)
 - `nx bench`: `bench "name" { }` blocks with warmup, iterations and
   medians, in the same file as tests.
 - `nx build --sanitize address,undefined` through the C compiler, and

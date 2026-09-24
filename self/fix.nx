@@ -1,7 +1,8 @@
 // self/fix.nx: `nx fix`. The checker offers an edit with some of its
 // errors (`check.Fix`): rule V4's `.clone()` where a value moves out from
 // under a view of it, rule V5's `@escape(...)` around a value kept past its
-// arena. Each edit is tried on the program in memory and kept only when the
+// arena, `_ = ` in front of a value nothing uses. Only edits that keep what
+// the program does are offered (decision 113). Each edit is tried on the program in memory and kept only when the
 // checker then reports fewer errors and none it did not report before, so
 // `nx fix` never makes a program worse; then the next is tried against the
 // edited program. The deprecation migrations of docs/stability.md join

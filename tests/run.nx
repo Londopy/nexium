@@ -396,6 +396,13 @@ fn suite_examples(e: *Env, failures: *mut List(String)) {
     if pc.code == 0 or pc.stderr[..].find("integer literal `340282366920938463463374607431768211456` does not fit in any integer type") == null { failures.append(format("examples: a literal past u128's maximum (exit {}):\n{}", .{pc.code, pc.stderr})) }
     let fun = nx(e, ["fix", v3_src[..]][..])
     if fun.code == 0 or fun.stdout[..].find("1 error(s) left that nx fix has no edit for") == null { failures.append(format("examples: nx fix on a V3 error (exit {}):\n{}{}", .{fun.code, fun.stdout, fun.stderr})) }
+    // `_ = ` in front of an unused value, in a statement and in a block's
+    // tail; none in an `if` with no `else` whose value is wanted
+    let un_src = fs.join(e.root[..], "nx-out/cases/unused.nx")
+    fs.write(un_src[..], "fn twice(x: i32) -> i32 { return x * 2 }\n\nfn quiet(c: bool) {\n    twice(1)\n    if c {\n        twice(2)\n    }\n}\n\nfn main() {\n    quiet(true)\n    let v = if true { twice(3) }\n}\n") catch { }
+    let unf = nx(e, ["fix", un_src[..]][..])
+    let unt = fs.read(un_src[..]) catch { String.new() }
+    if unf.stdout[..].find("2 error(s) left that nx fix has no edit for") == null or unt[..].find("    _ = twice(1)\n") == null or unt[..].find("        _ = twice(2)\n") == null or unt[..].find("_ = twice(3)") != null { failures.append(format("examples: nx fix and unused values (exit {}):\n{}{}{}", .{unf.code, unf.stdout, unf.stderr, unt})) }
     // the effects lockfile: the shipped example's is committed and must match;
     // a function that starts printing gains `blocks`, and --check says so
     let lk = nx(e, ["audit", "examples/ropesim.nx", "--check"][..])

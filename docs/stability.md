@@ -78,12 +78,15 @@ A feature that has to go is deprecated first:
 the deprecations the running compiler knows how to migrate, and the edits
 the checker offers for its errors where the fix is mechanical: rule V4's
 `.clone()` where a value moves out from under a view of it, rule V5's
-`@escape(...)` around a value kept past its arena. Each edit is tried on
-the program first and kept only when the checker then reports fewer
-errors and none it did not report before; what it cannot fix
-mechanically it leaves, and says how many errors remain. `--check`
-reports without writing. It never changes what a correct program means.
-There are no deprecations yet.
+`@escape(...)` around a value kept past its arena, `_ = ` in front of a
+value nothing uses. Each edit is tried on the program first and kept only
+when the checker then reports fewer errors and none it did not report
+before; what it cannot fix mechanically it leaves, and says how many
+errors remain. `--check` reports without writing. It never changes what a
+correct program means, and it makes no edit that would decide what a
+program computes: where arithmetic may overflow in a `!panics` function,
+wrapping (`+%`) and saturating (`+|`) are the programmer's choice
+(decision 113). There are no deprecations yet.
 
 ## Not covered
 

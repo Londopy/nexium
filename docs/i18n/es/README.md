@@ -313,7 +313,7 @@ using arena {
 | `nx emit-c file.nx` | imprime el C generado |
 | `nx tir file.nx [--sigs]` | el programa verificado como S-expresiones (las pruebas del propio compilador lo leen) |
 | `nx fmt file.nx [--check]` | formato canónico |
-| `nx fix file.nx` | reescribe las formas obsoletas que el compilador puede migrar (ninguna en 1.0; ver [docs/stability.md](../../stability.md)) |
+| `nx fix file.nx` | aplica las correcciones mecánicas del verificador (`.clone()`, `@escape(...)`, `_ = `) y migra las formas obsoletas; ver [docs/stability.md](../../stability.md) |
 | `nx doc file.nx` | documentación HTML con los efectos inferidos |
 | `nx size file.nx` | atribuye los bytes del binario a las declaraciones |
 | `nx layout file.nx [Type...]` | desplazamientos, tamaños y relleno de un struct o enum, y el orden por alineación que lo reduciría |

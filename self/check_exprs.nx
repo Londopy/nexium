@@ -1528,7 +1528,11 @@ impl Checker {
         let moved_before = self.moved_snapshot()
         let v = self.tys.void()
         let then_expected = if els_node != NONE { expected } else { v }
+        let saved_nd = self.no_discard_fix
+        let value_wanted = els_node == NONE and (expected == NONE or self.tys.kind(self.tys.shallow(expected)) != TK.Void)
+        if value_wanted { self.no_discard_fix = true }
         let tb = self.check_block(then_node, then_expected, NONE, NONE)
+        self.no_discard_fix = saved_nd
         self.pop_scope()
         self.facts_restore(&saved)
         let moved_then = self.moved_snapshot()
@@ -1539,6 +1543,8 @@ impl Checker {
             let tk = self.tys.kind(self.tys.shallow(then_ty))
             if ! (tk == TK.Void or tk == TK.Never) {
                 self.fail_here(self.tir.nodes[tb].start, format("an `if` without `else` produces no value, but this block has type `{}`; discard the value with `_ =`", .{self.ty_name(then_ty)})[..])
+                let tail = self.tir.nodes[tb].a
+                if tail != NONE and !value_wanted { self.offer_discard(self.tir.nodes[tail].start) }
             }
             let r = self.mk(TKind.If, v, start, end)
             self.tir.nodes[r].kids.append(c)
