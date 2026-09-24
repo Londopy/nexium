@@ -16,7 +16,12 @@
     let
       systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
       forAll = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
-      version = builtins.head (builtins.match ".*const VERSION = \"([^\"]+)\".*" (builtins.readFile ./self/nx.nx));
+      # the version from its line of self/nx.nx, matched a line at a time: a
+      # `.*` over the whole file overflows the regex engine's stack once the
+      # file passes about 95 KB
+      lines = builtins.filter builtins.isString (builtins.split "\n" (builtins.readFile ./self/nx.nx));
+      versions = builtins.filter (m: m != null) (map (l: builtins.match "const VERSION = \"([^\"]+)\"" l) lines);
+      version = builtins.head (builtins.head versions);
     in
     {
       packages = forAll (pkgs: rec {
