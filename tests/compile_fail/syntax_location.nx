@@ -1,0 +1,10 @@
+// A syntax error is reported the way a type error is: the message, then
+// the file, line and column, the line itself and a caret, never a byte
+// offset into the file (`error at 33`).
+// EXPECT: error: expected a newline after statement but found `upgrade`
+// EXPECT: syntax_location.nx:9:8
+// EXPECT: 9|     nx upgrade
+// EXPECT: 1 error(s)
+fn main() {
+    nx upgrade
+}

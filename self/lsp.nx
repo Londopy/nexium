@@ -486,16 +486,6 @@ fn diag_at(text: []u8, at: usize, width: usize, severity: f64, own message: Stri
     return LspDiag{ .line = l, .col = c, .end_line = el, .end_col = ec, .severity = severity, .message = message }
 }
 
-/// The offset in an `error at N: message` line from the lexer or parser.
-fn parse_error_offset(e: []u8, msg: *mut String) -> usize {
-    if !e.starts_with("error at ") { msg.* = String.from(e); return 0 }
-    let rest = e[9..]
-    let colon = rest.find(":") orelse { msg.* = String.from(e); return 0 }
-    let off = rest[0..colon].parse_int(usize) catch { 0 }
-    msg.* = String.from(rest[colon + 1..].trim())
-    return off
-}
-
 /// Check the buffer and return its diagnostics (only those in the open
 /// file) and, when it checks, the checker for hover.
 fn analyze(path: []u8, text: []u8, std_dir: []u8, cc: *List(String), out: *mut List(LspDiag)) -> ?check.Checker {
@@ -503,7 +493,7 @@ fn analyze(path: []u8, text: []u8, std_dir: []u8, cc: *List(String), out: *mut L
     if parsed.errors.len > 0 {
         for e in parsed.errors {
             var msg = String.new()
-            let off = parse_error_offset(e[..], &mut msg)
+            let off = parser.error_offset(e[..], &mut msg)
             out.append(diag_at(text, off, 1, 1.0, msg))
         }
         return null

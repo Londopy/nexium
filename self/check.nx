@@ -554,7 +554,11 @@ pub fn load_with_texts(root: []u8, texts: *Map(String, String), std_dir: []u8) -
         }
         let parsed = parser.parse_source(text[..])
         if parsed.errors.len > 0 {
-            for e in parsed.errors { eprintln("{}: {}", .{path, e}) }
+            // the REPL's synthetic program is shown as the REPL shows its
+            // diagnostics: no path, no count
+            let repl = path[..] == "<repl>"
+            let shown = syntax_errors(if repl { "" } else { path[..] }, text[..], &parsed.errors)
+            if repl { for d in shown { eprintln("error: {}", .{d}) } } else { print_errors(&shown) }
             return error.InvalidInput
         }
         for it in parsed.items {
@@ -628,7 +632,8 @@ pub fn load_with_texts(root: []u8, texts: *Map(String, String), std_dir: []u8) -
         }
         let parsed = parser.parse_source(text[..])
         if parsed.errors.len > 0 {
-            for e in parsed.errors { eprintln("{}: {}", .{path, e}) }
+            let shown = syntax_errors(path[..], text[..], &parsed.errors)
+            print_errors(&shown)
             return error.InvalidInput
         }
         for it in parsed.items {
@@ -1093,6 +1098,57 @@ pub struct Checker {
     cv_bad: check_interp.CV
 }
 
+/// The location block of a diagnostic: `  --> path:line:col`, the source
+/// line, and a caret under byte offset `at` of `src`. With an empty path (the
+/// REPL, where the input is the line just typed) the block is the line and the
+/// caret alone.
+pub fn location_block(path: []u8, src: []u8, at: usize) -> String {
+    var line: usize = 1
+    var line_start: usize = 0
+    var i: usize = 0
+    let stop = if at < src.len { at } else { src.len }
+    while i < stop {
+        if src[i] == '\n' { line += 1; line_start = i + 1 }
+        i += 1
+    }
+    let col = stop - line_start + 1
+    var line_end = line_start
+    while line_end < src.len and src[line_end] != '\n' { line_end += 1 }
+    var text = src[line_start..line_end]
+    if text.len > 0 and text[text.len - 1] == '\r' { text = text[0..text.len - 1] }
+    var out = String.new()
+    if path.len > 0 {
+        out.append(format("  --> {}:{}:{}\n", .{path, line, col})[..])
+        out.append("   |\n")
+        out.append(format("{>3}| {}\n", .{line, text})[..])
+    } else {
+        out.append(format("   | {}\n", .{text})[..])
+    }
+    out.append("   | ")
+    for _ in 1..col { out.append(" ") }
+    out.append("^")
+    return out
+}
+
+/// The lexer's and the parser's errors (`error at N: message`) rendered the
+/// way the checker renders its own, for `print_errors`: the message and the
+/// location block, one error per position (the lexer's complaint and the
+/// parser's reading of the same text are one mistake).
+pub fn syntax_errors(path: []u8, src: []u8, errors: *List(String)) -> List(String) {
+    var out = List(String).new()
+    var seen = List(usize).new()
+    for e in errors {
+        var msg = String.new()
+        let at = parser.error_offset(e[..], &mut msg)
+        var again = false
+        for s in seen { if s == at { again = true } }
+        if again { continue }
+        seen.append(at)
+        out.append(format("{}\n{}", .{msg, location_block(path, src, at)}))
+    }
+    return out
+}
+
 /// Print the diagnostics: errors with their prefix, notes as they are, and
 /// the count at the end.
 pub fn print_errors(errors: *List(String)) {
@@ -1230,31 +1286,13 @@ impl Checker {
         return false
     }
 
-    /// The location block of a diagnostic: `  --> path:line:col`, the source
-    /// line, and a caret. Positions are byte offsets into the module's text.
+    /// The location block of a diagnostic (`location_block`) at a byte offset
+    /// into a module's text. The REPL's input is shown without a path: its
+    /// lines are numbered in a program the user never sees.
     fn render_at(self: *Self, module: usize, at: usize) -> String {
-        let src = self.mods[module].source[..]
-        let path = if self.mods[module].path.len > 0 { self.mods[module].path[..] } else { self.mods[module].name[..] }
-        var line: usize = 1
-        var line_start: usize = 0
-        var i: usize = 0
-        let stop = if at < src.len { at } else { src.len }
-        while i < stop {
-            if src[i] == '\n' { line += 1; line_start = i + 1 }
-            i += 1
-        }
-        let col = at - line_start + 1
-        var line_end = line_start
-        while line_end < src.len and src[line_end] != '\n' { line_end += 1 }
-        var text = src[line_start..line_end]
-        if text.len > 0 and text[text.len - 1] == '\r' { text = text[0..text.len - 1] }
-        var out = format("  --> {}:{}:{}\n", .{path, line, col})
-        out.append("   |\n")
-        out.append(format("{>3}| {}\n", .{line, text})[..])
-        out.append("   | ")
-        for _ in 1..col { out.append(" ") }
-        out.append("^")
-        return out
+        let m = &self.mods[module]
+        let path = if self.repl_mode and m.path[..] == "<repl>" { "" } else if m.path.len > 0 { m.path[..] } else { m.name[..] }
+        return location_block(path, m.source[..], at)
     }
 
     fn node(self: *Self, module: usize, id: usize) -> *parser.Node {
