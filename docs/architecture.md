@@ -12,8 +12,8 @@ The compiler is written in Nexium under `self/`: `lexer.nx`, `parser.nx`,
 the checker (`check.nx` and the `check_*.nx` modules beside it, with
 `cimport.nx`), `cgen.nx` and the driver `nx.nx`, one stage each below, then
 the tools (`fmt.nx`, `doc.nx`, `tools.nx`, `size.nx`, `manifest.nx`,
-`ship.nx`, `ship_node.nx`, `installer.nx`, `lsp.nx`, `repl.nx`, `topo.nx`,
-`completions.nx`). It builds itself from the C seed in `bootstrap/`
+`ship.nx`, `ship_node.nx`, `installer.nx`, `lsp.nx` with `lsp_index.nx`,
+`repl.nx`, `topo.nx`, `completions.nx`, `fix.nx`). It builds itself from the C seed in `bootstrap/`
 (decision 90): the first compiler, in Rust, drove the port and left at 1.0.
 
 ## The one-paragraph version
