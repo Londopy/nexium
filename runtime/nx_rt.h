@@ -147,8 +147,23 @@ typedef struct nx_boundary {
 static void nx_track_handle(int kind, int64_t h, bool acquire);
 static void nx_ctx_untrack(nx_ctx* c);
 
-static NX_THREAD_LOCAL nx_boundary* nx_tls_boundary = NULL;
-static NX_THREAD_LOCAL char nx_tls_last_panic[256];
+/* The runtime's state. In one C file (the default) each variable is static;
+   a program compiled as several (`nx build` of a debug build, one C file per
+   module: NX_RT_SHARED) shares one copy, which the unit with NX_RT_OWNER
+   defines and the others declare. */
+#if defined(NX_RT_SHARED) && !defined(NX_RT_OWNER)
+#define NX_STATE extern
+#define NX_STATE_INIT(v)
+#elif defined(NX_RT_SHARED)
+#define NX_STATE
+#define NX_STATE_INIT(v) = v
+#else
+#define NX_STATE static
+#define NX_STATE_INIT(v) = v
+#endif
+
+NX_STATE NX_THREAD_LOCAL nx_boundary* nx_tls_boundary NX_STATE_INIT(NULL);
+NX_STATE NX_THREAD_LOCAL char nx_tls_last_panic[256];
 
 NX_NORETURN NX_INLINE void nx_panic(const char* msg, const char* loc) {
     if (nx_tls_boundary) {
@@ -306,7 +321,7 @@ NX_INLINE nx_sl_u8 nx_host_os(void) {
 /* UTF-8 on the Windows console for the program's life (the console's own code
    page shows `é` as two symbols); the previous page comes back at exit */
 #if defined(_WIN32)
-static UINT nx_prev_console_cp = 0;
+NX_STATE UINT nx_prev_console_cp NX_STATE_INIT(0);
 static void nx_console_restore(void) { if (nx_prev_console_cp) SetConsoleOutputCP(nx_prev_console_cp); }
 #endif
 NX_INLINE void nx_console_utf8(void) {
@@ -1067,7 +1082,7 @@ NX_INLINE bool nx_cpath(nx_sl_u8 path, char* buf, size_t cap) {
 /* Run a program with its stdin fed from `input`, in `cwd` when given, and
    its stdout and stderr captured. The captured text is kept for
    nx_last_stdout / nx_last_stderr to hand over; each thread has its own. */
-static NX_THREAD_LOCAL nx_string nx_cap_out, nx_cap_err;
+NX_STATE NX_THREAD_LOCAL nx_string nx_cap_out, nx_cap_err;
 NX_INLINE void nx_cap_reset(nx_ctx* c) {
     nx_str_free(c, &nx_cap_out); nx_str_free(c, &nx_cap_err);
     nx_cap_out.ptr = NULL; nx_cap_out.len = 0; nx_cap_out.cap = 0; nx_cap_out.ar = c->arena;
@@ -1412,7 +1427,7 @@ NX_INLINE nx_string nx_fs_temp_dir(nx_ctx* c) {
 /* ------------------------------------------------------------ file handles */
 /* 1 = stdin, 2 = stdout, 3 = stderr; opened files get 4 and up. */
 #define NX_MAX_FILES 64
-static FILE* nx_files[NX_MAX_FILES];
+NX_STATE FILE* nx_files[NX_MAX_FILES];
 NX_INLINE FILE* nx_fh(int64_t h) {
     if (h == 1) return stdin;
     if (h == 2) return stdout;
@@ -1436,8 +1451,8 @@ NX_INLINE int64_t nx_file_open(nx_sl_u8 path, nx_sl_u8 mode) {
 /* stdin is read at the descriptor level, so a pipe or a terminal hands over what it
    has instead of waiting for a full buffer the way fread does; every stdin reader in
    the runtime consumes from this one buffer */
-static uint8_t nx_stdin_buf[65536];
-static size_t nx_stdin_pos, nx_stdin_len;
+NX_STATE uint8_t nx_stdin_buf[65536];
+NX_STATE size_t nx_stdin_pos, nx_stdin_len;
 NX_INLINE bool nx_stdin_fill(void) {
     if (nx_stdin_pos < nx_stdin_len) return true;
 #if defined(_WIN32)
@@ -1583,7 +1598,7 @@ NX_INLINE int32_t nx_udp_send_to(int64_t h, nx_sl_u8 host, uint16_t port, nx_sl_
 NX_INLINE int32_t nx_udp_recv_from(nx_ctx* c, int64_t h, size_t n, int64_t timeout_ms, nx_string* out) { (void)c; (void)h; (void)n; (void)timeout_ms; (void)out; return 4; }
 NX_INLINE nx_string nx_net_last_peer(nx_ctx* c) { nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena; return s; }
 #else
-static char nx_net_peer_buf[128];
+NX_STATE char nx_net_peer_buf[128];
 
 NX_INLINE struct addrinfo* nx_net_lookup(nx_sl_u8 host, uint16_t port, int socktype, bool passive) {
     char h[256], p[8];
@@ -1923,8 +1938,8 @@ NX_INLINE void nx_mutex_unlock(int64_t m) { nx_track_handle(2, m, false); nx_mut
  * `io.pending_input()` how many are buffered (an escape sequence arrives
  * whole). */
 #if defined(_WIN32)
-static DWORD nx_saved_in_mode, nx_saved_out_mode;
-static bool nx_raw_saved;
+NX_STATE DWORD nx_saved_in_mode, nx_saved_out_mode;
+NX_STATE bool nx_raw_saved;
 static void nx_raw_restore(void) {
     if (!nx_raw_saved) return;
     SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), nx_saved_in_mode);
@@ -1944,8 +1959,8 @@ NX_INLINE bool nx_raw_mode(bool on) {
 #elif defined(NX_WASM)
 NX_INLINE bool nx_raw_mode(bool on) { (void)on; return false; }
 #else
-static struct termios nx_saved_termios;
-static bool nx_raw_saved;
+NX_STATE struct termios nx_saved_termios;
+NX_STATE bool nx_raw_saved;
 static void nx_raw_restore(void) { if (nx_raw_saved) tcsetattr(0, TCSANOW, &nx_saved_termios); }
 NX_INLINE bool nx_raw_mode(bool on) {
     if (!on) { nx_raw_restore(); return true; }

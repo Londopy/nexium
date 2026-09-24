@@ -910,3 +910,24 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     of decision 84 stand. Rename sees what the checker checked: a name
     used only in an `if comptime` branch this build does not take, or in
     a generic function nothing instantiates, is not reached.
+116. **A large program's debug build is a C file per module, each object
+    reused while its C is unchanged.** The compiler's own debug build was
+    one 190,000-line C file, eight and a half seconds to compile after any
+    change. Now a debug build of a program of about 200 KB of source or
+    more (`NX_UNITS=1` or `0` decides for any program) is generated as one
+    C file per module (`cgen.generate_units`): each declares every
+    function and the types it needs, defines its own module's functions
+    with external linkage, and keeps its helpers and literals static; the
+    root module's file defines the globals and holds the entry. The
+    runtime's own state (the panic boundary, the file table, stdin's
+    buffer, the console's modes) is declared by every file and defined by
+    the root's (`NX_STATE` in `nx_rt.h`), where one file keeps it static.
+    Each object is named by a hash of its C and of the command line that
+    compiles it, so a build compiles again only the files whose C changed,
+    on as many threads as there are cores (at most eight), and links.
+    With a released (optimized) `nx`, a one-line change to the compiler
+    rebuilds it in 0.99 seconds on Linux with gcc and 1.75 on Windows with
+    zig cc, where the one C file took 7.8; of that, checking the whole
+    program is 0.74, so "well under a second" everywhere waits for checking
+    by module. `nx emit-c`, and so the seed, stays one file, as do
+    optimized builds, whose optimizer sees across functions.

@@ -61,6 +61,16 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   which one a program means is the programmer's choice (decision 113). An error with an edit on offer ends with
   "note: `nx fix FILE` can try an edit for N of these". The loader takes
   stand-in texts for any of the program's files (`load_with_texts`).
+- Incremental builds (decision 116): the debug build of a large program
+  (about 200 KB of source or more; `NX_UNITS=1` or `0` decides for any)
+  is a C file per module, each object kept under
+  `<out-dir>/<name>.units/` by a hash of its C and its command line, so a
+  build compiles again only the modules whose C changed, on up to eight
+  threads, and links; `nx build` says how many it compiled
+  (`1 of 36 C files compiled`). A one-line change to the compiler rebuilds
+  it in 0.99 seconds on Linux (gcc) and 1.75 on Windows (zig cc), where
+  its one C file took 7.8. The runtime's state is shared between the files
+  (`NX_STATE`), one copy defined by the root module's.
 - The language server answers from the checker when the program checks
   (decision 115): go to definition follows what each local, function,
   method and field resolved to, so `s.scale(2)` goes to the `scale` of

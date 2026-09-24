@@ -30,6 +30,7 @@ import completions
 import fix
 import std.fs
 import std.strings
+import std.thread
 
 // the compiler runs on a gigabyte of stack: the compile-time interpreter
 // recurses on it, and each nested call costs about 165 KiB of frame
@@ -521,6 +522,16 @@ fn sanitizers_ok(o: *Opts) -> bool {
 /// Run the C compiler on the generated file. Zig's shared cache refuses a
 /// concurrent run now and then: that is retried.
 fn compile_c(c: *check.Checker, o: *Opts, c_path: []u8, out: []u8, kind: []u8) -> bool {
+    var inputs = List(String).new()
+    inputs.append(String.from(c_path))
+    let argv = c_argv(c, o, &inputs, out, kind)
+    return run_c_compiler(o, &argv)
+}
+
+/// The C compiler's command line for `inputs` (C files, or objects to link)
+/// to `out`: an executable, an `object`, a `shared` library, or `sections`
+/// (an object with a section per function, for `nx size`).
+fn c_argv(c: *check.Checker, o: *Opts, inputs: *List(String), out: []u8, kind: []u8) -> List(String) {
     var argv = List(String).new()
     for x in o.cc { argv.append(x.clone()) }
     argv.append(String.from("-std=gnu11"))
@@ -575,7 +586,7 @@ fn compile_c(c: *check.Checker, o: *Opts, c_path: []u8, out: []u8, kind: []u8) -
         argv.append(String.from("-DNX_BUILD_SHARED"))
         if !is_windows_target(o.target[..]) { argv.append(String.from("-fPIC")) }
     }
-    argv.append(String.from(c_path))
+    for x in inputs.* { argv.append(x.clone()) }
     argv.append(String.from("-o"))
     argv.append(String.from(out))
     let windows = is_windows_target(o.target[..])
@@ -588,31 +599,165 @@ fn compile_c(c: *check.Checker, o: *Opts, c_path: []u8, out: []u8, kind: []u8) -
         // threads live in libpthread before glibc 2.34; harmless after, and zig accepts it
         if !is_macos_target(o.target[..]) { argv.append(String.from("-lpthread")) }
     }
-    var views = List([]u8).new()
-    for a in argv { views.append(a[..]) }
+    return argv
+}
+
+/// Run one C compiler command line, in a private zig cache unless one is
+/// already set for the build.
+fn run_c_compiler(o: *Opts, argv: *List(String)) -> bool {
     let cache = private_zig_cache(o)
-    var code: i32 = 1
-    for attempt in 0..5 {
-        code = os.exec(views[..], "", "") catch {
-            eprintln("error: cannot run the C compiler `{}`; put zig on the PATH or set NX_CC", .{argv[0]})
-            return false
-        }
-        let err = os.last_stderr()
-        if code != 0 and err[..].find("failed to check cache") != null and attempt + 1 < 5 {
-            time.sleep(300 * ((attempt as u64) + 1))
-            continue
-        }
-        if err.len > 0 { eprintln("{}", .{err[..].trim()}) }
-        let outp = os.last_stdout()
-        if outp.len > 0 { print("{}", .{outp}) }
-        break
-    }
+    var err = String.new()
+    let code = run_cc(argv, &mut err)
+    if err.len > 0 { eprintln("{}", .{err[..].trim()}) }
     if cache.len > 0 { release_zig_cache(cache[..]) }
     if code != 0 {
         eprintln("error: C compilation failed (this is a compiler bug; run `nx emit-c` to inspect the output)", .{})
         return false
     }
     return true
+}
+
+/// Run the C compiler, its stderr into `err`: the exit code, or -1 when it
+/// cannot be started. Zig's shared cache refuses a concurrent run now and
+/// then: that is retried.
+fn run_cc(argv: *List(String), err: *mut String) -> i32 {
+    var views = List([]u8).new()
+    for a in argv.* { views.append(a[..]) }
+    var code: i32 = 1
+    for attempt in 0..5 {
+        code = os.exec(views[..], "", "") catch {
+            err.* = format("error: cannot run the C compiler `{}`; put zig on the PATH or set NX_CC", .{argv[0]})
+            return -1
+        }
+        let e = os.last_stderr()
+        if code != 0 and e[..].find("failed to check cache") != null and attempt + 1 < 5 {
+            time.sleep(300 * ((attempt as u64) + 1))
+            continue
+        }
+        err.* = e
+        let outp = os.last_stdout()
+        if outp.len > 0 { print("{}", .{outp}) }
+        break
+    }
+    return code
+}
+
+/// The C files of a split build that a thread compiles, and what went wrong.
+struct CcJob {
+    argvs: List(List(String))
+    failed: List(String)
+}
+
+fn cc_job(j: *mut CcJob) -> usize {
+    for a in j.argvs {
+        var err = String.new()
+        let code = run_cc(&a, &mut err)
+        if code != 0 { j.failed.append(if err.len > 0 { err.clone() } else { format("exit {}", .{code}) }) }
+    }
+    return j.failed.len
+}
+
+fn fnv(h0: u64, bytes: []u8) -> u64 {
+    var h = h0
+    for b in bytes { h = (h ^ (b as u64)) *% 1099511628211 }
+    return h
+}
+
+/// Whether a debug build is split into one C file per module (decision
+/// 116): a program of about 200 KB of source or more, where one C file
+/// takes seconds to compile again after any change; NX_UNITS=1 splits any
+/// program, NX_UNITS=0 none.
+fn units_wanted(c: *check.Checker, o: *Opts) -> bool {
+    if o.mode != cgen.MODE_DEBUG or o.target.len > 0 and !uses_zig(o) { return false }
+    if let v = os.env("NX_UNITS") {
+        if v == "1" { return true }
+        if v == "0" { return false }
+    }
+    var size: usize = 0
+    for m in c.mods { size += m.source.len }
+    return size >= 200000
+}
+
+/// A debug build as one C file per module (cgen.generate_units). Each
+/// file's object is kept under `<out-dir>/<stem>.units/`, named by a hash of
+/// the C and of the command line that compiles it, so a build compiles
+/// again only the files that changed, several at once, and links. `made`
+/// says how many were compiled of how many.
+fn build_units(c: *mut check.Checker, o: *Opts, entry: u8, stem: []u8, out: []u8, made: *mut String) -> bool {
+    let stack = cli_stack(c) orelse return false
+    var errs = List(String).new()
+    let units = cgen.generate_units(c, o.mode, entry, stem, stack, true, &mut errs)
+    if errs.len > 0 {
+        for e in errs { eprintln("error: {}", .{e}) }
+        return false
+    }
+    let dir = format("{}/{}.units", .{o.out_dir, stem})
+    fs.make_dirs(dir[..]) catch {
+        eprintln("error: cannot make {}", .{dir})
+        return false
+    }
+    var objs = List(String).new()
+    var kept = Map(String, bool).new()
+    var todo = List(List(String)).new()
+    for u in units {
+        let c_path = format("{}/{}.c", .{dir, u.name})
+        var one = List(String).new()
+        one.append(c_path.clone())
+        let probe = c_argv(c, o, &one, "-", "object")
+        var h: u64 = 14695981039346656037
+        h = fnv(h, u.text[..])
+        for a in probe { h = fnv(fnv(h, a[..]), " ") }
+        let file = format("{}.{x}.o", .{u.name, h})
+        let obj = format("{}/{}", .{dir, file})
+        objs.append(obj.clone())
+        kept.put(file, true)
+        if io.file_kind(obj[..]) == 1 { continue }
+        let text = cgen.resolve_line_resets(u.text[..], c_path[..])
+        io.write_file(c_path[..], text[..]) catch {
+            eprintln("error: cannot write {}", .{c_path})
+            return false
+        }
+        todo.append(c_argv(c, o, &one, obj[..], "object"))
+    }
+    made.* = format("{} of {} C files compiled", .{todo.len, units.len})
+    if todo.len > 0 {
+        // one zig cache for the build, set before the threads start: each
+        // thread's compiler inherits it, and a refused run is retried
+        let cache = private_zig_cache(o)
+        var n = thread.count()
+        if n > 8 { n = 8 }
+        if n > todo.len { n = todo.len }
+        if n < 1 { n = 1 }
+        var jobs = List(CcJob).new()
+        for i in 0..n { jobs.append(CcJob{ .argvs = List(List(String)).new(), .failed = List(String).new() }) }
+        for a, i in todo { jobs[i % n].argvs.append(a.clone()) }
+        var threads = List(thread.Thread(CcJob, usize)).new()
+        while jobs.len > 0 {
+            let j = jobs.pop().?
+            threads.append(thread.spawn(CcJob, usize, cc_job, j))
+        }
+        var failed = List(String).new()
+        var ti = threads.len
+        while ti > 0 {
+            ti -= 1
+            _ = threads[ti].join()
+            let done = threads[ti].arg()
+            for f in done.failed { failed.append(f.clone()) }
+        }
+        if cache.len > 0 { release_zig_cache(cache[..]) }
+        if failed.len > 0 {
+            for f in failed { eprintln("{}", .{f[..].trim()}) }
+            eprintln("error: C compilation failed (this is a compiler bug; run `nx emit-c` to inspect the output)", .{})
+            return false
+        }
+    }
+    // the objects of earlier builds go
+    let old = fs.list(dir[..]) catch { List(String).new() }
+    for f in old {
+        if f[..].ends_with(".o") and !kept.contains(f[..]) { io.remove_file(format("{}/{}", .{dir, f})[..]) catch { } }
+    }
+    let link = c_argv(c, o, &objs, out, "exe")
+    return run_c_compiler(o, &link)
 }
 
 /// When the C compiler is Zig, its local cache goes under the output
@@ -666,13 +811,21 @@ fn cmd_build(o: *Opts, run: bool, out_path: *mut String) -> bool {
     let stem = stem_of(o.file[..])
     let has_main = c.main_inst != NONE
     if !has_main and !run { eprintln("note: no `main` found; building a library object", .{}) }
-    let text = emit(&mut c, o, if has_main { cgen.ENTRY_MAIN } else { cgen.ENTRY_LIBRARY })
-    if text.len == 0 { return false }
-    let c_path = write_c(o, stem, text[..]) orelse return false
     var out = o.out.clone()
     if out.len == 0 {
         if has_main { out = format("{}/{}", .{o.out_dir, exe_name(stem, o.target[..])}) } else { out = format("{}/{}.o", .{o.out_dir, stem}) }
     }
+    // a large program's debug build: a C file per module, the unchanged reused
+    if has_main and units_wanted(&c, o) {
+        var made = String.new()
+        if !build_units(&mut c, o, cgen.ENTRY_MAIN, stem, out[..], &mut made) { return false }
+        if !run { println("{}", .{made}) }
+        out_path.* = out
+        return true
+    }
+    let text = emit(&mut c, o, if has_main { cgen.ENTRY_MAIN } else { cgen.ENTRY_LIBRARY })
+    if text.len == 0 { return false }
+    let c_path = write_c(o, stem, text[..]) orelse return false
     if !compile_c(&c, o, c_path[..], out[..], if has_main { "exe" } else { "object" }) { return false }
     if !o.keep_c { io.remove_file(c_path[..]) catch { } }
     out_path.* = out
@@ -769,11 +922,16 @@ fn cmd_test(o: *Opts) -> i32 {
         return 0
     }
     let stem = stem_of(o.file[..])
+    let tstem = format("{}_test", .{stem})
+    let out = format("{}/{}", .{o.out_dir, exe_name(tstem[..], o.target[..])})
+    if units_wanted(&c, o) {
+        var made = String.new()
+        if !build_units(&mut c, o, cgen.ENTRY_TESTS, tstem[..], out[..], &mut made) { return 1 }
+        return run_program(out[..], &o.rest)
+    }
     let text = emit(&mut c, o, cgen.ENTRY_TESTS)
     if text.len == 0 { return 1 }
-    let tstem = format("{}_test", .{stem})
     let c_path = write_c(o, tstem[..], text[..]) orelse return 1
-    let out = format("{}/{}", .{o.out_dir, exe_name(tstem[..], o.target[..])})
     if !compile_c(&c, o, c_path[..], out[..], "exe") { return 1 }
     if !o.keep_c { io.remove_file(c_path[..]) catch { } }
     return run_program(out[..], &o.rest)

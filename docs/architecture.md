@@ -245,6 +245,14 @@ path serves `run`, `test` (a generated test runner is the entry point),
 `leaks` (adds `-DNX_LEAK_CHECK`), and `size` (adds `-ffunction-sections` and
 reads the object back).
 
+A debug build of a large program (about 200 KB of source; `NX_UNITS`
+decides for any) is split instead (decision 116): `cgen.generate_units`
+writes a C file per module into `nx-out/<name>.units/`, each object named
+by a hash of its C and its command line, and the driver compiles only the
+files whose object is missing, on threads, then links them. The runtime's
+state (`NX_STATE`) is defined by the root module's file and declared by the
+others.
+
 `zig cc` is the default because it cross-compiles out of the box:
 `--target aarch64-linux-gnu` from a Windows machine just works. `--cc clang`
 or `--cc gcc` are accepted when cross-compiling is not needed.

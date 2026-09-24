@@ -153,6 +153,53 @@ pub struct Gen {
     // per module, its path as a C string for `#line`; empty when the module
     // has no file (std, a C header)
     line_files: List(String) = List(String).new()
+    // one C file of several (`generate_units`): the functions whose bodies it
+    // holds, and whether it is the root module's, which defines the program's
+    // and the runtime's state and holds the entry and the exports
+    unit_mode: bool = false
+    unit_bodies: List(bool) = List(bool).new()
+    unit_root: bool = false
+}
+
+/// One C file of a program split by module.
+pub struct Unit {
+    name: String
+    text: String
+}
+
+/// The program as one C file per module that has function bodies (the root
+/// module's always): each declares every function and the types it needs,
+/// defines its own module's functions with external linkage, and keeps its
+/// helpers and literals static; the root's defines the globals and the
+/// runtime's state and holds the entry. A change to one function's body
+/// changes one file, which is what `nx build` compiles again (decision 116).
+pub fn generate_units(c: *mut check.Checker, mode: u8, entry: u8, lib_name: []u8, stack_bytes: u64, line_dirs: bool, errors: *mut List(String)) -> List(Unit) {
+    var units = List(Unit).new()
+    let nm = c.mods.len
+    let ni = c.insts.len
+    for m in 0..nm {
+        var bodies = List(bool).new()
+        var any = false
+        for i in 0..ni {
+            let mine = c.insts[i].body != NONE and c.insts[i].module == m
+            bodies.append(mine)
+            if mine { any = true }
+        }
+        if !any and m != 0 { continue }
+        var g = new_gen(c, mode, entry)
+        g.lib_name = String.from(lib_name)
+        g.stack_bytes = stack_bytes
+        if line_dirs { g.use_line_directives() }
+        g.unit_mode = true
+        g.unit_bodies = bodies
+        g.unit_root = m == 0
+        let text = g.generate()
+        for e in g.errors { errors.append(e.clone()) }
+        var name = format("{}_", .{m})
+        for b in c.mods[m].name { name.push_byte(if is_ident_byte(b) { b } else { '_' }) }
+        units.append(Unit{ .name = name, .text = text })
+    }
+    return units
 }
 
 /// Where a function with `#line` directives ends: the driver turns it into
@@ -1300,7 +1347,7 @@ impl Gen {
         }
         let name = self.fn_c_name(inst)
         if self.c.insts[inst].is_variadic { params.append(String.from("...")) }
-        let linkage = if is_extern { "extern " } else { "static " }
+        let linkage = if is_extern { "extern " } else if self.unit_mode { "" } else { "static " }
         var joined = String.new()
         if params.len == 0 { joined = String.from("void") }
         for p, i in params {
@@ -5090,7 +5137,10 @@ impl Gen {
                 init = self.static_init(&v, ty)
             }
             let mangled = global_mangled(self.c, i)
-            if init.len > 0 { self.data_out.append(format("static {} {} = {};\n", .{cn, mangled, init})[..]) }
+            if self.unit_mode and !self.unit_root { self.data_out.append(format("extern {} {};\n", .{cn, mangled})[..]) }
+            else if self.unit_mode and init.len > 0 { self.data_out.append(format("{} {} = {};\n", .{cn, mangled, init})[..]) }
+            else if self.unit_mode { self.data_out.append(format("{} {};\n", .{cn, mangled})[..]) }
+            else if init.len > 0 { self.data_out.append(format("static {} {} = {};\n", .{cn, mangled, init})[..]) }
             else { self.data_out.append(format("static {} {};\n", .{cn, mangled})[..]) }
         }
         // prototypes for all functions with bodies (and externs)
@@ -5101,22 +5151,30 @@ impl Gen {
             let sig = self.fn_signature(i, false)
             self.protos_out.append(format("{};\n", .{sig})[..])
         }
-        // bodies
+        // bodies (a unit's own)
         for i in 0..n {
-            if self.c.insts[i].body != NONE { self.emit_function(i) }
+            if self.c.insts[i].body == NONE { continue }
+            if self.unit_mode and (i >= self.unit_bodies.len or !self.unit_bodies[i]) { continue }
+            self.emit_function(i)
         }
-        // exports and entry
+        // exports and entry (in the root's unit)
+        let holds_entry = !self.unit_mode or self.unit_root
         var tail = String.new()
         for i in 0..n {
-            if self.c.insts[i].export_name != "-" { tail.append(self.export_wrapper(i)[..]) }
+            if holds_entry and self.c.insts[i].export_name != "-" { tail.append(self.export_wrapper(i)[..]) }
         }
-        if self.entry == ENTRY_MAIN { tail.append(self.main_wrapper()[..]) }
+        if !holds_entry { }
+        else if self.entry == ENTRY_MAIN { tail.append(self.main_wrapper()[..]) }
         else if self.entry == ENTRY_TESTS { tail.append(self.test_runner()[..]) }
         else if self.entry == ENTRY_BENCH { tail.append(self.bench_runner()[..]) }
         var out = String.new()
         out.append("/* generated by nx */\n")
         let mode_name = if self.mode == MODE_DEBUG { "DEBUG" } else if self.mode == MODE_SAFE { "SAFE" } else if self.mode == MODE_FAST { "FAST" } else { "SMALL" }
         out.append(format("#define NX_MODE_{}\n", .{mode_name})[..])
+        if self.unit_mode {
+            out.append("#define NX_RT_SHARED 1\n")
+            if self.unit_root { out.append("#define NX_RT_OWNER 1\n") }
+        }
         out.append(RUNTIME_H)
         out.append("\n/* ---- imported C headers ---- */\n")
         for h, i in self.c.cimport_headers {
@@ -5149,7 +5207,7 @@ impl Gen {
         out.append(tail[..])
         // library-level helpers: error names and the last panic message
         var any_export = false
-        for i in 0..n { if self.c.insts[i].export_name != "-" { any_export = true } }
+        for i in 0..n { if holds_entry and self.c.insts[i].export_name != "-" { any_export = true } }
         if any_export {
             let lib = sanitize_ident(self.lib_name[..])
             out.append(format("NX_EXPORT const char* {}_error_name(int32_t code) {{ return nx_error_name((uint32_t)code); }}\nNX_EXPORT const char* {}_last_panic(void) {{ return nx_tls_last_panic; }}\n", .{lib, lib})[..])

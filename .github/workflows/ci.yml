@@ -67,6 +67,24 @@ jobs:
           nx=nx-out/bootstrap/nx2; [ -f "$nx.exe" ] && nx="$nx.exe"
           "$nx" run tests/run.nx
 
+      # the compiler's debug build is split into a C file per module: the
+      # compiler that makes emits what the one-file build's does, and a
+      # one-line change compiles one file again (decision 116)
+      - name: nx builds itself split by module, and again after a one-line change
+        shell: bash
+        run: |
+          nx=nx-out/bootstrap/nx2; [ -f "$nx.exe" ] && nx="$nx.exe"
+          ext=""; [ "$RUNNER_OS" = Windows ] && ext=".exe"
+          "$nx" build self/nx.nx -o "nx-out/split/nx$ext" --out-dir nx-out/split | tee split1.txt
+          grep -q "C files compiled" split1.txt
+          "$nx" emit-c self/nx.nx --mode safe > nx-out/split/one.c
+          "nx-out/split/nx$ext" emit-c self/nx.nx --mode safe > nx-out/split/split.c
+          cmp nx-out/split/one.c nx-out/split/split.c
+          perl -pi -e 's/is not an effect \(they are: \{\}\)/is not an effect (the effects: {})/' self/tools.nx
+          "$nx" build self/nx.nx -o "nx-out/split/nx$ext" --out-dir nx-out/split | tee split2.txt
+          grep -q "^1 of " split2.txt
+          git checkout -- self/tools.nx
+
       - name: The compiler is built for the baseline instruction set
         if: runner.os == 'Linux'
         run: |

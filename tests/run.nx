@@ -481,6 +481,29 @@ fn suite_examples(e: *Env, failures: *mut List(String)) {
     if bb.code != 1 { failures.append(format("examples: nx bench with a failing benchmark exited {}", .{bb.code})) }
     let bf = nx(e, ["bench", bench_src[..], "named", "--quick"][..])
     if bf.code != 0 or bf.stdout[..].find("1 benchmark(s), safe mode (some skipped by filter)") == null { failures.append(format("examples: nx bench with a filter (exit {}):\n{}{}", .{bf.code, bf.stdout, bf.stderr})) }
+    // a debug build split into a C file per module (NX_UNITS=1 splits even a
+    // small one): the runtime's state is one (two modules read stdin in turn),
+    // a module's global is the root file's, and a change to one module
+    // compiles one file again
+    let udir = fs.join(e.root[..], "nx-out/cases/units")
+    fs.remove_all(udir[..]) catch { }
+    fs.make_dirs(udir[..]) catch { }
+    let umain = fs.join(udir[..], "main.nx")
+    fs.write(umain[..], "import util\nimport shapes\n\nfn main() {\n    let a = util.first_line()\n    let b = shapes.second_line()\n    _ = util.hit()\n    println(\"{} {} {} {} {}\", .{a, b, util.twice(21), shapes.area(3), util.hit()})\n}\n") catch { }
+    fs.write(fs.join(udir[..], "util.nx")[..], "var hits: i64 = 0\n\npub fn first_line() -> String {\n    return io.read_line() orelse String.new()\n}\n\npub fn twice(x: i64) -> i64 {\n    return x * 2\n}\n\npub fn hit() -> i64 {\n    unsafe {\n        hits += 1\n        return hits\n    }\n}\n") catch { }
+    let ushapes = fs.join(udir[..], "shapes.nx")
+    fs.write(ushapes[..], "pub fn second_line() -> String {\n    return io.read_line() orelse String.new()\n}\n\npub fn area(r: i64) -> i64 {\n    return r * r * 3\n}\n") catch { }
+    let uout = fs.join(udir[..], "out")
+    let uexe = fs.join(uout[..], if e.windows { "main.exe" } else { "main" })
+    os.set_env("NX_UNITS", "1")
+    let ub1 = nx(e, ["build", umain[..], "--out-dir", uout[..]][..])
+    let ur1 = run_in(e, [uexe[..]][..], "alpha\nbeta\n", e.root[..])
+    if ub1.stdout[..].find("3 of 3 C files compiled") == null or ur1.stdout[..].find("alpha beta 42 27 2") == null { failures.append(format("examples: a build split by module (exit {}):\n{}{}{}{}", .{ub1.code, ub1.stdout, ub1.stderr, ur1.stdout, ur1.stderr})) }
+    fs.write(ushapes[..], "pub fn second_line() -> String {\n    return io.read_line() orelse String.new()\n}\n\npub fn area(r: i64) -> i64 {\n    return r * r * 4\n}\n") catch { }
+    let ub2 = nx(e, ["build", umain[..], "--out-dir", uout[..]][..])
+    let ur2 = run_in(e, [uexe[..]][..], "alpha\nbeta\n", e.root[..])
+    if ub2.stdout[..].find("1 of 3 C files compiled") == null or ur2.stdout[..].find("alpha beta 42 36 2") == null { failures.append(format("examples: a split build after one module changed (exit {}):\n{}{}{}{}", .{ub2.code, ub2.stdout, ub2.stderr, ur2.stdout, ur2.stderr})) }
+    os.set_env("NX_UNITS", "")
     // `if comptime`: the target picks the branch that is built, and the other
     // is not in the C at all
     let ct_src = fs.join(e.root[..], "nx-out/cases/comptime_if.nx")

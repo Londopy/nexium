@@ -524,6 +524,12 @@ luck.
 - Incremental builds: one C file per module, compiled separately and
   cached by content hash, so a one-line change does not recompile a
   100k-line translation unit; parallel checking of independent modules.
+  (Done for the C, decision 116: a large program's debug build is a C file
+  per module, the unchanged objects reused and the rest compiled on
+  threads; the compiler rebuilds after a one-line change in 0.99 seconds on
+  Linux and 1.75 on Windows, from 7.8. Checking is still whole-program,
+  0.74 of those seconds: checking by module, and with it "well under a
+  second" on every platform, is the next step.)
 - `#line` directives in the generated C, so a debugger shows `.nx` lines,
   and `nx debug` launching lldb or gdb with formatters for `List`,
   `String`, `Map`, slices and optionals. (Done: debug and sanitized builds
