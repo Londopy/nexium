@@ -37,6 +37,8 @@ pub struct Reader {
     eof: bool
     owns: bool
     socket: bool
+    // a socket's receive timeout in milliseconds; 0 waits forever
+    timeout_ms: i64 = 0
 }
 
 impl Reader {
@@ -62,8 +64,14 @@ impl Reader {
         return Reader{ .handle = sock, .buf = String.new(), .pos = 0, .eof = false, .owns = false, .socket = true }
     }
 
+    /// `from_socket`, each read waiting at most `timeout_ms` for data
+    /// (`error.Timeout` then; 0 waits forever).
+    pub fn from_socket_timeout(sock: i64, timeout_ms: i64) -> Reader {
+        return Reader{ .handle = sock, .buf = String.new(), .pos = 0, .eof = false, .owns = false, .socket = true, .timeout_ms = timeout_ms }
+    }
+
     fn pull(self: *mut Self, n: usize) -> !String {
-        if self.socket { return net.recv(self.handle, n, 0) }
+        if self.socket { return net.recv(self.handle, n, self.timeout_ms) }
         return io.read(self.handle, n)
     }
 
@@ -86,9 +94,17 @@ impl Reader {
 
     /// The next line without its `\n` (or `\r\n`); null at end of input.
     pub fn read_line(self: *mut Self) -> !?String {
+        return self.read_line_max(0)
+    }
+
+    /// `read_line`, refusing a line longer than `max` bytes with
+    /// `error.TooLarge` rather than buffering it (0: no limit). Input from a
+    /// peer that need not end its lines calls for one.
+    pub fn read_line_max(self: *mut Self, max: usize) -> !?String {
         while true {
             var i = self.pos
             while i < self.buf.len and self.buf[i] != '\n' { i += 1 }
+            if max > 0 and i - self.pos > max { return error.TooLarge }
             if i < self.buf.len {
                 var end = i
                 if end > self.pos and self.buf[end - 1] == '\r' { end -= 1 }

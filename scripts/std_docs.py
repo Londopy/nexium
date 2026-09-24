@@ -65,7 +65,12 @@ for name in modules:
         if stripped.startswith("pub fn "):
             sig = stripped[len("pub fn "):]
             sig = re.sub(r"\s*\{.*$", "", sig).strip()
-            doc = lines[i - 1].strip()[4:].strip() if i > 0 and lines[i - 1].strip().startswith("/// ") else ""
+            # the whole `///` comment above (its last line alone cut
+            # sentences in half)
+            j = i
+            while j > 0 and lines[j - 1].strip().startswith("///"):
+                j -= 1
+            doc = " ".join(l2.strip()[3:].strip() for l2 in lines[j:i])
             # methods are indented inside an impl block
             if l.startswith("    "):
                 sig = "(method) " + sig

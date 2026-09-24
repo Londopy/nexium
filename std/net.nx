@@ -118,8 +118,9 @@ impl TcpStream {
     }
 
     /// A buffered reader over the socket (lines, chunks); does not own it.
+    /// A buffered reader over the socket, with its receive timeout.
     pub fn reader(self: *Self) -> stream.Reader {
-        return stream.Reader.from_socket(self.sock)
+        return stream.Reader.from_socket_timeout(self.sock, self.timeout_ms)
     }
 
     /// A buffered writer over the socket; flush it before waiting for a reply.

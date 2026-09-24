@@ -99,6 +99,24 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Fixed
 
+- A socket's receive timeout never reached its reader: `TcpStream.reader()`
+  read with no timeout whatever `set_timeout` said, so a client that
+  connected and sent nothing held a `std.http` server (whose `serve_one`
+  sets ten seconds) forever. The reader keeps the stream's timeout
+  (`stream.Reader.from_socket_timeout`) and a read past it is
+  `error.Timeout`.
+- `std.http` sized its buffers from what the peer declared: a request
+  announcing a huge `Content-Length` made the server allocate it at once
+  and die out of memory before a byte of body arrived, a chunk size of 17
+  or more hex digits overflowed and panicked, and a line that never ended
+  grew without bound. A request body past `http.MAX_BODY` (16 MiB;
+  `read_request_max` takes another) is `error.TooLarge`, answered 413 by
+  `serve_one`; request, header and chunk-size lines past 64 KiB are too
+  (`stream.Reader.read_line_max`); a chunk size past `usize` is
+  `error.InvalidInput`; and a body buffer grows as its bytes arrive. Found
+  reviewing QNI, a server built on `std.http`.
+- `docs/std.md` showed only the last line of a multi-line doc comment
+  (`join`: "replaces `dir`."); `scripts/std_docs.py` takes the whole one.
 - `nx play` wrote a float in exponent form as Rust does (`1e-7`, `1e21`)
   where the compiled program writes C's (`1e-07`, `1e+21`), and computed
   `f32` arithmetic in `f64` precision; a compiled program wrote an `f32`

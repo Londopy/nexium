@@ -27,6 +27,11 @@ import std.fs
 
 const MAX_REDIRECTS: usize = 5
 const MAX_HEADER_LINES: usize = 200
+// the longest request, status, header or chunk-size line read
+const MAX_LINE: usize = 65536
+/// The largest request body `read_request` accepts (`error.TooLarge`
+/// past it); `read_request_max` takes another.
+pub const MAX_BODY: usize = 16777216
 
 pub struct Header {
     name: String
@@ -198,7 +203,7 @@ fn read_headers(r: *mut stream.Reader) -> !List(Header) {
     var headers = List(Header).new()
     var n: usize = 0
     while true {
-        let line = (try r.read_line()) orelse break
+        let line = (try r.read_line_max(MAX_LINE)) orelse break
         if line.len == 0 { break }
         n += 1
         if n > MAX_HEADER_LINES { return error.InvalidInput }
@@ -220,14 +225,16 @@ fn hex_value(s: []u8) -> ?usize {
         else if c >= 'A' and c <= 'F' { d = (c - 'A' + 10) as usize }
         else if c == ';' or c == ' ' { break }
         else { return null }
-        v = v * 16 + d
+        // a size past usize is not one a body can have
+        v = (v.checked_mul(16) orelse return null).checked_add(d) orelse return null
         any = true
     }
     return if any { v } else { null }
 }
 
 fn read_exact(r: *mut stream.Reader, n: usize) -> !String {
-    var out = String.with_capacity(n)
+    // the size came from the peer: the buffer grows as the bytes arrive
+    var out = String.with_capacity(if n < 65536 { n } else { 65536 })
     while out.len < n {
         let chunk = try r.read(n - out.len)
         if chunk.len == 0 { return error.Truncated }
@@ -236,13 +243,16 @@ fn read_exact(r: *mut stream.Reader, n: usize) -> !String {
     return out
 }
 
-fn read_body(r: *mut stream.Reader, headers: *List(Header), allow_until_close: bool) -> !String {
+/// The body the headers announce; past `max` bytes (0: no limit) it is
+/// `error.TooLarge`, found before it is read.
+fn read_body(r: *mut stream.Reader, headers: *List(Header), allow_until_close: bool, max: usize) -> !String {
     if let te = header_value(headers, "transfer-encoding") {
         if te.eq_ignore_case("chunked") {
             var body = String.new()
             while true {
-                let size_line = (try r.read_line()) orelse return error.Truncated
+                let size_line = (try r.read_line_max(MAX_LINE)) orelse return error.Truncated
                 let size = hex_value(size_line) orelse return error.InvalidInput
+                if max > 0 and size > max - body.len { return error.TooLarge }
                 if size == 0 {
                     // trailers, then the blank line
                     while true {
@@ -259,6 +269,7 @@ fn read_body(r: *mut stream.Reader, headers: *List(Header), allow_until_close: b
     }
     if let cl = header_value(headers, "content-length") {
         let n = cl.parse_int(usize) catch return error.InvalidInput
+        if max > 0 and n > max { return error.TooLarge }
         return read_exact(r, n)
     }
     if allow_until_close { return r.read_all() }
@@ -270,7 +281,7 @@ pub fn read_response(r: *mut stream.Reader) -> !Response {
     let line = (try r.read_line()) orelse return error.Truncated
     let st = parse_status(line) orelse return error.InvalidInput
     let headers = try read_headers(r)
-    let body = if st.0 == 204 or st.0 == 304 { String.new() } else { try read_body(r, &headers, true) }
+    let body = if st.0 == 204 or st.0 == 304 { String.new() } else { try read_body(r, &headers, true, 0) }
     return Response{ .status = st.0, .reason = String.from(st.1), .headers = headers, .body = body }
 }
 
@@ -378,7 +389,12 @@ impl Request {
 /// Read a request from a reader over the connection; null when the
 /// connection was closed before a request line.
 pub fn read_request(r: *mut stream.Reader, peer: []u8) -> !?Request {
-    let line = (try r.read_line()) orelse return null
+    return read_request_max(r, peer, MAX_BODY)
+}
+
+/// `read_request` with a body limit of `max_body` bytes (0: none).
+pub fn read_request_max(r: *mut stream.Reader, peer: []u8, max_body: usize) -> !?Request {
+    let line = (try r.read_line_max(MAX_LINE)) orelse return null
     // GET /path?query HTTP/1.1
     var a: usize = 0
     while a < line.len and line[a] != ' ' { a += 1 }
@@ -389,7 +405,7 @@ pub fn read_request(r: *mut stream.Reader, peer: []u8) -> !?Request {
     var q: usize = 0
     while q < target.len and target[q] != '?' { q += 1 }
     let headers = try read_headers(r)
-    let body = try read_body(r, &headers, false)
+    let body = try read_body(r, &headers, false, max_body)
     return Request{
         .method = String.from(line[0..a]),
         .path = String.from(target[0..q]),
@@ -500,11 +516,13 @@ impl Server {
         let peer = conn.peer() catch String.from("?")
         var r = conn.reader()
         var bad = false
-        let maybe = read_request(&mut r, peer) catch |_| {
+        var too_large = false
+        let maybe = read_request(&mut r, peer) catch |e| {
             bad = true
+            too_large = e == error.TooLarge
             null
         }
-        var resp = text(400, "bad request\n")
+        var resp = if too_large { text(413, "request too large\n") } else { text(400, "bad request\n") }
         if !bad {
             if let req = maybe {
                 resp = router.handle(&req)
@@ -616,4 +634,55 @@ test "chunked bodies" {
     expect_eq(resp.body, "hello world")
     expect_eq(resp.header("x-test").?, "yes")
     expect(resp.ok())
+}
+
+// a request as a peer would send it, read through a file-backed reader
+fn request_from(text: []u8) -> !?Request {
+    let path = fs.temp_path("nxhttp-")
+    try fs.write(path, text)
+    var r = try stream.Reader.open(path)
+    let got = read_request(&mut r, "peer")
+    r.close()
+    try fs.remove(path)
+    return got
+}
+
+// the error a request fails with, as its name
+fn request_error(text: []u8) -> []u8 {
+    _ = request_from(text) catch |e| { return @errorName(e) }
+    return "none"
+}
+
+test "a peer's sizes are bounded before anything is allocated" {
+    // a body the client only announces, far past the limit
+    expect_eq(request_error("POST / HTTP/1.1\r\nContent-Length: 999999999999\r\n\r\n"), "TooLarge")
+    // a chunk size past usize, and chunks that add up past the limit
+    expect_eq(request_error("POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\nFFFFFFFFFFFFFFFFFFFFFFFF\r\n"), "InvalidInput")
+    expect_eq(request_error("POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n1000001\r\n"), "TooLarge")
+    // a line that never ends
+    var long = String.from("GET /")
+    for _ in 0..70000 { long.push_byte('a') }
+    expect_eq(request_error(long[..]), "TooLarge")
+    // a body within the limit still reads
+    let ok = (try request_from("POST /x HTTP/1.1\r\nContent-Length: 5\r\n\r\nhello")).?
+    expect_eq(ok.body, "hello")
+}
+
+test "a socket reader keeps the stream's timeout" {
+    var listener = try net.TcpListener.bind("127.0.0.1", 0)
+    let port = try listener.port()
+    var client = try net.TcpStream.connect_timeout("127.0.0.1", port, 5000)
+    var conn = try listener.accept_timeout(5000)
+    // the client sends nothing: the read gives up after the timeout
+    conn.set_timeout(200)
+    var r = conn.reader()
+    var timed_out = false
+    _ = r.read_line() catch |e| {
+        timed_out = e == error.Timeout
+        null
+    }
+    expect(timed_out)
+    conn.close()
+    client.close()
+    listener.close()
 }

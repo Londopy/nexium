@@ -88,18 +88,18 @@ std.fs: files, directories and paths, written in Nexium. `import std.fs` then: i
 | `remove(path: []u8) -> !void` | Remove a file or an empty directory. |
 | `remove_all(path: []u8) -> !void` | Remove a file, or a directory with everything in it. |
 | `rename(from: []u8, to: []u8) -> !void` | Rename or move a file or directory (an existing destination file is replaced). |
-| `walk(root: []u8) -> !List(String)` | directory by directory. Directories themselves are not listed. |
+| `walk(root: []u8) -> !List(String)` | Every file under `root`, recursively, as paths joined onto `root`, sorted directory by directory. Directories themselves are not listed. |
 | `cwd() -> !String` | The current working directory. |
 | `temp_dir() -> String` | The directory for temporary files. |
-| `temp_path(prefix: []u8) -> String` | does not exist yet. The caller creates it. |
+| `temp_path(prefix: []u8) -> String` | A fresh path in the temporary directory, `<temp>/<prefix><number>`, that does not exist yet. The caller creates it. |
 | `is_absolute(path: []u8) -> bool` | Does the path start at a root (`/x`, `C:\x`, `C:/x`, `\\server`)? |
-| `join(dir: []u8, name: []u8) -> String` | replaces `dir`. |
-| `parent(path: []u8) -> []u8` | `/c.txt` -> `/`. |
+| `join(dir: []u8, name: []u8) -> String` | `dir/name`; a separator is added only when needed, and an absolute `name` replaces `dir`. |
+| `parent(path: []u8) -> []u8` | Everything before the last separator: `a/b/c.txt` -> `a/b`, `c.txt` -> ``, `/c.txt` -> `/`. |
 | `base_name(path: []u8) -> []u8` | The last component: `a/b/c.txt` -> `c.txt`. |
 | `extension(path: []u8) -> []u8` | The extension without the dot: `a/b.tar.gz` -> `gz`, `Makefile` -> ``. |
 | `stem(path: []u8) -> []u8` | The base name without its extension: `a/b.tar.gz` -> `b.tar`. |
 | `with_extension(path: []u8, ext: []u8) -> String` | The path with its extension replaced (or added): `a/b.txt`, `md` -> `a/b.md`. |
-| `normalize(path: []u8) -> String` | `a/./b/../c//d` -> `a/c/d`. A leading `..` is kept. |
+| `normalize(path: []u8) -> String` | Collapse `.` and `..` components and repeated separators: `a/./b/../c//d` -> `a/c/d`. A leading `..` is kept. |
 
 ## std.http
 
@@ -123,12 +123,13 @@ Types: `Header`, `Url`, `Response`, `Request`, `Route`, `Router`, `Server`
 | `content_type_for(path: []u8) -> []u8` | The content type for a file name, by extension. |
 | `read_response(r: *mut stream.Reader) -> !Response` | Read a full response from a reader over the connection. |
 | `send_request(w: *mut stream.Writer, method: []u8, url: *Url, headers: *List(Header), body: []u8) -> !void` | Write a request; `headers` may add or override the defaults. |
-| `request(method: []u8, url_text: []u8, headers: *List(Header), body: []u8) -> !Response` | this client cannot speak (including `https://`). |
+| `request(method: []u8, url_text: []u8, headers: *List(Header), body: []u8) -> !Response` | Perform a request, following redirects. `error.InvalidInput` for a URL this client cannot speak (including `https://`). |
 | `get(url: []u8) -> !Response` |  |
 | `post(url: []u8, content_type: []u8, body: []u8) -> !Response` |  |
 | `(method) header(self: *Self, name: []u8) -> ?[]u8` |  |
 | `(method) param(self: *Self, name: []u8) -> ?[]u8` | The value of a query parameter (`?a=1&b=2`), not decoded. |
-| `read_request(r: *mut stream.Reader, peer: []u8) -> !?Request` | connection was closed before a request line. |
+| `read_request(r: *mut stream.Reader, peer: []u8) -> !?Request` | Read a request from a reader over the connection; null when the connection was closed before a request line. |
+| `read_request_max(r: *mut stream.Reader, peer: []u8, max_body: usize) -> !?Request` | `read_request` with a body limit of `max_body` bytes (0: none). |
 | `write_response(w: *mut stream.Writer, resp: *Response) -> !void` | Write a response with `Content-Length` and `Connection: close`. |
 | `(method) new() -> Router` |  |
 | `(method) route(self: *mut Self, method: []u8, path: []u8, handler: fn(*Request) -> Response)` |  |
@@ -136,10 +137,10 @@ Types: `Header`, `Url`, `Response`, `Request`, `Route`, `Router`, `Server`
 | `(method) post(self: *mut Self, path: []u8, handler: fn(*Request) -> Response)` |  |
 | `(method) serve_static(self: *mut Self, root: []u8)` | Serve files under `root` for paths no route claims. |
 | `(method) handle(self: *Self, req: *Request) -> Response` | The response for a request. |
-| `static_file(root: []u8, path: []u8) -> Response` | directories. |
+| `static_file(root: []u8, path: []u8) -> Response` | A file under `root` for a request path, refusing `..`; `index.html` for directories. |
 | `(method) bind(host: []u8, port: u16) -> !Server` |  |
 | `(method) port(self: *Self) -> !u16` |  |
-| `(method) serve_one(self: *Self, router: *Router, timeout_ms: i64) -> !void` | when nobody connects within `timeout_ms` (0 waits forever). |
+| `(method) serve_one(self: *Self, router: *Router, timeout_ms: i64) -> !void` | Accept one connection, answer one request, close. `error.Timeout` when nobody connects within `timeout_ms` (0 waits forever). |
 | `(method) serve(self: *Self, router: *Router) -> !void` | Serve forever, one request at a time. |
 | `(method) close(self: *mut Self)` |  |
 
@@ -220,7 +221,7 @@ Types: `Addr`, `TcpStream`, `TcpListener`, `Datagram`, `UdpSocket`
 | `(method) recv_all(self: *Self) -> !String` | Everything until the peer closes. |
 | `(method) peer(self: *Self) -> !String` | The remote address as `ip:port`. |
 | `(method) local(self: *Self) -> !String` | The local address as `ip:port`. |
-| `(method) reader(self: *Self) -> stream.Reader` | A buffered reader over the socket (lines, chunks); does not own it. |
+| `(method) reader(self: *Self) -> stream.Reader` | A buffered reader over the socket (lines, chunks); does not own it. A buffered reader over the socket, with its receive timeout. |
 | `(method) writer(self: *Self) -> stream.Writer` | A buffered writer over the socket; flush it before waiting for a reply. |
 | `(method) close(self: *mut Self)` |  |
 | `(method) bind(host: []u8, port: u16) -> !TcpListener` | Bind and listen; port 0 picks a free port (see `local`). |
@@ -291,7 +292,7 @@ Types: `Regex`, `Match`
 | `(method) find(self: *Self, text: []u8) -> ?Match` | The first match in `text`. |
 | `(method) is_match(self: *Self, text: []u8) -> bool` | Does the pattern match anywhere in `text`? |
 | `(method) find_all(self: *Self, text: []u8) -> List(Match)` | Every non-overlapping match, left to right. |
-| `(method) replace_all(self: *Self, text: []u8, repl: []u8) -> String` | dollar sign. |
+| `(method) replace_all(self: *Self, text: []u8, repl: []u8) -> String` | Replace every match. In `repl`, `$0`..`$9` insert groups and `$$` is a dollar sign. |
 | `(method) split(self: *Self, text: []u8) -> List([]u8)` | The pieces of `text` between matches. |
 
 ## std.stream
@@ -305,8 +306,10 @@ Types: `Reader`, `Writer`
 | `(method) open(path: []u8) -> !Reader` | Open a file for reading. |
 | `(method) stdin() -> Reader` | Standard input. |
 | `(method) from_handle(handle: i64) -> Reader` | Wrap a handle from `io.open`; `close` will not close it. |
-| `(method) from_socket(sock: i64) -> Reader` | will not close it. |
+| `(method) from_socket(sock: i64) -> Reader` | Wrap a connected socket from `net.connect` or `net.accept`; `close` will not close it. |
+| `(method) from_socket_timeout(sock: i64, timeout_ms: i64) -> Reader` | `from_socket`, each read waiting at most `timeout_ms` for data (`error.Timeout` then; 0 waits forever). |
 | `(method) read_line(self: *mut Self) -> !?String` | The next line without its `\n` (or `\r\n`); null at end of input. |
+| `(method) read_line_max(self: *mut Self, max: usize) -> !?String` | `read_line`, refusing a line longer than `max` bytes with `error.TooLarge` rather than buffering it (0: no limit). Input from a peer that need not end its lines calls for one. |
 | `(method) read(self: *mut Self, n: usize) -> !String` | Up to `n` bytes; empty at end of input. |
 | `(method) read_all(self: *mut Self) -> !String` | Everything that is left. |
 | `(method) close(self: *mut Self)` | Release the file (the standard streams stay open). |
@@ -363,9 +366,9 @@ std.testing: conveniences for `test` blocks, written in Nexium. `import std.test
 | `expect_error(comptime T: type, own r: !T, err: error)` | Panics unless the result is exactly `err`. |
 | `expect_contains(hay: []u8, needle: []u8)` | Panics unless `hay` contains `needle`. |
 | `expect_lines(actual: []u8, expected: []u8)` | Compares line by line; panics naming the first line that differs. |
-| `snapshot_in(dir: []u8, name: []u8, actual: []u8) -> !void` | NX_UPDATE_SNAPSHOTS is set. |
+| `snapshot_in(dir: []u8, name: []u8, actual: []u8) -> !void` | Compare `actual` to `<dir>/<name>.txt`; write it when missing or when NX_UPDATE_SNAPSHOTS is set. |
 | `snapshot(name: []u8, actual: []u8) -> !void` | `snapshot_in("snapshots", name, actual)`. |
-| `expect_snapshot_in(dir: []u8, name: []u8, actual: []u8)` | returning an error for the test to handle. |
+| `expect_snapshot_in(dir: []u8, name: []u8, actual: []u8)` | `snapshot_in`, in the `expect_` form: a mismatch fails the test naming the file, the first differing line and how to accept the new output; a file that cannot be read or written fails it too, instead of returning an error for the test to handle. |
 | `expect_snapshot(name: []u8, actual: []u8)` | `expect_snapshot_in("snapshots", name, actual)`. |
 
 ## std.text
@@ -376,7 +379,7 @@ Types: `Decoded`
 
 | function | what it does |
 | --- | --- |
-| `decode_at(s: []u8, i: usize) -> Decoded` | U+FFFD with length 1 so callers always make progress. |
+| `decode_at(s: []u8, i: usize) -> Decoded` | Decode the code point starting at byte `i`. Invalid input yields U+FFFD with length 1 so callers always make progress. |
 | `push(out: *mut String, cp: u32)` | Append a code point as UTF-8. |
 | `encode(cp: u32) -> String` | A code point as a String. |
 | `is_valid(s: []u8) -> bool` | Is the text well-formed UTF-8? |
@@ -392,7 +395,7 @@ Types: `Decoded`
 | `char_width(cp: u32) -> usize` | Columns a code point takes on a terminal: 0, 1 or 2. |
 | `width(s: []u8) -> usize` | Columns the text takes on a terminal. |
 | `pad_right(s: []u8, columns: usize) -> String` | Pad on the right to `columns` terminal columns (by width, not bytes). |
-| `upper_char(cp: u32) -> u32` | Latin-1, Latin Extended-A (pairs), Greek, Cyrillic. |
+| `upper_char(cp: u32) -> u32` | Upper-case a code point where the mapping is a fixed offset: ASCII, Latin-1, Latin Extended-A (pairs), Greek, Cyrillic. |
 | `lower_char(cp: u32) -> u32` | Lower-case a code point; the inverse of `upper_char`. |
 | `to_upper(s: []u8) -> String` |  |
 | `to_lower(s: []u8) -> String` |  |
@@ -449,8 +452,8 @@ Types: `DateTime`, `Duration`, `Stopwatch`
 | `(method) time_text(self: *Self) -> String` | `HH:MM:SS`. |
 | `(method) offset_text(self: *Self) -> String` | The offset as `Z`, or `+HH:MM` / `-HH:MM`. |
 | `(method) iso(self: *Self) -> String` | ISO 8601 / RFC 3339: `2026-09-19T04:15:14.123Z`, `...+02:00`. |
-| `(method) format(self: *Self, spec: []u8) -> String` | Unknown letters are copied through. |
-| `parse_iso(s: []u8) -> ?DateTime` | text is not a date. |
+| `(method) format(self: *Self, spec: []u8) -> String` | strftime-style formatting: `%Y %m %d %H %M %S %3` (millis) `%z` (offset) `%a %b` (short day and month names) `%j` (day of year) `%%`. Unknown letters are copied through. |
+| `parse_iso(s: []u8) -> ?DateTime` | Parse `YYYY-MM-DD`, optionally followed by `THH:MM[:SS[.mmm]]` and an offset `Z` / `+HH:MM` / `-HH:MM`. Missing parts are zero; `null` when the text is not a date. |
 | `(method) millis(n: i64) -> Duration` |  |
 | `(method) seconds(n: i64) -> Duration` |  |
 | `(method) minutes(n: i64) -> Duration` |  |
