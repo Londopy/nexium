@@ -89,14 +89,17 @@ shipped 4 artifact file(s) for x86_64-windows:
 
 | | |
 | --- | --- |
-| 🧾 **推論され検証されるエフェクト** | `allocates` `refcounts` `blocks` `shared_mutable` `nondeterministic` `panics` `ffi`。`!allocates` と宣言すれば、コンパイラは呼び出しをたどって、それを破る正確な行を指し示します。 |
-| 🧠 **借用チェッカのない所有権** | コレクションはムーブし、`.clone()` はコピーし、`ref class` の値は参照カウントされ、`weak` が循環を断ちます。ムーブ後の使用はコンパイルエラーです。 |
-| 🔬 **バイナリパターン** | `<<version:4, ihl:4, len:16/big, rest:bytes>>` がサイズ検証つきでパケットを照合し、組み立てます。 |
+| 🧾 **推論され検証されるエフェクト** | `allocates` `refcounts` `blocks` `shared_mutable` `nondeterministic` `panics` `ffi`。`!allocates` と宣言すれば、それを破る行を呼び出しをたどってコンパイラが正確に示します。 |
+| 🛡 **ガベージコレクタなしのメモリ安全性** | コレクションはムーブし、`.clone()` はコピーし、`ref class` の値は参照カウントされ、`weak` が循環を断ちます。スライスやポインタが指す先の記憶域より長く生きることはありません。ビュー規則は呼び出し、ループ、分岐をまたいで検査され、ライフタイムを書く必要はありません。修正が機械的なら `nx fix` が行います。 |
+| 🔬 **バイナリパターン** | `<<version:4, ihl:4, len:16/big, rest:bytes>>` でパケットを照合・構築し、サイズは検査されます。 |
 | 🧵 **並列ループ、アリーナ、トレイトオブジェクト** | `for parallel`、`using arena { }`、`dyn Trait !allocates`。 |
-| 🔌 **バインディング不要の C** | `@cImport("header.h")` がヘッダを直接読み、`artifact link` が同梱の C をプログラムに組み込みます。 |
-| 📦 **ひとつのソースから出荷** | `nx ship` が C のヘッダとライブラリ、Python の wheel、安全なラッパつきの Rust クレートを生成します。 |
-| 🖼 **Nexium 製の GUI** | [`gui/`](../../../gui)：ソフトウェアラスタライザとビットマップフォントを持つ即時モード GUI（ボタン、スライダ、テキスト欄）。200 行の C ウィンドウ層の上はすべて Nexium です。 |
-| 🛠 **同梱のツール** | `fmt`、`doc`、`lsp`、`size`、`leaks`、`refcounts`、`effects`、`audit`。依存関係ゼロ。 |
+| 🔌 **バインディング不要の C** | `@cImport("header.h")` がヘッダを直接読み、`artifact link` が同梱の C をプログラムにコンパイルし、`if comptime @target().0 == "windows"` はプラットフォームが通る分岐だけをビルドします。 |
+| 📦 **一つのソースから出荷** | `nx ship` が C のヘッダとライブラリ、Python の wheel、安全なラッパー付きの Rust crate を生成します。 |
+| 🐞 **デバッグと計測** | `nx debug` は gdb か lldb を `.nx` の行で止め、文字列、リスト、マップ、オプショナルを値として表示します。`bench "name" { }` ブロックはテストの隣に置けます。`--sanitize address,undefined` はどのビルドにも AddressSanitizer と UBSan をかけます。 |
+| 🧭 **ブラウザで学ぶ** | チュートリアル [Topo](https://londopy.github.io/nexium/topo/01-base-camp.html) は WebAssembly にコンパイルしたコンパイラでプログラムをページ上で実行し、ターミナルの `nx topo` と同じように演習を採点します。`nx repl` はプロンプトです。 |
+| 🪞 **自分自身で書かれている** | コンパイラは Nexium で、どの C コンパイラでも一つの C ファイルからビルドできます。大きなプログラムのデバッグビルドは変わったモジュールだけを再コンパイルします。 |
+| 🖼 **Nexium の GUI** | [`gui/`](../../../gui)：ソフトウェアラスタライザとビットマップフォントを備えたイミディエイトモード GUI（ボタン、スライダー、テキスト欄）。200 行の C のウィンドウ層の上はすべて Nexium です。 |
+| 🛠 **同梱のツール** | `fmt`、`fix`、`doc`、`lsp`（定義、ホバー、名前変更をチェッカーから）、`debug`、`bench`、`size`、`layout`、`leaks`、`refcounts`、`effects`、`explain`、`audit`、`repl`。依存なし。 |
 
 ## インストール
 
@@ -118,19 +121,25 @@ C コンパイラを用意し（macOS では Xcode のツール、Linux では�
 **Windows、PowerShell から**：`irm https://raw.githubusercontent.com/Londopy/nexium/main/installers/install.ps1 | iex`
 （ポータブル版、検証済み、PATH に追加。ウィザードなし）。
 
-**pip または npm**：`pip install nexium-lang` または `npm install -g nexium-lang`（プラットフォームごとのバイナリ。C コンパイラはいつも通り必要）。
+**pip または npm**：`pip install nexium-lang`（[PyPI](https://pypi.org/project/nexium-lang/)）または `npm install -g nexium-lang`（[npm](https://www.npmjs.com/package/nexium-lang)）。プラットフォームごとのバイナリで、C コンパイラはいつも通り必要です。
 
 **Docker**：`docker run --rm -v "$PWD":/work ghcr.io/londopy/nexium run hello.nx`
 （Debian。`:alpine` もあり。amd64 と arm64）。
 
-**Homebrew と Scoop**：このリポジトリ自体が tap であり bucket です。
+**Chocolatey と winget**：`choco install nexium`（[パッケージ](https://community.chocolatey.org/packages/nexium)）と `winget install Londopy.Nexium`。どちらもレジストリが最初のバージョンを承認してから使えます（[状況](../../install.md#where-to-get-it)、英語）。
+
+**Debian、RPM、Nix、mise**：各リリースに `.deb` と `.rpm` のパッケージが付きます（`sudo dpkg -i nexium_*_amd64.deb`）。`nix run github:Londopy/nexium` は一つの C ファイルからビルドし、`mise use -g "ubi:Londopy/nexium[exe=nx]"` はリリースのバイナリをインストールします。すべての成果物に署名付きの来歴があります：`gh attestation verify nx --owner Londopy`。[すべての道](../../install.md#where-to-get-it)（英語）。
+
+**ブラウザで**：[リポジトリを Codespace で開けば](https://codespaces.new/Londopy/nexium)、何もインストールせずに 1 分で `nx run examples/hello.nx` が動きます。
+
+**Homebrew と Scoop**：このリポジトリ自体が tap で、Scoop の bucket は [Londopy/scoop-bucket](https://github.com/Londopy/scoop-bucket) です（Scoop 自身の更新機能で最新に保たれます）。
 
 ```bash
 brew tap londopy/tap https://github.com/Londopy/nexium && brew install londopy/tap/nexium
 ```
 
 ```powershell
-scoop install https://raw.githubusercontent.com/Londopy/nexium/main/bucket/nexium.json
+scoop bucket add londopy https://github.com/Londopy/scoop-bucket && scoop install nexium
 ```
 
 その後、新しいコンソールで `nx doctor` を実行すると何が使われるかが分かります。
@@ -239,6 +248,62 @@ error: function `hot` is declared `!allocates` but has the `allocates` effect
 </details>
 
 <details>
+<summary><b>ビューは記憶域より長く生きない</b></summary>
+
+```
+fn main() {
+    var names = List(String).new()
+    names.append(String.from("ada"))
+    let first = names[0][..]
+    names.append(String.from("grace"))
+    println("{}", .{first})
+}
+```
+
+```
+error: `first` is a view into `names`, which changed on line 5 after the view
+was taken; its storage may have moved (rule V3); take the view after the
+change, or keep an owned copy of the container (`.clone()`) taken before it
+  --> views.nx:6:21
+```
+
+スライスやポインタは指す先の記憶域に対して検査されます（SPEC 5.6、規則 V1〜V5）。
+ガベージコレクタもなく、書くべきライフタイムもありません。
+
+</details>
+
+<details>
+<summary><b>テストとベンチマークを並べて</b></summary>
+
+```
+fn sum_to(n: i64) -> i64 {
+    var s: i64 = 0
+    for i in 0..n { s += i }
+    return s
+}
+
+test "sums" {
+    expect(sum_to(4) == 6)
+}
+
+bench "sum to 1000" {
+    sum_to(1000)
+}
+```
+
+```
+$ nx bench sums.nx
+bench  sum to 1000  189 ns/iter  (min 188 ns, max 197 ns; 21 samples of 63856)
+
+1 benchmark(s), safe mode
+```
+
+`nx test` はテストを実行し、`nx bench` はファイルを最適化してビルドし、反復回数を
+較正して、ブロックの値を最適化で消されないように保ちます。
+
+</details>
+
+<details>
 <summary><b>C の呼び出しはヘッダのインポートひとつ</b></summary>
 
 ```
@@ -282,7 +347,8 @@ using arena {
 - [the Topo](https://londopy.github.io/nexium/topo/01-base-camp.html)（英語）：チュートリアル。コンパイラのインストールからニューラルネットワーク、GUI、出荷するライブラリまで。ソースは [`topo/`](../../../topo/)。以上すべてのレンダリング版は [londopy.github.io/nexium](https://londopy.github.io/nexium/) にあります。
 - [インストール](../../install.md)（英語）：Windows インストーラ、macOS/Linux スクリプト、ソースビルド、チェックサム、`nx` が C コンパイラを見つける方法。
 - [パッケージ](../../packages.md)（英語）：`nexium.toml`、`nx add`、`nx fetch`、git またはパス依存、ロックファイル。
-- [標準ライブラリ](../../std.md)（英語）：Nexium で書かれたモジュール（`std.strings`、`std.lists`、`std.bytes`、`std.num`、`std.json`、`std.args`、`std.fs`、`std.time`、`std.regex`、`std.text`、`std.testing`、`std.stream`、`std.net`、`std.http`、`std.thread`、`std.process`）。
+- [標準ライブラリ](../../std.md)（英語）：Nexium で書かれたモジュール（`std.strings`、`std.lists`、`std.bytes`、`std.num`、`std.json`、`std.args`、`std.fs`、`std.time`、`std.regex`、`std.text`、`std.testing`、`std.stream`、`std.net`、`std.http`、`std.thread`、`std.process`、`std.sort`、`std.heap`、`std.set`、`std.deque`、`std.hash`）。
+- [数値](../../numbers.md)（英語）：5 言語で書いた 4 つのプログラムを、同じランナーで毎週計測。
 - [nexium-gui](../../gui.md)（英語）：即時モード GUI ライブラリとウィジェットの書き方。
 - [プログラムのリリース](../../releasing-your-program.md)（英語）：タグから 3 プラットフォームのバイナリを、インストーラは任意で。
 - [エディタ対応](../../../editors)（英語）：VS Code、Vim、Neovim、Helix、Zed、Emacs、Kate、JetBrains、Sublime Text、Notepad++、nano、そのほかは `nx lsp` で。
@@ -291,6 +357,19 @@ using arena {
 - [リリース名](../../release-names.md)（英語）：すべてのリリースは山の上の場所。命名規則、台帳、まだ使っていない名前。
 - [決定記録](../../../DECISIONS.md)（英語）：仕様が開いていた箇所で下したすべての判断。
 - [既知の問題](../../../KNOWN_ISSUES.md)（英語）：未修正のバグ、欠落、制限。再現手順つき。
+
+## 実際の利用
+
+このリポジトリの外で Nexium で書かれたプログラムとパッケージ：
+
+| プロジェクト | そこで Nexium がしていること |
+| --- | --- |
+| [statusmith](https://github.com/Londopy/statusmith)、タスクトレイからの Discord Rich Presence | その SDK は Nexium のパッケージ：`nx add discord_rpc --git https://github.com/Londopy/statusmith --tag sdk-v0.1.0 --dir nexium` でどの Nexium プログラムからもプレゼンスを設定できる（[解説](../../discord.md)） |
+| [Point of Origin](https://github.com/Londopy/point-of-origin)、地面そのものがパズルのプラットフォーマー | ビルド全体が Nexium：`build.nx` が Odin のシミュレーションの DLL を動かし、`tools/bindgen.nx` が Odin のエクスポートを読んで Unity が呼ぶ C# バインディングを書き、`tools/levels.nx` がレベルのマップをゲームが読む JSON にコンパイルし（どのレベルも同じシミュレーションで育つので解ける）、`tools/chapters.nx` がそこからドキュメントを書く |
+| [QNI](https://github.com/Londopy/qni)、Cal Poly アマチュア無線クラブ（W6BHZ）の Discord のためのネットのリマインダー、チェックインの手助け、ネットコントロールのチュートリアル | プログラム全体が Nexium：スラッシュコマンドとボタンを Webhook で応答し、ボットユーザーも権限もなし。すべてのリクエストは何かを読む前に Discord の Ed25519 署名を検査（nxtls 経由）。ネットのカード、ネットコントロールの練習モード、役員のシート形式のネットログ。偽の Discord を相手にエンドツーエンドでテスト |
+| [nxtls](https://github.com/Londopy/nxtls)、純粋な Nexium の暗号 | SHA-2、HMAC、TLS 1.3 のラベル付き HKDF、Ed25519 検証。C も `unsafe` もなく、規格が公開するベクタでテスト。パッケージ：`nx add nxtls --git https://github.com/Londopy/nxtls --tag v0.1.0`。TLS 1.3 クライアントが計画中 |
+
+どこかで Nexium を使っていますか？ issue か pull request を開けばここに載ります。
 
 ## コマンド
 
@@ -304,6 +383,7 @@ using arena {
 | `nx explain file.nx f effect` | `f` がその効果を持つ理由：効果を持ち込む呼び出しを、プリミティブまで木として表示 |
 | `nx audit file.nx` | `unsafe` ブロックと可変グローバルを列挙。`--lock` は効果のロックファイルを書き、`--check` は効果が増えると失敗 |
 | `nx ship file.nx` | 宣言されたすべての `artifact` を生成 |
+| `nx init`、`nx add`、`nx fetch`、`nx update` | パッケージのマニフェスト、git またはパスからの依存、ロックファイル（[docs/packages.md](../../packages.md)） |
 | `nx emit-c file.nx` | 生成された C を表示 |
 | `nx tir file.nx [--sigs]` | 検査済みプログラムを S 式で（コンパイラ自身のテストが読む） |
 | `nx fmt file.nx [--check]` | 正規の整形 |
@@ -319,7 +399,10 @@ using arena {
 | `nx leaks file.nx` | 確保を追跡しながら実行し、リークを報告 |
 | `nx lsp` | stdio 上の言語サーバ |
 | `nx doctor` | どの C コンパイラが使われるか、インストールが動くか |
+| `nx version` | バージョンとリリース名 |
+| `nx completions <shell>`、`nx man` | bash、zsh、fish、PowerShell の補完とマニュアルページ |
 | `nx repl`、または単に `nx` | 対話セッション：コードを打ち、値を見て、束縛を保つ |
+| `nx -e CODE`、`nx -p EXPR` | プロンプトと同じように一行を実行。`-p` は値を表示 |
 
 オプション：`--mode debug|safe|fast|small`、`--target x86_64-linux-gnu`
 （`zig cc` が知るあらゆるターゲット）、`--cpu baseline|native|<名前>`（既定は
@@ -330,18 +413,20 @@ address,undefined`（C コンパイラのサニタイザ。`address` には gcc 
 
 ## 現状
 
-**1.0：言語は安定、エコシステムは初期段階。** 言語は
+**1.3：言語は安定、ツールチェーンは成熟。** 言語は
 [安定性ポリシー](../../stability.md)のもと追加によってのみ変わります。コンパイラは
 Nexium で書かれ、自分自身をビルドします。すべてのサンプル、仕様ケース、チュートリアルの
-プログラムが CI で 3 プラットフォーム上、サニタイザとファザーのもとで実行されます。
-1.0 がまだ何でないか、そしてそれぞれがどこで答えられるかは
-[ロードマップ](../../../ROADMAP.md)の最初の節にあります。メモリ安全性は 1.2 の
-ビュー規則で、1.3 からエラーです（機械的な修正は `nx fix` が行います）。ベンチマークの数値は[数値のページ](../../numbers.md)（5 言語で書いた 4 つの
-プログラムを同じランナーで、毎週再生成）にあるだけで、エコシステムはメンテナ一人、
-標準ライブラリ 16 モジュール、そしてツリー外からの最初のパッケージ（statusmith の
-[Discord Rich Presence SDK](../../discord.md)、`nx add discord_rpc ...`）です。[`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md) は未修正のバグを
-その修正案とともに、[`DECISIONS.md`](../../../DECISIONS.md) は仕様が開いていた箇所での
-すべての判断を列挙します。
+プログラムが CI で 3 プラットフォーム上、サニタイザとファザーのもとで実行され、gdb と
+lldb も `nx debug` を通してそこで動かされます。メモリ安全性はビュー規則で、1.3 から
+エラーです。1.4、補う必要のない標準ライブラリは進行中で、コレクション（`std.sort`、
+`std.heap`、`std.set`、`std.deque`）と `std.hash` が入り、全部で 21 モジュール、
+次は TLS 付きの HTTP クライアント、WebSocket、タイムゾーンです。Nexium がまだ何でないか、
+そしてそれぞれがどこで答えられるかは[ロードマップ](../../../ROADMAP.md)の最初の節に
+あります。ベンチマークの数値は[数値のページ](../../numbers.md)だけで、エコシステムは
+メンテナ一人とツリー外のプロジェクト四つです（[上](#実際の利用)）。
+[`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md) は未修正のバグをその修正案とともに、
+[`DECISIONS.md`](../../../DECISIONS.md) は仕様が開いていた箇所でのすべての判断を
+列挙します。
 
 ## リリース名
 
@@ -371,9 +456,9 @@ sh bootstrap/build.sh     # nx.c -> nx0; nx0 が self/nx.nx をビルド -> nx1;
 | 字句解析器 | [`self/lexer.nx`](../../../self/lexer.nx) | トークン |
 | 構文解析器 | [`self/parser.nx`](../../../self/parser.nx) | id アリーナ上の構文木 |
 | 検査器 | [`self/check.nx`](../../../self/check.nx)、`self/check_*.nx`、[`self/cimport.nx`](../../../self/cimport.nx) | 型、エフェクト、所有権、ジェネリクス、コンパイル時インタプリタ、C ヘッダのインポート、すべての診断 |
-| C 生成器 | [`self/cgen.nx`](../../../self/cgen.nx) | プログラムごとに 1 つの C ファイル |
-| ドライバ | [`self/nx.nx`](../../../self/nx.nx) | build、run、test、check、emit-c、tir。標準ライブラリを内蔵 |
-| ツール | [`self/fmt.nx`](../../../self/fmt.nx)、[`self/doc.nx`](../../../self/doc.nx)、[`self/tools.nx`](../../../self/tools.nx)、[`self/size.nx`](../../../self/size.nx)、[`self/manifest.nx`](../../../self/manifest.nx)、[`self/ship.nx`](../../../self/ship.nx)、[`self/lsp.nx`](../../../self/lsp.nx)、[`self/repl.nx`](../../../self/repl.nx) | 整形器、ドキュメント生成器、各種レポート、パッケージ、`ship`、言語サーバ、REPL |
+| C 生成器 | [`self/cgen.nx`](../../../self/cgen.nx) | プログラムごとに 1 つの C ファイル。大きなプログラムのデバッグビルドではモジュールごとに 1 つで、変わっていないものは再利用 |
+| ドライバ | [`self/nx.nx`](../../../self/nx.nx) | build、run、test、bench、debug、check、emit-c、tir。標準ライブラリを内蔵 |
+| ツール | [`self/fmt.nx`](../../../self/fmt.nx)、[`self/doc.nx`](../../../self/doc.nx)、[`self/tools.nx`](../../../self/tools.nx)、[`self/size.nx`](../../../self/size.nx)、[`self/manifest.nx`](../../../self/manifest.nx)、[`self/ship.nx`](../../../self/ship.nx)、[`self/lsp.nx`](../../../self/lsp.nx)、[`self/lsp_index.nx`](../../../self/lsp_index.nx)、[`self/fix.nx`](../../../self/fix.nx)、[`self/repl.nx`](../../../self/repl.nx) | 整形器、ドキュメント生成器、各種レポート、パッケージ、`ship`、言語サーバとその検査済みプログラムの索引、`nx fix`、REPL |
 
 すべてのサンプル、仕様ケース、コンパイル失敗ケースが、それ自体 Nexium プログラムである
 テストハーネス（`nx run tests/run.nx`）に駆動されて、ブートストラップされたコンパイラを
@@ -387,17 +472,17 @@ Rust で書かれた最初のコンパイラは移植を牽引し、1.0 で削�
 
 | 言語 | 行数 | 割合 | 何か |
 | --- | --- | --- | --- |
-| Nexium | 38,374 | 85.4% | コンパイラとそのツール（`self/` 配下に 27,100 行）、標準ライブラリ、テストハーネスとファザー、サンプル、チュートリアルのプログラム、nexium-gui、サイト生成器、仕様スイート、ベンチマーク 4 つ |
-| C | 2,925 | 6.5% | ランタイム `nx_rt.h`、GUI のウィンドウ層、同梱のテスト用 C、ベンチマーク一つ |
-| Python | 1,063 | 2.4% | リリース用スクリプト（ノート、パッケージのマニフェスト、wheel と npm パッケージ、std ドキュメント）、ベンチマークランナー、ベンチマーク一つ |
-| エディタ用ファイル | 1,028 | 2.3% | tree-sitter クエリ、Emacs Lisp、Vim script、Neovim 用 Lua、そして Zed が拡張に要求する 25 行の Rust |
-| JavaScript、TypeScript | 550 | 1.2% | VS Code 拡張と tree-sitter 文法 |
-| Inno Setup、シェル、PowerShell | 777 | 1.7% | Windows インストーラのスクリプト、`install.sh`、`install.ps1`、Chocolatey のスクリプト |
-| Rust、Go、Ruby | 236 | 0.5% | Rust と Go にベンチマークが一つずつ、そして Homebrew の formula |
+| Nexium | 48,804 | 87.2% | コンパイラとそのツール（`self/` 配下に 33,000 行）、標準ライブラリ（21 モジュール）、テストハーネスとファザー、サンプル、チュートリアルのプログラム、nexium-gui、サイト生成器、ベンチマーク 4 つ |
+| C | 2,542 | 4.5% | ランタイム `nx_rt.h`、GUI のウィンドウ層、同梱のテスト用 C、ベンチマーク一つ |
+| Python | 1,492 | 2.7% | リリース用スクリプト（ノート、パッケージのマニフェスト、wheel と npm パッケージ、std ドキュメント）、gdb と lldb のフォーマッタ、ベンチマークランナーとベンチマーク 4 つ |
+| エディタ用ファイル | 1,103 | 2.0% | tree-sitter クエリ、Emacs Lisp、Vim script、Neovim 用 Lua、Pygments のレキサ、そして Zed が拡張に要求する 25 行の Rust |
+| JavaScript、TypeScript | 939 | 1.7% | VS Code 拡張、tree-sitter 文法、プレイグラウンドの WASI 層 |
+| Inno Setup、シェル、PowerShell | 855 | 1.5% | Windows インストーラのスクリプト、`install.sh`、`install.ps1`、Chocolatey のスクリプト、ブートストラップのスクリプト |
+| Rust、Go、Ruby | 213 | 0.4% | Rust と Go にベンチマークが 4 つずつ、そして Homebrew の formula |
 
 コンパイラに Rust はありません。最初のコンパイラは移植を牽引して 1.0 で削除され
 （決定 90）、残る Rust は Zed が WebAssembly にコンパイルする Zed 拡張の接着部分と、
-比較対象として書かれたベンチマークプログラム一つ（Go の双子と並んで）です。
+比較対象として書かれたベンチマークプログラム四つ（Go の双子と並んで）です。
 Zig が表にないのは、ツリーに Zig のソースがないからです。`zig cc` は `nx` が実行する
 C コンパイラであり（Windows インストーラが同梱し、インストールスクリプトがダウンロード
 します）、C コンパイラが書くものではなく使うものであるのと同じです。
@@ -406,7 +491,7 @@ C コンパイラであり（Windows インストーラが同梱し、インス�
 
 ```
 bootstrap/      コンパイラの元になる C のシードと、ビルドスクリプト
-runtime/        nx_rt.h。生成されるすべての C ファイルに埋め込まれる
+runtime/        nx_rt.h。生成されるすべての C ファイルに埋め込まれる。nx debug の gdb と lldb のフォーマッタ
 std/            Nexium で書かれた標準ライブラリ。コンパイラに内蔵
 self/           Nexium で書かれたコンパイラ、段階ごとに
 gui/            nexium-gui：Nexium の即時モード GUI、デモ、C のプラットフォーム層
@@ -414,7 +499,7 @@ editors/        VS Code 拡張、tree-sitter 文法、さらに 10 のエディ�
 examples/       出力を記録したプログラム。テストが実行する
 topo/           チュートリアル：各章と、そこで示すプログラム（テストが実行する）
 site/           ドキュメントサイトの生成器。Nexium プログラム
-tests/          ハーネス（run.nx）、仕様の適合スイート（tests/spec）、コンパイル失敗ケース
+tests/          ハーネス（run.nx）、仕様の適合スイート（tests/spec）、コンパイル失敗ケース、デバッガの検査
 docs/           仕組み、言語リファレンス、組み込みガイド、i18n/ の翻訳
 bench/          数値のページを支える 5 言語 4 プログラム
 installers/     Windows インストーラのスクリプト、install.sh と install.ps1、winget と Chocolatey のマニフェスト

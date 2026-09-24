@@ -100,13 +100,16 @@ boundary rather than aborting the host process.
 | | |
 | --- | --- |
 | 🧾 **Effects, inferred and checked** | `allocates` `refcounts` `blocks` `shared_mutable` `nondeterministic` `panics` `ffi`. Declare `!allocates` and the compiler points at the exact line that would break it, through calls. |
-| 🧠 **Ownership without a borrow checker** | Collections move, `.clone()` copies, `ref class` values are reference counted, `weak` breaks cycles. Use after move is a compile error. |
+| 🛡 **Memory safety without a garbage collector** | Collections move, `.clone()` copies, `ref class` values are reference counted, `weak` breaks cycles, and a slice or pointer never outlives the storage it points into: the view rules are checked through calls, loops and branches, with no lifetimes to write. Where the fix is mechanical, `nx fix` makes it. |
 | 🔬 **Binary patterns** | `<<version:4, ihl:4, len:16/big, rest:bytes>>` matches and builds packets with checked sizes. |
 | 🧵 **Parallel loops, arenas, trait objects** | `for parallel`, `using arena { }`, `dyn Trait !allocates`. |
-| 🔌 **C without bindings** | `@cImport("header.h")` reads the header directly; `artifact link` compiles vendored C into the program. |
+| 🔌 **C without bindings** | `@cImport("header.h")` reads the header directly; `artifact link` compiles vendored C into the program; `if comptime @target().0 == "windows"` builds only the branch the platform takes. |
 | 📦 **Ship from one source** | `nx ship` produces C headers and libraries, Python wheels, and Rust crates with safe wrappers. |
+| 🐞 **Debug it, measure it** | `nx debug` stops gdb or lldb at `.nx` lines and shows strings, lists, maps and optionals as values; `bench "name" { }` blocks sit beside the tests; `--sanitize address,undefined` puts AddressSanitizer and UBSan under any build. |
+| 🧭 **Learn it in the browser** | [The Topo](https://londopy.github.io/nexium/topo/01-base-camp.html), the tutorial, runs its programs in the page, the compiler compiled to WebAssembly, and grades its exercises as `nx topo` does in the terminal. `nx repl` is a prompt. |
+| 🪞 **Written in itself** | The compiler is Nexium, built from one C file by any C compiler; a large program's debug build recompiles only the modules that changed. |
 | 🖼 **A GUI, in Nexium** | [`gui/`](gui): an immediate-mode GUI (buttons, sliders, text fields) with a software rasterizer and bitmap font, all Nexium over a 200-line C window layer. |
-| 🛠 **Tooling in the box** | `fmt`, `doc`, `lsp`, `size`, `leaks`, `refcounts`, `effects`, `audit`. Zero dependencies. |
+| 🛠 **Tooling in the box** | `fmt`, `fix`, `doc`, `lsp` (definition, hover and rename from the checker), `debug`, `bench`, `size`, `layout`, `leaks`, `refcounts`, `effects`, `explain`, `audit`, `repl`. Zero dependencies. |
 
 ## Install
 
@@ -136,11 +139,11 @@ on Linux when nothing is found), and adds `nx` to your PATH.
 
 **Chocolatey and winget**: `choco install nexium` ([the package](https://community.chocolatey.org/packages/nexium)) and `winget install Londopy.Nexium`, each once its registry has approved the first version ([the status](docs/install.md#where-to-get-it)).
 
-**Debian, RPM, Nix, mise**: every release attaches `.deb` and `.rpm` packages (`sudo dpkg -i nexium_1.3.0_amd64.deb`); `nix run github:Londopy/nexium` builds it from the one C file; `mise use -g "ubi:Londopy/nexium[exe=nx]"` installs the release binary. Every asset carries signed provenance: `gh attestation verify nx --owner Londopy`. [All the roads](docs/install.md#where-to-get-it).
+**Debian, RPM, Nix, mise**: every release attaches `.deb` and `.rpm` packages (`sudo dpkg -i nexium_*_amd64.deb`); `nix run github:Londopy/nexium` builds it from the one C file; `mise use -g "ubi:Londopy/nexium[exe=nx]"` installs the release binary. Every asset carries signed provenance: `gh attestation verify nx --owner Londopy`. [All the roads](docs/install.md#where-to-get-it).
 
 **In the browser**: [open the repository in a Codespace](https://codespaces.new/Londopy/nexium) and `nx run examples/hello.nx` runs in a minute, nothing installed.
 
-**Homebrew and Scoop**: the repository is its own tap and bucket.
+**Homebrew and Scoop**: the repository is its own tap, and Scoop's bucket is [Londopy/scoop-bucket](https://github.com/Londopy/scoop-bucket), kept current by Scoop's own updater.
 
 ```bash
 brew tap londopy/tap https://github.com/Londopy/nexium && brew install londopy/tap/nexium
@@ -256,6 +259,62 @@ error: function `hot` is declared `!allocates` but has the `allocates` effect
 </details>
 
 <details>
+<summary><b>A view never outlives its storage</b></summary>
+
+```
+fn main() {
+    var names = List(String).new()
+    names.append(String.from("ada"))
+    let first = names[0][..]
+    names.append(String.from("grace"))
+    println("{}", .{first})
+}
+```
+
+```
+error: `first` is a view into `names`, which changed on line 5 after the view
+was taken; its storage may have moved (rule V3); take the view after the
+change, or keep an owned copy of the container (`.clone()`) taken before it
+  --> views.nx:6:21
+```
+
+A slice or pointer is checked against the storage it points into (SPEC
+5.6, rules V1 to V5): no garbage collector, and no lifetimes to write.
+
+</details>
+
+<details>
+<summary><b>Tests and benchmarks side by side</b></summary>
+
+```
+fn sum_to(n: i64) -> i64 {
+    var s: i64 = 0
+    for i in 0..n { s += i }
+    return s
+}
+
+test "sums" {
+    expect(sum_to(4) == 6)
+}
+
+bench "sum to 1000" {
+    sum_to(1000)
+}
+```
+
+```
+$ nx bench sums.nx
+bench  sum to 1000  189 ns/iter  (min 188 ns, max 197 ns; 21 samples of 63856)
+
+1 benchmark(s), safe mode
+```
+
+`nx test` runs the tests; `nx bench` builds the file optimized, calibrates
+the iterations, and keeps the block's value from the optimizer.
+
+</details>
+
+<details>
 <summary><b>Calling C is a header import away</b></summary>
 
 ```
@@ -299,7 +358,8 @@ using arena {
 - [The Topo](https://londopy.github.io/nexium/topo/01-base-camp.html): the tutorial, from installing the compiler to a neural network, a GUI and a shipped library, with exercises the compiler grades (on the page, or `nx topo` in the terminal); the source is [`topo/`](topo/). All of the above, rendered, is at [londopy.github.io/nexium](https://londopy.github.io/nexium/).
 - [Installing](docs/install.md): the Windows installer, the macOS/Linux script, source builds, checksums, and how `nx` finds a C compiler.
 - [Packages](docs/packages.md): `nexium.toml`, `nx add`, `nx fetch`, git or path dependencies, the lock file.
-- [Standard library](docs/std.md): the modules written in Nexium (`std.strings`, `std.lists`, `std.bytes`, `std.num`, `std.json`, `std.args`, `std.fs`, `std.time`, `std.regex`, `std.text`, `std.testing`, `std.stream`, `std.net`, `std.http`, `std.thread`, `std.process`).
+- [Standard library](docs/std.md): the modules written in Nexium (`std.strings`, `std.lists`, `std.bytes`, `std.num`, `std.json`, `std.args`, `std.fs`, `std.time`, `std.regex`, `std.text`, `std.testing`, `std.stream`, `std.net`, `std.http`, `std.thread`, `std.process`, `std.sort`, `std.heap`, `std.set`, `std.deque`, `std.hash`).
+- [The numbers](docs/numbers.md): four programs in five languages, measured weekly on one runner.
 - [nexium-gui](docs/gui.md): the immediate-mode GUI library and how to write a widget.
 - [Releasing your program](docs/releasing-your-program.md): binaries for three platforms from a tag, installers optional.
 - [Editor support](editors): VS Code, Vim, Neovim, Helix, Zed, Emacs, Kate, JetBrains, Sublime Text, Notepad++, nano, and `nx lsp` for the rest.
@@ -334,6 +394,7 @@ Using Nexium somewhere? Open an issue or a pull request and it goes here.
 | `nx explain file.nx f effect` | why `f` has the effect: the calls that carry it in, down to the primitive, as a tree |
 | `nx audit file.nx` | list `unsafe` blocks and mutable globals; `--lock` writes the effects lockfile, `--check` fails on a gained effect |
 | `nx ship file.nx` | produce every declared `artifact` |
+| `nx init`, `nx add`, `nx fetch`, `nx update` | a package's manifest, dependencies from git or a path, the lock file ([docs/packages.md](docs/packages.md)) |
 | `nx emit-c file.nx` | print the generated C |
 | `nx tir file.nx [--sigs]` | the checked program as S-expressions (the compiler's own tests read it) |
 | `nx fmt file.nx [--check]` | canonical formatting |
@@ -349,7 +410,10 @@ Using Nexium somewhere? Open an issue or a pull request and it goes here.
 | `nx leaks file.nx` | run with allocation tracking and report leaks |
 | `nx lsp` | language server over stdio |
 | `nx doctor` | which C compiler will be used, and whether the installation works |
+| `nx version` | the version and its release name |
+| `nx completions <shell>`, `nx man` | completions for bash, zsh, fish and PowerShell, and the manual page |
 | `nx repl`, or just `nx` | an interactive session: type code, see values, keep bindings |
+| `nx -e CODE`, `nx -p EXPR` | a line run as at the prompt; `-p` prints its value |
 | `nx play [file.nx]` | check a whole program and run it in the interpreter, nothing compiled; stdin when no file (the command the site's playground runs) |
 | `nx topo [<chapter>\|check\|hint\|solution\|quiz]` | the Topo's exercises in the terminal, graded by the compiler, progress kept |
 
@@ -362,20 +426,22 @@ clang), and for C interop `-I`, `--link`, `--link-path`, `--c-source`.
 
 ## Status
 
-**1.0: language-stable, early ecosystem.** The language changes only by
-addition under the [stability policy](docs/stability.md); the compiler is
-written in Nexium and builds itself; every example, spec case and tutorial
-program runs in CI on three platforms, under the sanitizers and the fuzzer.
-What 1.0 is not yet, and where each is answered, is the first section of
-[the roadmap](ROADMAP.md): memory safety is the view rules of 1.2, errors
-since 1.3 (`nx fix` makes the mechanical fixes), there are no benchmark
-numbers beyond [the numbers page](docs/numbers.md) (four programs in five
-languages on one runner, regenerated weekly), and the ecosystem is one maintainer, sixteen standard
-library modules and two projects outside the tree (statusmith's
-[Discord Rich Presence SDK](docs/discord.md) and Point of Origin's build
-tooling, [above](#in-the-wild)). [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) lists every open bug
-with its fix; [`DECISIONS.md`](DECISIONS.md) every call made where the
-specification was open.
+**1.3: language-stable, the toolchain grown up.** The language changes only
+by addition under the [stability policy](docs/stability.md); the compiler
+is written in Nexium and builds itself; every example, spec case and
+tutorial program runs in CI on three platforms, under the sanitizers and
+the fuzzer, and gdb and lldb are driven through `nx debug` there too.
+Memory safety is the view rules, errors since 1.3. 1.4, a standard library
+people stop supplementing, is under way: collections (`std.sort`,
+`std.heap`, `std.set`, `std.deque`) and `std.hash` are in, twenty-one
+modules in all, and the HTTP client with TLS, websockets and time zones are
+next. What Nexium is not yet, and where each is answered, is the first
+section of [the roadmap](ROADMAP.md): the only benchmark numbers are
+[the numbers page](docs/numbers.md), and the ecosystem is one maintainer
+and four projects outside the tree ([above](#in-the-wild)).
+[`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) lists every open bug with its fix;
+[`DECISIONS.md`](DECISIONS.md) every call made where the specification was
+open.
 
 ## Release names
 
@@ -409,8 +475,8 @@ sh bootstrap/build.sh     # nx.c -> nx0; nx0 builds self/nx.nx -> nx1; nx1 rebui
 | lexer | [`self/lexer.nx`](self/lexer.nx) | tokens |
 | parser | [`self/parser.nx`](self/parser.nx) | an id-arena syntax tree |
 | checker | [`self/check.nx`](self/check.nx), `self/check_*.nx`, [`self/cimport.nx`](self/cimport.nx) | types, effects, ownership, generics, the compile-time interpreter, C header import, every diagnostic |
-| C emitter | [`self/cgen.nx`](self/cgen.nx) | one C file per program |
-| driver | [`self/nx.nx`](self/nx.nx) | build, run, test, check, emit-c, tir; the standard library embedded |
+| C emitter | [`self/cgen.nx`](self/cgen.nx) | one C file per program, or one per module for a large program's debug build, the unchanged ones reused |
+| driver | [`self/nx.nx`](self/nx.nx) | build, run, test, bench, debug, check, emit-c, tir; the standard library embedded |
 | tools | [`self/fmt.nx`](self/fmt.nx), [`self/doc.nx`](self/doc.nx), [`self/tools.nx`](self/tools.nx), [`self/size.nx`](self/size.nx), [`self/manifest.nx`](self/manifest.nx), [`self/ship.nx`](self/ship.nx), [`self/lsp.nx`](self/lsp.nx), [`self/lsp_index.nx`](self/lsp_index.nx), [`self/fix.nx`](self/fix.nx), [`self/repl.nx`](self/repl.nx) | the formatter, the documentation generator, the reports, packages, `ship`, the language server and its index of the checked program, `nx fix`, the REPL |
 
 Every example, every spec case and every compile-fail case runs through the
@@ -426,18 +492,18 @@ files (`bootstrap/nx.c`, the tree-sitter parser, `gui/font.bin`, lock files):
 
 | language | lines | share | what it is |
 | --- | --- | --- | --- |
-| Nexium | 38,374 | 85.4% | the compiler and its tools (27,100 lines under `self/`), the standard library, the test harness and the fuzzer, the examples, the tutorial's programs, the GUI, the site generator, four benchmarks |
-| C | 2,925 | 6.5% | the runtime `nx_rt.h`, the GUI window layer, vendored test C, a benchmark |
-| Python | 1,063 | 2.4% | the release scripts (notes, package manifests, wheels and npm packages, the std docs), the benchmark runner, a benchmark |
-| editor files | 1,028 | 2.3% | tree-sitter queries, Emacs Lisp, Vim script, Lua for Neovim, and the 25 lines of Rust that Zed requires of an extension |
-| JavaScript, TypeScript | 550 | 1.2% | the VS Code extension and the tree-sitter grammar |
-| Inno Setup, shell, PowerShell | 777 | 1.7% | the Windows installer script, `install.sh`, `install.ps1`, the Chocolatey scripts |
-| Rust, Go, Ruby | 236 | 0.5% | one benchmark each in Rust and Go, and the Homebrew formula |
+| Nexium | 48,804 | 87.2% | the compiler and its tools (33,000 lines under `self/`), the standard library (21 modules), the test harness and the fuzzer, the examples, the tutorial's programs, the GUI, the site generator, four benchmarks |
+| C | 2,542 | 4.5% | the runtime `nx_rt.h`, the GUI window layer, vendored test C, a benchmark |
+| Python | 1,492 | 2.7% | the release scripts (notes, package manifests, wheels and npm packages, the std docs), the gdb and lldb formatters, the benchmark runner and four benchmarks |
+| editor files | 1,103 | 2.0% | tree-sitter queries, Emacs Lisp, Vim script, Lua for Neovim, a Pygments lexer, and the 25 lines of Rust that Zed requires of an extension |
+| JavaScript, TypeScript | 939 | 1.7% | the VS Code extension, the tree-sitter grammar, and the playground's WASI layer |
+| Inno Setup, shell, PowerShell | 855 | 1.5% | the Windows installer script, `install.sh`, `install.ps1`, the Chocolatey scripts, the bootstrap scripts |
+| Rust, Go, Ruby | 213 | 0.4% | four benchmarks each in Rust and Go, and the Homebrew formula |
 
 There is no Rust in the compiler: the first compiler drove the port and
 was deleted at 1.0 (decision 90). The Rust that remains is the glue of the
-Zed extension, which Zed compiles to WebAssembly, and one benchmark
-program written to be measured against, beside its Go twin. Zig is not in
+Zed extension, which Zed compiles to WebAssembly, and four benchmark
+programs written to be measured against, beside their Go twins. Zig is not in
 the table because there is no Zig source in the tree: `zig cc` is the C
 compiler `nx` runs (bundled by the Windows installer, downloaded by the
 install script), the same way a C compiler is used and not written.
@@ -446,7 +512,7 @@ install script), the same way a C compiler is used and not written.
 
 ```
 bootstrap/      the C seed the compiler is built from, and the build scripts
-runtime/        nx_rt.h, embedded into every generated C file
+runtime/        nx_rt.h, embedded into every generated C file; the gdb and lldb formatters of nx debug
 std/            the standard library in Nexium, embedded in the compiler
 self/           the compiler in Nexium, stage by stage
 gui/            nexium-gui: immediate-mode GUI in Nexium, demo, and the C platform layer
@@ -454,7 +520,7 @@ editors/        VS Code extension, tree-sitter grammar, and the files for ten mo
 examples/       programs with recorded output, run by the tests
 topo/           the tutorial: chapters, and the programs they show (run by the tests)
 site/           the documentation site generator, a Nexium program
-tests/          the harness (run.nx), the spec conformance suite (tests/spec) and compile-fail cases
+tests/          the harness (run.nx), the spec conformance suite (tests/spec), compile-fail cases, the debugger check
 docs/           how it works, language reference, embedding guide, i18n/ translations
 bench/          four programs in five languages behind the numbers page
 installers/     the Windows installer script, install.sh and install.ps1, the winget and Chocolatey manifests

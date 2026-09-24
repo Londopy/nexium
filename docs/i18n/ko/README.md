@@ -88,14 +88,17 @@ shipped 4 artifact file(s) for x86_64-windows:
 
 | | |
 | --- | --- |
-| 🧾 **추론되고 검사되는 이펙트** | `allocates` `refcounts` `blocks` `shared_mutable` `nondeterministic` `panics` `ffi`. `!allocates`를 선언하면 컴파일러가 호출을 따라가 이를 깨뜨릴 정확한 줄을 가리킵니다. |
-| 🧠 **빌림 검사기 없는 소유권** | 컬렉션은 이동하고, `.clone()`은 복사하고, `ref class` 값은 참조 카운팅되며, `weak`가 순환을 끊습니다. 이동 후 사용은 컴파일 오류입니다. |
-| 🔬 **바이너리 패턴** | `<<version:4, ihl:4, len:16/big, rest:bytes>>`가 크기를 검사하며 패킷을 매칭하고 조립합니다. |
+| 🧾 **추론되고 검사되는 이펙트** | `allocates` `refcounts` `blocks` `shared_mutable` `nondeterministic` `panics` `ffi`. `!allocates`를 선언하면 그것을 깨는 정확한 줄을 호출을 따라가며 컴파일러가 가리킵니다. |
+| 🛡 **가비지 컬렉터 없는 메모리 안전성** | 컬렉션은 이동하고, `.clone()`은 복사하며, `ref class` 값은 참조 카운트되고, `weak`가 순환을 끊습니다. 슬라이스나 포인터는 가리키는 저장소보다 오래 살지 않습니다. 뷰 규칙은 호출, 반복문, 분기를 넘어 검사되며 적어야 할 수명은 없습니다. 고치는 방법이 기계적이면 `nx fix`가 고칩니다. |
+| 🔬 **바이너리 패턴** | `<<version:4, ihl:4, len:16/big, rest:bytes>>`로 패킷을 매칭하고 만들며, 크기는 검사됩니다. |
 | 🧵 **병렬 루프, 아레나, 트레이트 객체** | `for parallel`, `using arena { }`, `dyn Trait !allocates`. |
-| 🔌 **바인딩 없는 C** | `@cImport("header.h")`가 헤더를 직접 읽고, `artifact link`가 동봉한 C를 프로그램에 컴파일해 넣습니다. |
-| 📦 **하나의 소스에서 배포** | `nx ship`이 C 헤더와 라이브러리, Python wheel, 안전한 래퍼를 갖춘 Rust 크레이트를 만듭니다. |
-| 🖼 **Nexium으로 만든 GUI** | [`gui/`](../../../gui): 소프트웨어 래스터라이저와 비트맵 폰트를 갖춘 즉시 모드 GUI(버튼, 슬라이더, 텍스트 필드). 200줄짜리 C 창 계층 위는 전부 Nexium입니다. |
-| 🛠 **기본 제공 도구** | `fmt`, `doc`, `lsp`, `size`, `leaks`, `refcounts`, `effects`, `audit`. 의존성 제로. |
+| 🔌 **바인딩 없는 C** | `@cImport("header.h")`가 헤더를 직접 읽고, `artifact link`가 동봉한 C를 프로그램에 컴파일하며, `if comptime @target().0 == "windows"`는 플랫폼이 택하는 분기만 빌드합니다. |
+| 📦 **하나의 소스에서 배포** | `nx ship`이 C 헤더와 라이브러리, Python wheel, 안전한 래퍼를 갖춘 Rust crate를 만듭니다. |
+| 🐞 **디버그하고 측정하기** | `nx debug`는 gdb나 lldb를 `.nx` 줄에서 멈추고 문자열, 리스트, 맵, 옵셔널을 값으로 보여 줍니다. `bench "name" { }` 블록은 테스트 옆에 둡니다. `--sanitize address,undefined`는 어떤 빌드에든 AddressSanitizer와 UBSan을 겁니다. |
+| 🧭 **브라우저에서 배우기** | 튜토리얼 [Topo](https://londopy.github.io/nexium/topo/01-base-camp.html)는 WebAssembly로 컴파일한 컴파일러로 프로그램을 페이지에서 실행하고, 터미널의 `nx topo`처럼 연습 문제를 채점합니다. `nx repl`은 프롬프트입니다. |
+| 🪞 **자기 자신으로 작성됨** | 컴파일러는 Nexium이며, 어떤 C 컴파일러로든 C 파일 하나에서 빌드됩니다. 큰 프로그램의 디버그 빌드는 바뀐 모듈만 다시 컴파일합니다. |
+| 🖼 **Nexium으로 만든 GUI** | [`gui/`](../../../gui): 소프트웨어 래스터라이저와 비트맵 폰트를 갖춘 즉시 모드 GUI(버튼, 슬라이더, 텍스트 필드). 200줄짜리 C 창 계층 위는 모두 Nexium입니다. |
+| 🛠 **기본 제공 도구** | `fmt`, `fix`, `doc`, `lsp`(정의, 호버, 이름 바꾸기를 검사기에서), `debug`, `bench`, `size`, `layout`, `leaks`, `refcounts`, `effects`, `explain`, `audit`, `repl`. 의존성 없음. |
 
 ## 설치
 
@@ -117,19 +120,25 @@ curl -fsSL https://raw.githubusercontent.com/Londopy/nexium/main/installers/inst
 **Windows, PowerShell에서**: `irm https://raw.githubusercontent.com/Londopy/nexium/main/installers/install.ps1 | iex`
 (포터블 빌드, 검증됨, PATH에 추가; 마법사 없음).
 
-**pip 또는 npm**: `pip install nexium-lang` 또는 `npm install -g nexium-lang`(플랫폼별 바이너리; C 컴파일러는 평소처럼 필요).
+**pip 또는 npm**: `pip install nexium-lang`([PyPI](https://pypi.org/project/nexium-lang/)) 또는 `npm install -g nexium-lang`([npm](https://www.npmjs.com/package/nexium-lang)). 플랫폼별 바이너리이며, C 컴파일러는 평소처럼 필요합니다.
 
 **Docker**: `docker run --rm -v "$PWD":/work ghcr.io/londopy/nexium run hello.nx`
 (Debian; `:alpine`도 있음; amd64와 arm64).
 
-**Homebrew와 Scoop**: 이 저장소가 곧 tap이자 bucket입니다.
+**Chocolatey와 winget**: `choco install nexium`([패키지](https://community.chocolatey.org/packages/nexium)) 및 `winget install Londopy.Nexium`. 각 레지스트리가 첫 버전을 승인한 뒤부터 쓸 수 있습니다([현황](../../install.md#where-to-get-it), 영어).
+
+**Debian, RPM, Nix, mise**: 모든 릴리스에 `.deb`와 `.rpm` 패키지가 첨부됩니다(`sudo dpkg -i nexium_*_amd64.deb`). `nix run github:Londopy/nexium`은 C 파일 하나에서 빌드하고, `mise use -g "ubi:Londopy/nexium[exe=nx]"`는 릴리스 바이너리를 설치합니다. 모든 산출물에는 서명된 출처 증명이 있습니다: `gh attestation verify nx --owner Londopy`. [모든 경로](../../install.md#where-to-get-it)(영어).
+
+**브라우저에서**: [저장소를 Codespace에서 열면](https://codespaces.new/Londopy/nexium) 아무것도 설치하지 않고 1분 안에 `nx run examples/hello.nx`가 실행됩니다.
+
+**Homebrew와 Scoop**: 이 저장소가 곧 tap이고, Scoop의 bucket은 [Londopy/scoop-bucket](https://github.com/Londopy/scoop-bucket)입니다(Scoop 자체 업데이터가 최신으로 유지).
 
 ```bash
 brew tap londopy/tap https://github.com/Londopy/nexium && brew install londopy/tap/nexium
 ```
 
 ```powershell
-scoop install https://raw.githubusercontent.com/Londopy/nexium/main/bucket/nexium.json
+scoop bucket add londopy https://github.com/Londopy/scoop-bucket && scoop install nexium
 ```
 
 그다음 새 콘솔에서 `nx doctor`를 실행하면 무엇이 사용될지 보여 줍니다. 체크섬 검증과
@@ -238,6 +247,62 @@ error: function `hot` is declared `!allocates` but has the `allocates` effect
 </details>
 
 <details>
+<summary><b>뷰는 저장소보다 오래 살지 않는다</b></summary>
+
+```
+fn main() {
+    var names = List(String).new()
+    names.append(String.from("ada"))
+    let first = names[0][..]
+    names.append(String.from("grace"))
+    println("{}", .{first})
+}
+```
+
+```
+error: `first` is a view into `names`, which changed on line 5 after the view
+was taken; its storage may have moved (rule V3); take the view after the
+change, or keep an owned copy of the container (`.clone()`) taken before it
+  --> views.nx:6:21
+```
+
+슬라이스나 포인터는 가리키는 저장소에 대해 검사됩니다(SPEC 5.6, 규칙 V1~V5).
+가비지 컬렉터도 없고, 적어야 할 수명도 없습니다.
+
+</details>
+
+<details>
+<summary><b>테스트와 벤치마크를 나란히</b></summary>
+
+```
+fn sum_to(n: i64) -> i64 {
+    var s: i64 = 0
+    for i in 0..n { s += i }
+    return s
+}
+
+test "sums" {
+    expect(sum_to(4) == 6)
+}
+
+bench "sum to 1000" {
+    sum_to(1000)
+}
+```
+
+```
+$ nx bench sums.nx
+bench  sum to 1000  189 ns/iter  (min 188 ns, max 197 ns; 21 samples of 63856)
+
+1 benchmark(s), safe mode
+```
+
+`nx test`는 테스트를 실행하고, `nx bench`는 파일을 최적화해 빌드하고 반복 횟수를
+보정하며, 블록의 값이 최적화로 사라지지 않게 지킵니다.
+
+</details>
+
+<details>
 <summary><b>C 호출은 헤더 임포트 하나면 된다</b></summary>
 
 ```
@@ -281,7 +346,8 @@ using arena {
 - [the Topo](https://londopy.github.io/nexium/topo/01-base-camp.html) (영어): 튜토리얼. 컴파일러 설치부터 신경망, GUI, 배포 라이브러리까지. 소스는 [`topo/`](../../../topo/)에 있습니다. 위의 모든 것을 렌더링한 결과는 [londopy.github.io/nexium](https://londopy.github.io/nexium/)에 있습니다.
 - [설치](../../install.md) (영어): Windows 설치 프로그램, macOS/Linux 스크립트, 소스 빌드, 체크섬, `nx`가 C 컴파일러를 찾는 방법.
 - [패키지](../../packages.md) (영어): `nexium.toml`, `nx add`, `nx fetch`, git 또는 경로 의존성, 잠금 파일.
-- [표준 라이브러리](../../std.md) (영어): Nexium으로 쓰인 모듈(`std.strings`, `std.lists`, `std.bytes`, `std.num`, `std.json`, `std.args`, `std.fs`, `std.time`, `std.regex`, `std.text`, `std.testing`, `std.stream`, `std.net`, `std.http`, `std.thread`, `std.process`).
+- [표준 라이브러리](../../std.md) (영어): Nexium으로 쓰인 모듈(`std.strings`, `std.lists`, `std.bytes`, `std.num`, `std.json`, `std.args`, `std.fs`, `std.time`, `std.regex`, `std.text`, `std.testing`, `std.stream`, `std.net`, `std.http`, `std.thread`, `std.process`, `std.sort`, `std.heap`, `std.set`, `std.deque`, `std.hash`).
+- [수치](../../numbers.md) (영어): 다섯 언어로 쓴 네 프로그램을 한 러너에서 매주 측정.
 - [nexium-gui](../../gui.md) (영어): 즉시 모드 GUI 라이브러리와 위젯 작성법.
 - [프로그램 릴리스하기](../../releasing-your-program.md) (영어): 태그 하나로 세 플랫폼의 바이너리를, 설치 프로그램은 선택.
 - [에디터 지원](../../../editors) (영어): VS Code, Vim, Neovim, Helix, Zed, Emacs, Kate, JetBrains, Sublime Text, Notepad++, nano, 나머지는 `nx lsp`로.
@@ -290,6 +356,19 @@ using arena {
 - [릴리스 이름](../../release-names.md) (영어): 모든 릴리스는 산 위의 한 장소. 규칙, 장부, 아직 쓰지 않은 이름.
 - [결정 기록](../../../DECISIONS.md) (영어): 명세가 열려 있던 곳에서 내린 모든 결정.
 - [알려진 문제](../../../KNOWN_ISSUES.md) (영어): 미해결 버그, 빈틈, 제한. 재현 방법 포함.
+
+## 실제 사용
+
+이 저장소 밖에서 Nexium으로 쓰인 프로그램과 패키지:
+
+| 프로젝트 | Nexium이 거기서 하는 일 |
+| --- | --- |
+| [statusmith](https://github.com/Londopy/statusmith), 트레이에서 켜는 Discord Rich Presence | 그 SDK는 Nexium 패키지: `nx add discord_rpc --git https://github.com/Londopy/statusmith --tag sdk-v0.1.0 --dir nexium`으로 어떤 Nexium 프로그램에서든 프레즌스를 설정([설명](../../discord.md)) |
+| [Point of Origin](https://github.com/Londopy/point-of-origin), 땅 자체가 퍼즐인 플랫포머 | 빌드 전체가 Nexium: `build.nx`가 Odin 시뮬레이션의 DLL을 구동하고, `tools/bindgen.nx`가 Odin 익스포트를 읽어 Unity가 부르는 C# 바인딩을 쓰며, `tools/levels.nx`가 레벨 맵을 게임이 읽는 JSON으로 컴파일하고(모든 레벨이 같은 시뮬레이션으로 자라므로 풀 수 있음), `tools/chapters.nx`가 그로부터 문서를 씀 |
+| [QNI](https://github.com/Londopy/qni), Cal Poly 아마추어 무선 클럽(W6BHZ) Discord를 위한 네트 알림, 체크인 도우미, 네트 컨트롤 튜토리얼 | 프로그램 전체가 Nexium: 슬래시 명령과 버튼을 웹훅으로 응답하며 봇 사용자도 권한도 없음. 모든 요청은 무엇이든 읽기 전에 Discord의 Ed25519 서명을 검사(nxtls로). 네트 카드, 네트 컨트롤 연습 모드, 임원진 시트 형식의 네트 로그. 가짜 Discord를 상대로 처음부터 끝까지 테스트 |
+| [nxtls](https://github.com/Londopy/nxtls), 순수 Nexium 암호 라이브러리 | SHA-2, HMAC, TLS 1.3 레이블을 쓰는 HKDF, Ed25519 검증. C도 `unsafe`도 없이, 표준이 공개한 벡터로 테스트. 패키지: `nx add nxtls --git https://github.com/Londopy/nxtls --tag v0.1.0`. TLS 1.3 클라이언트가 계획 |
+
+어딘가에서 Nexium을 쓰고 있나요? issue나 pull request를 열면 여기에 실립니다.
 
 ## 명령
 
@@ -303,6 +382,7 @@ using arena {
 | `nx explain file.nx f effect` | `f`가 그 효과를 갖는 이유: 효과를 들여오는 호출들을 원시 연산까지 트리로 |
 | `nx audit file.nx` | `unsafe` 블록과 가변 전역 나열; `--lock`은 효과 잠금 파일을 쓰고, `--check`는 효과가 늘면 실패 |
 | `nx ship file.nx` | 선언된 모든 `artifact` 생성 |
+| `nx init`, `nx add`, `nx fetch`, `nx update` | 패키지 매니페스트, git이나 경로에서 가져오는 의존성, 잠금 파일([docs/packages.md](../../packages.md)) |
 | `nx emit-c file.nx` | 생성된 C 출력 |
 | `nx tir file.nx [--sigs]` | 검사된 프로그램을 S-식으로(컴파일러 자체 테스트가 읽음) |
 | `nx fmt file.nx [--check]` | 표준 서식 |
@@ -318,7 +398,10 @@ using arena {
 | `nx leaks file.nx` | 할당을 추적하며 실행하고 누수 보고 |
 | `nx lsp` | stdio 위의 언어 서버 |
 | `nx doctor` | 어떤 C 컴파일러가 쓰일지, 설치가 동작하는지 |
+| `nx version` | 버전과 릴리스 이름 |
+| `nx completions <shell>`, `nx man` | bash, zsh, fish, PowerShell 자동 완성과 매뉴얼 페이지 |
 | `nx repl`, 또는 그냥 `nx` | 대화형 세션: 코드를 입력하고, 값을 보고, 바인딩을 유지 |
+| `nx -e CODE`, `nx -p EXPR` | 프롬프트에서처럼 한 줄을 실행, `-p`는 값을 출력 |
 
 옵션: `--mode debug|safe|fast|small`, `--target x86_64-linux-gnu`(`zig cc`가 아는 모든
 타깃), `--cpu baseline|native|<이름>`(기본은 baseline, 같은 아키텍처의 어느 기계에서도
@@ -329,16 +412,16 @@ gcc나 clang이 필요), C 연동용 `-I`, `--link`,
 
 ## 현황
 
-**1.0: 언어는 안정, 생태계는 초기.** 언어는 [안정성 정책](../../stability.md)에 따라
+**1.3: 언어는 안정, 툴체인은 성숙.** 언어는 [안정성 정책](../../stability.md)에 따라
 추가로만 바뀝니다. 컴파일러는 Nexium으로 쓰였고 스스로를 빌드합니다. 모든 예제, 명세
 케이스, 튜토리얼 프로그램이 CI에서 세 플랫폼 위에서, 새니타이저와 퍼저 아래에서
-실행됩니다. 1.0이 아직 아닌 것과 각각이 어디서 답을 얻는지는
-[로드맵](../../../ROADMAP.md)의 첫 절에 있습니다. 메모리 안전성은 1.2의 뷰 규칙이며
-1.3부터 오류이고(기계적인 수정은 `nx fix`가 합니다), 벤치마크 수치는
-[수치 페이지](../../numbers.md)(다섯 언어로 쓴 네 프로그램을 한 러너에서, 매주 재생성)
-말고는 없으며, 생태계는 메인테이너 한 명, 표준 라이브러리 열여섯 모듈, 그리고 트리
-밖에서 온 패키지 하나(statusmith의 [Discord Rich Presence SDK](../../discord.md),
-`nx add discord_rpc ...`)입니다.
+실행되며, gdb와 lldb도 거기서 `nx debug`로 구동됩니다. 메모리 안전성은 뷰 규칙이며
+1.3부터 오류입니다. 1.4, 보탤 필요가 없는 표준 라이브러리는 진행 중입니다. 컬렉션
+(`std.sort`, `std.heap`, `std.set`, `std.deque`)과 `std.hash`가 들어와 모두 스물한
+모듈이고, 다음은 TLS를 갖춘 HTTP 클라이언트, 웹소켓, 시간대입니다. Nexium이 아직 아닌
+것과 각각이 어디서 답을 얻는지는 [로드맵](../../../ROADMAP.md)의 첫 절에 있습니다.
+벤치마크 수치는 [수치 페이지](../../numbers.md)뿐이며, 생태계는 메인테이너 한 명과 트리
+밖의 프로젝트 넷입니다([위](#실제-사용)).
 [`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md)는 미해결 버그를 수정 방안과 함께,
 [`DECISIONS.md`](../../../DECISIONS.md)는 명세가 열려 있던 곳에서 내린 모든 결정을
 나열합니다.
@@ -372,9 +455,9 @@ sh bootstrap/build.sh     # nx.c -> nx0; nx0가 self/nx.nx를 빌드 -> nx1; nx1
 | 렉서 | [`self/lexer.nx`](../../../self/lexer.nx) | 토큰 |
 | 파서 | [`self/parser.nx`](../../../self/parser.nx) | id 아레나 위의 구문 트리 |
 | 검사기 | [`self/check.nx`](../../../self/check.nx), `self/check_*.nx`, [`self/cimport.nx`](../../../self/cimport.nx) | 타입, 이펙트, 소유권, 제네릭, 컴파일 타임 인터프리터, C 헤더 임포트, 모든 진단 |
-| C 생성기 | [`self/cgen.nx`](../../../self/cgen.nx) | 프로그램당 C 파일 하나 |
-| 드라이버 | [`self/nx.nx`](../../../self/nx.nx) | build, run, test, check, emit-c, tir; 표준 라이브러리 내장 |
-| 도구 | [`self/fmt.nx`](../../../self/fmt.nx), [`self/doc.nx`](../../../self/doc.nx), [`self/tools.nx`](../../../self/tools.nx), [`self/size.nx`](../../../self/size.nx), [`self/manifest.nx`](../../../self/manifest.nx), [`self/ship.nx`](../../../self/ship.nx), [`self/lsp.nx`](../../../self/lsp.nx), [`self/repl.nx`](../../../self/repl.nx) | 포매터, 문서 생성기, 각종 보고서, 패키지, `ship`, 언어 서버, REPL |
+| C 생성기 | [`self/cgen.nx`](../../../self/cgen.nx) | 프로그램당 C 파일 하나, 큰 프로그램의 디버그 빌드에서는 모듈당 하나이며 바뀌지 않은 것은 재사용 |
+| 드라이버 | [`self/nx.nx`](../../../self/nx.nx) | build, run, test, bench, debug, check, emit-c, tir; 표준 라이브러리 내장 |
+| 도구 | [`self/fmt.nx`](../../../self/fmt.nx), [`self/doc.nx`](../../../self/doc.nx), [`self/tools.nx`](../../../self/tools.nx), [`self/size.nx`](../../../self/size.nx), [`self/manifest.nx`](../../../self/manifest.nx), [`self/ship.nx`](../../../self/ship.nx), [`self/lsp.nx`](../../../self/lsp.nx), [`self/lsp_index.nx`](../../../self/lsp_index.nx), [`self/fix.nx`](../../../self/fix.nx), [`self/repl.nx`](../../../self/repl.nx) | 포매터, 문서 생성기, 각종 보고서, 패키지, `ship`, 언어 서버와 검사된 프로그램의 색인, `nx fix`, REPL |
 
 모든 예제, 명세 케이스, 컴파일 실패 케이스가 그 자체로 Nexium 프로그램인 테스트
 하네스(`nx run tests/run.nx`)의 구동으로 부트스트랩된 컴파일러를 거쳐, CI에서 세
@@ -388,17 +471,17 @@ sh bootstrap/build.sh     # nx.c -> nx0; nx0가 self/nx.nx를 빌드 -> nx1; nx1
 
 | 언어 | 줄 수 | 비율 | 무엇인가 |
 | --- | --- | --- | --- |
-| Nexium | 38,374 | 85.4% | 컴파일러와 그 도구(`self/` 아래 27,100줄), 표준 라이브러리, 테스트 하네스와 퍼저, 예제, 튜토리얼의 프로그램, nexium-gui, 사이트 생성기, 명세 스위트, 벤치마크 넷 |
-| C | 2,925 | 6.5% | 런타임 `nx_rt.h`, GUI 창 계층, 동봉된 테스트용 C, 벤치마크 하나 |
-| Python | 1,063 | 2.4% | 릴리스 스크립트(노트, 패키지 매니페스트, wheel과 npm 패키지, std 문서), 벤치마크 러너, 벤치마크 하나 |
-| 에디터 파일 | 1,028 | 2.3% | tree-sitter 쿼리, Emacs Lisp, Vim script, Neovim용 Lua, 그리고 Zed가 확장에 요구하는 Rust 25줄 |
-| JavaScript, TypeScript | 550 | 1.2% | VS Code 확장과 tree-sitter 문법 |
-| Inno Setup, 셸, PowerShell | 777 | 1.7% | Windows 설치 프로그램 스크립트, `install.sh`, `install.ps1`, Chocolatey 스크립트 |
-| Rust, Go, Ruby | 236 | 0.5% | Rust와 Go에 벤치마크 하나씩, 그리고 Homebrew 포뮬러 |
+| Nexium | 48,804 | 87.2% | 컴파일러와 그 도구(`self/` 아래 33,000줄), 표준 라이브러리(모듈 21개), 테스트 하네스와 퍼저, 예제, 튜토리얼의 프로그램, nexium-gui, 사이트 생성기, 벤치마크 넷 |
+| C | 2,542 | 4.5% | 런타임 `nx_rt.h`, GUI 창 계층, 동봉된 테스트용 C, 벤치마크 하나 |
+| Python | 1,492 | 2.7% | 릴리스 스크립트(노트, 패키지 매니페스트, wheel과 npm 패키지, std 문서), gdb와 lldb 포매터, 벤치마크 러너와 벤치마크 넷 |
+| 에디터 파일 | 1,103 | 2.0% | tree-sitter 쿼리, Emacs Lisp, Vim script, Neovim용 Lua, Pygments 렉서, 그리고 Zed가 확장에 요구하는 Rust 25줄 |
+| JavaScript, TypeScript | 939 | 1.7% | VS Code 확장, tree-sitter 문법, 플레이그라운드의 WASI 계층 |
+| Inno Setup, 셸, PowerShell | 855 | 1.5% | Windows 설치 프로그램 스크립트, `install.sh`, `install.ps1`, Chocolatey 스크립트, 부트스트랩 스크립트 |
+| Rust, Go, Ruby | 213 | 0.4% | Rust와 Go에 벤치마크 넷씩, 그리고 Homebrew 포뮬러 |
 
 컴파일러에는 Rust가 없습니다. 첫 컴파일러는 이식을 이끌고 1.0에서 삭제되었으며(결정
 90), 남은 Rust는 Zed가 WebAssembly로 컴파일하는 Zed 확장의 접착 코드와, 비교 측정용으로
-쓴 벤치마크 프로그램 하나(Go 쌍둥이 곁에)뿐입니다. Zig가
+쓴 벤치마크 프로그램 넷(Go 쌍둥이 곁에)뿐입니다. Zig가
 표에 없는 이유는 트리에 Zig 소스가 없기 때문입니다. `zig cc`는 `nx`가 실행하는 C
 컴파일러이며(Windows 설치 프로그램이 동봉하고, 설치 스크립트가 내려받음), C
 컴파일러를 쓰는 것이지 작성하는 것이 아닌 것과 같습니다.
@@ -407,7 +490,7 @@ sh bootstrap/build.sh     # nx.c -> nx0; nx0가 self/nx.nx를 빌드 -> nx1; nx1
 
 ```
 bootstrap/      컴파일러를 빌드하는 C 시드와 빌드 스크립트
-runtime/        nx_rt.h. 생성되는 모든 C 파일에 포함됨
+runtime/        nx_rt.h. 생성되는 모든 C 파일에 포함됨. nx debug의 gdb와 lldb 포매터
 std/            Nexium으로 쓰인 표준 라이브러리. 컴파일러에 내장
 self/           Nexium으로 쓰인 컴파일러, 단계별로
 gui/            nexium-gui: Nexium 즉시 모드 GUI, 데모, C 플랫폼 계층
@@ -415,7 +498,7 @@ editors/        VS Code 확장, tree-sitter 문법, 그리고 열 개 에디터�
 examples/       출력이 기록된 프로그램. 테스트가 실행
 topo/           튜토리얼: 각 장과 거기서 보여 주는 프로그램(테스트가 실행)
 site/           문서 사이트 생성기. Nexium 프로그램
-tests/          하네스(run.nx), 명세 적합성 스위트(tests/spec), 컴파일 실패 케이스
+tests/          하네스(run.nx), 명세 적합성 스위트(tests/spec), 컴파일 실패 케이스, 디버거 검사
 docs/           동작 원리, 언어 레퍼런스, 임베딩 가이드, i18n/의 번역
 bench/          수치 페이지 뒤의 다섯 언어 네 프로그램
 installers/     Windows 설치 프로그램 스크립트, install.sh와 install.ps1, winget과 Chocolatey 매니페스트

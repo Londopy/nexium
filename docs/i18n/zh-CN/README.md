@@ -87,14 +87,17 @@ Nexium panic 会在边界处被转换，而不是让宿主进程中止。
 
 | | |
 | --- | --- |
-| 🧾 **效应：推断并检查** | `allocates` `refcounts` `blocks` `shared_mutable` `nondeterministic` `panics` `ffi`。声明 `!allocates`，编译器会穿过调用链，指出会破坏它的那一行。 |
-| 🧠 **没有借用检查器的所有权** | 集合按移动传递，`.clone()` 复制，`ref class` 值按引用计数，`weak` 打破循环。移动后再使用是编译错误。 |
-| 🔬 **二进制模式** | `<<version:4, ihl:4, len:16/big, rest:bytes>>` 在校验长度的前提下匹配和构造数据包。 |
+| 🧾 **推断并检查的效应** | `allocates` `refcounts` `blocks` `shared_mutable` `nondeterministic` `panics` `ffi`。声明 `!allocates`，编译器会顺着调用指出会打破它的那一行。 |
+| 🛡 **没有垃圾回收器的内存安全** | 集合会移动，`.clone()` 复制，`ref class` 的值做引用计数，`weak` 打破循环；切片或指针绝不会比它指向的存储活得更久：视图规则跨调用、循环和分支检查，不必写生命周期。修复是机械性的时候，`nx fix` 替你改。 |
+| 🔬 **二进制模式** | `<<version:4, ihl:4, len:16/big, rest:bytes>>` 匹配并构造数据包，大小都经过检查。 |
 | 🧵 **并行循环、arena、trait 对象** | `for parallel`、`using arena { }`、`dyn Trait !allocates`。 |
-| 🔌 **无需绑定的 C** | `@cImport("header.h")` 直接读取头文件；`artifact link` 把随附的 C 编译进程序。 |
-| 📦 **一份源码，多处交付** | `nx ship` 生成 C 头文件和库、Python wheel，以及带安全封装的 Rust crate。 |
-| 🖼 **用 Nexium 写的 GUI** | [`gui/`](../../../gui)：即时模式 GUI（按钮、滑块、文本框），带软件光栅化器和位图字体，200 行 C 窗口层之上全是 Nexium。 |
-| 🛠 **自带工具** | `fmt`、`doc`、`lsp`、`size`、`leaks`、`refcounts`、`effects`、`audit`。零依赖。 |
+| 🔌 **无需绑定的 C** | `@cImport("header.h")` 直接读取头文件；`artifact link` 把随附的 C 编译进程序；`if comptime @target().0 == "windows"` 只构建平台所走的分支。 |
+| 📦 **一份源码，处处交付** | `nx ship` 生成 C 头文件与库、Python wheel，以及带安全封装的 Rust crate。 |
+| 🐞 **调试与测量** | `nx debug` 让 gdb 或 lldb 停在 `.nx` 行上，把字符串、列表、映射和可选值显示为值；`bench "name" { }` 块与测试并列；`--sanitize address,undefined` 为任意构建加上 AddressSanitizer 与 UBSan。 |
+| 🧭 **在浏览器里学** | 教程 [Topo](https://londopy.github.io/nexium/topo/01-base-camp.html) 用编译成 WebAssembly 的编译器在页面中运行它的程序，并像终端里的 `nx topo` 一样给练习评分。`nx repl` 是一个提示符。 |
+| 🪞 **用自己写成** | 编译器用 Nexium 写成，任何 C 编译器都能从一个 C 文件构建它；大型程序的调试构建只重新编译改动过的模块。 |
+| 🖼 **Nexium 写的 GUI** | [`gui/`](../../../gui)：带软件光栅化器和位图字体的即时模式 GUI（按钮、滑块、文本框），在 200 行 C 窗口层之上全部是 Nexium。 |
+| 🛠 **自带工具** | `fmt`、`fix`、`doc`、`lsp`（定义、悬停和重命名来自检查器）、`debug`、`bench`、`size`、`layout`、`leaks`、`refcounts`、`effects`、`explain`、`audit`、`repl`。零依赖。 |
 
 ## 安装
 
@@ -114,19 +117,25 @@ curl -fsSL https://raw.githubusercontent.com/Londopy/nexium/main/installers/inst
 **Windows，在 PowerShell 中**：`irm https://raw.githubusercontent.com/Londopy/nexium/main/installers/install.ps1 | iex`
 （便携版，已校验，加入 PATH；无向导）。
 
-**pip 或 npm**：`pip install nexium-lang` 或 `npm install -g nexium-lang`（按平台提供的二进制；C 编译器照常需要）。
+**pip 或 npm**：`pip install nexium-lang`（[PyPI](https://pypi.org/project/nexium-lang/)）或 `npm install -g nexium-lang`（[npm](https://www.npmjs.com/package/nexium-lang)）；按平台提供的二进制；C 编译器照常需要。
 
 **Docker**：`docker run --rm -v "$PWD":/work ghcr.io/londopy/nexium run hello.nx`
 （Debian；也有 `:alpine`；amd64 与 arm64）。
 
-**Homebrew 与 Scoop**：这个仓库本身就是 tap 和 bucket。
+**Chocolatey 与 winget**：`choco install nexium`（[软件包](https://community.chocolatey.org/packages/nexium)）和 `winget install Londopy.Nexium`，各自在其注册表批准第一个版本之后可用（[状态](../../install.md#where-to-get-it)，英文）。
+
+**Debian、RPM、Nix、mise**：每个发布都附带 `.deb` 和 `.rpm` 包（`sudo dpkg -i nexium_*_amd64.deb`）；`nix run github:Londopy/nexium` 从那一个 C 文件构建；`mise use -g "ubi:Londopy/nexium[exe=nx]"` 安装发布的二进制。每个产物都带有签名的来源证明：`gh attestation verify nx --owner Londopy`。[所有途径](../../install.md#where-to-get-it)（英文）。
+
+**在浏览器中**：[在 Codespace 中打开仓库](https://codespaces.new/Londopy/nexium)，一分钟内即可运行 `nx run examples/hello.nx`，无需安装任何东西。
+
+**Homebrew 与 Scoop**：这个仓库本身就是 tap，Scoop 的 bucket 是 [Londopy/scoop-bucket](https://github.com/Londopy/scoop-bucket)，由 Scoop 自己的更新器保持最新。
 
 ```bash
 brew tap londopy/tap https://github.com/Londopy/nexium && brew install londopy/tap/nexium
 ```
 
 ```powershell
-scoop install https://raw.githubusercontent.com/Londopy/nexium/main/bucket/nexium.json
+scoop bucket add londopy https://github.com/Londopy/scoop-bucket && scoop install nexium
 ```
 
 然后在新的终端里运行 `nx doctor`，它会显示将使用什么。包括校验和验证与每个
@@ -234,6 +243,62 @@ error: function `hot` is declared `!allocates` but has the `allocates` effect
 </details>
 
 <details>
+<summary><b>视图绝不比它的存储活得久</b></summary>
+
+```
+fn main() {
+    var names = List(String).new()
+    names.append(String.from("ada"))
+    let first = names[0][..]
+    names.append(String.from("grace"))
+    println("{}", .{first})
+}
+```
+
+```
+error: `first` is a view into `names`, which changed on line 5 after the view
+was taken; its storage may have moved (rule V3); take the view after the
+change, or keep an owned copy of the container (`.clone()`) taken before it
+  --> views.nx:6:21
+```
+
+切片或指针会对照它指向的存储检查（SPEC 5.6，规则 V1 到 V5）：没有垃圾回收器，
+也不必写生命周期。
+
+</details>
+
+<details>
+<summary><b>测试和基准并排</b></summary>
+
+```
+fn sum_to(n: i64) -> i64 {
+    var s: i64 = 0
+    for i in 0..n { s += i }
+    return s
+}
+
+test "sums" {
+    expect(sum_to(4) == 6)
+}
+
+bench "sum to 1000" {
+    sum_to(1000)
+}
+```
+
+```
+$ nx bench sums.nx
+bench  sum to 1000  189 ns/iter  (min 188 ns, max 197 ns; 21 samples of 63856)
+
+1 benchmark(s), safe mode
+```
+
+`nx test` 运行测试；`nx bench` 以优化模式构建文件、校准迭代次数，并让块的值
+不被优化器消掉。
+
+</details>
+
+<details>
 <summary><b>调用 C 只需导入一个头文件</b></summary>
 
 ```
@@ -277,7 +342,8 @@ using arena {
 - [the Topo](https://londopy.github.io/nexium/topo/01-base-camp.html)（英文）：教程，从安装编译器到神经网络、GUI 和一个交付出去的库；源码在 [`topo/`](../../../topo/)。以上全部的渲染版本在 [londopy.github.io/nexium](https://londopy.github.io/nexium/)。
 - [安装](../../install.md)（英文）：Windows 安装程序、macOS/Linux 脚本、源码构建、校验和，以及 `nx` 如何找到 C 编译器。
 - [包](../../packages.md)（英文）：`nexium.toml`、`nx add`、`nx fetch`、git 或路径依赖、锁文件。
-- [标准库](../../std.md)（英文）：用 Nexium 写的模块（`std.strings`、`std.lists`、`std.bytes`、`std.num`、`std.json`、`std.args`、`std.fs`、`std.time`、`std.regex`、`std.text`、`std.testing`、`std.stream`、`std.net`、`std.http`、`std.thread`、`std.process`）。
+- [标准库](../../std.md)（英文）：用 Nexium 写的模块（`std.strings`、`std.lists`、`std.bytes`、`std.num`、`std.json`、`std.args`、`std.fs`、`std.time`、`std.regex`、`std.text`、`std.testing`、`std.stream`、`std.net`、`std.http`、`std.thread`、`std.process`、`std.sort`、`std.heap`、`std.set`、`std.deque`、`std.hash`）。
+- [数字](../../numbers.md)（英文）：五种语言写的四个程序，每周在同一台 runner 上测量。
 - [nexium-gui](../../gui.md)（英文）：即时模式 GUI 库以及如何编写一个控件。
 - [发布你的程序](../../releasing-your-program.md)（英文）：从一个标签得到三个平台的二进制，安装程序可选。
 - [编辑器支持](../../../editors)（英文）：VS Code、Vim、Neovim、Helix、Zed、Emacs、Kate、JetBrains、Sublime Text、Notepad++、nano，其余的用 `nx lsp`。
@@ -286,6 +352,19 @@ using arena {
 - [发布版名称](../../release-names.md)（英文）：每个发布版都是山上的一个地方；命名规则、台账，以及尚未用过的名字。
 - [决策记录](../../../DECISIONS.md)（英文）：规范未定之处做出的每一个决定。
 - [已知问题](../../../KNOWN_ISSUES.md)（英文）：未修复的缺陷、缺口与限制，附复现步骤。
+
+## 实际使用
+
+本仓库之外用 Nexium 写的程序和包：
+
+| 项目 | Nexium 在其中做什么 |
+| --- | --- |
+| [statusmith](https://github.com/Londopy/statusmith)，从托盘设置 Discord Rich Presence | 它的 SDK 是一个 Nexium 包：`nx add discord_rpc --git https://github.com/Londopy/statusmith --tag sdk-v0.1.0 --dir nexium` 让任何 Nexium 程序都能设置状态（[说明页](../../discord.md)） |
+| [Point of Origin](https://github.com/Londopy/point-of-origin)，地面本身就是谜题的平台游戏 | 整个构建都是 Nexium：`build.nx` 驱动 Odin 模拟的 DLL，`tools/bindgen.nx` 读取 Odin 的导出并写出 Unity 调用的 C# 绑定，`tools/levels.nx` 把关卡地图编译成游戏加载的 JSON（每一关都由同一个模拟生成，因此必有解），`tools/chapters.nx` 据此写出文档 |
+| [QNI](https://github.com/Londopy/qni)，为 Cal Poly 业余无线电俱乐部（W6BHZ）的 Discord 提供网络提醒、签到帮助和网络控制教程 | 整个程序都是 Nexium：斜杠命令和按钮通过 webhook 应答，没有机器人用户也不要权限；每个请求在读取任何内容之前先检查 Discord 的 Ed25519 签名（借助 nxtls）；网络卡片、网络控制练习模式，以及干事自己表格格式的网络日志；针对一个假的 Discord 做端到端测试 |
+| [nxtls](https://github.com/Londopy/nxtls)，纯 Nexium 的密码学 | SHA-2、HMAC、带 TLS 1.3 标签的 HKDF 和 Ed25519 验证，没有 C 也没有 `unsafe`，用标准公布的向量测试；一个包：`nx add nxtls --git https://github.com/Londopy/nxtls --tag v0.1.0`；TLS 1.3 客户端在计划中 |
+
+在哪里用了 Nexium？开一个 issue 或 pull request，它就会出现在这里。
 
 ## 命令
 
@@ -299,6 +378,7 @@ using arena {
 | `nx explain file.nx f effect` | `f` 为何带有该效应：把效应带进来的调用链，直到原语，以树的形式 |
 | `nx audit file.nx` | 列出 `unsafe` 块和可变全局变量；`--lock` 写出效应锁文件，`--check` 在新增效应时失败 |
 | `nx ship file.nx` | 生成声明的每个 `artifact` |
+| `nx init`、`nx add`、`nx fetch`、`nx update` | 包的清单、来自 git 或路径的依赖、锁文件（[docs/packages.md](../../packages.md)） |
 | `nx emit-c file.nx` | 打印生成的 C |
 | `nx tir file.nx [--sigs]` | 以 S 表达式输出检查后的程序（编译器自己的测试会读取它） |
 | `nx fmt file.nx [--check]` | 规范化格式 |
@@ -314,7 +394,10 @@ using arena {
 | `nx leaks file.nx` | 带分配跟踪运行并报告泄漏 |
 | `nx lsp` | 基于 stdio 的语言服务器 |
 | `nx doctor` | 将使用哪个 C 编译器，安装是否正常 |
+| `nx version` | 版本及其发布名 |
+| `nx completions <shell>`、`nx man` | bash、zsh、fish 和 PowerShell 的补全，以及手册页 |
 | `nx repl`，或直接 `nx` | 交互式会话：输入代码，查看值，保留绑定 |
+| `nx -e CODE`、`nx -p EXPR` | 像在提示符下那样运行一行；`-p` 打印它的值 |
 
 选项：`--mode debug|safe|fast|small`、`--target x86_64-linux-gnu`（`zig cc` 认识的
 任何目标）、`--cpu baseline|native|<名称>`（默认 baseline，这样二进制能在同架构的
@@ -325,15 +408,16 @@ using arena {
 
 ## 现状
 
-**1.0：语言已稳定，生态尚在早期。** 语言只按[稳定性策略](../../stability.md)以增添的
+**1.3：语言已稳定，工具链已成熟。** 语言只按[稳定性策略](../../stability.md)以增添的
 方式变化；编译器用 Nexium 写成并能构建自身；每个示例、规范用例和教程程序都在 CI 中于
-三个平台上、在 sanitizer 和 fuzzer 之下运行。1.0 还不是什么、每一点在哪里得到回答，
-是[路线图](../../../ROADMAP.md)的第一节：内存安全是 1.2 的视图规则，自 1.3 起是
-错误（机械性的修正由 `nx fix` 完成），除[数字页](../../numbers.md)（五种语言的四个
-程序在同一台 runner 上，每周重新生成）之外还没有基准数字，生态只有一位维护者、
-十六个标准库模块和一个来自树外的包（statusmith 的 [Discord Rich Presence SDK](../../discord.md)，
-`nx add discord_rpc ...`）。[`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md) 列出每个未修复的缺陷
-及其修法；[`DECISIONS.md`](../../../DECISIONS.md) 列出规范未定之处做出的每一个决定。
+三个平台上、在 sanitizer 和 fuzzer 之下运行，gdb 和 lldb 也在那里经由 `nx debug` 驱动。
+内存安全是视图规则，自 1.3 起是错误。1.4，一个不必再补充的标准库，正在进行：集合
+（`std.sort`、`std.heap`、`std.set`、`std.deque`）和 `std.hash` 已经加入，一共二十一个
+模块，接下来是带 TLS 的 HTTP 客户端、websocket 和时区。Nexium 还不是什么、每一点在哪里
+得到回答，是[路线图](../../../ROADMAP.md)的第一节：基准数字只有[数字页](../../numbers.md)，
+生态只有一位维护者和四个树外的项目（[上文](#实际使用)）。
+[`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md) 列出每个未修复的缺陷及其修法；
+[`DECISIONS.md`](../../../DECISIONS.md) 列出规范未定之处做出的每一个决定。
 
 ## 发布版名称
 
@@ -361,9 +445,9 @@ sh bootstrap/build.sh     # nx.c -> nx0；nx0 构建 self/nx.nx -> nx1；nx1 把
 | 词法分析器 | [`self/lexer.nx`](../../../self/lexer.nx) | 记号 |
 | 语法分析器 | [`self/parser.nx`](../../../self/parser.nx) | id arena 上的语法树 |
 | 检查器 | [`self/check.nx`](../../../self/check.nx)、`self/check_*.nx`、[`self/cimport.nx`](../../../self/cimport.nx) | 类型、效应、所有权、泛型、编译期解释器、C 头文件导入、每一条诊断 |
-| C 生成器 | [`self/cgen.nx`](../../../self/cgen.nx) | 每个程序一个 C 文件 |
-| 驱动 | [`self/nx.nx`](../../../self/nx.nx) | build、run、test、check、emit-c、tir；内嵌标准库 |
-| 工具 | [`self/fmt.nx`](../../../self/fmt.nx)、[`self/doc.nx`](../../../self/doc.nx)、[`self/tools.nx`](../../../self/tools.nx)、[`self/size.nx`](../../../self/size.nx)、[`self/manifest.nx`](../../../self/manifest.nx)、[`self/ship.nx`](../../../self/ship.nx)、[`self/lsp.nx`](../../../self/lsp.nx)、[`self/repl.nx`](../../../self/repl.nx) | 格式化器、文档生成器、各类报告、包管理、`ship`、语言服务器、REPL |
+| C 生成器 | [`self/cgen.nx`](../../../self/cgen.nx) | 每个程序一个 C 文件；大型程序的调试构建每个模块一个，未改动的复用 |
+| 驱动 | [`self/nx.nx`](../../../self/nx.nx) | build、run、test、bench、debug、check、emit-c、tir；内嵌标准库 |
+| 工具 | [`self/fmt.nx`](../../../self/fmt.nx)、[`self/doc.nx`](../../../self/doc.nx)、[`self/tools.nx`](../../../self/tools.nx)、[`self/size.nx`](../../../self/size.nx)、[`self/manifest.nx`](../../../self/manifest.nx)、[`self/ship.nx`](../../../self/ship.nx)、[`self/lsp.nx`](../../../self/lsp.nx)、[`self/lsp_index.nx`](../../../self/lsp_index.nx)、[`self/fix.nx`](../../../self/fix.nx)、[`self/repl.nx`](../../../self/repl.nx) | 格式化器、文档生成器、各类报告、包管理、`ship`、语言服务器及其对已检查程序的索引、`nx fix`、REPL |
 
 每个示例、每个规范用例和每个编译失败用例都经由自举出的编译器运行，由本身就是
 Nexium 程序的测试框架（`nx run tests/run.nx`）驱动，在 CI 中于三个平台上运行，完全
@@ -376,17 +460,17 @@ Nexium 程序的测试框架（`nx run tests/run.nx`）驱动，在 CI 中于三
 
 | 语言 | 行数 | 占比 | 是什么 |
 | --- | --- | --- | --- |
-| Nexium | 38,374 | 85.4% | 编译器及其工具（`self/` 下 27,100 行）、标准库、测试框架与 fuzzer、示例、教程程序、nexium-gui、站点生成器、规范测试套件、四个基准程序 |
-| C | 2,925 | 6.5% | 运行时 `nx_rt.h`、GUI 窗口层、随附的测试用 C、一个基准程序 |
-| Python | 1,063 | 2.4% | 发布脚本（说明、包清单、wheel 与 npm 包、std 文档）、基准运行器、一个基准程序 |
-| 编辑器文件 | 1,028 | 2.3% | tree-sitter 查询、Emacs Lisp、Vim script、Neovim 用的 Lua，以及 Zed 对扩展要求的 25 行 Rust |
-| JavaScript、TypeScript | 550 | 1.2% | VS Code 扩展和 tree-sitter 语法 |
-| Inno Setup、shell、PowerShell | 777 | 1.7% | Windows 安装程序脚本、`install.sh`、`install.ps1`、Chocolatey 脚本 |
-| Rust、Go、Ruby | 236 | 0.5% | Rust 与 Go 各一个基准程序，以及 Homebrew 公式 |
+| Nexium | 48,804 | 87.2% | 编译器及其工具（`self/` 下 33,000 行）、标准库（21 个模块）、测试框架与 fuzzer、示例、教程程序、nexium-gui、站点生成器、四个基准程序 |
+| C | 2,542 | 4.5% | 运行时 `nx_rt.h`、GUI 窗口层、随附的测试用 C、一个基准程序 |
+| Python | 1,492 | 2.7% | 发布脚本（说明、包清单、wheel 与 npm 包、std 文档）、gdb 与 lldb 格式化器、基准运行器和四个基准程序 |
+| 编辑器文件 | 1,103 | 2.0% | tree-sitter 查询、Emacs Lisp、Vim script、Neovim 用的 Lua、一个 Pygments 词法分析器，以及 Zed 对扩展要求的 25 行 Rust |
+| JavaScript、TypeScript | 939 | 1.7% | VS Code 扩展、tree-sitter 语法，以及 playground 的 WASI 层 |
+| Inno Setup、shell、PowerShell | 855 | 1.5% | Windows 安装程序脚本、`install.sh`、`install.ps1`、Chocolatey 脚本、自举脚本 |
+| Rust、Go、Ruby | 213 | 0.4% | Rust 与 Go 各四个基准程序，以及 Homebrew 公式 |
 
 编译器里没有 Rust：第一个编译器推动了移植并在 1.0 时被删除（决策 90）。剩下的 Rust
-是 Zed 扩展的胶水代码，由 Zed 编译为 WebAssembly，以及一个用来对照测量的基准程序，
-旁边是它的 Go 孪生版本。Zig 不在表中，因为树里没有 Zig
+是 Zed 扩展的胶水代码，由 Zed 编译为 WebAssembly，以及四个用来对照测量的基准程序，
+旁边是它们的 Go 孪生版本。Zig 不在表中，因为树里没有 Zig
 源码：`zig cc` 是 `nx` 运行的 C 编译器（Windows 安装程序随附，安装脚本下载），正如
 C 编译器是拿来用的，不是拿来写的。
 
@@ -394,7 +478,7 @@ C 编译器是拿来用的，不是拿来写的。
 
 ```
 bootstrap/      构建编译器所用的 C 种子，以及构建脚本
-runtime/        nx_rt.h，嵌入每一个生成的 C 文件
+runtime/        nx_rt.h，嵌入每一个生成的 C 文件；nx debug 的 gdb 与 lldb 格式化器
 std/            用 Nexium 写的标准库，内嵌于编译器
 self/           用 Nexium 写的编译器，逐阶段
 gui/            nexium-gui：Nexium 即时模式 GUI、演示，以及 C 平台层
@@ -402,7 +486,7 @@ editors/        VS Code 扩展、tree-sitter 语法，以及另外十种编辑�
 examples/       带记录输出的程序，由测试运行
 topo/           教程：各章及其展示的程序（由测试运行）
 site/           文档站点生成器，一个 Nexium 程序
-tests/          测试框架（run.nx）、规范一致性套件（tests/spec）和编译失败用例
+tests/          测试框架（run.nx）、规范一致性套件（tests/spec）、编译失败用例、调试器检查
 docs/           工作原理、语言参考、嵌入指南、i18n/ 下的翻译
 bench/          数字页背后的五种语言四个程序
 installers/     Windows 安装程序脚本、install.sh 与 install.ps1、winget 与 Chocolatey 清单
