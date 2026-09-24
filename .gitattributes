@@ -34,3 +34,7 @@ topo/code/data/* text eol=lf
 *.lua text eol=lf
 *.el text eol=lf
 *.nanorc text eol=lf
+# embedded by the compiler; nx debug writes them beside the binary
+runtime/*.py text eol=lf
+# command files the debuggers read (tests/debug/check.sh)
+tests/debug/*.txt text eol=lf
