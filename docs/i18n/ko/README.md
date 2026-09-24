@@ -131,6 +131,8 @@ curl -fsSL https://raw.githubusercontent.com/Londopy/nexium/main/installers/inst
 
 **브라우저에서**: [저장소를 Codespace에서 열면](https://codespaces.new/Londopy/nexium) 아무것도 설치하지 않고 1분 안에 `nx run examples/hello.nx`가 실행됩니다.
 
+**노트북에서**: [Google Colab](https://colab.research.google.com)이나 Jupyter에서 `!pip install -q nexium-lang` 후, `%%writefile` 셀이 쓴 파일에 `!nx run hello.nx`([세 셀](../../install.md#in-a-notebook-colab-and-jupyter), 영어).
+
 **Homebrew와 Scoop**: 이 저장소가 곧 tap이고, Scoop의 bucket은 [Londopy/scoop-bucket](https://github.com/Londopy/scoop-bucket)입니다(Scoop 자체 업데이터가 최신으로 유지).
 
 ```bash

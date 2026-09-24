@@ -132,6 +132,8 @@ C コンパイラを用意し（macOS では Xcode のツール、Linux では�
 
 **ブラウザで**：[リポジトリを Codespace で開けば](https://codespaces.new/Londopy/nexium)、何もインストールせずに 1 分で `nx run examples/hello.nx` が動きます。
 
+**ノートブックで**：[Google Colab](https://colab.research.google.com) や Jupyter では `!pip install -q nexium-lang` のあと、`%%writefile` のセルが書いたファイルに `!nx run hello.nx`（[3 つのセル](../../install.md#in-a-notebook-colab-and-jupyter)、英語）。
+
 **Homebrew と Scoop**：このリポジトリ自体が tap で、Scoop の bucket は [Londopy/scoop-bucket](https://github.com/Londopy/scoop-bucket) です（Scoop 自身の更新機能で最新に保たれます）。
 
 ```bash

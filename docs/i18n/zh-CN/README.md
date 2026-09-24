@@ -128,6 +128,8 @@ curl -fsSL https://raw.githubusercontent.com/Londopy/nexium/main/installers/inst
 
 **在浏览器中**：[在 Codespace 中打开仓库](https://codespaces.new/Londopy/nexium)，一分钟内即可运行 `nx run examples/hello.nx`，无需安装任何东西。
 
+**在笔记本中**：在 [Google Colab](https://colab.research.google.com) 或 Jupyter 里先 `!pip install -q nexium-lang`，再对 `%%writefile` 单元写出的文件运行 `!nx run hello.nx`（[三个单元](../../install.md#in-a-notebook-colab-and-jupyter)，英文）。
+
 **Homebrew 与 Scoop**：这个仓库本身就是 tap，Scoop 的 bucket 是 [Londopy/scoop-bucket](https://github.com/Londopy/scoop-bucket)，由 Scoop 自己的更新器保持最新。
 
 ```bash

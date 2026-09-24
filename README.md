@@ -143,6 +143,8 @@ on Linux when nothing is found), and adds `nx` to your PATH.
 
 **In the browser**: [open the repository in a Codespace](https://codespaces.new/Londopy/nexium) and `nx run examples/hello.nx` runs in a minute, nothing installed.
 
+**In a notebook**: in [Google Colab](https://colab.research.google.com) or Jupyter, `!pip install -q nexium-lang`, then `!nx run hello.nx` on a file a `%%writefile` cell wrote ([the three cells](docs/install.md#in-a-notebook-colab-and-jupyter)).
+
 **Homebrew and Scoop**: the repository is its own tap, and Scoop's bucket is [Londopy/scoop-bucket](https://github.com/Londopy/scoop-bucket), kept current by Scoop's own updater.
 
 ```bash

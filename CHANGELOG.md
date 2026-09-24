@@ -33,6 +33,10 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 - `std.deque`: `Deque(T)`, both ends in O(1) amortized (two Lists back to
   back): `push_front`, `push_back`, `pop_front`, `pop_back`, `get`, `first`,
   `last`.
+- Nexium in a notebook: `docs/install.md` shows the three cells that run a
+  program in Google Colab or Jupyter on the wheel (`!pip install -q
+  nexium-lang`, a `%%writefile` cell holding the program, `!nx run`), tried
+  in Colab; the README's Install section points at them.
 
 ### Changed
 

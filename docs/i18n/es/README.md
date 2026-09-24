@@ -136,6 +136,8 @@ PATH.
 
 **En el navegador**: [abre el repositorio en un Codespace](https://codespaces.new/Londopy/nexium) y `nx run examples/hello.nx` funciona en un minuto, sin instalar nada.
 
+**En un notebook**: en [Google Colab](https://colab.research.google.com) o Jupyter, `!pip install -q nexium-lang` y luego `!nx run hello.nx` sobre un archivo que escribió una celda `%%writefile` ([las tres celdas](../../install.md#in-a-notebook-colab-and-jupyter), en inglés).
+
 **Homebrew y Scoop**: el repositorio es su propio tap, y el bucket de Scoop es [Londopy/scoop-bucket](https://github.com/Londopy/scoop-bucket), al día gracias al actualizador del propio Scoop.
 
 ```bash

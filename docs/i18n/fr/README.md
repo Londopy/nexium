@@ -134,6 +134,8 @@ ajoute `nx` à votre PATH.
 
 **Dans le navigateur** : [ouvrez le dépôt dans un Codespace](https://codespaces.new/Londopy/nexium) et `nx run examples/hello.nx` tourne en une minute, sans rien installer.
 
+**Dans un notebook** : dans [Google Colab](https://colab.research.google.com) ou Jupyter, `!pip install -q nexium-lang`, puis `!nx run hello.nx` sur un fichier écrit par une cellule `%%writefile` ([les trois cellules](../../install.md#in-a-notebook-colab-and-jupyter), en anglais).
+
 **Homebrew et Scoop** : le dépôt est son propre tap, et le bucket Scoop est [Londopy/scoop-bucket](https://github.com/Londopy/scoop-bucket), tenu à jour par l'outil de mise à jour de Scoop lui-même.
 
 ```bash

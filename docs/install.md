@@ -24,6 +24,7 @@ workflow itself:
 | Arch Linux | `yay -S nexium-bin` (or any AUR helper) | [`installers/aur`](https://github.com/Londopy/nexium/tree/main/installers/aur), written at each release; on the AUR once its first push is made |
 | mise, asdf | `mise use -g "ubi:Londopy/nexium[exe=nx]"` | the release binary through mise's `ubi` backend |
 | GitHub Codespaces, dev containers | [open in a Codespace](https://codespaces.new/Londopy/nexium) | [`.devcontainer`](https://github.com/Londopy/nexium/tree/main/.devcontainer) on the Docker image |
+| Colab, Jupyter | `!pip install -q nexium-lang` in a notebook cell | [three cells](#in-a-notebook-colab-and-jupyter), below, on the wheel from PyPI |
 | Open VSX | the VS Code extension, for VSCodium, Cursor and the other forks | [open-vsx.org/extension/Londopy/nexium](https://open-vsx.org/extension/Londopy/nexium) |
 | Visual Studio Marketplace | the VS Code extension | pending the publisher's token |
 
@@ -167,6 +168,38 @@ package is the shape esbuild uses: `nexium-lang` has `bin/nx.js`, which
 runs the binary from `@nexium-lang/<os>-<cpu>`, the one optional
 dependency npm installs for the machine. Neither carries Zig: `nx` needs a
 C compiler as usual (`nx doctor` says what it found).
+
+## In a notebook: Colab and Jupyter
+
+The wheel is all a notebook needs: `pip install` puts `nx` on the PATH of
+the notebook's Python, and a cell that starts with `!` runs it. In
+[Google Colab](https://colab.research.google.com), three cells run a
+program:
+
+```
+!pip install -q nexium-lang
+```
+
+```
+%%writefile hello.nx
+fn main() {
+    println("hello from Colab", .{})
+}
+```
+
+```
+!nx run hello.nx
+```
+
+`%%writefile` must be the first line of its cell, with the program under
+it in the same cell; the file lands in the notebook's working directory,
+and `!nx test hello.nx` and `!nx bench hello.nx` work on it the same way.
+Colab's machine is Linux on x86-64 with gcc and no zig, so `nx` builds with
+gcc (step 7 of [How `nx` finds a C compiler](#how-nx-finds-a-c-compiler)).
+Jupyter, JupyterLab and VS Code notebooks on your own machine run the same
+cells with the C compiler `nx` finds there (`!nx doctor` says which).
+The cells stay Python, with Nexium beside them through `!nx`; a Nexium
+kernel is on the [roadmap](../ROADMAP.md#tools-only-this-language-can-have).
 
 ## Homebrew, Scoop and winget
 
