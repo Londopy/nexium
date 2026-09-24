@@ -454,6 +454,24 @@ static DWORD WINAPI nx_par_thread(LPVOID p) { nx_par_run((nx_par_task*)p); retur
 NX_INLINE size_t nx_hw_threads(void) { SYSTEM_INFO si; GetSystemInfo(&si); return si.dwNumberOfProcessors ? si.dwNumberOfProcessors : 1; }
 #else
 #include <pthread.h>
+#if defined(NX_WASM)
+/* wasm32-wasi has no threads: wasi-libc declares pthreads and defines none.
+   Starting a thread fails, so the work runs in place where the parallel
+   loop and `thread.spawn` already fall back to, and a lock has no one else
+   to wait for. (The playground's compiler links against these: its driver
+   compiles C on threads, which in the page it never does.) */
+#define pthread_create(t, attr, f, arg) ((void)(t), (void)(attr), (void)(f), (void)(arg), EAGAIN)
+#define pthread_join(t, r) ((void)(t), (void)(r), 0)
+#define pthread_mutex_init(m, a) ((void)(m), (void)(a), 0)
+#define pthread_mutex_destroy(m) ((void)(m), 0)
+#define pthread_mutex_lock(m) ((void)(m), 0)
+#define pthread_mutex_unlock(m) ((void)(m), 0)
+#define pthread_cond_init(v, a) ((void)(v), (void)(a), 0)
+#define pthread_cond_destroy(v) ((void)(v), 0)
+#define pthread_cond_wait(v, m) ((void)(v), (void)(m), 0)
+#define pthread_cond_signal(v) ((void)(v), 0)
+#define pthread_cond_broadcast(v) ((void)(v), 0)
+#endif
 static void* nx_par_thread(void* p) { nx_par_run((nx_par_task*)p); return NULL; }
 NX_INLINE size_t nx_hw_threads(void) { long n = sysconf(_SC_NPROCESSORS_ONLN); return n > 0 ? (size_t)n : 1; }
 #endif

@@ -12,6 +12,11 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Changed
 
+- A program that uses `std.thread` or `for parallel` builds for
+  `wasm32-wasi`, which has no threads: starting one fails, so its work runs
+  in place, as it already did wherever a thread could not be started, and a
+  lock has no one else to wait for. (The playground's compiler needs it:
+  its driver compiles C on threads, which in the page it never does.)
 - The view rules V1 to V5 (specification 5.6 and 5.7) are errors, as 1.2
   said they would be: a warning in one release, an error in the next
   (docs/stability.md). No program in this repository had one left.
