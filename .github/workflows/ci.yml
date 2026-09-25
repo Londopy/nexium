@@ -2,7 +2,8 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # release-X.Y carries a patch release's fixes from its tag
+    branches: [main, "release-*"]
     # prose and pictures: CI (prose) answers for the required checks and
     # validates the changelog, Pages builds the site; the matrix stays idle
     paths-ignore:
