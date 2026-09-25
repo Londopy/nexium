@@ -1,0 +1,296 @@
+// std.log: leveled, structured logging, written in Nexium: a message and
+// named fields, as a line of text a person reads or a line of JSON a
+// machine reads, on stderr.
+//
+// `import std.log` then:
+//
+//     var l = log.Logger.new(log.Level.Info)
+//     l.info("listening", [log.int("port", 8080), log.str("host", host)][..])
+//     l.warn("slow answer", [log.float("seconds", 2.5)][..])
+//     l.debug("not shown: below the logger's level", [])
+//
+//     var j = log.Logger.json(log.Level.Debug)      // one JSON object a line
+//     let level = log.parse_level(env.get_or("LOG", "info")) orelse log.Level.Info
+//     var request = l.with([log.str("id", id)][..]) // every line carries the id
+//
+// A text line is `2026-09-25T18:04:05.120Z INFO listening port=8080
+// host=0.0.0.0`, a value with a space, `=` or a quote in quotes; a JSON line
+// is `{"time":"2026-09-25T18:04:05.120Z","level":"info","msg":"listening",
+// "port":8080,"host":"0.0.0.0"}`.
+
+import std.json
+import std.time
+
+/// How much a line matters; a logger writes its level and those above.
+pub enum Level {
+    Debug,
+    Info,
+    Warn,
+    Error,
+}
+
+/// The level named by `debug`, `info`, `warn` (or `warning`) or `error`, in
+/// any case; null for anything else.
+pub fn parse_level(text: []u8) -> ?Level {
+    if text.eq_ignore_case("debug") { return Level.Debug }
+    if text.eq_ignore_case("info") { return Level.Info }
+    if text.eq_ignore_case("warn") or text.eq_ignore_case("warning") { return Level.Warn }
+    if text.eq_ignore_case("error") { return Level.Error }
+    return null
+}
+
+fn rank(l: Level) -> u8 {
+    return match l {
+        .Debug => 0,
+        .Info => 1,
+        .Warn => 2,
+        .Error => 3,
+    }
+}
+
+fn level_name(l: Level) -> []u8 {
+    return match l {
+        .Debug => "debug",
+        .Info => "info",
+        .Warn => "warn",
+        .Error => "error",
+    }
+}
+
+/// A named value on a line.
+pub struct Field {
+    key: String
+    value: String
+    /// written as text (quoted in JSON) rather than a number or a boolean
+    quoted: bool
+}
+
+/// A text field.
+pub fn str(key: []u8, value: []u8) -> Field {
+    return Field{ .key = String.from(key), .value = String.from(value), .quoted = true }
+}
+
+/// A whole-number field.
+pub fn int(key: []u8, value: i64) -> Field {
+    return Field{ .key = String.from(key), .value = format("{}", .{value}), .quoted = false }
+}
+
+/// A floating-point field; a value JSON cannot hold (NaN, the infinities) is
+/// written as text.
+pub fn float(key: []u8, value: f64) -> Field {
+    let finite = value == value and value - value == 0.0
+    return Field{ .key = String.from(key), .value = format("{}", .{value}), .quoted = !finite }
+}
+
+/// A true-or-false field.
+pub fn flag(key: []u8, value: bool) -> Field {
+    return Field{ .key = String.from(key), .value = String.from(if value { "true" } else { "false" }), .quoted = false }
+}
+
+/// Where lines go and what they look like.
+pub struct Logger {
+    level: Level
+    json: bool
+    /// whether a line starts with the time (UTC, to the millisecond)
+    timestamps: bool
+    /// the fields every line carries, before its own
+    fields: List(Field)
+    /// whether lines are kept in `kept` instead of written to stderr
+    keep: bool
+    kept: List(String)
+}
+
+impl Logger {
+    /// Text lines on stderr, from `level` up.
+    pub fn new(level: Level) -> Logger {
+        return Logger{ .level = level, .json = false, .timestamps = true, .fields = List(Field).new(), .keep = false, .kept = List(String).new() }
+    }
+
+    /// JSON lines on stderr, from `level` up.
+    pub fn json(level: Level) -> Logger {
+        var l = Logger.new(level)
+        l.json = true
+        return l
+    }
+
+    /// A logger that keeps its lines in `kept` rather than writing them:
+    /// for tests of what a program logs.
+    pub fn keeping(level: Level, json: bool) -> Logger {
+        var l = Logger.new(level)
+        l.json = json
+        l.timestamps = false
+        l.keep = true
+        return l
+    }
+
+    /// A logger like this one whose lines carry `fields` too.
+    pub fn with(self: *Self, fields: []Field) -> Logger {
+        var l = Logger{ .level = self.level, .json = self.json, .timestamps = self.timestamps, .fields = List(Field).new(), .keep = self.keep, .kept = List(String).new() }
+        for f in self.fields { l.fields.append(Field{ .key = f.key.clone(), .value = f.value.clone(), .quoted = f.quoted }) }
+        for f in fields { l.fields.append(Field{ .key = f.key.clone(), .value = f.value.clone(), .quoted = f.quoted }) }
+        return l
+    }
+
+    /// Does this logger write lines of `level`?
+    pub fn enabled(self: *Self, level: Level) -> bool {
+        return rank(level) >= rank(self.level)
+    }
+
+    /// A line at `level`, if the logger writes that level.
+    pub fn log(self: *mut Self, level: Level, msg: []u8, fields: []Field) {
+        if !self.enabled(level) { return }
+        let line = if self.json { self.json_line(level, msg, fields) } else { self.text_line(level, msg, fields) }
+        if self.keep {
+            self.kept.append(line)
+        } else {
+            eprintln("{}", .{line})
+        }
+    }
+
+    pub fn debug(self: *mut Self, msg: []u8, fields: []Field) { self.log(Level.Debug, msg, fields) }
+    pub fn info(self: *mut Self, msg: []u8, fields: []Field) { self.log(Level.Info, msg, fields) }
+    pub fn warn(self: *mut Self, msg: []u8, fields: []Field) { self.log(Level.Warn, msg, fields) }
+    /// A line at `Level.Error` (`error` itself is a keyword).
+    pub fn err(self: *mut Self, msg: []u8, fields: []Field) { self.log(Level.Error, msg, fields) }
+
+    fn text_line(self: *Self, level: Level, msg: []u8, fields: []Field) -> String {
+        var out = String.new()
+        if self.timestamps {
+            out.append(time.now_utc().iso())
+            out.push_byte(' ')
+        }
+        let name = level_name(level)
+        for c in name { out.push_byte(if c >= 'a' and c <= 'z' { c - 32 } else { c }) }
+        out.push_byte(' ')
+        out.append(msg)
+        for f in self.fields { text_field(&mut out, &f) }
+        for f in fields { text_field(&mut out, &f) }
+        return out
+    }
+
+    fn json_line(self: *Self, level: Level, msg: []u8, fields: []Field) -> String {
+        var out = String.from("{")
+        if self.timestamps {
+            out.append("\"time\":")
+            out.append(quote(time.now_utc().iso()[..]))
+            out.push_byte(',')
+        }
+        out.append("\"level\":")
+        out.append(quote(level_name(level)))
+        out.append(",\"msg\":")
+        out.append(quote(msg))
+        for f in self.fields { json_field(&mut out, &f) }
+        for f in fields { json_field(&mut out, &f) }
+        out.push_byte('}')
+        return out
+    }
+}
+
+// a JSON string: `"` and `\` escaped, control characters as `\n`, `\t`,
+// `\r` or `\u00XX`
+fn quote(s: []u8) -> String {
+    var out = String.with_capacity(s.len + 2)
+    out.push_byte('"')
+    for c in s {
+        if c == '"' or c == '\\' {
+            out.push_byte('\\')
+            out.push_byte(c)
+        } else if c == '\n' {
+            out.append("\\n")
+        } else if c == '\t' {
+            out.append("\\t")
+        } else if c == '\r' {
+            out.append("\\r")
+        } else if c < 32 {
+            out.append("\\u00")
+            out.push_byte("0123456789abcdef"[(c >> 4) as usize])
+            out.push_byte("0123456789abcdef"[(c & 15) as usize])
+        } else {
+            out.push_byte(c)
+        }
+    }
+    out.push_byte('"')
+    return out
+}
+
+// `key=value`, the value in quotes when it has a space, `=`, a quote or
+// nothing at all
+fn text_field(out: *mut String, f: *Field) {
+    out.push_byte(' ')
+    out.append(f.key)
+    out.push_byte('=')
+    var plain = f.value.len > 0
+    for c in f.value {
+        if c <= ' ' or c == '=' or c == '"' { plain = false }
+    }
+    if plain {
+        out.append(f.value)
+        return
+    }
+    out.push_byte('"')
+    for c in f.value {
+        if c == '"' or c == '\\' { out.push_byte('\\') }
+        if c == '\n' {
+            out.append("\\n")
+            continue
+        }
+        out.push_byte(c)
+    }
+    out.push_byte('"')
+}
+
+fn json_field(out: *mut String, f: *Field) {
+    out.push_byte(',')
+    out.append(quote(f.key[..]))
+    out.push_byte(':')
+    if f.quoted { out.append(quote(f.value[..])) } else { out.append(f.value) }
+}
+
+// ------------------------------------------------------------------ tests
+
+test "levels" {
+    expect(parse_level("DEBUG").? == Level.Debug)
+    expect(parse_level("warning").? == Level.Warn)
+    expect(parse_level("Error").? == Level.Error)
+    expect(parse_level("loud") == null)
+    var l = Logger.keeping(Level.Warn, false)
+    l.debug("no", [])
+    l.info("no", [])
+    l.warn("yes", [])
+    l.err("yes too", [])
+    expect_eq(l.kept.len, 2)
+    expect_eq(l.kept[0], "WARN yes")
+    expect_eq(l.kept[1], "ERROR yes too")
+    expect(l.enabled(Level.Error) and !l.enabled(Level.Info))
+}
+
+test "text lines" {
+    var l = Logger.keeping(Level.Debug, false)
+    l.info("listening", [int("port", 8080), str("host", "0.0.0.0"), flag("tls", true)][..])
+    l.info("asked", [str("path", "/a b"), str("q", "x=\"1\""), str("empty", "")][..])
+    expect_eq(l.kept[0], "INFO listening port=8080 host=0.0.0.0 tls=true")
+    expect_eq(l.kept[1], "INFO asked path=\"/a b\" q=\"x=\\\"1\\\"\" empty=\"\"")
+}
+
+test "JSON lines, and fields every line carries" {
+    var l = Logger.keeping(Level.Info, true)
+    var r = l.with([str("id", "r-7")][..])
+    r.warn("slow", [float("seconds", 2.5), int("tries", -1)][..])
+    expect_eq(r.kept[0], "{\"level\":\"warn\",\"msg\":\"slow\",\"id\":\"r-7\",\"seconds\":2.5,\"tries\":-1}")
+    let parsed = json.parse(r.kept[0][..]) catch {
+        panic("a JSON line did not parse")
+    }
+    _ = parsed
+    r.info("quote \"this\"\n", [float("bad", math.NAN)][..])
+    expect(r.kept[1][..].find("\"msg\":\"quote \\\"this\\\"\\n\"") != null)
+    expect(r.kept[1][..].find("\"bad\":\"nan\"") != null or r.kept[1][..].find("\"bad\":\"NaN\"") != null)
+}
+
+test "timestamps come first, in UTC" {
+    var l = Logger.keeping(Level.Info, false)
+    l.timestamps = true
+    l.info("tick", [])
+    let line = l.kept[0].clone()
+    expect(line[..].ends_with("Z INFO tick"))
+    expect(time.parse_iso(line[0..line[..].find(" ").?]) != null)
+}

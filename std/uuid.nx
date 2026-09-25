@@ -1,0 +1,196 @@
+// std.uuid: UUIDs (RFC 9562), written in Nexium: random ones (version 4),
+// ones that sort by the time they were made (version 7), and their text.
+//
+// `import std.uuid` then:
+//
+//     let id = try uuid.v4()                        // 122 random bits
+//     println("{}", .{id.text()})                    // "9f1c2e7a-4b3d-4e8f-a1b2-c3d4e5f60718"
+//     let row = try uuid.v7()                       // the time first: sorts by creation
+//     let back = uuid.parse(text) orelse return error.BadId
+//
+// The random bits come from `random.secure`, the operating system's
+// generator, so an id cannot be guessed from the ones before it; `v4` and
+// `v7` fail only where the system has no generator (`IoError`).
+
+/// A UUID: 16 bytes, most significant first.
+pub struct Uuid {
+    bytes: [16]u8
+}
+
+const HEX: []u8 = "0123456789abcdef"
+
+impl Uuid {
+    /// The canonical text: 32 lowercase hex digits in groups of 8, 4, 4, 4
+    /// and 12, joined by hyphens.
+    pub fn text(self: *Self) -> String {
+        var out = String.with_capacity(36)
+        for b, i in self.bytes {
+            if i == 4 or i == 6 or i == 8 or i == 10 { out.push_byte('-') }
+            out.push_byte(HEX[(b >> 4) as usize])
+            out.push_byte(HEX[(b & 15) as usize])
+        }
+        return out
+    }
+
+    /// The version: 4 for random, 7 for time-ordered, 0 for the nil UUID.
+    pub fn version(self: *Self) -> u8 {
+        return self.bytes[6] >> 4
+    }
+
+    /// Is every bit zero?
+    pub fn is_nil(self: *Self) -> bool {
+        for b in self.bytes { if b != 0 { return false } }
+        return true
+    }
+
+    /// When a version 7 UUID was made, in milliseconds since the epoch; null
+    /// for any other version.
+    pub fn time_ms(self: *Self) -> ?i64 {
+        if self.version() != 7 { return null }
+        var ms: i64 = 0
+        for i in 0..6 { ms = (ms << 8) | (self.bytes[i] as i64) }
+        return ms
+    }
+
+    /// Is it the same UUID?
+    pub fn eq(self: *Self, other: *Uuid) -> bool {
+        for i in 0..16 { if self.bytes[i] != other.bytes[i] { return false } }
+        return true
+    }
+}
+
+// the version in the top four bits of byte 6, the RFC 4122 variant (10) in
+// the top two of byte 8
+fn stamp(b: *mut[16]u8, version: u8) {
+    b.*[6] = (b.*[6] & 15) | (version << 4)
+    b.*[8] = (b.*[8] & 63) | 128
+}
+
+/// A random UUID (version 4).
+pub fn v4() -> !Uuid {
+    var b: [16]u8 = undefined
+    try random.secure(b[..])
+    stamp(&mut b, 4)
+    return Uuid{ .bytes = b }
+}
+
+/// A UUID that begins with the time it was made (version 7): 48 bits of
+/// milliseconds since the epoch, then 74 random bits, so ids made later sort
+/// after earlier ones, as text and as bytes, to the millisecond.
+pub fn v7() -> !Uuid {
+    return v7_at(time.now())
+}
+
+fn v7_at(ms: i64) -> !Uuid {
+    var b: [16]u8 = undefined
+    try random.secure(b[..])
+    var t = ms
+    var i: usize = 6
+    while i > 0 {
+        i -= 1
+        b[i] = @truncate(u8, t & 255)
+        t = t >> 8
+    }
+    stamp(&mut b, 7)
+    return Uuid{ .bytes = b }
+}
+
+/// The nil UUID, every bit zero.
+pub fn nil() -> Uuid {
+    var b: [16]u8 = undefined
+    for i in 0..16 { b[i] = 0 }
+    return Uuid{ .bytes = b }
+}
+
+/// The max UUID, every bit one.
+pub fn max() -> Uuid {
+    var b: [16]u8 = undefined
+    for i in 0..16 { b[i] = 255 }
+    return Uuid{ .bytes = b }
+}
+
+/// A UUID from its 16 bytes; null for any other length.
+pub fn from_bytes(data: []u8) -> ?Uuid {
+    if data.len != 16 { return null }
+    var b: [16]u8 = undefined
+    for i in 0..16 { b[i] = data[i] }
+    return Uuid{ .bytes = b }
+}
+
+fn hex_value(c: u8) -> ?u8 {
+    if c >= '0' and c <= '9' { return c - '0' }
+    if c >= 'a' and c <= 'f' { return c - 'a' + 10 }
+    if c >= 'A' and c <= 'F' { return c - 'A' + 10 }
+    return null
+}
+
+/// A UUID from its text: the canonical form with hyphens, in either case,
+/// or the 32 hex digits alone, either one also in braces or after
+/// `urn:uuid:`. Null for anything else.
+pub fn parse(text: []u8) -> ?Uuid {
+    var s = text
+    if s.len > 9 and s[0..9].eq_ignore_case("urn:uuid:") { s = s[9..s.len] }
+    else if s.len >= 2 and s[0] == '{' and s[s.len - 1] == '}' { s = s[1..s.len - 1] }
+    let hyphens = s.len == 36
+    if !hyphens and s.len != 32 { return null }
+    var b: [16]u8 = undefined
+    var n: usize = 0
+    var i: usize = 0
+    while i < s.len {
+        if hyphens and (i == 8 or i == 13 or i == 18 or i == 23) {
+            if s[i] != '-' { return null }
+            i += 1
+            continue
+        }
+        let hi = hex_value(s[i]) orelse return null
+        let lo = hex_value(s[i + 1]) orelse return null
+        b[n] = (hi << 4) | lo
+        n += 1
+        i += 2
+    }
+    return Uuid{ .bytes = b }
+}
+
+// ------------------------------------------------------------------ tests
+
+test "version 4: random, stamped, and not twice the same" {
+    let a = try v4()
+    let b = try v4()
+    expect_eq(a.version(), 4)
+    expect_eq(a.bytes[8] >> 6, 2)
+    expect(!a.eq(&b))
+    let text = a.text()
+    expect_eq(text.len, 36)
+    expect_eq(text[14], '4')
+    expect(parse(text[..]).?.eq(&a))
+}
+
+test "version 7: the time first, so later ids sort after" {
+    let early = try v7_at(1700000000000)
+    let late = try v7_at(1700000000001)
+    expect_eq(early.version(), 7)
+    expect_eq(early.time_ms().?, 1700000000000)
+    expect(early.text()[..] < late.text()[..])
+    expect_eq(early.text()[0..13], "018bcfe5-6800")
+    let now = try v7()
+    expect(now.time_ms().? > 1700000000000)
+    expect((try v4()).time_ms() == null)
+}
+
+test "text in and out" {
+    let t = "9F1C2E7A-4B3D-4E8F-A1B2-C3D4E5F60718"
+    let id = parse(t).?
+    expect_eq(id.text(), "9f1c2e7a-4b3d-4e8f-a1b2-c3d4e5f60718")
+    expect(parse("{9f1c2e7a-4b3d-4e8f-a1b2-c3d4e5f60718}").?.eq(&id))
+    expect(parse("urn:uuid:9f1c2e7a-4b3d-4e8f-a1b2-c3d4e5f60718").?.eq(&id))
+    expect(parse("9f1c2e7a4b3d4e8fa1b2c3d4e5f60718").?.eq(&id))
+    expect(parse("9f1c2e7a-4b3d-4e8f-a1b2-c3d4e5f6071") == null)
+    expect(parse("9f1c2e7a+4b3d-4e8f-a1b2-c3d4e5f60718") == null)
+    expect(parse("9f1c2e7a-4b3d-4e8f-a1b2-c3d4e5f6071g") == null)
+    expect(parse("") == null)
+    expect_eq(nil().text(), "00000000-0000-0000-0000-000000000000")
+    expect(nil().is_nil())
+    expect_eq(max().text(), "ffffffff-ffff-ffff-ffff-ffffffffffff")
+    expect(from_bytes(id.bytes[..]).?.eq(&id))
+    expect(from_bytes("short") == null)
+}

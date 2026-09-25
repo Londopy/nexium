@@ -43,6 +43,50 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   `IoError` only where there is no generator (decision 119). It is what
   `std.uuid`, a SipHash-keyed `Map` and a TLS client on Windows were waiting
   for.
+- `std.path`: paths as text, without the file system. `join`, `join_all`,
+  `parent`, `base_name`, `extension`, `stem`, `with_extension` and
+  `normalize` (which `std.fs` had, and whose `std.fs` names now call these);
+  `root`, `components`, `is_absolute`, `is_relative`; `starts_with` and
+  `strip_prefix`, compared component by component (`a/bc` does not start
+  with `a/b`); `relative`, the path from one directory to another
+  (`src/app`, `src/lib/x.nx` -> `../lib/x.nx`); `to_slash` and
+  `to_native`.
+- `std.env`: variables (`get`, `get_or`, `set`, `unset`, `all`), `home`
+  and `expand_home`, and the directories each platform expects a program to
+  keep its files in: `config_dir`, `data_dir`, `cache_dir` and `state_dir`,
+  from the XDG variables or `~/.config` and its kin on Linux and the BSDs,
+  `~/Library` on macOS, and `APPDATA` or `LOCALAPPDATA` on Windows. `.env`
+  files: `parse_dotenv` (comments, `export`, single and double quotes) and
+  `load_dotenv`, which sets what is not set yet, or everything when asked.
+- `std.uuid`: UUIDs as RFC 9562 has them. `v4` (random) and `v7` (the time
+  first, so later ids sort after earlier ones), both from `random.secure`;
+  `parse` (the canonical form, the bare hex, braces or `urn:uuid:`),
+  `text`, `version`, `time_ms`, `nil`, `max` and `from_bytes`.
+- `std.log`: leveled, structured logging. A `Logger` writes text lines
+  (`2026-09-25T18:04:05.120Z INFO listening port=8080`) or JSON lines to
+  stderr from its level up, with fields made by `str`, `int`, `float` and
+  `flag`; `with` gives a logger whose every line carries some fields,
+  `parse_level` reads a level from configuration, and `keeping` keeps the
+  lines for a test to read.
+- `std.csv`: comma-separated values as RFC 4180 has them. `parse`,
+  `parse_with` (any separator: tabs, semicolons), `by_header` (each row a
+  map from the header's names), and `field`, `to_text` and
+  `to_text_with` for writing. A stray quote or a quoted field never closed
+  is an error, not a guess.
+- `std.toml`: TOML 1.0. `parse` reads a document into `Toml` values: every
+  string, integer, float, date and time form, arrays, inline tables and
+  arrays of tables, under TOML's rules that a key and a table are defined
+  once; `problem` says on which line a document breaks one and why. `get`,
+  `lookup` (`package.name`), `at`, `len`, `keys`, `as_str`, `as_int`,
+  `as_float`, `as_bool` and `as_time` read it, and `stringify` writes one.
+- `std.base64`: base64 as RFC 4648 has it: `encode` and `decode` in the
+  standard alphabet, `encode_url` and `decode_url` in the URL-safe one
+  without padding, as JSON Web Tokens carry it. Decoding is strict (a
+  character outside the alphabet, misplaced padding or an impossible length
+  is an error); `std.bytes.unbase64` stays the lenient reader.
+- The compiler reads `nexium.toml` with `std.toml`, where it had a reader
+  of its own for a subset: a manifest may use all of TOML, and one that is
+  not TOML says on which line and why.
 - Nexium in a notebook: `docs/install.md` shows the three cells that run a
   program in Google Colab or Jupyter on the wheel (`!pip install -q
   nexium-lang`, a `%%writefile` cell holding the program, `!nx run`), tried

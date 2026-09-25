@@ -9,9 +9,12 @@
 //     let cfg = fs.join(fs.parent(argv0), "app.toml")
 //
 // The platform calls are the `io.*` builtins (documented in the language
-// reference); this module adds paths, sorted listings, recursive create and
-// remove, and a walker. Paths are byte strings; `/` and `\` both separate
-// components on every platform, and results use `/` unless the input used `\`.
+// reference); this module adds sorted listings, recursive create and remove,
+// and a walker. Its path functions call std.path's, which has more. Paths
+// are byte strings; `/` and `\` both separate components on every
+// platform, and results use `/` unless the input used `\`.
+
+import std.path
 
 // ------------------------------------------------------------------ queries
 
@@ -161,128 +164,49 @@ pub fn temp_path(prefix: []u8) -> String {
 }
 
 // ------------------------------------------------------------------ paths
+// std.path has these; they stay here for the programs written before it.
 
-fn is_sep(c: u8) -> bool {
-    return c == '/' or c == '\\'
-}
-
-/// The separator a path uses: `\` when it contains one, else `/`.
-fn sep_of(path: []u8) -> u8 {
-    for c in path { if c == '\\' { return '\\' } }
-    return '/'
-}
-
-/// Does the path start at a root (`/x`, `C:\x`, `C:/x`, `\\server`)?
-pub fn is_absolute(path: []u8) -> bool {
-    if path.len == 0 { return false }
-    if is_sep(path[0]) { return true }
-    return path.len >= 3 and path[1] == ':' and is_sep(path[2])
+/// Does the path start at a root (`/x`, `C:\x`, `C:/x`, `\\server`)? As `path.is_absolute`.
+pub fn is_absolute(p: []u8) -> bool {
+    return path.is_absolute(p)
 }
 
 /// `dir/name`; a separator is added only when needed, and an absolute `name`
-/// replaces `dir`.
+/// replaces `dir`. As `path.join`.
 pub fn join(dir: []u8, name: []u8) -> String {
-    if dir.len == 0 or is_absolute(name) { return String.from(name) }
-    var out = String.from(dir)
-    if name.len == 0 { return out }
-    if !is_sep(dir[dir.len - 1]) { out.push_byte(sep_of(dir)) }
-    out.append(name)
-    return out
+    return path.join(dir, name)
 }
 
 /// Everything before the last separator: `a/b/c.txt` -> `a/b`, `c.txt` -> ``,
-/// `/c.txt` -> `/`.
-pub fn parent(path: []u8) -> []u8 {
-    var end = path.len
-    while end > 0 and is_sep(path[end - 1]) { end -= 1 }
-    var i = end
-    while i > 0 and !is_sep(path[i - 1]) { i -= 1 }
-    if i == 0 { return path[0..0] }
-    var j = i
-    while j > 1 and is_sep(path[j - 1]) { j -= 1 }
-    if j == 1 and is_sep(path[0]) { return path[0..1] }
-    if j >= 2 and path[j - 1] == ':' { return path[0..j + 1] }
-    return path[0..j]
+/// `/c.txt` -> `/`. As `path.parent`.
+pub fn parent(p: []u8) -> []u8 {
+    return path.parent(p)
 }
 
-/// The last component: `a/b/c.txt` -> `c.txt`.
-pub fn base_name(path: []u8) -> []u8 {
-    var end = path.len
-    while end > 0 and is_sep(path[end - 1]) { end -= 1 }
-    var i = end
-    while i > 0 and !is_sep(path[i - 1]) { i -= 1 }
-    return path[i..end]
+/// The last component: `a/b/c.txt` -> `c.txt`. As `path.base_name`.
+pub fn base_name(p: []u8) -> []u8 {
+    return path.base_name(p)
 }
 
-/// The extension without the dot: `a/b.tar.gz` -> `gz`, `Makefile` -> ``.
-pub fn extension(path: []u8) -> []u8 {
-    let name = base_name(path)
-    var i = name.len
-    while i > 0 {
-        i -= 1
-        if name[i] == '.' {
-            if i == 0 { return name[0..0] }
-            return name[i + 1..name.len]
-        }
-    }
-    return name[0..0]
+/// The extension without the dot: `a/b.tar.gz` -> `gz`, `Makefile` -> ``. As `path.extension`.
+pub fn extension(p: []u8) -> []u8 {
+    return path.extension(p)
 }
 
-/// The base name without its extension: `a/b.tar.gz` -> `b.tar`.
-pub fn stem(path: []u8) -> []u8 {
-    let name = base_name(path)
-    var i = name.len
-    while i > 0 {
-        i -= 1
-        if name[i] == '.' {
-            if i == 0 { return name }
-            return name[0..i]
-        }
-    }
-    return name
+/// The base name without its extension: `a/b.tar.gz` -> `b.tar`. As `path.stem`.
+pub fn stem(p: []u8) -> []u8 {
+    return path.stem(p)
 }
 
-/// The path with its extension replaced (or added): `a/b.txt`, `md` -> `a/b.md`.
-pub fn with_extension(path: []u8, ext: []u8) -> String {
-    let e = extension(path)
-    var out = String.from(if e.len > 0 { path[0..path.len - e.len - 1] } else { path })
-    if ext.len > 0 {
-        out.push_byte('.')
-        out.append(ext)
-    }
-    return out
+/// The path with its extension replaced (or added): `a/b.txt`, `md` -> `a/b.md`. As `path.with_extension`.
+pub fn with_extension(p: []u8, ext: []u8) -> String {
+    return path.with_extension(p, ext)
 }
 
 /// Collapse `.` and `..` components and repeated separators:
-/// `a/./b/../c//d` -> `a/c/d`. A leading `..` is kept.
-pub fn normalize(path: []u8) -> String {
-    let sep = sep_of(path)
-    var parts = List([]u8).new()
-    var start: usize = 0
-    var i: usize = 0
-    while i <= path.len {
-        if i == path.len or is_sep(path[i]) {
-            let part = path[start..i]
-            if part.len == 0 or part == "." {
-                // skip
-            } else if part == ".." {
-                if parts.len > 0 and parts[parts.len - 1] != ".." { _ = parts.pop() }
-                else if !(path.len > 0 and is_sep(path[0])) { parts.append(part) }
-            } else {
-                parts.append(part)
-            }
-            start = i + 1
-        }
-        i += 1
-    }
-    var out = String.new()
-    if path.len > 0 and is_sep(path[0]) { out.push_byte(sep) }
-    for p, k in parts {
-        if k > 0 { out.push_byte(sep) }
-        out.append(p)
-    }
-    if out.len == 0 { out.push_byte('.') }
-    return out
+/// `a/./b/../c//d` -> `a/c/d`. A leading `..` is kept. As `path.normalize`.
+pub fn normalize(p: []u8) -> String {
+    return path.normalize(p)
 }
 
 // ------------------------------------------------------------------ helpers

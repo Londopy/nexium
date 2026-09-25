@@ -1,0 +1,399 @@
+// std.path: paths as text, written in Nexium: joining, splitting, comparing
+// and normalizing them, without touching the file system (std.fs does that).
+//
+// `import std.path` then:
+//
+//     let cfg = path.join(path.parent(argv0), "app.toml")
+//     let ext = path.extension("notes.tar.gz")           // "gz"
+//     let n = path.normalize("a/./b/../c")               // "a/c"
+//     let r = path.relative("src/app", "src/lib/x.nx")   // "../lib/x.nx"
+//     for part in path.components("/usr/local/bin") { }  // "/", "usr", "local", "bin"
+//
+// Paths are byte strings. `/` and `\` both separate components on every
+// platform, and a result uses `/` unless its input used `\`. A path is
+// absolute when it starts at a root: `/`, `\`, a drive (`C:\`, `C:/`) or a
+// share (`\\server`). std.fs keeps its path functions, which call these.
+
+// ------------------------------------------------------------------ parts
+
+fn is_sep(c: u8) -> bool {
+    return c == '/' or c == '\\'
+}
+
+// the separator a path uses: `\` when it contains one, else `/`
+fn sep_of(p: []u8) -> u8 {
+    for c in p { if c == '\\' { return '\\' } }
+    return '/'
+}
+
+fn lower(c: u8) -> u8 {
+    return if c >= 'A' and c <= 'Z' { c + 32 } else { c }
+}
+
+// the length of the root a path starts with: a drive and its separator, a
+// share's two separators, or one separator; 0 for a relative path
+fn root_len(p: []u8) -> usize {
+    if p.len >= 3 and p[1] == ':' and is_sep(p[2]) { return 3 }
+    if p.len >= 2 and is_sep(p[0]) and is_sep(p[1]) { return 2 }
+    if p.len >= 1 and is_sep(p[0]) { return 1 }
+    return 0
+}
+
+// two roots are the same when their separators and drive letters are, in
+// either spelling
+fn same_root(x: []u8, y: []u8) -> bool {
+    if x.len != y.len { return false }
+    for i in 0..x.len {
+        if !(is_sep(x[i]) and is_sep(y[i])) and lower(x[i]) != lower(y[i]) { return false }
+    }
+    return true
+}
+
+// where each component after the root starts and ends
+struct Span {
+    start: usize
+    end: usize
+}
+
+fn spans(p: []u8) -> List(Span) {
+    var out = List(Span).new()
+    var i = root_len(p)
+    while i < p.len {
+        while i < p.len and is_sep(p[i]) { i += 1 }
+        let start = i
+        while i < p.len and !is_sep(p[i]) { i += 1 }
+        if i > start { out.append(Span{ .start = start, .end = i }) }
+    }
+    return out
+}
+
+/// The root a path starts with (`/`, `C:\`, `\\`), or `` for a relative path.
+pub fn root(p: []u8) -> []u8 {
+    return p[0..root_len(p)]
+}
+
+/// Does the path start at a root (`/x`, `C:\x`, `C:/x`, `\\server`)?
+pub fn is_absolute(p: []u8) -> bool {
+    return root_len(p) > 0
+}
+
+/// Is the path relative to some directory: not `is_absolute`?
+pub fn is_relative(p: []u8) -> bool {
+    return root_len(p) == 0
+}
+
+/// The root, if any, then each component, separators left out:
+/// `/usr/local/` -> `/`, `usr`, `local`; `a/./b` -> `a`, `.`, `b`.
+pub fn components(p: []u8) -> List([]u8) {
+    var out = List([]u8).new()
+    let r = root_len(p)
+    if r > 0 { out.append(p[0..r]) }
+    for s in spans(p) { out.append(p[s.start..s.end]) }
+    return out
+}
+
+// ------------------------------------------------------------------ joining
+
+/// `dir/name`; a separator is added only when needed, and an absolute `name`
+/// replaces `dir`.
+pub fn join(dir: []u8, name: []u8) -> String {
+    if dir.len == 0 or is_absolute(name) { return String.from(name) }
+    var out = String.from(dir)
+    if name.len == 0 { return out }
+    if !is_sep(dir[dir.len - 1]) { out.push_byte(sep_of(dir)) }
+    out.append(name)
+    return out
+}
+
+/// Every part joined in turn, as `join` joins two: `join_all(parts[..])`.
+pub fn join_all(parts: [][]u8) -> String {
+    var out = String.new()
+    for part in parts {
+        let next = join(out, part)
+        out = next
+    }
+    return out
+}
+
+// ------------------------------------------------------------------ splitting
+
+/// Everything before the last separator: `a/b/c.txt` -> `a/b`, `c.txt` -> ``,
+/// `/c.txt` -> `/`.
+pub fn parent(p: []u8) -> []u8 {
+    var end = p.len
+    while end > 0 and is_sep(p[end - 1]) { end -= 1 }
+    var i = end
+    while i > 0 and !is_sep(p[i - 1]) { i -= 1 }
+    if i == 0 { return p[0..0] }
+    var j = i
+    while j > 1 and is_sep(p[j - 1]) { j -= 1 }
+    if j == 1 and is_sep(p[0]) { return p[0..1] }
+    if j >= 2 and p[j - 1] == ':' { return p[0..j + 1] }
+    return p[0..j]
+}
+
+/// The last component: `a/b/c.txt` -> `c.txt`.
+pub fn base_name(p: []u8) -> []u8 {
+    var end = p.len
+    while end > 0 and is_sep(p[end - 1]) { end -= 1 }
+    var i = end
+    while i > 0 and !is_sep(p[i - 1]) { i -= 1 }
+    return p[i..end]
+}
+
+/// The extension without the dot: `a/b.tar.gz` -> `gz`, `Makefile` -> ``.
+pub fn extension(p: []u8) -> []u8 {
+    let name = base_name(p)
+    var i = name.len
+    while i > 0 {
+        i -= 1
+        if name[i] == '.' {
+            if i == 0 { return name[0..0] }
+            return name[i + 1..name.len]
+        }
+    }
+    return name[0..0]
+}
+
+/// The base name without its extension: `a/b.tar.gz` -> `b.tar`.
+pub fn stem(p: []u8) -> []u8 {
+    let name = base_name(p)
+    var i = name.len
+    while i > 0 {
+        i -= 1
+        if name[i] == '.' {
+            if i == 0 { return name }
+            return name[0..i]
+        }
+    }
+    return name
+}
+
+/// The path with its extension replaced (or added): `a/b.txt`, `md` -> `a/b.md`.
+pub fn with_extension(p: []u8, ext: []u8) -> String {
+    let e = extension(p)
+    var out = String.from(if e.len > 0 { p[0..p.len - e.len - 1] } else { p })
+    if ext.len > 0 {
+        out.push_byte('.')
+        out.append(ext)
+    }
+    return out
+}
+
+// ------------------------------------------------------------------ comparing
+
+/// Collapse `.` and `..` components and repeated separators:
+/// `a/./b/../c//d` -> `a/c/d`. A leading `..` is kept; `..` at a root is
+/// dropped; an empty result is `.`.
+pub fn normalize(p: []u8) -> String {
+    let sep = sep_of(p)
+    let r = root_len(p)
+    var parts = List([]u8).new()
+    for s in spans(p) {
+        let part = p[s.start..s.end]
+        if part == "." {
+            continue
+        }
+        if part == ".." {
+            if parts.len > 0 and parts[parts.len - 1] != ".." {
+                _ = parts.pop()
+            } else if r == 0 {
+                parts.append(part)
+            }
+            continue
+        }
+        parts.append(part)
+    }
+    var out = String.new()
+    for c in p[0..r] { out.push_byte(if is_sep(c) { sep } else { c }) }
+    for part, k in parts {
+        if k > 0 { out.push_byte(sep) }
+        out.append(part)
+    }
+    if out.len == 0 { out.push_byte('.') }
+    return out
+}
+
+/// What follows `prefix` in `p`, compared component by component (so `a/bc`
+/// does not start with `a/b`): `a/b/c/d`, `a/b` -> `c/d`; null when `p` does
+/// not start with `prefix`. Neither is normalized first.
+pub fn strip_prefix(p: []u8, prefix: []u8) -> ?[]u8 {
+    if !same_root(p[0..root_len(p)], prefix[0..root_len(prefix)]) { return null }
+    let a = spans(p)
+    let b = spans(prefix)
+    if b.len > a.len { return null }
+    for i in 0..b.len {
+        if p[a[i].start..a[i].end] != prefix[b[i].start..b[i].end] { return null }
+    }
+    if b.len == a.len { return p[p.len..p.len] }
+    return p[a[b.len].start..p.len]
+}
+
+/// Does `p` start with `prefix`, component by component?
+pub fn starts_with(p: []u8, prefix: []u8) -> bool {
+    return strip_prefix(p, prefix) != null
+}
+
+/// The path that leads from the directory `from` to `to`, both normalized:
+/// `src/app`, `src/lib/x.nx` -> `../lib/x.nx`, and `.` for the same place.
+/// Null when no such path can be written: one is absolute and the other not,
+/// their roots differ, or `from` climbs out through a `..`.
+pub fn relative(from: []u8, to: []u8) -> ?String {
+    let f = normalize(from)
+    let t = normalize(to)
+    if !same_root(f[0..root_len(f)], t[0..root_len(t)]) { return null }
+    var a = List([]u8).new()
+    for s in spans(f) {
+        if f[s.start..s.end] != "." { a.append(f[s.start..s.end]) }
+    }
+    var b = List([]u8).new()
+    for s in spans(t) {
+        if t[s.start..s.end] != "." { b.append(t[s.start..s.end]) }
+    }
+    var i: usize = 0
+    while i < a.len and i < b.len and a[i] == b[i] { i += 1 }
+    let sep: u8 = if sep_of(from) == '\\' or sep_of(to) == '\\' { '\\' } else { '/' }
+    var out = String.new()
+    for k in i..a.len {
+        if a[k] == ".." { return null }
+        if out.len > 0 { out.push_byte(sep) }
+        out.append("..")
+    }
+    for k in i..b.len {
+        if out.len > 0 { out.push_byte(sep) }
+        out.append(b[k])
+    }
+    if out.len == 0 { out.push_byte('.') }
+    return out
+}
+
+// ------------------------------------------------------------------ spelling
+
+/// Every `\` as `/`.
+pub fn to_slash(p: []u8) -> String {
+    var out = String.with_capacity(p.len)
+    for c in p { out.push_byte(if c == '\\' { '/' } else { c }) }
+    return out
+}
+
+/// The separators the platform spells paths with: `\` on Windows, `/`
+/// elsewhere.
+pub fn to_native(p: []u8) -> String {
+    if comptime @target().0 == "windows" {
+        var out = String.with_capacity(p.len)
+        for c in p { out.push_byte(if c == '/' { '\\' } else { c }) }
+        return out
+    } else {
+        return to_slash(p)
+    }
+}
+
+// ------------------------------------------------------------------ tests
+
+test "roots and components" {
+    expect_eq(root("/usr/bin"), "/")
+    expect_eq(root("C:\\x"), "C:\\")
+    expect_eq(root("c:/x"), "c:/")
+    expect_eq(root("\\\\server\\share"), "\\\\")
+    expect_eq(root("a/b"), "")
+    expect(is_absolute("/x") and is_absolute("C:\\x") and is_absolute("C:/x") and is_absolute("\\\\s\\x"))
+    expect(!is_absolute("x/y") and !is_absolute("") and !is_absolute("C:x"))
+    expect(is_relative("x/y"))
+    let parts = components("/usr//local/bin/")
+    expect_eq(parts.len, 4)
+    expect_eq(parts[0], "/")
+    expect_eq(parts[1], "usr")
+    expect_eq(parts[3], "bin")
+    let rel = components("a/./b")
+    expect_eq(rel.len, 3)
+    expect_eq(rel[1], ".")
+    expect_eq(components("").len, 0)
+    let drive = components("C:\\Users\\me")
+    expect_eq(drive[0], "C:\\")
+    expect_eq(drive[2], "me")
+}
+
+test "joining" {
+    expect_eq(join("a", "b"), "a/b")
+    expect_eq(join("a/", "b"), "a/b")
+    expect_eq(join("", "b"), "b")
+    expect_eq(join("a", ""), "a")
+    expect_eq(join("a", "/b"), "/b")
+    expect_eq(join("C:\\x", "y"), "C:\\x\\y")
+    let parts = ["usr", "local", "bin"]
+    expect_eq(join_all(parts[..]), "usr/local/bin")
+    let rooted = ["/", "etc", "hosts"]
+    expect_eq(join_all(rooted[..]), "/etc/hosts")
+    let none: [0][]u8 = []
+    expect_eq(join_all(none[..]), "")
+}
+
+test "splitting" {
+    expect_eq(parent("a/b/c.txt"), "a/b")
+    expect_eq(parent("c.txt"), "")
+    expect_eq(parent("/c.txt"), "/")
+    expect_eq(parent("a/b/"), "a")
+    expect_eq(parent("C:\\x\\y.txt"), "C:\\x")
+    expect_eq(parent("C:\\y.txt"), "C:\\")
+    expect_eq(base_name("a/b/c.txt"), "c.txt")
+    expect_eq(base_name("a/b/"), "b")
+    expect_eq(extension("a/b.tar.gz"), "gz")
+    expect_eq(extension("Makefile"), "")
+    expect_eq(extension(".bashrc"), "")
+    expect_eq(stem("a/b.tar.gz"), "b.tar")
+    expect_eq(stem(".bashrc"), ".bashrc")
+    expect_eq(with_extension("a/b.txt", "md"), "a/b.md")
+    expect_eq(with_extension("a/b", "md"), "a/b.md")
+    expect_eq(with_extension("a/b.txt", ""), "a/b")
+}
+
+test "normalizing" {
+    expect_eq(normalize("a/./b/../c//d"), "a/c/d")
+    expect_eq(normalize("/a/../.."), "/")
+    expect_eq(normalize("../a"), "../a")
+    expect_eq(normalize("../../a/.."), "../..")
+    expect_eq(normalize("a/.."), ".")
+    expect_eq(normalize(""), ".")
+    expect_eq(normalize("C:\\a\\..\\b"), "C:\\b")
+    expect_eq(normalize("C:/a/../b"), "C:/b")
+    expect_eq(normalize("\\\\server\\share\\..\\x"), "\\\\server\\x")
+}
+
+test "prefixes, component by component" {
+    expect_eq(strip_prefix("a/b/c/d", "a/b").?, "c/d")
+    expect_eq(strip_prefix("a/b/c", "a/b/").?, "c")
+    expect_eq(strip_prefix("a/b", "a/b").?, "")
+    expect_eq(strip_prefix("/x/y", "/").?, "x/y")
+    expect_eq(strip_prefix("C:\\x\\y", "c:/x").?, "y")
+    expect(strip_prefix("a/bc", "a/b") == null)
+    expect(strip_prefix("a", "a/b") == null)
+    expect(strip_prefix("/a/b", "a") == null)
+    expect(strip_prefix("a/b", "/a") == null)
+    expect(starts_with("src/lib/x.nx", "src"))
+    expect(!starts_with("srcs/x.nx", "src"))
+    expect(starts_with("x", ""))
+}
+
+test "relative paths" {
+    expect_eq(relative("src/app", "src/lib/x.nx").?, "../lib/x.nx")
+    expect_eq(relative("a/b", "a/b").?, ".")
+    expect_eq(relative("a", "a/b/c").?, "b/c")
+    expect_eq(relative("a/b/c", "a").?, "../..")
+    expect_eq(relative(".", "x").?, "x")
+    expect_eq(relative("x", "../y").?, "../../y")
+    expect_eq(relative("/usr/local", "/usr/bin/nx").?, "../bin/nx")
+    expect_eq(relative("C:\\a\\b", "c:\\a\\c").?, "..\\c")
+    expect(relative("../x", "y") == null)
+    expect(relative("/a", "b") == null)
+    expect(relative("C:\\a", "D:\\a") == null)
+}
+
+test "spelling" {
+    expect_eq(to_slash("a\\b/c"), "a/b/c")
+    let native = to_native("a/b\\c")
+    if comptime @target().0 == "windows" {
+        expect_eq(native, "a\\b\\c")
+    } else {
+        expect_eq(native, "a/b/c")
+    }
+}

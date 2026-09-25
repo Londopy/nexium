@@ -356,7 +356,7 @@ using arena {
 - [El Topo](https://londopy.github.io/nexium/topo/01-base-camp.html) (inglés): el tutorial, desde instalar el compilador hasta una red neuronal, una GUI y una biblioteca distribuida; la fuente está en [`topo/`](../../../topo/). Todo lo anterior, renderizado, está en [londopy.github.io/nexium](https://londopy.github.io/nexium/).
 - [Instalación](../../install.md) (inglés): el instalador de Windows, el script de macOS/Linux, la compilación desde fuente, las sumas de comprobación y cómo `nx` encuentra un compilador de C.
 - [Paquetes](../../packages.md) (inglés): `nexium.toml`, `nx add`, `nx fetch`, dependencias por git o por ruta, el archivo de bloqueo.
-- [Biblioteca estándar](../../std.md) (inglés): los módulos escritos en Nexium (`std.strings`, `std.lists`, `std.bytes`, `std.num`, `std.json`, `std.args`, `std.fs`, `std.time`, `std.regex`, `std.text`, `std.testing`, `std.stream`, `std.net`, `std.http`, `std.thread`, `std.process`, `std.sort`, `std.heap`, `std.set`, `std.deque`, `std.hash`).
+- [Biblioteca estándar](../../std.md) (inglés): los módulos escritos en Nexium (`std.strings`, `std.lists`, `std.bytes`, `std.num`, `std.json`, `std.args`, `std.fs`, `std.time`, `std.regex`, `std.text`, `std.testing`, `std.stream`, `std.net`, `std.http`, `std.thread`, `std.process`, `std.sort`, `std.heap`, `std.set`, `std.deque`, `std.hash`, `std.path`, `std.env`, `std.uuid`, `std.log`, `std.csv`, `std.toml`, `std.base64`).
 - [Las cifras](https://londopy.github.io/nexium/docs/numbers.html) (inglés): cuatro programas en cinco lenguajes, medidos cada semana en un mismo runner.
 - [nexium-gui](../../gui.md) (inglés): la biblioteca de GUI de modo inmediato y cómo escribir un widget.
 - [Publicar tu programa](../../releasing-your-program.md) (inglés): binarios para tres plataformas a partir de una etiqueta, instaladores opcionales.
@@ -459,10 +459,11 @@ en tres plataformas, bajo los sanitizadores y el fuzzer, y gdb y lldb también
 se manejan allí con `nx debug`. La seguridad de memoria son las reglas de
 vistas, errores desde 1.3. 1.4, una biblioteca estándar que ya no haya que
 completar, está en marcha: las colecciones (`std.sort`, `std.heap`,
-`std.set`, `std.deque`), `std.hash` y `random.secure` ya están, veintiún
-módulos en total; después vienen los módulos pequeños (rutas, carpetas de
-configuración, UUID, registros, CSV, TOML), luego las zonas horarias, el
-cliente HTTP con TLS y los websockets. Lo que Nexium todavía no es, y dónde
+`std.set`, `std.deque`), `std.hash`, `random.secure`, rutas, el entorno y
+las carpetas de configuración, UUID, registros, CSV, TOML y base64 ya están,
+veintiocho módulos en total; después vienen `Map` protegido contra la
+inundación de hashes, las zonas horarias, el cliente HTTP con TLS y los
+websockets. Lo que Nexium todavía no es, y dónde
 se responde cada punto, está en [una sección de la hoja de
 ruta](../../../ROADMAP.md#what-10-is-not-yet): las pruebas de rendimiento son cuatro
 programas ([Velocidad](#velocidad)), y el ecosistema es un solo mantenedor y

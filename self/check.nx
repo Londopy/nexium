@@ -474,7 +474,7 @@ pub struct Mod {
 /// The standard library, embedded: a module's source by name, so a built
 /// compiler needs no `std/` directory beside it.
 /// The embedded standard library modules, in the order the first compiler listed them.
-pub const STD_MODULE_NAMES = "strings, lists, bytes, num, json, args, fs, time, regex, text, testing, stream, net, http, thread, process, sort, heap, set, deque, hash"
+pub const STD_MODULE_NAMES = "strings, lists, bytes, num, json, args, fs, time, regex, text, testing, stream, net, http, thread, process, sort, heap, set, deque, hash, path, env, uuid, log, csv, toml, base64"
 
 pub fn std_source(name: []u8) -> ?[]u8 {
     if name == "args" { return @embedFile("../std/args.nx") }
@@ -498,6 +498,13 @@ pub fn std_source(name: []u8) -> ?[]u8 {
     if name == "set" { return @embedFile("../std/set.nx") }
     if name == "deque" { return @embedFile("../std/deque.nx") }
     if name == "hash" { return @embedFile("../std/hash.nx") }
+    if name == "path" { return @embedFile("../std/path.nx") }
+    if name == "env" { return @embedFile("../std/env.nx") }
+    if name == "uuid" { return @embedFile("../std/uuid.nx") }
+    if name == "log" { return @embedFile("../std/log.nx") }
+    if name == "csv" { return @embedFile("../std/csv.nx") }
+    if name == "toml" { return @embedFile("../std/toml.nx") }
+    if name == "base64" { return @embedFile("../std/base64.nx") }
     return null
 }
 

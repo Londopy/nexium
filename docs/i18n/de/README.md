@@ -356,7 +356,7 @@ using arena {
 - [Der Topo](https://londopy.github.io/nexium/topo/01-base-camp.html) (Englisch): das Tutorial, von der Installation des Compilers bis zu einem neuronalen Netz, einer GUI und einer ausgelieferten Bibliothek; die Quelle liegt in [`topo/`](../../../topo/). Alles Obige, gerendert, steht auf [londopy.github.io/nexium](https://londopy.github.io/nexium/).
 - [Installation](../../install.md) (Englisch): der Windows-Installer, das macOS/Linux-Skript, Bauen aus dem Quelltext, Prüfsummen, und wie `nx` einen C-Compiler findet.
 - [Pakete](../../packages.md) (Englisch): `nexium.toml`, `nx add`, `nx fetch`, Git- oder Pfadabhängigkeiten, die Lock-Datei.
-- [Standardbibliothek](../../std.md) (Englisch): die in Nexium geschriebenen Module (`std.strings`, `std.lists`, `std.bytes`, `std.num`, `std.json`, `std.args`, `std.fs`, `std.time`, `std.regex`, `std.text`, `std.testing`, `std.stream`, `std.net`, `std.http`, `std.thread`, `std.process`, `std.sort`, `std.heap`, `std.set`, `std.deque`, `std.hash`).
+- [Standardbibliothek](../../std.md) (Englisch): die in Nexium geschriebenen Module (`std.strings`, `std.lists`, `std.bytes`, `std.num`, `std.json`, `std.args`, `std.fs`, `std.time`, `std.regex`, `std.text`, `std.testing`, `std.stream`, `std.net`, `std.http`, `std.thread`, `std.process`, `std.sort`, `std.heap`, `std.set`, `std.deque`, `std.hash`, `std.path`, `std.env`, `std.uuid`, `std.log`, `std.csv`, `std.toml`, `std.base64`).
 - [Die Zahlen](https://londopy.github.io/nexium/docs/numbers.html) (Englisch): vier Programme in fünf Sprachen, wöchentlich auf einem Runner gemessen.
 - [nexium-gui](../../gui.md) (Englisch): die Immediate-Mode-GUI-Bibliothek und wie man ein Widget schreibt.
 - [Dein Programm veröffentlichen](../../releasing-your-program.md) (Englisch): Binaries für drei Plattformen aus einem Tag, Installer optional.
@@ -460,10 +460,10 @@ Plattformen, unter den Sanitizern und dem Fuzzer, und auch gdb und lldb
 werden dort durch `nx debug` gesteuert. Speichersicherheit sind die
 Sichtregeln, seit 1.3 Fehler. 1.4, eine Standardbibliothek, die niemand mehr
 ergänzen muss, ist unterwegs: Collections (`std.sort`, `std.heap`, `std.set`,
-`std.deque`), `std.hash` und `random.secure` sind da, einundzwanzig Module
-insgesamt; als Nächstes kommen die kleinen Module (Pfade, Konfigurationsordner,
-UUIDs, Logs, CSV, TOML), dann Zeitzonen, der HTTP-Client mit TLS und
-Websockets. Was Nexium noch nicht ist, und wo jeder Punkt beantwortet wird,
+`std.deque`), `std.hash`, `random.secure`, Pfade, Umgebung und
+Konfigurationsordner, UUIDs, Logging, CSV, TOML und Base64 sind da, achtundzwanzig
+Module insgesamt; als Nächstes kommen `Map` mit Schutz vor Hash-Flooding,
+Zeitzonen, der HTTP-Client mit TLS und Websockets. Was Nexium noch nicht ist, und wo jeder Punkt beantwortet wird,
 steht in [einem Abschnitt der Roadmap](../../../ROADMAP.md#what-10-is-not-yet): die
 Benchmarks sind vier Programme ([Geschwindigkeit](#geschwindigkeit)), und das
 Ökosystem besteht aus einem Maintainer und vier Projekten außerhalb des

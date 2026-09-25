@@ -344,7 +344,7 @@ using arena {
 - [the Topo](https://londopy.github.io/nexium/topo/01-base-camp.html)（英文）：教程，从安装编译器到神经网络、GUI 和一个交付出去的库；源码在 [`topo/`](../../../topo/)。以上全部的渲染版本在 [londopy.github.io/nexium](https://londopy.github.io/nexium/)。
 - [安装](../../install.md)（英文）：Windows 安装程序、macOS/Linux 脚本、源码构建、校验和，以及 `nx` 如何找到 C 编译器。
 - [包](../../packages.md)（英文）：`nexium.toml`、`nx add`、`nx fetch`、git 或路径依赖、锁文件。
-- [标准库](../../std.md)（英文）：用 Nexium 写的模块（`std.strings`、`std.lists`、`std.bytes`、`std.num`、`std.json`、`std.args`、`std.fs`、`std.time`、`std.regex`、`std.text`、`std.testing`、`std.stream`、`std.net`、`std.http`、`std.thread`、`std.process`、`std.sort`、`std.heap`、`std.set`、`std.deque`、`std.hash`）。
+- [标准库](../../std.md)（英文）：用 Nexium 写的模块（`std.strings`、`std.lists`、`std.bytes`、`std.num`、`std.json`、`std.args`、`std.fs`、`std.time`、`std.regex`、`std.text`、`std.testing`、`std.stream`、`std.net`、`std.http`、`std.thread`、`std.process`、`std.sort`、`std.heap`、`std.set`、`std.deque`、`std.hash`、`std.path`、`std.env`、`std.uuid`、`std.log`、`std.csv`、`std.toml`、`std.base64`）。
 - [数字](https://londopy.github.io/nexium/docs/numbers.html)（英文）：五种语言写的四个程序，每周在同一台 runner 上测量。
 - [nexium-gui](../../gui.md)（英文）：即时模式 GUI 库以及如何编写一个控件。
 - [发布你的程序](../../releasing-your-program.md)（英文）：从一个标签得到三个平台的二进制，安装程序可选。
@@ -434,9 +434,9 @@ runner 上测量（2026-09-25；七次运行的中位数，超过五秒的取三
 方式变化；编译器用 Nexium 写成并能构建自身；每个示例、规范用例和教程程序都在 CI 中于
 三个平台上、在 sanitizer 和 fuzzer 之下运行，gdb 和 lldb 也在那里经由 `nx debug` 驱动。
 内存安全是视图规则，自 1.3 起是错误。1.4，一个不必再补充的标准库，正在进行：集合
-（`std.sort`、`std.heap`、`std.set`、`std.deque`）、`std.hash` 和 `random.secure` 已经加入，
-一共二十一个模块；接下来是小模块（路径、配置目录、UUID、日志、CSV、TOML），然后是时区、
-带 TLS 的 HTTP 客户端和 websocket。Nexium 还不是什么、每一点在哪里得到回答，见
+（`std.sort`、`std.heap`、`std.set`、`std.deque`）、`std.hash`、`random.secure`、路径、环境
+变量与配置目录、UUID、日志、CSV、TOML 和 base64 已经加入，一共二十八个模块；接下来是能抵御哈希洪水
+攻击的 `Map`、时区、带 TLS 的 HTTP 客户端和 websocket。Nexium 还不是什么、每一点在哪里得到回答，见
 [路线图的一节](../../../ROADMAP.md#what-10-is-not-yet)：基准只有四个程序（[速度](#速度)），
 生态只有一位维护者和四个树外的项目（[上文](#实际使用)）。
 [`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md) 列出每个未修复的缺陷及其修法；

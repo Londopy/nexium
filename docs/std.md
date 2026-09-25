@@ -13,16 +13,21 @@ by `scripts/std_docs.py` from the doc comments.
 | module | what |
 | --- | --- |
 | [`std.args`](#stdargs) | command-line argument parsing, written in Nexium. |
+| [`std.base64`](#stdbase64) | base64 (RFC 4648), written in Nexium: the standard alphabet |
 | [`std.bytes`](#stdbytes) | encodings and byte-level utilities, written in Nexium. |
+| [`std.csv`](#stdcsv) | comma-separated values (RFC 4180), written in Nexium: reading |
 | [`std.deque`](#stddeque) | a double-ended queue, written in Nexium: two Lists back to |
+| [`std.env`](#stdenv) | the environment, and where a program keeps its files, written in |
 | [`std.fs`](#stdfs) | files, directories and paths, written in Nexium. |
 | [`std.hash`](#stdhash) | hash functions, written in Nexium: FNV-1a (64-bit), SipHash-2-4 |
 | [`std.heap`](#stdheap) | a priority queue, written in Nexium: a binary heap over a List, |
 | [`std.http`](#stdhttp) | an HTTP/1.1 client and a small server, written in Nexium over |
 | [`std.json`](#stdjson) | a JSON parser and serializer, written in Nexium. |
 | [`std.lists`](#stdlists) | generic helpers over slices and Lists, written in Nexium. |
+| [`std.log`](#stdlog) | leveled, structured logging, written in Nexium: a message and |
 | [`std.net`](#stdnet) | TCP and UDP with addresses, written in Nexium over the `net.*` |
 | [`std.num`](#stdnum) | integer utilities, written in Nexium. |
+| [`std.path`](#stdpath) | paths as text, written in Nexium: joining, splitting, comparing |
 | [`std.process`](#stdprocess) | run programs and capture what they print, written in Nexium |
 | [`std.regex`](#stdregex) | regular expressions without backtracking, written in Nexium. |
 | [`std.set`](#stdset) | a set of values, written in Nexium over `Map(T, bool)`: its |
@@ -33,6 +38,8 @@ by `scripts/std_docs.py` from the doc comments.
 | [`std.text`](#stdtext) | UTF-8 text by code point, written in Nexium. |
 | [`std.thread`](#stdthread) | threads, channels and mutexes, written in Nexium over the |
 | [`std.time`](#stdtime) | dates, durations and timers, written in Nexium. |
+| [`std.toml`](#stdtoml) | TOML 1.0 (toml.io), written in Nexium: reading a document into |
+| [`std.uuid`](#stduuid) | UUIDs (RFC 9562), written in Nexium: random ones (version 4), |
 
 ## std.args
 
@@ -53,6 +60,17 @@ Types: `Parser`
 | `usage(program: []u8, summary: []u8, rows: [][]u8) -> String` | Render a usage line and option table from (flags, description) rows. |
 | `env_map() -> Map(String, String)` | The environment as a map, from `os.environ()`. |
 
+## std.base64
+
+std.base64: base64 (RFC 4648), written in Nexium: the standard alphabet with its `=` padding, and the URL-safe one (`-` and `_` for `+` and `/`) without, as JSON Web Tokens and URLs carry it. `import std.base64` then: let s = base64.encode("hi!")                  // "aGkh" let raw = try base64.decode(s) let token = base64.encode_url(key)            // no `=`, safe in a URL let back = try base64.decode_url(token) Decoding is strict: a character outside the alphabet, padding anywhere but at the end or more of it than the length needs, or a length no encoding produces is `error.InvalidInput`. `std.bytes` keeps the lenient reader, `unbase64`, which skips line breaks and stray padding.
+
+| function | what it does |
+| --- | --- |
+| `encode(data: []u8) -> String` | Standard base64 with `=` padding. |
+| `decode(text: []u8) -> !String` | Bytes from standard base64; the padding may be left out. |
+| `encode_url(data: []u8) -> String` | URL-safe base64 without padding (RFC 4648 section 5, as JWTs use). |
+| `decode_url(text: []u8) -> !String` | Bytes from URL-safe base64, padded or not. |
+
 ## std.bytes
 
 std.bytes: encodings and byte-level utilities, written in Nexium. `import std.bytes` then `bytes.hex(data)`, `bytes.base64(data)`, ... Decoders return `error.InvalidInput` on malformed text.
@@ -70,6 +88,19 @@ std.bytes: encodings and byte-level utilities, written in Nexium. `import std.by
 | `write_u32_be(out: *mut String, v: u32)` | Append a big-endian 32-bit value. |
 | `write_u32_le(out: *mut String, v: u32)` | Append a little-endian 32-bit value. |
 | `first_difference(a: []u8, b: []u8) -> ?usize` | Bytes that differ, for a compact diff of two buffers. |
+
+## std.csv
+
+std.csv: comma-separated values (RFC 4180), written in Nexium: reading rows, reading rows by their header, and writing rows. `import std.csv` then: let rows = try csv.parse(text)                      // List(List(String)) for row in try csv.by_header(text) {                // Map(String, String) let name = row["name"] orelse "?" } let tsv = try csv.parse_with(text, '\t') let out = csv.to_text(&rows)                         // quoted where needed, CRLF A field in double quotes may hold the separator, line breaks and `""` for a quote. A quote inside an unquoted field, anything but the separator or a line end after a closing quote, and a quoted field never closed are `error.InvalidInput`. Lines may end in CRLF or LF, empty lines are skipped, and a leading UTF-8 byte-order mark is dropped.
+
+| function | what it does |
+| --- | --- |
+| `parse(text: []u8) -> !List(List(String))` | The rows of comma-separated text. |
+| `parse_with(text: []u8, sep: u8) -> !List(List(String))` | The rows of text whose fields are separated by `sep` (`'\t'` for TSV, `';'` where the decimal separator is a comma). |
+| `by_header(text: []u8) -> !List(Map(String, String))` | The rows after the first, each as a map from the first row's names to its fields. A row shorter than the header leaves the missing names out; one longer is `error.InvalidInput`. |
+| `field(value: []u8, sep: u8) -> String` | A field as written between separators: in double quotes, with any quote doubled, when it holds `sep`, a quote or a line break. |
+| `to_text(rows: *List(List(String))) -> String` | Rows as comma-separated text, each line ending in CRLF. |
+| `to_text_with(rows: *List(List(String)), sep: u8, line_end: []u8) -> String` | Rows as text with `sep` between fields and `line_end` after each row. |
 
 ## std.deque
 
@@ -91,9 +122,31 @@ Types: `Deque(T){`
 | `(method) last(self: *Self) -> ?*T` |  |
 | `(method) clear(self: *mut Self)` |  |
 
+## std.env
+
+std.env: the environment, and where a program keeps its files, written in Nexium: variables, the home directory, the config, data, cache and state directories each platform expects (XDG on Linux and the BSDs, Library on macOS, AppData on Windows), and `.env` files. `import std.env` then: let port = env.get_or("PORT", "8080") let dir = env.config_dir("myapp")              // ?String: ~/.config/myapp, ... let notes = env.expand_home("~/notes.txt") let n = env.load_dotenv(".env", false) catch 0 // sets what is not set yet The directories are where a program should keep its files; nothing here creates them (`fs.make_dirs` does). Each is null when the variables it comes from are not set.
+
+Types: `Var`
+
+| function | what it does |
+| --- | --- |
+| `get(name: []u8) -> ?String` | The variable's value, or null when it is not set or set to nothing. |
+| `get_or(name: []u8, default: []u8) -> String` | The variable's value, or `default` when it is not set or set to nothing. |
+| `set(name: []u8, value: []u8)` | Set a variable for this program and the ones it starts. |
+| `unset(name: []u8)` | Remove a variable. |
+| `all() -> List(Var)` | Every variable, sorted by name. |
+| `home() -> ?String` | The user's home directory: `HOME`, or on Windows `USERPROFILE`. |
+| `expand_home(p: []u8) -> String` | `~` or `~/...` at the start of a path, with the home directory in its place; any other path as it is. |
+| `config_dir(app: []u8) -> ?String` | Where a program keeps its settings, in a directory named `app` (none when `app` is empty): `$XDG_CONFIG_HOME` or `~/.config` on Linux and the BSDs, `~/Library/Application Support` on macOS, `%APPDATA%` on Windows. |
+| `data_dir(app: []u8) -> ?String` | Where a program keeps what it makes and needs to keep: `$XDG_DATA_HOME` or `~/.local/share`, `~/Library/Application Support`, `%APPDATA%`. |
+| `cache_dir(app: []u8) -> ?String` | Where a program keeps what it can make again: `$XDG_CACHE_HOME` or `~/.cache`, `~/Library/Caches`, `%LOCALAPPDATA%`. |
+| `state_dir(app: []u8) -> ?String` | Where a program keeps its state between runs (logs, history, what was open): `$XDG_STATE_HOME` or `~/.local/state`, `~/Library/Application Support`, `%LOCALAPPDATA%`. |
+| `parse_dotenv(text: []u8) -> !List(Var)` | The variables a `.env` file sets, in order: `NAME=value` lines, an optional `export ` before the name, `#` comments and blank lines skipped, a value in single quotes taken as written, one in double quotes with `\n`, `\t`, `\"` and `\\` read as escapes, and an unquoted value trimmed and cut at ` #`. A line that is none of these is an error. |
+| `load_dotenv(file: []u8, override: bool) -> !usize` | Read a `.env` file and set its variables: those not set already, or every one when `override`. How many were set; `error.InvalidInput` when a line does not parse (nothing is set then). |
+
 ## std.fs
 
-std.fs: files, directories and paths, written in Nexium. `import std.fs` then: if fs.exists("notes.txt") { ... } try fs.make_dirs("out/logs") for name in try fs.list("out") { ... } for path in try fs.walk("src") { ... }        // every file, recursively let cfg = fs.join(fs.parent(argv0), "app.toml") The platform calls are the `io.*` builtins (documented in the language reference); this module adds paths, sorted listings, recursive create and remove, and a walker. Paths are byte strings; `/` and `\` both separate components on every platform, and results use `/` unless the input used `\`.
+std.fs: files, directories and paths, written in Nexium. `import std.fs` then: if fs.exists("notes.txt") { ... } try fs.make_dirs("out/logs") for name in try fs.list("out") { ... } for path in try fs.walk("src") { ... }        // every file, recursively let cfg = fs.join(fs.parent(argv0), "app.toml") The platform calls are the `io.*` builtins (documented in the language reference); this module adds sorted listings, recursive create and remove, and a walker. Its path functions call std.path's, which has more. Paths are byte strings; `/` and `\` both separate components on every platform, and results use `/` unless the input used `\`.
 
 | function | what it does |
 | --- | --- |
@@ -117,14 +170,14 @@ std.fs: files, directories and paths, written in Nexium. `import std.fs` then: i
 | `cwd() -> !String` | The current working directory. |
 | `temp_dir() -> String` | The directory for temporary files. |
 | `temp_path(prefix: []u8) -> String` | A fresh path in the temporary directory, `<temp>/<prefix><number>`, that does not exist yet. The caller creates it. |
-| `is_absolute(path: []u8) -> bool` | Does the path start at a root (`/x`, `C:\x`, `C:/x`, `\\server`)? |
-| `join(dir: []u8, name: []u8) -> String` | `dir/name`; a separator is added only when needed, and an absolute `name` replaces `dir`. |
-| `parent(path: []u8) -> []u8` | Everything before the last separator: `a/b/c.txt` -> `a/b`, `c.txt` -> ``, `/c.txt` -> `/`. |
-| `base_name(path: []u8) -> []u8` | The last component: `a/b/c.txt` -> `c.txt`. |
-| `extension(path: []u8) -> []u8` | The extension without the dot: `a/b.tar.gz` -> `gz`, `Makefile` -> ``. |
-| `stem(path: []u8) -> []u8` | The base name without its extension: `a/b.tar.gz` -> `b.tar`. |
-| `with_extension(path: []u8, ext: []u8) -> String` | The path with its extension replaced (or added): `a/b.txt`, `md` -> `a/b.md`. |
-| `normalize(path: []u8) -> String` | Collapse `.` and `..` components and repeated separators: `a/./b/../c//d` -> `a/c/d`. A leading `..` is kept. |
+| `is_absolute(p: []u8) -> bool` | Does the path start at a root (`/x`, `C:\x`, `C:/x`, `\\server`)? As `path.is_absolute`. |
+| `join(dir: []u8, name: []u8) -> String` | `dir/name`; a separator is added only when needed, and an absolute `name` replaces `dir`. As `path.join`. |
+| `parent(p: []u8) -> []u8` | Everything before the last separator: `a/b/c.txt` -> `a/b`, `c.txt` -> ``, `/c.txt` -> `/`. As `path.parent`. |
+| `base_name(p: []u8) -> []u8` | The last component: `a/b/c.txt` -> `c.txt`. As `path.base_name`. |
+| `extension(p: []u8) -> []u8` | The extension without the dot: `a/b.tar.gz` -> `gz`, `Makefile` -> ``. As `path.extension`. |
+| `stem(p: []u8) -> []u8` | The base name without its extension: `a/b.tar.gz` -> `b.tar`. As `path.stem`. |
+| `with_extension(p: []u8, ext: []u8) -> String` | The path with its extension replaced (or added): `a/b.txt`, `md` -> `a/b.md`. As `path.with_extension`. |
+| `normalize(p: []u8) -> String` | Collapse `.` and `..` components and repeated separators: `a/./b/../c//d` -> `a/c/d`. A leading `..` is kept. As `path.normalize`. |
 
 ## std.hash
 
@@ -258,6 +311,30 @@ std.lists: generic helpers over slices and Lists, written in Nexium. `import std
 | `repeat(comptime T: type, xs: []T, times: usize) -> List(T)` | Elements repeated `times` times in sequence. |
 | `starts_with(comptime T: type where T: Eq, xs: []T, prefix: []T) -> bool` | True when `xs` starts with `prefix`. |
 
+## std.log
+
+std.log: leveled, structured logging, written in Nexium: a message and named fields, as a line of text a person reads or a line of JSON a machine reads, on stderr. `import std.log` then: var l = log.Logger.new(log.Level.Info) l.info("listening", [log.int("port", 8080), log.str("host", host)][..]) l.warn("slow answer", [log.float("seconds", 2.5)][..]) l.debug("not shown: below the logger's level", []) var j = log.Logger.json(log.Level.Debug)      // one JSON object a line let level = log.parse_level(env.get_or("LOG", "info")) orelse log.Level.Info var request = l.with([log.str("id", id)][..]) // every line carries the id A text line is `2026-09-25T18:04:05.120Z INFO listening port=8080 host=0.0.0.0`, a value with a space, `=` or a quote in quotes; a JSON line is `{"time":"2026-09-25T18:04:05.120Z","level":"info","msg":"listening", "port":8080,"host":"0.0.0.0"}`.
+
+Types: `Level`, `Field`, `Logger`
+
+| function | what it does |
+| --- | --- |
+| `parse_level(text: []u8) -> ?Level` | The level named by `debug`, `info`, `warn` (or `warning`) or `error`, in any case; null for anything else. |
+| `str(key: []u8, value: []u8) -> Field` | A text field. |
+| `int(key: []u8, value: i64) -> Field` | A whole-number field. |
+| `float(key: []u8, value: f64) -> Field` | A floating-point field; a value JSON cannot hold (NaN, the infinities) is written as text. |
+| `flag(key: []u8, value: bool) -> Field` | A true-or-false field. |
+| `(method) new(level: Level) -> Logger` | Text lines on stderr, from `level` up. |
+| `(method) json(level: Level) -> Logger` | JSON lines on stderr, from `level` up. |
+| `(method) keeping(level: Level, json: bool) -> Logger` | A logger that keeps its lines in `kept` rather than writing them: for tests of what a program logs. |
+| `(method) with(self: *Self, fields: []Field) -> Logger` | A logger like this one whose lines carry `fields` too. |
+| `(method) enabled(self: *Self, level: Level) -> bool` | Does this logger write lines of `level`? |
+| `(method) log(self: *mut Self, level: Level, msg: []u8, fields: []Field)` | A line at `level`, if the logger writes that level. |
+| `(method) debug(self: *mut Self, msg: []u8, fields: []Field)` |  |
+| `(method) info(self: *mut Self, msg: []u8, fields: []Field)` |  |
+| `(method) warn(self: *mut Self, msg: []u8, fields: []Field)` |  |
+| `(method) err(self: *mut Self, msg: []u8, fields: []Field)` | A line at `Level.Error` (`error` itself is a keyword). |
+
 ## std.net
 
 std.net: TCP and UDP with addresses, written in Nexium over the `net.*` primitives. `import std.net` then: var c = try net.TcpStream.connect("example.com", 80) try c.send("GET / HTTP/1.0\r\nHost: example.com\r\n\r\n") let reply = try c.recv_all()                 // until the peer closes c.close() var l = try net.TcpListener.bind("127.0.0.1", 8080) while true { var conn = try l.accept() var r = conn.reader()                     // a std.stream Reader let line = try r.read_line() try conn.send("ok\n") conn.close() } var u = try net.UdpSocket.bind("0.0.0.0", 0) try u.send_to("127.0.0.1", 9000, "ping") let d = try u.recv_from(1500)                 // d.data, d.from Every call blocks; timeouts are per socket (`set_timeout`, milliseconds, 0 waits forever) and expire with `error.Timeout`. `recv` returns an empty String when the peer has closed. Errors: `NotFound` (name lookup), `ConnectionRefused`, `Timeout`, `IoError`.
@@ -317,6 +394,30 @@ std.num: integer utilities, written in Nexium. `import std.num` then `num.gcd(12
 | `is_power_of_two(n: u64) -> bool` | True for 1, 2, 4, 8, ... |
 | `next_power_of_two(n: u64) -> u64` | The smallest power of two >= n (n <= 2^63). |
 | `popcount(n: u64) -> u32` | Number of set bits. |
+
+## std.path
+
+std.path: paths as text, written in Nexium: joining, splitting, comparing and normalizing them, without touching the file system (std.fs does that). `import std.path` then: let cfg = path.join(path.parent(argv0), "app.toml") let ext = path.extension("notes.tar.gz")           // "gz" let n = path.normalize("a/./b/../c")               // "a/c" let r = path.relative("src/app", "src/lib/x.nx")   // "../lib/x.nx" for part in path.components("/usr/local/bin") { }  // "/", "usr", "local", "bin" Paths are byte strings. `/` and `\` both separate components on every platform, and a result uses `/` unless its input used `\`. A path is absolute when it starts at a root: `/`, `\`, a drive (`C:\`, `C:/`) or a share (`\\server`). std.fs keeps its path functions, which call these.
+
+| function | what it does |
+| --- | --- |
+| `root(p: []u8) -> []u8` | The root a path starts with (`/`, `C:\`, `\\`), or `` for a relative path. |
+| `is_absolute(p: []u8) -> bool` | Does the path start at a root (`/x`, `C:\x`, `C:/x`, `\\server`)? |
+| `is_relative(p: []u8) -> bool` | Is the path relative to some directory: not `is_absolute`? |
+| `components(p: []u8) -> List([]u8)` | The root, if any, then each component, separators left out: `/usr/local/` -> `/`, `usr`, `local`; `a/./b` -> `a`, `.`, `b`. |
+| `join(dir: []u8, name: []u8) -> String` | `dir/name`; a separator is added only when needed, and an absolute `name` replaces `dir`. |
+| `join_all(parts: [][]u8) -> String` | Every part joined in turn, as `join` joins two: `join_all(parts[..])`. |
+| `parent(p: []u8) -> []u8` | Everything before the last separator: `a/b/c.txt` -> `a/b`, `c.txt` -> ``, `/c.txt` -> `/`. |
+| `base_name(p: []u8) -> []u8` | The last component: `a/b/c.txt` -> `c.txt`. |
+| `extension(p: []u8) -> []u8` | The extension without the dot: `a/b.tar.gz` -> `gz`, `Makefile` -> ``. |
+| `stem(p: []u8) -> []u8` | The base name without its extension: `a/b.tar.gz` -> `b.tar`. |
+| `with_extension(p: []u8, ext: []u8) -> String` | The path with its extension replaced (or added): `a/b.txt`, `md` -> `a/b.md`. |
+| `normalize(p: []u8) -> String` | Collapse `.` and `..` components and repeated separators: `a/./b/../c//d` -> `a/c/d`. A leading `..` is kept; `..` at a root is dropped; an empty result is `.`. |
+| `strip_prefix(p: []u8, prefix: []u8) -> ?[]u8` | What follows `prefix` in `p`, compared component by component (so `a/bc` does not start with `a/b`): `a/b/c/d`, `a/b` -> `c/d`; null when `p` does not start with `prefix`. Neither is normalized first. |
+| `starts_with(p: []u8, prefix: []u8) -> bool` | Does `p` start with `prefix`, component by component? |
+| `relative(from: []u8, to: []u8) -> ?String` | The path that leads from the directory `from` to `to`, both normalized: `src/app`, `src/lib/x.nx` -> `../lib/x.nx`, and `.` for the same place. Null when no such path can be written: one is absolute and the other not, their roots differ, or `from` climbs out through a `..`. |
+| `to_slash(p: []u8) -> String` | Every `\` as `/`. |
+| `to_native(p: []u8) -> String` | The separators the platform spells paths with: `\` on Windows, `/` elsewhere. |
 
 ## std.process
 
@@ -565,3 +666,47 @@ Types: `DateTime`, `Duration`, `Stopwatch`
 | `(method) elapsed_ms(self: *Self) -> f64` | Elapsed time in milliseconds, fractional. |
 | `(method) elapsed(self: *Self) -> Duration` | Elapsed time as a Duration (whole milliseconds). |
 | `(method) lap(self: *mut Self) -> Duration` | Restart and return what had elapsed. |
+
+## std.toml
+
+std.toml: TOML 1.0 (toml.io), written in Nexium: reading a document into values, finding a value by its key, and writing values back as TOML. `import std.toml` then: let doc = try toml.parse(text) let name = toml.as_str(toml.lookup(&doc, "package.name") orelse return) orelse "" for dep in toml.keys(toml.get(&doc, "dependencies") orelse return) { } if let why = toml.problem(text) { eprintln("{}", .{why}) }   // "line 3: ..." let out = toml.stringify(&doc) Every value TOML has: strings (basic and literal, each also multi-line), 64-bit integers (decimal, hex, octal, binary), floats (with `inf` and `nan`), booleans, dates and times (kept as written: offset date-time, local date-time, local date, local time), arrays, tables, inline tables and arrays of tables, under TOML's rules that a key and a table are defined once. A document that breaks one is `error.InvalidInput`; `problem` says where and why.
+
+Types: `Toml`, `Entry`, `StampKind`, `Stamp`
+
+| function | what it does |
+| --- | --- |
+| `parse(text: []u8) -> !Toml` | The document's values: a `Table` of its keys. |
+| `problem(text: []u8) -> ?String` | Why `text` is not a TOML document (`line N: ...`), or null when it is. |
+| `get(v: *Toml, key: []u8) -> ?*Toml` | The value of a table's `key`, or null. |
+| `lookup(v: *Toml, dotted: []u8) -> ?*Toml` | The value at a dotted path of bare keys, `package.name`, or null. |
+| `at(v: *Toml, i: usize) -> ?*Toml` | An array's item `i`, or null. |
+| `len(v: *Toml) -> usize` | How many items an array holds or keys a table has; 0 for anything else. |
+| `is_table(v: *Toml) -> bool` | Is it a table (a document, a `[header]`'s, or an inline one)? |
+| `is_array(v: *Toml) -> bool` | Is it an array (an array of tables included)? |
+| `keys(v: *Toml) -> List([]u8)` | A table's keys in the document's order; empty for anything else. |
+| `as_str(v: *Toml) -> ?[]u8` |  |
+| `as_int(v: *Toml) -> ?i64` |  |
+| `as_float(v: *Toml) -> ?f64` | A float's value, or an integer's as a float. |
+| `as_bool(v: *Toml) -> ?bool` |  |
+| `as_time(v: *Toml) -> ?Stamp` | A date or time as the document wrote it, and which form it is. |
+| `stringify(v: *Toml) -> String` | A table as a TOML document: its plain keys first, then each table under a `[header]` and each array of tables under `[[headers]]`. Anything that is not a table is written as a value. |
+
+## std.uuid
+
+std.uuid: UUIDs (RFC 9562), written in Nexium: random ones (version 4), ones that sort by the time they were made (version 7), and their text. `import std.uuid` then: let id = try uuid.v4()                        // 122 random bits println("{}", .{id.text()})                    // "9f1c2e7a-4b3d-4e8f-a1b2-c3d4e5f60718" let row = try uuid.v7()                       // the time first: sorts by creation let back = uuid.parse(text) orelse return error.BadId The random bits come from `random.secure`, the operating system's generator, so an id cannot be guessed from the ones before it; `v4` and `v7` fail only where the system has no generator (`IoError`).
+
+Types: `Uuid`
+
+| function | what it does |
+| --- | --- |
+| `(method) text(self: *Self) -> String` | The canonical text: 32 lowercase hex digits in groups of 8, 4, 4, 4 and 12, joined by hyphens. |
+| `(method) version(self: *Self) -> u8` | The version: 4 for random, 7 for time-ordered, 0 for the nil UUID. |
+| `(method) is_nil(self: *Self) -> bool` | Is every bit zero? |
+| `(method) time_ms(self: *Self) -> ?i64` | When a version 7 UUID was made, in milliseconds since the epoch; null for any other version. |
+| `(method) eq(self: *Self, other: *Uuid) -> bool` | Is it the same UUID? |
+| `v4() -> !Uuid` | A random UUID (version 4). |
+| `v7() -> !Uuid` | A UUID that begins with the time it was made (version 7): 48 bits of milliseconds since the epoch, then 74 random bits, so ids made later sort after earlier ones, as text and as bytes, to the millisecond. |
+| `nil() -> Uuid` | The nil UUID, every bit zero. |
+| `max() -> Uuid` | The max UUID, every bit one. |
+| `from_bytes(data: []u8) -> ?Uuid` | A UUID from its 16 bytes; null for any other length. |
+| `parse(text: []u8) -> ?Uuid` | A UUID from its text: the canonical form with hyphens, in either case, or the 32 hex digits alone, either one also in braces or after `urn:uuid:`. Null for anything else. |

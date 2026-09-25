@@ -599,12 +599,14 @@ own sources, and the language server answers from the checker.
   `upper_bound` and `binary_search`, `std.heap`, written in Nexium over the
   slice's new `swap`.)
 - `std.path` (split off from `std.fs`), `std.env` (config files, XDG and
-  AppData directories), `std.csv`, `std.toml` (the manifest parser leaves
-  Rust), `std.base64`, `std.hash` (FNV, SipHash for `Map`, SHA-256 for
+  AppData directories), `std.csv`, `std.toml` (the manifest reader moves
+  onto it), `std.base64`, `std.hash` (FNV, SipHash for `Map`, SHA-256 for
   checksums), `std.uuid`, `std.log` with levels and structured fields.
-  (`std.hash` done: FNV-1a 64, SipHash-2-4, SHA-256. The secure random key
-  `Map`'s move to SipHash and `std.uuid` both need is in: `random.secure`,
-  from the operating system's generator.)
+  (Done: `std.path`, `std.env`, `std.csv`, `std.toml`, which the
+  compiler's manifest reader now uses, `std.base64`, `std.hash` (FNV-1a 64,
+  SipHash-2-4, SHA-256), `std.uuid` and `std.log`; and `random.secure`,
+  from the operating system's generator, the secret key `Map`'s move to
+  SipHash needs.)
 - `std.http` client with redirects, timeouts and streaming bodies, and
   HTTPS through a TLS slot (decision 120). The client speaks HTTP over any
   stream, and one interface turns a TCP connection into an encrypted one:
@@ -655,9 +657,9 @@ own sources, and the language server answers from the checker.
 - `std.testing`: property-based tests (`check(gen, fn)`) with shrinking,
   the same driver the fuzzers use.
 
-Order, with the collections, `std.hash` and `random.secure` in: the small
-modules first (`std.path`, `std.env`, `std.uuid`, `std.log`, `std.csv`,
-`std.toml`, each a few hours' work); `Map` on SipHash with a random key;
+Order, with the collections, `std.hash`, `random.secure` and the small
+modules in (`std.path`, `std.env`, `std.uuid`, `std.log`, `std.csv`,
+`std.toml`, `std.base64`): `Map` on SipHash with a random key;
 `std.time`, fixing on the way the known issue of `import std.time`
 hiding `time.now()`; the HTTP client and the TLS slot, with nxtls in it;
 `std.websocket` and `discord`, lifted from QNI's working code; then the

@@ -348,7 +348,7 @@ using arena {
 - [the Topo](https://londopy.github.io/nexium/topo/01-base-camp.html) (영어): 튜토리얼. 컴파일러 설치부터 신경망, GUI, 배포 라이브러리까지. 소스는 [`topo/`](../../../topo/)에 있습니다. 위의 모든 것을 렌더링한 결과는 [londopy.github.io/nexium](https://londopy.github.io/nexium/)에 있습니다.
 - [설치](../../install.md) (영어): Windows 설치 프로그램, macOS/Linux 스크립트, 소스 빌드, 체크섬, `nx`가 C 컴파일러를 찾는 방법.
 - [패키지](../../packages.md) (영어): `nexium.toml`, `nx add`, `nx fetch`, git 또는 경로 의존성, 잠금 파일.
-- [표준 라이브러리](../../std.md) (영어): Nexium으로 쓰인 모듈(`std.strings`, `std.lists`, `std.bytes`, `std.num`, `std.json`, `std.args`, `std.fs`, `std.time`, `std.regex`, `std.text`, `std.testing`, `std.stream`, `std.net`, `std.http`, `std.thread`, `std.process`, `std.sort`, `std.heap`, `std.set`, `std.deque`, `std.hash`).
+- [표준 라이브러리](../../std.md) (영어): Nexium으로 쓰인 모듈(`std.strings`, `std.lists`, `std.bytes`, `std.num`, `std.json`, `std.args`, `std.fs`, `std.time`, `std.regex`, `std.text`, `std.testing`, `std.stream`, `std.net`, `std.http`, `std.thread`, `std.process`, `std.sort`, `std.heap`, `std.set`, `std.deque`, `std.hash`, `std.path`, `std.env`, `std.uuid`, `std.log`, `std.csv`, `std.toml`, `std.base64`).
 - [수치](https://londopy.github.io/nexium/docs/numbers.html) (영어): 다섯 언어로 쓴 네 프로그램을 한 러너에서 매주 측정.
 - [nexium-gui](../../gui.md) (영어): 즉시 모드 GUI 라이브러리와 위젯 작성법.
 - [프로그램 릴리스하기](../../releasing-your-program.md) (영어): 태그 하나로 세 플랫폼의 바이너리를, 설치 프로그램은 선택.
@@ -441,9 +441,9 @@ gcc나 clang이 필요), C 연동용 `-I`, `--link`,
 케이스, 튜토리얼 프로그램이 CI에서 세 플랫폼 위에서, 새니타이저와 퍼저 아래에서
 실행되며, gdb와 lldb도 거기서 `nx debug`로 구동됩니다. 메모리 안전성은 뷰 규칙이며
 1.3부터 오류입니다. 1.4, 보탤 필요가 없는 표준 라이브러리는 진행 중입니다. 컬렉션
-(`std.sort`, `std.heap`, `std.set`, `std.deque`), `std.hash`, `random.secure`가 들어와
-모두 스물한 모듈이고, 다음은 작은 모듈(경로, 설정 폴더, UUID, 로그, CSV, TOML), 그다음
-시간대, TLS를 갖춘 HTTP 클라이언트, 웹소켓입니다. Nexium이 아직 아닌 것과 각각이
+(`std.sort`, `std.heap`, `std.set`, `std.deque`), `std.hash`, `random.secure`, 경로, 환경
+변수와 설정 폴더, UUID, 로깅, CSV, TOML, base64가 들어와 모두 스물여덟 모듈이고, 다음은 해시
+공격에 강한 `Map`, 시간대, TLS를 갖춘 HTTP 클라이언트, 웹소켓입니다. Nexium이 아직 아닌 것과 각각이
 어디서 답을 얻는지는 [로드맵의 한 절](../../../ROADMAP.md#what-10-is-not-yet)에 있습니다.
 벤치마크는 네 프로그램([속도](#속도))뿐이며, 생태계는 메인테이너 한 명과 트리 밖의
 프로젝트 넷입니다([위](#실제-사용)).

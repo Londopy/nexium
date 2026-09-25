@@ -13,165 +13,14 @@
 //     greet = { git = "https://github.com/someone/greet", tag = "v1.2.0" }
 //     local = { path = "../local" }
 //
-// The TOML reader covers this subset: tables, string, number and boolean
-// values, inline tables, arrays of strings, comments.
+// The manifest is TOML, read by std.toml.
 
 import std.fs
+import std.toml
 
 pub const MANIFEST = "nexium.toml"
 pub const LOCK = "nexium.lock"
 pub const MODULES_DIR = "nexium_modules"
-
-/// A TOML value of the subset: a string (numbers and booleans keep their
-/// text), an inline table, or an array.
-pub struct Value {
-    kind: u8
-    text: String
-    keys: List(String)
-    items: List(Value)
-}
-
-pub const V_STR: u8 = 0
-pub const V_TABLE: u8 = 1
-pub const V_LIST: u8 = 2
-
-fn str_value(s: []u8) -> Value {
-    return Value{ .kind = V_STR, .text = String.from(s), .keys = List(String).new(), .items = List(Value).new() }
-}
-
-impl Value {
-    /// The entry `key` of an inline table.
-    pub fn get(self: *Self, key: []u8) -> ?*Value {
-        if self.kind != V_TABLE { return null }
-        for k, i in self.keys { if k == key { return &self.items[i] } }
-        return null
-    }
-    pub fn as_str(self: *Self) -> ?[]u8 {
-        if self.kind != V_STR { return null }
-        return self.text[..]
-    }
-}
-
-/// One `key = value` line of a table.
-pub struct Entry {
-    key: String
-    value: Value
-}
-
-/// A table of the manifest: its header path and its entries in order.
-pub struct Table {
-    name: String
-    entries: List(Entry)
-}
-
-fn strip_comment(line: []u8) -> []u8 {
-    var in_str = false
-    for c, i in line {
-        if c == '"' { in_str = !in_str }
-        else if c == '#' and !in_str { return line[0..i] }
-    }
-    return line
-}
-
-/// Split on commas outside strings and brackets.
-fn split_top(s: []u8) -> List(String) {
-    var out = List(String).new()
-    var depth: i64 = 0
-    var in_str = false
-    var cur = String.new()
-    for c in s {
-        if c == '"' { in_str = !in_str; cur.push_byte(c) }
-        else if (c == '{' or c == '[') and !in_str { depth += 1; cur.push_byte(c) }
-        else if (c == '}' or c == ']') and !in_str { depth -= 1; cur.push_byte(c) }
-        else if c == ',' and !in_str and depth == 0 { out.append(cur); cur = String.new() }
-        else { cur.push_byte(c) }
-    }
-    if cur[..].trim().len > 0 { out.append(cur) }
-    return out
-}
-
-fn parse_value(v: []u8) -> !Value {
-    if v.len > 0 and v[0] == '"' {
-        let inner = v[1..]
-        let end = inner.find("\"") orelse return error.UnterminatedString
-        return str_value(inner[0..end])
-    }
-    if v.len > 0 and v[0] == '{' {
-        if v[v.len - 1] != '}' { return error.UnterminatedTable }
-        let inner = v[1..v.len - 1]
-        var t = Value{ .kind = V_TABLE, .text = String.new(), .keys = List(String).new(), .items = List(Value).new() }
-        for part in split_top(inner) {
-            let p = part[..].trim()
-            if p.len == 0 { continue }
-            let eq = p.find("=") orelse return error.ExpectedKeyValue
-            t.keys.append(String.from(p[0..eq].trim()))
-            t.items.append(try parse_value(p[eq + 1..].trim()))
-        }
-        return t
-    }
-    if v.len > 0 and v[0] == '[' {
-        if v[v.len - 1] != ']' { return error.UnterminatedArray }
-        let inner = v[1..v.len - 1]
-        var l = Value{ .kind = V_LIST, .text = String.new(), .keys = List(String).new(), .items = List(Value).new() }
-        for part in split_top(inner) {
-            let p = part[..].trim()
-            if p.len > 0 { l.items.append(try parse_value(p)) }
-        }
-        return l
-    }
-    // numbers and booleans are kept as their text
-    return str_value(v)
-}
-
-/// What a parse error means, for the diagnostic.
-fn explain(e: error) -> []u8 {
-    if e == error.UnterminatedString { return "unterminated string" }
-    if e == error.UnterminatedTable { return "unterminated inline table" }
-    if e == error.UnterminatedArray { return "unterminated array" }
-    if e == error.ExpectedKeyValue { return "expected `key = value` in the inline table" }
-    if e == error.UnterminatedHeader { return "unterminated table header" }
-    if e == error.ExpectedLine { return "expected `key = value`" }
-    return "invalid manifest"
-}
-
-/// Parse the TOML subset into tables; a message names the line on failure.
-pub fn parse_toml(text: []u8) -> !List(Table) {
-    var tables = List(Table).new()
-    tables.append(Table{ .name = String.new(), .entries = List(Entry).new() })
-    var current: usize = 0
-    for raw, i in text.lines() {
-        let line = strip_comment(raw).trim()
-        if line.len == 0 { continue }
-        if line[0] == '[' {
-            if line[line.len - 1] != ']' {
-                eprintln("error: {}:{}: {}", .{MANIFEST, i + 1, explain(error.UnterminatedHeader)})
-                return error.InvalidInput
-            }
-            let name = line[1..line.len - 1].trim()
-            current = tables.len
-            for t, ti in tables { if t.name == name { current = ti } }
-            if current == tables.len { tables.append(Table{ .name = String.from(name), .entries = List(Entry).new() }) }
-            continue
-        }
-        let eq = line.find("=") orelse {
-            eprintln("error: {}:{}: {}", .{MANIFEST, i + 1, explain(error.ExpectedLine)})
-            return error.InvalidInput
-        }
-        var key = line[0..eq].trim()
-        if key.len >= 2 and key[0] == '"' and key[key.len - 1] == '"' { key = key[1..key.len - 1] }
-        let value = parse_value(line[eq + 1..].trim()) catch |e| {
-            eprintln("error: {}:{}: {}", .{MANIFEST, i + 1, explain(e)})
-            return error.InvalidInput
-        }
-        tables[current].entries.append(Entry{ .key = String.from(key), .value = value })
-    }
-    return tables
-}
-
-fn table_of(tables: *List(Table), name: []u8) -> ?*Table {
-    for t, i in tables { if t.name == name { return &tables[i] } }
-    return null
-}
 
 /// A dependency as the manifest names it.
 pub struct Dep {
@@ -193,6 +42,16 @@ pub struct Manifest {
     dir: String
 }
 
+// a value as the manifest reads it: a string, or a number or a boolean as
+// its text, as the reader before std.toml kept them
+fn text_of(v: *toml.Toml) -> ?String {
+    if let s = toml.as_str(v) { return String.from(s) }
+    if let i = toml.as_int(v) { return format("{}", .{i}) }
+    if let f = toml.as_float(v) { return format("{}", .{f}) }
+    if let b = toml.as_bool(v) { return String.from(if b { "true" } else { "false" }) }
+    return null
+}
+
 fn is_ident(s: []u8) -> bool {
     if s.len == 0 { return false }
     for c in s { if !((c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '_') { return false } }
@@ -205,17 +64,18 @@ pub fn read(path: []u8) -> !Manifest {
         eprintln("error: cannot read {}", .{path})
         return error.NotFound
     }
-    let tables = try parse_toml(text[..])
-    let pkg = table_of(&tables, "package") orelse {
+    let doc = toml.parse(text[..]) catch {
+        eprintln("error: {}: {}", .{path, toml.problem(text[..]) orelse String.from("not TOML")})
+        return error.InvalidInput
+    }
+    let pkg = toml.get(&doc, "package") orelse {
         eprintln("error: {}: missing a [package] table", .{path})
         return error.InvalidInput
     }
     var name = String.new()
     var version = String.from("0.0.0")
-    for e in pkg.entries {
-        if e.key == "name" { if let s = e.value.as_str() { name = String.from(s) } }
-        if e.key == "version" { if let s = e.value.as_str() { version = String.from(s) } }
-    }
+    if let n = toml.get(pkg, "name") { if let s = text_of(n) { name = s } }
+    if let v = toml.get(pkg, "version") { if let s = text_of(v) { version = s } }
     if name.len == 0 {
         eprintln("error: {}: [package] needs a name", .{path})
         return error.InvalidInput
@@ -225,26 +85,27 @@ pub fn read(path: []u8) -> !Manifest {
         return error.InvalidInput
     }
     var deps = List(Dep).new()
-    if let d = table_of(&tables, "dependencies") {
-        for e in d.entries {
-            var dep = Dep{ .name = e.key.clone(), .git = String.new(), .tag = String.new(), .path = String.new(), .dir = String.new() }
-            if e.value.kind == V_STR {
-                dep.tag = e.value.text.clone()
-            } else if e.value.kind == V_TABLE {
-                if let g = e.value.get("git") { if let s = g.as_str() { dep.git = String.from(s) } }
-                if let t = e.value.get("tag") { if let s = t.as_str() { dep.tag = String.from(s) } }
-                if let p = e.value.get("path") { if let s = p.as_str() { dep.path = String.from(s) } }
-                if let x = e.value.get("dir") { if let s = x.as_str() { dep.dir = String.from(s) } }
+    if let d = toml.get(&doc, "dependencies") {
+        for key in toml.keys(d) {
+            let v = toml.get(d, key) orelse continue
+            var dep = Dep{ .name = String.from(key), .git = String.new(), .tag = String.new(), .path = String.new(), .dir = String.new() }
+            if toml.is_table(v) {
+                if let g = toml.get(v, "git") { if let s = text_of(g) { dep.git = s } }
+                if let t = toml.get(v, "tag") { if let s = text_of(t) { dep.tag = s } }
+                if let p = toml.get(v, "path") { if let s = text_of(p) { dep.path = s } }
+                if let x = toml.get(v, "dir") { if let s = text_of(x) { dep.dir = s } }
+            } else if let s = text_of(v) {
+                dep.tag = s
             } else {
-                eprintln("error: {}: dependency `{}` cannot be an array", .{path, e.key})
+                eprintln("error: {}: dependency `{}` must be a table or a version", .{path, key})
                 return error.InvalidInput
             }
             if dep.git.len == 0 and dep.path.len == 0 {
-                eprintln("error: {}: dependency `{}` needs `git = \"url\"` (with `tag`) or `path = \"dir\"`", .{path, e.key})
+                eprintln("error: {}: dependency `{}` needs `git = \"url\"` (with `tag`) or `path = \"dir\"`", .{path, key})
                 return error.InvalidInput
             }
             if dep.dir.len > 0 and dep.git.len == 0 {
-                eprintln("error: {}: dependency `{}`: `dir` goes with `git` (a `path` points at the package's directory itself)", .{path, e.key})
+                eprintln("error: {}: dependency `{}`: `dir` goes with `git` (a `path` points at the package's directory itself)", .{path, key})
                 return error.InvalidInput
             }
             deps.append(dep)
@@ -555,18 +416,33 @@ pub fn add(manifest_path: []u8, dep: *Dep) -> !void {
     }
 }
 
-test "toml subset" {
-    let t = parse_toml("# c\n[package]\nname = \"app\" # trailing\nversion = \"0.1.0\"\n\n[dependencies]\ngreet = { git = \"https://x/y\", tag = \"v1\" }\nloc = { path = \"../loc\" }\nlist = [\"a\", \"b\"]\n") catch {
+test "a manifest, read through std.toml" {
+    let dir = fs.temp_path("nx-manifest-")
+    fs.make_dirs(dir[..]) catch {
         expect(false)
         return
     }
-    let pkg = table_of(&t, "package") orelse { expect(false); return }
-    expect_eq(pkg.entries[0].key[..], "name")
-    expect_eq(pkg.entries[0].value.text[..], "app")
-    let deps = table_of(&t, "dependencies") orelse { expect(false); return }
-    let tag = deps.entries[0].value.get("tag") orelse { expect(false); return }
-    expect_eq(tag.text[..], "v1")
-    let path = deps.entries[1].value.get("path") orelse { expect(false); return }
-    expect_eq(path.text[..], "../loc")
-    expect_eq(deps.entries[2].value.items.len, 2)
+    let file = fs.join(dir[..], MANIFEST)
+    fs.write(file[..], "# c\n[package]\nname = \"app\" # trailing\nversion = 1.0\n\n[dependencies]\ngreet = { git = \"https://x/y\", tag = \"v1\" }\nloc = { path = \"../loc\" }\n") catch {
+        expect(false)
+        return
+    }
+    let m = read(file[..]) catch {
+        expect(false)
+        return
+    }
+    expect_eq(m.name[..], "app")
+    expect_eq(m.version[..], "1.0")
+    expect_eq(m.deps.len, 2)
+    expect_eq(m.deps[0].git[..], "https://x/y")
+    expect_eq(m.deps[0].tag[..], "v1")
+    expect_eq(m.deps[1].path[..], "../loc")
+    fs.write(file[..], "[package]\nname = \"app\"\nname = \"twice\"\n") catch { }
+    var refused = false
+    _ = read(file[..]) catch {
+        refused = true
+        Manifest{ .name = String.new(), .version = String.new(), .deps = List(Dep).new(), .dir = String.new() }
+    }
+    expect(refused)
+    fs.remove_all(dir[..]) catch { }
 }

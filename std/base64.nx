@@ -1,0 +1,136 @@
+// std.base64: base64 (RFC 4648), written in Nexium: the standard alphabet
+// with its `=` padding, and the URL-safe one (`-` and `_` for `+` and `/`)
+// without, as JSON Web Tokens and URLs carry it.
+//
+// `import std.base64` then:
+//
+//     let s = base64.encode("hi!")                  // "aGkh"
+//     let raw = try base64.decode(s)
+//     let token = base64.encode_url(key)            // no `=`, safe in a URL
+//     let back = try base64.decode_url(token)
+//
+// Decoding is strict: a character outside the alphabet, padding anywhere
+// but at the end or more of it than the length needs, or a length no
+// encoding produces is `error.InvalidInput`. `std.bytes` keeps the lenient
+// reader, `unbase64`, which skips line breaks and stray padding.
+
+const STD: []u8 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+const URL: []u8 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+
+/// Standard base64 with `=` padding.
+pub fn encode(data: []u8) -> String {
+    return encode_with(data, STD, true)
+}
+
+/// Bytes from standard base64; the padding may be left out.
+pub fn decode(text: []u8) -> !String {
+    return decode_with(text, false)
+}
+
+/// URL-safe base64 without padding (RFC 4648 section 5, as JWTs use).
+pub fn encode_url(data: []u8) -> String {
+    return encode_with(data, URL, false)
+}
+
+/// Bytes from URL-safe base64, padded or not.
+pub fn decode_url(text: []u8) -> !String {
+    return decode_with(text, true)
+}
+
+fn encode_with(data: []u8, alphabet: []u8, pad: bool) -> String {
+    var out = String.with_capacity((data.len + 2) / 3 * 4)
+    var i: usize = 0
+    while i + 3 <= data.len {
+        let n = ((data[i] as u32) << 16) | ((data[i + 1] as u32) << 8) | (data[i + 2] as u32)
+        out.push_byte(alphabet[((n >> 18) & 63) as usize])
+        out.push_byte(alphabet[((n >> 12) & 63) as usize])
+        out.push_byte(alphabet[((n >> 6) & 63) as usize])
+        out.push_byte(alphabet[(n & 63) as usize])
+        i += 3
+    }
+    let rest = data.len - i
+    if rest > 0 {
+        var n = (data[i] as u32) << 16
+        if rest == 2 { n = n | ((data[i + 1] as u32) << 8) }
+        out.push_byte(alphabet[((n >> 18) & 63) as usize])
+        out.push_byte(alphabet[((n >> 12) & 63) as usize])
+        if rest == 2 { out.push_byte(alphabet[((n >> 6) & 63) as usize]) }
+        if pad { out.append(if rest == 1 { "==" } else { "=" }) }
+    }
+    return out
+}
+
+fn value(c: u8, url: bool) -> ?u32 {
+    if c >= 'A' and c <= 'Z' { return (c - 'A') as u32 }
+    if c >= 'a' and c <= 'z' { return ((c - 'a') as u32) + 26 }
+    if c >= '0' and c <= '9' { return ((c - '0') as u32) + 52 }
+    if c == (if url { '-' } else { '+' }) { return 62 }
+    if c == (if url { '_' } else { '/' }) { return 63 }
+    return null
+}
+
+fn decode_with(text: []u8, url: bool) -> !String {
+    var end = text.len
+    var padding: usize = 0
+    while end > 0 and text[end - 1] == '=' and padding < 2 {
+        end -= 1
+        padding += 1
+    }
+    // padded text comes in whole groups of four, and a lone character is
+    // never the end of one
+    if padding > 0 and text.len % 4 != 0 { return error.InvalidInput }
+    if end % 4 == 1 { return error.InvalidInput }
+    if padding > 0 and end % 4 + padding != 4 { return error.InvalidInput }
+    var out = String.with_capacity(end / 4 * 3 + 2)
+    var acc: u32 = 0
+    var bits: u32 = 0
+    for c in text[0..end] {
+        let v = value(c, url) orelse return error.InvalidInput
+        acc = ((acc << 6) | v) & 0xFFFFFF
+        bits += 6
+        if bits >= 8 {
+            bits -= 8
+            out.push_byte(@truncate(u8, (acc >> bits) & 255))
+        }
+    }
+    return out
+}
+
+// ------------------------------------------------------------------ tests
+
+test "RFC 4648's vectors" {
+    let plain = ["", "f", "fo", "foo", "foob", "fooba", "foobar"]
+    let coded = ["", "Zg==", "Zm8=", "Zm9v", "Zm9vYg==", "Zm9vYmE=", "Zm9vYmFy"]
+    for p, i in plain {
+        expect_eq(encode(p), coded[i])
+        expect_eq(try decode(coded[i]), p)
+    }
+    expect_eq(try decode("Zm9vYg"), "foob")
+}
+
+test "the URL-safe alphabet, without padding" {
+    let data = b"\xFB\xFF\xBF"
+    expect_eq(encode(data), "+/+/")
+    expect_eq(encode_url(data), "-_-_")
+    expect_eq(encode_url(b"\xFB\xFF"), "-_8")
+    expect_eq(try decode_url("-_8"), b"\xFB\xFF")
+    expect_eq(try decode_url("-_8="), b"\xFB\xFF")
+    var refused = false
+    _ = decode("-_8=") catch |e| {
+        refused = e == error.InvalidInput
+        String.new()
+    }
+    expect(refused)
+}
+
+test "what is not base64" {
+    for bad in ["Z", "Zm9vY", "Zg=", "Zg===", "Z=g=", "Zm 9v", "Zm9v\n", "Zm9=v"] {
+        var refused = false
+        _ = decode(bad) catch |e| {
+            refused = e == error.InvalidInput
+            String.new()
+        }
+        if !refused { println("base64: {} was read", .{bad}) }
+        expect(refused)
+    }
+}

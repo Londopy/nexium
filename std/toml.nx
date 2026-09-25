@@ -1,0 +1,1214 @@
+// std.toml: TOML 1.0 (toml.io), written in Nexium: reading a document into
+// values, finding a value by its key, and writing values back as TOML.
+//
+// `import std.toml` then:
+//
+//     let doc = try toml.parse(text)
+//     let name = toml.as_str(toml.lookup(&doc, "package.name") orelse return) orelse ""
+//     for dep in toml.keys(toml.get(&doc, "dependencies") orelse return) { }
+//     if let why = toml.problem(text) { eprintln("{}", .{why}) }   // "line 3: ..."
+//     let out = toml.stringify(&doc)
+//
+// Every value TOML has: strings (basic and literal, each also multi-line),
+// 64-bit integers (decimal, hex, octal, binary), floats (with `inf` and
+// `nan`), booleans, dates and times (kept as written: offset date-time,
+// local date-time, local date, local time), arrays, tables, inline tables
+// and arrays of tables, under TOML's rules that a key and a table are
+// defined once. A document that breaks one is `error.InvalidInput`;
+// `problem` says where and why.
+
+/// A TOML value; a document is a `Table`.
+pub enum Toml derive(Clone) {
+    Str(String),
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    Time(Stamp),
+    Arr(List(Toml)),
+    Table(List(Entry)),
+}
+
+/// A key of a table and its value, in the order the document gave them.
+pub struct Entry derive(Clone) {
+    key: String
+    value: Toml
+}
+
+/// Which of TOML's four date and time forms a stamp is.
+pub enum StampKind {
+    OffsetDateTime,
+    LocalDateTime,
+    LocalDate,
+    LocalTime,
+}
+
+/// A date, a time or both (RFC 3339), as the document wrote it.
+pub struct Stamp derive(Clone) {
+    kind: StampKind
+    text: String
+}
+
+// ------------------------------------------------------------------ reading
+
+/// The document's values: a `Table` of its keys.
+pub fn parse(text: []u8) -> !Toml {
+    var why = String.new()
+    return parse_doc(text, &mut why) orelse return error.InvalidInput
+}
+
+/// Why `text` is not a TOML document (`line N: ...`), or null when it is.
+pub fn problem(text: []u8) -> ?String {
+    var why = String.new()
+    if parse_doc(text, &mut why) != null { return null }
+    return why
+}
+
+// the document as it is read: each table knows how it was defined, which
+// the rules for defining it again need and a `Toml` does not keep
+const N_TABLE: u8 = 0
+const N_ARRAY: u8 = 1
+const N_VALUE: u8 = 2
+
+struct Node {
+    kind: u8
+    /// a table's keys, and its members in `kids`; an array of tables' tables
+    keys: List(String)
+    kids: List(Node)
+    value: Toml
+    /// a table defined by a `[header]`, or by dotted keys
+    header: bool
+    dotted: bool
+}
+
+fn table_node() -> Node {
+    return Node{ .kind = N_TABLE, .keys = List(String).new(), .kids = List(Node).new(), .value = Toml.Bool(false), .header = false, .dotted = false }
+}
+
+fn value_node(own v: Toml) -> Node {
+    var n = table_node()
+    n.kind = N_VALUE
+    n.value = v
+    return n
+}
+
+fn find(n: *Node, key: []u8) -> ?usize {
+    for k, i in n.keys { if k[..] == key { return i } }
+    return null
+}
+
+fn to_toml(n: *Node) -> Toml {
+    if n.kind == N_VALUE { return n.value.clone() }
+    if n.kind == N_ARRAY {
+        var items = List(Toml).new()
+        for k in n.kids { items.append(to_toml(&k)) }
+        return Toml.Arr(items)
+    }
+    var entries = List(Entry).new()
+    for k, i in n.keys { entries.append(Entry{ .key = k.clone(), .value = to_toml(&n.kids[i]) }) }
+    return Toml.Table(entries)
+}
+
+fn parse_doc(text: []u8, why: *mut String) -> ?Toml {
+    var p = Parser{ .src = text, .at = 0, .line = 1, .why = String.new() }
+    var root = table_node()
+    // the table key/value lines go into, as the steps down to it
+    var current = List(usize).new()
+    while true {
+        if !p.skip_blank() { break }
+        if p.at >= p.src.len { break }
+        if p.src[p.at] == '[' {
+            var path = List(usize).new()
+            if !p.header(&mut root, &mut path) { break }
+            current = path
+        } else if !p.key_value(&mut root, current[..]) {
+            break
+        }
+        if !p.end_of_line() { break }
+    }
+    if p.why.len > 0 {
+        why.* = p.why.clone()
+        return null
+    }
+    return to_toml(&root)
+}
+
+struct Parser {
+    src: []u8
+    at: usize
+    line: usize
+    why: String
+}
+
+fn is_bare(c: u8) -> bool {
+    return (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '_' or c == '-'
+}
+
+fn is_digit(c: u8) -> bool {
+    return c >= '0' and c <= '9'
+}
+
+fn digit_value(c: u8) -> u32 {
+    if c >= '0' and c <= '9' { return (c - '0') as u32 }
+    if c >= 'a' and c <= 'f' { return ((c - 'a') as u32) + 10 }
+    if c >= 'A' and c <= 'F' { return ((c - 'A') as u32) + 10 }
+    return 99
+}
+
+impl Parser {
+    fn fail(self: *mut Self, msg: []u8) {
+        if self.why.len == 0 { self.why = format("line {}: {}", .{self.line, msg}) }
+    }
+
+    fn starts(self: *Self, s: []u8) -> bool {
+        return self.at + s.len <= self.src.len and self.src[self.at..self.at + s.len] == s
+    }
+
+    fn peek(self: *Self) -> u8 {
+        return if self.at < self.src.len { self.src[self.at] } else { 0 }
+    }
+
+    fn skip_ws(self: *mut Self) {
+        while self.at < self.src.len and (self.src[self.at] == ' ' or self.src[self.at] == '\t') { self.at += 1 }
+    }
+
+    // a comment to the end of its line; false at a control character in it
+    fn skip_comment(self: *mut Self) -> bool {
+        if self.peek() != '#' { return true }
+        while self.at < self.src.len and self.src[self.at] != '\n' {
+            let c = self.src[self.at]
+            if c == '\r' and self.at + 1 < self.src.len and self.src[self.at + 1] == '\n' { return true }
+            if (c < 0x20 and c != '\t') or c == 0x7f {
+                self.fail("a control character in a comment")
+                return false
+            }
+            self.at += 1
+        }
+        return true
+    }
+
+    // a line end, LF or CRLF
+    fn newline(self: *mut Self) -> bool {
+        if self.peek() == '\n' {
+            self.at += 1
+            self.line += 1
+            return true
+        }
+        if self.starts("\r\n") {
+            self.at += 2
+            self.line += 1
+            return true
+        }
+        return false
+    }
+
+    // whitespace, comments and line ends; false after a failure
+    fn skip_blank(self: *mut Self) -> bool {
+        while true {
+            self.skip_ws()
+            if !self.skip_comment() { return false }
+            if !self.newline() { break }
+        }
+        return self.why.len == 0
+    }
+
+    // what may follow a statement on its line: whitespace, a comment
+    fn end_of_line(self: *mut Self) -> bool {
+        self.skip_ws()
+        if !self.skip_comment() { return false }
+        if self.at >= self.src.len or self.newline() { return true }
+        self.fail("more on the line after its key and value, or its header")
+        return false
+    }
+
+    // ---------------------------------------------------------------- keys
+
+    fn simple_key(self: *mut Self) -> ?String {
+        let c = self.peek()
+        if c == '"' {
+            if self.starts("\"\"\"") {
+                self.fail("a multi-line string cannot be a key")
+                return null
+            }
+            return self.basic_string()
+        }
+        if c == '\'' {
+            if self.starts("'''") {
+                self.fail("a multi-line string cannot be a key")
+                return null
+            }
+            return self.literal_string()
+        }
+        let start = self.at
+        while self.at < self.src.len and is_bare(self.src[self.at]) { self.at += 1 }
+        if self.at == start {
+            self.fail("a key is missing")
+            return null
+        }
+        return String.from(self.src[start..self.at])
+    }
+
+    // a key, dotted or not: `a`, `a.b`, `"a b".c`
+    fn key(self: *mut Self) -> ?List(String) {
+        var parts = List(String).new()
+        while true {
+            self.skip_ws()
+            let k = self.simple_key() orelse return null
+            parts.append(k)
+            self.skip_ws()
+            if self.peek() != '.' { break }
+            self.at += 1
+        }
+        return parts
+    }
+
+    // ---------------------------------------------------------------- tables
+
+    // `[a.b]` or `[[a.b]]`: the steps down to the table it opens go in `path`
+    fn header(self: *mut Self, root: *mut Node, path: *mut List(usize)) -> bool {
+        self.at += 1
+        let array = self.peek() == '['
+        if array { self.at += 1 }
+        let parts = self.key() orelse return false
+        if self.peek() != ']' {
+            self.fail("a table's header is not closed with `]`")
+            return false
+        }
+        self.at += 1
+        if array {
+            if self.peek() != ']' {
+                self.fail("an array of tables' header is not closed with `]]`")
+                return false
+            }
+            self.at += 1
+        }
+        return self.open_table(root, parts[..], array, path)
+    }
+
+    fn open_table(self: *mut Self, n: *mut Node, parts: []String, array: bool, path: *mut List(usize)) -> bool {
+        let name = parts[0][..]
+        let last = parts.len == 1
+        let found = find(n, name)
+        if found == null {
+            var t = table_node()
+            t.header = last
+            if last and array {
+                var arr = table_node()
+                arr.kind = N_ARRAY
+                arr.kids.append(t)
+                n.keys.append(String.from(name))
+                n.kids.append(arr)
+                path.append(n.kids.len - 1)
+                path.append(0)
+                return true
+            }
+            n.keys.append(String.from(name))
+            n.kids.append(t)
+            path.append(n.kids.len - 1)
+            if last { return true }
+            return self.open_table(&mut n.kids[n.kids.len - 1], parts[1..], array, path)
+        }
+        let k = found.?
+        path.append(k)
+        let child = &mut n.kids[k]
+        if child.kind == N_VALUE {
+            self.fail(format("`{}` is a value, not a table", .{name})[..])
+            return false
+        }
+        if last {
+            if array {
+                if child.kind != N_ARRAY {
+                    self.fail(format("`{}` is a table, not an array of tables", .{name})[..])
+                    return false
+                }
+                var t = table_node()
+                t.header = true
+                child.kids.append(t)
+                path.append(child.kids.len - 1)
+                return true
+            }
+            if child.kind == N_ARRAY {
+                self.fail(format("`{}` is an array of tables, not a table", .{name})[..])
+                return false
+            }
+            if child.header or child.dotted {
+                self.fail(format("the table `{}` is defined twice", .{name})[..])
+                return false
+            }
+            child.header = true
+            return true
+        }
+        if child.kind == N_ARRAY {
+            let e = child.kids.len - 1
+            path.append(e)
+            return self.open_table(&mut child.kids[e], parts[1..], array, path)
+        }
+        return self.open_table(child, parts[1..], array, path)
+    }
+
+    // ---------------------------------------------------------------- keys and values
+
+    fn key_value(self: *mut Self, root: *mut Node, path: []usize) -> bool {
+        let parts = self.key() orelse return false
+        if self.peek() != '=' {
+            self.fail("`=` is missing after a key")
+            return false
+        }
+        self.at += 1
+        self.skip_ws()
+        let v = self.value() orelse return false
+        return self.put(root, path, parts[..], v)
+    }
+
+    fn put(self: *mut Self, n: *mut Node, path: []usize, parts: []String, own v: Toml) -> bool {
+        if path.len > 0 { return self.put(&mut n.kids[path[0]], path[1..], parts, v) }
+        return self.put_dotted(n, parts, v)
+    }
+
+    fn put_dotted(self: *mut Self, n: *mut Node, parts: []String, own v: Toml) -> bool {
+        let name = parts[0][..]
+        let found = find(n, name)
+        if parts.len == 1 {
+            if found != null {
+                self.fail(format("the key `{}` is defined twice", .{name})[..])
+                return false
+            }
+            n.keys.append(String.from(name))
+            n.kids.append(value_node(v))
+            return true
+        }
+        if let k = found {
+            let child = &mut n.kids[k]
+            if child.kind != N_TABLE {
+                self.fail(format("`{}` is not a table that dotted keys can add to", .{name})[..])
+                return false
+            }
+            if child.header {
+                self.fail(format("the table `{}` has a header, so dotted keys cannot add to it", .{name})[..])
+                return false
+            }
+            child.dotted = true
+            return self.put_dotted(child, parts[1..], v)
+        }
+        var t = table_node()
+        t.dotted = true
+        n.keys.append(String.from(name))
+        n.kids.append(t)
+        return self.put_dotted(&mut n.kids[n.kids.len - 1], parts[1..], v)
+    }
+
+    fn value(self: *mut Self) -> ?Toml {
+        let c = self.peek()
+        if c == '"' {
+            if self.starts("\"\"\"") {
+                let s = self.ml_string('"') orelse return null
+                return Toml.Str(s)
+            }
+            let s = self.basic_string() orelse return null
+            return Toml.Str(s)
+        }
+        if c == '\'' {
+            if self.starts("'''") {
+                let s = self.ml_string('\'') orelse return null
+                return Toml.Str(s)
+            }
+            let s = self.literal_string() orelse return null
+            return Toml.Str(s)
+        }
+        if c == '[' { return self.array() }
+        if c == '{' { return self.inline_table() }
+        return self.scalar()
+    }
+
+    // ---------------------------------------------------------------- strings
+
+    fn basic_string(self: *mut Self) -> ?String {
+        self.at += 1
+        var out = String.new()
+        while true {
+            if self.at >= self.src.len or self.src[self.at] == '\n' or self.src[self.at] == '\r' {
+                self.fail("a string is not closed on its line")
+                return null
+            }
+            let c = self.src[self.at]
+            if c == '"' {
+                self.at += 1
+                break
+            }
+            if c == '\\' {
+                if !self.escape(&mut out) { return null }
+                continue
+            }
+            if (c < 0x20 and c != '\t') or c == 0x7f {
+                self.fail("a control character in a string")
+                return null
+            }
+            out.push_byte(c)
+            self.at += 1
+        }
+        return out
+    }
+
+    fn literal_string(self: *mut Self) -> ?String {
+        self.at += 1
+        let start = self.at
+        while true {
+            if self.at >= self.src.len or self.src[self.at] == '\n' or self.src[self.at] == '\r' {
+                self.fail("a string is not closed on its line")
+                return null
+            }
+            let c = self.src[self.at]
+            if c == '\'' { break }
+            if (c < 0x20 and c != '\t') or c == 0x7f {
+                self.fail("a control character in a string")
+                return null
+            }
+            self.at += 1
+        }
+        let s = String.from(self.src[start..self.at])
+        self.at += 1
+        return s
+    }
+
+    // at a backslash in a basic string
+    fn escape(self: *mut Self, out: *mut String) -> bool {
+        if self.at + 1 >= self.src.len {
+            self.fail("a string ends in a backslash")
+            return false
+        }
+        let e = self.src[self.at + 1]
+        self.at += 2
+        if e == 'b' { out.push_byte(8) }
+        else if e == 't' { out.push_byte('\t') }
+        else if e == 'n' { out.push_byte('\n') }
+        else if e == 'f' { out.push_byte(12) }
+        else if e == 'r' { out.push_byte('\r') }
+        else if e == '"' { out.push_byte('"') }
+        else if e == '\\' { out.push_byte('\\') }
+        else if e == 'u' or e == 'U' {
+            let n: usize = if e == 'u' { 4 } else { 8 }
+            if self.at + n > self.src.len {
+                self.fail("a \\u escape is cut short")
+                return false
+            }
+            var cp: u32 = 0
+            for i in 0..n {
+                let d = digit_value(self.src[self.at + i])
+                if d > 15 {
+                    self.fail("a \\u escape with a character that is not a hex digit")
+                    return false
+                }
+                cp = cp * 16 + d
+            }
+            self.at += n
+            if (cp >= 0xD800 and cp <= 0xDFFF) or cp > 0x10FFFF {
+                self.fail("a \\u escape that is not a Unicode scalar value")
+                return false
+            }
+            out.append_char(cp as char)
+        } else {
+            self.fail(format("an escape TOML does not have: \\{}", .{self.src[self.at - 1..self.at]})[..])
+            return false
+        }
+        return true
+    }
+
+    // `"""` or `'''`: a line end straight after the opening is dropped, a
+    // basic one's backslash at a line's end joins the next line, and up to
+    // two quotes may stand before the closing three
+    fn ml_string(self: *mut Self, q: u8) -> ?String {
+        self.at += 3
+        _ = self.newline()
+        var out = String.new()
+        while true {
+            if self.at >= self.src.len {
+                self.fail("a multi-line string is not closed")
+                return null
+            }
+            let c = self.src[self.at]
+            if c == q and self.at + 2 < self.src.len and self.src[self.at + 1] == q and self.src[self.at + 2] == q {
+                var run: usize = 3
+                while self.at + run < self.src.len and self.src[self.at + run] == q { run += 1 }
+                if run > 5 {
+                    self.fail("three quotes in a row inside a multi-line string")
+                    return null
+                }
+                for _ in 0..run - 3 { out.push_byte(q) }
+                self.at += run
+                return out
+            }
+            if q == '"' and c == '\\' {
+                var j = self.at + 1
+                while j < self.src.len and (self.src[j] == ' ' or self.src[j] == '\t') { j += 1 }
+                if j < self.src.len and (self.src[j] == '\n' or (self.src[j] == '\r' and j + 1 < self.src.len and self.src[j + 1] == '\n')) {
+                    self.at = j
+                    while self.at < self.src.len {
+                        let d = self.src[self.at]
+                        if d == ' ' or d == '\t' {
+                            self.at += 1
+                        } else if !self.newline() {
+                            break
+                        }
+                    }
+                    continue
+                }
+                if !self.escape(&mut out) { return null }
+                continue
+            }
+            if self.newline() {
+                out.push_byte('\n')
+                continue
+            }
+            if (c < 0x20 and c != '\t') or c == 0x7f {
+                self.fail("a control character in a string")
+                return null
+            }
+            out.push_byte(c)
+            self.at += 1
+        }
+        return out
+    }
+
+    // ---------------------------------------------------------------- arrays and inline tables
+
+    fn array(self: *mut Self) -> ?Toml {
+        self.at += 1
+        var items = List(Toml).new()
+        while true {
+            if !self.skip_blank() { return null }
+            if self.peek() == ']' {
+                self.at += 1
+                break
+            }
+            if self.at >= self.src.len {
+                self.fail("an array is not closed")
+                return null
+            }
+            let v = self.value() orelse return null
+            items.append(v)
+            if !self.skip_blank() { return null }
+            if self.peek() == ',' {
+                self.at += 1
+                continue
+            }
+            if self.peek() == ']' {
+                self.at += 1
+                break
+            }
+            self.fail("a comma or `]` is missing in an array")
+            return null
+        }
+        return Toml.Arr(items)
+    }
+
+    fn inline_table(self: *mut Self) -> ?Toml {
+        self.at += 1
+        var t = table_node()
+        self.skip_ws()
+        if self.peek() == '}' {
+            self.at += 1
+            return to_toml(&t)
+        }
+        while true {
+            let parts = self.key() orelse return null
+            if self.peek() != '=' {
+                self.fail("`=` is missing after a key")
+                return null
+            }
+            self.at += 1
+            self.skip_ws()
+            let v = self.value() orelse return null
+            if !self.put_dotted(&mut t, parts[..], v) { return null }
+            self.skip_ws()
+            if self.peek() == '}' {
+                self.at += 1
+                break
+            }
+            if self.peek() != ',' {
+                self.fail("a comma or `}` is missing in an inline table (it must fit on one line)")
+                return null
+            }
+            self.at += 1
+        }
+        return to_toml(&t)
+    }
+
+    // ---------------------------------------------------------------- numbers, booleans, dates and times
+
+    fn scalar(self: *mut Self) -> ?Toml {
+        let start = self.at
+        while self.at < self.src.len {
+            let c = self.src[self.at]
+            if is_bare(c) or c == '+' or c == '.' or c == ':' {
+                self.at += 1
+                continue
+            }
+            // a date and a time may be joined by a space
+            if c == ' ' and self.at - start == 10 and self.src[start + 4] == '-' and self.at + 1 < self.src.len and is_digit(self.src[self.at + 1]) {
+                self.at += 1
+                continue
+            }
+            break
+        }
+        let tok = self.src[start..self.at]
+        if tok.len == 0 {
+            self.fail("a value is missing")
+            return null
+        }
+        if tok == "true" { return Toml.Bool(true) }
+        if tok == "false" { return Toml.Bool(false) }
+        if tok == "inf" or tok == "+inf" { return Toml.Float(math.INF) }
+        if tok == "-inf" { return Toml.Float(-math.INF) }
+        if tok == "nan" or tok == "+nan" or tok == "-nan" { return Toml.Float(math.NAN) }
+        if (tok.len >= 10 and is_digit(tok[0]) and tok[4] == '-') or (tok.len >= 8 and is_digit(tok[0]) and tok[2] == ':') {
+            let kind = stamp_kind(tok) orelse {
+                self.fail(format("`{}` is not a date or time TOML allows", .{tok})[..])
+                return null
+            }
+            return Toml.Time(Stamp{ .kind = kind, .text = String.from(tok) })
+        }
+        if let i = int_value(tok) { return Toml.Int(i) }
+        if let f = float_value(tok) { return Toml.Float(f) }
+        self.fail(format("`{}` is not a value TOML has", .{tok})[..])
+        return null
+    }
+}
+
+// the end of a run of digits of `base` from `i`, underscores only between
+// digits; `i` when no digit is there; null for a misplaced underscore
+fn digit_run(s: []u8, i: usize, base: u32) -> ?usize {
+    var j = i
+    var digit = false
+    while j < s.len {
+        let c = s[j]
+        if c == '_' {
+            if !digit { return null }
+            digit = false
+            j += 1
+            continue
+        }
+        if digit_value(c) >= base { break }
+        digit = true
+        j += 1
+    }
+    if j > i and !digit { return null }
+    return j
+}
+
+fn int_value(tok: []u8) -> ?i64 {
+    var base: u32 = 10
+    var i: usize = 0
+    var negative = false
+    if tok.len > 2 and tok[0] == '0' and (tok[1] == 'x' or tok[1] == 'o' or tok[1] == 'b') {
+        base = if tok[1] == 'x' { 16 } else if tok[1] == 'o' { 8 } else { 2 }
+        i = 2
+    } else {
+        if tok.len > 0 and (tok[0] == '+' or tok[0] == '-') {
+            negative = tok[0] == '-'
+            i = 1
+        }
+        // no leading zero: `0` itself only
+        if i + 1 < tok.len and tok[i] == '0' { return null }
+    }
+    let end = digit_run(tok, i, base) orelse return null
+    if end == i or end != tok.len { return null }
+    var v: u64 = 0
+    let limit: u64 = if negative { 9223372036854775808 } else { 9223372036854775807 }
+    for c in tok[i..end] {
+        if c == '_' { continue }
+        let d = digit_value(c) as u64
+        if v > (limit - d) / (base as u64) { return null }
+        v = v * (base as u64) + d
+    }
+    if negative {
+        if v == 9223372036854775808 { return -9223372036854775807 - 1 }
+        return - (v as i64)
+    }
+    return v as i64
+}
+
+fn float_value(tok: []u8) -> ?f64 {
+    var i: usize = 0
+    if tok.len > 0 and (tok[0] == '+' or tok[0] == '-') { i = 1 }
+    let int_end = digit_run(tok, i, 10) orelse return null
+    if int_end == i { return null }
+    if int_end - i > 1 and tok[i] == '0' { return null }
+    var j = int_end
+    var fraction = false
+    if j < tok.len and tok[j] == '.' {
+        let frac_end = digit_run(tok, j + 1, 10) orelse return null
+        if frac_end == j + 1 { return null }
+        j = frac_end
+        fraction = true
+    }
+    var exponent = false
+    if j < tok.len and (tok[j] == 'e' or tok[j] == 'E') {
+        var k = j + 1
+        if k < tok.len and (tok[k] == '+' or tok[k] == '-') { k += 1 }
+        let exp_end = digit_run(tok, k, 10) orelse return null
+        if exp_end == k { return null }
+        j = exp_end
+        exponent = true
+    }
+    if j != tok.len or !(fraction or exponent) { return null }
+    var plain = String.with_capacity(tok.len)
+    for c in tok { if c != '_' { plain.push_byte(c) } }
+    let f = plain[..].parse_float() catch { return null }
+    return f
+}
+
+fn two(s: []u8, at: usize) -> ?u32 {
+    if at + 2 > s.len or !is_digit(s[at]) or !is_digit(s[at + 1]) { return null }
+    return ((s[at] - '0') as u32) * 10 + ((s[at + 1] - '0') as u32)
+}
+
+// `HH:MM:SS` and a fraction from `at`: where it ends, or null
+fn time_end(s: []u8, at: usize) -> ?usize {
+    let h = two(s, at) orelse return null
+    if at + 2 >= s.len or s[at + 2] != ':' { return null }
+    let m = two(s, at + 3) orelse return null
+    if at + 5 >= s.len or s[at + 5] != ':' { return null }
+    let sec = two(s, at + 6) orelse return null
+    if h > 23 or m > 59 or sec > 60 { return null }
+    var end = at + 8
+    if end < s.len and s[end] == '.' {
+        var k = end + 1
+        while k < s.len and is_digit(s[k]) { k += 1 }
+        if k == end + 1 { return null }
+        end = k
+    }
+    return end
+}
+
+fn stamp_kind(s: []u8) -> ?StampKind {
+    if s.len >= 3 and s[2] == ':' {
+        let end = time_end(s, 0) orelse return null
+        return if end == s.len { StampKind.LocalTime } else { null }
+    }
+    if s.len < 10 or s[4] != '-' or s[7] != '-' { return null }
+    var year: u32 = 0
+    for k in 0..4 {
+        if !is_digit(s[k]) { return null }
+        year = year * 10 + ((s[k] - '0') as u32)
+    }
+    let month = two(s, 5) orelse return null
+    let day = two(s, 8) orelse return null
+    if month < 1 or month > 12 or day < 1 { return null }
+    let leap = (year % 4 == 0 and year % 100 != 0) or year % 400 == 0
+    let lengths: [12]u32 = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    var days: u32 = lengths[(month - 1) as usize]
+    if month == 2 and leap { days = 29 }
+    if day > days { return null }
+    if s.len == 10 { return StampKind.LocalDate }
+    if s[10] != 'T' and s[10] != 't' and s[10] != ' ' { return null }
+    let end = time_end(s, 11) orelse return null
+    if end == s.len { return StampKind.LocalDateTime }
+    if s[end] == 'Z' or s[end] == 'z' {
+        return if end + 1 == s.len { StampKind.OffsetDateTime } else { null }
+    }
+    if s[end] != '+' and s[end] != '-' { return null }
+    let oh = two(s, end + 1) orelse return null
+    if end + 3 >= s.len or s[end + 3] != ':' { return null }
+    let om = two(s, end + 4) orelse return null
+    if oh > 23 or om > 59 or end + 6 != s.len { return null }
+    return StampKind.OffsetDateTime
+}
+
+// ------------------------------------------------------------------ finding
+
+/// The value of a table's `key`, or null.
+pub fn get(v: *Toml, key: []u8) -> ?*Toml {
+    match v.* {
+        .Table(entries) => {
+            for e, i in entries {
+                if e.key == key { return &entries[i].value }
+            }
+            return null
+        },
+        _ => return null,
+    }
+}
+
+/// The value at a dotted path of bare keys, `package.name`, or null.
+pub fn lookup(v: *Toml, dotted: []u8) -> ?*Toml {
+    let dot = dotted.find(".") orelse return get(v, dotted)
+    let first = get(v, dotted[0..dot]) orelse return null
+    return lookup(first, dotted[dot + 1..dotted.len])
+}
+
+/// An array's item `i`, or null.
+pub fn at(v: *Toml, i: usize) -> ?*Toml {
+    match v.* {
+        .Arr(items) => {
+            if i < items.len { return &items[i] }
+            return null
+        },
+        _ => return null,
+    }
+}
+
+/// How many items an array holds or keys a table has; 0 for anything else.
+pub fn len(v: *Toml) -> usize {
+    match v.* {
+        .Arr(items) => return items.len,
+        .Table(entries) => return entries.len,
+        _ => return 0,
+    }
+}
+
+/// Is it a table (a document, a `[header]`'s, or an inline one)?
+pub fn is_table(v: *Toml) -> bool {
+    match v.* {
+        .Table(_) => return true,
+        _ => return false,
+    }
+}
+
+/// Is it an array (an array of tables included)?
+pub fn is_array(v: *Toml) -> bool {
+    match v.* {
+        .Arr(_) => return true,
+        _ => return false,
+    }
+}
+
+/// A table's keys in the document's order; empty for anything else.
+pub fn keys(v: *Toml) -> List([]u8) {
+    var out = List([]u8).new()
+    match v.* {
+        .Table(entries) => { for e in entries { out.append(e.key.as_slice()) } },
+        _ => { },
+    }
+    return out
+}
+
+pub fn as_str(v: *Toml) -> ?[]u8 {
+    match v.* {
+        .Str(s) => return s.as_slice(),
+        _ => return null,
+    }
+}
+
+pub fn as_int(v: *Toml) -> ?i64 {
+    match v.* {
+        .Int(i) => return i,
+        _ => return null,
+    }
+}
+
+/// A float's value, or an integer's as a float.
+pub fn as_float(v: *Toml) -> ?f64 {
+    match v.* {
+        .Float(f) => return f,
+        .Int(i) => return i as f64,
+        _ => return null,
+    }
+}
+
+pub fn as_bool(v: *Toml) -> ?bool {
+    match v.* {
+        .Bool(b) => return b,
+        _ => return null,
+    }
+}
+
+/// A date or time as the document wrote it, and which form it is.
+pub fn as_time(v: *Toml) -> ?Stamp {
+    match v.* {
+        .Time(s) => return s.clone(),
+        _ => return null,
+    }
+}
+
+// ------------------------------------------------------------------ writing
+
+/// A table as a TOML document: its plain keys first, then each table under
+/// a `[header]` and each array of tables under `[[headers]]`. Anything that
+/// is not a table is written as a value.
+pub fn stringify(v: *Toml) -> String {
+    var out = String.new()
+    match v.* {
+        .Table(entries) => write_table(&mut out, entries, ""),
+        _ => write_value(&mut out, v),
+    }
+    return out
+}
+
+fn is_section(v: *Toml) -> bool {
+    match v.* {
+        .Table(_) => return true,
+        .Arr(items) => {
+            if items.len == 0 { return false }
+            for item in items {
+                match item {
+                    .Table(_) => { },
+                    _ => return false,
+                }
+            }
+            return true
+        },
+        _ => return false,
+    }
+}
+
+fn write_key(out: *mut String, key: []u8) {
+    var bare = key.len > 0
+    for c in key { if !is_bare(c) { bare = false } }
+    if bare { out.append(key) } else { write_string(out, key) }
+}
+
+fn write_string(out: *mut String, s: []u8) {
+    out.push_byte('"')
+    for c in s {
+        if c == '"' { out.append("\\\"") }
+        else if c == '\\' { out.append("\\\\") }
+        else if c == '\n' { out.append("\\n") }
+        else if c == '\t' { out.append("\\t") }
+        else if c == '\r' { out.append("\\r") }
+        else if c < 0x20 or c == 0x7f {
+            out.append("\\u00")
+            out.push_byte("0123456789ABCDEF"[(c >> 4) as usize])
+            out.push_byte("0123456789ABCDEF"[(c & 15) as usize])
+        } else { out.push_byte(c) }
+    }
+    out.push_byte('"')
+}
+
+fn write_value(out: *mut String, v: *Toml) {
+    match v.* {
+        .Str(s) => write_string(out, s[..]),
+        .Int(i) => out.append(format("{}", .{i})),
+        .Float(f) => {
+            if f != f {
+                out.append("nan")
+            } else if f == math.INF {
+                out.append("inf")
+            } else if f == -math.INF {
+                out.append("-inf")
+            } else {
+                let text = format("{}", .{f})
+                out.append(text)
+                if text[..].find(".") == null and text[..].find("e") == null and text[..].find("E") == null { out.append(".0") }
+            }
+        },
+        .Bool(b) => out.append(if b { "true" } else { "false" }),
+        .Time(s) => out.append(s.text),
+        .Arr(items) => {
+            out.push_byte('[')
+            for item, i in items {
+                if i > 0 { out.append(", ") }
+                write_value(out, &item)
+            }
+            out.push_byte(']')
+        },
+        .Table(entries) => {
+            out.push_byte('{')
+            for e, i in entries {
+                out.append(if i > 0 { ", " } else { " " })
+                write_key(out, e.key[..])
+                out.append(" = ")
+                write_value(out, &e.value)
+            }
+            out.append(if entries.len > 0 { " }" } else { "}" })
+        },
+    }
+}
+
+fn write_table(out: *mut String, entries: *List(Entry), prefix: []u8) {
+    for e in entries.* {
+        if is_section(&e.value) { continue }
+        write_key(out, e.key[..])
+        out.append(" = ")
+        write_value(out, &e.value)
+        out.push_byte('\n')
+    }
+    for e in entries.* {
+        if !is_section(&e.value) { continue }
+        var name = String.from(prefix)
+        if name.len > 0 { name.push_byte('.') }
+        write_key(&mut name, e.key[..])
+        match e.value {
+            .Table(sub) => {
+                if out.len > 0 { out.push_byte('\n') }
+                out.push_byte('[')
+                out.append(name)
+                out.append("]\n")
+                write_table(out, &sub, name[..])
+            },
+            .Arr(items) => {
+                for item in items {
+                    match item {
+                        .Table(sub) => {
+                            if out.len > 0 { out.push_byte('\n') }
+                            out.append("[[")
+                            out.append(name)
+                            out.append("]]\n")
+                            write_table(out, &sub, name[..])
+                        },
+                        _ => { },
+                    }
+                }
+            },
+            _ => { },
+        }
+    }
+}
+
+// ------------------------------------------------------------------ tests
+
+fn same(a: *Toml, b: *Toml) -> bool {
+    match a.* {
+        .Str(x) => return as_str(b) != null and as_str(b).? == x[..],
+        .Int(x) => return as_int(b) != null and as_int(b).? == x,
+        .Float(x) => {
+            match b.* {
+                .Float(y) => return x == y or (x != x and y != y),
+                _ => return false,
+            }
+        },
+        .Bool(x) => return as_bool(b) != null and as_bool(b).? == x,
+        .Time(x) => return as_time(b) != null and as_time(b).?.text == x.text,
+        .Arr(xs) => {
+            if len(b) != xs.len { return false }
+            for x, i in xs { if !same(&x, at(b, i) orelse return false) { return false } }
+            return true
+        },
+        .Table(es) => {
+            if len(b) != es.len { return false }
+            for e in es { if !same(&e.value, get(b, e.key[..]) orelse return false) { return false } }
+            return true
+        },
+    }
+}
+
+fn doc(text: []u8) -> Toml {
+    return parse(text) catch {
+        println("toml: {}", .{problem(text) orelse String.from("?")})
+        panic("a document did not parse")
+    }
+}
+
+test "keys, values and tables" {
+    let d = doc("# a comment\ntitle = \"TOML\" # after a value\n\n[owner]\nname = 'Tom'\n\"quoted key\" = 1\nsite.\"google.com\" = true\n\n[database.connection]\nports = [ 8000, 8001, ]\nenabled = false\n")
+    expect_eq(as_str(get(&d, "title").?).?, "TOML")
+    expect_eq(as_str(lookup(&d, "owner.name").?).?, "Tom")
+    expect_eq(as_int(get(get(&d, "owner").?, "quoted key").?).?, 1)
+    let site = lookup(&d, "owner.site").?
+    expect_eq(as_bool(get(site, "google.com").?).?, true)
+    let ports = lookup(&d, "database.connection.ports").?
+    expect_eq(len(ports), 2)
+    expect_eq(as_int(at(ports, 1).?).?, 8001)
+    let order = keys(&d)
+    expect_eq(order.len, 3)
+    expect_eq(order[1], "owner")
+}
+
+test "strings" {
+    let d = doc("a = \"tab\\there \\\"q\\\" \\u00e9 \\U0001F600\"\nb = 'C:\\Users\\raw'\nc = \"\"\"\nfirst\n  second\"\"\"\nd = \"\"\"joined \\\n     together\"\"\"\ne = '''\nraw \\n here\n'''\nf = \"\"\"\"quoted\" \"\"\"\"\ng = ''''two'''''\n")
+    expect_eq(as_str(get(&d, "a").?).?, "tab\there \"q\" \u{e9} \u{1F600}")
+    expect_eq(as_str(get(&d, "b").?).?, "C:\\Users\\raw")
+    expect_eq(as_str(get(&d, "c").?).?, "first\n  second")
+    expect_eq(as_str(get(&d, "d").?).?, "joined together")
+    expect_eq(as_str(get(&d, "e").?).?, "raw \\n here\n")
+    expect_eq(as_str(get(&d, "f").?).?, "\"quoted\" \"")
+    expect_eq(as_str(get(&d, "g").?).?, "'two''")
+}
+
+test "numbers" {
+    let d = doc("a = +99\nb = -17\nc = 1_000_000\nd = 0xDEAD_beef\ne = 0o755\nf = 0b1101\ng = 9223372036854775807\nh = -9223372036854775808\ni = 3.1415\nj = -2E-2\nk = 6.626e-34\nl = 224_617.445_991\nm = inf\nn = -inf\no = nan\np = 0\nq = -0.0\n")
+    expect_eq(as_int(get(&d, "a").?).?, 99)
+    expect_eq(as_int(get(&d, "b").?).?, -17)
+    expect_eq(as_int(get(&d, "c").?).?, 1000000)
+    expect_eq(as_int(get(&d, "d").?).?, 3735928559)
+    expect_eq(as_int(get(&d, "e").?).?, 493)
+    expect_eq(as_int(get(&d, "f").?).?, 13)
+    expect_eq(as_int(get(&d, "g").?).?, 9223372036854775807)
+    expect(as_int(get(&d, "h").?).? == -9223372036854775807 - 1)
+    expect(as_float(get(&d, "i").?).? == 3.1415)
+    expect(as_float(get(&d, "j").?).? == -0.02)
+    expect(as_float(get(&d, "l").?).? == 224617.445991)
+    expect(as_float(get(&d, "m").?).? == math.INF)
+    expect(as_float(get(&d, "n").?).? == -math.INF)
+    let nan = as_float(get(&d, "o").?).?
+    expect(nan != nan)
+    expect_eq(as_int(get(&d, "p").?).?, 0)
+    expect(as_int(get(&d, "i").?) == null)
+    for bad in ["x = 0123\n", "x = 1__0\n", "x = _1\n", "x = 1_\n", "x = .5\n", "x = 5.\n", "x = 3.e2\n", "x = 0x\n", "x = +0x1\n", "x = 9223372036854775808\n", "x = 1e\n", "x = 01.5\n"] {
+        if problem(bad) == null { println("toml: `{}` was read", .{bad}) }
+        expect(problem(bad) != null)
+    }
+}
+
+test "dates and times" {
+    let d = doc("a = 1979-05-27T07:32:00Z\nb = 1979-05-27T00:32:00.999999-07:00\nc = 1979-05-27 07:32:00\nd = 1979-05-27\ne = 07:32:00\nf = 2024-02-29\n")
+    expect(as_time(get(&d, "a").?).?.kind == StampKind.OffsetDateTime)
+    expect(as_time(get(&d, "b").?).?.kind == StampKind.OffsetDateTime)
+    expect(as_time(get(&d, "c").?).?.kind == StampKind.LocalDateTime)
+    expect_eq(as_time(get(&d, "c").?).?.text, "1979-05-27 07:32:00")
+    expect(as_time(get(&d, "d").?).?.kind == StampKind.LocalDate)
+    expect(as_time(get(&d, "e").?).?.kind == StampKind.LocalTime)
+    for bad in ["x = 1979-13-27\n", "x = 2023-02-29\n", "x = 1979-05-27T25:00:00\n", "x = 07:32\n", "x = 1979-05-27T07:32:00+7\n", "x = 1979-05-27X07:32:00\n"] {
+        if problem(bad) == null { println("toml: `{}` was read", .{bad}) }
+        expect(problem(bad) != null)
+    }
+}
+
+test "arrays, inline tables and arrays of tables" {
+    let d = doc("points = [ { x = 1, y = 2 }, { x = 7, y = 8 } ]\nnested = [ [1, 2], ['a', \"b\"], [], ]\nmixed = [\n  1, # one\n  2.0,\n]\ninline = { name.first = \"Tom\", last = \"P\" }\n\n[[fruit]]\nname = \"apple\"\n[fruit.physical]\ncolor = \"red\"\n[[fruit.variety]]\nname = \"red delicious\"\n[[fruit]]\nname = \"banana\"\n")
+    expect_eq(len(get(&d, "points").?), 2)
+    expect_eq(as_int(get(at(get(&d, "points").?, 1).?, "x").?).?, 7)
+    expect_eq(len(at(get(&d, "nested").?, 2).?), 0)
+    expect_eq(len(get(&d, "mixed").?), 2)
+    expect_eq(as_str(lookup(&d, "inline.name.first").?).?, "Tom")
+    let fruit = get(&d, "fruit").?
+    expect_eq(len(fruit), 2)
+    expect_eq(as_str(lookup(at(fruit, 0).?, "physical.color").?).?, "red")
+    expect_eq(as_str(get(at(get(at(fruit, 0).?, "variety").?, 0).?, "name").?).?, "red delicious")
+    expect_eq(as_str(get(at(fruit, 1).?, "name").?).?, "banana")
+}
+
+test "a key or a table is defined once" {
+    let bad = [
+        "a = 1\na = 2\n",
+        "[t]\n[t]\n",
+        "a = {}\n[a]\n",
+        "a = { b = 1 }\na.c = 2\n",
+        "[fruit]\napple.color = 'red'\n[fruit.apple]\n",
+        "[a.b]\nc = 1\n[a]\nb.d = 2\n",
+        "a = [1]\n[[a]]\n",
+        "[[a]]\n[a]\n",
+        "[a]\n[[a]]\n",
+        "a = 1 b = 2\n",
+        "a = { b = 1, }\n",
+        "a = { b = 1,\n c = 2 }\n",
+        "= 1\n",
+        "a =\n",
+        "[a\n",
+        "a = \"open\n",
+        "a = \"\"\"never closed\n",
+        "a = \"bad \\q escape\"\n",
+    ]
+    for b in bad {
+        if problem(b) == null { println("toml: `{}` was read", .{b}) }
+        expect(problem(b) != null)
+    }
+    // what the rules allow
+    let d = doc("[x.y.z]\n[x]\na = 1\n[fruit]\napple.color = 'red'\n[fruit.apple.texture]\nsmooth = true\n")
+    expect_eq(as_int(lookup(&d, "x.a").?).?, 1)
+    expect_eq(as_bool(lookup(&d, "fruit.apple.texture.smooth").?).?, true)
+    expect_eq(problem("a = 1\na = 2\n").?, "line 2: the key `a` is defined twice")
+}
+
+test "writing, and reading back what was written" {
+    let text = "title = \"x \\\"y\\\"\"\ncount = 3\nratio = 2.0\nwhen = 1979-05-27T07:32:00Z\nlist = [1, 2, [\"a\", { k = true }]]\n\"odd key\" = true\n\n[server]\nhost = \"0.0.0.0\"\n\n[server.tls]\non = false\n\n[[job]]\nname = \"one\"\n\n[[job]]\nname = \"two\"\n"
+    let d = doc(text)
+    let out = stringify(&d)
+    expect_eq(out, text)
+    let back = doc(out[..])
+    expect(same(&d, &back))
+    // an array of inline tables is written as the array of tables it is
+    let inline = doc("tables = [{ a = 1 }, { a = 2 }]\n")
+    expect_eq(stringify(&inline), "[[tables]]\na = 1\n\n[[tables]]\na = 2\n")
+    let empty = doc("")
+    expect_eq(len(&empty), 0)
+    expect_eq(stringify(&empty), "")
+}

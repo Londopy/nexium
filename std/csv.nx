@@ -1,0 +1,232 @@
+// std.csv: comma-separated values (RFC 4180), written in Nexium: reading
+// rows, reading rows by their header, and writing rows.
+//
+// `import std.csv` then:
+//
+//     let rows = try csv.parse(text)                      // List(List(String))
+//     for row in try csv.by_header(text) {                // Map(String, String)
+//         let name = row["name"] orelse "?"
+//     }
+//     let tsv = try csv.parse_with(text, '\t')
+//     let out = csv.to_text(&rows)                         // quoted where needed, CRLF
+//
+// A field in double quotes may hold the separator, line breaks and `""` for
+// a quote. A quote inside an unquoted field, anything but the separator or
+// a line end after a closing quote, and a quoted field never closed are
+// `error.InvalidInput`. Lines may end in CRLF or LF, empty lines are
+// skipped, and a leading UTF-8 byte-order mark is dropped.
+
+/// The rows of comma-separated text.
+pub fn parse(text: []u8) -> !List(List(String)) {
+    return parse_with(text, ',')
+}
+
+/// The rows of text whose fields are separated by `sep` (`'\t'` for TSV,
+/// `';'` where the decimal separator is a comma).
+pub fn parse_with(text: []u8, sep: u8) -> !List(List(String)) {
+    var rows = List(List(String)).new()
+    var row = List(String).new()
+    var field = String.new()
+    var i: usize = 0
+    if text.len >= 3 and text[0] == 0xEF and text[1] == 0xBB and text[2] == 0xBF { i = 3 }
+    // inside quotes; the field was quoted and has closed; nothing read of
+    // the field yet
+    var quoted = false
+    var closed = false
+    var fresh = true
+    while i < text.len {
+        let c = text[i]
+        if quoted {
+            if c == '"' {
+                if i + 1 < text.len and text[i + 1] == '"' {
+                    field.push_byte('"')
+                    i += 2
+                    continue
+                }
+                quoted = false
+                closed = true
+            } else {
+                field.push_byte(c)
+            }
+            i += 1
+            continue
+        }
+        if c == sep {
+            row.append(field)
+            field = String.new()
+            fresh = true
+            closed = false
+            i += 1
+            continue
+        }
+        if c == '\r' or c == '\n' {
+            if c == '\r' and i + 1 < text.len and text[i + 1] == '\n' { i += 1 }
+            i += 1
+            if row.len == 0 and fresh and !closed { continue }
+            row.append(field)
+            field = String.new()
+            rows.append(row)
+            row = List(String).new()
+            fresh = true
+            closed = false
+            continue
+        }
+        if closed { return error.InvalidInput }
+        if c == '"' {
+            if !fresh { return error.InvalidInput }
+            quoted = true
+            fresh = false
+            i += 1
+            continue
+        }
+        field.push_byte(c)
+        fresh = false
+        i += 1
+    }
+    if quoted { return error.InvalidInput }
+    if row.len > 0 or !fresh or closed {
+        row.append(field)
+        rows.append(row)
+    }
+    return rows
+}
+
+/// The rows after the first, each as a map from the first row's names to
+/// its fields. A row shorter than the header leaves the missing names out;
+/// one longer is `error.InvalidInput`.
+pub fn by_header(text: []u8) -> !List(Map(String, String)) {
+    let rows = try parse(text)
+    var out = List(Map(String, String)).new()
+    if rows.len == 0 { return out }
+    let names = &rows[0]
+    for r in 1..rows.len {
+        let row = &rows[r]
+        if row.len > names.len { return error.InvalidInput }
+        var m = Map(String, String).new()
+        for i in 0..row.len { m.put(names.*[i].clone(), row.*[i].clone()) }
+        out.append(m)
+    }
+    return out
+}
+
+/// A field as written between separators: in double quotes, with any
+/// quote doubled, when it holds `sep`, a quote or a line break.
+pub fn field(value: []u8, sep: u8) -> String {
+    var needs = false
+    for c in value {
+        if c == sep or c == '"' or c == '\r' or c == '\n' { needs = true }
+    }
+    if !needs { return String.from(value) }
+    var out = String.with_capacity(value.len + 2)
+    out.push_byte('"')
+    for c in value {
+        if c == '"' { out.push_byte('"') }
+        out.push_byte(c)
+    }
+    out.push_byte('"')
+    return out
+}
+
+/// Rows as comma-separated text, each line ending in CRLF.
+pub fn to_text(rows: *List(List(String))) -> String {
+    return to_text_with(rows, ',', "\r\n")
+}
+
+/// Rows as text with `sep` between fields and `line_end` after each row.
+pub fn to_text_with(rows: *List(List(String)), sep: u8, line_end: []u8) -> String {
+    var out = String.new()
+    for row in rows.* {
+        for f, i in row {
+            if i > 0 { out.push_byte(sep) }
+            out.append(field(f[..], sep))
+        }
+        out.append(line_end)
+    }
+    return out
+}
+
+// ------------------------------------------------------------------ tests
+
+test "plain rows, empty fields and line ends" {
+    let rows = try parse("a,b,c\r\n1,,3\n\n4,5,\n")
+    expect_eq(rows.len, 3)
+    expect_eq(rows[0].len, 3)
+    expect_eq(rows[1][1], "")
+    expect_eq(rows[1][2], "3")
+    expect_eq(rows[2].len, 3)
+    expect_eq(rows[2][2], "")
+    let last = try parse("x,y")
+    expect_eq(last.len, 1)
+    expect_eq(last[0][1], "y")
+    expect_eq((try parse("")).len, 0)
+    let bom = try parse("\xEF\xBB\xBFname\nNexium\n")
+    expect_eq(bom[0][0], "name")
+}
+
+test "quoted fields" {
+    let rows = try parse("\"a, b\",\"say \"\"hi\"\"\",\"two\nlines\",\"\"\n")
+    expect_eq(rows.len, 1)
+    expect_eq(rows[0].len, 4)
+    expect_eq(rows[0][0], "a, b")
+    expect_eq(rows[0][1], "say \"hi\"")
+    expect_eq(rows[0][2], "two\nlines")
+    expect_eq(rows[0][3], "")
+    let lone = try parse("\"\"\n")
+    expect_eq(lone.len, 1)
+    expect_eq(lone[0][0], "")
+}
+
+test "what is not CSV" {
+    for bad in ["a\"b,c\n", "\"open,c\n", "\"a\"b,c\n", "\"a\" ,c\n"] {
+        var refused = false
+        _ = parse(bad) catch |e| {
+            refused = e == error.InvalidInput
+            List(List(String)).new()
+        }
+        if !refused { println("csv: {} was read", .{bad}) }
+        expect(refused)
+    }
+}
+
+test "other separators" {
+    let rows = try parse_with("a\tb;c\n1\t2\n", '\t')
+    expect_eq(rows[0][1], "b;c")
+    let semi = try parse_with("x;\"1;5\"\n", ';')
+    expect_eq(semi[0][1], "1;5")
+}
+
+test "rows by their header" {
+    let rows = try by_header("name,year\nNexium,2026\nC\n")
+    expect_eq(rows.len, 2)
+    expect_eq(rows[0]["name"].?, "Nexium")
+    expect_eq(rows[0]["year"].?, "2026")
+    expect(rows[1]["year"] == null)
+    var refused = false
+    _ = by_header("a\n1,2\n") catch |e| {
+        refused = e == error.InvalidInput
+        List(Map(String, String)).new()
+    }
+    expect(refused)
+}
+
+test "writing, and reading back what was written" {
+    var rows = List(List(String)).new()
+    var r1 = List(String).new()
+    r1.append(String.from("plain"))
+    r1.append(String.from("with, comma"))
+    r1.append(String.from("with \"quotes\""))
+    rows.append(r1)
+    var r2 = List(String).new()
+    r2.append(String.from("two\nlines"))
+    r2.append(String.new())
+    r2.append(String.from("end"))
+    rows.append(r2)
+    let text = to_text(&rows)
+    expect_eq(text, "plain,\"with, comma\",\"with \"\"quotes\"\"\"\r\n\"two\nlines\",,end\r\n")
+    let back = try parse(text[..])
+    expect_eq(back.len, 2)
+    for i in 0..2 {
+        for j in 0..3 { expect_eq(back[i][j], rows[i][j]) }
+    }
+    expect_eq(to_text_with(&rows, '\t', "\n"), "plain\twith, comma\t\"with \"\"quotes\"\"\"\n\"two\nlines\"\t\tend\n")
+}
