@@ -461,9 +461,9 @@ vistas, errores desde 1.3. 1.4, una biblioteca estándar que ya no haya que
 completar, está en marcha: las colecciones (`std.sort`, `std.heap`,
 `std.set`, `std.deque`), `std.hash`, `random.secure`, rutas, el entorno y
 las carpetas de configuración, UUID, registros, CSV, TOML y base64 ya están,
-veintiocho módulos en total; después vienen `Map` protegido contra la
-inundación de hashes, las zonas horarias, el cliente HTTP con TLS y los
-websockets. Lo que Nexium todavía no es, y dónde
+veintiocho módulos en total; `Map` está protegido contra la
+inundación de hashes y conserva el orden en que llegaron las claves; después
+vienen las zonas horarias, el cliente HTTP con TLS y los websockets. Lo que Nexium todavía no es, y dónde
 se responde cada punto, está en [una sección de la hoja de
 ruta](../../../ROADMAP.md#what-10-is-not-yet): las pruebas de rendimiento son cuatro
 programas ([Velocidad](#velocidad)), y el ecosistema es un solo mantenedor y

@@ -105,6 +105,16 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   with every language slower), and a baseline of other sizes is not
   compared. `sieve.c` counts in `long long`, as `long` is 32 bits on
   Windows and `i * i` overflowed there.
+- A `Map` iterates in the order its keys were first put (decision 121):
+  `for k in m`, `for (k, v) in m`, `keys()` and `values()` give the keys in
+  that order, whatever they hash to; a put of a key already there keeps
+  its place, and a removed key leaves no gap. The order was the hash
+  table's before, and not the one `nx play` and the REPL gave, so a program
+  that printed a map's keys without sorting them prints them in a
+  different order now. Keys are hashed with SipHash-1-3 under a key drawn
+  once per process from the operating system's generator, where the hash
+  was FNV-1a with no key, so no one who chooses a program's keys can make
+  them collide (hash flooding). `std.set` iterates in the same order.
 - The README and its translations have a Speed section: the four
   programs' times in Nexium's two modes, C, Rust, Go and Python, from the
   Bench run of 2026-09-25, and what they come to; its links to the numbers

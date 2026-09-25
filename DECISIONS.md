@@ -1010,3 +1010,21 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     written in Nexium, weeks of cryptography for the old servers the
     platform already reaches. This replaces the plan of 1.4's first draft,
     the platform's TLS alone.
+121. **A `Map` keeps its keys in the order they were first put, and hashes
+    them under a key drawn once per process.** A map hashed with a fixed
+    function lets whoever chooses its keys (the names in a JSON object, the
+    headers of a request) choose ones that collide, and every lookup then
+    walks them all: hash flooding. Keying the hash with bytes from the
+    operating system's generator, drawn at the first use of a map (SipHash-1-3,
+    as Rust's `HashMap`), ends that; but a hash that differs between runs
+    would make the order of `for k in m` differ between runs too, and a
+    program's output with it, as Go and Rust have it. So the order is no
+    longer the hash's: the entries sit in the order their keys were first
+    put, and the hash table beside them holds only where each entry is. A
+    put of a key already there keeps its place; a removed key leaves no gap
+    (the entries are packed when removed ones are half of them); a key put
+    again after its removal goes to the end. It is the order Python's
+    dicts have, and the one the interpreter's maps (`nx play`, the REPL,
+    compile-time evaluation) already had, so a program prints the same
+    thing compiled and interpreted. It costs nothing measurable: the words
+    benchmark, all maps and strings, runs in the time it did.

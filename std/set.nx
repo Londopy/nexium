@@ -11,7 +11,7 @@
 // `add`, `contains` and `remove` take a value like a Map's key: a copy, or
 // for a `String` set an owned string (`name.clone()` keeps yours).
 
-/// A set: each value at most once, in no particular order.
+/// A set: each value at most once, in the order each was first added.
 pub struct Set(T){
     m: Map(T, bool)
 }
@@ -50,7 +50,7 @@ impl(T) Set(T) {
         self.m.clear()
     }
 
-    /// The elements, in no particular order.
+    /// The elements, in the order each was first added.
     pub fn items(self: *Self) -> List(T) {
         return self.m.keys()
     }

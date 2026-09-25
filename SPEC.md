@@ -119,7 +119,7 @@ panic prints its location and exits with 101; a `u8` is the exit code.
 | `*T`, `*mut T` | pointer to one value; `&x`, `&mut x`, `p.*` |
 | `?T` | optional; `null` is the absent value |
 | `!T`, `Set!T` | error union: an error of the global set or of `Set`, or a `T` |
-| `List(T)` `String` `Map(K, V)` | owning collections (section 5); `Map` keys are integers, `bool`, `char`, `[]u8`, or `String` |
+| `List(T)` `String` `Map(K, V)` | owning collections (section 5); `Map` keys are integers, `bool`, `char`, `[]u8`, or `String`, and a `Map` iterates its keys in the order they were first put (decision 121) |
 | `(A, B, ...)` | tuple; fields `.0`, `.1`; legal as a type argument |
 | `fn(A, B) -> R !effects` | function value; may carry negative effect bounds |
 | `dyn Trait !effects` | trait object; a fat pointer (section 8.4) |

@@ -1,0 +1,51 @@
+// SPEC 6: a Map keeps its keys in the order they were first put. A put of a
+// key already there keeps its place, a removed key leaves no gap, and one
+// put again after its removal goes to the end. Many removals (the map packs
+// its entries then), a clone, `keys()`, `values()` and `for (k, v)` keep the
+// order, whatever the keys hash to.
+fn main() {
+    var m = Map([]u8, i64).new()
+    m.put("zebra", 1)
+    m.put("apple", 2)
+    m.put("mango", 3)
+    m.put("apple", 20)
+    for k in m { print("{} ", .{k}) }
+    println("", .{})
+    _ = m.remove("zebra")
+    m.put("kiwi", 4)
+    m.put("zebra", 5)
+    for (k, v) in m { print("{}={} ", .{k, v}) }
+    println("", .{})
+    let keys = m.keys()
+    let values = m.values()
+    println("{} {} {}", .{keys.len, keys[0], values[3]})
+
+    var big = Map(i64, i64).new()
+    var i: i64 = 0
+    while i < 1000 {
+        big.put(i * 7919 % 1000, i)
+        i += 1
+    }
+    i = 0
+    while i < 1000 {
+        if i % 10 != 0 { _ = big.remove(i) }
+        i += 1
+    }
+    big.put(-1, -1)
+    big.put(-2, -2)
+    var n = 0
+    for (k, v) in big {
+        if n < 5 or n >= 99 { print("{}={} ", .{k, v}) }
+        n += 1
+    }
+    println("({} keys)", .{big.len})
+
+    let copy = m.clone()
+    for k in copy { print("{} ", .{k}) }
+    println("", .{})
+
+    var names = Map(String, bool).new()
+    for w in ["delta", "alpha", "charlie", "bravo", "alpha"] { names.put(String.from(w), true) }
+    for k in names { print("{} ", .{k}) }
+    println("", .{})
+}

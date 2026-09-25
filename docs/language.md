@@ -231,7 +231,8 @@ brings it.
 - `String`: `new`, `from`, `with_capacity`, `append`, `append_char` (a code
   point, UTF-8 encoded), `push_byte` (one raw byte), `clone`, `clear`, `pop`,
   `bytes`, `len`, plus `[]u8` methods.
-- `Map(K, V)` (keys: integers, bool, char, `[]u8`, `String`): `new`, `put`,
+- `Map(K, V)` (keys: integers, bool, char, `[]u8`, `String`; iterated in the
+  order the keys were first put, however they hash): `new`, `put`,
   `get`, `contains`, `remove`, `clear`, `clone`, `keys`, `values`, `len`,
   `m[key]`; `for k in m` iterates keys.
 - Slices: `len`, `fill`, `reverse`, `sort`, `swap(i, j)`, `contains`, `index_of`,

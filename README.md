@@ -463,9 +463,10 @@ the fuzzer, and gdb and lldb are driven through `nx debug` there too.
 Memory safety is the view rules, errors since 1.3. 1.4, a standard library
 people stop supplementing, is under way: collections (`std.sort`,
 `std.heap`, `std.set`, `std.deque`), `std.hash`, `random.secure`, paths,
-the environment and config folders, UUIDs, logging, CSV, TOML and base64 are in,
-twenty-eight modules in all; next are `Map` hashed against flooding, time
-zones, the HTTP client with TLS and websockets. What Nexium is not yet, and where each is answered, is
+the environment and config folders, UUIDs, logging, CSV, TOML and base64
+are in, twenty-eight modules in all; `Map` is hashed against flooding and
+keeps its keys in the order they were put; next are time zones, the HTTP
+client with TLS and websockets. What Nexium is not yet, and where each is answered, is
 [a section of the roadmap](ROADMAP.md#what-10-is-not-yet): the benchmarks are four
 programs ([Speed](#speed)), and the ecosystem is one maintainer and four
 projects outside the tree ([above](#in-the-wild)).

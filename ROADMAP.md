@@ -604,9 +604,10 @@ own sources, and the language server answers from the checker.
   checksums), `std.uuid`, `std.log` with levels and structured fields.
   (Done: `std.path`, `std.env`, `std.csv`, `std.toml`, which the
   compiler's manifest reader now uses, `std.base64`, `std.hash` (FNV-1a 64,
-  SipHash-2-4, SHA-256), `std.uuid` and `std.log`; and `random.secure`,
-  from the operating system's generator, the secret key `Map`'s move to
-  SipHash needs.)
+  SipHash-2-4, SHA-256), `std.uuid` and `std.log`; `random.secure`, from
+  the operating system's generator; and `Map` hashed with SipHash-1-3 under
+  a key drawn once per process, keeping its keys in the order they were
+  first put, decision 121.)
 - `std.http` client with redirects, timeouts and streaming bodies, and
   HTTPS through a TLS slot (decision 120). The client speaks HTTP over any
   stream, and one interface turns a TCP connection into an encrypted one:
@@ -657,10 +658,10 @@ own sources, and the language server answers from the checker.
 - `std.testing`: property-based tests (`check(gen, fn)`) with shrinking,
   the same driver the fuzzers use.
 
-Order, with the collections, `std.hash`, `random.secure` and the small
-modules in (`std.path`, `std.env`, `std.uuid`, `std.log`, `std.csv`,
-`std.toml`, `std.base64`): `Map` on SipHash with a random key;
-`std.time`, fixing on the way the known issue of `import std.time`
+Order, with the collections, `std.hash`, `random.secure`, the small modules
+(`std.path`, `std.env`, `std.uuid`, `std.log`, `std.csv`, `std.toml`,
+`std.base64`) and `Map` on SipHash already in: `std.time`, fixing on the
+way the known issue of `import std.time`
 hiding `time.now()`; the HTTP client and the TLS slot, with nxtls in it;
 `std.websocket` and `discord`, lifted from QNI's working code; then the
 platform's TLS, `std.text`, `std.process` (whose streams end the known
@@ -716,8 +717,8 @@ proves.
   `refcounts` effect reports the ones that remain.
 - Bounds-check elimination in loops from the range analysis; `nx audit`
   shows which checks survive in a hot function.
-- `Map`: open addressing with a hash chosen per key type, iteration order
-  documented; small-string optimization for `String`; `List` growth policy
+- `Map`: a hash chosen per key type (the iteration order is documented
+  since 1.4: the order the keys were first put); small-string optimization for `String`; `List` growth policy
   documented and tunable per `using` block.
 - `for parallel`: work stealing, a chunk size heuristic, and nested
   parallel loops that share one pool.

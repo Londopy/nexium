@@ -741,20 +741,71 @@ NX_INLINE void nx_w_bool(nx_sink* s, bool b) { nx_w_cstr(s, b ? "true" : "false"
 NX_INLINE void nx_w_char(nx_sink* s, uint32_t cp) { uint8_t buf[4]; size_t n = nx_utf8_encode(cp, buf); nx_w(s, buf, n); }
 
 /* --------------------------------------------------------------- maps */
-/* Open addressing with linear probing. Keys and values are stored as raw bytes.
+/* A map keeps its entries in the order their keys were first put: iterating
+ * gives them in that order (putting a key again keeps its place; removing
+ * one closes the gap), whatever the keys hash to, as the interpreter's maps
+ * do. An index of entry numbers, open addressing with linear probing over a
+ * power-of-two table, finds a key. Keys are hashed with SipHash-1-3 under a
+ * key drawn once per process from the operating system's generator, so
+ * someone who chooses a program's keys cannot choose ones that collide.
+ * Keys and values are stored as raw bytes.
  * key_kind: 0 = inline bytes, 1 = nx_sl_u8 (content hashed, storage borrowed),
  *           2 = nx_string (content hashed, owned by the map). */
 typedef struct nx_map {
-    uint8_t* keys; uint8_t* vals; uint8_t* state;
-    size_t cap; size_t len; size_t ksize; size_t vsize; int key_kind;
+    /* the entries, `used` of them written, room for `ecap`; `live` 0 for a
+       removed one */
+    uint8_t* keys; uint8_t* vals; uint8_t* live; uint64_t* hashes;
+    /* the index: per slot 0 (empty), NX_MAP_GONE (a removed entry's), or
+       an entry's number + 1; `filled` slots are not empty */
+    size_t* index; size_t icap; size_t filled;
+    size_t used; size_t ecap; size_t len; size_t ksize; size_t vsize; int key_kind;
     nx_arena* ar;
 } nx_map;
+#define NX_MAP_GONE ((size_t)-1)
 
-NX_INLINE uint64_t nx_hash_bytes(const uint8_t* p, size_t n) {
-    uint64_t h = 1469598103934665603ULL;
-    for (size_t i = 0; i < n; i++) { h ^= p[i]; h *= 1099511628211ULL; }
-    h ^= h >> 32;
-    return h;
+NX_INLINE bool nx_os_random(uint8_t* p, size_t n);
+NX_STATE uint64_t nx_map_seed[2];
+NX_STATE int nx_map_seeded;
+/* the process's hash key, drawn at the first use of a map: 0 not drawn,
+   1 being drawn (another thread waits), 2 ready */
+NX_INLINE void nx_map_seed_init(void) {
+    if (__atomic_load_n(&nx_map_seeded, __ATOMIC_ACQUIRE) == 2) return;
+    int expected = 0;
+    if (__atomic_compare_exchange_n(&nx_map_seeded, &expected, 1, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        uint64_t k[2] = { 0, 0 };
+        if (!nx_os_random((uint8_t*)k, sizeof k)) {
+            /* no generator: something no one outside can predict well */
+            k[0] = (uint64_t)time(NULL) * 0x9E3779B97F4A7C15ULL;
+            k[1] = (uint64_t)(uintptr_t)&k ^ ((uint64_t)clock() << 32);
+        }
+        nx_map_seed[0] = k[0];
+        nx_map_seed[1] = k[1];
+        __atomic_store_n(&nx_map_seeded, 2, __ATOMIC_RELEASE);
+        return;
+    }
+    while (__atomic_load_n(&nx_map_seeded, __ATOMIC_ACQUIRE) != 2) { }
+}
+#define NX_ROTL64(x, b) (uint64_t)(((x) << (b)) | ((x) >> (64 - (b))))
+#define NX_SIPROUND do { \
+    v0 += v1; v1 = NX_ROTL64(v1, 13); v1 ^= v0; v0 = NX_ROTL64(v0, 32); \
+    v2 += v3; v3 = NX_ROTL64(v3, 16); v3 ^= v2; \
+    v0 += v3; v3 = NX_ROTL64(v3, 21); v3 ^= v0; \
+    v2 += v1; v1 = NX_ROTL64(v1, 17); v1 ^= v2; v2 = NX_ROTL64(v2, 32); } while (0)
+/* SipHash-1-3 (one round per 8 bytes, three to finish), as Rust's HashMap */
+NX_INLINE uint64_t nx_siphash13(uint64_t k0, uint64_t k1, const uint8_t* p, size_t n) {
+    uint64_t v0 = 0x736f6d6570736575ULL ^ k0, v1 = 0x646f72616e646f6dULL ^ k1;
+    uint64_t v2 = 0x6c7967656e657261ULL ^ k0, v3 = 0x7465646279746573ULL ^ k1;
+    size_t end = n & ~(size_t)7;
+    for (size_t i = 0; i < end; i += 8) {
+        uint64_t m = 0;
+        for (int b = 0; b < 8; b++) m |= (uint64_t)p[i + b] << (8 * b);
+        v3 ^= m; NX_SIPROUND; v0 ^= m;
+    }
+    uint64_t last = (uint64_t)n << 56;
+    for (size_t b = 0; b < (n & 7); b++) last |= (uint64_t)p[end + b] << (8 * b);
+    v3 ^= last; NX_SIPROUND; v0 ^= last;
+    v2 ^= 0xff; NX_SIPROUND; NX_SIPROUND; NX_SIPROUND;
+    return v0 ^ v1 ^ v2 ^ v3;
 }
 NX_INLINE nx_sl_u8 nx_map_key_bytes(const nx_map* m, const void* key) {
     nx_sl_u8 r;
@@ -762,109 +813,190 @@ NX_INLINE nx_sl_u8 nx_map_key_bytes(const nx_map* m, const void* key) {
     else { const nx_sl_u8* s = (const nx_sl_u8*)key; r.ptr = s->ptr; r.len = s->len; }
     return r;
 }
+NX_INLINE uint64_t nx_map_hash(nx_sl_u8 kb) {
+    nx_map_seed_init();
+    return nx_siphash13(nx_map_seed[0], nx_map_seed[1], kb.ptr, kb.len);
+}
 NX_INLINE nx_map nx_map_new(nx_ctx* c, size_t ksize, size_t vsize, int key_kind) {
     nx_map m; memset(&m, 0, sizeof m); m.ksize = ksize; m.vsize = vsize; m.key_kind = key_kind; m.ar = c->arena; return m;
 }
-NX_INLINE bool nx_map_lookup(const nx_map* m, const void* key, size_t* slot) {
-    if (m->cap == 0) return false;
-    nx_sl_u8 kb = nx_map_key_bytes(m, key);
-    uint64_t h = nx_hash_bytes(kb.ptr, kb.len);
-    size_t i = (size_t)(h % m->cap);
-    for (size_t n = 0; n < m->cap; n++) {
-        uint8_t st = m->state[i];
-        if (st == 0) { *slot = i; return false; }
-        if (st == 1) {
-            nx_sl_u8 ob = nx_map_key_bytes(m, m->keys + i * m->ksize);
-            if (nx_sl_eq(ob, kb)) { *slot = i; return true; }
+/* the slot of the entry holding `kb` (true, and its number in *entry), or
+   where it would go: the first removed entry's slot on its way, else the
+   empty slot that ends it. The index always has an empty slot. */
+NX_INLINE bool nx_map_find(const nx_map* m, nx_sl_u8 kb, uint64_t h, size_t* slot, size_t* entry) {
+    if (m->icap == 0) { *slot = 0; return false; }
+    size_t mask = m->icap - 1, i = (size_t)h & mask, gone = NX_MAP_GONE;
+    for (;;) {
+        size_t v = m->index[i];
+        if (v == 0) { *slot = gone != NX_MAP_GONE ? gone : i; return false; }
+        if (v == NX_MAP_GONE) {
+            if (gone == NX_MAP_GONE) gone = i;
+        } else if (m->hashes[v - 1] == h && nx_sl_eq(nx_map_key_bytes(m, m->keys + (v - 1) * m->ksize), kb)) {
+            *slot = i; *entry = v - 1; return true;
         }
-        i = (i + 1) % m->cap;
+        i = (i + 1) & mask;
     }
-    *slot = m->cap;
-    return false;
 }
-NX_INLINE void nx_map_rehash(nx_ctx* c, nx_map* m, size_t new_cap);
-NX_INLINE void nx_map_insert_raw(nx_ctx* c, nx_map* m, const void* key, const void* val) {
-    if ((m->len + 1) * 4 >= m->cap * 3) nx_map_rehash(c, m, m->cap ? m->cap * 2 : 8);
-    size_t slot;
-    if (nx_map_lookup(m, key, &slot)) {
-        memcpy(m->vals + slot * m->vsize, val, m->vsize);
+/* an index of `icap` slots over the live entries */
+NX_INLINE void nx_map_reindex(nx_ctx* c, nx_map* m, size_t icap) {
+    if (m->icap) nx_cont_free(c, m->ar, m->index, m->icap * sizeof(size_t));
+    m->index = (size_t*)nx_cont_alloc(c, m->ar, icap * sizeof(size_t), _Alignof(size_t));
+    memset(m->index, 0, icap * sizeof(size_t));
+    m->icap = icap;
+    m->filled = 0;
+    size_t mask = icap - 1;
+    for (size_t e = 0; e < m->used; e++) {
+        if (!m->live[e]) continue;
+        size_t i = (size_t)m->hashes[e] & mask;
+        while (m->index[i] != 0) i = (i + 1) & mask;
+        m->index[i] = e + 1;
+        m->filled++;
+    }
+}
+/* room for one more entry: the removed ones packed out, in order, when they
+   are half of what is written, else twice the room */
+NX_INLINE void nx_map_make_room(nx_ctx* c, nx_map* m) {
+    size_t dead = m->used - m->len;
+    if (dead > 0 && dead * 2 >= m->used) {
+        size_t w = 0;
+        for (size_t r = 0; r < m->used; r++) {
+            if (!m->live[r]) continue;
+            if (w != r) {
+                memmove(m->keys + w * m->ksize, m->keys + r * m->ksize, m->ksize);
+                if (m->vsize) memmove(m->vals + w * m->vsize, m->vals + r * m->vsize, m->vsize);
+                m->hashes[w] = m->hashes[r];
+                m->live[w] = 1;
+            }
+            w++;
+        }
+        for (size_t r = w; r < m->used; r++) m->live[r] = 0;
+        m->used = w;
+        nx_map_reindex(c, m, m->icap);
         return;
     }
-    if (slot >= m->cap) { nx_map_rehash(c, m, m->cap * 2); nx_map_lookup(m, key, &slot); }
-    memcpy(m->keys + slot * m->ksize, key, m->ksize);
-    memcpy(m->vals + slot * m->vsize, val, m->vsize);
-    m->state[slot] = 1;
-    m->len++;
-}
-NX_INLINE void nx_map_rehash(nx_ctx* c, nx_map* m, size_t new_cap) {
-    nx_map n = nx_map_new(c, m->ksize, m->vsize, m->key_kind);
-    n.cap = new_cap;
-    n.ar = m->ar;
-    n.keys = (uint8_t*)nx_cont_alloc(c, n.ar, new_cap * m->ksize, 16);
-    n.vals = (uint8_t*)nx_cont_alloc(c, n.ar, new_cap * (m->vsize ? m->vsize : 1), 16);
-    n.state = (uint8_t*)nx_cont_alloc(c, n.ar, new_cap, 1);
-    memset(n.state, 0, new_cap);
-    for (size_t i = 0; i < m->cap; i++) {
-        if (m->state[i] == 1) nx_map_insert_raw(c, &n, m->keys + i * m->ksize, m->vals + i * m->vsize);
+    size_t ncap = m->ecap ? m->ecap * 2 : 8;
+    size_t vs = m->vsize ? m->vsize : 1;
+    uint8_t* keys = (uint8_t*)nx_cont_alloc(c, m->ar, ncap * m->ksize, 16);
+    uint8_t* vals = (uint8_t*)nx_cont_alloc(c, m->ar, ncap * vs, 16);
+    uint8_t* live = (uint8_t*)nx_cont_alloc(c, m->ar, ncap, 1);
+    uint64_t* hashes = (uint64_t*)nx_cont_alloc(c, m->ar, ncap * sizeof(uint64_t), _Alignof(uint64_t));
+    memset(live, 0, ncap);
+    if (m->used) {
+        memcpy(keys, m->keys, m->used * m->ksize);
+        memcpy(vals, m->vals, m->used * vs);
+        memcpy(live, m->live, m->used);
+        memcpy(hashes, m->hashes, m->used * sizeof(uint64_t));
     }
-    nx_cont_free(c, m->ar, m->keys, m->cap * m->ksize);
-    nx_cont_free(c, m->ar, m->vals, m->cap * (m->vsize ? m->vsize : 1));
-    nx_cont_free(c, m->ar, m->state, m->cap);
-    *m = n;
+    if (m->ecap) {
+        nx_cont_free(c, m->ar, m->keys, m->ecap * m->ksize);
+        nx_cont_free(c, m->ar, m->vals, m->ecap * vs);
+        nx_cont_free(c, m->ar, m->live, m->ecap);
+        nx_cont_free(c, m->ar, m->hashes, m->ecap * sizeof(uint64_t));
+    }
+    m->keys = keys; m->vals = vals; m->live = live; m->hashes = hashes; m->ecap = ncap;
+}
+/* a new entry at the end, for a key that is not in the map */
+NX_INLINE void nx_map_append(nx_ctx* c, nx_map* m, const void* key, const void* val, nx_sl_u8 kb, uint64_t h) {
+    if (m->used == m->ecap) nx_map_make_room(c, m);
+    if ((m->filled + 1) * 4 > m->icap * 3) {
+        size_t icap = m->icap ? m->icap : 8;
+        while ((m->len + 1) * 2 > icap) icap *= 2;
+        nx_map_reindex(c, m, icap);
+    }
+    size_t slot = 0, unused = 0;
+    (void)nx_map_find(m, kb, h, &slot, &unused);
+    size_t e = m->used++;
+    memcpy(m->keys + e * m->ksize, key, m->ksize);
+    if (m->vsize) memcpy(m->vals + e * m->vsize, val, m->vsize);
+    m->hashes[e] = h;
+    m->live[e] = 1;
+    if (m->index[slot] == 0) m->filled++;
+    m->index[slot] = e + 1;
+    m->len++;
 }
 /* returns pointer to the existing value slot, or NULL */
 NX_INLINE void* nx_map_get(const nx_map* m, const void* key) {
-    size_t slot;
-    if (nx_map_lookup(m, key, &slot)) return m->vals + slot * m->vsize;
+    if (m->len == 0) return NULL;
+    nx_sl_u8 kb = nx_map_key_bytes(m, key);
+    size_t slot, e;
+    if (nx_map_find(m, kb, nx_map_hash(kb), &slot, &e)) return m->vals + e * m->vsize;
     return NULL;
 }
 /* returns true if an existing entry was replaced (the old key/value are returned in old_key/old_val for dropping) */
 NX_INLINE bool nx_map_put(nx_ctx* c, nx_map* m, const void* key, const void* val, void* old_key, void* old_val) {
-    size_t slot;
-    if (nx_map_lookup(m, key, &slot)) {
-        if (old_key) memcpy(old_key, m->keys + slot * m->ksize, m->ksize);
-        if (old_val) memcpy(old_val, m->vals + slot * m->vsize, m->vsize);
-        memcpy(m->keys + slot * m->ksize, key, m->ksize);
-        memcpy(m->vals + slot * m->vsize, val, m->vsize);
+    nx_sl_u8 kb = nx_map_key_bytes(m, key);
+    uint64_t h = nx_map_hash(kb);
+    size_t slot, e;
+    if (nx_map_find(m, kb, h, &slot, &e)) {
+        if (old_key) memcpy(old_key, m->keys + e * m->ksize, m->ksize);
+        if (old_val) memcpy(old_val, m->vals + e * m->vsize, m->vsize);
+        memcpy(m->keys + e * m->ksize, key, m->ksize);
+        if (m->vsize) memcpy(m->vals + e * m->vsize, val, m->vsize);
         return true;
     }
-    nx_map_insert_raw(c, m, key, val);
+    nx_map_append(c, m, key, val, kb, h);
     return false;
 }
 NX_INLINE bool nx_map_remove(nx_map* m, const void* key, void* old_key, void* old_val) {
-    size_t slot;
-    if (!nx_map_lookup(m, key, &slot)) return false;
-    if (old_key) memcpy(old_key, m->keys + slot * m->ksize, m->ksize);
-    if (old_val) memcpy(old_val, m->vals + slot * m->vsize, m->vsize);
-    m->state[slot] = 2; /* tombstone */
+    if (m->len == 0) return false;
+    nx_sl_u8 kb = nx_map_key_bytes(m, key);
+    size_t slot, e;
+    if (!nx_map_find(m, kb, nx_map_hash(kb), &slot, &e)) return false;
+    if (old_key) memcpy(old_key, m->keys + e * m->ksize, m->ksize);
+    if (old_val) memcpy(old_val, m->vals + e * m->vsize, m->vsize);
+    m->live[e] = 0;
+    m->index[slot] = NX_MAP_GONE;
     m->len--;
+    if (m->len == 0) {
+        /* the last one gone: start over in the same room */
+        memset(m->live, 0, m->used);
+        m->used = 0;
+        memset(m->index, 0, m->icap * sizeof(size_t));
+        m->filled = 0;
+    }
     return true;
 }
 NX_INLINE void nx_map_free_storage(nx_ctx* c, nx_map* m) {
-    nx_cont_free(c, m->ar, m->keys, m->cap * m->ksize);
-    nx_cont_free(c, m->ar, m->vals, m->cap * (m->vsize ? m->vsize : 1));
-    nx_cont_free(c, m->ar, m->state, m->cap);
-    m->keys = NULL; m->vals = NULL; m->state = NULL; m->cap = 0; m->len = 0;
+    if (m->ecap) {
+        size_t vs = m->vsize ? m->vsize : 1;
+        nx_cont_free(c, m->ar, m->keys, m->ecap * m->ksize);
+        nx_cont_free(c, m->ar, m->vals, m->ecap * vs);
+        nx_cont_free(c, m->ar, m->live, m->ecap);
+        nx_cont_free(c, m->ar, m->hashes, m->ecap * sizeof(uint64_t));
+    }
+    if (m->icap) nx_cont_free(c, m->ar, m->index, m->icap * sizeof(size_t));
+    m->keys = NULL; m->vals = NULL; m->live = NULL; m->hashes = NULL; m->index = NULL;
+    m->ecap = 0; m->icap = 0; m->filled = 0; m->used = 0; m->len = 0;
 }
-/* iterate: start with i = 0; returns false when done */
+/* iterate in insertion order: start with i = 0; returns false when done */
 NX_INLINE bool nx_map_next(const nx_map* m, size_t* i, void** key, void** val) {
-    while (*i < m->cap) {
+    while (*i < m->used) {
         size_t k = (*i)++;
-        if (m->state[k] == 1) { *key = m->keys + k * m->ksize; *val = m->vals + k * m->vsize; return true; }
+        if (m->live[k]) { *key = m->keys + k * m->ksize; *val = m->vals + k * m->vsize; return true; }
     }
     return false;
 }
 NX_INLINE nx_map nx_map_clone_raw(nx_ctx* c, const nx_map* m) {
     nx_map n = nx_map_new(c, m->ksize, m->vsize, m->key_kind);
-    if (m->cap) {
-        n.cap = m->cap;
-        n.keys = (uint8_t*)nx_cont_alloc(c, n.ar, m->cap * m->ksize, 16);
-        n.vals = (uint8_t*)nx_cont_alloc(c, n.ar, m->cap * (m->vsize ? m->vsize : 1), 16);
-        n.state = (uint8_t*)nx_cont_alloc(c, n.ar, m->cap, 1);
-        memcpy(n.keys, m->keys, m->cap * m->ksize);
-        memcpy(n.vals, m->vals, m->cap * (m->vsize ? m->vsize : 1));
-        memcpy(n.state, m->state, m->cap);
-        n.len = m->len;
+    if (m->ecap) {
+        size_t vs = m->vsize ? m->vsize : 1;
+        n.keys = (uint8_t*)nx_cont_alloc(c, n.ar, m->ecap * m->ksize, 16);
+        n.vals = (uint8_t*)nx_cont_alloc(c, n.ar, m->ecap * vs, 16);
+        n.live = (uint8_t*)nx_cont_alloc(c, n.ar, m->ecap, 1);
+        n.hashes = (uint64_t*)nx_cont_alloc(c, n.ar, m->ecap * sizeof(uint64_t), _Alignof(uint64_t));
+        memset(n.live, 0, m->ecap);
+        if (m->used) {
+            memcpy(n.keys, m->keys, m->used * m->ksize);
+            memcpy(n.vals, m->vals, m->used * vs);
+            memcpy(n.live, m->live, m->used);
+            memcpy(n.hashes, m->hashes, m->used * sizeof(uint64_t));
+        }
+        n.ecap = m->ecap; n.used = m->used; n.len = m->len;
+    }
+    if (m->icap) {
+        n.index = (size_t*)nx_cont_alloc(c, n.ar, m->icap * sizeof(size_t), _Alignof(size_t));
+        memcpy(n.index, m->index, m->icap * sizeof(size_t));
+        n.icap = m->icap; n.filled = m->filled;
     }
     return n;
 }
