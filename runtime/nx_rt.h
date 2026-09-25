@@ -774,9 +774,10 @@ NX_INLINE void nx_map_seed_init(void) {
     if (__atomic_compare_exchange_n(&nx_map_seeded, &expected, 1, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
         uint64_t k[2] = { 0, 0 };
         if (!nx_os_random((uint8_t*)k, sizeof k)) {
-            /* no generator: something no one outside can predict well */
+            /* no generator: something no one outside can predict well (the
+               time and two addresses; not clock(), which wasm32-wasi lacks) */
             k[0] = (uint64_t)time(NULL) * 0x9E3779B97F4A7C15ULL;
-            k[1] = (uint64_t)(uintptr_t)&k ^ ((uint64_t)clock() << 32);
+            k[1] = (uint64_t)(uintptr_t)&k ^ ((uint64_t)(uintptr_t)&nx_map_seeded << 16);
         }
         nx_map_seed[0] = k[0];
         nx_map_seed[1] = k[1];

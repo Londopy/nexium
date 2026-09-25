@@ -4,7 +4,7 @@
 // Nothing is sent anywhere. The compiler is fetched on the first Run and
 // runs in a worker, so a long program never freezes the page.
 //
-// `runWasi` is the whole WASI layer (the 23 calls nx.wasm imports), shared
+// `runWasi` is the whole WASI layer (the 24 calls nx.wasm imports), shared
 // by the worker and by site/play_test.mjs, which checks every exercise
 // through it in Node.
 
@@ -112,6 +112,11 @@ function runWasi(module, args, stdinText) {
       return SUCCESS;
     },
     proc_exit: (code) => { throw new Exit(code); },
+    // the runtime's hash key for maps; getRandomValues fills 64 KiB at most
+    random_get: (ptr, len) => {
+      for (let at = 0; at < len; at += 65536) crypto.getRandomValues(bytes().subarray(ptr + at, ptr + Math.min(len, at + 65536)));
+      return SUCCESS;
+    },
   };
 
   const instance = new WebAssembly.Instance(module, { wasi_snapshot_preview1: wasi });
