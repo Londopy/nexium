@@ -73,6 +73,23 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   summit with its route still to climb. The rule, the plan and every
   mountain's range in `docs/release-names.md` follow.
 
+### Fixed
+
+- A TCP connection that failed at once came back from `net.connect`
+  with a timeout (and `TcpStream.connect_timeout`) as if it were open,
+  and the first send then ended the program with SIGPIPE. A
+  non-blocking `connect` with no route to the address (an IPv6 address
+  on a machine without IPv6, a broadcast address) reports that at once,
+  after which the socket selects as writable with nothing in SO_ERROR;
+  the runtime waited and took it for connected. It is `error.IoError`
+  now. Found connecting nxtls to an IPv6 address under WSL.
+- A send to a connection the peer had reset ended the program with
+  SIGPIPE on Linux and macOS instead of returning `error.IoError`; sends
+  pass MSG_NOSIGNAL now, and macOS sockets set SO_NOSIGPIPE. The same
+  held for `process.run_with` writing stdin to a program that ends
+  without reading it all (`grep -q`, say): the caller died, and now it
+  carries on and gets the child's exit code.
+
 ## [1.3.1] - 2026-09-25
 
 *Annapurna: Couzy* — the engineer of the team, and a patch of the engineer's kind: the C the compiler writes, the runtime it links, the toolchain's messages and the release build. A branch's value could be a view of a String its branch had already released, a use-after-free in code without `unsafe` that the view rules promise cannot happen; an empty String handed its null pointer to `memcpy` and `memcmp`; a syntax error named a byte offset, and the REPL pointed into a program the user never sees; and the Linux build needed a newer glibc than its wheel says. Each is fixed with a regression test, and the seed is regenerated from the final sources.

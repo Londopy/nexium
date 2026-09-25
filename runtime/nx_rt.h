@@ -55,6 +55,7 @@ extern char** environ;
 #include <unistd.h>
 #include <termios.h>
 #include <poll.h>
+#include <signal.h>
 #include <spawn.h>
 #include <sys/wait.h>
 #include <dirent.h>
@@ -1214,6 +1215,29 @@ NX_INLINE bool nx_run_capture(nx_ctx* c, const nx_sl_u8* argv, size_t argc, nx_s
     return false;
 }
 #else
+#if !defined(_WIN32)
+/* Writes all of p to a pipe; stops early when the reader has gone. That
+   write fails with EPIPE and raises SIGPIPE, which would end the program:
+   SIGPIPE is blocked in this thread meanwhile, and one the write raised is
+   taken before it is unblocked (unless the program had it blocked). */
+NX_INLINE void nx_pipe_write_all(int fd, const uint8_t* p, size_t n) {
+    sigset_t pipe_set, old;
+    sigemptyset(&pipe_set);
+    sigaddset(&pipe_set, SIGPIPE);
+    pthread_sigmask(SIG_BLOCK, &pipe_set, &old);
+    size_t off = 0;
+    while (off < n) {
+        ssize_t w = write(fd, p + off, n - off);
+        if (w < 0 && errno == EINTR) continue;
+        if (w <= 0) break;
+        off += (size_t)w;
+    }
+    sigset_t pending;
+    sigpending(&pending);
+    if (sigismember(&pending, SIGPIPE) && !sigismember(&old, SIGPIPE)) { int sig; sigwait(&pipe_set, &sig); }
+    pthread_sigmask(SIG_SETMASK, &old, NULL);
+}
+#endif
 NX_INLINE bool nx_run_capture(nx_ctx* c, const nx_sl_u8* argv, size_t argc, nx_sl_u8 input, nx_sl_u8 cwd, int* code) {
     if (argc == 0) return false;
     fflush(stdout); fflush(stderr);
@@ -1297,7 +1321,7 @@ NX_INLINE bool nx_run_capture(nx_ctx* c, const nx_sl_u8* argv, size_t argc, nx_s
     close(inp[0]); close(outp[1]); close(errp[1]);
     for (size_t i = 0; i < argc; i++) nx_free_bytes(c, av[i], argv[i].len + 1);
     nx_free_bytes(c, av, (argc + 1) * sizeof(char*));
-    if (input.len > 0) { size_t off = 0; while (off < input.len) { ssize_t w = write(inp[1], input.ptr + off, input.len - off); if (w <= 0) break; off += (size_t)w; } }
+    if (input.len > 0) nx_pipe_write_all(inp[1], input.ptr, input.len);
     close(inp[1]);
     /* both pipes are drained as the child fills them, so a child that fills one
        before finishing the other cannot stall */
@@ -1657,6 +1681,7 @@ NX_INLINE int32_t nx_net_code(void) {
     return 4;
 }
 NX_INLINE void nx_net_blocking(nx_sock s, bool on) { u_long mode = on ? 0 : 1; ioctlsocket(s, FIONBIO, &mode); }
+NX_INLINE bool nx_net_in_progress(void) { return WSAGetLastError() == WSAEWOULDBLOCK; }
 #elif defined(NX_WASM)
 typedef int nx_sock;
 #define NX_BAD_SOCK (-1)
@@ -1676,6 +1701,15 @@ NX_INLINE void nx_net_blocking(nx_sock s, bool on) {
     int fl = fcntl(s, F_GETFL, 0);
     if (fl >= 0) fcntl(s, F_SETFL, on ? (fl & ~O_NONBLOCK) : (fl | O_NONBLOCK));
 }
+NX_INLINE bool nx_net_in_progress(void) { return errno == EINPROGRESS || errno == EINTR; }
+#endif
+/* A send to a connection the peer has reset fails with EPIPE; without
+   these it raises SIGPIPE first, which ends the program. Linux and the BSDs
+   take MSG_NOSIGNAL on each send, macOS SO_NOSIGPIPE on the socket. */
+#if defined(MSG_NOSIGNAL)
+#define NX_SEND_FLAGS MSG_NOSIGNAL
+#else
+#define NX_SEND_FLAGS 0
 #endif
 #if defined(NX_WASM)
 /* no sockets in the playground: every call fails as "any other failure" */
@@ -1735,6 +1769,14 @@ NX_INLINE bool nx_net_wait(nx_sock s, bool write, int64_t ms) {
     int r = select((int)(s + 1), write ? NULL : &fds, write ? &fds : NULL, write ? &exc : NULL, ms > 0 ? &tv : NULL);
     return r > 0;
 }
+/* what every connected TCP socket gets: no Nagle delay, and no SIGPIPE */
+NX_INLINE void nx_tcp_ready(nx_sock s) {
+    int one = 1;
+    setsockopt(s, IPPROTO_TCP, TCP_NODELAY, (const char*)&one, sizeof one);
+#if defined(SO_NOSIGPIPE)
+    setsockopt(s, SOL_SOCKET, SO_NOSIGPIPE, (const char*)&one, sizeof one);
+#endif
+}
 NX_INLINE int32_t nx_tcp_connect(nx_sl_u8 host, uint16_t port, int64_t timeout_ms, int64_t* out) {
     struct addrinfo* res = nx_net_lookup(host, port, SOCK_STREAM, false);
     if (!res) return 1;
@@ -1747,7 +1789,12 @@ NX_INLINE int32_t nx_tcp_connect(nx_sl_u8 host, uint16_t port, int64_t timeout_m
             nx_net_blocking(s, false);
             int r = connect(s, ai->ai_addr, (int)ai->ai_addrlen);
             ok = r == 0;
-            if (!ok) {
+            if (!ok && !nx_net_in_progress()) {
+                /* it failed at once (no route, say): the socket then
+                   selects as writable with no error pending, so waiting
+                   would take it for connected */
+                code = nx_net_code();
+            } else if (!ok) {
                 if (nx_net_wait(s, true, timeout_ms)) {
                     int err = 0; socklen_t len = sizeof err;
                     getsockopt(s, SOL_SOCKET, SO_ERROR, (char*)&err, &len);
@@ -1773,8 +1820,7 @@ NX_INLINE int32_t nx_tcp_connect(nx_sl_u8 host, uint16_t port, int64_t timeout_m
             if (!ok) code = nx_net_code();
         }
         if (ok) {
-            int one = 1;
-            setsockopt(s, IPPROTO_TCP, TCP_NODELAY, (const char*)&one, sizeof one);
+            nx_tcp_ready(s);
             *out = (int64_t)s; nx_track_handle(1, *out, true);
             freeaddrinfo(res);
             return 0;
@@ -1809,8 +1855,7 @@ NX_INLINE int32_t nx_tcp_accept(int64_t l, int64_t timeout_ms, int64_t* out) {
     if (timeout_ms > 0 && !nx_net_wait(ls, false, timeout_ms)) return 3;
     nx_sock s = accept(ls, NULL, NULL);
     if (s == NX_BAD_SOCK) return nx_net_code();
-    int one = 1;
-    setsockopt(s, IPPROTO_TCP, TCP_NODELAY, (const char*)&one, sizeof one);
+    nx_tcp_ready(s);
     *out = (int64_t)s; nx_track_handle(1, *out, true);
     return 0;
 }
@@ -1818,7 +1863,7 @@ NX_INLINE int32_t nx_net_send(int64_t h, nx_sl_u8 data) {
     nx_sock s = (nx_sock)h;
     size_t sent = 0;
     while (sent < data.len) {
-        int n = (int)send(s, (const char*)data.ptr + sent, (int)(data.len - sent), 0);
+        int n = (int)send(s, (const char*)data.ptr + sent, (int)(data.len - sent), NX_SEND_FLAGS);
         if (n <= 0) return nx_net_code();
         sent += (size_t)n;
     }

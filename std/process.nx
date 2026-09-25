@@ -87,3 +87,19 @@ test "capture, stdin and a missing program" {
     let there = try run_with(sort_cmd[..], Options{ .stdin = "x\n", .cwd = io.temp_dir() })
     expect(there.ok())
 }
+
+test "a program that ends without reading its input leaves the caller running" {
+    // POSIX only: writing on after the reader has gone raises SIGPIPE there
+    if os.env("COMSPEC") != null and os.env("WINDIR") != null {
+        return
+    }
+    // `true` reads nothing, and a megabyte does not fit in the pipe, so
+    // the rest meets a pipe with no reader
+    var big = String.new()
+    for _ in 0..(1 << 20) {
+        big.push_byte('x')
+    }
+    let t = ["true"]
+    let r = try run_with(t[..], Options{ .stdin = big, .cwd = "" })
+    expect(r.ok())
+}

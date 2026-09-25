@@ -301,3 +301,34 @@ test "refused and unknown" {
     }
     expect(unknown)
 }
+
+test "a connection that fails at once is an error, not a dead socket" {
+    // no route to a broadcast address: connect says so at once, and the
+    // socket then waits as writable with no error pending
+    var failed = false
+    _ = TcpStream.connect_timeout("255.255.255.255", 80, 2000) catch {
+        failed = true
+        TcpStream.from_socket(-1)
+    }
+    expect(failed)
+}
+
+test "sending to a connection the peer has closed is an error, not SIGPIPE" {
+    var l = try TcpListener.bind("127.0.0.1", 0)
+    let port = try l.port()
+    var c = try TcpStream.connect_timeout("127.0.0.1", port, 5000)
+    var s = try l.accept_timeout(5000)
+    s.close()
+    l.close()
+    // the first send is answered with a reset; a send after that fails
+    var failed = false
+    for _ in 0..100 {
+        c.send("x") catch {
+            failed = true
+            break
+        }
+        time.sleep(10)
+    }
+    expect(failed)
+    c.close()
+}
