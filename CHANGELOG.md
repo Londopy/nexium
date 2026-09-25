@@ -72,6 +72,16 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   argument or a network host. The runtime copies a slice's bytes through
   `nx_bytes_copy`, which skips an empty copy. Found by QNI and nxtls; a
   spec case exercises each and runs under CI's sanitizers.
+- A view of a String made in a branch no longer outlives it. `show(if c {
+  format(...) } else { ... })` with `fn show(s: []u8)` read freed memory,
+  with no diagnostic: the String was released when its branch closed,
+  before the call. The same held for a `match` arm, a typed binding (`let
+  t: []u8 = if ...`), a nested `if`, a block's value or its `break :label`
+  value, an `if let` capture and an arm's binding. The storage a branch's
+  value is made of now belongs to the whole expression and is released with
+  the block the expression is in, as a plain expression's temporaries are
+  (decision 118). Found by QNI's tests against glibc; a spec case runs each
+  form under CI's sanitizers.
 
 ## [1.3.0] - 2026-09-24
 

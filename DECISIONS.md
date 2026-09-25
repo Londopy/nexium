@@ -951,3 +951,19 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     (0.x the climb, 1.0.0 the summit, 1.1 to 1.3 Annapurna's other routes);
     the names pencilled in for 1.5 to 1.8 go back to Annapurna's pool, and
     Everest's route moves from after 2.0 to before it.
+118. **A temporary a branch's value is made of belongs to the whole `if`,
+    `match` or block expression.** SPEC 5.2 releases owned values when
+    their scope ends without saying whose scope a temporary is. A plain
+    expression's are the enclosing block's: `show(format(...))` and `let t:
+    []u8 = format(...)` keep the String until the block ends. The
+    temporaries a branch made for its value, and an owned `if let` capture
+    or pattern binding, were the branch's, released when it closed, so a
+    branch whose value was a view of one handed on freed memory:
+    `show(if c { format(...) } else { ... })` read a released String, with
+    no diagnostic, where the view rules promise that never happens. They
+    are now the expression's: declared before it zeroed, so a branch that
+    did not run releases nothing, and released with the block the
+    expression is in, as a plain expression's are. A statement inside a
+    branch keeps its own temporaries, released at the branch's end as
+    before, so a loop in a branch does not pile them up. Found by QNI's
+    tests against glibc (#15).

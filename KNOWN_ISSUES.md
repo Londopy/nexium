@@ -10,17 +10,6 @@ Fixed bugs are not listed here; `CHANGELOG.md` and `git log` have them.
 
 ## Compiler
 
-- **An owned if-expression passed straight to a `[]u8` parameter is freed
-  before the call reads it.** With `fn show(s: []u8)`,
-  `show(if n > 2 { format("big {}", .{n}) } else { String.from("small") })`
-  prints garbage on Linux (glibc hands the block straight back) and
-  happens to work on Windows: the branch's owned String is dropped at the
-  end of its branch, so the slice the call gets points into freed memory.
-  Binding it first (`let t = if ...`), a format argument and `return` are
-  all fine. Found by QNI's tests, which CI builds against glibc; still in
-  1.3.0. Fix: an if-expression whose value is an owned temporary coerced
-  to a slice argument keeps that temporary alive until the call returns,
-  like any other owned argument.
 
 ## Self-hosting
 
