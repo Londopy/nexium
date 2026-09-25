@@ -342,8 +342,9 @@ pub fn eval(code: []u8, print_last: bool, std_dir: []u8, cc: *List(String)) -> i
 /// nothing is compiled. It is the playground's command (the site runs the
 /// compiler as WebAssembly, where there is no C compiler) and works the same
 /// in a terminal. The interpreter runs the language and the standard
-/// library's pure parts; foreign calls, threads, sockets, processes, mutable
-/// globals and `@refCount` need a compiled program, and say so. The exit code: `main`'s own, 1 after
+/// library's pure parts; foreign calls, threads, sockets, processes,
+/// `random.secure`, mutable globals and `@refCount` need a compiled program,
+/// and say so. The exit code: `main`'s own, 1 after
 /// diagnostics or an error returned from `main`, 2 after a panic or a
 /// statement the interpreter cannot run.
 pub fn play(file: []u8, std_dir: []u8, cc: *List(String), strict: bool) -> i32 {
@@ -402,7 +403,7 @@ pub fn play(file: []u8, std_dir: []u8, cc: *List(String), strict: bool) -> i32 {
     if r.kind == check_interp.PLAY_UNSUPPORTED {
         var at = String.new()
         if r.own_at.len > 0 { at = format(" (at {}, inside {})", .{r.own_at, r.at}) } else if r.at.len > 0 { at = format(" (at {})", .{r.at}) }
-        eprintln("error: the interpreter cannot run this program{}: foreign calls, threads, sockets, processes, mutable globals, @refCount and u128 values past i128's maximum need a compiled program (nx run)", .{at})
+        eprintln("error: the interpreter cannot run this program{}: foreign calls, threads, sockets, processes, `random.secure`, mutable globals, @refCount and u128 values past i128's maximum need a compiled program (nx run)", .{at})
         return 2
     }
     return r.code

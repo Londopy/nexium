@@ -33,6 +33,16 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 - `std.deque`: `Deque(T)`, both ends in O(1) amortized (two Lists back to
   back): `push_front`, `push_back`, `pop_front`, `pop_back`, `get`, `first`,
   `last`.
+- `random.secure(buf)`: a `[]mut u8` filled from the operating system's
+  secure generator, for keys, tokens and UUIDs, where `random.int` and
+  `random.float` are a fast generator `random.seed` makes repeatable. Windows
+  asks BCryptGenRandom, Linux the getrandom system call (made directly, so
+  programs still need nothing past glibc 2.17) or `/dev/urandom` on older
+  kernels, macOS and the BSDs `arc4random_buf`, WASI `getentropy`. It carries
+  the `nondeterministic` effect, is refused at compile time, and fails with
+  `IoError` only where there is no generator (decision 119). It is what
+  `std.uuid`, a SipHash-keyed `Map` and a TLS client on Windows were waiting
+  for.
 - Nexium in a notebook: `docs/install.md` shows the three cells that run a
   program in Google Colab or Jupyter on the wheel (`!pip install -q
   nexium-lang`, a `%%writefile` cell holding the program, `!nx run`), tried

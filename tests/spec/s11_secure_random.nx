@@ -1,0 +1,28 @@
+// SPEC 11: `random.secure(buf)` fills a mutable byte slice from the operating
+// system's secure generator, which `random.seed` does not make repeatable; an
+// empty slice (a new List's has no storage at all) is filled without a read.
+fn nonzero(b: []u8) -> bool {
+    for x in b { if x != 0 { return true } }
+    return false
+}
+
+fn main() -> !void {
+    random.seed(7)
+    var a: [32]u8 = undefined
+    try random.secure(a[..])
+    random.seed(7)
+    var b: [32]u8 = undefined
+    try random.secure(b[..])
+    println("{} {} {}", .{nonzero(a[..]), nonzero(b[..]), a[..] != b[..]})
+    var none = List(u8).new()
+    try random.secure(none[..])
+    var big = List(u8).new()
+    for _ in 0..70000 { big.append(0) }
+    try random.secure(big[..])
+    var seen = List(bool).new()
+    for _ in 0..256 { seen.append(false) }
+    for x in big { seen[x as usize] = true }
+    var values: usize = 0
+    for s in seen { if s { values += 1 } }
+    println("{} {}", .{none.len, values})
+}

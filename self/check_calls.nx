@@ -102,6 +102,7 @@ const NS_FNS = [
     NsFn{ .ns = "random", .name = "int", .args = "i64 i64", .ret = "i64", .op = "RandomInt", .effects = EFF_NONDETERMINISTIC },
     NsFn{ .ns = "random", .name = "float", .args = "", .ret = "f64", .op = "RandomFloat", .effects = EFF_NONDETERMINISTIC },
     NsFn{ .ns = "random", .name = "seed", .args = "u64", .ret = "void", .op = "RandomSeed", .effects = 0 },
+    NsFn{ .ns = "random", .name = "secure", .args = "mutbytes", .ret = "!void", .op = "RandomSecure", .effects = EFF_NONDETERMINISTIC },
 ]
 
 impl Checker {
@@ -124,6 +125,7 @@ impl Checker {
             return self.tys.wrap(TK.List, inner, false)
         }
         if code == "bytes" { return self.tys.str_slice() }
+        if code == "mutbytes" { return self.tys.wrap(TK.Slice, self.tys.int("u8"), true) }
         if code == "string" { return self.tys.string() }
         if code == "void" { return self.tys.void() }
         if code == "never" { return self.tys.never() }

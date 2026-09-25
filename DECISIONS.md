@@ -967,3 +967,22 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     branch keeps its own temporaries, released at the branch's end as
     before, so a loop in a branch does not pile them up. Found by QNI's
     tests against glibc (#15).
+119. **`random.secure(buf)` fills a mutable byte slice from the operating
+    system's generator, and returns `!void`.** Keys, tokens, UUIDs and a
+    `Map` hashed against flooding need bytes an attacker cannot predict;
+    `random.int` is splitmix64 seeded from the clock, and `random.seed`
+    makes it repeatable on purpose. The secure source stays next to it in
+    `random`, where people look, with the difference in its name. It fills
+    a slice rather than returning a String, so code that must not allocate
+    (a TLS record, a key schedule under `!allocates`) can use it; it
+    returns an error rather than panicking because every other builtin
+    that asks the operating system does, though it fails only where there
+    is no generator at all (`IoError`). Each platform's own source: Windows
+    BCryptGenRandom, looked up in bcrypt.dll at the first call so no program
+    links another library; Linux the getrandom system call made directly,
+    as glibc's wrapper would raise the floor past 2.17, falling back to
+    `/dev/urandom`, checked to be a device, on kernels before 3.17; macOS
+    and the BSDs `arc4random_buf`; WASI `getentropy`. It is
+    `nondeterministic`, so compile-time evaluation refuses it; the REPL's
+    interpreter does not run it yet, as it cannot write through a slice
+    argument.

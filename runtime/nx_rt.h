@@ -69,6 +69,9 @@ extern char** environ;
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
 #endif
+#if defined(__linux__)
+#include <sys/syscall.h>
+#endif
 #endif
 
 #if defined(_MSC_VER) && !defined(__clang__)
@@ -1027,6 +1030,73 @@ NX_INLINE int64_t nx_random_int(nx_ctx* c, int64_t lo, int64_t hi, const char* l
     return lo + (int64_t)(nx_rng_next(c) % span);
 }
 NX_INLINE double nx_random_float(nx_ctx* c) { return (double)(nx_rng_next(c) >> 11) * (1.0 / 9007199254740992.0); }
+
+/* random.secure: n bytes from the operating system's secure generator, for
+   keys, tokens and UUIDs; never the seeded generator above. Windows asks
+   BCryptGenRandom, loaded from bcrypt.dll so no program links another
+   library; Linux the getrandom system call, made directly so the glibc a
+   program needs stays 2.17, or /dev/urandom on a kernel older than 3.17;
+   macOS and the BSDs arc4random_buf; WASI getentropy. False when the source
+   fails, and the bytes must not be used then. */
+#if defined(_WIN32)
+typedef LONG (WINAPI* nx_bcrypt_gen_random)(void*, unsigned char*, ULONG, ULONG);
+#endif
+NX_INLINE bool nx_os_random(uint8_t* p, size_t n) {
+    if (n == 0) return true;
+#if defined(_WIN32)
+    static nx_bcrypt_gen_random gen = NULL;
+    if (!gen) {
+        HMODULE m = LoadLibraryA("bcrypt.dll");
+        if (m) gen = (nx_bcrypt_gen_random)GetProcAddress(m, "BCryptGenRandom");
+        if (!gen) return false;
+    }
+    while (n > 0) {
+        ULONG chunk = n > 0x40000000u ? 0x40000000u : (ULONG)n;
+        /* 2: BCRYPT_USE_SYSTEM_PREFERRED_RNG, no algorithm handle */
+        if (gen(NULL, p, chunk, 2) != 0) return false;
+        p += chunk; n -= chunk;
+    }
+    return true;
+#elif defined(NX_WASM)
+    while (n > 0) {
+        size_t chunk = n > 256 ? 256 : n;
+        if (getentropy(p, chunk) != 0) return false;
+        p += chunk; n -= chunk;
+    }
+    return true;
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || defined(__DragonFly__)
+    arc4random_buf(p, n);
+    return true;
+#else
+#if defined(__linux__) && defined(SYS_getrandom)
+    while (n > 0) {
+        long r = syscall(SYS_getrandom, p, n, 0);
+        if (r > 0) { p += (size_t)r; n -= (size_t)r; continue; }
+        if (r < 0 && errno == EINTR) continue;
+        if (r < 0 && errno == ENOSYS) break;
+        return false;
+    }
+    if (n == 0) return true;
+#endif
+#ifndef O_CLOEXEC
+#define O_CLOEXEC 0
+#endif
+    int fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return false;
+    /* a regular file planted in its place is not a generator */
+    struct stat st;
+    if (fstat(fd, &st) != 0 || !S_ISCHR(st.st_mode)) { close(fd); return false; }
+    while (n > 0) {
+        ssize_t r = read(fd, p, n);
+        if (r > 0) { p += (size_t)r; n -= (size_t)r; continue; }
+        if (r < 0 && errno == EINTR) continue;
+        close(fd);
+        return false;
+    }
+    close(fd);
+    return true;
+#endif
+}
 
 /* process.run: spawn argv[0] with the given arguments (searching PATH), wait,
  * and return its exit code. False when the process could not be started. */

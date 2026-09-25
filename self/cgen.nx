@@ -4262,6 +4262,14 @@ impl Gen {
             self.line(format("c->rng = {}; c->rng_seeded = true;", .{v})[..])
             return String.from("0")
         }
+        if name == "RandomSecure" {
+            let b = self.simple(args[0])
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            let io = self.err_id("IoError")
+            self.line(format("{} {}; {}.err = nx_os_random({}.ptr, {}.len) ? 0 : {}u;", .{cn, t, t, b, b, io})[..])
+            return t
+        }
         self.errors.append(format("builtin {} is not supported by the C backend", .{name}))
         return String.from("0")
     }

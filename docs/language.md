@@ -302,7 +302,13 @@ brings it.
   `time.utc_offset(ms) -> i64` (minutes east of UTC of local time at that
   instant; `std.time` builds dates on these),
   `time.sleep(ms)`.
-- `random.int(lo, hi)`, `random.float()`, `random.seed(n)`.
+- `random.int(lo, hi)`, `random.float()`, `random.seed(n)`: a fast
+  generator that `random.seed` makes repeatable, never for secrets.
+- `random.secure(buf) -> !void`: fills a `[]mut u8` from the operating
+  system's secure generator (BCryptGenRandom, getrandom, arc4random), for
+  keys, tokens and UUIDs; `random.seed` does not touch it, and it fails
+  with `IoError` only where the system has no generator. The REPL and `nx
+  play` do not run it: it needs a compiled program.
 - `mem.copy(dst, src)`.
 - `@typeName(T)`, `@sizeOf(T)`, `@alignOf(T)`, `@truncate(T, x)`,
   `@bitCast(T, x)` (same size, scalars), `@min(a, b)`, `@max(a, b)`,

@@ -1093,9 +1093,9 @@ impl Checker {
                 out.panic = format("exceeded the step budget ({} steps)", .{STEP_BUDGET})
                 failed = true
             } else if flow == FL_FAIL {
-                var at = String.new()
-                if self.it_failed_at != NONE { at = format(" (at {})", .{self.location(self.insts[inst].module, self.it_failed_at)}) }
-                out.panic = format("this statement cannot be evaluated by the interpreter{}; foreign calls, threads, sockets, processes, mutable globals, @refCount and u128 values past i128's maximum need a compiled program", .{at})
+                // no location: it is the input just typed, and a position in
+                // the program the REPL builds around it would mean nothing
+                out.panic = String.from("this line cannot be evaluated by the interpreter; foreign calls, threads, sockets, processes, `random.secure`, mutable globals, @refCount and u128 values past i128's maximum need a compiled program")
                 failed = true
             }
             if failed {

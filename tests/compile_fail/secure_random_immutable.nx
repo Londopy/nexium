@@ -1,0 +1,5 @@
+// EXPECT: expected `[]mut u8` but found `[]u8`
+fn main() -> !void {
+    let s: []u8 = "abc"
+    try random.secure(s)
+}
