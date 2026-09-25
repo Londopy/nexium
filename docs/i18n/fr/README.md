@@ -355,7 +355,7 @@ using arena {
 - [Installation](../../install.md) (anglais) : l'installateur Windows, le script macOS/Linux, la compilation depuis les sources, les sommes de contrôle, et comment `nx` trouve un compilateur C.
 - [Paquets](../../packages.md) (anglais) : `nexium.toml`, `nx add`, `nx fetch`, dépendances git ou par chemin, le fichier de verrouillage.
 - [Bibliothèque standard](../../std.md) (anglais) : les modules écrits en Nexium (`std.strings`, `std.lists`, `std.bytes`, `std.num`, `std.json`, `std.args`, `std.fs`, `std.time`, `std.regex`, `std.text`, `std.testing`, `std.stream`, `std.net`, `std.http`, `std.thread`, `std.process`, `std.sort`, `std.heap`, `std.set`, `std.deque`, `std.hash`).
-- [Les chiffres](../../numbers.md) (anglais) : quatre programmes en cinq langages, mesurés chaque semaine sur un même runner.
+- [Les chiffres](https://londopy.github.io/nexium/docs/numbers.html) (anglais) : quatre programmes en cinq langages, mesurés chaque semaine sur un même runner.
 - [nexium-gui](../../gui.md) (anglais) : la bibliothèque GUI en mode immédiat et comment écrire un widget.
 - [Publier votre programme](../../releasing-your-program.md) (anglais) : des binaires pour trois plateformes à partir d'un tag, installateurs en option.
 - [Prise en charge des éditeurs](../../../editors) (anglais) : VS Code, Vim, Neovim, Helix, Zed, Emacs, Kate, JetBrains, Sublime Text, Notepad++, nano, et `nx lsp` pour les autres.
@@ -364,6 +364,34 @@ using arena {
 - [Noms des versions](../../release-names.md) (anglais) : chaque version est un lieu sur une montagne ; le schéma, le registre et les noms encore à utiliser.
 - [Décisions](../../../DECISIONS.md) (anglais) : chaque choix fait là où la spécification était ouverte.
 - [Problèmes connus](../../../KNOWN_ISSUES.md) (anglais) : bogues ouverts, manques et limites, avec reproductions.
+
+## Vitesse
+
+Quatre programmes écrits de la même façon dans cinq langages, d'environ une
+seconde chacun dans les langages compilés, mesurés sur un runner GitHub
+(2026-09-25 ; la médiane de sept exécutions, ou de trois au-delà de cinq secondes ;
+en secondes, moins c'est mieux) :
+
+| programme | Nexium safe | Nexium fast | C | Rust | Go | Python |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `fib` (appels) | 1,32 | 0,78 | 0,39 | 0,78 | 1,34 | 28,87 |
+| `nbody` (flottants) | 0,66 | 0,66 | 0,59 | 0,68 | 0,71 | 48,54 |
+| `sieve` (tableaux) | 0,62 | 0,60 | 0,48 | 0,53 | 0,53 | 4,29 |
+| `words` (tables et chaînes) | 1,16 | 1,11 | 0,57 | 0,97 | 1,12 | 3,60 |
+
+En flottants et en tableaux, Nexium prend au plus un tiers de temps de plus que
+C : un peu plus rapide que Rust et Go en flottants, un peu plus lent en
+tableaux. En appels, `fast` égale Rust avec deux fois le temps de C, et les
+contrôles de débordement de `safe` y ajoutent 70 %. Les tables et les chaînes
+vont au rythme de Go, environ deux fois le temps de C. Python met de 3 à 74 fois
+plus de temps que Nexium `fast`.
+
+`safe` garde les contrôles de débordement et de bornes, comme `nx ship` et
+`nx bench` construisent sauf indication contraire ; `fast` (`--mode fast`)
+les omet. [La page des chiffres](https://londopy.github.io/nexium/docs/numbers.html) (en anglais) donne aussi chaque temps en multiple de
+celui de C, les versions et les règles ; le workflow Bench remesure chaque
+semaine et à chaque version, et échoue quand le temps de Nexium, en multiple
+de celui de C, augmente d'un quart d'une mesure à l'autre.
 
 ## Dans la nature
 
@@ -434,7 +462,7 @@ modules en tout, et le client HTTP avec TLS, les websockets et les fuseaux
 horaires viennent ensuite. Ce que Nexium n'est pas encore, et où chaque
 point trouve sa réponse, est la première section de [la feuille de
 route](../../../ROADMAP.md) : les seuls chiffres de performance sont [la
-page des chiffres](../../numbers.md), et l'écosystème se résume à un seul
+page des chiffres](https://londopy.github.io/nexium/docs/numbers.html), et l'écosystème se résume à un seul
 mainteneur et quatre projets hors de l'arbre ([plus haut](#dans-la-nature)).
 [`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md) liste chaque bogue ouvert avec
 son correctif ; [`DECISIONS.md`](../../../DECISIONS.md), chaque choix fait

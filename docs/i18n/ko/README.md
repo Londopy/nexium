@@ -349,7 +349,7 @@ using arena {
 - [설치](../../install.md) (영어): Windows 설치 프로그램, macOS/Linux 스크립트, 소스 빌드, 체크섬, `nx`가 C 컴파일러를 찾는 방법.
 - [패키지](../../packages.md) (영어): `nexium.toml`, `nx add`, `nx fetch`, git 또는 경로 의존성, 잠금 파일.
 - [표준 라이브러리](../../std.md) (영어): Nexium으로 쓰인 모듈(`std.strings`, `std.lists`, `std.bytes`, `std.num`, `std.json`, `std.args`, `std.fs`, `std.time`, `std.regex`, `std.text`, `std.testing`, `std.stream`, `std.net`, `std.http`, `std.thread`, `std.process`, `std.sort`, `std.heap`, `std.set`, `std.deque`, `std.hash`).
-- [수치](../../numbers.md) (영어): 다섯 언어로 쓴 네 프로그램을 한 러너에서 매주 측정.
+- [수치](https://londopy.github.io/nexium/docs/numbers.html) (영어): 다섯 언어로 쓴 네 프로그램을 한 러너에서 매주 측정.
 - [nexium-gui](../../gui.md) (영어): 즉시 모드 GUI 라이브러리와 위젯 작성법.
 - [프로그램 릴리스하기](../../releasing-your-program.md) (영어): 태그 하나로 세 플랫폼의 바이너리를, 설치 프로그램은 선택.
 - [에디터 지원](../../../editors) (영어): VS Code, Vim, Neovim, Helix, Zed, Emacs, Kate, JetBrains, Sublime Text, Notepad++, nano, 나머지는 `nx lsp`로.
@@ -358,6 +358,28 @@ using arena {
 - [릴리스 이름](../../release-names.md) (영어): 모든 릴리스는 산 위의 한 장소. 규칙, 장부, 아직 쓰지 않은 이름.
 - [결정 기록](../../../DECISIONS.md) (영어): 명세가 열려 있던 곳에서 내린 모든 결정.
 - [알려진 문제](../../../KNOWN_ISSUES.md) (영어): 미해결 버그, 빈틈, 제한. 재현 방법 포함.
+
+## 속도
+
+다섯 언어로 똑같이 작성한 네 프로그램을, 컴파일 언어에서 각각 약 1초 걸리는 크기로,
+GitHub 러너에서 측정했습니다(2026-09-25, 7회의 중앙값, 5초가 넘는 것은 3회, 초, 작을수록 빠름):
+
+| 프로그램 | Nexium safe | Nexium fast | C | Rust | Go | Python |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `fib` (함수 호출) | 1.32 | 0.78 | 0.39 | 0.78 | 1.34 | 28.87 |
+| `nbody` (부동소수점) | 0.66 | 0.66 | 0.59 | 0.68 | 0.71 | 48.54 |
+| `sieve` (배열) | 0.62 | 0.60 | 0.48 | 0.53 | 0.53 | 4.29 |
+| `words` (맵과 문자열) | 1.16 | 1.11 | 0.57 | 0.97 | 1.12 | 3.60 |
+
+부동소수점과 배열에서 Nexium은 C보다 많아야 3분의 1 더 걸립니다. 부동소수점에서는 Rust와
+Go보다 조금 빠르고, 배열에서는 조금 느립니다. 함수 호출에서 `fast`는 Rust처럼 C의 2배 시간이
+걸리고, `safe`의 오버플로 검사는 여기에 70%를 더합니다. 맵과 문자열은 Go와 같은 속도로 C의
+약 2배 시간입니다. Python은 Nexium `fast`의 3~74배 시간이 걸립니다.
+
+`safe`는 오버플로와 범위 검사를 유지하며 `nx ship`과 `nx bench`의 기본값이고,
+`fast`(`--mode fast`)는 검사를 뺍니다. [수치 페이지](https://londopy.github.io/nexium/docs/numbers.html) (영어)에는 C 대비 배수, 각 버전,
+규칙도 있습니다. Bench 워크플로는 매주와 릴리스마다 다시 측정하고, Nexium 시간의
+C 대비 배수가 이전 측정보다 4분의 1 늘면 실패합니다.
 
 ## 실제 사용
 
@@ -422,7 +444,7 @@ gcc나 clang이 필요), C 연동용 `-I`, `--link`,
 (`std.sort`, `std.heap`, `std.set`, `std.deque`)과 `std.hash`가 들어와 모두 스물한
 모듈이고, 다음은 TLS를 갖춘 HTTP 클라이언트, 웹소켓, 시간대입니다. Nexium이 아직 아닌
 것과 각각이 어디서 답을 얻는지는 [로드맵](../../../ROADMAP.md)의 첫 절에 있습니다.
-벤치마크 수치는 [수치 페이지](../../numbers.md)뿐이며, 생태계는 메인테이너 한 명과 트리
+벤치마크 수치는 [수치 페이지](https://londopy.github.io/nexium/docs/numbers.html)뿐이며, 생태계는 메인테이너 한 명과 트리
 밖의 프로젝트 넷입니다([위](#실제-사용)).
 [`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md)는 미해결 버그를 수정 방안과 함께,
 [`DECISIONS.md`](../../../DECISIONS.md)는 명세가 열려 있던 곳에서 내린 모든 결정을

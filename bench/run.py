@@ -199,8 +199,8 @@ if args.page:
             row.append(f"{v:.2f}" if v is not None else "n/a")
         lines.append("| " + " | ".join(row) + " |")
     lines += ["", "Nexium is built twice: `safe` keeps its overflow and bounds checks (what `nx",
-              "bench` builds, and `nx build --mode safe`), `fast` leaves them out (what `nx ship`",
-              "builds for a release). C is built with `-O2`, Rust with `-O` (which keeps its",
+              "bench` and `nx ship` build unless told otherwise), `fast` (`--mode fast`) leaves",
+              "them out. C is built with `-O2`, Rust with `-O` (which keeps its",
               "bounds checks), Go and Python as they come.", "",
               "| tool | version |", "| --- | --- |"]
     for l in ["nexium", "c", "rust", "go", "python"]:

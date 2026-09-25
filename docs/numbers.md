@@ -29,8 +29,8 @@ The same, as multiples of C's time (1.00 is as fast as C):
 | `words` | 2.04 | 1.95 | 1.71 | 1.97 | 6.30 |
 
 Nexium is built twice: `safe` keeps its overflow and bounds checks (what `nx
-bench` builds, and `nx build --mode safe`), `fast` leaves them out (what `nx ship`
-builds for a release). C is built with `-O2`, Rust with `-O` (which keeps its
+bench` and `nx ship` build unless told otherwise), `fast` (`--mode fast`) leaves
+them out. C is built with `-O2`, Rust with `-O` (which keeps its
 bounds checks), Go and Python as they come.
 
 | tool | version |

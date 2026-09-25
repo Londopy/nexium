@@ -357,7 +357,7 @@ using arena {
 - [Installation](../../install.md) (Englisch): der Windows-Installer, das macOS/Linux-Skript, Bauen aus dem Quelltext, Prüfsummen, und wie `nx` einen C-Compiler findet.
 - [Pakete](../../packages.md) (Englisch): `nexium.toml`, `nx add`, `nx fetch`, Git- oder Pfadabhängigkeiten, die Lock-Datei.
 - [Standardbibliothek](../../std.md) (Englisch): die in Nexium geschriebenen Module (`std.strings`, `std.lists`, `std.bytes`, `std.num`, `std.json`, `std.args`, `std.fs`, `std.time`, `std.regex`, `std.text`, `std.testing`, `std.stream`, `std.net`, `std.http`, `std.thread`, `std.process`, `std.sort`, `std.heap`, `std.set`, `std.deque`, `std.hash`).
-- [Die Zahlen](../../numbers.md) (Englisch): vier Programme in fünf Sprachen, wöchentlich auf einem Runner gemessen.
+- [Die Zahlen](https://londopy.github.io/nexium/docs/numbers.html) (Englisch): vier Programme in fünf Sprachen, wöchentlich auf einem Runner gemessen.
 - [nexium-gui](../../gui.md) (Englisch): die Immediate-Mode-GUI-Bibliothek und wie man ein Widget schreibt.
 - [Dein Programm veröffentlichen](../../releasing-your-program.md) (Englisch): Binaries für drei Plattformen aus einem Tag, Installer optional.
 - [Editor-Unterstützung](../../../editors) (Englisch): VS Code, Vim, Neovim, Helix, Zed, Emacs, Kate, JetBrains, Sublime Text, Notepad++, nano, und `nx lsp` für alle anderen.
@@ -366,6 +366,35 @@ using arena {
 - [Release-Namen](../../release-names.md) (Englisch): jede Release ist ein Ort auf einem Berg; das Schema, das Verzeichnis und die noch unbenutzten Namen.
 - [Entscheidungen](../../../DECISIONS.md) (Englisch): jede Entscheidung, die getroffen wurde, wo die Spezifikation offen war.
 - [Bekannte Probleme](../../../KNOWN_ISSUES.md) (Englisch): offene Fehler, Lücken und Grenzen, mit Reproduktionen.
+
+## Geschwindigkeit
+
+Vier Programme, in fünf Sprachen gleich geschrieben, in den kompilierten
+je etwa eine Sekunde lang, gemessen auf einem GitHub-Runner (2026-09-25; der
+Median von sieben Läufen, bei über fünf Sekunden von dreien; in Sekunden,
+kleiner ist besser):
+
+| Programm | Nexium safe | Nexium fast | C | Rust | Go | Python |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `fib` (Aufrufe) | 1,32 | 0,78 | 0,39 | 0,78 | 1,34 | 28,87 |
+| `nbody` (Gleitkomma) | 0,66 | 0,66 | 0,59 | 0,68 | 0,71 | 48,54 |
+| `sieve` (Arrays) | 0,62 | 0,60 | 0,48 | 0,53 | 0,53 | 4,29 |
+| `words` (Maps und Strings) | 1,16 | 1,11 | 0,57 | 0,97 | 1,12 | 3,60 |
+
+Bei Gleitkomma und Arrays braucht Nexium höchstens ein Drittel länger als C:
+bei Gleitkomma etwas schneller als Rust und Go, bei Arrays etwas langsamer. Bei
+Aufrufen ist `fast` so schnell wie Rust, mit der doppelten Zeit von C; die
+Überlaufprüfungen von `safe` kosten dort 70 % mehr. Maps und Strings laufen so
+schnell wie in Go, mit etwa der doppelten Zeit von C. Python braucht 3- bis
+74-mal so lange wie Nexium `fast`.
+
+`safe` behält die Überlauf- und Grenzprüfungen, wie `nx ship` und `nx bench`
+ohne Angabe bauen; `fast` (`--mode fast`) lässt sie weg. [Die
+Zahlenseite](https://londopy.github.io/nexium/docs/numbers.html) (Englisch)
+zeigt jede Zeit auch als Vielfaches der von C, die Versionen und die Regeln;
+der Bench-Workflow misst jede Woche und bei jedem Release neu und schlägt
+fehl, wenn Nexiums Zeit als Vielfaches der von C von einem Lauf zum nächsten
+um ein Viertel wächst.
 
 ## In freier Wildbahn
 
@@ -435,7 +464,7 @@ ergänzen muss, ist unterwegs: Collections (`std.sort`, `std.heap`, `std.set`,
 HTTP-Client mit TLS, Websockets und Zeitzonen kommen als Nächstes. Was Nexium
 noch nicht ist, und wo jeder Punkt beantwortet wird, ist der erste Abschnitt
 der [Roadmap](../../../ROADMAP.md): die einzigen Benchmark-Zahlen sind
-[die Zahlenseite](../../numbers.md), und das Ökosystem besteht aus einem
+[die Zahlenseite](https://londopy.github.io/nexium/docs/numbers.html), und das Ökosystem besteht aus einem
 Maintainer und vier Projekten außerhalb des Baums
 ([oben](#in-freier-wildbahn)). [`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md)
 führt jeden offenen Fehler mit seiner Lösung;

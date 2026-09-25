@@ -345,7 +345,7 @@ using arena {
 - [安装](../../install.md)（英文）：Windows 安装程序、macOS/Linux 脚本、源码构建、校验和，以及 `nx` 如何找到 C 编译器。
 - [包](../../packages.md)（英文）：`nexium.toml`、`nx add`、`nx fetch`、git 或路径依赖、锁文件。
 - [标准库](../../std.md)（英文）：用 Nexium 写的模块（`std.strings`、`std.lists`、`std.bytes`、`std.num`、`std.json`、`std.args`、`std.fs`、`std.time`、`std.regex`、`std.text`、`std.testing`、`std.stream`、`std.net`、`std.http`、`std.thread`、`std.process`、`std.sort`、`std.heap`、`std.set`、`std.deque`、`std.hash`）。
-- [数字](../../numbers.md)（英文）：五种语言写的四个程序，每周在同一台 runner 上测量。
+- [数字](https://londopy.github.io/nexium/docs/numbers.html)（英文）：五种语言写的四个程序，每周在同一台 runner 上测量。
 - [nexium-gui](../../gui.md)（英文）：即时模式 GUI 库以及如何编写一个控件。
 - [发布你的程序](../../releasing-your-program.md)（英文）：从一个标签得到三个平台的二进制，安装程序可选。
 - [编辑器支持](../../../editors)（英文）：VS Code、Vim、Neovim、Helix、Zed、Emacs、Kate、JetBrains、Sublime Text、Notepad++、nano，其余的用 `nx lsp`。
@@ -354,6 +354,26 @@ using arena {
 - [发布版名称](../../release-names.md)（英文）：每个发布版都是山上的一个地方；命名规则、台账，以及尚未用过的名字。
 - [决策记录](../../../DECISIONS.md)（英文）：规范未定之处做出的每一个决定。
 - [已知问题](../../../KNOWN_ISSUES.md)（英文）：未修复的缺陷、缺口与限制，附复现步骤。
+
+## 速度
+
+用五种语言以同样方式编写的四个程序，在编译型语言中各运行约一秒，在 GitHub 的
+runner 上测量（2026-09-25；七次运行的中位数，超过五秒的取三次；单位为秒，越小越快）：
+
+| 程序 | Nexium safe | Nexium fast | C | Rust | Go | Python |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `fib` (函数调用) | 1.32 | 0.78 | 0.39 | 0.78 | 1.34 | 28.87 |
+| `nbody` (浮点) | 0.66 | 0.66 | 0.59 | 0.68 | 0.71 | 48.54 |
+| `sieve` (数组) | 0.62 | 0.60 | 0.48 | 0.53 | 0.53 | 4.29 |
+| `words` (映射与字符串) | 1.16 | 1.11 | 0.57 | 0.97 | 1.12 | 3.60 |
+
+在浮点和数组上，Nexium 的用时最多比 C 多三分之一：浮点上比 Rust 和 Go 略快，数组上略慢。
+在函数调用上，`fast` 与 Rust 一样用时是 C 的两倍，`safe` 的溢出检查在此之上再多 70%。映射与
+字符串的速度与 Go 相同，用时约为 C 的两倍。Python 的用时是 Nexium `fast` 的 3 到 74 倍。
+
+`safe` 保留溢出和边界检查，是 `nx ship` 和 `nx bench` 的默认模式；`fast`
+（`--mode fast`）去掉这些检查。[数字页面](https://londopy.github.io/nexium/docs/numbers.html)（英文）还给出每个时间相对 C 的倍数、各工具版本和规则；Bench 工作流
+每周和每次发布都会重新测量，Nexium 用时相对 C 的倍数比上次增加四分之一时就会失败。
 
 ## 实际使用
 
@@ -416,7 +436,7 @@ using arena {
 内存安全是视图规则，自 1.3 起是错误。1.4，一个不必再补充的标准库，正在进行：集合
 （`std.sort`、`std.heap`、`std.set`、`std.deque`）和 `std.hash` 已经加入，一共二十一个
 模块，接下来是带 TLS 的 HTTP 客户端、websocket 和时区。Nexium 还不是什么、每一点在哪里
-得到回答，是[路线图](../../../ROADMAP.md)的第一节：基准数字只有[数字页](../../numbers.md)，
+得到回答，是[路线图](../../../ROADMAP.md)的第一节：基准数字只有[数字页](https://londopy.github.io/nexium/docs/numbers.html)，
 生态只有一位维护者和四个树外的项目（[上文](#实际使用)）。
 [`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md) 列出每个未修复的缺陷及其修法；
 [`DECISIONS.md`](../../../DECISIONS.md) 列出规范未定之处做出的每一个决定。

@@ -350,7 +350,7 @@ using arena {
 - [インストール](../../install.md)（英語）：Windows インストーラ、macOS/Linux スクリプト、ソースビルド、チェックサム、`nx` が C コンパイラを見つける方法。
 - [パッケージ](../../packages.md)（英語）：`nexium.toml`、`nx add`、`nx fetch`、git またはパス依存、ロックファイル。
 - [標準ライブラリ](../../std.md)（英語）：Nexium で書かれたモジュール（`std.strings`、`std.lists`、`std.bytes`、`std.num`、`std.json`、`std.args`、`std.fs`、`std.time`、`std.regex`、`std.text`、`std.testing`、`std.stream`、`std.net`、`std.http`、`std.thread`、`std.process`、`std.sort`、`std.heap`、`std.set`、`std.deque`、`std.hash`）。
-- [数値](../../numbers.md)（英語）：5 言語で書いた 4 つのプログラムを、同じランナーで毎週計測。
+- [数値](https://londopy.github.io/nexium/docs/numbers.html)（英語）：5 言語で書いた 4 つのプログラムを、同じランナーで毎週計測。
 - [nexium-gui](../../gui.md)（英語）：即時モード GUI ライブラリとウィジェットの書き方。
 - [プログラムのリリース](../../releasing-your-program.md)（英語）：タグから 3 プラットフォームのバイナリを、インストーラは任意で。
 - [エディタ対応](../../../editors)（英語）：VS Code、Vim、Neovim、Helix、Zed、Emacs、Kate、JetBrains、Sublime Text、Notepad++、nano、そのほかは `nx lsp` で。
@@ -359,6 +359,29 @@ using arena {
 - [リリース名](../../release-names.md)（英語）：すべてのリリースは山の上の場所。命名規則、台帳、まだ使っていない名前。
 - [決定記録](../../../DECISIONS.md)（英語）：仕様が開いていた箇所で下したすべての判断。
 - [既知の問題](../../../KNOWN_ISSUES.md)（英語）：未修正のバグ、欠落、制限。再現手順つき。
+
+## 速度
+
+5 つの言語で同じように書いた 4 つのプログラムを、コンパイル言語ではそれぞれ約 1 秒
+かかる大きさにして、GitHub のランナーで計測（2026-09-25、7 回の中央値、5 秒を超えるものは 3 回、
+秒、小さいほど速い）：
+
+| プログラム | Nexium safe | Nexium fast | C | Rust | Go | Python |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `fib` (関数呼び出し) | 1.32 | 0.78 | 0.39 | 0.78 | 1.34 | 28.87 |
+| `nbody` (浮動小数点) | 0.66 | 0.66 | 0.59 | 0.68 | 0.71 | 48.54 |
+| `sieve` (配列) | 0.62 | 0.60 | 0.48 | 0.53 | 0.53 | 4.29 |
+| `words` (マップと文字列) | 1.16 | 1.11 | 0.57 | 0.97 | 1.12 | 3.60 |
+
+浮動小数点と配列では Nexium は C の 3 分の 1 増し以内の時間で、浮動小数点では Rust や Go
+よりやや速く、配列ではやや遅くなります。関数呼び出しでは `fast` が Rust と同じく C の 2 倍の
+時間で、`safe` のオーバーフロー検査はそこに 70% を加えます。マップと文字列は Go と同じ速さで、
+C のおよそ 2 倍の時間です。Python は Nexium `fast` の 3〜74 倍の時間がかかります。
+
+`safe` はオーバーフローと範囲の検査を残し、`nx ship` と `nx bench` の既定です。
+`fast`（`--mode fast`）は検査を省きます。[数値のページ](https://londopy.github.io/nexium/docs/numbers.html)（英語）には C の時間に
+対する倍率、各バージョン、規則も載っています。Bench ワークフローは毎週とリリースごとに
+計測し直し、Nexium の時間の C に対する倍率が前回から 4 分の 1 増えると失敗します。
 
 ## 実際の利用
 
@@ -424,7 +447,7 @@ lldb も `nx debug` を通してそこで動かされます。メモリ安全性
 `std.heap`、`std.set`、`std.deque`）と `std.hash` が入り、全部で 21 モジュール、
 次は TLS 付きの HTTP クライアント、WebSocket、タイムゾーンです。Nexium がまだ何でないか、
 そしてそれぞれがどこで答えられるかは[ロードマップ](../../../ROADMAP.md)の最初の節に
-あります。ベンチマークの数値は[数値のページ](../../numbers.md)だけで、エコシステムは
+あります。ベンチマークの数値は[数値のページ](https://londopy.github.io/nexium/docs/numbers.html)だけで、エコシステムは
 メンテナ一人とツリー外のプロジェクト四つです（[上](#実際の利用)）。
 [`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md) は未修正のバグをその修正案とともに、
 [`DECISIONS.md`](../../../DECISIONS.md) は仕様が開いていた箇所でのすべての判断を

@@ -361,7 +361,7 @@ using arena {
 - [Installing](docs/install.md): the Windows installer, the macOS/Linux script, source builds, checksums, and how `nx` finds a C compiler.
 - [Packages](docs/packages.md): `nexium.toml`, `nx add`, `nx fetch`, git or path dependencies, the lock file.
 - [Standard library](docs/std.md): the modules written in Nexium (`std.strings`, `std.lists`, `std.bytes`, `std.num`, `std.json`, `std.args`, `std.fs`, `std.time`, `std.regex`, `std.text`, `std.testing`, `std.stream`, `std.net`, `std.http`, `std.thread`, `std.process`, `std.sort`, `std.heap`, `std.set`, `std.deque`, `std.hash`).
-- [The numbers](docs/numbers.md): four programs in five languages, measured weekly on one runner.
+- [The numbers](https://londopy.github.io/nexium/docs/numbers.html): four programs in five languages, measured weekly on one runner.
 - [nexium-gui](docs/gui.md): the immediate-mode GUI library and how to write a widget.
 - [Releasing your program](docs/releasing-your-program.md): binaries for three platforms from a tag, installers optional.
 - [Editor support](editors): VS Code, Vim, Neovim, Helix, Zed, Emacs, Kate, JetBrains, Sublime Text, Notepad++, nano, and `nx lsp` for the rest.
@@ -370,6 +370,33 @@ using arena {
 - [Release names](docs/release-names.md): every release is a place on a mountain; the scheme, the ledger, and the names still to use.
 - [Decisions](DECISIONS.md): every call made where the specification was open.
 - [Known issues](KNOWN_ISSUES.md): open bugs, gaps and limitations, with repros.
+
+## Speed
+
+Four programs written the same way in five languages, about a second
+each in the compiled ones, timed on a GitHub runner (2026-09-25; the median of
+seven runs, or three for anything over five seconds; in seconds, smaller
+is better):
+
+| program | Nexium safe | Nexium fast | C | Rust | Go | Python |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `fib` (calls) | 1.32 | 0.78 | 0.39 | 0.78 | 1.34 | 28.87 |
+| `nbody` (floats) | 0.66 | 0.66 | 0.59 | 0.68 | 0.71 | 48.54 |
+| `sieve` (arrays) | 0.62 | 0.60 | 0.48 | 0.53 | 0.53 | 4.29 |
+| `words` (maps and strings) | 1.16 | 1.11 | 0.57 | 0.97 | 1.12 | 3.60 |
+
+On floats and arrays Nexium takes at most a third longer than C: a little
+ahead of Rust and Go on floats, a little behind them on arrays. On calls
+`fast` matches Rust at twice C's time, and `safe`'s overflow checks add 70% to
+that. Maps and strings run at Go's pace, about twice C's time. Python takes 3
+to 74 times as long as Nexium `fast`.
+
+`safe` keeps the overflow and bounds checks, as `nx ship` and `nx bench`
+build unless told otherwise; `fast` (`--mode fast`) leaves them out. [The
+numbers page](https://londopy.github.io/nexium/docs/numbers.html) has each time as a multiple of C's, the versions and
+the rules; the Bench workflow measures
+again every week and at every release, and fails when Nexium's time as a
+multiple of C's grows by a quarter from one run to the next.
 
 ## In the wild
 
@@ -439,7 +466,7 @@ people stop supplementing, is under way: collections (`std.sort`,
 modules in all, and the HTTP client with TLS, websockets and time zones are
 next. What Nexium is not yet, and where each is answered, is the first
 section of [the roadmap](ROADMAP.md): the only benchmark numbers are
-[the numbers page](docs/numbers.md), and the ecosystem is one maintainer
+[the numbers page](https://londopy.github.io/nexium/docs/numbers.html), and the ecosystem is one maintainer
 and four projects outside the tree ([above](#in-the-wild)).
 [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) lists every open bug with its fix;
 [`DECISIONS.md`](DECISIONS.md) every call made where the specification was

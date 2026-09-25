@@ -357,7 +357,7 @@ using arena {
 - [Instalación](../../install.md) (inglés): el instalador de Windows, el script de macOS/Linux, la compilación desde fuente, las sumas de comprobación y cómo `nx` encuentra un compilador de C.
 - [Paquetes](../../packages.md) (inglés): `nexium.toml`, `nx add`, `nx fetch`, dependencias por git o por ruta, el archivo de bloqueo.
 - [Biblioteca estándar](../../std.md) (inglés): los módulos escritos en Nexium (`std.strings`, `std.lists`, `std.bytes`, `std.num`, `std.json`, `std.args`, `std.fs`, `std.time`, `std.regex`, `std.text`, `std.testing`, `std.stream`, `std.net`, `std.http`, `std.thread`, `std.process`, `std.sort`, `std.heap`, `std.set`, `std.deque`, `std.hash`).
-- [Las cifras](../../numbers.md) (inglés): cuatro programas en cinco lenguajes, medidos cada semana en un mismo runner.
+- [Las cifras](https://londopy.github.io/nexium/docs/numbers.html) (inglés): cuatro programas en cinco lenguajes, medidos cada semana en un mismo runner.
 - [nexium-gui](../../gui.md) (inglés): la biblioteca de GUI de modo inmediato y cómo escribir un widget.
 - [Publicar tu programa](../../releasing-your-program.md) (inglés): binarios para tres plataformas a partir de una etiqueta, instaladores opcionales.
 - [Soporte de editores](../../../editors) (inglés): VS Code, Vim, Neovim, Helix, Zed, Emacs, Kate, JetBrains, Sublime Text, Notepad++, nano, y `nx lsp` para el resto.
@@ -366,6 +366,34 @@ using arena {
 - [Nombres de las versiones](../../release-names.md) (inglés): cada versión es un lugar de una montaña; el esquema, el registro y los nombres por usar.
 - [Decisiones](../../../DECISIONS.md) (inglés): cada decisión tomada donde la especificación estaba abierta.
 - [Problemas conocidos](../../../KNOWN_ISSUES.md) (inglés): errores abiertos, carencias y limitaciones, con reproducciones.
+
+## Velocidad
+
+Cuatro programas escritos de la misma forma en cinco lenguajes, de alrededor
+de un segundo cada uno en los compilados, medidos en un runner de GitHub
+(2026-09-25; la mediana de siete ejecuciones, o de tres para lo que pasa de cinco
+segundos; en segundos, menos es mejor):
+
+| programa | Nexium safe | Nexium fast | C | Rust | Go | Python |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `fib` (llamadas) | 1,32 | 0,78 | 0,39 | 0,78 | 1,34 | 28,87 |
+| `nbody` (coma flotante) | 0,66 | 0,66 | 0,59 | 0,68 | 0,71 | 48,54 |
+| `sieve` (arreglos) | 0,62 | 0,60 | 0,48 | 0,53 | 0,53 | 4,29 |
+| `words` (mapas y cadenas) | 1,16 | 1,11 | 0,57 | 0,97 | 1,12 | 3,60 |
+
+En coma flotante y arreglos, Nexium tarda como mucho un tercio más que C: algo
+más rápido que Rust y Go en coma flotante, algo más lento en arreglos. En
+llamadas, `fast` iguala a Rust con el doble del tiempo de C, y las
+comprobaciones de desbordamiento de `safe` añaden un 70 %. Los mapas y las
+cadenas van al ritmo de Go, con cerca del doble del tiempo de C. Python tarda
+de 3 a 74 veces lo que Nexium `fast`.
+
+`safe` conserva las comprobaciones de desbordamiento y de límites, como
+compilan `nx ship` y `nx bench` si no se les indica otra cosa; `fast`
+(`--mode fast`) las omite. [La página de cifras](https://londopy.github.io/nexium/docs/numbers.html) (en inglés) da cada tiempo también como múltiplo del de C,
+las versiones y las reglas; el workflow Bench vuelve a medir cada semana y
+en cada versión, y falla cuando el tiempo de Nexium, como múltiplo del de C,
+crece un cuarto de una medición a la siguiente.
 
 ## En el mundo real
 
@@ -435,7 +463,7 @@ completar, está en marcha: las colecciones (`std.sort`, `std.heap`,
 el cliente HTTP con TLS, los websockets y las zonas horarias vienen después.
 Lo que Nexium todavía no es, y dónde se responde cada punto, es la primera
 sección de [la hoja de ruta](../../../ROADMAP.md): las únicas cifras de
-rendimiento son [la página de cifras](../../numbers.md), y el ecosistema es
+rendimiento son [la página de cifras](https://londopy.github.io/nexium/docs/numbers.html), y el ecosistema es
 un solo mantenedor y cuatro proyectos fuera del árbol
 ([arriba](#en-el-mundo-real)). [`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md)
 lista cada error abierto con su arreglo;

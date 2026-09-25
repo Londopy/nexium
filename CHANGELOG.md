@@ -61,6 +61,10 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   with every language slower), and a baseline of other sizes is not
   compared. `sieve.c` counts in `long long`, as `long` is 32 bits on
   Windows and `i * i` overflowed there.
+- The README and its translations have a Speed section: the four
+  programs' times in Nexium's two modes, C, Rust, Go and Python, from the
+  Bench run of 2026-09-25, and what they come to; its links to the numbers
+  page go to the site, which has the latest run.
 - Release names move to the next mountain at the `.5` of each line
   (decision 117): a major is still a summit, and the climb to it starts
   halfway through the line before (1.5.0 is `Everest: Base Camp`, 2.0.0
