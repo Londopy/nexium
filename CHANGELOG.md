@@ -73,6 +73,10 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   summit with its route still to climb. The rule, the plan and every
   mountain's range in `docs/release-names.md` follow.
 
+## [1.3.2] - 2026-09-25
+
+*Annapurna: Oudot* — the expedition's doctor, and a patch that keeps a program alive. On Linux and macOS, a send to a connection the other side had reset, or input written to a program that had stopped reading it, raised SIGPIPE and ended the whole program before it could see the error; and a connect that failed at once came back looking open, so its first send did the same. Both are errors a program can handle now, each with a regression test, and the seed is regenerated from the final sources.
+
 ### Fixed
 
 - A TCP connection that failed at once came back from `net.connect`
@@ -1783,7 +1787,8 @@ First public release.
   Korean, French, and German; the language reference and architecture tour in
   Spanish, Chinese, and Japanese.
 
-[Unreleased]: https://github.com/Londopy/nexium/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/Londopy/nexium/compare/v1.3.2...HEAD
+[1.3.2]: https://github.com/Londopy/nexium/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/Londopy/nexium/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/Londopy/nexium/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/Londopy/nexium/compare/v1.2.0...v1.2.1

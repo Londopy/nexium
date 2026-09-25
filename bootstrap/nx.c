@@ -2853,9 +2853,9 @@ typedef struct nx_env_1390 { char _e; } nx_env_1390;
 /* ---- data ---- */
 static const char* const nx_error_names[] = { "(ok)", "OutOfMemory", "Panic", "InvalidRecord", "Truncated", "Overflow", "InvalidUtf8", "NotFound", "IoError", "InvalidInput", "BufferTooSmall", "Timeout", "ConnectionRefused", "TooLarge", "TruncatedCoff", "Elf32", "MachO", "Unrecognized", "AlreadyExists", "UnterminatedHeader", "ExpectedLine", "UnterminatedString", "UnterminatedTable", "UnterminatedArray", "ExpectedKeyValue" };
 NX_INLINE const char* nx_error_name(uint32_t e) { return e <= sizeof(nx_error_names)/sizeof(*nx_error_names) - 1 ? nx_error_names[e] : "(unknown error)"; }
-static const char nx_str_0[6] = "1.3.1";
+static const char nx_str_0[6] = "1.3.2";
 static const nx_sl_u8 nxc_VERSION_0 = { (uint8_t*)nx_str_0, 5 };
-static const char nx_str_1[17] = "Annapurna: Couzy";
+static const char nx_str_1[17] = "Annapurna: Oudot";
 static const nx_sl_u8 nxc_RELEASE_NAME_1 = { (uint8_t*)nx_str_1, 16 };
 static const char nx_str_2[11] = "2026-09-25";
 static const nx_sl_u8 nxc_RELEASE_DATE_2 = { (uint8_t*)nx_str_2, 10 };

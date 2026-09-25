@@ -3,7 +3,7 @@
 #
 #     repos:
 #       - repo: https://github.com/Londopy/nexium
-#         rev: v1.3.1
+#         rev: v1.3.2
 #         hooks:
 #           - id: nx-fmt
 #           - id: nx-check
