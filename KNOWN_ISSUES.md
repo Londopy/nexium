@@ -20,6 +20,16 @@ Fixed bugs are not listed here; `CHANGELOG.md` and `git log` have them.
   with its module). Fix, if the form is wanted: accept `DotLBrace` in
   `parse_import`, say so in SPEC 11, and add a spec case.
 
+- **A checkout of the compiler inside a package's directory builds as
+  part of that package.** `nx` looks for `nexium.toml` from the working
+  directory up, and Nexium's repository has none at its root, so
+  `bootstrap/build.sh` run in a checkout that sits inside a package
+  (nexium-discord's first CI did this) reaches stage 1 and stops: the
+  outer package's dependencies are "not fetched". Fix: stop the search at
+  a repository's root (a `.git`), or give the compiler's own build a way
+  to say it is no package's (a flag, or a `nexium.toml` for the
+  repository); a case in the bootstrap suite.
+
 ## Self-hosting
 
 - **`nx tir --sigs` omits body-dependent facts** (error ids, alias types,
