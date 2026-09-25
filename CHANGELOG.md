@@ -148,6 +148,12 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   frames, the decoder) are QNI's, tested byte by byte against RFC 6455's
   examples; checked against Discord's gateway over nxtls (its HELLO, a
   ping's pong, a clean close) and an echo server on loopback.
+- A Discord bot library, the second package outside this repository:
+  [nexium-discord](https://github.com/Londopy/nexium-discord). A `Bot`
+  whose `next` returns the gateway's events as an enum (heartbeats,
+  resumes and reconnects inside), the REST calls a bot makes, messages,
+  interactions and slash commands; TLS from nxtls in std.http's slot.
+  docs/discord.md points at it.
 - `hash.sha1` and `hash.sha1_hex`, for the protocols that still require
   SHA-1 (the WebSocket handshake), never to check or sign data.
 - A trait of an imported module is named with its module, as a type is:

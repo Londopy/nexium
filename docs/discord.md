@@ -53,3 +53,23 @@ application's name; the presence stays up while the connection is open.
   Topo's example prints what the card would have said instead.
 - `nexium/examples/presence.nx` in statusmith is a command-line front end:
   `nx run presence.nx -- --app ID --details "the build" --elapsed --hold 600`.
+
+## A bot
+
+For a bot, the second package outside this repository is
+[nexium-discord](https://github.com/Londopy/nexium-discord): the gateway
+(identify, heartbeats, resume, reconnects), the REST calls a bot makes
+(messages, reactions, slash commands and their answers, and any other
+call with Discord's rate limits waited out), and the events as an enum to
+`match` on. It speaks through `std.websocket` and `std.http`, with TLS
+from [nxtls](https://github.com/Londopy/nxtls) in the TLS slot, so it
+needs Nexium 1.4 and, until nxtls moves to `random.secure`, Linux, macOS
+or a BSD.
+
+```toml
+[dependencies]
+discord = { git = "https://github.com/Londopy/nexium-discord", tag = "v0.1.0" }
+```
+
+Its [pingbot](https://github.com/Londopy/nexium-discord/tree/main/examples/pingbot)
+answers `/ping` and `!ping`; the token comes from `$DISCORD_TOKEN`.

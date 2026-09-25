@@ -446,7 +446,7 @@ lldb も `nx debug` を通してそこで動かされます。メモリ安全性
 エラーです。1.4、補う必要のない標準ライブラリは進行中で、コレクション（`std.sort`、
 `std.heap`、`std.set`、`std.deque`）、`std.hash`、`random.secure`、パス、環境変数と設定
 フォルダ、UUID、ログ、CSV、TOML、base64 が入り、全部で 29 モジュール。`Map` はハッシュ攻撃に強く、
-キーを入れた順を保ちます。`std.time` はプラットフォームのデータベースからタイムゾーンを読み、`std.http` のクライアントは nxtls が担う TLS 層を通して HTTPS を話し、`std.websocket` も同じ層を通ります。次は Discord 用パッケージです。Nexium がまだ
+キーを入れた順を保ちます。`std.time` はプラットフォームのデータベースからタイムゾーンを読み、`std.http` のクライアントは nxtls が担う TLS 層を通して HTTPS を話し、`std.websocket` も同じ層を通り、[nexium-discord](https://github.com/Londopy/nexium-discord) はその上に Discord ボットを作ります。次はプラットフォームの TLS です。Nexium がまだ
 何でないか、そしてそれぞれがどこで答えられるかは[ロードマップの一節](../../../ROADMAP.md#what-10-is-not-yet)に
 あります。ベンチマークは 4 つのプログラム（[速度](#速度)）だけで、エコシステムは
 メンテナ一人とツリー外のプロジェクト四つです（[上](#実際の利用)）。

@@ -463,7 +463,9 @@ journalisation, CSV, TOML et base64 sont là, vingt-neuf modules en tout ; `Map`
 protégé contre l'inondation de hachages et garde l'ordre d'arrivée des clés ;
 `std.time` lit les fuseaux horaires dans la base de la plateforme, et le
 client de `std.http` parle HTTPS à travers une couche TLS, que fournit nxtls,
-comme `std.websocket` ; vient ensuite un paquet pour Discord. Ce que Nexium n'est pas
+comme `std.websocket`, et
+[nexium-discord](https://github.com/Londopy/nexium-discord) bâtit dessus un bot Discord ; vient ensuite le
+TLS de la plateforme. Ce que Nexium n'est pas
 encore, et où chaque point trouve sa réponse, est dans [une section de la
 feuille de route](../../../ROADMAP.md#what-10-is-not-yet) : les mesures de performance
 sont quatre programmes ([Vitesse](#vitesse)), et l'écosystème se résume à un

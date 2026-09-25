@@ -465,8 +465,9 @@ Konfigurationsordner, UUIDs, Logging, CSV, TOML und Base64 sind da, neunundzwanz
 Module insgesamt; `Map` ist gegen Hash-Flooding geschützt und behält die
 Reihenfolge, in der die Schlüssel kamen; `std.time` liest Zeitzonen aus der
 Datenbank der Plattform, und der Client von `std.http` spricht HTTPS über eine
-TLS-Schicht, die nxtls stellt, wie `std.websocket`; als Nächstes kommt ein
-Discord-Paket. Was Nexium noch nicht ist, und wo jeder Punkt beantwortet wird,
+TLS-Schicht, die nxtls stellt, wie `std.websocket`, und
+[nexium-discord](https://github.com/Londopy/nexium-discord) baut darauf einen Discord-Bot; als Nächstes
+kommt das TLS der Plattform. Was Nexium noch nicht ist, und wo jeder Punkt beantwortet wird,
 steht in [einem Abschnitt der Roadmap](../../../ROADMAP.md#what-10-is-not-yet): die
 Benchmarks sind vier Programme ([Geschwindigkeit](#geschwindigkeit)), und das
 Ökosystem besteht aus einem Maintainer und vier Projekten außerhalb des
