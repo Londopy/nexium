@@ -1,0 +1,10 @@
+// EXPECT: cannot find module `nowhere`
+struct X {
+    n: i64
+}
+
+impl nowhere.Shape for X {
+    fn f(self: *Self) -> i64 { return self.n }
+}
+
+fn main() { }

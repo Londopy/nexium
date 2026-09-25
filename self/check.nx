@@ -368,6 +368,8 @@ pub struct TraitDef {
 pub struct ImplDef {
     trait_name: String
     has_trait: bool
+    /// where the impl begins, for errors about its trait
+    at: usize = 0
     target: usize
     tparams: List(String)
     methods: List(usize)
@@ -1320,6 +1322,58 @@ impl Checker {
         self.items.put(key, ItemRef{ .kind = kind, .id = id })
     }
 
+    /// A trait's item by its name in module `m`: `Name`, or `module.Name`
+    /// for a trait of an imported module.
+    fn lookup_trait(self: *Self, m: usize, name: []u8) -> ?ItemRef {
+        if let dot = name.find(".") {
+            let q = self.lookup(m, name[0..dot]) orelse return null
+            if q.kind != ItemKind.Module { return null }
+            return self.lookup(q.id, name[dot + 1..name.len])
+        }
+        return self.lookup(m, name)
+    }
+
+    /// `impl http.Transport for T`: impls match their trait by its own
+    /// name, so the qualifier is checked here and dropped, and the trait is
+    /// reachable by that name in the impl's module, as `import
+    /// std.http.{Transport}` would make it.
+    fn qualify_impls(self: *mut Self) {
+        let n = self.impls.len
+        for i in 0..n {
+            let tn = self.impls[i].trait_name.clone()
+            let dot = tn[..].find(".") orelse continue
+            let m = self.impls[i].module
+            let at = self.impls[i].at
+            let q = String.from(tn[0..dot])
+            let bare = String.from(tn[dot + 1..tn.len])
+            let module_ref = self.lookup(m, q[..]) orelse {
+                self.fail(m, at, format("cannot find module `{}`", .{q})[..])
+                continue
+            }
+            if module_ref.kind != ItemKind.Module {
+                self.fail(m, at, format("`{}` is not a module", .{q})[..])
+                continue
+            }
+            let r = self.lookup(module_ref.id, bare[..]) orelse {
+                self.fail(m, at, format("module `{}` has no trait `{}`", .{q, bare})[..])
+                continue
+            }
+            if r.kind != ItemKind.Trait {
+                self.fail(m, at, format("`{}` is not a trait", .{tn})[..])
+                continue
+            }
+            if let here = self.lookup(m, bare[..]) {
+                if here.kind != r.kind or here.id != r.id {
+                    self.fail(m, at, format("this module has a `{}` of its own, which `impl {}` would be taken for", .{bare, tn})[..])
+                    continue
+                }
+            } else {
+                self.imports.put(item_key(m, bare[..]), ImportRef{ .module = module_ref.id, .name = bare.clone(), .has_name = true })
+            }
+            self.impls[i].trait_name = bare
+        }
+    }
+
     fn lookup(self: *Self, module: usize, name: []u8) -> ?ItemRef {
         let key = item_key(module, name)
         if let r = self.items.get(key[..]) { return r }
@@ -1349,6 +1403,8 @@ impl Checker {
                 self.collect_item(m, it)
             }
         }
+        // every module's items are in: an impl may name another's trait
+        self.qualify_impls()
     }
 
     fn is_cimport_const(self: *Self, m: usize, it: usize) -> bool {
@@ -1538,7 +1594,7 @@ impl Checker {
                 self.fns.append(FnDef{ .node = meth, .node_module = m, .module = m, .impl_id = impl_id, .is_generic = generic, .is_test = false, .test_name = String.new(), .test_comptime = false })
                 methods.append(self.fns.len - 1)
             }
-            self.impls.append(ImplDef{ .trait_name = n.name.clone(), .has_trait = n.name != "-", .target = n.x, .tparams = tparams, .methods = methods, .module = m })
+            self.impls.append(ImplDef{ .trait_name = n.name.clone(), .has_trait = n.name != "-", .at = n.start, .target = n.x, .tparams = tparams, .methods = methods, .module = m })
         } else if k == parser.NodeKind.Const {
             let n = self.node(m, it)
             let d = ConstDef{ .name = n.name.clone(), .node = it, .module = m, .start = n.start, .end = n.end, .is_pub = n.flag, .ty = NONE, .in_progress = false, .value = NONE }
@@ -1699,7 +1755,7 @@ impl Checker {
             let n = self.node(m, id)
             let trait_name = n.name.clone()
             let eff_words = n.words.clone()
-            if let r = self.lookup(m, trait_name[..]) {
+            if let r = self.lookup_trait(m, trait_name[..]) {
                 if r.kind == ItemKind.Trait { return self.tys.dyn_of(r.id, effect_mask(&eff_words)) }
             }
             self.fail(m, id, format("cannot find trait `{}`", .{trait_name})[..])

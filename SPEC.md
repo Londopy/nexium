@@ -435,7 +435,8 @@ Generic structs and impls take parameters the same way: `struct Pair(T)`,
 A trait declares method signatures with receivers `self: *Self` or
 `self: *mut Self`, and may give default bodies. `impl Trait for Type`
 implements it; `impl Type` adds inherent methods; the receiver is the first
-parameter named `self`. An implementation's method has the signature the
+parameter named `self`. A trait of an imported module is named with its
+module, as a type is: `impl http.Transport for Conn`, `dyn http.Transport`. An implementation's method has the signature the
 trait declares, with `Self` read as the implementing type: the same
 receiver, the same parameters with the same `own`, the same return type (a
 generic impl is held to the receiver, the parameters' number and `own`).

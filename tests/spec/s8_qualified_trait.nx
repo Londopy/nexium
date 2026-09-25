@@ -1,0 +1,53 @@
+// SPEC 8.3: a trait of an imported module is implemented as `impl
+// module.Trait for T`, and named in a type as `dyn module.Trait`. Here the
+// trait is std.http's TLS slot, filled by a canned reply.
+import std.http
+
+struct Canned {
+    reply: String
+    at: usize
+    hosts: List(String)
+}
+
+impl http.Transport for Canned {
+    fn connect(self: *mut Self, host: []u8, port: u16, timeout_ms: i64) -> !void {
+        _ = timeout_ms
+        self.at = 0
+        self.hosts.append(format("{}:{}", .{host, port}))
+    }
+
+    fn send(self: *mut Self, data: []u8) -> !void {
+        _ = self
+        _ = data
+    }
+
+    fn recv(self: *mut Self) -> !String {
+        let out = String.from(self.reply[self.at..self.reply.len])
+        self.at = self.reply.len
+        return out
+    }
+
+    fn truncated(self: *Self) -> bool {
+        _ = self
+        return false
+    }
+
+    fn close(self: *mut Self) {
+        self.at = self.reply.len
+    }
+}
+
+fn first_bytes(t: dyn http.Transport) -> !String {
+    var tt = t
+    try tt.connect("example.com", 443, 1000)
+    return tt.recv()
+}
+
+fn main() -> !void {
+    var canned = Canned{ .reply = String.from("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi"), .at = 0, .hosts = List(String).new() }
+    var client = http.client_with(Canned, &mut canned)
+    let r = try client.get("https://example.com/")
+    println("{} {} {}", .{r.status, r.body, canned.hosts[0]})
+    let raw = try first_bytes(&mut canned)
+    println("{} bytes from {} connections", .{raw.len, canned.hosts.len})
+}

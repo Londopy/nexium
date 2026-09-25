@@ -1,0 +1,12 @@
+// EXPECT: module `http` has no trait `Nope`
+import std.http
+
+struct X {
+    n: i64
+}
+
+impl http.Nope for X {
+    fn f(self: *Self) -> i64 { return self.n }
+}
+
+fn main() { }

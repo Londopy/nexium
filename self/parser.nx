@@ -703,6 +703,9 @@ impl Parser {
             let f = &self.tree.nodes[first]
             if f.k == NodeKind.TName and f.kids.len == 0 and f.words.len == 1 {
                 trait_name = String.from(f.words[0])
+            } else if f.k == NodeKind.TName and f.kids.len == 0 and f.words.len == 2 {
+                // `impl http.Transport for T`: a trait of an imported module
+                trait_name = format("{}.{}", .{f.words[0], f.words[1]})
             } else {
                 return self.fail(f.start, "expected a trait name before `for`")
             }
@@ -1011,7 +1014,12 @@ impl Parser {
                 t = self.tree.add(n)
             } else if s == "dyn" {
                 self.bump()
-                let tn = try self.expect_ident()
+                var tn = try self.expect_ident()
+                // `dyn http.Transport`: a trait of an imported module
+                if self.at(lexer.Kind.Dot) and self.peek_at(1) == lexer.Kind.Ident {
+                    self.bump()
+                    tn = format("{}.{}", .{tn, try self.expect_ident()})
+                }
                 var n = blank(NodeKind.TDyn, start, start)
                 n.name = tn
                 n.words = self.parse_effect_bounds()

@@ -134,6 +134,9 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   of the connection, which is `error.Truncated` when a TLS connection was
   cut without close_notify; interim `1xx` answers are skipped and a HEAD
   has no body.
+- A trait of an imported module is named with its module, as a type is:
+  `impl http.Transport for Conn` and `dyn http.Transport` (SPEC 8.3),
+  where the impl was a parse error ("expected a trait name before `for`").
 - The compiler reads `nexium.toml` with `std.toml`, where it had a reader
   of its own for a subset: a manifest may use all of TOML, and one that is
   not TOML says on which line and why.
