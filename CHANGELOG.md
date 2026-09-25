@@ -58,6 +58,10 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   summit with its route still to climb. The rule, the plan and every
   mountain's range in `docs/release-names.md` follow.
 
+## [1.3.1] - 2026-09-25
+
+*Annapurna: Couzy* — the engineer of the team, and a patch of the engineer's kind: the C the compiler writes, the runtime it links, the toolchain's messages and the release build. A branch's value could be a view of a String its branch had already released, a use-after-free in code without `unsafe` that the view rules promise cannot happen; an empty String handed its null pointer to `memcpy` and `memcmp`; a syntax error named a byte offset, and the REPL pointed into a program the user never sees; and the Linux build needed a newer glibc than its wheel says. Each is fixed with a regression test, and the seed is regenerated from the final sources.
+
 ### Fixed
 
 - Syntax errors are reported the way type errors are: the message, then
@@ -1747,7 +1751,8 @@ First public release.
   Korean, French, and German; the language reference and architecture tour in
   Spanish, Chinese, and Japanese.
 
-[Unreleased]: https://github.com/Londopy/nexium/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/Londopy/nexium/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/Londopy/nexium/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/Londopy/nexium/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/Londopy/nexium/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/Londopy/nexium/compare/v1.1.0...v1.2.0

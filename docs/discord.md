@@ -19,7 +19,7 @@ import discord_rpc
 fn main() -> !void {
     var a = discord_rpc.activity()
     a.details = String.from("writing the compiler in itself")
-    a.state = String.from("1.3.0")
+    a.state = String.from("1.3.1")
     a.start_ms = time.now()                                      // an elapsed timer
     var client = try discord_rpc.connect("1234567890123456789")  // your Application ID
     let headline = try client.set_activity(&a)                   // "Playing <headline>"
