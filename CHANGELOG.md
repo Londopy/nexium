@@ -64,6 +64,14 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   upgrade` typed at the prompt is answered as a command for the terminal
   (it was a parse error), and the banner that names a newer release says to
   leave and run it there.
+- An empty `String` no longer reaches `memcpy` or `memcmp` with its null
+  pointer, which is undefined behaviour even for a length of 0 and traps
+  in a build against glibc: `println` of one, `starts_with` one, and one
+  handed to the runtime as a path (`io.read_file`, `io.file_kind`, the
+  other file calls), an environment variable's name or value, a process
+  argument or a network host. The runtime copies a slice's bytes through
+  `nx_bytes_copy`, which skips an empty copy. Found by QNI and nxtls; a
+  spec case exercises each and runs under CI's sanitizers.
 
 ## [1.3.0] - 2026-09-24
 

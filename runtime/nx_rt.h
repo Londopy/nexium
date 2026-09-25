@@ -578,6 +578,11 @@ NX_INLINE void nx_str_append_char(nx_ctx* c, nx_string* s, uint32_t cp) {
     nx_str_append(c, s, buf, n);
 }
 
+/* Copy a slice's bytes. An empty slice may have a null pointer (an empty
+   String has no storage), and memcpy may not be given one even to copy
+   nothing (C11 7.24.1; glibc declares the arguments nonnull), so every copy
+   out of a slice goes through here or checks the length itself. */
+NX_INLINE void nx_bytes_copy(void* d, const void* s, size_t n) { if (n) memcpy(d, s, n); }
 NX_INLINE bool nx_sl_eq(nx_sl_u8 a, nx_sl_u8 b) { return a.len == b.len && (a.len == 0 || memcmp(a.ptr, b.ptr, a.len) == 0); }
 NX_INLINE int nx_sl_cmp(nx_sl_u8 a, nx_sl_u8 b) {
     size_t n = a.len < b.len ? a.len : b.len;
@@ -585,7 +590,7 @@ NX_INLINE int nx_sl_cmp(nx_sl_u8 a, nx_sl_u8 b) {
     if (r) return r;
     return a.len < b.len ? -1 : (a.len > b.len ? 1 : 0);
 }
-NX_INLINE bool nx_sl_starts_with(nx_sl_u8 a, nx_sl_u8 p) { return a.len >= p.len && memcmp(a.ptr, p.ptr, p.len) == 0; }
+NX_INLINE bool nx_sl_starts_with(nx_sl_u8 a, nx_sl_u8 p) { return a.len >= p.len && (p.len == 0 || memcmp(a.ptr, p.ptr, p.len) == 0); }
 NX_INLINE bool nx_sl_ends_with(nx_sl_u8 a, nx_sl_u8 p) { return a.len >= p.len && (p.len == 0 || memcmp(a.ptr + a.len - p.len, p.ptr, p.len) == 0); }
 NX_INLINE bool nx_sl_find(nx_sl_u8 a, nx_sl_u8 n, size_t* out) {
     if (n.len == 0) { *out = 0; return true; }
@@ -678,6 +683,7 @@ NX_INLINE nx_sink nx_sink_file(nx_ctx* c, FILE* f) { nx_sink s; s.ctx = c; s.str
 NX_INLINE nx_sink nx_sink_str(nx_ctx* c, nx_string* str) { nx_sink s; s.ctx = c; s.str = str; s.f = NULL; s.n = 0; return s; }
 NX_INLINE void nx_sink_flush(nx_sink* s) { if (s->f && s->n) { fwrite(s->buf, 1, s->n, s->f); s->n = 0; } if (s->f) fflush(s->f); }
 NX_INLINE void nx_w(nx_sink* s, const uint8_t* p, size_t n) {
+    if (n == 0) return;
     if (s->str) { nx_str_append(s->ctx, s->str, p, n); return; }
     if (n > sizeof s->buf) { nx_sink_flush(s); fwrite(p, 1, n, s->f); return; }
     if (s->n + n > sizeof s->buf) { fwrite(s->buf, 1, s->n, s->f); s->n = 0; }
@@ -1077,7 +1083,7 @@ NX_INLINE bool nx_run(nx_ctx* c, const nx_sl_u8* argv, size_t argc, int* code) {
     char** av = (char**)nx_alloc_bytes(c, (argc + 1) * sizeof(char*), 8);
     for (size_t i = 0; i < argc; i++) {
         av[i] = (char*)nx_alloc_bytes(c, argv[i].len + 1, 1);
-        memcpy(av[i], argv[i].ptr, argv[i].len); av[i][argv[i].len] = 0;
+        nx_bytes_copy(av[i], argv[i].ptr, argv[i].len); av[i][argv[i].len] = 0;
     }
     av[argc] = NULL;
     pid_t pid = 0;
@@ -1094,7 +1100,7 @@ NX_INLINE bool nx_run(nx_ctx* c, const nx_sl_u8* argv, size_t argc, int* code) {
 #endif
 NX_INLINE bool nx_cpath(nx_sl_u8 path, char* buf, size_t cap) {
     if (path.len >= cap) return false;
-    memcpy(buf, path.ptr, path.len); buf[path.len] = 0;
+    nx_bytes_copy(buf, path.ptr, path.len); buf[path.len] = 0;
     return true;
 }
 /* Run a program with its stdin fed from `input`, in `cwd` when given, and
@@ -1204,7 +1210,7 @@ NX_INLINE bool nx_run_capture(nx_ctx* c, const nx_sl_u8* argv, size_t argc, nx_s
     char** av = (char**)nx_alloc_bytes(c, (argc + 1) * sizeof(char*), 8);
     for (size_t i = 0; i < argc; i++) {
         av[i] = (char*)nx_alloc_bytes(c, argv[i].len + 1, 1);
-        memcpy(av[i], argv[i].ptr, argv[i].len); av[i][argv[i].len] = 0;
+        nx_bytes_copy(av[i], argv[i].ptr, argv[i].len); av[i][argv[i].len] = 0;
     }
     av[argc] = NULL;
     int inp[2], outp[2], errp[2];
@@ -1250,7 +1256,7 @@ NX_INLINE bool nx_run_capture(nx_ctx* c, const nx_sl_u8* argv, size_t argc, nx_s
 NX_INLINE bool nx_read_file(nx_ctx* c, nx_sl_u8 path, nx_string* out) {
     char p[4096];
     if (path.len >= sizeof p) return false;
-    memcpy(p, path.ptr, path.len); p[path.len] = 0;
+    nx_bytes_copy(p, path.ptr, path.len); p[path.len] = 0;
     FILE* f = fopen(p, "rb");
     if (!f) return false;
     nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;
@@ -1264,7 +1270,7 @@ NX_INLINE bool nx_read_file(nx_ctx* c, nx_sl_u8 path, nx_string* out) {
 NX_INLINE bool nx_write_file(nx_sl_u8 path, nx_sl_u8 data) {
     char p[4096];
     if (path.len >= sizeof p) return false;
-    memcpy(p, path.ptr, path.len); p[path.len] = 0;
+    nx_bytes_copy(p, path.ptr, path.len); p[path.len] = 0;
     FILE* f = fopen(p, "wb");
     if (!f) return false;
     size_t w = data.len ? fwrite(data.ptr, 1, data.len, f) : 0;
@@ -1274,7 +1280,7 @@ NX_INLINE bool nx_write_file(nx_sl_u8 path, nx_sl_u8 data) {
 NX_INLINE bool nx_append_file(nx_sl_u8 path, nx_sl_u8 data) {
     char p[4096];
     if (path.len >= sizeof p) return false;
-    memcpy(p, path.ptr, path.len); p[path.len] = 0;
+    nx_bytes_copy(p, path.ptr, path.len); p[path.len] = 0;
     FILE* f = fopen(p, "ab");
     if (!f) return false;
     size_t w = data.len ? fwrite(data.ptr, 1, data.len, f) : 0;
@@ -1528,7 +1534,7 @@ NX_INLINE void nx_set_env(nx_sl_u8 name, nx_sl_u8 value) {
     char n[256], v[4096];
     if (name.len == 0 || name.len >= sizeof n || value.len >= sizeof v) return;
     memcpy(n, name.ptr, name.len); n[name.len] = 0;
-    memcpy(v, value.ptr, value.len); v[value.len] = 0;
+    nx_bytes_copy(v, value.ptr, value.len); v[value.len] = 0;
 #if defined(_WIN32)
     _putenv_s(n, v);
 #else
@@ -1621,7 +1627,7 @@ NX_STATE char nx_net_peer_buf[128];
 NX_INLINE struct addrinfo* nx_net_lookup(nx_sl_u8 host, uint16_t port, int socktype, bool passive) {
     char h[256], p[8];
     if (host.len >= sizeof h) return NULL;
-    memcpy(h, host.ptr, host.len); h[host.len] = 0;
+    nx_bytes_copy(h, host.ptr, host.len); h[host.len] = 0;
     snprintf(p, sizeof p, "%u", (unsigned)port);
     struct addrinfo hints;
     memset(&hints, 0, sizeof hints);

@@ -21,22 +21,6 @@ Fixed bugs are not listed here; `CHANGELOG.md` and `git log` have them.
   1.3.0. Fix: an if-expression whose value is an owned temporary coerced
   to a slice argument keeps that temporary alive until the call returns,
   like any other owned argument.
-- **`println` of an empty `String` passes NULL to `memcpy`.**
-  `println("[{}]", .{String.new()})` traps in a debug build against glibc
-  ("null pointer passed as argument 2, which is declared to never be
-  null", in `nx_w`): the file sink copies with `memcpy(s->buf + s->n, p,
-  n)` even when `n` is 0, and an empty String's pointer is NULL. It is
-  undefined behaviour on every platform; `format` into a String is fine,
-  because `nx_str_append` checks `if (n)`. Found by nxtls's live probe;
-  still in 1.3.0. Reproduce: `nx build x.nx --target x86_64-linux-gnu`,
-  run it on Linux. Fix: return from `nx_w` when `n == 0`.
-- **`starts_with` an empty prefix with a NULL pointer calls `memcmp(a,
-  NULL, 0)`.** `"abc".starts_with(String.new())` traps the same way, in
-  `nx_sl_starts_with`, which lacks the `p.len == 0` guard that
-  `nx_sl_ends_with` has. A `""` literal has a real pointer, so only an
-  empty String (or a slice of one) shows it. Found by QNI, whose settings
-  have prefixes that can be empty; still in 1.3.0. Fix: the same guard as
-  `nx_sl_ends_with`.
 
 ## Self-hosting
 
