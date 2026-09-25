@@ -128,18 +128,20 @@ class MapPrinter:
         if self.kv is None:
             return
         m = self.val
-        cap = int(m["cap"])
-        if cap == 0:
+        # the entries, in the order their keys were put; a removed one is
+        # not live until the map packs them
+        used = int(m["used"])
+        if used == 0:
             return
         # the descriptor holds pointers: a map's value may be the struct holding it
         fields = self.kv.strip_typedefs().fields()
         kt, vt = fields[0].type.target(), fields[1].type.target()
         ksize, vsize = int(m["ksize"]), int(m["vsize"])
         keys, vals = int(m["keys"]), int(m["vals"])
-        state = _read(m["state"], cap)
+        live = _read(m["live"], used)
         shown = 0
-        for i in range(cap):
-            if state[i] != 1:
+        for i in range(used):
+            if live[i] == 0:
                 continue
             yield "k%d" % i, gdb.Value(keys + i * ksize).cast(kt.pointer()).dereference()
             yield "v%d" % i, gdb.Value(vals + i * vsize).cast(vt.pointer()).dereference()

@@ -129,13 +129,15 @@ class MapProvider:
                 # struct holding it
                 self.kt = kv.GetFieldAtIndex(0).GetType().GetPointeeType()
                 self.vt = kv.GetFieldAtIndex(1).GetType().GetPointeeType()
-        cap = _member(self.valobj, "cap").GetValueAsUnsigned(0)
+        # the entries, in the order their keys were put; a removed one is
+        # not live until the map packs them
+        used = _member(self.valobj, "used").GetValueAsUnsigned(0)
         self.ksize = _member(self.valobj, "ksize").GetValueAsUnsigned(0)
         self.vsize = _member(self.valobj, "vsize").GetValueAsUnsigned(0)
         self.keys = _member(self.valobj, "keys").GetValueAsUnsigned(0)
         self.vals = _member(self.valobj, "vals").GetValueAsUnsigned(0)
-        state = _read(self.valobj, _member(self.valobj, "state").GetValueAsUnsigned(0), cap)
-        self.slots = [i for i in range(len(state)) if state[i] == 1][:LIMIT]
+        live = _read(self.valobj, _member(self.valobj, "live").GetValueAsUnsigned(0), used)
+        self.slots = [i for i in range(len(live)) if live[i] != 0][:LIMIT]
         return False
 
     def num_children(self):
