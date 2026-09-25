@@ -98,6 +98,7 @@ ordering; the name carries the character.
 | 1.2.0 | Annapurna: South Face | the great wall climbed by siege: memory safety without a garbage collector, the view rules |
 | 1.2.1 | Annapurna: de Noyelle | patch (roster 9): the liaison officer, permits and diplomacy; the roads in: every registry and package format, completions and a manual page, provenance on every asset, the Topo as a course |
 | 1.3.0 | Annapurna: North Face | the face of the first ascent, the original line followed through: the toolchain grown up; `nx fix`, `nx bench`, `nx debug` and `#line`, `--sanitize`, `if comptime`, the language server from the checker, incremental builds |
+| 1.3.1 | Annapurna: Couzy | patch (roster 5): the engineer; fixes the build, the toolchain and the C: a use-after-free in branch values, the runtime's null copies, syntax errors at their line, the glibc 2.17 floor |
 
 ## The plan
 
@@ -151,7 +152,7 @@ summiters lost fingers and toes on the descent.
 | the Sickle | the crescent glacier the summit route crosses; exposed, avalanche-prone | the last risky structural change before a major (used: 0.8.0) |
 | Summit Ridge | the final ridge; nothing left but walking up | the last minor before a major (used: 0.9.0) |
 | Summit | 3 June 1950 | `X.0.0` (used: 1.0.0) |
-| North Face | the 1950 route, the face the camps are on | a release that completes the original line: finishes something begun in 0.x (planned: 1.3.0) |
+| North Face | the 1950 route, the face the camps are on | a release that completes the original line: finishes something begun in 0.x (used: 1.3.0) |
 | Dutch Rib | the 1977 route on the North Face, now the usual line because it is safer than the Sickle | the release that makes the everyday path easier and safer: ergonomics (1.1.0) |
 | South Face | Bonington's 1970 siege of the great wall; Whillans and Haston to the top; the first big-wall climb in the Himalaya | the biggest minor of a line, climbed the hard way: memory safety (1.2.0) |
 | the Sanctuary | the glacial basin ringed by the Annapurna peaks; the base of every south-side route | the release that supplies everything else: the standard library (planned: 1.4.0) |
@@ -170,7 +171,7 @@ summiters lost fingers and toes on the descent.
 | Lachenal | summiter; wanted to turn back and went on | finishes something against the odds (used: 0.6.1) |
 | Terray | carried the frostbitten summiters down | rescues a broken release: the hotfix (used: 1.0.2) |
 | Rébuffat | the guide; roped the snow-blind party together on the descent | ties loose ends: docs, tests, consistency (used: 1.0.1) |
-| Couzy | the engineer of the team | fixes the build, the toolchain, the C |
+| Couzy | the engineer of the team | fixes the build, the toolchain, the C (used: 1.3.1) |
 | Schatz | found the summit party in the crevasse the morning after | finds a long-hidden bug (used: 1.0.3) |
 | Oudot | the doctor; amputations on the march out | removes something to save the rest |
 | Ichac | the filmmaker | is all documentation, examples, screenshots |

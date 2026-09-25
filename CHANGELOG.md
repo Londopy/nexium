@@ -10,6 +10,51 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-09-25
+
+*Annapurna: Couzy* — the engineer of the team, and a patch of the engineer's kind: the C the compiler writes, the runtime it links, the toolchain's messages and the release build. A branch's value could be a view of a String its branch had already released, a use-after-free in code without `unsafe` that the view rules promise cannot happen; an empty String handed its null pointer to `memcpy` and `memcmp`; a syntax error named a byte offset, and the REPL pointed into a program the user never sees; and the Linux build needed a newer glibc than its wheel says. Each is fixed with a regression test, and the seed is regenerated from the final sources.
+
+### Fixed
+
+- Syntax errors are reported the way type errors are: the message, then
+  `--> file:line:col`, the line and a caret, where they printed
+  `file: error at 33: message` with a byte offset into the file. A mistake
+  the lexer and the parser both report at one position (a string cut by a
+  newline) is reported once rather than three times.
+- The REPL points at what was typed. A syntax error's caret is under the
+  input rather than at an offset in the program the REPL builds around it,
+  an input that stops in the middle of a statement says so (`let x = 1 +`
+  blamed that program's own `return`), and a diagnostic at the prompt shows
+  the line and the caret without a `--> <repl>:14:15` numbered in that
+  program; a file `:load` reads is named with its own line numbers. `nx
+  upgrade` typed at the prompt is answered as a command for the terminal
+  (it was a parse error), and the banner that names a newer release says to
+  leave and run it there.
+- An empty `String` no longer reaches `memcpy` or `memcmp` with its null
+  pointer, which is undefined behaviour even for a length of 0 and traps
+  in a build against glibc: `println` of one, `starts_with` one, and one
+  handed to the runtime as a path (`io.read_file`, `io.file_kind`, the
+  other file calls), an environment variable's name or value, a process
+  argument or a network host. The runtime copies a slice's bytes through
+  `nx_bytes_copy`, which skips an empty copy. Found by QNI and nxtls; a
+  spec case exercises each and runs under CI's sanitizers.
+- A view of a String made in a branch no longer outlives it. `show(if c {
+  format(...) } else { ... })` with `fn show(s: []u8)` read freed memory,
+  with no diagnostic: the String was released when its branch closed,
+  before the call. The same held for a `match` arm, a typed binding (`let
+  t: []u8 = if ...`), a nested `if`, a block's value or its `break :label`
+  value, an `if let` capture and an arm's binding. The storage a branch's
+  value is made of now belongs to the whole expression and is released with
+  the block the expression is in, as a plain expression's temporaries are
+  (decision 118). Found by QNI's tests against glibc; a spec case runs each
+  form under CI's sanitizers.
+- The x86_64 Linux build runs on every glibc from 2.17, as its wheel's
+  `manylinux_2_17` tag and the `.deb` promise. 1.3.0's needed 2.34, the
+  release runner's own, so `pip install nexium-lang` gave Ubuntu 20.04,
+  Debian 11 and Amazon Linux 2 an `nx` that stopped with "GLIBC_2.34 not
+  found". The release now builds both Linux architectures for glibc 2.17
+  and fails when one needs a newer symbol.
+
 ## [1.3.0] - 2026-09-24
 
 *Annapurna: North Face* — the face of the first ascent, the original line followed through: the toolchain grown up. `nx fix` makes the checker's own edits, `nx bench` measures `bench` blocks, `nx debug` stops gdb or lldb at `.nx` lines with formatters for the language's values, `--sanitize` brings AddressSanitizer and UBSan to any build, `if comptime` builds only the branch the target picks, the language server answers from the checker when the program checks, and a large program's debug build is a C file per module, compiled again only where it changed. The view rules are errors, trait impls are held to their traits, and the checker is split by responsibility. The seed is regenerated from the final sources.
@@ -1658,7 +1703,8 @@ First public release.
   Korean, French, and German; the language reference and architecture tour in
   Spanish, Chinese, and Japanese.
 
-[Unreleased]: https://github.com/Londopy/nexium/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/Londopy/nexium/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/Londopy/nexium/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/Londopy/nexium/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/Londopy/nexium/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/Londopy/nexium/compare/v1.1.0...v1.2.0
