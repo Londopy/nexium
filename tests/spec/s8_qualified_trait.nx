@@ -27,6 +27,11 @@ impl http.Transport for Canned {
         return out
     }
 
+    fn set_timeout(self: *mut Self, ms: i64) {
+        _ = self
+        _ = ms
+    }
+
     fn truncated(self: *Self) -> bool {
         _ = self
         return false

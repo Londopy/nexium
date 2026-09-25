@@ -119,8 +119,9 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   each wait, `max_redirects`, `max_body`, headers for every request).
   `send`, `get` and `post` read the answer whole, and `open` gives a
   `Streaming` whose body comes in pieces (`next`) as it arrives. The slot
-  is the trait `http.Transport` (connect with a deadline, send, recv,
-  close, and whether the connection was cut rather than closed); `Plain` is
+  is the trait `http.Transport` (connect with a deadline, send, recv, a
+  timeout for the waits apart from the connect's, close, and whether the
+  connection was cut rather than closed); `Plain` is
   TCP, and nxtls fills it in a few lines (the trait's documentation has
   them), checked against Discord's API, Google, example.com and GitHub,
   whose redirect from `http://` to `https://` crosses from one transport to

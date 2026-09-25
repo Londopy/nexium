@@ -388,6 +388,7 @@ pub fn send_request(w: *mut stream.Writer, method: []u8, url: *Url, headers: *Li
 ///         }
 ///         fn send(self: *mut Self, data: []u8) -> !void { return self.conn.send(data) }
 ///         fn recv(self: *mut Self) -> !String { return self.conn.recv() }
+///         fn set_timeout(self: *mut Self, ms: i64) { self.conn.set_timeout(ms) }
 ///         fn truncated(self: *Self) -> bool { return self.conn.truncated() }
 ///         fn close(self: *mut Self) { self.conn.close() }
 ///     }
@@ -400,6 +401,10 @@ pub trait Transport {
     fn send(self: *mut Self, data: []u8) -> !void
     /// At least one byte, or "" at the end of the connection.
     fn recv(self: *mut Self) -> !String
+    /// How long each wait for data takes from now on, in ms (0: no limit):
+    /// a Discord gateway waits for the next heartbeat, not the connect's
+    /// deadline.
+    fn set_timeout(self: *mut Self, ms: i64)
     /// Whether the connection ended without TLS's close_notify, so that
     /// what came may be cut short. Plain TCP cannot tell, and says false.
     fn truncated(self: *Self) -> bool
@@ -433,6 +438,10 @@ impl Transport for Plain {
 
     fn recv(self: *mut Self) -> !String {
         return self.conn.recv(65536)
+    }
+
+    fn set_timeout(self: *mut Self, ms: i64) {
+        self.conn.set_timeout(ms)
     }
 
     fn truncated(self: *Self) -> bool {
@@ -1241,6 +1250,11 @@ impl Transport for Scripted {
         let out = String.from(self.reply[self.at..end])
         self.at = end
         return out
+    }
+
+    fn set_timeout(self: *mut Self, ms: i64) {
+        _ = self
+        _ = ms
     }
 
     fn truncated(self: *Self) -> bool {

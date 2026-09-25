@@ -495,6 +495,16 @@ impl(T) Socket(T) {
         }
     }
 
+    /// How long each wait for data takes from now on, in ms (0: no limit):
+    /// `recv` is `error.Timeout` past it, and can be called again.
+    pub fn set_timeout(self: *mut Self, ms: i64) {
+        if self.secure {
+            if let t = self.tls { t.set_timeout(ms) }
+        } else {
+            self.plain.set_timeout(ms)
+        }
+    }
+
     /// Whether messages can still be sent.
     pub fn is_open(self: *Self) -> bool {
         return self.state == OPEN
@@ -743,6 +753,11 @@ impl http.Transport for Scripted {
         let piece = String.from(self.out[0..n])
         self.out = String.from(self.out[n..self.out.len])
         return piece
+    }
+
+    fn set_timeout(self: *mut Self, ms: i64) {
+        _ = self
+        _ = ms
     }
 
     fn truncated(self: *Self) -> bool {
