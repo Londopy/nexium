@@ -50,6 +50,17 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Changed
 
+- The numbers are measured: the four benchmark programs run about a hundred
+  times longer (`fib(42)`, 10,000,000 n-body steps, primes below
+  100,000,000, 10,000,000 words), about a second each in the compiled
+  languages, where they finished in 5 to 20 milliseconds and timed mostly
+  the start of a process. Nexium is timed in `safe` mode (its checks on) as
+  well as `fast`, and the page adds each language's time as a multiple of
+  C's. The Bench job's check compares Nexium against C in the same run,
+  so a slower runner no longer fails it (the v1.3.1 tag's run did, twice,
+  with every language slower), and a baseline of other sizes is not
+  compared. `sieve.c` counts in `long long`, as `long` is 32 bits on
+  Windows and `i * i` overflowed there.
 - Release names move to the next mountain at the `.5` of each line
   (decision 117): a major is still a summit, and the climb to it starts
   halfway through the line before (1.5.0 is `Everest: Base Camp`, 2.0.0

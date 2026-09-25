@@ -51,14 +51,6 @@ Fixed bugs are not listed here; `CHANGELOG.md` and `git log` have them.
 
 ## Tests and CI
 
-- **The benchmark gate fails on a slower runner.** `bench/run.py --check`
-  fails when a Nexium median is a quarter slower than the last run's, in
-  seconds, so a slower GitHub runner fails it with no change to Nexium: the
-  v1.3.1 tag's run (twice) found every language 1.4 to 2.1 times slower
-  than the baseline, C and Python included, and Nexium's ratio to C
-  unchanged. Fix: compare Nexium's time as a ratio to C's (or to the other
-  languages' median) in the same run, which a runner's speed cancels out of.
-
 - **Suites that build files must pass `--out-dir`.** Two cases compiling
   the same source into `nx-out/` at once fail on Windows (the second write
   hits a mapped file). The harness (`tests/run.nx`) gives every case its

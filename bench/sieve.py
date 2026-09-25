@@ -1,4 +1,4 @@
-LIMIT = 10000000
+LIMIT = 100000000
 
 def main():
     composite = bytearray(LIMIT)

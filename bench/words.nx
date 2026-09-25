@@ -1,6 +1,6 @@
-// two million words from a linear congruential generator, counted in a map:
+// ten million words from a linear congruential generator, counted in a map:
 // the number of distinct words and the total
-const WORDS: i64 = 2000000
+const WORDS: i64 = 10000000
 
 fn main() {
     var counts = Map(String, i64).new()

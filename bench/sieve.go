@@ -2,7 +2,7 @@ package main
 
 import "fmt"
 
-const limit = 10000000
+const limit = 100000000
 
 func main() {
 	composite := make([]bool, limit)

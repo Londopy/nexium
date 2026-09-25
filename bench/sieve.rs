@@ -1,4 +1,4 @@
-const LIMIT: usize = 10000000;
+const LIMIT: usize = 100000000;
 fn main() {
     let mut composite = vec![false; LIMIT];
     let mut count = 0usize;

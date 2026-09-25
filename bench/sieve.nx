@@ -1,5 +1,5 @@
 // primes below the limit, the sieve of Eratosthenes on a list of flags
-const LIMIT: usize = 10000000
+const LIMIT: usize = 100000000
 
 fn main() {
     var composite = List(bool).with_capacity(LIMIT)

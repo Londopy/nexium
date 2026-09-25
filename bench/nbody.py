@@ -1,7 +1,7 @@
 from math import sqrt
 
 N = 5
-STEPS = 200000
+STEPS = 10000000
 DT = 0.01
 
 def energy(x, y, z, vx, vy, vz, m):

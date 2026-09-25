@@ -1,6 +1,6 @@
 // five bodies on a symplectic (leapfrog) integrator; the energy after the run
 const N: usize = 5
-const STEPS: i32 = 200000
+const STEPS: i32 = 10000000
 const DT: f64 = 0.01
 
 fn energy(x: []f64, y: []f64, z: []f64, vx: []f64, vy: []f64, vz: []f64, m: []f64) -> f64 {

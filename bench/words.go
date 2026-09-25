@@ -2,7 +2,7 @@ package main
 
 import "fmt"
 
-const words = 2000000
+const words = 10000000
 
 func main() {
 	counts := make(map[string]int64)

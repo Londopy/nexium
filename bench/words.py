@@ -1,4 +1,4 @@
-WORDS = 2000000
+WORDS = 10000000
 
 def main():
     counts = {}

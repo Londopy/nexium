@@ -1,6 +1,7 @@
 # The numbers page: bench/ in five languages on a GitHub runner, the medians
-# committed to bench/results/latest.json and docs/numbers.md; a Nexium
-# median a quarter slower than the last run fails the job. A protected main
+# committed to bench/results/latest.json and docs/numbers.md; Nexium's time
+# as a multiple of C's in the same run growing by a quarter against the
+# last run fails the job (a slower runner does not). A protected main
 # refuses the workflow's push: the numbers then live on the branch
 # `numbers`, the last run there is the baseline, and the site reads the
 # page from there.

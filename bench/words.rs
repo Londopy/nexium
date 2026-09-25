@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-const WORDS: i64 = 2000000;
+const WORDS: i64 = 10000000;
 fn main() {
     let mut counts: HashMap<String, i64> = HashMap::new();
     let mut seed: u64 = 42;

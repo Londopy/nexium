@@ -1,7 +1,7 @@
 #include <math.h>
 #include <stdio.h>
 #define N 5
-#define STEPS 200000
+#define STEPS 10000000
 #define DT 0.01
 static double energy(const double* x, const double* y, const double* z, const double* vx, const double* vy, const double* vz, const double* m) {
     double e = 0.0;

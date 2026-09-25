@@ -1,3 +1,3 @@
 #include <stdio.h>
 static int fib(int n) { return n < 2 ? n : fib(n - 1) + fib(n - 2); }
-int main(void) { printf("%d\n", fib(32)); return 0; }
+int main(void) { printf("%d\n", fib(42)); return 0; }

@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#define WORDS 2000000
+#define WORDS 10000000
 /* an open-addressing table: what a C program keeps at hand */
 #define CAP 131072
 typedef struct { char key[16]; long count; int used; } slot;

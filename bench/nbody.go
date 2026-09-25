@@ -6,7 +6,7 @@ import (
 )
 
 const n = 5
-const steps = 200000
+const steps = 10000000
 const dt = 0.01
 
 func energy(x, y, z, vx, vy, vz, m *[n]float64) float64 {

@@ -9,4 +9,4 @@ func fib(n int32) int32 {
 	return fib(n-1) + fib(n-2)
 }
 
-func main() { fmt.Println(fib(32)) }
+func main() { fmt.Println(fib(42)) }
