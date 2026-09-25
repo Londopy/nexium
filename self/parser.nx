@@ -445,6 +445,12 @@ impl Parser {
             } else {
                 n.kids2.append(0)
                 n.text.append(try self.expect_ident())
+                // `where T: http.Transport`: a trait of an imported module
+                if self.at(lexer.Kind.Dot) and self.peek_at(1) == lexer.Kind.Ident {
+                    self.bump()
+                    n.text.push_byte('.')
+                    n.text.append(try self.expect_ident())
+                }
                 n.text.append(" ")
             }
             if !self.eat(lexer.Kind.Plus) { break }

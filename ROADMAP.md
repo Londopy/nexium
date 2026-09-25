@@ -652,6 +652,9 @@ own sources, and the language server answers from the checker.
   commands, embeds, reactions), the events as an enum to `match` on, and
   the token from the environment. The Topo's Discord bot chapter (below)
   is its test, and statusmith's SDK grows the same way as it needs to.
+  (Done for `std.websocket`: QNI's handshake, frames and decoder over
+  std.http's transports, `ws://` and `wss://`, checked against Discord's
+  gateway over nxtls. The `discord` package is next.)
 - `std.text`: grapheme clusters and case mapping tables, `chars()` over
   scalars, width for terminal alignment.
 - `std.time`: time zones from the platform database, ISO 8601 parsing
@@ -673,8 +676,8 @@ own sources, and the language server answers from the checker.
 Order, with the collections, `std.hash`, `random.secure`, the small modules
 (`std.path`, `std.env`, `std.uuid`, `std.log`, `std.csv`, `std.toml`,
 `std.base64`), `Map` on SipHash, `std.time` (and with it the known issue
-of `import std.time` hiding `time.now()` fixed), and the HTTP client with
-the TLS slot and nxtls in it already in: `std.websocket` and `discord`,
+of `import std.time` hiding `time.now()` fixed), the HTTP client with the
+TLS slot and nxtls in it, and `std.websocket` already in: `discord`,
 lifted from QNI's working code; then the
 platform's TLS, `std.text`, `std.process` (whose streams end the known
 stall of a child that writes before it reads its input), `std.thread` and

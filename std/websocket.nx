@@ -1,0 +1,860 @@
+// std.websocket: a WebSocket client (RFC 6455), written in Nexium over
+// std.http's transports.
+//
+// `import std.websocket` then:
+//
+//     var ws = try websocket.connect("ws://localhost:8080/chat", 10000)
+//     try ws.send_text("hello")
+//     while true {
+//         let m = try ws.recv()                   // a whole message
+//         if m.op == websocket.CLOSE { break }    // the server's close, or the end
+//         println("{}", .{m.data})
+//     }
+//     ws.close(1000, "done")
+//
+//     var gw = try websocket.connect_with(NxTls, &mut layer, "wss://gateway.discord.gg/?v=10", 10000)
+//
+//     var api = websocket.socket(NxTls, &mut layer)   // with headers of its own
+//     api.header("Authorization", token)
+//     try api.open("wss://example.com/stream", 10000)
+//
+// `wss://` goes over a TLS layer, the slot std.http's client uses
+// (`http.Transport`, which nxtls fills). No extensions are asked for (no
+// compression). A message arrives whole, its fragments joined, up to
+// `max_message` bytes; `recv` answers a ping with a pong on its way. The
+// first protocol mistake by the server ends the connection, with the
+// reason in `problem`. The handshake's key and every frame's mask come
+// from `random.secure`. A `recv` that waits longer than the timeout is
+// `error.Timeout` and may be called again: nothing that came is lost.
+
+import std.http
+import std.hash
+import std.base64
+import std.net
+import std.thread
+
+pub const CONTINUATION: u8 = 0
+pub const TEXT: u8 = 1
+pub const BINARY: u8 = 2
+pub const CLOSE: u8 = 8
+pub const PING: u8 = 9
+pub const PONG: u8 = 10
+
+/// The largest message `recv` takes unless `max_message` says otherwise.
+pub const MAX_MESSAGE: usize = 16777216
+
+// the most the handshake's answer may be, before its blank line
+const MAX_HEAD: usize = 16384
+
+// what RFC 6455 appends to the key before hashing it
+const GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+/// One whole message: its opcode (TEXT, BINARY, PONG, or CLOSE with its
+/// reason as `data`).
+pub struct Message {
+    op: u8
+    data: String
+    /// a CLOSE's status: 1000 normal, 1005 when the server gave none, 1006
+    /// when the connection ended without a close
+    code: u16
+}
+
+// ------------------------------------------------------------------ the handshake
+
+/// The Sec-WebSocket-Accept a server answers `key` with: the base64 of the
+/// SHA-1 of the key and RFC 6455's GUID.
+pub fn accept_for(key: []u8) -> String {
+    var k = String.from(key)
+    k.append(GUID)
+    let d = hash.sha1(k[..])
+    return base64.encode(d[..])
+}
+
+/// The opening request for `host` (the Host header, as the server knows
+/// itself) and `path` (with its query); `headers` are added.
+pub fn request(host: []u8, path: []u8, key: []u8, headers: []http.Header) -> String {
+    var r = format("GET {} HTTP/1.1\r\nHost: {}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {}\r\nSec-WebSocket-Version: 13\r\n", .{path, host, key})
+    var agent = false
+    for h in headers {
+        if h.name.eq_ignore_case("user-agent") { agent = true }
+    }
+    if !agent { r.append("User-Agent: nexium-websocket/1.4\r\n") }
+    for h in headers {
+        r.append(h.name)
+        r.append(": ")
+        r.append(h.value)
+        r.append("\r\n")
+    }
+    r.append("\r\n")
+    return r
+}
+
+fn lower(s: []u8) -> String {
+    var out = String.with_capacity(s.len)
+    for c in s {
+        out.push_byte(if c >= 'A' and c <= 'Z' { c + 32 } else { c })
+    }
+    return out
+}
+
+/// What is wrong with the server's answer to the handshake (`head`, up to
+/// but not including the blank line), or null when it accepts `key`.
+pub fn check_response(head: []u8, key: []u8) -> ?String {
+    let lines = head.split("\r\n")
+    if lines.len == 0 or !(lines[0].starts_with("HTTP/1.1 101") or lines[0].starts_with("HTTP/1.0 101")) {
+        let first = if lines.len > 0 { lines[0] } else { "" }
+        return format("the server did not switch to WebSocket: {}", .{first[0..@min(first.len, 80)]})
+    }
+    var upgrade = false
+    var connection = false
+    var accept = String.new()
+    for i in 1..lines.len {
+        let line = lines[i]
+        let colon = line.find(":") orelse continue
+        let name = lower(line[0..colon].trim())
+        let value = line[colon + 1..line.len].trim()
+        if name == "upgrade" {
+            upgrade = value.eq_ignore_case("websocket")
+        } else if name == "connection" {
+            connection = lower(value).find("upgrade") != null
+        } else if name == "sec-websocket-accept" {
+            accept = String.from(value)
+        } else if name == "sec-websocket-extensions" {
+            return String.from("the server turned on an extension that was not asked for")
+        }
+    }
+    if !upgrade or !connection {
+        return String.from("the server's answer lacks Upgrade: websocket and Connection: Upgrade")
+    }
+    if accept != accept_for(key) {
+        return String.from("the server's Sec-WebSocket-Accept does not match the key")
+    }
+    return null
+}
+
+// ------------------------------------------------------------------ frames
+
+/// A client frame: final, opcode `op`, masked with the 4 bytes of `mask`.
+pub fn frame(op: u8, payload: []u8, mask: []u8) -> String {
+    var out = String.with_capacity(payload.len + 14)
+    out.push_byte(0x80 | op)
+    let n = payload.len
+    if n < 126 {
+        out.push_byte(0x80 | @truncate(u8, n))
+    } else if n < 65536 {
+        out.push_byte(0x80 | 126)
+        out.push_byte(@truncate(u8, n >> 8))
+        out.push_byte(@truncate(u8, n))
+    } else {
+        out.push_byte(0x80 | 127)
+        let v = n as u64
+        for i in 0..8 {
+            out.push_byte(@truncate(u8, v >> ((56 - 8 * i) as u64)))
+        }
+    }
+    out.append(mask[0..4])
+    for i in 0..n {
+        out.push_byte(payload[i] ^ mask[i % 4])
+    }
+    return out
+}
+
+/// The payload of a close frame: the code, big-endian, then the reason,
+/// cut to 123 bytes (a control frame carries 125) at a character's start.
+pub fn close_payload(code: u16, reason: []u8) -> String {
+    var p = String.new()
+    p.push_byte(@truncate(u8, code >> 8))
+    p.push_byte(@truncate(u8, code))
+    var n = @min(reason.len, 123)
+    while n > 0 and n < reason.len and (reason[n] & 0xc0) == 0x80 { n -= 1 }
+    p.append(reason[0..n])
+    return p
+}
+
+/// Whether `s` is UTF-8: what a TEXT message must be.
+fn valid_utf8(s: []u8) -> bool {
+    var i: usize = 0
+    while i < s.len {
+        let c = s[i]
+        if c < 0x80 {
+            i += 1
+            continue
+        }
+        var n: usize = 0
+        var cp: u32 = 0
+        var least: u32 = 0
+        if c >= 0xc2 and c <= 0xdf {
+            n = 1
+            cp = (c & 0x1f) as u32
+            least = 0x80
+        } else if c >= 0xe0 and c <= 0xef {
+            n = 2
+            cp = (c & 0x0f) as u32
+            least = 0x800
+        } else if c >= 0xf0 and c <= 0xf4 {
+            n = 3
+            cp = (c & 0x07) as u32
+            least = 0x10000
+        } else {
+            return false
+        }
+        var k: usize = 1
+        while k <= n {
+            if i + k >= s.len { return false }
+            let b = s[i + k]
+            if (b & 0xc0) != 0x80 { return false }
+            cp = (cp << 6) | ((b & 0x3f) as u32)
+            k += 1
+        }
+        // overlong forms, UTF-16's surrogates, past U+10FFFF
+        if cp < least or (cp >= 0xd800 and cp <= 0xdfff) or cp > 0x10ffff { return false }
+        i += n + 1
+    }
+    return true
+}
+
+/// Unframes what a server sends, whatever pieces it arrives in.
+pub struct Decoder {
+    buf: String
+    // a fragmented message being put together
+    partial: String
+    partial_op: u8
+    in_message: bool
+    /// the largest message taken
+    max: usize
+    /// set on the first protocol mistake; nothing more is decoded after it
+    problem: String
+}
+
+impl Decoder {
+    pub fn new(max: usize) -> Decoder {
+        return Decoder{ .buf = String.new(), .partial = String.new(), .partial_op = 0, .in_message = false, .max = max, .problem = String.new() }
+    }
+
+    pub fn feed(self: *mut Self, data: []u8) {
+        self.buf.append(data)
+    }
+
+    fn fail(self: *mut Self, why: []u8) -> ?Message {
+        self.problem = String.from(why)
+        return null
+    }
+
+    /// The next whole message, a control frame as it comes (PING, PONG,
+    /// CLOSE), or null when more bytes are needed or `problem` is set.
+    pub fn next(self: *mut Self) -> ?Message {
+        while true {
+            if self.problem.len > 0 or self.buf.len < 2 {
+                return null
+            }
+            let b0 = self.buf[0]
+            let b1 = self.buf[1]
+            let fin = (b0 & 0x80) != 0
+            let op = b0 & 0x0f
+            if (b0 & 0x70) != 0 {
+                return self.fail("the server set a reserved bit")
+            }
+            if (b1 & 0x80) != 0 {
+                return self.fail("the server masked a frame")
+            }
+            var len = (b1 & 0x7f) as u64
+            var at: usize = 2
+            if len == 126 {
+                if self.buf.len < 4 {
+                    return null
+                }
+                len = ((self.buf[2] as u64) << 8) | (self.buf[3] as u64)
+                at = 4
+            } else if len == 127 {
+                if self.buf.len < 10 {
+                    return null
+                }
+                len = 0
+                for i in 2..10 {
+                    len = (len << 8) | (self.buf[i] as u64)
+                }
+                at = 10
+            }
+            if op >= 8 and (!fin or len > 125) {
+                return self.fail("the server sent a fragmented or long control frame")
+            }
+            if op != CONTINUATION and op != TEXT and op != BINARY and op != CLOSE and op != PING and op != PONG {
+                return self.fail("the server sent a frame with a reserved opcode")
+            }
+            if len > (self.max as u64) {
+                return self.fail("the server sent a frame past the largest message taken")
+            }
+            let n = len as usize
+            if self.buf.len < at + n {
+                return null
+            }
+            let payload = String.from(self.buf[at..at + n])
+            self.buf = String.from(self.buf[at + n..self.buf.len])
+            if op >= 8 {
+                if op == CLOSE {
+                    if n == 1 { return self.fail("the server sent a close with half a status code") }
+                    var code: u16 = 1005
+                    var reason = String.new()
+                    if n >= 2 {
+                        code = ((payload[0] as u16) << 8) | (payload[1] as u16)
+                        reason = String.from(payload[2..n])
+                    }
+                    return Message{ .op = CLOSE, .data = reason, .code = code }
+                }
+                return Message{ .op = op, .data = payload, .code = 0 }
+            }
+            if op == CONTINUATION {
+                if !self.in_message {
+                    return self.fail("the server continued a message it never started")
+                }
+                if self.partial.len + n > self.max {
+                    return self.fail("the server sent a message past the largest taken")
+                }
+                self.partial.append(payload)
+            } else {
+                if self.in_message {
+                    return self.fail("the server started a message inside another")
+                }
+                self.partial = payload
+                self.partial_op = op
+                self.in_message = true
+            }
+            if fin {
+                self.in_message = false
+                let whole = self.partial.clone()
+                self.partial = String.new()
+                if self.partial_op == TEXT and !valid_utf8(whole[..]) {
+                    return self.fail("the server sent text that is not UTF-8")
+                }
+                return Message{ .op = self.partial_op, .data = whole, .code = 0 }
+            }
+        }
+    }
+}
+
+// ------------------------------------------------------------------ the connection
+
+const OPEN: u8 = 0
+// a close was sent and the server's is awaited
+const CLOSING: u8 = 1
+const CLOSED: u8 = 2
+// made by `socket`, not opened yet
+const NEW: u8 = 3
+
+/// A WebSocket connection over TCP (`ws://`) or a TLS layer, a `T`
+/// (`wss://`). Its calls go straight to the transport, so they have its
+/// effects and no others.
+pub struct Socket(T){
+    plain: http.Plain
+    tls: ?*mut T
+    secure: bool
+    /// headers the handshake carries, from `header`
+    headers: List(http.Header)
+    dec: Decoder
+    state: u8
+    /// the largest message `recv` takes (MAX_MESSAGE unless changed)
+    max_message: usize = 16777216
+    /// why the connection ended, when the server or the network ended it
+    problem: String
+}
+
+/// Connects to a `ws://` URL and completes the handshake; the connect and
+/// each wait for data take at most `timeout_ms` (0: no limit).
+pub fn connect(url: []u8, timeout_ms: i64) -> !Socket(http.Plain) {
+    var s = socket(http.Plain, null)
+    try s.open(url, timeout_ms)
+    return s
+}
+
+/// Connects to a `wss://` (or `ws://`) URL, TLS over `tls`, a TLS layer:
+/// an `http.Transport`, such as nxtls's.
+pub fn connect_with(comptime T: type where T: http.Transport, tls: *mut T, url: []u8, timeout_ms: i64) -> !Socket(T) {
+    var s = socket(T, tls)
+    try s.open(url, timeout_ms)
+    return s
+}
+
+/// A socket to open, after `header` has added what the handshake should
+/// carry (Authorization, Origin, Sec-WebSocket-Protocol). `tls` may be
+/// null for `ws://`.
+pub fn socket(comptime T: type, tls: ?*mut T) -> Socket(T) {
+    return Socket(T){ .plain = http.Plain.new(), .tls = tls, .secure = false, .headers = List(http.Header).new(), .dec = Decoder.new(MAX_MESSAGE), .state = NEW, .problem = String.new() }
+}
+
+impl(T) Socket(T) {
+    /// A header for the handshake to carry.
+    pub fn header(self: *mut Self, name: []u8, value: []u8) {
+        self.headers.append(http.Header{ .name = String.from(name), .value = String.from(value) })
+    }
+
+    /// Connects to a `ws://` or `wss://` URL and completes the handshake;
+    /// `wss://` without a TLS layer is `error.Unsupported`, a URL of
+    /// another scheme and an answer that is not a WebSocket's are
+    /// `error.InvalidInput` (`problem` says how).
+    pub fn open(self: *mut Self, url: []u8, timeout_ms: i64) -> !void {
+        if self.state != NEW { return error.InvalidInput }
+        // ws:// and wss:// read as http:// and https:// as far as the URL goes
+        var as_http = String.new()
+        if url.starts_with("ws://") {
+            as_http.append("http://")
+            as_http.append(url[5..url.len])
+        } else if url.starts_with("wss://") {
+            as_http.append("https://")
+            as_http.append(url[6..url.len])
+        } else {
+            return error.InvalidInput
+        }
+        let u = http.parse_url(as_http[..]) orelse return error.InvalidInput
+        self.secure = u.scheme[..] == "https"
+        if self.secure {
+            let t = self.tls orelse return error.Unsupported
+            try t.connect(u.host[..], u.port, timeout_ms)
+        } else {
+            try self.plain.connect(u.host[..], u.port, timeout_ms)
+        }
+        self.state = OPEN
+        var raw: [16]u8 = undefined
+        random.secure(raw[..]) catch |e| {
+            self.end()
+            return e
+        }
+        let key = base64.encode(raw[..])
+        var host = String.from(u.host)
+        if host[..].find(":") != null { host = format("[{}]", .{u.host}) }
+        let usual: u16 = if self.secure { 443 } else { 80 }
+        if u.port != usual { host.append(format(":{}", .{u.port})) }
+        let req = request(host[..], u.path[..], key[..], self.headers[..])
+        self.send_raw(req[..]) catch |e| {
+            self.end()
+            return e
+        }
+        // the answer's head; what comes after the blank line is frames already
+        var got = String.new()
+        while true {
+            if let at = got[..].find("\r\n\r\n") {
+                if let why = check_response(got[0..at], key[..]) {
+                    self.problem = why
+                    self.end()
+                    return error.InvalidInput
+                }
+                self.dec.feed(got[at + 4..got.len])
+                return
+            }
+            if got.len > MAX_HEAD {
+                self.problem = String.from("the server's answer to the handshake did not end")
+                self.end()
+                return error.InvalidInput
+            }
+            let piece = self.recv_raw() catch |e| {
+                self.end()
+                return e
+            }
+            if piece.len == 0 {
+                self.problem = String.from("the connection ended during the handshake")
+                self.end()
+                return error.Truncated
+            }
+            got.append(piece)
+        }
+    }
+
+    fn send_raw(self: *mut Self, data: []u8) -> !void {
+        if self.secure {
+            let t = self.tls orelse return error.Closed
+            return t.send(data)
+        }
+        return self.plain.send(data)
+    }
+
+    fn recv_raw(self: *mut Self) -> !String {
+        if self.secure {
+            let t = self.tls orelse return String.new()
+            return t.recv()
+        }
+        return self.plain.recv()
+    }
+
+    // ends the connection, without a word to the server
+    fn end(self: *mut Self) {
+        self.state = CLOSED
+        if self.secure {
+            if let t = self.tls { t.close() }
+        } else {
+            self.plain.close()
+        }
+    }
+
+    fn send_frame(self: *mut Self, op: u8, data: []u8) -> !void {
+        var mask: [4]u8 = undefined
+        try random.secure(mask[..])
+        let f = frame(op, data, mask[..])
+        self.send_raw(f[..]) catch |e| {
+            self.problem = String.from("the connection broke while sending")
+            self.end()
+            return e
+        }
+    }
+
+    /// Whether messages can still be sent.
+    pub fn is_open(self: *Self) -> bool {
+        return self.state == OPEN
+    }
+
+    /// Sends a text message; `data` should be UTF-8.
+    pub fn send_text(self: *mut Self, data: []u8) -> !void {
+        if self.state != OPEN { return error.Closed }
+        return self.send_frame(TEXT, data)
+    }
+
+    /// Sends a binary message.
+    pub fn send_binary(self: *mut Self, data: []u8) -> !void {
+        if self.state != OPEN { return error.Closed }
+        return self.send_frame(BINARY, data)
+    }
+
+    /// Sends a ping (at most 125 bytes); its pong comes back through `recv`.
+    pub fn ping(self: *mut Self, data: []u8) -> !void {
+        if self.state != OPEN { return error.Closed }
+        if data.len > 125 { return error.InvalidInput }
+        return self.send_frame(PING, data)
+    }
+
+    /// The next message: TEXT or BINARY whole, a PONG, or CLOSE, either the
+    /// server's (its code and reason) or the end of the connection (1006,
+    /// with `problem` saying so). A ping is answered on the way.
+    /// `error.Timeout` when nothing whole came in time (call again: nothing
+    /// is lost), `error.Closed` once a CLOSE was returned, and
+    /// `error.InvalidInput` for the server's protocol mistake (`problem`
+    /// says which), which ends the connection.
+    pub fn recv(self: *mut Self) -> !Message {
+        self.dec.max = self.max_message
+        while true {
+            if self.state == CLOSED { return error.Closed }
+            if let m = self.dec.next() {
+                if m.op == PING {
+                    self.send_frame(PONG, m.data[..]) catch { }
+                    continue
+                }
+                if m.op == CLOSE {
+                    if self.state == OPEN {
+                        // the server began it: answer with its code, then end
+                        let answer = if m.code == 1005 { String.new() } else { close_payload(m.code, "") }
+                        self.send_frame(CLOSE, answer[..]) catch { }
+                    }
+                    self.end()
+                    return m
+                }
+                return m
+            }
+            if self.dec.problem.len > 0 {
+                self.problem = self.dec.problem.clone()
+                // RFC 6455 7.1.7: a protocol error, then the end
+                let why = close_payload(1002, "")
+                self.send_frame(CLOSE, why[..]) catch { }
+                self.end()
+                return error.InvalidInput
+            }
+            let piece = try self.recv_raw()
+            if piece.len == 0 {
+                self.problem = String.from("the connection ended without a close frame")
+                self.end()
+                return Message{ .op = CLOSE, .data = String.new(), .code = 1006 }
+            }
+            self.dec.feed(piece[..])
+        }
+    }
+
+    /// Closes the connection with a status (1000: normal) and a reason:
+    /// sends the close frame, reads until the server's close answers it,
+    /// the connection ends or a wait times out, then ends the connection.
+    /// Messages that come meanwhile are dropped.
+    pub fn close(self: *mut Self, code: u16, reason: []u8) {
+        if self.state == OPEN {
+            let payload = close_payload(code, reason)
+            self.state = CLOSING
+            self.send_frame(CLOSE, payload[..]) catch { }
+            while self.state == CLOSING {
+                if let m = self.dec.next() {
+                    if m.op == CLOSE { break }
+                    continue
+                }
+                if self.dec.problem.len > 0 { break }
+                let piece = self.recv_raw() catch { break }
+                if piece.len == 0 { break }
+                self.dec.feed(piece[..])
+            }
+        }
+        self.end()
+    }
+}
+
+// ------------------------------------------------------------------ tests
+
+test "the handshake" {
+    // RFC 6455's own example
+    expect_eq(accept_for("dGhlIHNhbXBsZSBub25jZQ=="), "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=")
+    var hs = List(http.Header).new()
+    hs.append(http.Header{ .name = String.from("Origin"), .value = String.from("https://example.com") })
+    let r = request("example.com", "/chat?x=1", "dGhlIHNhbXBsZSBub25jZQ==", hs[..])
+    expect(r[..].starts_with("GET /chat?x=1 HTTP/1.1\r\nHost: example.com\r\nUpgrade: websocket\r\n"))
+    expect(r[..].find("Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n") != null)
+    expect(r[..].ends_with("Origin: https://example.com\r\n\r\n"))
+    let ok = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
+    expect(check_response(ok, "dGhlIHNhbXBsZSBub25jZQ==") == null)
+    expect(check_response(ok, "another key, another answer") != null)
+    expect(check_response("HTTP/1.1 200 OK\r\nContent-Length: 0", "k") != null)
+    expect(check_response("HTTP/1.1 101 Switching Protocols\r\nSec-WebSocket-Accept: x", "k") != null)
+    let deflate = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Extensions: permessage-deflate\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
+    expect(check_response(deflate, "dGhlIHNhbXBsZSBub25jZQ==") != null)
+}
+
+test "frames" {
+    // RFC 6455 5.7: a masked "Hello"
+    let hello = frame(TEXT, "Hello", b"\x37\xfa\x21\x3d")
+    expect(hello == b"\x81\x85\x37\xfa\x21\x3d\x7f\x9f\x4d\x51\x58")
+    var mid = String.new()
+    for _ in 0..300 { mid.push_byte('m') }
+    let f = frame(BINARY, mid[..], "abcd")
+    expect(f[0] == 0x82 and f[1] == 0xfe and f[2] == 1 and f[3] == 44 and f.len == 4 + 4 + 300)
+    var big = String.new()
+    for _ in 0..70000 { big.push_byte('b') }
+    let g = frame(BINARY, big[..], "abcd")
+    expect(g[1] == 0xff and g[7] == 0x01 and g[8] == 0x11 and g[9] == 0x70 and g.len == 10 + 4 + 70000)
+    let c = close_payload(1000, "done")
+    expect(c == b"\x03\xe8done")
+    // a reason past 123 bytes is cut at a character's start
+    var long = String.new()
+    for _ in 0..62 { long.append("é") }
+    let cut = close_payload(1001, long[..])
+    expect(cut.len == 2 + 122 and valid_utf8(cut[2..cut.len]))
+}
+
+test "UTF-8" {
+    expect(valid_utf8("plain ascii") and valid_utf8("héllo wörld") and valid_utf8("日本語") and valid_utf8("🎉"))
+    expect(!valid_utf8(b"\xc0\xaf") and !valid_utf8(b"\xe0\x80\xaf") and !valid_utf8(b"\xed\xa0\x80"))
+    expect(!valid_utf8(b"\xf4\x90\x80\x80") and !valid_utf8(b"\xff") and !valid_utf8(b"\xe6\x97") and !valid_utf8(b"a\x80"))
+}
+
+// the messages a decoder makes of `data` fed a byte at a time
+fn decode_bytes(data: []u8, max: usize) -> List(Message) {
+    var d = Decoder.new(max)
+    var out = List(Message).new()
+    for i in 0..data.len {
+        d.feed(data[i..i + 1])
+        while true {
+            let m = d.next() orelse break
+            out.append(m)
+        }
+    }
+    return out
+}
+
+// why a decoder gives up on `data`
+fn decode_problem(data: []u8, max: usize) -> String {
+    var d = Decoder.new(max)
+    d.feed(data)
+    while true {
+        let m = d.next() orelse break
+        _ = m
+    }
+    return d.problem.clone()
+}
+
+test "the decoder" {
+    // RFC 6455 5.7: "Hello" unmasked, in two fragments, and a ping between
+    let ms = decode_bytes(b"\x81\x05Hello\x01\x03Hel\x89\x02hi\x80\x02lo\x88\x05\x03\xe8bye", 1000)
+    expect(ms.len == 4)
+    expect(ms[0].op == TEXT and ms[0].data == "Hello")
+    expect(ms[1].op == PING and ms[1].data == "hi")
+    expect(ms[2].op == TEXT and ms[2].data == "Hello")
+    expect(ms[3].op == CLOSE and ms[3].code == 1000 and ms[3].data == "bye")
+    // a close without a code, and binary data that need not be UTF-8
+    let raw = decode_bytes(b"\x82\x02\xff\xfe\x88\x00", 1000)
+    expect(raw[0].op == BINARY and raw[0].data.len == 2 and raw[1].code == 1005)
+    expect(decode_problem(b"\x81\x85\x37\xfa\x21\x3d\x7f\x9f\x4d\x51\x58", 1000) == "the server masked a frame")
+    expect(decode_problem(b"\xc1\x00", 1000) == "the server set a reserved bit")
+    expect(decode_problem(b"\x09\x00", 1000) == "the server sent a fragmented or long control frame")
+    expect(decode_problem(b"\x80\x01a", 1000) == "the server continued a message it never started")
+    expect(decode_problem(b"\x83\x00", 1000) == "the server sent a frame with a reserved opcode")
+    expect(decode_problem(b"\x81\x05Hello", 4) == "the server sent a frame past the largest message taken")
+    expect(decode_problem(b"\x01\x03Hel\x80\x02lo", 4) == "the server sent a message past the largest taken")
+    expect(decode_problem(b"\x81\x02\xc3\x28", 1000) == "the server sent text that is not UTF-8")
+    expect(decode_problem(b"\x01\x01a\x01\x01b", 1000) == "the server started a message inside another")
+}
+
+/// A server played from a script over the TLS slot: it answers the
+/// handshake with the right accept, then sends `frames`; it unmasks what
+/// the client sends and keeps each frame (opcode, payload).
+struct Scripted {
+    frames: String
+    sent: String
+    answered: bool
+    replied: bool
+    step: usize
+    out: String
+    ended: bool
+}
+
+fn scripted(frames: []u8) -> Scripted {
+    return Scripted{ .frames = String.from(frames), .sent = String.new(), .answered = false, .replied = false, .step = 5, .out = String.new(), .ended = false }
+}
+
+impl Scripted {
+    // the client's frames, unmasked: (opcode, payload), whole ones only
+    fn client_frames(self: *Self) -> List((u8, String)) {
+        var out = List((u8, String)).new()
+        let s = self.sent[..]
+        var at = s.find("\r\n\r\n").? + 4
+        while at + 6 <= s.len {
+            let op = s[at] & 0x0f
+            let n = (s[at + 1] & 0x7f) as usize
+            let mask = s[at + 2..at + 6]
+            var p = String.new()
+            for i in 0..n { p.push_byte(s[at + 6 + i] ^ mask[i % 4]) }
+            out.append((op, p))
+            at += 6 + n
+        }
+        return out
+    }
+}
+
+impl http.Transport for Scripted {
+    fn connect(self: *mut Self, host: []u8, port: u16, timeout_ms: i64) -> !void {
+        _ = host
+        _ = port
+        _ = timeout_ms
+    }
+
+    fn send(self: *mut Self, data: []u8) -> !void {
+        self.sent.append(data)
+    }
+
+    fn recv(self: *mut Self) -> !String {
+        if !self.replied {
+            let s = self.sent[..]
+            let k = s.find("Sec-WebSocket-Key: ").? + 19
+            var e = k
+            while s[e] != '\r' { e += 1 }
+            self.out = format("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {}\r\n\r\n", .{accept_for(s[k..e])})
+            self.out.append(self.frames)
+            self.replied = true
+        }
+        let n = @min(self.step, self.out.len)
+        let piece = String.from(self.out[0..n])
+        self.out = String.from(self.out[n..self.out.len])
+        return piece
+    }
+
+    fn truncated(self: *Self) -> bool {
+        _ = self
+        return false
+    }
+
+    fn close(self: *mut Self) {
+        self.ended = true
+    }
+}
+
+test "a socket over the TLS slot" {
+    // a message, a ping, a fragmented message, then the server's close
+    var server = scripted(b"\x81\x05Hello\x89\x02hi\x01\x03Hel\x80\x02lo\x88\x05\x03\xe8bye")
+    var ws = try connect_with(Scripted, &mut server, "wss://example.com/chat", 1000)
+    try ws.send_text("hey")
+    let a = try ws.recv()
+    expect(a.op == TEXT and a.data == "Hello")
+    let b = try ws.recv()
+    expect(b.op == TEXT and b.data == "Hello")
+    let c = try ws.recv()
+    expect(c.op == CLOSE and c.code == 1000 and c.data == "bye")
+    expect(!ws.is_open() and server.ended)
+    var closed = false
+    _ = ws.recv() catch |e| {
+        closed = e == error.Closed
+        Message{ .op = 0, .data = String.new(), .code = 0 }
+    }
+    expect(closed)
+    // what the client sent: its text, the pong to the ping, the close's answer
+    let sent = server.client_frames()
+    expect(sent.len == 3)
+    expect(sent[0].0 == TEXT and sent[0].1 == "hey")
+    expect(sent[1].0 == PONG and sent[1].1 == "hi")
+    expect(sent[2].0 == CLOSE and sent[2].1 == b"\x03\xe8")
+    expect(server.sent[..].starts_with("GET /chat HTTP/1.1\r\nHost: example.com\r\n"))
+}
+
+test "a socket's endings" {
+    // the connection ends without a close: 1006
+    var cut = scripted(b"\x81\x02ok")
+    var ws = try connect_with(Scripted, &mut cut, "wss://example.com/", 1000)
+    expect((try ws.recv()).data == "ok")
+    let end = try ws.recv()
+    expect(end.op == CLOSE and end.code == 1006 and ws.problem.len > 0)
+    // a protocol mistake ends it with 1002
+    var bad = scripted(b"\xc1\x00")
+    var ws2 = try connect_with(Scripted, &mut bad, "wss://example.com/", 1000)
+    var invalid = false
+    _ = ws2.recv() catch |e| {
+        invalid = e == error.InvalidInput
+        Message{ .op = 0, .data = String.new(), .code = 0 }
+    }
+    expect(invalid and ws2.problem == "the server set a reserved bit")
+    expect(bad.client_frames()[0].1 == b"\x03\xea")
+    // closing first: the server's close answers it
+    var polite = scripted(b"\x88\x02\x03\xe8")
+    var ws3 = try connect_with(Scripted, &mut polite, "wss://example.com/", 1000)
+    ws3.close(1000, "done")
+    expect(polite.client_frames()[0].1 == b"\x03\xe8done" and polite.ended)
+}
+
+// a WebSocket server for one message: answers the handshake, echoes one
+// frame, and answers the close
+fn echo_once(l: *mut net.TcpListener) -> bool {
+    var c = l.accept_timeout(10000) catch { return false }
+    c.set_timeout(10000)
+    var head = String.new()
+    while head[..].find("\r\n\r\n") == null {
+        let got = c.recv(4096) catch { return false }
+        if got.len == 0 { return false }
+        head.append(got)
+    }
+    let k = head[..].find("Sec-WebSocket-Key: ").? + 19
+    var e = k
+    while head[e] != '\r' { e += 1 }
+    let answer = format("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {}\r\n\r\n", .{accept_for(head[k..e])})
+    c.send(answer[..]) catch { return false }
+    var n: usize = 0
+    while n < 2 {
+        // a frame from the client: short, masked
+        var fr = String.new()
+        while fr.len < 2 or fr.len < 6 + ((fr[1] & 0x7f) as usize) {
+            let got = c.recv(4096) catch { return false }
+            if got.len == 0 { return false }
+            fr.append(got)
+        }
+        let op = fr[0] & 0x0f
+        let len = (fr[1] & 0x7f) as usize
+        var p = String.new()
+        for i in 0..len { p.push_byte(fr[6 + i] ^ fr[2 + i % 4]) }
+        var reply = String.new()
+        reply.push_byte(0x80 | op)
+        reply.push_byte(@truncate(u8, len))
+        reply.append(p)
+        c.send(reply[..]) catch { return false }
+        n += 1
+        if op == CLOSE { break }
+    }
+    c.close()
+    return true
+}
+
+test "an echo over loopback" {
+    var l = try net.TcpListener.bind("127.0.0.1", 0)
+    let port = try l.port()
+    var server = thread.spawn(net.TcpListener, bool, echo_once, l)
+    var ws = try connect(format("ws://127.0.0.1:{}/echo", .{port})[..], 10000)
+    try ws.send_text("ping pong")
+    let m = try ws.recv()
+    expect(m.op == TEXT and m.data == "ping pong")
+    ws.close(1000, "done")
+    expect(server.join())
+}

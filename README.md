@@ -360,7 +360,7 @@ using arena {
 - [The Topo](https://londopy.github.io/nexium/topo/01-base-camp.html): the tutorial, from installing the compiler to a neural network, a GUI and a shipped library, with exercises the compiler grades (on the page, or `nx topo` in the terminal); the source is [`topo/`](topo/). All of the above, rendered, is at [londopy.github.io/nexium](https://londopy.github.io/nexium/).
 - [Installing](docs/install.md): the Windows installer, the macOS/Linux script, source builds, checksums, and how `nx` finds a C compiler.
 - [Packages](docs/packages.md): `nexium.toml`, `nx add`, `nx fetch`, git or path dependencies, the lock file.
-- [Standard library](docs/std.md): the modules written in Nexium (`std.strings`, `std.lists`, `std.bytes`, `std.num`, `std.json`, `std.args`, `std.fs`, `std.time`, `std.regex`, `std.text`, `std.testing`, `std.stream`, `std.net`, `std.http`, `std.thread`, `std.process`, `std.sort`, `std.heap`, `std.set`, `std.deque`, `std.hash`, `std.path`, `std.env`, `std.uuid`, `std.log`, `std.csv`, `std.toml`, `std.base64`).
+- [Standard library](docs/std.md): the modules written in Nexium (`std.strings`, `std.lists`, `std.bytes`, `std.num`, `std.json`, `std.args`, `std.fs`, `std.time`, `std.regex`, `std.text`, `std.testing`, `std.stream`, `std.net`, `std.http`, `std.thread`, `std.process`, `std.sort`, `std.heap`, `std.set`, `std.deque`, `std.hash`, `std.path`, `std.env`, `std.uuid`, `std.log`, `std.csv`, `std.toml`, `std.base64`, `std.websocket`).
 - [The numbers](https://londopy.github.io/nexium/docs/numbers.html): four programs in five languages, measured weekly on one runner.
 - [nexium-gui](docs/gui.md): the immediate-mode GUI library and how to write a widget.
 - [Releasing your program](docs/releasing-your-program.md): binaries for three platforms from a tag, installers optional.
@@ -464,10 +464,10 @@ Memory safety is the view rules, errors since 1.3. 1.4, a standard library
 people stop supplementing, is under way: collections (`std.sort`,
 `std.heap`, `std.set`, `std.deque`), `std.hash`, `random.secure`, paths,
 the environment and config folders, UUIDs, logging, CSV, TOML and base64
-are in, twenty-eight modules in all; `Map` is hashed against flooding and
+are in, twenty-nine modules in all; `Map` is hashed against flooding and
 keeps its keys in the order they were put; `std.time` reads time zones from
 the platform's database, and `std.http`'s client takes HTTPS through a TLS
-layer, which nxtls fills; next are websockets and a Discord package. What Nexium is not yet, and where each is answered, is
+layer, which nxtls fills, as `std.websocket` does; next is a Discord package. What Nexium is not yet, and where each is answered, is
 [a section of the roadmap](ROADMAP.md#what-10-is-not-yet): the benchmarks are four
 programs ([Speed](#speed)), and the ecosystem is one maintainer and four
 projects outside the tree ([above](#in-the-wild)).

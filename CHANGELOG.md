@@ -134,9 +134,25 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   of the connection, which is `error.Truncated` when a TLS connection was
   cut without close_notify; interim `1xx` answers are skipped and a HEAD
   has no body.
+- `std.websocket`: a WebSocket client (RFC 6455) over std.http's
+  transports, `ws://` over TCP (`connect`) and `wss://` over the TLS layer a
+  program gives it (`connect_with`), or built up with headers of its own
+  (`socket`, `header`, `open`). `recv` gives whole messages (fragments
+  joined, text checked to be UTF-8, `max_message` bytes at most), answers
+  pings on the way, and reports the server's close or the end of the
+  connection (1006); `send_text`, `send_binary`, `ping`, and `close` with
+  the closing handshake. The first protocol mistake by the server ends the
+  connection with 1002 and the reason in `problem`. Keys and masks come
+  from `random.secure`. The pure parts (the handshake's text and check,
+  frames, the decoder) are QNI's, tested byte by byte against RFC 6455's
+  examples; checked against Discord's gateway over nxtls (its HELLO, a
+  ping's pong, a clean close) and an echo server on loopback.
+- `hash.sha1` and `hash.sha1_hex`, for the protocols that still require
+  SHA-1 (the WebSocket handshake), never to check or sign data.
 - A trait of an imported module is named with its module, as a type is:
-  `impl http.Transport for Conn` and `dyn http.Transport` (SPEC 8.3),
-  where the impl was a parse error ("expected a trait name before `for`").
+  `impl http.Transport for Conn`, `dyn http.Transport` and `where T:
+  http.Transport` (SPEC 8.3), where the impl was a parse error ("expected a
+  trait name before `for`").
 - The compiler reads `nexium.toml` with `std.toml`, where it had a reader
   of its own for a subset: a manifest may use all of TOML, and one that is
   not TOML says on which line and why.
@@ -199,6 +215,11 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   `now`") in a file that imported it. A std module named like a builtin
   namespace (`time`, `process`, `net`, `thread`) now adds to it: a call
   the module does not have goes to the builtin (SPEC 11).
+- A type of an imported module passed as a type argument,
+  `thread.spawn(net.TcpListener, bool, serve, l)`, was taken for a value,
+  and the call for one with too many arguments ("`spawn` takes 2
+  argument(s) but 4 were given"); `mod.Type` and `mod.Type(A)` are type
+  arguments there, as they are in a type.
 - `nx fmt` joined a function's brace to a return type that ends in a
   trait object, `-> !dyn Transport{`, taking `Transport {` for a struct
   literal; `dyn` and `weak` are passed over, as `mut` was, on the way back

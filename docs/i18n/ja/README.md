@@ -349,7 +349,7 @@ using arena {
 - [the Topo](https://londopy.github.io/nexium/topo/01-base-camp.html)（英語）：チュートリアル。コンパイラのインストールからニューラルネットワーク、GUI、出荷するライブラリまで。ソースは [`topo/`](../../../topo/)。以上すべてのレンダリング版は [londopy.github.io/nexium](https://londopy.github.io/nexium/) にあります。
 - [インストール](../../install.md)（英語）：Windows インストーラ、macOS/Linux スクリプト、ソースビルド、チェックサム、`nx` が C コンパイラを見つける方法。
 - [パッケージ](../../packages.md)（英語）：`nexium.toml`、`nx add`、`nx fetch`、git またはパス依存、ロックファイル。
-- [標準ライブラリ](../../std.md)（英語）：Nexium で書かれたモジュール（`std.strings`、`std.lists`、`std.bytes`、`std.num`、`std.json`、`std.args`、`std.fs`、`std.time`、`std.regex`、`std.text`、`std.testing`、`std.stream`、`std.net`、`std.http`、`std.thread`、`std.process`、`std.sort`、`std.heap`、`std.set`、`std.deque`、`std.hash`、`std.path`、`std.env`、`std.uuid`、`std.log`、`std.csv`、`std.toml`、`std.base64`）。
+- [標準ライブラリ](../../std.md)（英語）：Nexium で書かれたモジュール（`std.strings`、`std.lists`、`std.bytes`、`std.num`、`std.json`、`std.args`、`std.fs`、`std.time`、`std.regex`、`std.text`、`std.testing`、`std.stream`、`std.net`、`std.http`、`std.thread`、`std.process`、`std.sort`、`std.heap`、`std.set`、`std.deque`、`std.hash`、`std.path`、`std.env`、`std.uuid`、`std.log`、`std.csv`、`std.toml`、`std.base64`、`std.websocket`）。
 - [数値](https://londopy.github.io/nexium/docs/numbers.html)（英語）：5 言語で書いた 4 つのプログラムを、同じランナーで毎週計測。
 - [nexium-gui](../../gui.md)（英語）：即時モード GUI ライブラリとウィジェットの書き方。
 - [プログラムのリリース](../../releasing-your-program.md)（英語）：タグから 3 プラットフォームのバイナリを、インストーラは任意で。
@@ -445,8 +445,8 @@ Nexium で書かれ、自分自身をビルドします。すべてのサンプ�
 lldb も `nx debug` を通してそこで動かされます。メモリ安全性はビュー規則で、1.3 から
 エラーです。1.4、補う必要のない標準ライブラリは進行中で、コレクション（`std.sort`、
 `std.heap`、`std.set`、`std.deque`）、`std.hash`、`random.secure`、パス、環境変数と設定
-フォルダ、UUID、ログ、CSV、TOML、base64 が入り、全部で 28 モジュール。`Map` はハッシュ攻撃に強く、
-キーを入れた順を保ちます。`std.time` はプラットフォームのデータベースからタイムゾーンを読み、`std.http` のクライアントは nxtls が担う TLS 層を通して HTTPS を話します。次は WebSocket と Discord 用パッケージです。Nexium がまだ
+フォルダ、UUID、ログ、CSV、TOML、base64 が入り、全部で 29 モジュール。`Map` はハッシュ攻撃に強く、
+キーを入れた順を保ちます。`std.time` はプラットフォームのデータベースからタイムゾーンを読み、`std.http` のクライアントは nxtls が担う TLS 層を通して HTTPS を話し、`std.websocket` も同じ層を通ります。次は Discord 用パッケージです。Nexium がまだ
 何でないか、そしてそれぞれがどこで答えられるかは[ロードマップの一節](../../../ROADMAP.md#what-10-is-not-yet)に
 あります。ベンチマークは 4 つのプログラム（[速度](#速度)）だけで、エコシステムは
 メンテナ一人とツリー外のプロジェクト四つです（[上](#実際の利用)）。

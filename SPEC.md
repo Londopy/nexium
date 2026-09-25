@@ -539,7 +539,8 @@ items are `b.item`. `import std.name` loads a standard library module that
 is written in Nexium and embedded in the compiler: `strings`, `lists`,
 `bytes`, `num`, `json`, `args`, `fs`, `time`, `regex`, `text`, `testing`,
 `stream`, `net`, `http`, `thread`, `process`, `sort`, `heap`, `set`,
-`deque`, `hash`, `path`, `env`, `uuid`, `log`, `csv`, `toml`, `base64`
+`deque`, `hash`, `path`, `env`, `uuid`, `log`, `csv`, `toml`, `base64`,
+`websocket`
 (see `docs/std.md`); std modules may import each other. The builtin
 namespaces `math`, `io`, `os`, `process`, `time`, `random`, `mem`, `net`,
 `thread`, `sync` are always in scope and need no import. A std module of

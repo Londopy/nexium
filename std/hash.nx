@@ -1,6 +1,6 @@
 // std.hash: hash functions, written in Nexium: FNV-1a (64-bit), SipHash-2-4
-// (keyed: a table whose keys an adversary picks), and SHA-256 (checksums and
-// content addresses).
+// (keyed: a table whose keys an adversary picks), SHA-256 (checksums and
+// content addresses), and SHA-1 for the protocols that still require it.
 //
 // `import std.hash` then:
 //
@@ -243,6 +243,85 @@ pub fn sha256_hex(data: []u8) -> String {
     return bytes.hex(d[..])
 }
 
+fn rotl32(x: u32, n: u32) -> u32 {
+    return (x << n) | (x >> (32 - n))
+}
+
+/// The SHA-1 digest of `data`: 20 bytes. SHA-1 is broken for anything an
+/// adversary can choose, so it is here for the protocols that still
+/// require it (the WebSocket handshake, `std.websocket`), never to check
+/// or sign data; use `sha256` for that.
+pub fn sha1(data: []u8) -> String {
+    var h: [5]u32 = [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0]
+    var msg = String.with_capacity(data.len + 72)
+    msg.append(data)
+    let bits = (data.len as u64) *% 8
+    msg.push_byte(0x80)
+    while msg.len % 64 != 56 { msg.push_byte(0) }
+    var i: u64 = 8
+    while i > 0 {
+        i -= 1
+        msg.push_byte(((bits >> (i * 8)) & 255) as u8)
+    }
+    var at: usize = 0
+    while at < msg.len {
+        var w: [80]u32 = undefined
+        for t in 0..16 {
+            let b = at + t * 4
+            w[t] = ((msg[b] as u32) << 24) | ((msg[b + 1] as u32) << 16) | ((msg[b + 2] as u32) << 8) | (msg[b + 3] as u32)
+        }
+        for t in 16..80 { w[t] = rotl32(w[t - 3] ^ w[t - 8] ^ w[t - 14] ^ w[t - 16], 1) }
+        var a = h[0]
+        var b = h[1]
+        var c = h[2]
+        var d = h[3]
+        var e = h[4]
+        for t in 0..80 {
+            var f: u32 = 0
+            var k: u32 = 0
+            if t < 20 {
+                f = (b & c) | (~b & d)
+                k = 0x5a827999
+            } else if t < 40 {
+                f = b ^ c ^ d
+                k = 0x6ed9eba1
+            } else if t < 60 {
+                f = (b & c) | (b & d) | (c & d)
+                k = 0x8f1bbcdc
+            } else {
+                f = b ^ c ^ d
+                k = 0xca62c1d6
+            }
+            let temp = rotl32(a, 5) +% f +% e +% k +% w[t]
+            e = d
+            d = c
+            c = rotl32(b, 30)
+            b = a
+            a = temp
+        }
+        h[0] = h[0] +% a
+        h[1] = h[1] +% b
+        h[2] = h[2] +% c
+        h[3] = h[3] +% d
+        h[4] = h[4] +% e
+        at += 64
+    }
+    var out = String.with_capacity(20)
+    for x in h {
+        out.push_byte(((x >> 24) & 255) as u8)
+        out.push_byte(((x >> 16) & 255) as u8)
+        out.push_byte(((x >> 8) & 255) as u8)
+        out.push_byte((x & 255) as u8)
+    }
+    return out
+}
+
+/// The SHA-1 digest of `data` as 40 lower-case hex digits.
+pub fn sha1_hex(data: []u8) -> String {
+    let d = sha1(data)
+    return bytes.hex(d[..])
+}
+
 // ------------------------------------------------------------------ tests
 
 test "FNV-1a over 64 bits" {
@@ -264,6 +343,16 @@ test "SHA-256, the FIPS vectors" {
     expect(sha256_hex("") == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
     expect(sha256_hex("abc") == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
     expect(sha256_hex("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq") == "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1")
+}
+
+test "SHA-1, the FIPS vectors" {
+    expect(sha1_hex("") == "da39a3ee5e6b4b0d3255bfef95601890afd80709")
+    expect(sha1_hex("abc") == "a9993e364706816aba3e25717850c26c9cd0d89d")
+    expect(sha1_hex("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq") == "84983e441c3bd26ebaae4aa1f95129e5e54670f1")
+    // a million times `a`, sixteen thousand blocks and a padding block
+    var many = String.new()
+    for _ in 0..1000000 { many.push_byte('a') }
+    expect(sha1_hex(many[..]) == "34aa973cd4c4daa4f61eeb2bdbad27316534016f")
 }
 
 test "SHA-256 in pieces is SHA-256 at once" {

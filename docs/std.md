@@ -40,6 +40,7 @@ by `scripts/std_docs.py` from the doc comments.
 | [`std.time`](#stdtime) | dates, durations, time zones and timers, written in Nexium. |
 | [`std.toml`](#stdtoml) | TOML 1.0 (toml.io), written in Nexium: reading a document into |
 | [`std.uuid`](#stduuid) | UUIDs (RFC 9562), written in Nexium: random ones (version 4), |
+| [`std.websocket`](#stdwebsocket) | a WebSocket client (RFC 6455), written in Nexium over |
 
 ## std.args
 
@@ -181,7 +182,7 @@ std.fs: files, directories and paths, written in Nexium. `import std.fs` then: i
 
 ## std.hash
 
-std.hash: hash functions, written in Nexium: FNV-1a (64-bit), SipHash-2-4 (keyed: a table whose keys an adversary picks), and SHA-256 (checksums and content addresses). `import std.hash` then: let h = hash.fnv1a64(name)                    // fast, not keyed let k = hash.siphash(key16, name)             // keyed with 16 bytes let sum = hash.sha256_hex(file_text)          // 64 hex digits var s = hash.Sha256.new()                     // or piece by piece s.update(part1) s.update(part2) let digest = s.finish()                       // 32 bytes `std.bytes` keeps the 32-bit `fnv1a` and `crc32`.
+std.hash: hash functions, written in Nexium: FNV-1a (64-bit), SipHash-2-4 (keyed: a table whose keys an adversary picks), SHA-256 (checksums and content addresses), and SHA-1 for the protocols that still require it. `import std.hash` then: let h = hash.fnv1a64(name)                    // fast, not keyed let k = hash.siphash(key16, name)             // keyed with 16 bytes let sum = hash.sha256_hex(file_text)          // 64 hex digits var s = hash.Sha256.new()                     // or piece by piece s.update(part1) s.update(part2) let digest = s.finish()                       // 32 bytes `std.bytes` keeps the 32-bit `fnv1a` and `crc32`.
 
 Types: `Sha256`
 
@@ -194,6 +195,8 @@ Types: `Sha256`
 | `(method) finish(self: *mut Self) -> String` | The 32-byte digest of everything given to `update`. |
 | `sha256(data: []u8) -> String` | The SHA-256 digest of `data`: 32 bytes. |
 | `sha256_hex(data: []u8) -> String` | The SHA-256 digest of `data` as 64 lower-case hex digits. |
+| `sha1(data: []u8) -> String` | The SHA-1 digest of `data`: 20 bytes. SHA-1 is broken for anything an adversary can choose, so it is here for the protocols that still require it (the WebSocket handshake, `std.websocket`), never to check or sign data; use `sha256` for that. |
+| `sha1_hex(data: []u8) -> String` | The SHA-1 digest of `data` as 40 lower-case hex digits. |
 
 ## std.heap
 
@@ -213,9 +216,9 @@ Types: `Heap(T){`
 
 ## std.http
 
-std.http: an HTTP/1.1 client and a small server, written in Nexium over std.net and std.stream. `import std.http` then: let r = try http.get("http://example.com/") println("{} {}", .{r.status, r.body.len}) if let ct = r.header("content-type") { ... } var client = http.Client.new()              // timeouts, redirects, limits client.tls = &mut layer                     // a TLS layer, for https:// var s = try client.open("GET", "https://example.com/big", &headers, "") while true {                                // the body as it arrives let piece = (try s.next()) orelse break ... } s.close() fn hello(req: *http.Request) -> http.Response { return http.text(200, "hello from Nexium") } var router = http.Router.new() router.get("/", hello) var server = try http.Server.bind("127.0.0.1", 8080) try server.serve(&router)                  // forever, one request at a time The client speaks HTTP/1.1 with `Connection: close` over a `Transport`: TCP for `http://`, and for `https://` the TLS layer a program hands its Client, the slot of decision 120 (nxtls, the TLS 1.3 client written in Nexium, fills it; the platform's TLS will). It reads a body by Content-Length, chunked encoding, or until the connection ends (refused when a TLS connection was cut rather than closed, as nothing then shows the body is whole), whole or as it arrives, follows up to five redirects, and gives up on a connect or a wait after `timeout_ms`. The server handles one connection at a time, which is what a tool, a local dashboard or a test needs; threads come later in the roadmap.
+std.http: an HTTP/1.1 client and a small server, written in Nexium over std.net and std.stream. `import std.http` then: let r = try http.get("http://example.com/") println("{} {}", .{r.status, r.body.len}) if let ct = r.header("content-type") { ... } var client = http.client_with(NxTls, &mut layer)   // a TLS layer, for https:// client.timeout_ms = 10000                   // and timeouts, redirects, limits var s = try client.open("GET", "https://example.com/big", &headers, "") while true {                                // the body as it arrives let piece = (try s.next()) orelse break ... } s.close() fn hello(req: *http.Request) -> http.Response { return http.text(200, "hello from Nexium") } var router = http.Router.new() router.get("/", hello) var server = try http.Server.bind("127.0.0.1", 8080) try server.serve(&router)                  // forever, one request at a time The client speaks HTTP/1.1 with `Connection: close` over a `Transport`: TCP for `http://`, and for `https://` the TLS layer a program hands its client, the slot of decision 120 (nxtls, the TLS 1.3 client written in Nexium, fills it; the platform's TLS will). It reads a body by Content-Length, chunked encoding, or until the connection ends (refused when a TLS connection was cut rather than closed, as nothing then shows the body is whole), whole or as it arrives, follows up to five redirects, and gives up on a connect or a wait after `timeout_ms`. The server handles one connection at a time, which is what a tool, a local dashboard or a test needs; threads come later in the roadmap.
 
-Types: `Header`, `Url`, `Response`, `Plain`, `Streaming`, `Client`, `Request`, `Route`, `Router`, `Server`
+Types: `Header`, `Url`, `Response`, `Plain`, `Streaming(T){`, `Client(T){`, `Request`, `Route`, `Router`, `Server`
 
 | function | what it does |
 | --- | --- |
@@ -239,12 +242,13 @@ Types: `Header`, `Url`, `Response`, `Plain`, `Streaming`, `Client`, `Request`, `
 | `(method) next(self: *mut Self) -> !?String` | The next piece of the body; null once all of it has come. `error.Truncated` when the connection ends before the body does. |
 | `(method) read_all(self: *mut Self) -> !String` | The rest of the body at once. |
 | `(method) close(self: *mut Self)` | Closes the connection. |
-| `(method) new() -> Client` |  |
-| `(method) open(self: *mut Self, method: []u8, url_text: []u8, headers: *List(Header), body: []u8) -> !Streaming` | Sends a request and reads the response's status and headers, following redirects: a 303, and a 301 or 302 to a POST, turn into a GET without the body, and a redirect to another host goes without the Authorization and Cookie headers. The body is read from the `Streaming` as it arrives; close it when done. |
+| `client() -> Client(Plain)` | A client for `http://`; `https://` is `error.Unsupported`. |
+| `client_with(comptime T: type where T: Transport, tls: *mut T) -> Client(T)` | A client whose `https://` goes over `tls`, a TLS layer: a `Transport`, such as nxtls's. |
+| `(method) open(self: *mut Self, method: []u8, url_text: []u8, headers: *List(Header), body: []u8) -> !Streaming(T)` | Sends a request and reads the response's status and headers, following redirects: a 303, and a 301 or 302 to a POST, turn into a GET without the body, and a redirect to another host goes without the Authorization and Cookie headers. The body is read from the `Streaming` as it arrives; close it when done. |
 | `(method) send(self: *mut Self, method: []u8, url: []u8, headers: *List(Header), body: []u8) -> !Response` | A request, its response read whole, following redirects. |
 | `(method) get(self: *mut Self, url: []u8) -> !Response` |  |
 | `(method) post(self: *mut Self, url: []u8, content_type: []u8, body: []u8) -> !Response` |  |
-| `request(method: []u8, url_text: []u8, headers: *List(Header), body: []u8) -> !Response` | Perform a request with a default `Client`, following redirects. `error.InvalidInput` for a URL that is not http or https, `error.Unsupported` for `https://`, which needs a Client with a TLS layer. |
+| `request(method: []u8, url_text: []u8, headers: *List(Header), body: []u8) -> !Response` | Perform a request with a plain `client()`, following redirects. `error.InvalidInput` for a URL that is not http or https, `error.Unsupported` for `https://`, which needs `client_with` and a TLS layer. |
 | `get(url: []u8) -> !Response` |  |
 | `post(url: []u8, content_type: []u8, body: []u8) -> !Response` |  |
 | `(method) header(self: *Self, name: []u8) -> ?[]u8` |  |
@@ -762,3 +766,31 @@ Types: `Uuid`
 | `max() -> Uuid` | The max UUID, every bit one. |
 | `from_bytes(data: []u8) -> ?Uuid` | A UUID from its 16 bytes; null for any other length. |
 | `parse(text: []u8) -> ?Uuid` | A UUID from its text: the canonical form with hyphens, in either case, or the 32 hex digits alone, either one also in braces or after `urn:uuid:`. Null for anything else. |
+
+## std.websocket
+
+std.websocket: a WebSocket client (RFC 6455), written in Nexium over std.http's transports. `import std.websocket` then: var ws = try websocket.connect("ws://localhost:8080/chat", 10000) try ws.send_text("hello") while true { let m = try ws.recv()                   // a whole message if m.op == websocket.CLOSE { break }    // the server's close, or the end println("{}", .{m.data}) } ws.close(1000, "done") var gw = try websocket.connect_with(NxTls, &mut layer, "wss://gateway.discord.gg/?v=10", 10000) var api = websocket.socket(NxTls, &mut layer)   // with headers of its own api.header("Authorization", token) try api.open("wss://example.com/stream", 10000) `wss://` goes over a TLS layer, the slot std.http's client uses (`http.Transport`, which nxtls fills). No extensions are asked for (no compression). A message arrives whole, its fragments joined, up to `max_message` bytes; `recv` answers a ping with a pong on its way. The first protocol mistake by the server ends the connection, with the reason in `problem`. The handshake's key and every frame's mask come from `random.secure`. A `recv` that waits longer than the timeout is `error.Timeout` and may be called again: nothing that came is lost.
+
+Types: `Message`, `Decoder`, `Socket(T){`
+
+| function | what it does |
+| --- | --- |
+| `accept_for(key: []u8) -> String` | The Sec-WebSocket-Accept a server answers `key` with: the base64 of the SHA-1 of the key and RFC 6455's GUID. |
+| `request(host: []u8, path: []u8, key: []u8, headers: []http.Header) -> String` | The opening request for `host` (the Host header, as the server knows itself) and `path` (with its query); `headers` are added. |
+| `check_response(head: []u8, key: []u8) -> ?String` | What is wrong with the server's answer to the handshake (`head`, up to but not including the blank line), or null when it accepts `key`. |
+| `frame(op: u8, payload: []u8, mask: []u8) -> String` | A client frame: final, opcode `op`, masked with the 4 bytes of `mask`. |
+| `close_payload(code: u16, reason: []u8) -> String` | The payload of a close frame: the code, big-endian, then the reason, cut to 123 bytes (a control frame carries 125) at a character's start. |
+| `(method) new(max: usize) -> Decoder` |  |
+| `(method) feed(self: *mut Self, data: []u8)` |  |
+| `(method) next(self: *mut Self) -> ?Message` | The next whole message, a control frame as it comes (PING, PONG, CLOSE), or null when more bytes are needed or `problem` is set. |
+| `connect(url: []u8, timeout_ms: i64) -> !Socket(http.Plain)` | Connects to a `ws://` URL and completes the handshake; the connect and each wait for data take at most `timeout_ms` (0: no limit). |
+| `connect_with(comptime T: type where T: http.Transport, tls: *mut T, url: []u8, timeout_ms: i64) -> !Socket(T)` | Connects to a `wss://` (or `ws://`) URL, TLS over `tls`, a TLS layer: an `http.Transport`, such as nxtls's. |
+| `socket(comptime T: type, tls: ?*mut T) -> Socket(T)` | A socket to open, after `header` has added what the handshake should carry (Authorization, Origin, Sec-WebSocket-Protocol). `tls` may be null for `ws://`. |
+| `(method) header(self: *mut Self, name: []u8, value: []u8)` | A header for the handshake to carry. |
+| `(method) open(self: *mut Self, url: []u8, timeout_ms: i64) -> !void` | Connects to a `ws://` or `wss://` URL and completes the handshake; `wss://` without a TLS layer is `error.Unsupported`, a URL of another scheme and an answer that is not a WebSocket's are `error.InvalidInput` (`problem` says how). |
+| `(method) is_open(self: *Self) -> bool` | Whether messages can still be sent. |
+| `(method) send_text(self: *mut Self, data: []u8) -> !void` | Sends a text message; `data` should be UTF-8. |
+| `(method) send_binary(self: *mut Self, data: []u8) -> !void` | Sends a binary message. |
+| `(method) ping(self: *mut Self, data: []u8) -> !void` | Sends a ping (at most 125 bytes); its pong comes back through `recv`. |
+| `(method) recv(self: *mut Self) -> !Message` | The next message: TEXT or BINARY whole, a PONG, or CLOSE, either the server's (its code and reason) or the end of the connection (1006, with `problem` saying so). A ping is answered on the way. `error.Timeout` when nothing whole came in time (call again: nothing is lost), `error.Closed` once a CLOSE was returned, and `error.InvalidInput` for the server's protocol mistake (`problem` says which), which ends the connection. |
+| `(method) close(self: *mut Self, code: u16, reason: []u8)` | Closes the connection with a status (1000: normal) and a reason: sends the close frame, reads until the server's close answers it, the connection ends or a wait times out, then ends the connection. Messages that come meanwhile are dropped. |

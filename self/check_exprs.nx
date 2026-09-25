@@ -1091,6 +1091,22 @@ impl Checker {
             if name == "List" or name == "Map" { return true }
             if let it = self.lookup(m, name[..]) { return it.kind == ItemKind.Struct or it.kind == ItemKind.Enum }
         }
+        // `http.Plain`, `mod.Pair(i32)`: a type of an imported module, as
+        // `expr_as_type` reads them
+        if n.k == parser.NodeKind.FieldE or n.k == parser.NodeKind.MethodCall {
+            let base = self.node(m, n.x)
+            if base.k != parser.NodeKind.Ident { return false }
+            let qualifier = base.name.clone()
+            let name = n.name.clone()
+            let generic = n.k == parser.NodeKind.MethodCall
+            if self.lookup_local(qualifier[..]) != NONE { return false }
+            let q = self.lookup(m, qualifier[..]) orelse return false
+            if q.kind != ItemKind.Module { return false }
+            if let it = self.lookup(q.id, name[..]) {
+                if generic { return it.kind == ItemKind.Struct or it.kind == ItemKind.Enum }
+                return it.kind == ItemKind.Struct or it.kind == ItemKind.Enum or it.kind == ItemKind.Alias
+            }
+        }
         return false
     }
 
@@ -1182,7 +1198,10 @@ impl Checker {
     }
 
     /// Does `t` satisfy a trait: the derivable ones by their rules, others by an impl.
-    fn type_satisfies_trait(self: *mut Self, t0: usize, trait_name: []u8) -> bool {
+    fn type_satisfies_trait(self: *mut Self, t0: usize, trait_name0: []u8) -> bool {
+        // `http.Transport`: impls know a trait by its own name
+        var trait_name = trait_name0
+        if let dot = trait_name0.find(".") { trait_name = trait_name0[dot + 1..trait_name0.len] }
         let t = self.tys.resolve(t0, true)
         let k = self.tys.kind(t)
         if trait_name == "Clone" {

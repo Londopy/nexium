@@ -356,7 +356,7 @@ using arena {
 - [El Topo](https://londopy.github.io/nexium/topo/01-base-camp.html) (inglés): el tutorial, desde instalar el compilador hasta una red neuronal, una GUI y una biblioteca distribuida; la fuente está en [`topo/`](../../../topo/). Todo lo anterior, renderizado, está en [londopy.github.io/nexium](https://londopy.github.io/nexium/).
 - [Instalación](../../install.md) (inglés): el instalador de Windows, el script de macOS/Linux, la compilación desde fuente, las sumas de comprobación y cómo `nx` encuentra un compilador de C.
 - [Paquetes](../../packages.md) (inglés): `nexium.toml`, `nx add`, `nx fetch`, dependencias por git o por ruta, el archivo de bloqueo.
-- [Biblioteca estándar](../../std.md) (inglés): los módulos escritos en Nexium (`std.strings`, `std.lists`, `std.bytes`, `std.num`, `std.json`, `std.args`, `std.fs`, `std.time`, `std.regex`, `std.text`, `std.testing`, `std.stream`, `std.net`, `std.http`, `std.thread`, `std.process`, `std.sort`, `std.heap`, `std.set`, `std.deque`, `std.hash`, `std.path`, `std.env`, `std.uuid`, `std.log`, `std.csv`, `std.toml`, `std.base64`).
+- [Biblioteca estándar](../../std.md) (inglés): los módulos escritos en Nexium (`std.strings`, `std.lists`, `std.bytes`, `std.num`, `std.json`, `std.args`, `std.fs`, `std.time`, `std.regex`, `std.text`, `std.testing`, `std.stream`, `std.net`, `std.http`, `std.thread`, `std.process`, `std.sort`, `std.heap`, `std.set`, `std.deque`, `std.hash`, `std.path`, `std.env`, `std.uuid`, `std.log`, `std.csv`, `std.toml`, `std.base64`, `std.websocket`).
 - [Las cifras](https://londopy.github.io/nexium/docs/numbers.html) (inglés): cuatro programas en cinco lenguajes, medidos cada semana en un mismo runner.
 - [nexium-gui](../../gui.md) (inglés): la biblioteca de GUI de modo inmediato y cómo escribir un widget.
 - [Publicar tu programa](../../releasing-your-program.md) (inglés): binarios para tres plataformas a partir de una etiqueta, instaladores opcionales.
@@ -461,11 +461,11 @@ vistas, errores desde 1.3. 1.4, una biblioteca estándar que ya no haya que
 completar, está en marcha: las colecciones (`std.sort`, `std.heap`,
 `std.set`, `std.deque`), `std.hash`, `random.secure`, rutas, el entorno y
 las carpetas de configuración, UUID, registros, CSV, TOML y base64 ya están,
-veintiocho módulos en total; `Map` está protegido contra la
+veintinueve módulos en total; `Map` está protegido contra la
 inundación de hashes y conserva el orden en que llegaron las claves; `std.time` lee
 las zonas horarias de la base de datos de la plataforma, y el cliente de
-`std.http` habla HTTPS a través de una capa TLS, que pone nxtls; después vienen
-los websockets y un paquete para Discord. Lo que Nexium todavía no es, y dónde
+`std.http` habla HTTPS a través de una capa TLS, que pone nxtls, como `std.websocket`; después viene
+un paquete para Discord. Lo que Nexium todavía no es, y dónde
 se responde cada punto, está en [una sección de la hoja de
 ruta](../../../ROADMAP.md#what-10-is-not-yet): las pruebas de rendimiento son cuatro
 programas ([Velocidad](#velocidad)), y el ecosistema es un solo mantenedor y
