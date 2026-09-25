@@ -537,10 +537,15 @@ returns `error.InvalidRecord` instead.
 items are `b.item`. `import std.name` loads a standard library module that
 is written in Nexium and embedded in the compiler: `strings`, `lists`,
 `bytes`, `num`, `json`, `args`, `fs`, `time`, `regex`, `text`, `testing`,
-`stream`, `net`, `http`, `thread`, `process` (see `docs/std.md`); std
-modules may import each other. The builtin namespaces `math`, `io`, `os`,
-`process`, `time`, `random`, `mem`, `net`, `thread`, `sync` are always in
-scope and need no import. `error` names the anonymous error set as a type.
+`stream`, `net`, `http`, `thread`, `process`, `sort`, `heap`, `set`,
+`deque`, `hash`, `path`, `env`, `uuid`, `log`, `csv`, `toml`, `base64`
+(see `docs/std.md`); std modules may import each other. The builtin
+namespaces `math`, `io`, `os`, `process`, `time`, `random`, `mem`, `net`,
+`thread`, `sync` are always in scope and need no import. A std module of
+the same name (`std.time`, `std.process`, `std.net`, `std.thread`) adds to
+its namespace rather than hiding it: a call the module does not have goes
+to the builtin, so `time.now()` works in a file that imports `std.time`.
+`error` names the anonymous error set as a type.
 Packages: `import dep` and `import dep.module` load a dependency named in
 the program's `nexium.toml` (`src/lib.nx` and `src/module.nx` of the
 package, from a path or a git repository); inside a package, imports

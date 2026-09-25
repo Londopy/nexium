@@ -1,0 +1,6 @@
+// EXPECT: module `std.time` has no function `nope`
+import std.time
+
+fn main() {
+    _ = time.nope()
+}

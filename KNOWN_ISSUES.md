@@ -10,14 +10,6 @@ Fixed bugs are not listed here; `CHANGELOG.md` and `git log` have them.
 
 ## Compiler
 
-- **`import std.time` hides the builtin `time` namespace.** In a file that
-  imports it, `time.now()` and `time.monotonic()` are errors ("module
-  `std.time` has no function `now`"), though the builtins exist in every
-  other file; std.time names its own `now_utc()` and `now_local()`. Found
-  timing nxtls's `x509.check_chain`, whose file imports std.time. Fix:
-  look a member up in the builtin namespace when the module of that name
-  does not have it, or have std.time forward `now` and `monotonic`.
-
 ## Self-hosting
 
 - **`nx tir --sigs` omits body-dependent facts** (error ids, alias types,

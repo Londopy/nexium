@@ -1,0 +1,14 @@
+// SPEC 11: a std module named like a builtin namespace adds to it rather
+// than hiding it. With `std.time` imported, `time.now()`, `time.monotonic()`
+// and `time.sleep()` are still the builtins, and `time.now_utc()` is the
+// module's.
+import std.time
+
+fn main() {
+    let ms = time.now()
+    let t0 = time.monotonic()
+    time.sleep(1)
+    let t1 = time.monotonic()
+    let d = time.now_utc()
+    println("{} {} {}", .{ms > 1700000000000, t1 > t0, d.year >= 2026})
+}

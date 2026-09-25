@@ -193,6 +193,13 @@ impl Checker {
                     return self.call_fn_def(item.id, NONE, args, expected, start, end)
                 }
             }
+            // a std module named like a builtin namespace (`std.time` and
+            // `time`, `std.process` and `process`) hides none of it: what
+            // the module does not have, the namespace answers
+            let full = self.mods[m].name[..]
+            if full.starts_with("std.") and self.builtin_ns_has(full[4..], name) {
+                return self.check_namespace_call(full[4..], name, args, expected, start, end)
+            }
             if let why = self.cimport_unsupported.get(format("{}:{}", .{m, name})[..]) {
                 self.fail_here(start, format("`{}` was imported from `{}` but cannot be called: {}", .{name, self.mods[m].name[8..], why})[..])
             } else {
@@ -275,6 +282,18 @@ impl Checker {
         self.fail_here(start, format("`{}` has no function `{}`", .{ns, name})[..])
         for a in args { _ = self.check_expr(a, NONE) }
         return self.error_expr(start, end)
+    }
+
+    // whether the builtin namespace `ns` has the function `name`
+    fn builtin_ns_has(self: *Self, ns: []u8, name: []u8) -> bool {
+        _ = self
+        if ns == "mem" and name == "copy" { return true }
+        if ns == "thread" and name == "start" { return true }
+        let lookup_ns = if ns == "process" { "os" } else { ns }
+        for f in NS_FNS {
+            if f.ns == lookup_ns and f.name == name { return true }
+        }
+        return false
     }
 
     fn check_math_call(self: *mut Self, name: []u8, args: []usize, expected: usize, start: usize, end: usize) -> usize {

@@ -129,6 +129,11 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Fixed
 
+- `import std.time` hid the builtin `time` namespace: `time.now()` and
+  `time.monotonic()` were errors ("module `std.time` has no function
+  `now`") in a file that imported it. A std module named like a builtin
+  namespace (`time`, `process`, `net`, `thread`) now adds to it: a call
+  the module does not have goes to the builtin (SPEC 11).
 - `nx fmt` wrote a negated parenthesis with a space, `if ! (a or b)`:
   the rule that keeps a call's parenthesis tight let `!` through as if
   it began a spaced expression. `!` is tight before `(` now, as before a
