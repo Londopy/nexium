@@ -221,6 +221,10 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   and the call for one with too many arguments ("`spawn` takes 2
   argument(s) but 4 were given"); `mod.Type` and `mod.Type(A)` are type
   arguments there, as they are in a type.
+- `nx fmt` joined an enum literal to the operator or keyword before it,
+  `return.Blue` and `x ==.Red`, reading the `.` as member access; one that
+  begins a value is spaced as a word now, and member access and
+  `error.Name` stay tight.
 - `nx fmt` joined a function's brace to a return type that ends in a
   trait object, `-> !dyn Transport{`, taking `Transport {` for a struct
   literal; `dyn` and `weak` are passed over, as `mut` was, on the way back

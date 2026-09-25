@@ -4191,7 +4191,7 @@ static const char nx_str_857[6122] = "// std.bytes: encodings and byte-level uti
 static const char nx_str_858[3] = "fs";
 static const char nx_str_859[9369] = "// std.fs: files, directories and paths, written in Nexium.\n//\n// `import std.fs` then:\n//\n//     if fs.exists(\"notes.txt\") { ... }\n//     try fs.make_dirs(\"out/logs\")\n//     for name in try fs.list(\"out\") { ... }\n//     for path in try fs.walk(\"src\") { ... }        // every file, recursively\n//     let cfg = fs.join(fs.parent(argv0), \"app.toml\")\n//\n// The platform calls are the `io.*` builtins (documented in the language\n// reference); this module adds sorted listings, recursive create and remove,\n// and a walker. Its path functions call std.path's, which has more. Paths\n// are byte strings; `/` and `\\` both separate components on every\n// platform, and results use `/` unless the input used `\\`.\n\nimport std.path\n\n// ------------------------------------------------------------------ queries\n\n/// Is there a file or directory at `path`?\npub fn exists(path: []u8) -> bool {\n    return io.file_kind(path) != 0\n}\n\n/// Is `path` an existing regular file (anything that is not a directory)?\npub fn is_file(path: []u8) -> bool {\n    return io.file_kind(path) == 1\n}\n\n/// Is `path` an existing directory?\npub fn is_dir(path: []u8) -> bool {\n    return io.file_kind(path) == 2\n}\n\n/// The size of a file in bytes.\npub fn size(path: []u8) -> !u64 {\n    return io.file_size(path)\n}\n\n/// The modification time in milliseconds since the epoch.\npub fn modified(path: []u8) -> !i64 {\n    return io.file_modified(path)\n}\n\n// ------------------------------------------------------------------ contents\n\n/// The whole file as a String.\npub fn read(path: []u8) -> !String {\n    return io.read_file(path)\n}\n\n/// The lines of a file, without their line endings.\npub fn read_lines(path: []u8) -> !List(String) {\n    let text = try io.read_file(path)\n    var out = List(String).new()\n    for l in text.lines() { out.append(String.from(l)) }\n    return out\n}\n\n/// Write (replace) a file.\npub fn write(path: []u8, data: []u8) -> !void {\n    return io.write_file(path, data)\n}\n\n/// Append to a file, creating it when missing.\npub fn append(path: []u8, data: []u8) -> !void {\n    return io.append_file(path, data)\n}\n\n/// Copy a file's contents to a new path (the destination is replaced).\npub fn copy(from: []u8, to: []u8) -> !void {\n    let data = try io.read_file(from)\n    return io.write_file(to, data)\n}\n\n// ------------------------------------------------------------------ directories\n\n/// The names in a directory, sorted, without `.` and `..`.\npub fn list(path: []u8) -> !List(String) {\n    var names = try io.list_dir(path)\n    sort_names(&mut names)\n    return names\n}\n\n/// Create one directory; fine when it already exists.\npub fn make_dir(path: []u8) -> !void {\n    return io.make_dir(path)\n}\n\n/// Create a directory and every missing parent.\npub fn make_dirs(path: []u8) -> !void {\n    if path.len == 0 or is_dir(path) { return }\n    let p = parent(path)\n    if p.len > 0 and p.len < path.len and !is_dir(p) { try make_dirs(p) }\n    return io.make_dir(path)\n}\n\n/// Remove a file or an empty directory.\npub fn remove(path: []u8) -> !void {\n    if is_dir(path) { return io.remove_dir(path) }\n    return io.remove_file(path)\n}\n\n/// Remove a file, or a directory with everything in it.\npub fn remove_all(path: []u8) -> !void {\n    if is_dir(path) {\n        let names = try io.list_dir(path)\n        for n in names {\n            let child = join(path, n)\n            try remove_all(child)\n        }\n        return io.remove_dir(path)\n    }\n    if exists(path) { return io.remove_file(path) }\n}\n\n/// Rename or move a file or directory (an existing destination file is replaced).\npub fn rename(from: []u8, to: []u8) -> !void {\n    return io.rename(from, to)\n}\n\n/// Every file under `root`, recursively, as paths joined onto `root`, sorted\n/// directory by directory. Directories themselves are not listed.\npub fn walk(root: []u8) -> !List(String) {\n    var out = List(String).new()\n    try walk_into(root, &mut out)\n    return out\n}\n\nfn walk_into(dir: []u8, out: *mut List(String)) -> !void {\n    let names = try list(dir)\n    for n in names {\n        let child = join(dir, n)\n        if is_dir(child) {\n            try walk_into(child, out)\n        } else {\n            out.append(child)\n        }\n    }\n}\n\n/// The current working directory.\npub fn cwd() -> !String {\n    return io.cwd()\n}\n\n/// The directory for temporary files.\npub fn temp_dir() -> String {\n    return io.temp_dir()\n}\n\n/// A fresh path in the temporary directory, `<temp>/<prefix><number>`, that\n/// does not exist yet. The caller creates it.\npub fn temp_path(prefix: []u8) -> String {\n    let base = io.temp_dir()\n    var n = time.now()\n    while true {\n        var candidate = join(base, prefix)\n        candidate.append(format(\"{}\", .{n}))\n        if !exists(candidate) { return candidate }\n        n += 1\n    }\n}\n\n// ------------------------------------------------------------------ paths\n// std.path has these; they stay here for the programs written before it.\n\n/// Does the path start at a root (`/x`, `C:\\x`, `C:/x`, `\\\\server`)? As `path.is_absolute`.\npub fn is_absolute(p: []u8) -> bool {\n    return path.is_absolute(p)\n}\n\n/// `dir/name`; a separator is added only when needed, and an absolute `name`\n/// replaces `dir`. As `path.join`.\npub fn join(dir: []u8, name: []u8) -> String {\n    return path.join(dir, name)\n}\n\n/// Everything before the last separator: `a/b/c.txt` -> `a/b`, `c.txt` -> ``,\n/// `/c.txt` -> `/`. As `path.parent`.\npub fn parent(p: []u8) -> []u8 {\n    return path.parent(p)\n}\n\n/// The last component: `a/b/c.txt` -> `c.txt`. As `path.base_name`.\npub fn base_name(p: []u8) -> []u8 {\n    return path.base_name(p)\n}\n\n/// The extension without the dot: `a/b.tar.gz` -> `gz`, `Makefile` -> ``. As `path.extension`.\npub fn extension(p: []u8) -> []u8 {\n    return path.extension(p)\n}\n\n/// The base name without its extension: `a/b.tar.gz` -> `b.tar`. As `path.stem`.\npub fn stem(p: []u8) -> []u8 {\n    return path.stem(p)\n}\n\n/// The path with its extension replaced (or added): `a/b.txt`, `md` -> `a/b.md`. As `path.with_extension`.\npub fn with_extension(p: []u8, ext: []u8) -> String {\n    return path.with_extension(p, ext)\n}\n\n/// Collapse `.` and `..` components and repeated separators:\n/// `a/./b/../c//d` -> `a/c/d`. A leading `..` is kept. As `path.normalize`.\npub fn normalize(p: []u8) -> String {\n    return path.normalize(p)\n}\n\n// ------------------------------------------------------------------ helpers\n\nfn less(a: []u8, b: []u8) -> bool {\n    var i: usize = 0\n    while i < a.len and i < b.len {\n        if a[i] != b[i] { return a[i] < b[i] }\n        i += 1\n    }\n    return a.len < b.len\n}\n\nfn sort_names(names: *mut List(String)) {\n    var i: usize = 1\n    while i < names.len {\n        var j = i\n        while j > 0 and less(names[j], names[j - 1]) {\n            let s = names.remove(j)\n            names.insert(j - 1, s)\n            j -= 1\n        }\n        i += 1\n    }\n}\n\n// ------------------------------------------------------------------ tests\n\ntest \"path parts\" {\n    expect_eq(parent(\"a/b/c.txt\"), \"a/b\")\n    expect_eq(parent(\"c.txt\"), \"\")\n    expect_eq(parent(\"/c.txt\"), \"/\")\n    expect_eq(parent(\"a/b/\"), \"a\")\n    expect_eq(parent(\"C:\\\\x\\\\y.txt\"), \"C:\\\\x\")\n    expect_eq(parent(\"C:\\\\y.txt\"), \"C:\\\\\")\n    expect_eq(base_name(\"a/b/c.txt\"), \"c.txt\")\n    expect_eq(base_name(\"a/b/\"), \"b\")\n    expect_eq(extension(\"a/b.tar.gz\"), \"gz\")\n    expect_eq(extension(\"Makefile\"), \"\")\n    expect_eq(extension(\".bashrc\"), \"\")\n    expect_eq(stem(\"a/b.tar.gz\"), \"b.tar\")\n    expect_eq(stem(\".bashrc\"), \".bashrc\")\n    expect_eq(with_extension(\"a/b.txt\", \"md\"), \"a/b.md\")\n    expect_eq(with_extension(\"a/b\", \"md\"), \"a/b.md\")\n    expect_eq(with_extension(\"a/b.txt\", \"\"), \"a/b\")\n}\n\ntest \"join and absolute\" {\n    expect_eq(join(\"a\", \"b\"), \"a/b\")\n    expect_eq(join(\"a/\", \"b\"), \"a/b\")\n    expect_eq(join(\"\", \"b\"), \"b\")\n    expect_eq(join(\"a\", \"/b\"), \"/b\")\n    expect_eq(join(\"C:\\\\x\", \"y\"), \"C:\\\\x\\\\y\")\n    expect(is_absolute(\"/x\"))\n    expect(is_absolute(\"C:\\\\x\"))\n    expect(is_absolute(\"C:/x\"))\n    expect(!is_absolute(\"x/y\"))\n    expect(!is_absolute(\"\"))\n}\n\ntest \"normalize\" {\n    expect_eq(normalize(\"a/./b/../c//d\"), \"a/c/d\")\n    expect_eq(normalize(\"/a/../..\"), \"/\")\n    expect_eq(normalize(\"../a\"), \"../a\")\n    expect_eq(normalize(\"a/..\"), \".\")\n    expect_eq(normalize(\"C:\\\\a\\\\..\\\\b\"), \"C:\\\\b\")\n}\n\ntest \"files and directories\" {\n    let root = temp_path(\"nxfs-\")\n    try make_dirs(join(root, \"deep/er\"))\n    expect(is_dir(root))\n    expect(is_dir(join(root, \"deep/er\")))\n    let f = join(root, \"deep/er/note.txt\")\n    try write(f, \"one\\ntwo\\n\")\n    try append(f, \"three\\n\")\n    expect(is_file(f))\n    expect(!is_dir(f))\n    expect_eq(try size(f), 14)\n    let lines = try read_lines(f)\n    expect_eq(lines.len, 3)\n    expect_eq(lines[2], \"three\")\n    try copy(f, join(root, \"copy.txt\"))\n    let names = try list(root)\n    expect_eq(names.len, 2)\n    expect_eq(names[0], \"copy.txt\")\n    expect_eq(names[1], \"deep\")\n    let files = try walk(root)\n    expect_eq(files.len, 2)\n    expect_eq(base_name(files[1]), \"note.txt\")\n    try rename(join(root, \"copy.txt\"), join(root, \"moved.txt\"))\n    expect(!exists(join(root, \"copy.txt\")))\n    expect(exists(join(root, \"moved.txt\")))\n    var missing = false\n    _ = size(\"definitely/missing\") catch |e| {\n        missing = e == error.NotFound\n        0\n    }\n    expect(missing)\n    try remove_all(root)\n    expect(!exists(root))\n}\n";
 static const char nx_str_860[5] = "http";
-static const char nx_str_861[54022] = "// std.http: an HTTP/1.1 client and a small server, written in Nexium over\n// std.net and std.stream.\n//\n// `import std.http` then:\n//\n//     let r = try http.get(\"http://example.com/\")\n//     println(\"{} {}\", .{r.status, r.body.len})\n//     if let ct = r.header(\"content-type\") { ... }\n//\n//     var client = http.client_with(NxTls, &mut layer)   // a TLS layer, for https://\n//     client.timeout_ms = 10000                   // and timeouts, redirects, limits\n//     var s = try client.open(\"GET\", \"https://example.com/big\", &headers, \"\")\n//     while true {                                // the body as it arrives\n//         let piece = (try s.next()) orelse break\n//         ...\n//     }\n//     s.close()\n//\n//     fn hello(req: *http.Request) -> http.Response {\n//         return http.text(200, \"hello from Nexium\")\n//     }\n//     var router = http.Router.new()\n//     router.get(\"/\", hello)\n//     var server = try http.Server.bind(\"127.0.0.1\", 8080)\n//     try server.serve(&router)                  // forever, one request at a time\n//\n// The client speaks HTTP/1.1 with `Connection: close` over a `Transport`:\n// TCP for `http://`, and for `https://` the TLS layer a program hands its\n// client, the slot of decision 120 (nxtls, the TLS 1.3 client written in\n// Nexium, fills it; the platform's TLS will). It reads a body by\n// Content-Length, chunked encoding, or until the connection ends (refused\n// when a TLS connection was cut rather than closed, as nothing then shows\n// the body is whole), whole or as it arrives, follows up to five\n// redirects, and gives up on a connect or a wait after `timeout_ms`. The\n// server handles one connection at a time, which is what a tool, a local\n// dashboard or a test needs; threads come later in the roadmap.\n\nimport std.net\nimport std.stream\nimport std.fs\nimport std.thread\n\nconst MAX_REDIRECTS: usize = 5\nconst MAX_HEADER_LINES: usize = 200\n// the longest request, status, header or chunk-size line read\nconst MAX_LINE: usize = 65536\n/// The largest request body `read_request` accepts (`error.TooLarge`\n/// past it); `read_request_max` takes another.\npub const MAX_BODY: usize = 16777216\n\npub struct Header derive(Clone) {\n    name: String\n    value: String\n}\n\nfn header_value(headers: *List(Header), name: []u8) -> ?[]u8 {\n    for i in 0..headers.len {\n        if headers[i].name.eq_ignore_case(name) { return headers[i].value }\n    }\n    return null\n}\n\nfn find_header(headers: *List(Header), name: []u8) -> ?usize {\n    for h, i in headers {\n        if h.name.eq_ignore_case(name) { return i }\n    }\n    return null\n}\n\n// ------------------------------------------------------------------ URLs\n\npub struct Url {\n    scheme: String\n    host: String\n    port: u16\n    /// path with the query, e.g. `/a/b?x=1`; never empty\n    path: String\n}\n\n/// Parse `http://host[:port][/path]`; null for anything else.\npub fn parse_url(s: []u8) -> ?Url {\n    var rest = s\n    var scheme = \"http\"\n    if rest.starts_with(\"http://\") {\n        rest = rest[7..rest.len]\n    } else if rest.starts_with(\"https://\") {\n        scheme = \"https\"\n        rest = rest[8..rest.len]\n    } else {\n        return null\n    }\n    var end: usize = 0\n    while end < rest.len and rest[end] != '/' and rest[end] != '?' { end += 1 }\n    let hostport = rest[0..end]\n    var path = rest[end..rest.len]\n    // the host is copied out: `a` owns its text only until the `if let` ends\n    var host = String.from(hostport)\n    var port: u16 = if scheme == \"https\" { 443 } else { 80 }\n    if let a = net.parse_addr(hostport) {\n        host = a.host.clone()\n        port = a.port\n    }\n    if host.len == 0 { return null }\n    var p = String.new()\n    if path.len == 0 or path[0] == '?' { p.append(\"/\") }\n    p.append(path)\n    return Url{ .scheme = String.from(scheme), .host = host, .port = port, .path = p }\n}\n\n// ------------------------------------------------------------------ responses\n\npub struct Response {\n    status: u16\n    reason: String\n    headers: List(Header)\n    body: String\n}\n\nimpl Response {\n    /// A header value, case-insensitive; null when absent.\n    pub fn header(self: *Self, name: []u8) -> ?[]u8 {\n        return header_value(&self.headers, name)\n    }\n\n    /// Add or replace a header (builder style).\n    pub fn with_header(self: *mut Self, name: []u8, value: []u8) {\n        if let i = find_header(&self.headers, name) {\n            self.headers[i].value = String.from(value)\n            return\n        }\n        self.headers.append(Header{ .name = String.from(name), .value = String.from(value) })\n    }\n\n    pub fn ok(self: *Self) -> bool {\n        return self.status >= 200 and self.status < 300\n    }\n}\n\n/// The standard reason phrase for a status.\npub fn reason_for(status: u16) -> []u8 {\n    if status == 200 { return \"OK\" }\n    if status == 201 { return \"Created\" }\n    if status == 204 { return \"No Content\" }\n    if status == 301 { return \"Moved Permanently\" }\n    if status == 302 { return \"Found\" }\n    if status == 304 { return \"Not Modified\" }\n    if status == 400 { return \"Bad Request\" }\n    if status == 401 { return \"Unauthorized\" }\n    if status == 403 { return \"Forbidden\" }\n    if status == 404 { return \"Not Found\" }\n    if status == 405 { return \"Method Not Allowed\" }\n    if status == 500 { return \"Internal Server Error\" }\n    return \"Unknown\"\n}\n\n/// A response with a body and a content type.\npub fn respond(status: u16, content_type: []u8, body: []u8) -> Response {\n    var headers = List(Header).new()\n    headers.append(Header{ .name = String.from(\"Content-Type\"), .value = String.from(content_type) })\n    return Response{ .status = status, .reason = String.from(reason_for(status)), .headers = headers, .body = String.from(body) }\n}\n\npub fn text(status: u16, body: []u8) -> Response {\n    return respond(status, \"text/plain; charset=utf-8\", body)\n}\n\npub fn html(status: u16, body: []u8) -> Response {\n    return respond(status, \"text/html; charset=utf-8\", body)\n}\n\npub fn json(status: u16, body: []u8) -> Response {\n    return respond(status, \"application/json\", body)\n}\n\npub fn not_found() -> Response {\n    return text(404, \"not found\\n\")\n}\n\n/// A redirect to `location`.\npub fn redirect(location: []u8) -> Response {\n    var r = text(302, \"\")\n    r.with_header(\"Location\", location)\n    return r\n}\n\n/// The content type for a file name, by extension.\npub fn content_type_for(path: []u8) -> []u8 {\n    let ext = fs.extension(path)\n    if ext == \"html\" or ext == \"htm\" { return \"text/html; charset=utf-8\" }\n    if ext == \"css\" { return \"text/css\" }\n    if ext == \"js\" { return \"text/javascript\" }\n    if ext == \"json\" { return \"application/json\" }\n    if ext == \"txt\" or ext == \"md\" or ext == \"nx\" { return \"text/plain; charset=utf-8\" }\n    if ext == \"png\" { return \"image/png\" }\n    if ext == \"jpg\" or ext == \"jpeg\" { return \"image/jpeg\" }\n    if ext == \"gif\" { return \"image/gif\" }\n    if ext == \"svg\" { return \"image/svg+xml\" }\n    if ext == \"ico\" { return \"image/x-icon\" }\n    if ext == \"pdf\" { return \"application/pdf\" }\n    return \"application/octet-stream\"\n}\n\n// ------------------------------------------------------------------ wire format\n\nfn parse_status(line: []u8) -> ?(u16, []u8) {\n    // HTTP/1.1 200 OK\n    if !line.starts_with(\"HTTP/\") { return null }\n    var i: usize = 0\n    while i < line.len and line[i] != ' ' { i += 1 }\n    if i + 4 > line.len { return null }\n    let status = line[i + 1..i + 4].parse_int(u16) catch return null\n    var reason = line[0..0]\n    if i + 5 <= line.len { reason = line[i + 5..line.len] }\n    return (status, reason)\n}\n\n/// What the parser reads a message from: a `stream.Reader` over a socket\n/// or a file, or a transport's input.\ntrait Source {\n    /// The next line without its `\\r\\n`, `error.TooLarge` past `max`\n    /// bytes; null at the end.\n    fn line(self: *mut Self, max: usize) -> !?String\n    /// Up to `n` bytes; \"\" at the end.\n    fn some(self: *mut Self, n: usize) -> !String\n    /// Everything up to the end.\n    fn rest(self: *mut Self) -> !String\n}\n\nimpl Source for stream.Reader {\n    fn line(self: *mut Self, max: usize) -> !?String { return self.read_line_max(max) }\n    fn some(self: *mut Self, n: usize) -> !String { return self.read(n) }\n    fn rest(self: *mut Self) -> !String { return self.read_all() }\n}\n\nfn read_headers(comptime R: type where R: Source, r: *mut R) -> !List(Header) {\n    var headers = List(Header).new()\n    var n: usize = 0\n    while true {\n        let line = (try r.line(MAX_LINE)) orelse break\n        if line.len == 0 { break }\n        n += 1\n        if n > MAX_HEADER_LINES { return error.InvalidInput }\n        var c: usize = 0\n        while c < line.len and line[c] != ':' { c += 1 }\n        if c == line.len { return error.InvalidInput }\n        headers.append(Header{ .name = String.from(line[0..c]), .value = String.from(line[c + 1..line.len].trim()) })\n    }\n    return headers\n}\n\nfn hex_value(s: []u8) -> ?usize {\n    var v: usize = 0\n    var any = false\n    for c in s {\n        var d: usize = 0\n        if c >= '0' and c <= '9' { d = (c - '0') as usize }\n        else if c >= 'a' and c <= 'f' { d = (c - 'a' + 10) as usize }\n        else if c >= 'A' and c <= 'F' { d = (c - 'A' + 10) as usize }\n        else if c == ';' or c == ' ' { break }\n        else { return null }\n        // a size past usize is not one a body can have\n        v = (v.checked_mul(16) orelse return null).checked_add(d) orelse return null\n        any = true\n    }\n    return if any { v } else { null }\n}\n\n/// Whether a Transfer-Encoding ends in chunked (`chunked`, `gzip, chunked`):\n/// then chunks frame the body.\nfn is_chunked(te: []u8) -> bool {\n    var start = te.len\n    while start > 0 and te[start - 1] != ',' { start -= 1 }\n    return te[start..te.len].trim().eq_ignore_case(\"chunked\")\n}\n\nfn read_exact(comptime R: type where R: Source, r: *mut R, n: usize) -> !String {\n    // the size came from the peer: the buffer grows as the bytes arrive\n    var out = String.with_capacity(if n < 65536 { n } else { 65536 })\n    while out.len < n {\n        let chunk = try r.some(n - out.len)\n        if chunk.len == 0 { return error.Truncated }\n        out.append(chunk)\n    }\n    return out\n}\n\n/// The body the headers announce; past `max` bytes (0: no limit) it is\n/// `error.TooLarge`, found before it is read.\nfn read_body(comptime R: type where R: Source, r: *mut R, headers: *List(Header), allow_until_close: bool, max: usize) -> !String {\n    if let te = header_value(headers, \"transfer-encoding\") {\n        if is_chunked(te) {\n            var body = String.new()\n            while true {\n                let size_line = (try r.line(MAX_LINE)) orelse return error.Truncated\n                let size = hex_value(size_line) orelse return error.InvalidInput\n                if max > 0 and size > max - body.len { return error.TooLarge }\n                if size == 0 {\n                    // trailers, then the blank line\n                    while true {\n                        let t = (try r.line(MAX_LINE)) orelse break\n                        if t.len == 0 { break }\n                    }\n                    break\n                }\n                body.append(try read_exact(r, size))\n                _ = try r.line(MAX_LINE)\n            }\n            return body\n        }\n    }\n    if let cl = header_value(headers, \"content-length\") {\n        let n = cl.parse_int(usize) catch return error.InvalidInput\n        if max > 0 and n > max { return error.TooLarge }\n        return read_exact(r, n)\n    }\n    if allow_until_close { return r.rest() }\n    return String.new()\n}\n\n/// Read a full response from a reader over the connection.\npub fn read_response(r: *mut stream.Reader) -> !Response {\n    let line = (try r.line(MAX_LINE)) orelse return error.Truncated\n    let st = parse_status(line) orelse return error.InvalidInput\n    let headers = try read_headers(r)\n    let body = if st.0 == 204 or st.0 == 304 { String.new() } else { try read_body(r, &headers, true, 0) }\n    return Response{ .status = st.0, .reason = String.from(st.1), .headers = headers, .body = body }\n}\n\n/// The request line and the headers of a request, up to the blank line;\n/// `headers` add to the defaults or replace them.\nfn request_head(method: []u8, url: *Url, headers: *List(Header), body_len: usize) -> String {\n    var h = String.from(method)\n    h.push_byte(' ')\n    h.append(url.path)\n    h.append(\" HTTP/1.1\\r\\n\")\n    if header_value(headers, \"host\") == null {\n        h.append(\"Host: \")\n        // an IPv6 address goes in brackets\n        if url.host[..].find(\":\") != null {\n            h.push_byte('[')\n            h.append(url.host)\n            h.push_byte(']')\n        } else {\n            h.append(url.host)\n        }\n        let usual: u16 = if url.scheme[..] == \"https\" { 443 } else { 80 }\n        if url.port != usual { h.append(format(\":{}\", .{url.port})) }\n        h.append(\"\\r\\n\")\n    }\n    if header_value(headers, \"user-agent\") == null { h.append(\"User-Agent: nexium-http/0.4\\r\\n\") }\n    if header_value(headers, \"accept\") == null { h.append(\"Accept: */*\\r\\n\") }\n    h.append(\"Connection: close\\r\\n\")\n    let sends_body = body_len > 0 or method == \"POST\" or method == \"PUT\" or method == \"PATCH\"\n    if sends_body and header_value(headers, \"content-length\") == null { h.append(format(\"Content-Length: {}\\r\\n\", .{body_len})) }\n    for x in headers {\n        h.append(x.name)\n        h.append(\": \")\n        h.append(x.value)\n        h.append(\"\\r\\n\")\n    }\n    h.append(\"\\r\\n\")\n    return h\n}\n\n/// Write a request; `headers` may add or override the defaults.\npub fn send_request(w: *mut stream.Writer, method: []u8, url: *Url, headers: *List(Header), body: []u8) -> !void {\n    try w.write(request_head(method, url, headers, body.len)[..])\n    try w.write(body)\n    return w.flush()\n}\n\n// ------------------------------------------------------------------ transports\n\n/// A connection a request travels over, and the TLS slot of decision 120.\n/// `Plain` is TCP, for `http://`. A TLS layer implements it for\n/// `https://` and a program hands it to a client\n/// (`http.client_with(NxTls, &mut layer)`): nxtls, the TLS 1.3 client\n/// written in Nexium, today, and the platform's TLS later. nxtls fills it\n/// in a few lines:\n///\n///     struct NxTls { roots: x509.Store, conn: tls.Conn }\n///\n///     impl http.Transport for NxTls {\n///         fn connect(self: *mut Self, host: []u8, port: u16, timeout_ms: i64) -> !void {\n///             self.conn.close()\n///             self.conn = tls.connect(host, port, &self.roots, time.now(), timeout_ms)\n///             if !self.conn.is_open() { return error.ConnectionRefused }\n///         }\n///         fn send(self: *mut Self, data: []u8) -> !void { return self.conn.send(data) }\n///         fn recv(self: *mut Self) -> !String { return self.conn.recv() }\n///         fn truncated(self: *Self) -> bool { return self.conn.truncated() }\n///         fn close(self: *mut Self) { self.conn.close() }\n///     }\npub trait Transport {\n    /// Connects to `host` at `port`, closing any connection still open,\n    /// within `timeout_ms` (0: no limit); each wait for data afterwards\n    /// takes at most `timeout_ms` too, and is `error.Timeout` then.\n    fn connect(self: *mut Self, host: []u8, port: u16, timeout_ms: i64) -> !void\n    /// Sends all of `data`.\n    fn send(self: *mut Self, data: []u8) -> !void\n    /// At least one byte, or \"\" at the end of the connection.\n    fn recv(self: *mut Self) -> !String\n    /// Whether the connection ended without TLS's close_notify, so that\n    /// what came may be cut short. Plain TCP cannot tell, and says false.\n    fn truncated(self: *Self) -> bool\n    /// Closes the connection; a TLS layer says close_notify first.\n    fn close(self: *mut Self)\n}\n\n/// TCP, the transport of `http://`.\npub struct Plain {\n    conn: net.TcpStream\n}\n\nimpl Plain {\n    pub fn new() -> Plain {\n        var c = net.TcpStream.from_socket(-1)\n        c.open = false\n        return Plain{ .conn = c }\n    }\n}\n\nimpl Transport for Plain {\n    fn connect(self: *mut Self, host: []u8, port: u16, timeout_ms: i64) -> !void {\n        self.conn.close()\n        self.conn = try net.TcpStream.connect_timeout(host, port, timeout_ms)\n        self.conn.set_timeout(timeout_ms)\n    }\n\n    fn send(self: *mut Self, data: []u8) -> !void {\n        return self.conn.send(data)\n    }\n\n    fn recv(self: *mut Self) -> !String {\n        return self.conn.recv(65536)\n    }\n\n    fn truncated(self: *Self) -> bool {\n        _ = self\n        return false\n    }\n\n    fn close(self: *mut Self) {\n        self.conn.close()\n    }\n}\n\n/// A request's input, buffered for the parser: from `Plain`, or from the\n/// client's TLS layer, a `T`. Calls go straight to one or the other (no\n/// `dyn`), so a request has the effects of the transports it can use and\n/// no others: a plain client's stay `allocates blocks panics`.\nstruct Input(T) {\n    plain: ?*mut Plain\n    tls: ?*mut T\n    buf: String\n    pos: usize\n    eof: bool\n}\n\nimpl(T) Input(T) {\n    fn send(self: *mut Self, data: []u8) -> !void {\n        if let p = self.plain { return p.send(data) }\n        let t = self.tls orelse return error.Closed\n        return t.send(data)\n    }\n\n    fn recv(self: *mut Self) -> !String {\n        if let p = self.plain { return p.recv() }\n        let t = self.tls orelse return String.new()\n        return t.recv()\n    }\n\n    fn truncated(self: *Self) -> bool {\n        if let p = self.plain { return p.truncated() }\n        let t = self.tls orelse return false\n        return t.truncated()\n    }\n\n    fn close(self: *mut Self) {\n        if let p = self.plain { p.close() }\n        if let t = self.tls { t.close() }\n    }\n\n    // drop what was read and take the next piece; false at the end\n    fn fill(self: *mut Self) -> !bool {\n        if self.eof { return false }\n        if self.pos > 0 {\n            let left = String.from(self.buf[self.pos..self.buf.len])\n            self.buf = left\n            self.pos = 0\n        }\n        let got = try self.recv()\n        if got.len == 0 {\n            self.eof = true\n            return false\n        }\n        self.buf.append(got)\n        return true\n    }\n}\n\nimpl(T) Source for Input(T) {\n    fn line(self: *mut Self, max: usize) -> !?String {\n        while true {\n            var i = self.pos\n            while i < self.buf.len and self.buf[i] != '\\n' { i += 1 }\n            if max > 0 and i - self.pos > max { return error.TooLarge }\n            if i < self.buf.len {\n                var end = i\n                if end > self.pos and self.buf[end - 1] == '\\r' { end -= 1 }\n                let line = String.from(self.buf[self.pos..end])\n                self.pos = i + 1\n                return line\n            }\n            if !(try self.fill()) {\n                if self.pos < self.buf.len {\n                    let line = String.from(self.buf[self.pos..self.buf.len])\n                    self.pos = self.buf.len\n                    return line\n                }\n                return null\n            }\n        }\n    }\n\n    fn some(self: *mut Self, n: usize) -> !String {\n        if self.pos >= self.buf.len {\n            if !(try self.fill()) { return String.new() }\n        }\n        var end = self.pos + n\n        if end > self.buf.len { end = self.buf.len }\n        let out = String.from(self.buf[self.pos..end])\n        self.pos = end\n        return out\n    }\n\n    fn rest(self: *mut Self) -> !String {\n        var out = String.from(self.buf[self.pos..self.buf.len])\n        self.pos = self.buf.len\n        while true {\n            if !(try self.fill()) { break }\n            out.append(self.buf[self.pos..self.buf.len])\n            self.pos = self.buf.len\n        }\n        // nothing frames what came: a TLS connection cut rather than closed\n        // may have cut it short\n        if self.truncated() { return error.Truncated }\n        return out\n    }\n}\n\n// ------------------------------------------------------------------ client\n\nconst FRAME_NONE: u8 = 0\nconst FRAME_LENGTH: u8 = 1\nconst FRAME_CHUNKED: u8 = 2\nconst FRAME_CLOSE: u8 = 3\nconst PIECE: usize = 65536\n\n/// A response read as it arrives, from `Client.open`: the status and the\n/// headers, then the body in pieces (`next`) or whole (`read_all`). It\n/// holds the client's connection until `close`.\npub struct Streaming(T){\n    status: u16\n    reason: String\n    headers: List(Header)\n    input: Input(T)\n    /// how the body is framed: FRAME_NONE, _LENGTH, _CHUNKED or _CLOSE\n    frame: u8\n    /// what is left of the body (by length) or of the chunk\n    left: usize\n    /// read so far, against `max` (0: no limit)\n    total: usize\n    max: usize\n    /// a chunk's data ended and its line break is still to read\n    chunk_end: bool\n    done: bool\n}\n\nimpl(T) Streaming(T) {\n    /// A header value, case-insensitive; null when absent.\n    pub fn header(self: *Self, name: []u8) -> ?[]u8 {\n        return header_value(&self.headers, name)\n    }\n\n    pub fn ok(self: *Self) -> bool {\n        return self.status >= 200 and self.status < 300\n    }\n\n    fn counted(self: *mut Self, n: usize) -> !void {\n        self.total += n\n        if self.max > 0 and self.total > self.max { return error.TooLarge }\n    }\n\n    /// The next piece of the body; null once all of it has come.\n    /// `error.Truncated` when the connection ends before the body does.\n    pub fn next(self: *mut Self) -> !?String {\n        if self.done { return null }\n        if self.frame == FRAME_NONE {\n            self.done = true\n            return null\n        }\n        if self.frame == FRAME_LENGTH {\n            if self.left == 0 {\n                self.done = true\n                return null\n            }\n            let got = try self.input.some(if self.left < PIECE { self.left } else { PIECE })\n            if got.len == 0 { return error.Truncated }\n            self.left -= got.len\n            return got\n        }\n        if self.frame == FRAME_CHUNKED {\n            if self.left == 0 {\n                if self.chunk_end {\n                    _ = (try self.input.line(MAX_LINE)) orelse return error.Truncated\n                    self.chunk_end = false\n                }\n                let size_line = (try self.input.line(MAX_LINE)) orelse return error.Truncated\n                let size = hex_value(size_line) orelse return error.InvalidInput\n                if size == 0 {\n                    // trailers, then the blank line\n                    while true {\n                        let t = (try self.input.line(MAX_LINE)) orelse break\n                        if t.len == 0 { break }\n                    }\n                    self.done = true\n                    return null\n                }\n                if self.max > 0 and size > self.max - self.total { return error.TooLarge }\n                self.left = size\n            }\n            let got = try self.input.some(if self.left < PIECE { self.left } else { PIECE })\n            if got.len == 0 { return error.Truncated }\n            self.left -= got.len\n            if self.left == 0 { self.chunk_end = true }\n            try self.counted(got.len)\n            return got\n        }\n        let got = try self.input.some(PIECE)\n        if got.len == 0 {\n            self.done = true\n            // nothing frames this body: a TLS connection cut rather than\n            // closed may have cut it short\n            if self.input.truncated() { return error.Truncated }\n            return null\n        }\n        try self.counted(got.len)\n        return got\n    }\n\n    /// The rest of the body at once.\n    pub fn read_all(self: *mut Self) -> !String {\n        var body = String.new()\n        while true {\n            let piece = (try self.next()) orelse break\n            body.append(piece)\n        }\n        return body\n    }\n\n    /// Closes the connection.\n    pub fn close(self: *mut Self) {\n        self.input.close()\n        self.done = true\n    }\n}\n\n/// A response up to its body: what `begin` reads, owned.\nstruct Head {\n    status: u16\n    reason: String\n    headers: List(Header)\n    frame: u8\n    left: usize\n}\n\n/// Sends a request, whole, over a connected input and reads the response\n/// up to its body. It takes nothing borrowed but the input, so the input\n/// holds no view but its transport.\nfn begin(comptime T: type, input: *mut Input(T), own req: String, is_head: bool, max: usize) -> !Head {\n    try input.send(req[..])\n    var head = Head{ .status = 0, .reason = String.new(), .headers = List(Header).new(), .frame = FRAME_CLOSE, .left = 0 }\n    while true {\n        let line = (try input.line(MAX_LINE)) orelse return error.Truncated\n        let st = parse_status(line) orelse return error.InvalidInput\n        head.status = st.0\n        head.reason = String.from(st.1)\n        head.headers = try read_headers(input)\n        // an interim answer (103 Early Hints), then the real one\n        if head.status < 100 or head.status >= 200 or head.status == 101 { break }\n    }\n    if let te = header_value(&head.headers, \"transfer-encoding\") {\n        if is_chunked(te) { head.frame = FRAME_CHUNKED }\n    }\n    if head.frame == FRAME_CLOSE {\n        if let cl = header_value(&head.headers, \"content-length\") {\n            let n = cl.parse_int(usize) catch return error.InvalidInput\n            if max > 0 and n > max { return error.TooLarge }\n            head.frame = FRAME_LENGTH\n            head.left = n\n        }\n    }\n    if is_head or head.status == 204 or head.status == 304 or head.status < 200 { head.frame = FRAME_NONE }\n    return head\n}\n\n/// Where a redirect's `Location` leads from `base`: an absolute URL, one\n/// without its scheme (`//host/path`), a path, or a path relative to\n/// base's directory; null for anything that is not http or https.\nfn follow(base: *Url, loc0: []u8) -> ?Url {\n    var loc = loc0\n    if let hash = loc.find(\"#\") { loc = loc[0..hash] }\n    // a scheme (RFC 3986: a letter, then letters, digits, `+-.`, then `:`)\n    // makes it absolute, and one other than http or https is refused\n    var k: usize = 0\n    while k < loc.len and ((loc[k] >= 'a' and loc[k] <= 'z') or (loc[k] >= 'A' and loc[k] <= 'Z') or (k > 0 and ((loc[k] >= '0' and loc[k] <= '9') or loc[k] == '+' or loc[k] == '-' or loc[k] == '.'))) { k += 1 }\n    if k > 0 and k < loc.len and loc[k] == ':' { return parse_url(loc) }\n    if loc.starts_with(\"//\") { return parse_url(format(\"{}:{}\", .{base.scheme, loc})[..]) }\n    var path = String.new()\n    if loc.starts_with(\"/\") {\n        path.append(loc)\n    } else {\n        var dir = base.path[..]\n        if let q = dir.find(\"?\") { dir = dir[0..q] }\n        var cut = dir.len\n        while cut > 0 and dir[cut - 1] != '/' { cut -= 1 }\n        path.append(dir[0..cut])\n        path.append(loc)\n    }\n    if path.len == 0 { path.append(\"/\") }\n    return Url{ .scheme = base.scheme.clone(), .host = base.host.clone(), .port = base.port, .path = path }\n}\n\n/// `headers` without those named, case-insensitive.\nfn dropping(headers: *List(Header), names: [][]u8) -> List(Header) {\n    var out = List(Header).new()\n    for h in headers.* {\n        var keep = true\n        for n in names {\n            if h.name.eq_ignore_case(n) { keep = false }\n        }\n        if keep { out.append(Header{ .name = h.name.clone(), .value = h.value.clone() }) }\n    }\n    return out\n}\n\n/// Makes requests: `http://` over TCP, `https://` over the TLS layer a\n/// program gives it (the slot of decision 120). `client()` makes one for\n/// `http://` only, `client_with` one with a TLS layer:\n///\n///     var client = http.client_with(NxTls, &mut layer)   // nxtls's\n///     client.timeout_ms = 10000\n///     let r = try client.get(\"https://example.com/\")\n///\n/// A client calls its transports directly, so its requests have their\n/// effects: a plain client's are `allocates blocks panics`, and one with\n/// a TLS layer adds the layer's.\npub struct Client(T){\n    /// ms a connect, and each wait for data, may take; 0 waits as long as\n    /// the system does\n    timeout_ms: i64 = 15000\n    /// redirects followed at most; past them the redirect is the answer\n    max_redirects: usize = 5\n    /// the largest body read, in bytes (`error.TooLarge` past it); 0: no\n    /// limit\n    max_body: usize = 0\n    /// headers every request carries; a request's own replace them\n    headers: List(Header)\n    /// the TLS layer `https://` goes over; without one it is\n    /// `error.Unsupported`\n    tls: ?*mut T = null\n    plain: Plain\n}\n\n/// A client for `http://`; `https://` is `error.Unsupported`.\npub fn client() -> Client(Plain) {\n    return Client(Plain){ .headers = List(Header).new(), .plain = Plain.new() }\n}\n\n/// A client whose `https://` goes over `tls`, a TLS layer: a `Transport`,\n/// such as nxtls's.\npub fn client_with(comptime T: type where T: Transport, tls: *mut T) -> Client(T) {\n    return Client(T){ .headers = List(Header).new(), .tls = tls, .plain = Plain.new() }\n}\n\nimpl(T) Client(T) {\n    /// Sends a request and reads the response's status and headers,\n    /// following redirects: a 303, and a 301 or 302 to a POST, turn into a\n    /// GET without the body, and a redirect to another host goes without\n    /// the Authorization and Cookie headers. The body is read from the\n    /// `Streaming` as it arrives; close it when done.\n    pub fn open(self: *mut Self, method: []u8, url_text: []u8, headers: *List(Header), body: []u8) -> !Streaming(T) {\n        var url = parse_url(url_text) orelse return error.InvalidInput\n        var verb = String.from(method)\n        var payload = String.from(body)\n        // the client's headers, unless the request has its own\n        var hs = List(Header).new()\n        for h in self.headers {\n            if header_value(headers, h.name[..]) == null { hs.append(Header{ .name = h.name.clone(), .value = h.value.clone() }) }\n        }\n        for h in headers.* { hs.append(Header{ .name = h.name.clone(), .value = h.value.clone() }) }\n        var hops: usize = 0\n        while true {\n            var input = Input(T){ .plain = null, .tls = null, .buf = String.new(), .pos = 0, .eof = false }\n            if url.scheme[..] == \"https\" {\n                let t = self.tls orelse return error.Unsupported\n                try t.connect(url.host[..], url.port, self.timeout_ms)\n                input.tls = t\n            } else {\n                try self.plain.connect(url.host[..], url.port, self.timeout_ms)\n                input.plain = &mut self.plain\n            }\n            var req = request_head(verb[..], &url, &hs, payload.len)\n            req.append(payload)\n            let head = begin(T, &mut input, req, verb[..] == \"HEAD\", self.max_body) catch |e| {\n                input.close()\n                return e\n            }\n            let redirect = head.status == 301 or head.status == 302 or head.status == 303 or head.status == 307 or head.status == 308\n            var next: ?Url = null\n            if redirect and hops < self.max_redirects {\n                if let loc = header_value(&head.headers, \"location\") { next = follow(&url, loc) }\n            }\n            if next == null {\n                return Streaming(T){\n                    .status = head.status, .reason = head.reason.clone(), .headers = head.headers.clone(),\n                    .input = input, .frame = head.frame, .left = head.left,\n                    .total = 0, .max = self.max_body, .chunk_end = false, .done = false,\n                }\n            }\n            input.close()\n            hops += 1\n            let to = next.?\n            if to.host[..] != url.host[..] or to.port != url.port {\n                hs = dropping(&hs, [\"authorization\", \"cookie\", \"proxy-authorization\"][..])\n            }\n            if head.status == 303 or ((head.status == 301 or head.status == 302) and verb[..] == \"POST\") {\n                verb = String.from(\"GET\")\n                payload = String.new()\n                hs = dropping(&hs, [\"content-type\", \"content-length\"][..])\n            }\n            url = to\n        }\n    }\n\n    /// A request, its response read whole, following redirects.\n    pub fn send(self: *mut Self, method: []u8, url: []u8, headers: *List(Header), body: []u8) -> !Response {\n        var s = try self.open(method, url, headers, body)\n        let whole = s.read_all() catch |e| {\n            s.close()\n            return e\n        }\n        s.close()\n        return Response{ .status = s.status, .reason = s.reason.clone(), .headers = s.headers.clone(), .body = whole }\n    }\n\n    pub fn get(self: *mut Self, url: []u8) -> !Response {\n        let none = List(Header).new()\n        return self.send(\"GET\", url, &none, \"\")\n    }\n\n    pub fn post(self: *mut Self, url: []u8, content_type: []u8, body: []u8) -> !Response {\n        var headers = List(Header).new()\n        headers.append(Header{ .name = String.from(\"Content-Type\"), .value = String.from(content_type) })\n        return self.send(\"POST\", url, &headers, body)\n    }\n}\n\n/// Perform a request with a plain `client()`, following redirects.\n/// `error.InvalidInput` for a URL that is not http or https,\n/// `error.Unsupported` for `https://`, which needs `client_with` and a TLS\n/// layer.\npub fn request(method: []u8, url_text: []u8, headers: *List(Header), body: []u8) -> !Response {\n    var c = client()\n    return c.send(method, url_text, headers, body)\n}\n\npub fn get(url: []u8) -> !Response {\n    let none = List(Header).new()\n    return request(\"GET\", url, &none, \"\")\n}\n\npub fn post(url: []u8, content_type: []u8, body: []u8) -> !Response {\n    var headers = List(Header).new()\n    headers.append(Header{ .name = String.from(\"Content-Type\"), .value = String.from(content_type) })\n    return request(\"POST\", url, &headers, body)\n}\n\n// ------------------------------------------------------------------ server\n\npub struct Request {\n    method: String\n    /// the path without the query\n    path: String\n    /// the query string after `?`, without it\n    query: String\n    headers: List(Header)\n    body: String\n    peer: String\n}\n\nimpl Request {\n    pub fn header(self: *Self, name: []u8) -> ?[]u8 {\n        return header_value(&self.headers, name)\n    }\n\n    /// The value of a query parameter (`?a=1&b=2`), not decoded.\n    pub fn param(self: *Self, name: []u8) -> ?[]u8 {\n        for pair in self.query.split(\"&\") {\n            var eq: usize = 0\n            while eq < pair.len and pair[eq] != '=' { eq += 1 }\n            if pair[0..eq] == name { return if eq < pair.len { pair[eq + 1..pair.len] } else { pair[0..0] } }\n        }\n        return null\n    }\n}\n\n/// Read a request from a reader over the connection; null when the\n/// connection was closed before a request line.\npub fn read_request(r: *mut stream.Reader, peer: []u8) -> !?Request {\n    return read_request_max(r, peer, MAX_BODY)\n}\n\n/// `read_request` with a body limit of `max_body` bytes (0: none).\npub fn read_request_max(r: *mut stream.Reader, peer: []u8, max_body: usize) -> !?Request {\n    let line = (try r.read_line_max(MAX_LINE)) orelse return null\n    // GET /path?query HTTP/1.1\n    var a: usize = 0\n    while a < line.len and line[a] != ' ' { a += 1 }\n    if a == line.len { return error.InvalidInput }\n    var b = a + 1\n    while b < line.len and line[b] != ' ' { b += 1 }\n    let target = line[a + 1..b]\n    var q: usize = 0\n    while q < target.len and target[q] != '?' { q += 1 }\n    let headers = try read_headers(r)\n    let body = try read_body(r, &headers, false, max_body)\n    return Request{\n        .method = String.from(line[0..a]),\n        .path = String.from(target[0..q]),\n        .query = String.from(if q < target.len { target[q + 1..target.len] } else { target[0..0] }),\n        .headers = headers,\n        .body = body,\n        .peer = String.from(peer),\n    }\n}\n\n/// Write a response with `Content-Length` and `Connection: close`.\npub fn write_response(w: *mut stream.Writer, resp: *Response) -> !void {\n    try w.write(format(\"HTTP/1.1 {} \", .{resp.status}))\n    try w.write(resp.reason)\n    try w.write(\"\\r\\n\")\n    for h in resp.headers {\n        try w.write(h.name)\n        try w.write(\": \")\n        try w.write(h.value)\n        try w.write(\"\\r\\n\")\n    }\n    try w.write(format(\"Content-Length: {}\\r\\nConnection: close\\r\\n\\r\\n\", .{resp.body.len}))\n    try w.write(resp.body)\n    return w.flush()\n}\n\npub struct Route {\n    method: String\n    path: String\n    handler: fn(*Request) -> Response\n}\n\n/// Matches requests by method and exact path; a path ending in `/*`\n/// matches any request under that prefix.\npub struct Router {\n    routes: List(Route)\n    static_root: ?String\n}\n\nimpl Router {\n    pub fn new() -> Router {\n        return Router{ .routes = List(Route).new(), .static_root = null }\n    }\n\n    pub fn route(self: *mut Self, method: []u8, path: []u8, handler: fn(*Request) -> Response) {\n        self.routes.append(Route{ .method = String.from(method), .path = String.from(path), .handler = handler })\n    }\n\n    pub fn get(self: *mut Self, path: []u8, handler: fn(*Request) -> Response) {\n        self.route(\"GET\", path, handler)\n    }\n\n    pub fn post(self: *mut Self, path: []u8, handler: fn(*Request) -> Response) {\n        self.route(\"POST\", path, handler)\n    }\n\n    /// Serve files under `root` for paths no route claims.\n    pub fn serve_static(self: *mut Self, root: []u8) {\n        self.static_root = String.from(root)\n    }\n\n    /// The response for a request.\n    pub fn handle(self: *Self, req: *Request) -> Response {\n        for r in self.routes {\n            if r.method != req.method { continue }\n            let hit = if r.path.ends_with(\"/*\") { req.path.starts_with(r.path[0..r.path.len - 1]) } else { r.path == req.path }\n            if hit {\n                let h = r.handler\n                return h(req)\n            }\n        }\n        if let root = self.static_root {\n            if req.method == \"GET\" { return static_file(root, req.path) }\n        }\n        return not_found()\n    }\n}\n\n/// A file under `root` for a request path, refusing `..`; `index.html` for\n/// directories.\npub fn static_file(root: []u8, path: []u8) -> Response {\n    if path.find(\"..\") != null { return text(403, \"forbidden\\n\") }\n    var file = fs.join(root, if path.len > 0 and path[0] == '/' { path[1..path.len] } else { path })\n    if fs.is_dir(file) { file = fs.join(file, \"index.html\") }\n    if !fs.is_file(file) { return not_found() }\n    let data = fs.read(file) catch return text(500, \"cannot read file\\n\")\n    return respond(200, content_type_for(file), data)\n}\n\npub struct Server {\n    listener: net.TcpListener\n}\n\nimpl Server {\n    pub fn bind(host: []u8, port: u16) -> !Server {\n        return Server{ .listener = try net.TcpListener.bind(host, port) }\n    }\n\n    pub fn port(self: *Self) -> !u16 {\n        return self.listener.port()\n    }\n\n    /// Accept one connection, answer one request, close. `error.Timeout`\n    /// when nobody connects within `timeout_ms` (0 waits forever).\n    pub fn serve_one(self: *Self, router: *Router, timeout_ms: i64) -> !void {\n        var conn = try self.listener.accept_timeout(timeout_ms)\n        conn.set_timeout(10000)\n        let peer = conn.peer() catch String.from(\"?\")\n        var r = conn.reader()\n        var bad = false\n        var too_large = false\n        let maybe = read_request(&mut r, peer) catch |e| {\n            bad = true\n            too_large = e == error.TooLarge\n            null\n        }\n        var resp = if too_large { text(413, \"request too large\\n\") } else { text(400, \"bad request\\n\") }\n        if !bad {\n            if let req = maybe {\n                resp = router.handle(&req)\n            } else {\n                conn.close()\n                return\n            }\n        }\n        var w = conn.writer()\n        write_response(&mut w, &resp) catch { }\n        conn.close()\n    }\n\n    /// Serve forever, one request at a time.\n    pub fn serve(self: *Self, router: *Router) -> !void {\n        while true {\n            self.serve_one(router, 0) catch |e| {\n                if e != error.Timeout { return e }\n            }\n        }\n    }\n\n    pub fn close(self: *mut Self) {\n        self.listener.close()\n    }\n}\n\n// ------------------------------------------------------------------ tests\n\nfn hello(req: *Request) -> Response {\n    var body = String.from(\"hello \")\n    body.append(req.param(\"name\") orelse \"world\")\n    return text(200, body)\n}\n\nfn echo(req: *Request) -> Response {\n    return respond(201, \"application/octet-stream\", req.body)\n}\n\ntest \"urls\" {\n    let u = parse_url(\"http://example.com/a/b?x=1\").?\n    expect_eq(u.host, \"example.com\")\n    expect_eq(u.port, 80)\n    expect_eq(u.path, \"/a/b?x=1\")\n    let p = parse_url(\"http://localhost:8080\").?\n    expect_eq(p.port, 8080)\n    expect_eq(p.path, \"/\")\n    expect(parse_url(\"ftp://x\") == null)\n    expect_eq(parse_url(\"https://h/\").?.port, 443)\n    expect_eq(content_type_for(\"a/b.css\"), \"text/css\")\n    expect_eq(hex_value(\"1A;ext\").?, 26)\n}\n\ntest \"request and response over loopback\" {\n    var router = Router.new()\n    router.get(\"/hello\", hello)\n    router.post(\"/echo\", echo)\n    var server = try Server.bind(\"127.0.0.1\", 0)\n    let port = try server.port()\n    var url = parse_url(format(\"http://127.0.0.1:{}/hello?name=nx\", .{port})).?\n\n    // the client sends first; the request fits the socket buffer, so the\n    // single-threaded server can then accept and answer it\n    var c = try net.TcpStream.connect_timeout(\"127.0.0.1\", port, 5000)\n    c.set_timeout(5000)\n    var w = c.writer()\n    let none = List(Header).new()\n    try send_request(&mut w, \"GET\", &url, &none, \"\")\n    try server.serve_one(&router, 5000)\n    var r = c.reader()\n    let resp = try read_response(&mut r)\n    expect_eq(resp.status, 200)\n    expect_eq(resp.body, \"hello nx\")\n    expect_eq(resp.header(\"content-type\").?, \"text/plain; charset=utf-8\")\n    c.close()\n\n    var c2 = try net.TcpStream.connect_timeout(\"127.0.0.1\", port, 5000)\n    c2.set_timeout(5000)\n    var w2 = c2.writer()\n    url.path = String.from(\"/echo\")\n    try send_request(&mut w2, \"POST\", &url, &none, \"payload bytes\")\n    try server.serve_one(&router, 5000)\n    var r2 = c2.reader()\n    let resp2 = try read_response(&mut r2)\n    expect_eq(resp2.status, 201)\n    expect_eq(resp2.body, \"payload bytes\")\n    c2.close()\n\n    var c3 = try net.TcpStream.connect_timeout(\"127.0.0.1\", port, 5000)\n    c3.set_timeout(5000)\n    try c3.send(\"GET /missing HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n\")\n    try server.serve_one(&router, 5000)\n    var r3 = c3.reader()\n    expect_eq((try read_response(&mut r3)).status, 404)\n    c3.close()\n    server.close()\n}\n\ntest \"chunked bodies\" {\n    // a canned response fed through a file-backed reader\n    let path = fs.temp_path(\"nxhttp-\")\n    try fs.write(path, \"HTTP/1.1 200 OK\\r\\nTransfer-Encoding: chunked\\r\\nX-Test: yes\\r\\n\\r\\n5\\r\\nhello\\r\\n6;ext=1\\r\\n world\\r\\n0\\r\\n\\r\\n\")\n    var r = try stream.Reader.open(path)\n    let resp = try read_response(&mut r)\n    r.close()\n    try fs.remove(path)\n    expect_eq(resp.status, 200)\n    expect_eq(resp.reason, \"OK\")\n    expect_eq(resp.body, \"hello world\")\n    expect_eq(resp.header(\"x-test\").?, \"yes\")\n    expect(resp.ok())\n}\n\n// a request as a peer would send it, read through a file-backed reader\nfn request_from(text: []u8) -> !?Request {\n    let path = fs.temp_path(\"nxhttp-\")\n    try fs.write(path, text)\n    var r = try stream.Reader.open(path)\n    let got = read_request(&mut r, \"peer\")\n    r.close()\n    try fs.remove(path)\n    return got\n}\n\n// the error a request fails with, as its name\nfn request_error(text: []u8) -> []u8 {\n    _ = request_from(text) catch |e| { return @errorName(e) }\n    return \"none\"\n}\n\ntest \"a peer's sizes are bounded before anything is allocated\" {\n    // a body the client only announces, far past the limit\n    expect_eq(request_error(\"POST / HTTP/1.1\\r\\nContent-Length: 999999999999\\r\\n\\r\\n\"), \"TooLarge\")\n    // a chunk size past usize, and chunks that add up past the limit\n    expect_eq(request_error(\"POST / HTTP/1.1\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\nFFFFFFFFFFFFFFFFFFFFFFFF\\r\\n\"), \"InvalidInput\")\n    expect_eq(request_error(\"POST / HTTP/1.1\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n1000001\\r\\n\"), \"TooLarge\")\n    // a line that never ends\n    var long = String.from(\"GET /\")\n    for _ in 0..70000 { long.push_byte('a') }\n    expect_eq(request_error(long[..]), \"TooLarge\")\n    // a body within the limit still reads\n    let ok = (try request_from(\"POST /x HTTP/1.1\\r\\nContent-Length: 5\\r\\n\\r\\nhello\")).?\n    expect_eq(ok.body, \"hello\")\n}\n\n/// A transport that answers from a script: each connect takes the next\n/// canned reply, and what was sent over each connection, and where to,\n/// is kept.\nstruct Scripted {\n    replies: List(String)\n    next: usize\n    reply: String\n    at: usize\n    /// the most bytes a recv gives, to split the reply anywhere\n    step: usize\n    /// the connection ends without close_notify\n    cut: bool\n    sent: List(String)\n    hosts: List(String)\n}\n\nfn scripted(replies: [][]u8, step: usize) -> Scripted {\n    var r = List(String).new()\n    for x in replies { r.append(String.from(x)) }\n    return Scripted{ .replies = r, .next = 0, .reply = String.new(), .at = 0, .step = step, .cut = false, .sent = List(String).new(), .hosts = List(String).new() }\n}\n\nimpl Transport for Scripted {\n    fn connect(self: *mut Self, host: []u8, port: u16, timeout_ms: i64) -> !void {\n        _ = timeout_ms\n        if self.next >= self.replies.len { return error.ConnectionRefused }\n        self.reply = self.replies[self.next].clone()\n        self.next += 1\n        self.at = 0\n        self.hosts.append(format(\"{}:{}\", .{host, port}))\n        self.sent.append(String.new())\n    }\n\n    fn send(self: *mut Self, data: []u8) -> !void {\n        self.sent[self.sent.len - 1].append(data)\n    }\n\n    fn recv(self: *mut Self) -> !String {\n        var end = self.at + self.step\n        if end > self.reply.len { end = self.reply.len }\n        let out = String.from(self.reply[self.at..end])\n        self.at = end\n        return out\n    }\n\n    fn truncated(self: *Self) -> bool {\n        return self.cut\n    }\n\n    fn close(self: *mut Self) {\n        self.at = self.reply.len\n    }\n}\n\n// the error a client's GET fails with, as its name\nfn client_error(c: *mut Client(Plain), url: []u8) -> []u8 {\n    _ = c.get(url) catch |e| { return @errorName(e) }\n    return \"none\"\n}\n\n// the error a GET through a scripted TLS layer fails with, as its name\nfn get_error(tls: *mut Scripted, max_body: usize) -> []u8 {\n    var c = client_with(Scripted, tls)\n    c.max_body = max_body\n    _ = c.get(\"https://example.com/\") catch |e| { return @errorName(e) }\n    return \"none\"\n}\n\ntest \"https:// goes through the TLS slot\" {\n    var tls = scripted([\"HTTP/1.1 200 OK\\r\\nContent-Length: 5\\r\\n\\r\\nhello\"][..], 3)\n    var c = client_with(Scripted, &mut tls)\n    let r = try c.get(\"https://example.com/a?b=1\")\n    expect_eq(r.status, 200)\n    expect_eq(r.body, \"hello\")\n    expect_eq(tls.hosts[0], \"example.com:443\")\n    expect(tls.sent[0][..].starts_with(\"GET /a?b=1 HTTP/1.1\\r\\nHost: example.com\\r\\n\"))\n    // another port is named in Host; without a TLS layer, https:// is refused\n    var tls2 = scripted([\"HTTP/1.1 204 No Content\\r\\n\\r\\n\"][..], 64)\n    var c2 = client_with(Scripted, &mut tls2)\n    expect_eq((try c2.get(\"https://[::1]:8443/\")).status, 204)\n    expect(tls2.sent[0][..].starts_with(\"GET / HTTP/1.1\\r\\nHost: [::1]:8443\\r\\n\"))\n    var none = client()\n    expect_eq(client_error(&mut none, \"https://example.com/\"), \"Unsupported\")\n    expect_eq(client_error(&mut none, \"ftp://example.com/\"), \"InvalidInput\")\n}\n\ntest \"a body read as it arrives\" {\n    // a byte at a time: chunk sizes, data and line breaks all split\n    var tls = scripted([\"HTTP/1.1 200 OK\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n5\\r\\nhello\\r\\n6;x=1\\r\\n world\\r\\n0\\r\\nX-Trailer: 1\\r\\n\\r\\n\"][..], 1)\n    var c = client_with(Scripted, &mut tls)\n    let none = List(Header).new()\n    var s = try c.open(\"GET\", \"https://example.com/stream\", &none, \"\")\n    expect(s.ok())\n    var body = String.new()\n    var pieces: usize = 0\n    while true {\n        let piece = (try s.next()) orelse break\n        body.append(piece)\n        pieces += 1\n    }\n    s.close()\n    expect_eq(body, \"hello world\")\n    expect(pieces > 2)\n    expect(is_chunked(\"gzip, chunked\") and is_chunked(\" Chunked \") and !is_chunked(\"chunked, gzip\"))\n}\n\ntest \"redirects\" {\n    var tls = scripted([\n        \"HTTP/1.1 302 Found\\r\\nLocation: next\\r\\nContent-Length: 0\\r\\n\\r\\n\",\n        \"HTTP/1.1 303 See Other\\r\\nLocation: https://other.example/done#top\\r\\n\\r\\n\",\n        \"HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\n\\r\\nok\",\n    ][..], 7)\n    var c = client_with(Scripted, &mut tls)\n    var hs = List(Header).new()\n    hs.append(Header{ .name = String.from(\"Authorization\"), .value = String.from(\"Bot secret\") })\n    hs.append(Header{ .name = String.from(\"Content-Type\"), .value = String.from(\"application/json\") })\n    let r = try c.send(\"POST\", \"https://example.com/api/start\", &hs, \"{}\")\n    expect_eq(r.body, \"ok\")\n    expect_eq(tls.hosts[1], \"example.com:443\")\n    expect_eq(tls.hosts[2], \"other.example:443\")\n    // the POST, then after its 302 a GET without the body; the token goes\n    // to the same host and not to another\n    expect(tls.sent[0][..].starts_with(\"POST /api/start HTTP/1.1\\r\\n\"))\n    expect(tls.sent[0][..].ends_with(\"\\r\\n\\r\\n{}\"))\n    expect(tls.sent[1][..].starts_with(\"GET /api/next HTTP/1.1\\r\\n\"))\n    expect(tls.sent[1][..].find(\"Authorization: Bot secret\") != null)\n    expect(tls.sent[1][..].find(\"Content-Type\") == null)\n    expect(tls.sent[2][..].starts_with(\"GET /done HTTP/1.1\\r\\nHost: other.example\\r\\n\"))\n    expect(tls.sent[2][..].find(\"Authorization\") == null)\n    // past the limit, the redirect is the answer\n    var loop = scripted([\"HTTP/1.1 301 Moved\\r\\nLocation: /a\\r\\n\\r\\n\", \"HTTP/1.1 301 Moved\\r\\nLocation: /b\\r\\n\\r\\n\"][..], 64)\n    var c2 = client_with(Scripted, &mut loop)\n    c2.max_redirects = 1\n    let last = try c2.get(\"https://example.com/\")\n    expect_eq(last.status, 301)\n    expect_eq(last.header(\"location\").?, \"/b\")\n    let u = parse_url(\"http://h:8080/a/b/c?q=1\").?\n    expect_eq(follow(&u, \"d\").?.path, \"/a/b/d\")\n    expect_eq(follow(&u, \"/x?y\").?.path, \"/x?y\")\n    expect_eq(follow(&u, \"//g/p\").?.host, \"g\")\n    expect_eq(follow(&u, \"//g/p\").?.port, 80)\n    expect(follow(&u, \"ftp://x/\") == null)\n}\n\ntest \"bodies that end early, and limits\" {\n    // cut inside a body its length announced\n    var short = scripted([\"HTTP/1.1 200 OK\\r\\nContent-Length: 10\\r\\n\\r\\nhello\"][..], 64)\n    expect_eq(get_error(&mut short, 0), \"Truncated\")\n    // a body framed by the end of the connection: whole when TLS closed it,\n    // refused when the connection was cut\n    var closed = scripted([\"HTTP/1.1 200 OK\\r\\n\\r\\nall of it\"][..], 4)\n    var c = client_with(Scripted, &mut closed)\n    expect_eq((try c.get(\"https://example.com/\")).body, \"all of it\")\n    var cut = scripted([\"HTTP/1.1 200 OK\\r\\n\\r\\nall of it?\"][..], 4)\n    cut.cut = true\n    expect_eq(get_error(&mut cut, 0), \"Truncated\")\n    // bodies past max_body, announced or not\n    var long = scripted([\"HTTP/1.1 200 OK\\r\\nContent-Length: 5\\r\\n\\r\\nhello\"][..], 64)\n    expect_eq(get_error(&mut long, 4), \"TooLarge\")\n    var chunks = scripted([\"HTTP/1.1 200 OK\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n3\\r\\nabc\\r\\n3\\r\\ndef\\r\\n0\\r\\n\\r\\n\"][..], 64)\n    expect_eq(get_error(&mut chunks, 4), \"TooLarge\")\n    var open_ended = scripted([\"HTTP/1.1 200 OK\\r\\n\\r\\nabcdef\"][..], 64)\n    expect_eq(get_error(&mut open_ended, 4), \"TooLarge\")\n    // HEAD has no body, whatever the length says; an interim 103 is skipped\n    var head = scripted([\"HTTP/1.1 200 OK\\r\\nContent-Length: 100\\r\\n\\r\\n\"][..], 64)\n    var c2 = client_with(Scripted, &mut head)\n    let none = List(Header).new()\n    let h = try c2.send(\"HEAD\", \"https://example.com/\", &none, \"\")\n    expect_eq(h.status, 200)\n    expect_eq(h.body.len, 0)\n    var hints = scripted([\"HTTP/1.1 103 Early Hints\\r\\nLink: </a.css>\\r\\n\\r\\nHTTP/1.1 200 OK\\r\\nContent-Length: 3\\r\\n\\r\\nyes\"][..], 5)\n    var c3 = client_with(Scripted, &mut hints)\n    expect_eq((try c3.get(\"https://example.com/\")).body, \"yes\")\n}\n\ntest \"the plain transport over loopback\" {\n    var router = Router.new()\n    router.get(\"/hello\", hello)\n    var server = try Server.bind(\"127.0.0.1\", 0)\n    let port = try server.port()\n    var p = Plain.new()\n    try p.connect(\"127.0.0.1\", port, 5000)\n    try p.send(\"GET /hello?name=plain HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n\")\n    try server.serve_one(&router, 5000)\n    var input = Input(Plain){ .plain = &mut p, .tls = null, .buf = String.new(), .pos = 0, .eof = false }\n    let line = (try input.line(MAX_LINE)).?\n    expect(line[..].starts_with(\"HTTP/1.1 200\"))\n    let hs = try read_headers(&mut input)\n    expect_eq(try read_body(&mut input, &hs, true, 0), \"hello plain\")\n    p.close()\n    server.close()\n}\n\n/// A server that answers one request, on a thread of its own.\nstruct Serving {\n    server: Server\n    router: Router\n}\n\nfn serve_one_request(s: *mut Serving) -> bool {\n    let served = s.server.serve_one(&s.router, 10000)\n    s.server.close()\n    _ = served catch { return false }\n    return true\n}\n\ntest \"a client and a server on two threads\" {\n    var router = Router.new()\n    router.get(\"/hello\", hello)\n    let server = try Server.bind(\"127.0.0.1\", 0)\n    let port = try server.port()\n    var t = thread.spawn(Serving, bool, serve_one_request, Serving{ .server = server, .router = router })\n    var c = client()\n    c.timeout_ms = 10000\n    let r = try c.get(format(\"http://127.0.0.1:{}/hello?name=threads\", .{port})[..])\n    expect(t.join())\n    expect_eq(r.status, 200)\n    expect_eq(r.body, \"hello threads\")\n}\n\ntest \"a socket reader keeps the stream's timeout\" {\n    var listener = try net.TcpListener.bind(\"127.0.0.1\", 0)\n    let port = try listener.port()\n    var client = try net.TcpStream.connect_timeout(\"127.0.0.1\", port, 5000)\n    var conn = try listener.accept_timeout(5000)\n    // the client sends nothing: the read gives up after the timeout\n    conn.set_timeout(200)\n    var r = conn.reader()\n    var timed_out = false\n    _ = r.read_line() catch |e| {\n        timed_out = e == error.Timeout\n        null\n    }\n    expect(timed_out)\n    conn.close()\n    client.close()\n    listener.close()\n}\n";
+static const char nx_str_861[54492] = "// std.http: an HTTP/1.1 client and a small server, written in Nexium over\n// std.net and std.stream.\n//\n// `import std.http` then:\n//\n//     let r = try http.get(\"http://example.com/\")\n//     println(\"{} {}\", .{r.status, r.body.len})\n//     if let ct = r.header(\"content-type\") { ... }\n//\n//     var client = http.client_with(NxTls, &mut layer)   // a TLS layer, for https://\n//     client.timeout_ms = 10000                   // and timeouts, redirects, limits\n//     var s = try client.open(\"GET\", \"https://example.com/big\", &headers, \"\")\n//     while true {                                // the body as it arrives\n//         let piece = (try s.next()) orelse break\n//         ...\n//     }\n//     s.close()\n//\n//     fn hello(req: *http.Request) -> http.Response {\n//         return http.text(200, \"hello from Nexium\")\n//     }\n//     var router = http.Router.new()\n//     router.get(\"/\", hello)\n//     var server = try http.Server.bind(\"127.0.0.1\", 8080)\n//     try server.serve(&router)                  // forever, one request at a time\n//\n// The client speaks HTTP/1.1 with `Connection: close` over a `Transport`:\n// TCP for `http://`, and for `https://` the TLS layer a program hands its\n// client, the slot of decision 120 (nxtls, the TLS 1.3 client written in\n// Nexium, fills it; the platform's TLS will). It reads a body by\n// Content-Length, chunked encoding, or until the connection ends (refused\n// when a TLS connection was cut rather than closed, as nothing then shows\n// the body is whole), whole or as it arrives, follows up to five\n// redirects, and gives up on a connect or a wait after `timeout_ms`. The\n// server handles one connection at a time, which is what a tool, a local\n// dashboard or a test needs; threads come later in the roadmap.\n\nimport std.net\nimport std.stream\nimport std.fs\nimport std.thread\n\nconst MAX_REDIRECTS: usize = 5\nconst MAX_HEADER_LINES: usize = 200\n// the longest request, status, header or chunk-size line read\nconst MAX_LINE: usize = 65536\n/// The largest request body `read_request` accepts (`error.TooLarge`\n/// past it); `read_request_max` takes another.\npub const MAX_BODY: usize = 16777216\n\npub struct Header derive(Clone) {\n    name: String\n    value: String\n}\n\nfn header_value(headers: *List(Header), name: []u8) -> ?[]u8 {\n    for i in 0..headers.len {\n        if headers[i].name.eq_ignore_case(name) { return headers[i].value }\n    }\n    return null\n}\n\nfn find_header(headers: *List(Header), name: []u8) -> ?usize {\n    for h, i in headers {\n        if h.name.eq_ignore_case(name) { return i }\n    }\n    return null\n}\n\n// ------------------------------------------------------------------ URLs\n\npub struct Url {\n    scheme: String\n    host: String\n    port: u16\n    /// path with the query, e.g. `/a/b?x=1`; never empty\n    path: String\n}\n\n/// Parse `http://host[:port][/path]`; null for anything else.\npub fn parse_url(s: []u8) -> ?Url {\n    var rest = s\n    var scheme = \"http\"\n    if rest.starts_with(\"http://\") {\n        rest = rest[7..rest.len]\n    } else if rest.starts_with(\"https://\") {\n        scheme = \"https\"\n        rest = rest[8..rest.len]\n    } else {\n        return null\n    }\n    var end: usize = 0\n    while end < rest.len and rest[end] != '/' and rest[end] != '?' { end += 1 }\n    let hostport = rest[0..end]\n    var path = rest[end..rest.len]\n    // the host is copied out: `a` owns its text only until the `if let` ends\n    var host = String.from(hostport)\n    var port: u16 = if scheme == \"https\" { 443 } else { 80 }\n    if let a = net.parse_addr(hostport) {\n        host = a.host.clone()\n        port = a.port\n    }\n    if host.len == 0 { return null }\n    var p = String.new()\n    if path.len == 0 or path[0] == '?' { p.append(\"/\") }\n    p.append(path)\n    return Url{ .scheme = String.from(scheme), .host = host, .port = port, .path = p }\n}\n\n// ------------------------------------------------------------------ responses\n\npub struct Response {\n    status: u16\n    reason: String\n    headers: List(Header)\n    body: String\n}\n\nimpl Response {\n    /// A header value, case-insensitive; null when absent.\n    pub fn header(self: *Self, name: []u8) -> ?[]u8 {\n        return header_value(&self.headers, name)\n    }\n\n    /// Add or replace a header (builder style).\n    pub fn with_header(self: *mut Self, name: []u8, value: []u8) {\n        if let i = find_header(&self.headers, name) {\n            self.headers[i].value = String.from(value)\n            return\n        }\n        self.headers.append(Header{ .name = String.from(name), .value = String.from(value) })\n    }\n\n    pub fn ok(self: *Self) -> bool {\n        return self.status >= 200 and self.status < 300\n    }\n}\n\n/// The standard reason phrase for a status.\npub fn reason_for(status: u16) -> []u8 {\n    if status == 200 { return \"OK\" }\n    if status == 201 { return \"Created\" }\n    if status == 204 { return \"No Content\" }\n    if status == 301 { return \"Moved Permanently\" }\n    if status == 302 { return \"Found\" }\n    if status == 304 { return \"Not Modified\" }\n    if status == 400 { return \"Bad Request\" }\n    if status == 401 { return \"Unauthorized\" }\n    if status == 403 { return \"Forbidden\" }\n    if status == 404 { return \"Not Found\" }\n    if status == 405 { return \"Method Not Allowed\" }\n    if status == 500 { return \"Internal Server Error\" }\n    return \"Unknown\"\n}\n\n/// A response with a body and a content type.\npub fn respond(status: u16, content_type: []u8, body: []u8) -> Response {\n    var headers = List(Header).new()\n    headers.append(Header{ .name = String.from(\"Content-Type\"), .value = String.from(content_type) })\n    return Response{ .status = status, .reason = String.from(reason_for(status)), .headers = headers, .body = String.from(body) }\n}\n\npub fn text(status: u16, body: []u8) -> Response {\n    return respond(status, \"text/plain; charset=utf-8\", body)\n}\n\npub fn html(status: u16, body: []u8) -> Response {\n    return respond(status, \"text/html; charset=utf-8\", body)\n}\n\npub fn json(status: u16, body: []u8) -> Response {\n    return respond(status, \"application/json\", body)\n}\n\npub fn not_found() -> Response {\n    return text(404, \"not found\\n\")\n}\n\n/// A redirect to `location`.\npub fn redirect(location: []u8) -> Response {\n    var r = text(302, \"\")\n    r.with_header(\"Location\", location)\n    return r\n}\n\n/// The content type for a file name, by extension.\npub fn content_type_for(path: []u8) -> []u8 {\n    let ext = fs.extension(path)\n    if ext == \"html\" or ext == \"htm\" { return \"text/html; charset=utf-8\" }\n    if ext == \"css\" { return \"text/css\" }\n    if ext == \"js\" { return \"text/javascript\" }\n    if ext == \"json\" { return \"application/json\" }\n    if ext == \"txt\" or ext == \"md\" or ext == \"nx\" { return \"text/plain; charset=utf-8\" }\n    if ext == \"png\" { return \"image/png\" }\n    if ext == \"jpg\" or ext == \"jpeg\" { return \"image/jpeg\" }\n    if ext == \"gif\" { return \"image/gif\" }\n    if ext == \"svg\" { return \"image/svg+xml\" }\n    if ext == \"ico\" { return \"image/x-icon\" }\n    if ext == \"pdf\" { return \"application/pdf\" }\n    return \"application/octet-stream\"\n}\n\n// ------------------------------------------------------------------ wire format\n\nfn parse_status(line: []u8) -> ?(u16, []u8) {\n    // HTTP/1.1 200 OK\n    if !line.starts_with(\"HTTP/\") { return null }\n    var i: usize = 0\n    while i < line.len and line[i] != ' ' { i += 1 }\n    if i + 4 > line.len { return null }\n    let status = line[i + 1..i + 4].parse_int(u16) catch return null\n    var reason = line[0..0]\n    if i + 5 <= line.len { reason = line[i + 5..line.len] }\n    return (status, reason)\n}\n\n/// What the parser reads a message from: a `stream.Reader` over a socket\n/// or a file, or a transport's input.\ntrait Source {\n    /// The next line without its `\\r\\n`, `error.TooLarge` past `max`\n    /// bytes; null at the end.\n    fn line(self: *mut Self, max: usize) -> !?String\n    /// Up to `n` bytes; \"\" at the end.\n    fn some(self: *mut Self, n: usize) -> !String\n    /// Everything up to the end.\n    fn rest(self: *mut Self) -> !String\n}\n\nimpl Source for stream.Reader {\n    fn line(self: *mut Self, max: usize) -> !?String { return self.read_line_max(max) }\n    fn some(self: *mut Self, n: usize) -> !String { return self.read(n) }\n    fn rest(self: *mut Self) -> !String { return self.read_all() }\n}\n\nfn read_headers(comptime R: type where R: Source, r: *mut R) -> !List(Header) {\n    var headers = List(Header).new()\n    var n: usize = 0\n    while true {\n        let line = (try r.line(MAX_LINE)) orelse break\n        if line.len == 0 { break }\n        n += 1\n        if n > MAX_HEADER_LINES { return error.InvalidInput }\n        var c: usize = 0\n        while c < line.len and line[c] != ':' { c += 1 }\n        if c == line.len { return error.InvalidInput }\n        headers.append(Header{ .name = String.from(line[0..c]), .value = String.from(line[c + 1..line.len].trim()) })\n    }\n    return headers\n}\n\nfn hex_value(s: []u8) -> ?usize {\n    var v: usize = 0\n    var any = false\n    for c in s {\n        var d: usize = 0\n        if c >= '0' and c <= '9' { d = (c - '0') as usize }\n        else if c >= 'a' and c <= 'f' { d = (c - 'a' + 10) as usize }\n        else if c >= 'A' and c <= 'F' { d = (c - 'A' + 10) as usize }\n        else if c == ';' or c == ' ' { break }\n        else { return null }\n        // a size past usize is not one a body can have\n        v = (v.checked_mul(16) orelse return null).checked_add(d) orelse return null\n        any = true\n    }\n    return if any { v } else { null }\n}\n\n/// Whether a Transfer-Encoding ends in chunked (`chunked`, `gzip, chunked`):\n/// then chunks frame the body.\nfn is_chunked(te: []u8) -> bool {\n    var start = te.len\n    while start > 0 and te[start - 1] != ',' { start -= 1 }\n    return te[start..te.len].trim().eq_ignore_case(\"chunked\")\n}\n\nfn read_exact(comptime R: type where R: Source, r: *mut R, n: usize) -> !String {\n    // the size came from the peer: the buffer grows as the bytes arrive\n    var out = String.with_capacity(if n < 65536 { n } else { 65536 })\n    while out.len < n {\n        let chunk = try r.some(n - out.len)\n        if chunk.len == 0 { return error.Truncated }\n        out.append(chunk)\n    }\n    return out\n}\n\n/// The body the headers announce; past `max` bytes (0: no limit) it is\n/// `error.TooLarge`, found before it is read.\nfn read_body(comptime R: type where R: Source, r: *mut R, headers: *List(Header), allow_until_close: bool, max: usize) -> !String {\n    if let te = header_value(headers, \"transfer-encoding\") {\n        if is_chunked(te) {\n            var body = String.new()\n            while true {\n                let size_line = (try r.line(MAX_LINE)) orelse return error.Truncated\n                let size = hex_value(size_line) orelse return error.InvalidInput\n                if max > 0 and size > max - body.len { return error.TooLarge }\n                if size == 0 {\n                    // trailers, then the blank line\n                    while true {\n                        let t = (try r.line(MAX_LINE)) orelse break\n                        if t.len == 0 { break }\n                    }\n                    break\n                }\n                body.append(try read_exact(r, size))\n                _ = try r.line(MAX_LINE)\n            }\n            return body\n        }\n    }\n    if let cl = header_value(headers, \"content-length\") {\n        let n = cl.parse_int(usize) catch return error.InvalidInput\n        if max > 0 and n > max { return error.TooLarge }\n        return read_exact(r, n)\n    }\n    if allow_until_close { return r.rest() }\n    return String.new()\n}\n\n/// Read a full response from a reader over the connection.\npub fn read_response(r: *mut stream.Reader) -> !Response {\n    let line = (try r.line(MAX_LINE)) orelse return error.Truncated\n    let st = parse_status(line) orelse return error.InvalidInput\n    let headers = try read_headers(r)\n    let body = if st.0 == 204 or st.0 == 304 { String.new() } else { try read_body(r, &headers, true, 0) }\n    return Response{ .status = st.0, .reason = String.from(st.1), .headers = headers, .body = body }\n}\n\n/// The request line and the headers of a request, up to the blank line;\n/// `headers` add to the defaults or replace them.\nfn request_head(method: []u8, url: *Url, headers: *List(Header), body_len: usize) -> String {\n    var h = String.from(method)\n    h.push_byte(' ')\n    h.append(url.path)\n    h.append(\" HTTP/1.1\\r\\n\")\n    if header_value(headers, \"host\") == null {\n        h.append(\"Host: \")\n        // an IPv6 address goes in brackets\n        if url.host[..].find(\":\") != null {\n            h.push_byte('[')\n            h.append(url.host)\n            h.push_byte(']')\n        } else {\n            h.append(url.host)\n        }\n        let usual: u16 = if url.scheme[..] == \"https\" { 443 } else { 80 }\n        if url.port != usual { h.append(format(\":{}\", .{url.port})) }\n        h.append(\"\\r\\n\")\n    }\n    if header_value(headers, \"user-agent\") == null { h.append(\"User-Agent: nexium-http/0.4\\r\\n\") }\n    if header_value(headers, \"accept\") == null { h.append(\"Accept: */*\\r\\n\") }\n    h.append(\"Connection: close\\r\\n\")\n    let sends_body = body_len > 0 or method == \"POST\" or method == \"PUT\" or method == \"PATCH\"\n    if sends_body and header_value(headers, \"content-length\") == null { h.append(format(\"Content-Length: {}\\r\\n\", .{body_len})) }\n    for x in headers {\n        h.append(x.name)\n        h.append(\": \")\n        h.append(x.value)\n        h.append(\"\\r\\n\")\n    }\n    h.append(\"\\r\\n\")\n    return h\n}\n\n/// Write a request; `headers` may add or override the defaults.\npub fn send_request(w: *mut stream.Writer, method: []u8, url: *Url, headers: *List(Header), body: []u8) -> !void {\n    try w.write(request_head(method, url, headers, body.len)[..])\n    try w.write(body)\n    return w.flush()\n}\n\n// ------------------------------------------------------------------ transports\n\n/// A connection a request travels over, and the TLS slot of decision 120.\n/// `Plain` is TCP, for `http://`. A TLS layer implements it for\n/// `https://` and a program hands it to a client\n/// (`http.client_with(NxTls, &mut layer)`): nxtls, the TLS 1.3 client\n/// written in Nexium, today, and the platform's TLS later. nxtls fills it\n/// in a few lines:\n///\n///     struct NxTls { roots: x509.Store, conn: tls.Conn }\n///\n///     impl http.Transport for NxTls {\n///         fn connect(self: *mut Self, host: []u8, port: u16, timeout_ms: i64) -> !void {\n///             self.conn.close()\n///             self.conn = tls.connect(host, port, &self.roots, time.now(), timeout_ms)\n///             if !self.conn.is_open() { return error.ConnectionRefused }\n///         }\n///         fn send(self: *mut Self, data: []u8) -> !void { return self.conn.send(data) }\n///         fn recv(self: *mut Self) -> !String { return self.conn.recv() }\n///         fn set_timeout(self: *mut Self, ms: i64) { self.conn.set_timeout(ms) }\n///         fn truncated(self: *Self) -> bool { return self.conn.truncated() }\n///         fn close(self: *mut Self) { self.conn.close() }\n///     }\npub trait Transport {\n    /// Connects to `host` at `port`, closing any connection still open,\n    /// within `timeout_ms` (0: no limit); each wait for data afterwards\n    /// takes at most `timeout_ms` too, and is `error.Timeout` then.\n    fn connect(self: *mut Self, host: []u8, port: u16, timeout_ms: i64) -> !void\n    /// Sends all of `data`.\n    fn send(self: *mut Self, data: []u8) -> !void\n    /// At least one byte, or \"\" at the end of the connection.\n    fn recv(self: *mut Self) -> !String\n    /// How long each wait for data takes from now on, in ms (0: no limit):\n    /// a Discord gateway waits for the next heartbeat, not the connect's\n    /// deadline.\n    fn set_timeout(self: *mut Self, ms: i64)\n    /// Whether the connection ended without TLS's close_notify, so that\n    /// what came may be cut short. Plain TCP cannot tell, and says false.\n    fn truncated(self: *Self) -> bool\n    /// Closes the connection; a TLS layer says close_notify first.\n    fn close(self: *mut Self)\n}\n\n/// TCP, the transport of `http://`.\npub struct Plain {\n    conn: net.TcpStream\n}\n\nimpl Plain {\n    pub fn new() -> Plain {\n        var c = net.TcpStream.from_socket(-1)\n        c.open = false\n        return Plain{ .conn = c }\n    }\n}\n\nimpl Transport for Plain {\n    fn connect(self: *mut Self, host: []u8, port: u16, timeout_ms: i64) -> !void {\n        self.conn.close()\n        self.conn = try net.TcpStream.connect_timeout(host, port, timeout_ms)\n        self.conn.set_timeout(timeout_ms)\n    }\n\n    fn send(self: *mut Self, data: []u8) -> !void {\n        return self.conn.send(data)\n    }\n\n    fn recv(self: *mut Self) -> !String {\n        return self.conn.recv(65536)\n    }\n\n    fn set_timeout(self: *mut Self, ms: i64) {\n        self.conn.set_timeout(ms)\n    }\n\n    fn truncated(self: *Self) -> bool {\n        _ = self\n        return false\n    }\n\n    fn close(self: *mut Self) {\n        self.conn.close()\n    }\n}\n\n/// A request's input, buffered for the parser: from `Plain`, or from the\n/// client's TLS layer, a `T`. Calls go straight to one or the other (no\n/// `dyn`), so a request has the effects of the transports it can use and\n/// no others: a plain client's stay `allocates blocks panics`.\nstruct Input(T) {\n    plain: ?*mut Plain\n    tls: ?*mut T\n    buf: String\n    pos: usize\n    eof: bool\n}\n\nimpl(T) Input(T) {\n    fn send(self: *mut Self, data: []u8) -> !void {\n        if let p = self.plain { return p.send(data) }\n        let t = self.tls orelse return error.Closed\n        return t.send(data)\n    }\n\n    fn recv(self: *mut Self) -> !String {\n        if let p = self.plain { return p.recv() }\n        let t = self.tls orelse return String.new()\n        return t.recv()\n    }\n\n    fn truncated(self: *Self) -> bool {\n        if let p = self.plain { return p.truncated() }\n        let t = self.tls orelse return false\n        return t.truncated()\n    }\n\n    fn close(self: *mut Self) {\n        if let p = self.plain { p.close() }\n        if let t = self.tls { t.close() }\n    }\n\n    // drop what was read and take the next piece; false at the end\n    fn fill(self: *mut Self) -> !bool {\n        if self.eof { return false }\n        if self.pos > 0 {\n            let left = String.from(self.buf[self.pos..self.buf.len])\n            self.buf = left\n            self.pos = 0\n        }\n        let got = try self.recv()\n        if got.len == 0 {\n            self.eof = true\n            return false\n        }\n        self.buf.append(got)\n        return true\n    }\n}\n\nimpl(T) Source for Input(T) {\n    fn line(self: *mut Self, max: usize) -> !?String {\n        while true {\n            var i = self.pos\n            while i < self.buf.len and self.buf[i] != '\\n' { i += 1 }\n            if max > 0 and i - self.pos > max { return error.TooLarge }\n            if i < self.buf.len {\n                var end = i\n                if end > self.pos and self.buf[end - 1] == '\\r' { end -= 1 }\n                let line = String.from(self.buf[self.pos..end])\n                self.pos = i + 1\n                return line\n            }\n            if !(try self.fill()) {\n                if self.pos < self.buf.len {\n                    let line = String.from(self.buf[self.pos..self.buf.len])\n                    self.pos = self.buf.len\n                    return line\n                }\n                return null\n            }\n        }\n    }\n\n    fn some(self: *mut Self, n: usize) -> !String {\n        if self.pos >= self.buf.len {\n            if !(try self.fill()) { return String.new() }\n        }\n        var end = self.pos + n\n        if end > self.buf.len { end = self.buf.len }\n        let out = String.from(self.buf[self.pos..end])\n        self.pos = end\n        return out\n    }\n\n    fn rest(self: *mut Self) -> !String {\n        var out = String.from(self.buf[self.pos..self.buf.len])\n        self.pos = self.buf.len\n        while true {\n            if !(try self.fill()) { break }\n            out.append(self.buf[self.pos..self.buf.len])\n            self.pos = self.buf.len\n        }\n        // nothing frames what came: a TLS connection cut rather than closed\n        // may have cut it short\n        if self.truncated() { return error.Truncated }\n        return out\n    }\n}\n\n// ------------------------------------------------------------------ client\n\nconst FRAME_NONE: u8 = 0\nconst FRAME_LENGTH: u8 = 1\nconst FRAME_CHUNKED: u8 = 2\nconst FRAME_CLOSE: u8 = 3\nconst PIECE: usize = 65536\n\n/// A response read as it arrives, from `Client.open`: the status and the\n/// headers, then the body in pieces (`next`) or whole (`read_all`). It\n/// holds the client's connection until `close`.\npub struct Streaming(T){\n    status: u16\n    reason: String\n    headers: List(Header)\n    input: Input(T)\n    /// how the body is framed: FRAME_NONE, _LENGTH, _CHUNKED or _CLOSE\n    frame: u8\n    /// what is left of the body (by length) or of the chunk\n    left: usize\n    /// read so far, against `max` (0: no limit)\n    total: usize\n    max: usize\n    /// a chunk's data ended and its line break is still to read\n    chunk_end: bool\n    done: bool\n}\n\nimpl(T) Streaming(T) {\n    /// A header value, case-insensitive; null when absent.\n    pub fn header(self: *Self, name: []u8) -> ?[]u8 {\n        return header_value(&self.headers, name)\n    }\n\n    pub fn ok(self: *Self) -> bool {\n        return self.status >= 200 and self.status < 300\n    }\n\n    fn counted(self: *mut Self, n: usize) -> !void {\n        self.total += n\n        if self.max > 0 and self.total > self.max { return error.TooLarge }\n    }\n\n    /// The next piece of the body; null once all of it has come.\n    /// `error.Truncated` when the connection ends before the body does.\n    pub fn next(self: *mut Self) -> !?String {\n        if self.done { return null }\n        if self.frame == FRAME_NONE {\n            self.done = true\n            return null\n        }\n        if self.frame == FRAME_LENGTH {\n            if self.left == 0 {\n                self.done = true\n                return null\n            }\n            let got = try self.input.some(if self.left < PIECE { self.left } else { PIECE })\n            if got.len == 0 { return error.Truncated }\n            self.left -= got.len\n            return got\n        }\n        if self.frame == FRAME_CHUNKED {\n            if self.left == 0 {\n                if self.chunk_end {\n                    _ = (try self.input.line(MAX_LINE)) orelse return error.Truncated\n                    self.chunk_end = false\n                }\n                let size_line = (try self.input.line(MAX_LINE)) orelse return error.Truncated\n                let size = hex_value(size_line) orelse return error.InvalidInput\n                if size == 0 {\n                    // trailers, then the blank line\n                    while true {\n                        let t = (try self.input.line(MAX_LINE)) orelse break\n                        if t.len == 0 { break }\n                    }\n                    self.done = true\n                    return null\n                }\n                if self.max > 0 and size > self.max - self.total { return error.TooLarge }\n                self.left = size\n            }\n            let got = try self.input.some(if self.left < PIECE { self.left } else { PIECE })\n            if got.len == 0 { return error.Truncated }\n            self.left -= got.len\n            if self.left == 0 { self.chunk_end = true }\n            try self.counted(got.len)\n            return got\n        }\n        let got = try self.input.some(PIECE)\n        if got.len == 0 {\n            self.done = true\n            // nothing frames this body: a TLS connection cut rather than\n            // closed may have cut it short\n            if self.input.truncated() { return error.Truncated }\n            return null\n        }\n        try self.counted(got.len)\n        return got\n    }\n\n    /// The rest of the body at once.\n    pub fn read_all(self: *mut Self) -> !String {\n        var body = String.new()\n        while true {\n            let piece = (try self.next()) orelse break\n            body.append(piece)\n        }\n        return body\n    }\n\n    /// Closes the connection.\n    pub fn close(self: *mut Self) {\n        self.input.close()\n        self.done = true\n    }\n}\n\n/// A response up to its body: what `begin` reads, owned.\nstruct Head {\n    status: u16\n    reason: String\n    headers: List(Header)\n    frame: u8\n    left: usize\n}\n\n/// Sends a request, whole, over a connected input and reads the response\n/// up to its body. It takes nothing borrowed but the input, so the input\n/// holds no view but its transport.\nfn begin(comptime T: type, input: *mut Input(T), own req: String, is_head: bool, max: usize) -> !Head {\n    try input.send(req[..])\n    var head = Head{ .status = 0, .reason = String.new(), .headers = List(Header).new(), .frame = FRAME_CLOSE, .left = 0 }\n    while true {\n        let line = (try input.line(MAX_LINE)) orelse return error.Truncated\n        let st = parse_status(line) orelse return error.InvalidInput\n        head.status = st.0\n        head.reason = String.from(st.1)\n        head.headers = try read_headers(input)\n        // an interim answer (103 Early Hints), then the real one\n        if head.status < 100 or head.status >= 200 or head.status == 101 { break }\n    }\n    if let te = header_value(&head.headers, \"transfer-encoding\") {\n        if is_chunked(te) { head.frame = FRAME_CHUNKED }\n    }\n    if head.frame == FRAME_CLOSE {\n        if let cl = header_value(&head.headers, \"content-length\") {\n            let n = cl.parse_int(usize) catch return error.InvalidInput\n            if max > 0 and n > max { return error.TooLarge }\n            head.frame = FRAME_LENGTH\n            head.left = n\n        }\n    }\n    if is_head or head.status == 204 or head.status == 304 or head.status < 200 { head.frame = FRAME_NONE }\n    return head\n}\n\n/// Where a redirect's `Location` leads from `base`: an absolute URL, one\n/// without its scheme (`//host/path`), a path, or a path relative to\n/// base's directory; null for anything that is not http or https.\nfn follow(base: *Url, loc0: []u8) -> ?Url {\n    var loc = loc0\n    if let hash = loc.find(\"#\") { loc = loc[0..hash] }\n    // a scheme (RFC 3986: a letter, then letters, digits, `+-.`, then `:`)\n    // makes it absolute, and one other than http or https is refused\n    var k: usize = 0\n    while k < loc.len and ((loc[k] >= 'a' and loc[k] <= 'z') or (loc[k] >= 'A' and loc[k] <= 'Z') or (k > 0 and ((loc[k] >= '0' and loc[k] <= '9') or loc[k] == '+' or loc[k] == '-' or loc[k] == '.'))) { k += 1 }\n    if k > 0 and k < loc.len and loc[k] == ':' { return parse_url(loc) }\n    if loc.starts_with(\"//\") { return parse_url(format(\"{}:{}\", .{base.scheme, loc})[..]) }\n    var path = String.new()\n    if loc.starts_with(\"/\") {\n        path.append(loc)\n    } else {\n        var dir = base.path[..]\n        if let q = dir.find(\"?\") { dir = dir[0..q] }\n        var cut = dir.len\n        while cut > 0 and dir[cut - 1] != '/' { cut -= 1 }\n        path.append(dir[0..cut])\n        path.append(loc)\n    }\n    if path.len == 0 { path.append(\"/\") }\n    return Url{ .scheme = base.scheme.clone(), .host = base.host.clone(), .port = base.port, .path = path }\n}\n\n/// `headers` without those named, case-insensitive.\nfn dropping(headers: *List(Header), names: [][]u8) -> List(Header) {\n    var out = List(Header).new()\n    for h in headers.* {\n        var keep = true\n        for n in names {\n            if h.name.eq_ignore_case(n) { keep = false }\n        }\n        if keep { out.append(Header{ .name = h.name.clone(), .value = h.value.clone() }) }\n    }\n    return out\n}\n\n/// Makes requests: `http://` over TCP, `https://` over the TLS layer a\n/// program gives it (the slot of decision 120). `client()` makes one for\n/// `http://` only, `client_with` one with a TLS layer:\n///\n///     var client = http.client_with(NxTls, &mut layer)   // nxtls's\n///     client.timeout_ms = 10000\n///     let r = try client.get(\"https://example.com/\")\n///\n/// A client calls its transports directly, so its requests have their\n/// effects: a plain client's are `allocates blocks panics`, and one with\n/// a TLS layer adds the layer's.\npub struct Client(T){\n    /// ms a connect, and each wait for data, may take; 0 waits as long as\n    /// the system does\n    timeout_ms: i64 = 15000\n    /// redirects followed at most; past them the redirect is the answer\n    max_redirects: usize = 5\n    /// the largest body read, in bytes (`error.TooLarge` past it); 0: no\n    /// limit\n    max_body: usize = 0\n    /// headers every request carries; a request's own replace them\n    headers: List(Header)\n    /// the TLS layer `https://` goes over; without one it is\n    /// `error.Unsupported`\n    tls: ?*mut T = null\n    plain: Plain\n}\n\n/// A client for `http://`; `https://` is `error.Unsupported`.\npub fn client() -> Client(Plain) {\n    return Client(Plain){ .headers = List(Header).new(), .plain = Plain.new() }\n}\n\n/// A client whose `https://` goes over `tls`, a TLS layer: a `Transport`,\n/// such as nxtls's.\npub fn client_with(comptime T: type where T: Transport, tls: *mut T) -> Client(T) {\n    return Client(T){ .headers = List(Header).new(), .tls = tls, .plain = Plain.new() }\n}\n\nimpl(T) Client(T) {\n    /// Sends a request and reads the response's status and headers,\n    /// following redirects: a 303, and a 301 or 302 to a POST, turn into a\n    /// GET without the body, and a redirect to another host goes without\n    /// the Authorization and Cookie headers. The body is read from the\n    /// `Streaming` as it arrives; close it when done.\n    pub fn open(self: *mut Self, method: []u8, url_text: []u8, headers: *List(Header), body: []u8) -> !Streaming(T) {\n        var url = parse_url(url_text) orelse return error.InvalidInput\n        var verb = String.from(method)\n        var payload = String.from(body)\n        // the client's headers, unless the request has its own\n        var hs = List(Header).new()\n        for h in self.headers {\n            if header_value(headers, h.name[..]) == null { hs.append(Header{ .name = h.name.clone(), .value = h.value.clone() }) }\n        }\n        for h in headers.* { hs.append(Header{ .name = h.name.clone(), .value = h.value.clone() }) }\n        var hops: usize = 0\n        while true {\n            var input = Input(T){ .plain = null, .tls = null, .buf = String.new(), .pos = 0, .eof = false }\n            if url.scheme[..] == \"https\" {\n                let t = self.tls orelse return error.Unsupported\n                try t.connect(url.host[..], url.port, self.timeout_ms)\n                input.tls = t\n            } else {\n                try self.plain.connect(url.host[..], url.port, self.timeout_ms)\n                input.plain = &mut self.plain\n            }\n            var req = request_head(verb[..], &url, &hs, payload.len)\n            req.append(payload)\n            let head = begin(T, &mut input, req, verb[..] == \"HEAD\", self.max_body) catch |e| {\n                input.close()\n                return e\n            }\n            let redirect = head.status == 301 or head.status == 302 or head.status == 303 or head.status == 307 or head.status == 308\n            var next: ?Url = null\n            if redirect and hops < self.max_redirects {\n                if let loc = header_value(&head.headers, \"location\") { next = follow(&url, loc) }\n            }\n            if next == null {\n                return Streaming(T){\n                    .status = head.status, .reason = head.reason.clone(), .headers = head.headers.clone(),\n                    .input = input, .frame = head.frame, .left = head.left,\n                    .total = 0, .max = self.max_body, .chunk_end = false, .done = false,\n                }\n            }\n            input.close()\n            hops += 1\n            let to = next.?\n            if to.host[..] != url.host[..] or to.port != url.port {\n                hs = dropping(&hs, [\"authorization\", \"cookie\", \"proxy-authorization\"][..])\n            }\n            if head.status == 303 or ((head.status == 301 or head.status == 302) and verb[..] == \"POST\") {\n                verb = String.from(\"GET\")\n                payload = String.new()\n                hs = dropping(&hs, [\"content-type\", \"content-length\"][..])\n            }\n            url = to\n        }\n    }\n\n    /// A request, its response read whole, following redirects.\n    pub fn send(self: *mut Self, method: []u8, url: []u8, headers: *List(Header), body: []u8) -> !Response {\n        var s = try self.open(method, url, headers, body)\n        let whole = s.read_all() catch |e| {\n            s.close()\n            return e\n        }\n        s.close()\n        return Response{ .status = s.status, .reason = s.reason.clone(), .headers = s.headers.clone(), .body = whole }\n    }\n\n    pub fn get(self: *mut Self, url: []u8) -> !Response {\n        let none = List(Header).new()\n        return self.send(\"GET\", url, &none, \"\")\n    }\n\n    pub fn post(self: *mut Self, url: []u8, content_type: []u8, body: []u8) -> !Response {\n        var headers = List(Header).new()\n        headers.append(Header{ .name = String.from(\"Content-Type\"), .value = String.from(content_type) })\n        return self.send(\"POST\", url, &headers, body)\n    }\n}\n\n/// Perform a request with a plain `client()`, following redirects.\n/// `error.InvalidInput` for a URL that is not http or https,\n/// `error.Unsupported` for `https://`, which needs `client_with` and a TLS\n/// layer.\npub fn request(method: []u8, url_text: []u8, headers: *List(Header), body: []u8) -> !Response {\n    var c = client()\n    return c.send(method, url_text, headers, body)\n}\n\npub fn get(url: []u8) -> !Response {\n    let none = List(Header).new()\n    return request(\"GET\", url, &none, \"\")\n}\n\npub fn post(url: []u8, content_type: []u8, body: []u8) -> !Response {\n    var headers = List(Header).new()\n    headers.append(Header{ .name = String.from(\"Content-Type\"), .value = String.from(content_type) })\n    return request(\"POST\", url, &headers, body)\n}\n\n// ------------------------------------------------------------------ server\n\npub struct Request {\n    method: String\n    /// the path without the query\n    path: String\n    /// the query string after `?`, without it\n    query: String\n    headers: List(Header)\n    body: String\n    peer: String\n}\n\nimpl Request {\n    pub fn header(self: *Self, name: []u8) -> ?[]u8 {\n        return header_value(&self.headers, name)\n    }\n\n    /// The value of a query parameter (`?a=1&b=2`), not decoded.\n    pub fn param(self: *Self, name: []u8) -> ?[]u8 {\n        for pair in self.query.split(\"&\") {\n            var eq: usize = 0\n            while eq < pair.len and pair[eq] != '=' { eq += 1 }\n            if pair[0..eq] == name { return if eq < pair.len { pair[eq + 1..pair.len] } else { pair[0..0] } }\n        }\n        return null\n    }\n}\n\n/// Read a request from a reader over the connection; null when the\n/// connection was closed before a request line.\npub fn read_request(r: *mut stream.Reader, peer: []u8) -> !?Request {\n    return read_request_max(r, peer, MAX_BODY)\n}\n\n/// `read_request` with a body limit of `max_body` bytes (0: none).\npub fn read_request_max(r: *mut stream.Reader, peer: []u8, max_body: usize) -> !?Request {\n    let line = (try r.read_line_max(MAX_LINE)) orelse return null\n    // GET /path?query HTTP/1.1\n    var a: usize = 0\n    while a < line.len and line[a] != ' ' { a += 1 }\n    if a == line.len { return error.InvalidInput }\n    var b = a + 1\n    while b < line.len and line[b] != ' ' { b += 1 }\n    let target = line[a + 1..b]\n    var q: usize = 0\n    while q < target.len and target[q] != '?' { q += 1 }\n    let headers = try read_headers(r)\n    let body = try read_body(r, &headers, false, max_body)\n    return Request{\n        .method = String.from(line[0..a]),\n        .path = String.from(target[0..q]),\n        .query = String.from(if q < target.len { target[q + 1..target.len] } else { target[0..0] }),\n        .headers = headers,\n        .body = body,\n        .peer = String.from(peer),\n    }\n}\n\n/// Write a response with `Content-Length` and `Connection: close`.\npub fn write_response(w: *mut stream.Writer, resp: *Response) -> !void {\n    try w.write(format(\"HTTP/1.1 {} \", .{resp.status}))\n    try w.write(resp.reason)\n    try w.write(\"\\r\\n\")\n    for h in resp.headers {\n        try w.write(h.name)\n        try w.write(\": \")\n        try w.write(h.value)\n        try w.write(\"\\r\\n\")\n    }\n    try w.write(format(\"Content-Length: {}\\r\\nConnection: close\\r\\n\\r\\n\", .{resp.body.len}))\n    try w.write(resp.body)\n    return w.flush()\n}\n\npub struct Route {\n    method: String\n    path: String\n    handler: fn(*Request) -> Response\n}\n\n/// Matches requests by method and exact path; a path ending in `/*`\n/// matches any request under that prefix.\npub struct Router {\n    routes: List(Route)\n    static_root: ?String\n}\n\nimpl Router {\n    pub fn new() -> Router {\n        return Router{ .routes = List(Route).new(), .static_root = null }\n    }\n\n    pub fn route(self: *mut Self, method: []u8, path: []u8, handler: fn(*Request) -> Response) {\n        self.routes.append(Route{ .method = String.from(method), .path = String.from(path), .handler = handler })\n    }\n\n    pub fn get(self: *mut Self, path: []u8, handler: fn(*Request) -> Response) {\n        self.route(\"GET\", path, handler)\n    }\n\n    pub fn post(self: *mut Self, path: []u8, handler: fn(*Request) -> Response) {\n        self.route(\"POST\", path, handler)\n    }\n\n    /// Serve files under `root` for paths no route claims.\n    pub fn serve_static(self: *mut Self, root: []u8) {\n        self.static_root = String.from(root)\n    }\n\n    /// The response for a request.\n    pub fn handle(self: *Self, req: *Request) -> Response {\n        for r in self.routes {\n            if r.method != req.method { continue }\n            let hit = if r.path.ends_with(\"/*\") { req.path.starts_with(r.path[0..r.path.len - 1]) } else { r.path == req.path }\n            if hit {\n                let h = r.handler\n                return h(req)\n            }\n        }\n        if let root = self.static_root {\n            if req.method == \"GET\" { return static_file(root, req.path) }\n        }\n        return not_found()\n    }\n}\n\n/// A file under `root` for a request path, refusing `..`; `index.html` for\n/// directories.\npub fn static_file(root: []u8, path: []u8) -> Response {\n    if path.find(\"..\") != null { return text(403, \"forbidden\\n\") }\n    var file = fs.join(root, if path.len > 0 and path[0] == '/' { path[1..path.len] } else { path })\n    if fs.is_dir(file) { file = fs.join(file, \"index.html\") }\n    if !fs.is_file(file) { return not_found() }\n    let data = fs.read(file) catch return text(500, \"cannot read file\\n\")\n    return respond(200, content_type_for(file), data)\n}\n\npub struct Server {\n    listener: net.TcpListener\n}\n\nimpl Server {\n    pub fn bind(host: []u8, port: u16) -> !Server {\n        return Server{ .listener = try net.TcpListener.bind(host, port) }\n    }\n\n    pub fn port(self: *Self) -> !u16 {\n        return self.listener.port()\n    }\n\n    /// Accept one connection, answer one request, close. `error.Timeout`\n    /// when nobody connects within `timeout_ms` (0 waits forever).\n    pub fn serve_one(self: *Self, router: *Router, timeout_ms: i64) -> !void {\n        var conn = try self.listener.accept_timeout(timeout_ms)\n        conn.set_timeout(10000)\n        let peer = conn.peer() catch String.from(\"?\")\n        var r = conn.reader()\n        var bad = false\n        var too_large = false\n        let maybe = read_request(&mut r, peer) catch |e| {\n            bad = true\n            too_large = e == error.TooLarge\n            null\n        }\n        var resp = if too_large { text(413, \"request too large\\n\") } else { text(400, \"bad request\\n\") }\n        if !bad {\n            if let req = maybe {\n                resp = router.handle(&req)\n            } else {\n                conn.close()\n                return\n            }\n        }\n        var w = conn.writer()\n        write_response(&mut w, &resp) catch { }\n        conn.close()\n    }\n\n    /// Serve forever, one request at a time.\n    pub fn serve(self: *Self, router: *Router) -> !void {\n        while true {\n            self.serve_one(router, 0) catch |e| {\n                if e != error.Timeout { return e }\n            }\n        }\n    }\n\n    pub fn close(self: *mut Self) {\n        self.listener.close()\n    }\n}\n\n// ------------------------------------------------------------------ tests\n\nfn hello(req: *Request) -> Response {\n    var body = String.from(\"hello \")\n    body.append(req.param(\"name\") orelse \"world\")\n    return text(200, body)\n}\n\nfn echo(req: *Request) -> Response {\n    return respond(201, \"application/octet-stream\", req.body)\n}\n\ntest \"urls\" {\n    let u = parse_url(\"http://example.com/a/b?x=1\").?\n    expect_eq(u.host, \"example.com\")\n    expect_eq(u.port, 80)\n    expect_eq(u.path, \"/a/b?x=1\")\n    let p = parse_url(\"http://localhost:8080\").?\n    expect_eq(p.port, 8080)\n    expect_eq(p.path, \"/\")\n    expect(parse_url(\"ftp://x\") == null)\n    expect_eq(parse_url(\"https://h/\").?.port, 443)\n    expect_eq(content_type_for(\"a/b.css\"), \"text/css\")\n    expect_eq(hex_value(\"1A;ext\").?, 26)\n}\n\ntest \"request and response over loopback\" {\n    var router = Router.new()\n    router.get(\"/hello\", hello)\n    router.post(\"/echo\", echo)\n    var server = try Server.bind(\"127.0.0.1\", 0)\n    let port = try server.port()\n    var url = parse_url(format(\"http://127.0.0.1:{}/hello?name=nx\", .{port})).?\n\n    // the client sends first; the request fits the socket buffer, so the\n    // single-threaded server can then accept and answer it\n    var c = try net.TcpStream.connect_timeout(\"127.0.0.1\", port, 5000)\n    c.set_timeout(5000)\n    var w = c.writer()\n    let none = List(Header).new()\n    try send_request(&mut w, \"GET\", &url, &none, \"\")\n    try server.serve_one(&router, 5000)\n    var r = c.reader()\n    let resp = try read_response(&mut r)\n    expect_eq(resp.status, 200)\n    expect_eq(resp.body, \"hello nx\")\n    expect_eq(resp.header(\"content-type\").?, \"text/plain; charset=utf-8\")\n    c.close()\n\n    var c2 = try net.TcpStream.connect_timeout(\"127.0.0.1\", port, 5000)\n    c2.set_timeout(5000)\n    var w2 = c2.writer()\n    url.path = String.from(\"/echo\")\n    try send_request(&mut w2, \"POST\", &url, &none, \"payload bytes\")\n    try server.serve_one(&router, 5000)\n    var r2 = c2.reader()\n    let resp2 = try read_response(&mut r2)\n    expect_eq(resp2.status, 201)\n    expect_eq(resp2.body, \"payload bytes\")\n    c2.close()\n\n    var c3 = try net.TcpStream.connect_timeout(\"127.0.0.1\", port, 5000)\n    c3.set_timeout(5000)\n    try c3.send(\"GET /missing HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n\")\n    try server.serve_one(&router, 5000)\n    var r3 = c3.reader()\n    expect_eq((try read_response(&mut r3)).status, 404)\n    c3.close()\n    server.close()\n}\n\ntest \"chunked bodies\" {\n    // a canned response fed through a file-backed reader\n    let path = fs.temp_path(\"nxhttp-\")\n    try fs.write(path, \"HTTP/1.1 200 OK\\r\\nTransfer-Encoding: chunked\\r\\nX-Test: yes\\r\\n\\r\\n5\\r\\nhello\\r\\n6;ext=1\\r\\n world\\r\\n0\\r\\n\\r\\n\")\n    var r = try stream.Reader.open(path)\n    let resp = try read_response(&mut r)\n    r.close()\n    try fs.remove(path)\n    expect_eq(resp.status, 200)\n    expect_eq(resp.reason, \"OK\")\n    expect_eq(resp.body, \"hello world\")\n    expect_eq(resp.header(\"x-test\").?, \"yes\")\n    expect(resp.ok())\n}\n\n// a request as a peer would send it, read through a file-backed reader\nfn request_from(text: []u8) -> !?Request {\n    let path = fs.temp_path(\"nxhttp-\")\n    try fs.write(path, text)\n    var r = try stream.Reader.open(path)\n    let got = read_request(&mut r, \"peer\")\n    r.close()\n    try fs.remove(path)\n    return got\n}\n\n// the error a request fails with, as its name\nfn request_error(text: []u8) -> []u8 {\n    _ = request_from(text) catch |e| { return @errorName(e) }\n    return \"none\"\n}\n\ntest \"a peer's sizes are bounded before anything is allocated\" {\n    // a body the client only announces, far past the limit\n    expect_eq(request_error(\"POST / HTTP/1.1\\r\\nContent-Length: 999999999999\\r\\n\\r\\n\"), \"TooLarge\")\n    // a chunk size past usize, and chunks that add up past the limit\n    expect_eq(request_error(\"POST / HTTP/1.1\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\nFFFFFFFFFFFFFFFFFFFFFFFF\\r\\n\"), \"InvalidInput\")\n    expect_eq(request_error(\"POST / HTTP/1.1\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n1000001\\r\\n\"), \"TooLarge\")\n    // a line that never ends\n    var long = String.from(\"GET /\")\n    for _ in 0..70000 { long.push_byte('a') }\n    expect_eq(request_error(long[..]), \"TooLarge\")\n    // a body within the limit still reads\n    let ok = (try request_from(\"POST /x HTTP/1.1\\r\\nContent-Length: 5\\r\\n\\r\\nhello\")).?\n    expect_eq(ok.body, \"hello\")\n}\n\n/// A transport that answers from a script: each connect takes the next\n/// canned reply, and what was sent over each connection, and where to,\n/// is kept.\nstruct Scripted {\n    replies: List(String)\n    next: usize\n    reply: String\n    at: usize\n    /// the most bytes a recv gives, to split the reply anywhere\n    step: usize\n    /// the connection ends without close_notify\n    cut: bool\n    sent: List(String)\n    hosts: List(String)\n}\n\nfn scripted(replies: [][]u8, step: usize) -> Scripted {\n    var r = List(String).new()\n    for x in replies { r.append(String.from(x)) }\n    return Scripted{ .replies = r, .next = 0, .reply = String.new(), .at = 0, .step = step, .cut = false, .sent = List(String).new(), .hosts = List(String).new() }\n}\n\nimpl Transport for Scripted {\n    fn connect(self: *mut Self, host: []u8, port: u16, timeout_ms: i64) -> !void {\n        _ = timeout_ms\n        if self.next >= self.replies.len { return error.ConnectionRefused }\n        self.reply = self.replies[self.next].clone()\n        self.next += 1\n        self.at = 0\n        self.hosts.append(format(\"{}:{}\", .{host, port}))\n        self.sent.append(String.new())\n    }\n\n    fn send(self: *mut Self, data: []u8) -> !void {\n        self.sent[self.sent.len - 1].append(data)\n    }\n\n    fn recv(self: *mut Self) -> !String {\n        var end = self.at + self.step\n        if end > self.reply.len { end = self.reply.len }\n        let out = String.from(self.reply[self.at..end])\n        self.at = end\n        return out\n    }\n\n    fn set_timeout(self: *mut Self, ms: i64) {\n        _ = self\n        _ = ms\n    }\n\n    fn truncated(self: *Self) -> bool {\n        return self.cut\n    }\n\n    fn close(self: *mut Self) {\n        self.at = self.reply.len\n    }\n}\n\n// the error a client's GET fails with, as its name\nfn client_error(c: *mut Client(Plain), url: []u8) -> []u8 {\n    _ = c.get(url) catch |e| { return @errorName(e) }\n    return \"none\"\n}\n\n// the error a GET through a scripted TLS layer fails with, as its name\nfn get_error(tls: *mut Scripted, max_body: usize) -> []u8 {\n    var c = client_with(Scripted, tls)\n    c.max_body = max_body\n    _ = c.get(\"https://example.com/\") catch |e| { return @errorName(e) }\n    return \"none\"\n}\n\ntest \"https:// goes through the TLS slot\" {\n    var tls = scripted([\"HTTP/1.1 200 OK\\r\\nContent-Length: 5\\r\\n\\r\\nhello\"][..], 3)\n    var c = client_with(Scripted, &mut tls)\n    let r = try c.get(\"https://example.com/a?b=1\")\n    expect_eq(r.status, 200)\n    expect_eq(r.body, \"hello\")\n    expect_eq(tls.hosts[0], \"example.com:443\")\n    expect(tls.sent[0][..].starts_with(\"GET /a?b=1 HTTP/1.1\\r\\nHost: example.com\\r\\n\"))\n    // another port is named in Host; without a TLS layer, https:// is refused\n    var tls2 = scripted([\"HTTP/1.1 204 No Content\\r\\n\\r\\n\"][..], 64)\n    var c2 = client_with(Scripted, &mut tls2)\n    expect_eq((try c2.get(\"https://[::1]:8443/\")).status, 204)\n    expect(tls2.sent[0][..].starts_with(\"GET / HTTP/1.1\\r\\nHost: [::1]:8443\\r\\n\"))\n    var none = client()\n    expect_eq(client_error(&mut none, \"https://example.com/\"), \"Unsupported\")\n    expect_eq(client_error(&mut none, \"ftp://example.com/\"), \"InvalidInput\")\n}\n\ntest \"a body read as it arrives\" {\n    // a byte at a time: chunk sizes, data and line breaks all split\n    var tls = scripted([\"HTTP/1.1 200 OK\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n5\\r\\nhello\\r\\n6;x=1\\r\\n world\\r\\n0\\r\\nX-Trailer: 1\\r\\n\\r\\n\"][..], 1)\n    var c = client_with(Scripted, &mut tls)\n    let none = List(Header).new()\n    var s = try c.open(\"GET\", \"https://example.com/stream\", &none, \"\")\n    expect(s.ok())\n    var body = String.new()\n    var pieces: usize = 0\n    while true {\n        let piece = (try s.next()) orelse break\n        body.append(piece)\n        pieces += 1\n    }\n    s.close()\n    expect_eq(body, \"hello world\")\n    expect(pieces > 2)\n    expect(is_chunked(\"gzip, chunked\") and is_chunked(\" Chunked \") and !is_chunked(\"chunked, gzip\"))\n}\n\ntest \"redirects\" {\n    var tls = scripted([\n        \"HTTP/1.1 302 Found\\r\\nLocation: next\\r\\nContent-Length: 0\\r\\n\\r\\n\",\n        \"HTTP/1.1 303 See Other\\r\\nLocation: https://other.example/done#top\\r\\n\\r\\n\",\n        \"HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\n\\r\\nok\",\n    ][..], 7)\n    var c = client_with(Scripted, &mut tls)\n    var hs = List(Header).new()\n    hs.append(Header{ .name = String.from(\"Authorization\"), .value = String.from(\"Bot secret\") })\n    hs.append(Header{ .name = String.from(\"Content-Type\"), .value = String.from(\"application/json\") })\n    let r = try c.send(\"POST\", \"https://example.com/api/start\", &hs, \"{}\")\n    expect_eq(r.body, \"ok\")\n    expect_eq(tls.hosts[1], \"example.com:443\")\n    expect_eq(tls.hosts[2], \"other.example:443\")\n    // the POST, then after its 302 a GET without the body; the token goes\n    // to the same host and not to another\n    expect(tls.sent[0][..].starts_with(\"POST /api/start HTTP/1.1\\r\\n\"))\n    expect(tls.sent[0][..].ends_with(\"\\r\\n\\r\\n{}\"))\n    expect(tls.sent[1][..].starts_with(\"GET /api/next HTTP/1.1\\r\\n\"))\n    expect(tls.sent[1][..].find(\"Authorization: Bot secret\") != null)\n    expect(tls.sent[1][..].find(\"Content-Type\") == null)\n    expect(tls.sent[2][..].starts_with(\"GET /done HTTP/1.1\\r\\nHost: other.example\\r\\n\"))\n    expect(tls.sent[2][..].find(\"Authorization\") == null)\n    // past the limit, the redirect is the answer\n    var loop = scripted([\"HTTP/1.1 301 Moved\\r\\nLocation: /a\\r\\n\\r\\n\", \"HTTP/1.1 301 Moved\\r\\nLocation: /b\\r\\n\\r\\n\"][..], 64)\n    var c2 = client_with(Scripted, &mut loop)\n    c2.max_redirects = 1\n    let last = try c2.get(\"https://example.com/\")\n    expect_eq(last.status, 301)\n    expect_eq(last.header(\"location\").?, \"/b\")\n    let u = parse_url(\"http://h:8080/a/b/c?q=1\").?\n    expect_eq(follow(&u, \"d\").?.path, \"/a/b/d\")\n    expect_eq(follow(&u, \"/x?y\").?.path, \"/x?y\")\n    expect_eq(follow(&u, \"//g/p\").?.host, \"g\")\n    expect_eq(follow(&u, \"//g/p\").?.port, 80)\n    expect(follow(&u, \"ftp://x/\") == null)\n}\n\ntest \"bodies that end early, and limits\" {\n    // cut inside a body its length announced\n    var short = scripted([\"HTTP/1.1 200 OK\\r\\nContent-Length: 10\\r\\n\\r\\nhello\"][..], 64)\n    expect_eq(get_error(&mut short, 0), \"Truncated\")\n    // a body framed by the end of the connection: whole when TLS closed it,\n    // refused when the connection was cut\n    var closed = scripted([\"HTTP/1.1 200 OK\\r\\n\\r\\nall of it\"][..], 4)\n    var c = client_with(Scripted, &mut closed)\n    expect_eq((try c.get(\"https://example.com/\")).body, \"all of it\")\n    var cut = scripted([\"HTTP/1.1 200 OK\\r\\n\\r\\nall of it?\"][..], 4)\n    cut.cut = true\n    expect_eq(get_error(&mut cut, 0), \"Truncated\")\n    // bodies past max_body, announced or not\n    var long = scripted([\"HTTP/1.1 200 OK\\r\\nContent-Length: 5\\r\\n\\r\\nhello\"][..], 64)\n    expect_eq(get_error(&mut long, 4), \"TooLarge\")\n    var chunks = scripted([\"HTTP/1.1 200 OK\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n3\\r\\nabc\\r\\n3\\r\\ndef\\r\\n0\\r\\n\\r\\n\"][..], 64)\n    expect_eq(get_error(&mut chunks, 4), \"TooLarge\")\n    var open_ended = scripted([\"HTTP/1.1 200 OK\\r\\n\\r\\nabcdef\"][..], 64)\n    expect_eq(get_error(&mut open_ended, 4), \"TooLarge\")\n    // HEAD has no body, whatever the length says; an interim 103 is skipped\n    var head = scripted([\"HTTP/1.1 200 OK\\r\\nContent-Length: 100\\r\\n\\r\\n\"][..], 64)\n    var c2 = client_with(Scripted, &mut head)\n    let none = List(Header).new()\n    let h = try c2.send(\"HEAD\", \"https://example.com/\", &none, \"\")\n    expect_eq(h.status, 200)\n    expect_eq(h.body.len, 0)\n    var hints = scripted([\"HTTP/1.1 103 Early Hints\\r\\nLink: </a.css>\\r\\n\\r\\nHTTP/1.1 200 OK\\r\\nContent-Length: 3\\r\\n\\r\\nyes\"][..], 5)\n    var c3 = client_with(Scripted, &mut hints)\n    expect_eq((try c3.get(\"https://example.com/\")).body, \"yes\")\n}\n\ntest \"the plain transport over loopback\" {\n    var router = Router.new()\n    router.get(\"/hello\", hello)\n    var server = try Server.bind(\"127.0.0.1\", 0)\n    let port = try server.port()\n    var p = Plain.new()\n    try p.connect(\"127.0.0.1\", port, 5000)\n    try p.send(\"GET /hello?name=plain HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n\")\n    try server.serve_one(&router, 5000)\n    var input = Input(Plain){ .plain = &mut p, .tls = null, .buf = String.new(), .pos = 0, .eof = false }\n    let line = (try input.line(MAX_LINE)).?\n    expect(line[..].starts_with(\"HTTP/1.1 200\"))\n    let hs = try read_headers(&mut input)\n    expect_eq(try read_body(&mut input, &hs, true, 0), \"hello plain\")\n    p.close()\n    server.close()\n}\n\n/// A server that answers one request, on a thread of its own.\nstruct Serving {\n    server: Server\n    router: Router\n}\n\nfn serve_one_request(s: *mut Serving) -> bool {\n    let served = s.server.serve_one(&s.router, 10000)\n    s.server.close()\n    _ = served catch { return false }\n    return true\n}\n\ntest \"a client and a server on two threads\" {\n    var router = Router.new()\n    router.get(\"/hello\", hello)\n    let server = try Server.bind(\"127.0.0.1\", 0)\n    let port = try server.port()\n    var t = thread.spawn(Serving, bool, serve_one_request, Serving{ .server = server, .router = router })\n    var c = client()\n    c.timeout_ms = 10000\n    let r = try c.get(format(\"http://127.0.0.1:{}/hello?name=threads\", .{port})[..])\n    expect(t.join())\n    expect_eq(r.status, 200)\n    expect_eq(r.body, \"hello threads\")\n}\n\ntest \"a socket reader keeps the stream's timeout\" {\n    var listener = try net.TcpListener.bind(\"127.0.0.1\", 0)\n    let port = try listener.port()\n    var client = try net.TcpStream.connect_timeout(\"127.0.0.1\", port, 5000)\n    var conn = try listener.accept_timeout(5000)\n    // the client sends nothing: the read gives up after the timeout\n    conn.set_timeout(200)\n    var r = conn.reader()\n    var timed_out = false\n    _ = r.read_line() catch |e| {\n        timed_out = e == error.Timeout\n        null\n    }\n    expect(timed_out)\n    conn.close()\n    client.close()\n    listener.close()\n}\n";
 static const char nx_str_862[5] = "json";
 static const char nx_str_863[16618] = "// std.json: a JSON parser and serializer, written in Nexium.\n//\n// `import std.json` then `json.parse(text)`, `json.stringify(&value)`.\n// Values are the `Json` enum below; arrays and objects own their children.\n// Numbers are f64 (JSON has one number type); integers up to 2^53 round trip.\n\npub struct Member {\n    key: String\n    value: Json\n}\n\npub enum Json {\n    Null,\n    Bool(bool),\n    Num(f64),\n    Str(String),\n    Arr(List(Json)),\n    Obj(List(Member)),\n}\n\n// ---------------------------------------------------------------- building\n\npub fn null_value() -> Json { return Json.Null }\npub fn boolean(b: bool) -> Json { return Json.Bool(b) }\npub fn number(n: f64) -> Json { return Json.Num(n) }\npub fn string(s: []u8) -> Json { return Json.Str(String.from(s)) }\npub fn array() -> Json { return Json.Arr(List(Json).new()) }\npub fn object() -> Json { return Json.Obj(List(Member).new()) }\n\n/// Append to an array; does nothing when `v` is not an array.\npub fn push(v: *mut Json, own item: Json) {\n    match v.* {\n        .Arr(items) => items.append(item),\n        _ => { },\n    }\n}\n\n/// Set a key on an object (replacing an existing one); does nothing otherwise.\npub fn set(v: *mut Json, key: []u8, own value: Json) {\n    match v.* {\n        .Obj(members) => {\n            for m, i in members {\n                if m.key == key {\n                    members[i] = Member{ .key = String.from(key), .value = value }\n                    return\n                }\n            }\n            members.append(Member{ .key = String.from(key), .value = value })\n        },\n        _ => { },\n    }\n}\n\n// ---------------------------------------------------------------- reading\n\n/// The member `key` of an object, or null.\npub fn get(v: *Json, key: []u8) -> ?*Json {\n    match v.* {\n        .Obj(members) => {\n            for m, i in members {\n                if m.key == key { return &members[i].value }\n            }\n            return null\n        },\n        _ => return null,\n    }\n}\n\n/// The member `key` of an object, mutable, or null.\npub fn get_mut(v: *mut Json, key: []u8) -> ?*mut Json {\n    match v.* {\n        .Obj(members) => {\n            for m, i in members {\n                if m.key == key { return &mut members[i].value }\n            }\n            return null\n        },\n        _ => return null,\n    }\n}\n\n/// Element `i` of an array, mutable, or null.\npub fn at_mut(v: *mut Json, i: usize) -> ?*mut Json {\n    match v.* {\n        .Arr(items) => {\n            if i < items.len { return &mut items[i] }\n            return null\n        },\n        _ => return null,\n    }\n}\n\n/// Element `i` of an array, or null.\npub fn at(v: *Json, i: usize) -> ?*Json {\n    match v.* {\n        .Arr(items) => {\n            if i < items.len { return &items[i] }\n            return null\n        },\n        _ => return null,\n    }\n}\n\n/// Number of elements or members; 0 for scalars.\npub fn len(v: *Json) -> usize {\n    match v.* {\n        .Arr(items) => items.len,\n        .Obj(members) => members.len,\n        _ => 0,\n    }\n}\n\npub fn is_null(v: *Json) -> bool {\n    match v.* {\n        .Null => true,\n        _ => false,\n    }\n}\n\npub fn as_bool(v: *Json) -> ?bool {\n    match v.* {\n        .Bool(b) => b,\n        _ => null,\n    }\n}\n\npub fn as_num(v: *Json) -> ?f64 {\n    match v.* {\n        .Num(n) => n,\n        _ => null,\n    }\n}\n\npub fn as_str(v: *Json) -> ?[]u8 {\n    match v.* {\n        .Str(s) => s.as_slice(),\n        _ => null,\n    }\n}\n\n/// Keys of an object in order; empty for anything else.\npub fn keys(v: *Json) -> List([]u8) {\n    var out = List([]u8).new()\n    match v.* {\n        .Obj(members) => { for m in members { out.append(m.key.as_slice()) } },\n        _ => { },\n    }\n    return out\n}\n\n// ---------------------------------------------------------------- parsing\n\nstruct Parser {\n    src: []u8\n    pos: usize\n}\n\nfn is_ws(c: u8) -> bool { return c == ' ' or c == '\\t' or c == '\\n' or c == '\\r' }\n\nimpl Parser {\n    fn peek(self: *Self) -> u8 {\n        return if self.pos < self.src.len { self.src[self.pos] } else { 0 }\n    }\n\n    fn skip_ws(self: *mut Self) {\n        while self.pos < self.src.len and is_ws(self.src[self.pos]) { self.pos += 1 }\n    }\n\n    fn expect_word(self: *mut Self, word: []u8) -> !void {\n        if self.pos + word.len > self.src.len { return error.InvalidInput }\n        if self.src[self.pos..self.pos + word.len] != word { return error.InvalidInput }\n        self.pos += word.len\n    }\n\n    fn hex4(self: *mut Self) -> !u32 {\n        if self.pos + 4 > self.src.len { return error.InvalidInput }\n        var v: u32 = 0\n        for _ in 0..4 {\n            let c = self.src[self.pos]\n            var d: u32 = 0\n            if c >= '0' and c <= '9' { d = (c - '0') as u32 }\n            else if c >= 'a' and c <= 'f' { d = (c - 'a') as u32 + 10 }\n            else if c >= 'A' and c <= 'F' { d = (c - 'A') as u32 + 10 }\n            else { return error.InvalidInput }\n            v = v * 16 + d\n            self.pos += 1\n        }\n        return v\n    }\n\n    fn push_utf8(out: *mut String, cp: u32) {\n        if cp < 0x80 {\n            out.push_byte(cp as u8)\n        } else if cp < 0x800 {\n            out.push_byte((0xC0 | (cp >> 6)) as u8)\n            out.push_byte((0x80 | (cp & 0x3F)) as u8)\n        } else if cp < 0x10000 {\n            out.push_byte((0xE0 | (cp >> 12)) as u8)\n            out.push_byte((0x80 | ((cp >> 6) & 0x3F)) as u8)\n            out.push_byte((0x80 | (cp & 0x3F)) as u8)\n        } else {\n            out.push_byte((0xF0 | (cp >> 18)) as u8)\n            out.push_byte((0x80 | ((cp >> 12) & 0x3F)) as u8)\n            out.push_byte((0x80 | ((cp >> 6) & 0x3F)) as u8)\n            out.push_byte((0x80 | (cp & 0x3F)) as u8)\n        }\n    }\n\n    fn parse_string(self: *mut Self) -> !String {\n        // at the opening quote\n        self.pos += 1\n        var out = String.new()\n        while true {\n            if self.pos >= self.src.len { return error.InvalidInput }\n            let c = self.src[self.pos]\n            self.pos += 1\n            if c == '\"' { break }\n            if c == '\\\\' {\n                if self.pos >= self.src.len { return error.InvalidInput }\n                let e = self.src[self.pos]\n                self.pos += 1\n                if e == '\"' { out.push_byte('\"') }\n                else if e == '\\\\' { out.push_byte('\\\\') }\n                else if e == '/' { out.push_byte('/') }\n                else if e == 'b' { out.push_byte(8) }\n                else if e == 'f' { out.push_byte(12) }\n                else if e == 'n' { out.push_byte('\\n') }\n                else if e == 'r' { out.push_byte('\\r') }\n                else if e == 't' { out.push_byte('\\t') }\n                else if e == 'u' {\n                    var cp = try self.hex4()\n                    if cp >= 0xD800 and cp <= 0xDBFF {\n                        // surrogate pair: \\uD83D\\uDE00\n                        try self.expect_word(\"\\\\u\")\n                        let lo = try self.hex4()\n                        if lo < 0xDC00 or lo > 0xDFFF { return error.InvalidInput }\n                        cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00)\n                    }\n                    Parser.push_utf8(&mut out, cp)\n                } else {\n                    return error.InvalidInput\n                }\n            } else if c < 0x20 {\n                return error.InvalidInput\n            } else {\n                out.push_byte(c)\n            }\n        }\n        return out\n    }\n\n    fn parse_number(self: *mut Self) -> !f64 {\n        let start = self.pos\n        if self.peek() == '-' { self.pos += 1 }\n        if !(self.peek() >= '0' and self.peek() <= '9') { return error.InvalidInput }\n        while self.peek() >= '0' and self.peek() <= '9' { self.pos += 1 }\n        if self.peek() == '.' {\n            self.pos += 1\n            if !(self.peek() >= '0' and self.peek() <= '9') { return error.InvalidInput }\n            while self.peek() >= '0' and self.peek() <= '9' { self.pos += 1 }\n        }\n        if self.peek() == 'e' or self.peek() == 'E' {\n            self.pos += 1\n            if self.peek() == '+' or self.peek() == '-' { self.pos += 1 }\n            if !(self.peek() >= '0' and self.peek() <= '9') { return error.InvalidInput }\n            while self.peek() >= '0' and self.peek() <= '9' { self.pos += 1 }\n        }\n        let n = self.src[start..self.pos].parse_float() catch |e| return error.InvalidInput\n        return n\n    }\n\n    fn parse_value(self: *mut Self, depth: u32) -> !Json {\n        if depth > 256 { return error.InvalidInput }\n        self.skip_ws()\n        let c = self.peek()\n        if c == '{' {\n            self.pos += 1\n            var members = List(Member).new()\n            self.skip_ws()\n            if self.peek() == '}' {\n                self.pos += 1\n                return Json.Obj(members)\n            }\n            while true {\n                self.skip_ws()\n                if self.peek() != '\"' { return error.InvalidInput }\n                let key = try self.parse_string()\n                self.skip_ws()\n                if self.peek() != ':' { return error.InvalidInput }\n                self.pos += 1\n                let value = try self.parse_value(depth + 1)\n                members.append(Member{ .key = key, .value = value })\n                self.skip_ws()\n                let d = self.peek()\n                self.pos += 1\n                if d == '}' { break }\n                if d != ',' { return error.InvalidInput }\n            }\n            return Json.Obj(members)\n        }\n        if c == '[' {\n            self.pos += 1\n            var items = List(Json).new()\n            self.skip_ws()\n            if self.peek() == ']' {\n                self.pos += 1\n                return Json.Arr(items)\n            }\n            while true {\n                let v = try self.parse_value(depth + 1)\n                items.append(v)\n                self.skip_ws()\n                let d = self.peek()\n                self.pos += 1\n                if d == ']' { break }\n                if d != ',' { return error.InvalidInput }\n            }\n            return Json.Arr(items)\n        }\n        if c == '\"' {\n            let s = try self.parse_string()\n            return Json.Str(s)\n        }\n        if c == 't' {\n            try self.expect_word(\"true\")\n            return Json.Bool(true)\n        }\n        if c == 'f' {\n            try self.expect_word(\"false\")\n            return Json.Bool(false)\n        }\n        if c == 'n' {\n            try self.expect_word(\"null\")\n            return Json.Null\n        }\n        if c == '-' or (c >= '0' and c <= '9') {\n            let n = try self.parse_number()\n            return Json.Num(n)\n        }\n        return error.InvalidInput\n    }\n}\n\n/// Parse a JSON document. Trailing whitespace is allowed, anything else is an error.\npub fn parse(text: []u8) -> !Json {\n    var p = Parser{ .src = text, .pos = 0 }\n    let v = try p.parse_value(0)\n    p.skip_ws()\n    if p.pos != text.len { return error.InvalidInput }\n    return v\n}\n\n// ---------------------------------------------------------------- writing\n\nfn write_string(out: *mut String, s: []u8) {\n    out.push_byte('\"')\n    for c in s {\n        if c == '\"' { out.append(\"\\\\\\\"\") }\n        else if c == '\\\\' { out.append(\"\\\\\\\\\") }\n        else if c == '\\n' { out.append(\"\\\\n\") }\n        else if c == '\\r' { out.append(\"\\\\r\") }\n        else if c == '\\t' { out.append(\"\\\\t\") }\n        else if c == 8 { out.append(\"\\\\b\") }\n        else if c == 12 { out.append(\"\\\\f\") }\n        else if c < 0x20 {\n            out.append(\"\\\\u00\")\n            let hex = \"0123456789abcdef\"\n            out.push_byte(hex[(c >> 4) as usize])\n            out.push_byte(hex[(c & 15) as usize])\n        } else {\n            out.push_byte(c)\n        }\n    }\n    out.push_byte('\"')\n}\n\nfn write_number(out: *mut String, n: f64) {\n    // integers print without a fraction; everything else with enough digits to round trip\n    if n == math.floor(n) and math.abs(n) < 9007199254740992.0 {\n        out.append(format(\"{}\", .{n as i64}))\n    } else {\n        out.append(format(\"{}\", .{n}))\n    }\n}\n\nfn write_value(out: *mut String, v: *Json, indent: usize, level: usize) {\n    match v.* {\n        .Null => out.append(\"null\"),\n        .Bool(b) => out.append(if b { \"true\" } else { \"false\" }),\n        .Num(n) => write_number(out, n),\n        .Str(s) => write_string(out, s),\n        .Arr(items) => {\n            if items.len == 0 {\n                out.append(\"[]\")\n                return\n            }\n            out.push_byte('[')\n            for it, i in items {\n                if i > 0 { out.push_byte(',') }\n                newline(out, indent, level + 1)\n                write_value(out, &it, indent, level + 1)\n            }\n            newline(out, indent, level)\n            out.push_byte(']')\n        },\n        .Obj(members) => {\n            if members.len == 0 {\n                out.append(\"{}\")\n                return\n            }\n            out.push_byte('{')\n            for m, i in members {\n                if i > 0 { out.push_byte(',') }\n                newline(out, indent, level + 1)\n                write_string(out, m.key)\n                out.push_byte(':')\n                if indent > 0 { out.push_byte(' ') }\n                write_value(out, &m.value, indent, level + 1)\n            }\n            newline(out, indent, level)\n            out.push_byte('}')\n        },\n    }\n}\n\nfn newline(out: *mut String, indent: usize, level: usize) {\n    if indent == 0 { return }\n    out.push_byte('\\n')\n    for _ in 0..indent * level { out.push_byte(' ') }\n}\n\n/// Compact text: no whitespace.\npub fn stringify(v: *Json) -> String {\n    var out = String.new()\n    write_value(&mut out, v, 0, 0)\n    return out\n}\n\n/// Indented text, `indent` spaces per level.\npub fn pretty(v: *Json, indent: usize) -> String {\n    var out = String.new()\n    write_value(&mut out, v, indent, 0)\n    return out\n}\n\n// ---------------------------------------------------------------- tests\n\ntest \"scalars\" {\n    let t = try parse(\" true \")\n    expect_eq(as_bool(&t) orelse false, true)\n    let n = try parse(\"-12.5e1\")\n    expect_eq(as_num(&n) orelse 0.0, -125.0)\n    let s = try parse(\"\\\"a\\\\\\\"b\\\\n\\\\u0041\\\\u00e9\\\\ud83d\\\\ude00\\\"\")\n    expect_eq(as_str(&s) orelse \"\", \"a\\\"b\\nA\303\251\360\237\230\200\")\n    let z = try parse(\"null\")\n    expect(is_null(&z))\n    expect_eq(stringify(&t), \"true\")\n    expect_eq(stringify(&n), \"-125\")\n    expect_eq(stringify(&s), \"\\\"a\\\\\\\"b\\\\nA\303\251\360\237\230\200\\\"\")\n}\n\ntest \"arrays and objects\" {\n    let doc = try parse(\"{\\\"name\\\": \\\"nexium\\\", \\\"tags\\\": [\\\"lang\\\", 2, false, null], \\\"nested\\\": {\\\"k\\\": [ ]}}\")\n    expect_eq(len(&doc), 3)\n    expect_eq(as_str(get(&doc, \"name\") orelse &doc) orelse \"\", \"nexium\")\n    let tags = get(&doc, \"tags\") orelse &doc\n    expect_eq(len(tags), 4)\n    expect_eq(as_num(at(tags, 1) orelse tags) orelse 0.0, 2.0)\n    expect(get(&doc, \"missing\") == null)\n    expect(at(tags, 9) == null)\n    let ks = keys(&doc)\n    expect_eq(ks.len, 3)\n    expect_eq(ks[2], \"nested\")\n    expect_eq(stringify(&doc), \"{\\\"name\\\":\\\"nexium\\\",\\\"tags\\\":[\\\"lang\\\",2,false,null],\\\"nested\\\":{\\\"k\\\":[]}}\")\n}\n\ntest \"pretty printing\" {\n    let doc = try parse(\"{\\\"a\\\":[1,{\\\"b\\\":true}],\\\"c\\\":{}}\")\n    expect_eq(pretty(&doc, 2), \"{\\n  \\\"a\\\": [\\n    1,\\n    {\\n      \\\"b\\\": true\\n    }\\n  ],\\n  \\\"c\\\": {}\\n}\")\n}\n\ntest \"mutable access\" {\n    var doc = try parse(\"{\\\"a\\\": [1], \\\"b\\\": {}}\")\n    push(get_mut(&mut doc, \"a\") orelse &mut doc, number(2))\n    set(get_mut(&mut doc, \"b\") orelse &mut doc, \"c\", boolean(true))\n    if let first = at_mut(get_mut(&mut doc, \"a\") orelse &mut doc, 0) {\n        first.* = string(\"one\")\n    }\n    expect_eq(stringify(&doc), \"{\\\"a\\\":[\\\"one\\\",2],\\\"b\\\":{\\\"c\\\":true}}\")\n}\n\ntest \"building\" {\n    var root = object()\n    set(&mut root, \"n\", number(3.25))\n    set(&mut root, \"s\", string(\"x\"))\n    var arr = array()\n    push(&mut arr, boolean(true))\n    push(&mut arr, null_value())\n    set(&mut root, \"arr\", arr)\n    set(&mut root, \"n\", number(4))\n    expect_eq(stringify(&root), \"{\\\"n\\\":4,\\\"s\\\":\\\"x\\\",\\\"arr\\\":[true,null]}\")\n}\n\nfn fails(text: []u8) -> bool {\n    let r = parse(text) catch |e| return true\n    _ = r\n    return false\n}\n\ntest \"errors\" {\n    expect(fails(\"\"))\n    expect(fails(\"{\"))\n    expect(fails(\"[1,]\"))\n    expect(fails(\"{\\\"a\\\" 1}\"))\n    expect(fails(\"tru\"))\n    expect(fails(\"01x\"))\n    expect(fails(\"\\\"unterminated\"))\n    expect(fails(\"\\\"bad \\\\q escape\\\"\"))\n    expect(fails(\"1 2\"))\n    expect(!fails(\" [ ] \"))\n}\n\ntest \"round trip\" {\n    let text = \"[0,1.5,-2,1e21,\\\"\\\\u0001\\\",{\\\"k\\\":[[],{}]}]\"\n    let v = try parse(text)\n    let again = try parse(stringify(&v))\n    expect_eq(stringify(&again), stringify(&v))\n}\n";
 static const char nx_str_864[6] = "lists";
@@ -4235,7 +4235,7 @@ static const char nx_str_901[42542] = "// std.toml: TOML 1.0 (toml.io), written 
 static const char nx_str_902[7] = "base64";
 static const char nx_str_903[4875] = "// std.base64: base64 (RFC 4648), written in Nexium: the standard alphabet\n// with its `=` padding, and the URL-safe one (`-` and `_` for `+` and `/`)\n// without, as JSON Web Tokens and URLs carry it.\n//\n// `import std.base64` then:\n//\n//     let s = base64.encode(\"hi!\")                  // \"aGkh\"\n//     let raw = try base64.decode(s)\n//     let token = base64.encode_url(key)            // no `=`, safe in a URL\n//     let back = try base64.decode_url(token)\n//\n// Decoding is strict: a character outside the alphabet, padding anywhere\n// but at the end or more of it than the length needs, or a length no\n// encoding produces is `error.InvalidInput`. `std.bytes` keeps the lenient\n// reader, `unbase64`, which skips line breaks and stray padding.\n\nconst STD: []u8 = \"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/\"\nconst URL: []u8 = \"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_\"\n\n/// Standard base64 with `=` padding.\npub fn encode(data: []u8) -> String {\n    return encode_with(data, STD, true)\n}\n\n/// Bytes from standard base64; the padding may be left out.\npub fn decode(text: []u8) -> !String {\n    return decode_with(text, false)\n}\n\n/// URL-safe base64 without padding (RFC 4648 section 5, as JWTs use).\npub fn encode_url(data: []u8) -> String {\n    return encode_with(data, URL, false)\n}\n\n/// Bytes from URL-safe base64, padded or not.\npub fn decode_url(text: []u8) -> !String {\n    return decode_with(text, true)\n}\n\nfn encode_with(data: []u8, alphabet: []u8, pad: bool) -> String {\n    var out = String.with_capacity((data.len + 2) / 3 * 4)\n    var i: usize = 0\n    while i + 3 <= data.len {\n        let n = ((data[i] as u32) << 16) | ((data[i + 1] as u32) << 8) | (data[i + 2] as u32)\n        out.push_byte(alphabet[((n >> 18) & 63) as usize])\n        out.push_byte(alphabet[((n >> 12) & 63) as usize])\n        out.push_byte(alphabet[((n >> 6) & 63) as usize])\n        out.push_byte(alphabet[(n & 63) as usize])\n        i += 3\n    }\n    let rest = data.len - i\n    if rest > 0 {\n        var n = (data[i] as u32) << 16\n        if rest == 2 { n = n | ((data[i + 1] as u32) << 8) }\n        out.push_byte(alphabet[((n >> 18) & 63) as usize])\n        out.push_byte(alphabet[((n >> 12) & 63) as usize])\n        if rest == 2 { out.push_byte(alphabet[((n >> 6) & 63) as usize]) }\n        if pad { out.append(if rest == 1 { \"==\" } else { \"=\" }) }\n    }\n    return out\n}\n\nfn value(c: u8, url: bool) -> ?u32 {\n    if c >= 'A' and c <= 'Z' { return (c - 'A') as u32 }\n    if c >= 'a' and c <= 'z' { return ((c - 'a') as u32) + 26 }\n    if c >= '0' and c <= '9' { return ((c - '0') as u32) + 52 }\n    if c == (if url { '-' } else { '+' }) { return 62 }\n    if c == (if url { '_' } else { '/' }) { return 63 }\n    return null\n}\n\nfn decode_with(text: []u8, url: bool) -> !String {\n    var end = text.len\n    var padding: usize = 0\n    while end > 0 and text[end - 1] == '=' and padding < 2 {\n        end -= 1\n        padding += 1\n    }\n    // padded text comes in whole groups of four, and a lone character is\n    // never the end of one\n    if padding > 0 and text.len % 4 != 0 { return error.InvalidInput }\n    if end % 4 == 1 { return error.InvalidInput }\n    if padding > 0 and end % 4 + padding != 4 { return error.InvalidInput }\n    var out = String.with_capacity(end / 4 * 3 + 2)\n    var acc: u32 = 0\n    var bits: u32 = 0\n    for c in text[0..end] {\n        let v = value(c, url) orelse return error.InvalidInput\n        acc = ((acc << 6) | v) & 0xFFFFFF\n        bits += 6\n        if bits >= 8 {\n            bits -= 8\n            out.push_byte(@truncate(u8, (acc >> bits) & 255))\n        }\n    }\n    return out\n}\n\n// ------------------------------------------------------------------ tests\n\ntest \"RFC 4648's vectors\" {\n    let plain = [\"\", \"f\", \"fo\", \"foo\", \"foob\", \"fooba\", \"foobar\"]\n    let coded = [\"\", \"Zg==\", \"Zm8=\", \"Zm9v\", \"Zm9vYg==\", \"Zm9vYmE=\", \"Zm9vYmFy\"]\n    for p, i in plain {\n        expect_eq(encode(p), coded[i])\n        expect_eq(try decode(coded[i]), p)\n    }\n    expect_eq(try decode(\"Zm9vYg\"), \"foob\")\n}\n\ntest \"the URL-safe alphabet, without padding\" {\n    let data = b\"\\xFB\\xFF\\xBF\"\n    expect_eq(encode(data), \"+/+/\")\n    expect_eq(encode_url(data), \"-_-_\")\n    expect_eq(encode_url(b\"\\xFB\\xFF\"), \"-_8\")\n    expect_eq(try decode_url(\"-_8\"), b\"\\xFB\\xFF\")\n    expect_eq(try decode_url(\"-_8=\"), b\"\\xFB\\xFF\")\n    var refused = false\n    _ = decode(\"-_8=\") catch |e| {\n        refused = e == error.InvalidInput\n        String.new()\n    }\n    expect(refused)\n}\n\ntest \"what is not base64\" {\n    for bad in [\"Z\", \"Zm9vY\", \"Zg=\", \"Zg===\", \"Z=g=\", \"Zm 9v\", \"Zm9v\\n\", \"Zm9=v\"] {\n        var refused = false\n        _ = decode(bad) catch |e| {\n            refused = e == error.InvalidInput\n            String.new()\n        }\n        if !refused { println(\"base64: {} was read\", .{bad}) }\n        expect(refused)\n    }\n}\n";
 static const char nx_str_904[10] = "websocket";
-static const char nx_str_905[33069] = "// std.websocket: a WebSocket client (RFC 6455), written in Nexium over\n// std.http's transports.\n//\n// `import std.websocket` then:\n//\n//     var ws = try websocket.connect(\"ws://localhost:8080/chat\", 10000)\n//     try ws.send_text(\"hello\")\n//     while true {\n//         let m = try ws.recv()                   // a whole message\n//         if m.op == websocket.CLOSE { break }    // the server's close, or the end\n//         println(\"{}\", .{m.data})\n//     }\n//     ws.close(1000, \"done\")\n//\n//     var gw = try websocket.connect_with(NxTls, &mut layer, \"wss://gateway.discord.gg/?v=10\", 10000)\n//\n//     var api = websocket.socket(NxTls, &mut layer)   // with headers of its own\n//     api.header(\"Authorization\", token)\n//     try api.open(\"wss://example.com/stream\", 10000)\n//\n// `wss://` goes over a TLS layer, the slot std.http's client uses\n// (`http.Transport`, which nxtls fills). No extensions are asked for (no\n// compression). A message arrives whole, its fragments joined, up to\n// `max_message` bytes; `recv` answers a ping with a pong on its way. The\n// first protocol mistake by the server ends the connection, with the\n// reason in `problem`. The handshake's key and every frame's mask come\n// from `random.secure`. A `recv` that waits longer than the timeout is\n// `error.Timeout` and may be called again: nothing that came is lost.\n\nimport std.http\nimport std.hash\nimport std.base64\nimport std.net\nimport std.thread\n\npub const CONTINUATION: u8 = 0\npub const TEXT: u8 = 1\npub const BINARY: u8 = 2\npub const CLOSE: u8 = 8\npub const PING: u8 = 9\npub const PONG: u8 = 10\n\n/// The largest message `recv` takes unless `max_message` says otherwise.\npub const MAX_MESSAGE: usize = 16777216\n\n// the most the handshake's answer may be, before its blank line\nconst MAX_HEAD: usize = 16384\n\n// what RFC 6455 appends to the key before hashing it\nconst GUID = \"258EAFA5-E914-47DA-95CA-C5AB0DC85B11\"\n\n/// One whole message: its opcode (TEXT, BINARY, PONG, or CLOSE with its\n/// reason as `data`).\npub struct Message {\n    op: u8\n    data: String\n    /// a CLOSE's status: 1000 normal, 1005 when the server gave none, 1006\n    /// when the connection ended without a close\n    code: u16\n}\n\n// ------------------------------------------------------------------ the handshake\n\n/// The Sec-WebSocket-Accept a server answers `key` with: the base64 of the\n/// SHA-1 of the key and RFC 6455's GUID.\npub fn accept_for(key: []u8) -> String {\n    var k = String.from(key)\n    k.append(GUID)\n    let d = hash.sha1(k[..])\n    return base64.encode(d[..])\n}\n\n/// The opening request for `host` (the Host header, as the server knows\n/// itself) and `path` (with its query); `headers` are added.\npub fn request(host: []u8, path: []u8, key: []u8, headers: []http.Header) -> String {\n    var r = format(\"GET {} HTTP/1.1\\r\\nHost: {}\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Key: {}\\r\\nSec-WebSocket-Version: 13\\r\\n\", .{path, host, key})\n    var agent = false\n    for h in headers {\n        if h.name.eq_ignore_case(\"user-agent\") { agent = true }\n    }\n    if !agent { r.append(\"User-Agent: nexium-websocket/1.4\\r\\n\") }\n    for h in headers {\n        r.append(h.name)\n        r.append(\": \")\n        r.append(h.value)\n        r.append(\"\\r\\n\")\n    }\n    r.append(\"\\r\\n\")\n    return r\n}\n\nfn lower(s: []u8) -> String {\n    var out = String.with_capacity(s.len)\n    for c in s {\n        out.push_byte(if c >= 'A' and c <= 'Z' { c + 32 } else { c })\n    }\n    return out\n}\n\n/// What is wrong with the server's answer to the handshake (`head`, up to\n/// but not including the blank line), or null when it accepts `key`.\npub fn check_response(head: []u8, key: []u8) -> ?String {\n    let lines = head.split(\"\\r\\n\")\n    if lines.len == 0 or !(lines[0].starts_with(\"HTTP/1.1 101\") or lines[0].starts_with(\"HTTP/1.0 101\")) {\n        let first = if lines.len > 0 { lines[0] } else { \"\" }\n        return format(\"the server did not switch to WebSocket: {}\", .{first[0..@min(first.len, 80)]})\n    }\n    var upgrade = false\n    var connection = false\n    var accept = String.new()\n    for i in 1..lines.len {\n        let line = lines[i]\n        let colon = line.find(\":\") orelse continue\n        let name = lower(line[0..colon].trim())\n        let value = line[colon + 1..line.len].trim()\n        if name == \"upgrade\" {\n            upgrade = value.eq_ignore_case(\"websocket\")\n        } else if name == \"connection\" {\n            connection = lower(value).find(\"upgrade\") != null\n        } else if name == \"sec-websocket-accept\" {\n            accept = String.from(value)\n        } else if name == \"sec-websocket-extensions\" {\n            return String.from(\"the server turned on an extension that was not asked for\")\n        }\n    }\n    if !upgrade or !connection {\n        return String.from(\"the server's answer lacks Upgrade: websocket and Connection: Upgrade\")\n    }\n    if accept != accept_for(key) {\n        return String.from(\"the server's Sec-WebSocket-Accept does not match the key\")\n    }\n    return null\n}\n\n// ------------------------------------------------------------------ frames\n\n/// A client frame: final, opcode `op`, masked with the 4 bytes of `mask`.\npub fn frame(op: u8, payload: []u8, mask: []u8) -> String {\n    var out = String.with_capacity(payload.len + 14)\n    out.push_byte(0x80 | op)\n    let n = payload.len\n    if n < 126 {\n        out.push_byte(0x80 | @truncate(u8, n))\n    } else if n < 65536 {\n        out.push_byte(0x80 | 126)\n        out.push_byte(@truncate(u8, n >> 8))\n        out.push_byte(@truncate(u8, n))\n    } else {\n        out.push_byte(0x80 | 127)\n        let v = n as u64\n        for i in 0..8 {\n            out.push_byte(@truncate(u8, v >> ((56 - 8 * i) as u64)))\n        }\n    }\n    out.append(mask[0..4])\n    for i in 0..n {\n        out.push_byte(payload[i] ^ mask[i % 4])\n    }\n    return out\n}\n\n/// The payload of a close frame: the code, big-endian, then the reason,\n/// cut to 123 bytes (a control frame carries 125) at a character's start.\npub fn close_payload(code: u16, reason: []u8) -> String {\n    var p = String.new()\n    p.push_byte(@truncate(u8, code >> 8))\n    p.push_byte(@truncate(u8, code))\n    var n = @min(reason.len, 123)\n    while n > 0 and n < reason.len and (reason[n] & 0xc0) == 0x80 { n -= 1 }\n    p.append(reason[0..n])\n    return p\n}\n\n/// Whether `s` is UTF-8: what a TEXT message must be.\nfn valid_utf8(s: []u8) -> bool {\n    var i: usize = 0\n    while i < s.len {\n        let c = s[i]\n        if c < 0x80 {\n            i += 1\n            continue\n        }\n        var n: usize = 0\n        var cp: u32 = 0\n        var least: u32 = 0\n        if c >= 0xc2 and c <= 0xdf {\n            n = 1\n            cp = (c & 0x1f) as u32\n            least = 0x80\n        } else if c >= 0xe0 and c <= 0xef {\n            n = 2\n            cp = (c & 0x0f) as u32\n            least = 0x800\n        } else if c >= 0xf0 and c <= 0xf4 {\n            n = 3\n            cp = (c & 0x07) as u32\n            least = 0x10000\n        } else {\n            return false\n        }\n        var k: usize = 1\n        while k <= n {\n            if i + k >= s.len { return false }\n            let b = s[i + k]\n            if (b & 0xc0) != 0x80 { return false }\n            cp = (cp << 6) | ((b & 0x3f) as u32)\n            k += 1\n        }\n        // overlong forms, UTF-16's surrogates, past U+10FFFF\n        if cp < least or (cp >= 0xd800 and cp <= 0xdfff) or cp > 0x10ffff { return false }\n        i += n + 1\n    }\n    return true\n}\n\n/// Unframes what a server sends, whatever pieces it arrives in.\npub struct Decoder {\n    buf: String\n    // a fragmented message being put together\n    partial: String\n    partial_op: u8\n    in_message: bool\n    /// the largest message taken\n    max: usize\n    /// set on the first protocol mistake; nothing more is decoded after it\n    problem: String\n}\n\nimpl Decoder {\n    pub fn new(max: usize) -> Decoder {\n        return Decoder{ .buf = String.new(), .partial = String.new(), .partial_op = 0, .in_message = false, .max = max, .problem = String.new() }\n    }\n\n    pub fn feed(self: *mut Self, data: []u8) {\n        self.buf.append(data)\n    }\n\n    fn fail(self: *mut Self, why: []u8) -> ?Message {\n        self.problem = String.from(why)\n        return null\n    }\n\n    /// The next whole message, a control frame as it comes (PING, PONG,\n    /// CLOSE), or null when more bytes are needed or `problem` is set.\n    pub fn next(self: *mut Self) -> ?Message {\n        while true {\n            if self.problem.len > 0 or self.buf.len < 2 {\n                return null\n            }\n            let b0 = self.buf[0]\n            let b1 = self.buf[1]\n            let fin = (b0 & 0x80) != 0\n            let op = b0 & 0x0f\n            if (b0 & 0x70) != 0 {\n                return self.fail(\"the server set a reserved bit\")\n            }\n            if (b1 & 0x80) != 0 {\n                return self.fail(\"the server masked a frame\")\n            }\n            var len = (b1 & 0x7f) as u64\n            var at: usize = 2\n            if len == 126 {\n                if self.buf.len < 4 {\n                    return null\n                }\n                len = ((self.buf[2] as u64) << 8) | (self.buf[3] as u64)\n                at = 4\n            } else if len == 127 {\n                if self.buf.len < 10 {\n                    return null\n                }\n                len = 0\n                for i in 2..10 {\n                    len = (len << 8) | (self.buf[i] as u64)\n                }\n                at = 10\n            }\n            if op >= 8 and (!fin or len > 125) {\n                return self.fail(\"the server sent a fragmented or long control frame\")\n            }\n            if op != CONTINUATION and op != TEXT and op != BINARY and op != CLOSE and op != PING and op != PONG {\n                return self.fail(\"the server sent a frame with a reserved opcode\")\n            }\n            if len > (self.max as u64) {\n                return self.fail(\"the server sent a frame past the largest message taken\")\n            }\n            let n = len as usize\n            if self.buf.len < at + n {\n                return null\n            }\n            let payload = String.from(self.buf[at..at + n])\n            self.buf = String.from(self.buf[at + n..self.buf.len])\n            if op >= 8 {\n                if op == CLOSE {\n                    if n == 1 { return self.fail(\"the server sent a close with half a status code\") }\n                    var code: u16 = 1005\n                    var reason = String.new()\n                    if n >= 2 {\n                        code = ((payload[0] as u16) << 8) | (payload[1] as u16)\n                        reason = String.from(payload[2..n])\n                    }\n                    return Message{ .op = CLOSE, .data = reason, .code = code }\n                }\n                return Message{ .op = op, .data = payload, .code = 0 }\n            }\n            if op == CONTINUATION {\n                if !self.in_message {\n                    return self.fail(\"the server continued a message it never started\")\n                }\n                if self.partial.len + n > self.max {\n                    return self.fail(\"the server sent a message past the largest taken\")\n                }\n                self.partial.append(payload)\n            } else {\n                if self.in_message {\n                    return self.fail(\"the server started a message inside another\")\n                }\n                self.partial = payload\n                self.partial_op = op\n                self.in_message = true\n            }\n            if fin {\n                self.in_message = false\n                let whole = self.partial.clone()\n                self.partial = String.new()\n                if self.partial_op == TEXT and !valid_utf8(whole[..]) {\n                    return self.fail(\"the server sent text that is not UTF-8\")\n                }\n                return Message{ .op = self.partial_op, .data = whole, .code = 0 }\n            }\n        }\n    }\n}\n\n// ------------------------------------------------------------------ the connection\n\nconst OPEN: u8 = 0\n// a close was sent and the server's is awaited\nconst CLOSING: u8 = 1\nconst CLOSED: u8 = 2\n// made by `socket`, not opened yet\nconst NEW: u8 = 3\n\n/// A WebSocket connection over TCP (`ws://`) or a TLS layer, a `T`\n/// (`wss://`). Its calls go straight to the transport, so they have its\n/// effects and no others.\npub struct Socket(T){\n    plain: http.Plain\n    tls: ?*mut T\n    secure: bool\n    /// headers the handshake carries, from `header`\n    headers: List(http.Header)\n    dec: Decoder\n    state: u8\n    /// the largest message `recv` takes (MAX_MESSAGE unless changed)\n    max_message: usize = 16777216\n    /// why the connection ended, when the server or the network ended it\n    problem: String\n}\n\n/// Connects to a `ws://` URL and completes the handshake; the connect and\n/// each wait for data take at most `timeout_ms` (0: no limit).\npub fn connect(url: []u8, timeout_ms: i64) -> !Socket(http.Plain) {\n    var s = socket(http.Plain, null)\n    try s.open(url, timeout_ms)\n    return s\n}\n\n/// Connects to a `wss://` (or `ws://`) URL, TLS over `tls`, a TLS layer:\n/// an `http.Transport`, such as nxtls's.\npub fn connect_with(comptime T: type where T: http.Transport, tls: *mut T, url: []u8, timeout_ms: i64) -> !Socket(T) {\n    var s = socket(T, tls)\n    try s.open(url, timeout_ms)\n    return s\n}\n\n/// A socket to open, after `header` has added what the handshake should\n/// carry (Authorization, Origin, Sec-WebSocket-Protocol). `tls` may be\n/// null for `ws://`.\npub fn socket(comptime T: type, tls: ?*mut T) -> Socket(T) {\n    return Socket(T){ .plain = http.Plain.new(), .tls = tls, .secure = false, .headers = List(http.Header).new(), .dec = Decoder.new(MAX_MESSAGE), .state = NEW, .problem = String.new() }\n}\n\nimpl(T) Socket(T) {\n    /// A header for the handshake to carry.\n    pub fn header(self: *mut Self, name: []u8, value: []u8) {\n        self.headers.append(http.Header{ .name = String.from(name), .value = String.from(value) })\n    }\n\n    /// Connects to a `ws://` or `wss://` URL and completes the handshake;\n    /// `wss://` without a TLS layer is `error.Unsupported`, a URL of\n    /// another scheme and an answer that is not a WebSocket's are\n    /// `error.InvalidInput` (`problem` says how).\n    pub fn open(self: *mut Self, url: []u8, timeout_ms: i64) -> !void {\n        if self.state != NEW { return error.InvalidInput }\n        // ws:// and wss:// read as http:// and https:// as far as the URL goes\n        var as_http = String.new()\n        if url.starts_with(\"ws://\") {\n            as_http.append(\"http://\")\n            as_http.append(url[5..url.len])\n        } else if url.starts_with(\"wss://\") {\n            as_http.append(\"https://\")\n            as_http.append(url[6..url.len])\n        } else {\n            return error.InvalidInput\n        }\n        let u = http.parse_url(as_http[..]) orelse return error.InvalidInput\n        self.secure = u.scheme[..] == \"https\"\n        if self.secure {\n            let t = self.tls orelse return error.Unsupported\n            try t.connect(u.host[..], u.port, timeout_ms)\n        } else {\n            try self.plain.connect(u.host[..], u.port, timeout_ms)\n        }\n        self.state = OPEN\n        var raw: [16]u8 = undefined\n        random.secure(raw[..]) catch |e| {\n            self.end()\n            return e\n        }\n        let key = base64.encode(raw[..])\n        var host = String.from(u.host)\n        if host[..].find(\":\") != null { host = format(\"[{}]\", .{u.host}) }\n        let usual: u16 = if self.secure { 443 } else { 80 }\n        if u.port != usual { host.append(format(\":{}\", .{u.port})) }\n        let req = request(host[..], u.path[..], key[..], self.headers[..])\n        self.send_raw(req[..]) catch |e| {\n            self.end()\n            return e\n        }\n        // the answer's head; what comes after the blank line is frames already\n        var got = String.new()\n        while true {\n            if let at = got[..].find(\"\\r\\n\\r\\n\") {\n                if let why = check_response(got[0..at], key[..]) {\n                    self.problem = why\n                    self.end()\n                    return error.InvalidInput\n                }\n                self.dec.feed(got[at + 4..got.len])\n                return\n            }\n            if got.len > MAX_HEAD {\n                self.problem = String.from(\"the server's answer to the handshake did not end\")\n                self.end()\n                return error.InvalidInput\n            }\n            let piece = self.recv_raw() catch |e| {\n                self.end()\n                return e\n            }\n            if piece.len == 0 {\n                self.problem = String.from(\"the connection ended during the handshake\")\n                self.end()\n                return error.Truncated\n            }\n            got.append(piece)\n        }\n    }\n\n    fn send_raw(self: *mut Self, data: []u8) -> !void {\n        if self.secure {\n            let t = self.tls orelse return error.Closed\n            return t.send(data)\n        }\n        return self.plain.send(data)\n    }\n\n    fn recv_raw(self: *mut Self) -> !String {\n        if self.secure {\n            let t = self.tls orelse return String.new()\n            return t.recv()\n        }\n        return self.plain.recv()\n    }\n\n    // ends the connection, without a word to the server\n    fn end(self: *mut Self) {\n        self.state = CLOSED\n        if self.secure {\n            if let t = self.tls { t.close() }\n        } else {\n            self.plain.close()\n        }\n    }\n\n    fn send_frame(self: *mut Self, op: u8, data: []u8) -> !void {\n        var mask: [4]u8 = undefined\n        try random.secure(mask[..])\n        let f = frame(op, data, mask[..])\n        self.send_raw(f[..]) catch |e| {\n            self.problem = String.from(\"the connection broke while sending\")\n            self.end()\n            return e\n        }\n    }\n\n    /// Whether messages can still be sent.\n    pub fn is_open(self: *Self) -> bool {\n        return self.state == OPEN\n    }\n\n    /// Sends a text message; `data` should be UTF-8.\n    pub fn send_text(self: *mut Self, data: []u8) -> !void {\n        if self.state != OPEN { return error.Closed }\n        return self.send_frame(TEXT, data)\n    }\n\n    /// Sends a binary message.\n    pub fn send_binary(self: *mut Self, data: []u8) -> !void {\n        if self.state != OPEN { return error.Closed }\n        return self.send_frame(BINARY, data)\n    }\n\n    /// Sends a ping (at most 125 bytes); its pong comes back through `recv`.\n    pub fn ping(self: *mut Self, data: []u8) -> !void {\n        if self.state != OPEN { return error.Closed }\n        if data.len > 125 { return error.InvalidInput }\n        return self.send_frame(PING, data)\n    }\n\n    /// The next message: TEXT or BINARY whole, a PONG, or CLOSE, either the\n    /// server's (its code and reason) or the end of the connection (1006,\n    /// with `problem` saying so). A ping is answered on the way.\n    /// `error.Timeout` when nothing whole came in time (call again: nothing\n    /// is lost), `error.Closed` once a CLOSE was returned, and\n    /// `error.InvalidInput` for the server's protocol mistake (`problem`\n    /// says which), which ends the connection.\n    pub fn recv(self: *mut Self) -> !Message {\n        self.dec.max = self.max_message\n        while true {\n            if self.state == CLOSED { return error.Closed }\n            if let m = self.dec.next() {\n                if m.op == PING {\n                    self.send_frame(PONG, m.data[..]) catch { }\n                    continue\n                }\n                if m.op == CLOSE {\n                    if self.state == OPEN {\n                        // the server began it: answer with its code, then end\n                        let answer = if m.code == 1005 { String.new() } else { close_payload(m.code, \"\") }\n                        self.send_frame(CLOSE, answer[..]) catch { }\n                    }\n                    self.end()\n                    return m\n                }\n                return m\n            }\n            if self.dec.problem.len > 0 {\n                self.problem = self.dec.problem.clone()\n                // RFC 6455 7.1.7: a protocol error, then the end\n                let why = close_payload(1002, \"\")\n                self.send_frame(CLOSE, why[..]) catch { }\n                self.end()\n                return error.InvalidInput\n            }\n            let piece = try self.recv_raw()\n            if piece.len == 0 {\n                self.problem = String.from(\"the connection ended without a close frame\")\n                self.end()\n                return Message{ .op = CLOSE, .data = String.new(), .code = 1006 }\n            }\n            self.dec.feed(piece[..])\n        }\n    }\n\n    /// Closes the connection with a status (1000: normal) and a reason:\n    /// sends the close frame, reads until the server's close answers it,\n    /// the connection ends or a wait times out, then ends the connection.\n    /// Messages that come meanwhile are dropped.\n    pub fn close(self: *mut Self, code: u16, reason: []u8) {\n        if self.state == OPEN {\n            let payload = close_payload(code, reason)\n            self.state = CLOSING\n            self.send_frame(CLOSE, payload[..]) catch { }\n            while self.state == CLOSING {\n                if let m = self.dec.next() {\n                    if m.op == CLOSE { break }\n                    continue\n                }\n                if self.dec.problem.len > 0 { break }\n                let piece = self.recv_raw() catch { break }\n                if piece.len == 0 { break }\n                self.dec.feed(piece[..])\n            }\n        }\n        self.end()\n    }\n}\n\n// ------------------------------------------------------------------ tests\n\ntest \"the handshake\" {\n    // RFC 6455's own example\n    expect_eq(accept_for(\"dGhlIHNhbXBsZSBub25jZQ==\"), \"s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\")\n    var hs = List(http.Header).new()\n    hs.append(http.Header{ .name = String.from(\"Origin\"), .value = String.from(\"https://example.com\") })\n    let r = request(\"example.com\", \"/chat?x=1\", \"dGhlIHNhbXBsZSBub25jZQ==\", hs[..])\n    expect(r[..].starts_with(\"GET /chat?x=1 HTTP/1.1\\r\\nHost: example.com\\r\\nUpgrade: websocket\\r\\n\"))\n    expect(r[..].find(\"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\\r\\n\") != null)\n    expect(r[..].ends_with(\"Origin: https://example.com\\r\\n\\r\\n\"))\n    let ok = \"HTTP/1.1 101 Switching Protocols\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\"\n    expect(check_response(ok, \"dGhlIHNhbXBsZSBub25jZQ==\") == null)\n    expect(check_response(ok, \"another key, another answer\") != null)\n    expect(check_response(\"HTTP/1.1 200 OK\\r\\nContent-Length: 0\", \"k\") != null)\n    expect(check_response(\"HTTP/1.1 101 Switching Protocols\\r\\nSec-WebSocket-Accept: x\", \"k\") != null)\n    let deflate = \"HTTP/1.1 101 Switching Protocols\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Extensions: permessage-deflate\\r\\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\"\n    expect(check_response(deflate, \"dGhlIHNhbXBsZSBub25jZQ==\") != null)\n}\n\ntest \"frames\" {\n    // RFC 6455 5.7: a masked \"Hello\"\n    let hello = frame(TEXT, \"Hello\", b\"\\x37\\xfa\\x21\\x3d\")\n    expect(hello == b\"\\x81\\x85\\x37\\xfa\\x21\\x3d\\x7f\\x9f\\x4d\\x51\\x58\")\n    var mid = String.new()\n    for _ in 0..300 { mid.push_byte('m') }\n    let f = frame(BINARY, mid[..], \"abcd\")\n    expect(f[0] == 0x82 and f[1] == 0xfe and f[2] == 1 and f[3] == 44 and f.len == 4 + 4 + 300)\n    var big = String.new()\n    for _ in 0..70000 { big.push_byte('b') }\n    let g = frame(BINARY, big[..], \"abcd\")\n    expect(g[1] == 0xff and g[7] == 0x01 and g[8] == 0x11 and g[9] == 0x70 and g.len == 10 + 4 + 70000)\n    let c = close_payload(1000, \"done\")\n    expect(c == b\"\\x03\\xe8done\")\n    // a reason past 123 bytes is cut at a character's start\n    var long = String.new()\n    for _ in 0..62 { long.append(\"\303\251\") }\n    let cut = close_payload(1001, long[..])\n    expect(cut.len == 2 + 122 and valid_utf8(cut[2..cut.len]))\n}\n\ntest \"UTF-8\" {\n    expect(valid_utf8(\"plain ascii\") and valid_utf8(\"h\303\251llo w\303\266rld\") and valid_utf8(\"\346\227\245\346\234\254\350\252\236\") and valid_utf8(\"\360\237\216\211\"))\n    expect(!valid_utf8(b\"\\xc0\\xaf\") and !valid_utf8(b\"\\xe0\\x80\\xaf\") and !valid_utf8(b\"\\xed\\xa0\\x80\"))\n    expect(!valid_utf8(b\"\\xf4\\x90\\x80\\x80\") and !valid_utf8(b\"\\xff\") and !valid_utf8(b\"\\xe6\\x97\") and !valid_utf8(b\"a\\x80\"))\n}\n\n// the messages a decoder makes of `data` fed a byte at a time\nfn decode_bytes(data: []u8, max: usize) -> List(Message) {\n    var d = Decoder.new(max)\n    var out = List(Message).new()\n    for i in 0..data.len {\n        d.feed(data[i..i + 1])\n        while true {\n            let m = d.next() orelse break\n            out.append(m)\n        }\n    }\n    return out\n}\n\n// why a decoder gives up on `data`\nfn decode_problem(data: []u8, max: usize) -> String {\n    var d = Decoder.new(max)\n    d.feed(data)\n    while true {\n        let m = d.next() orelse break\n        _ = m\n    }\n    return d.problem.clone()\n}\n\ntest \"the decoder\" {\n    // RFC 6455 5.7: \"Hello\" unmasked, in two fragments, and a ping between\n    let ms = decode_bytes(b\"\\x81\\x05Hello\\x01\\x03Hel\\x89\\x02hi\\x80\\x02lo\\x88\\x05\\x03\\xe8bye\", 1000)\n    expect(ms.len == 4)\n    expect(ms[0].op == TEXT and ms[0].data == \"Hello\")\n    expect(ms[1].op == PING and ms[1].data == \"hi\")\n    expect(ms[2].op == TEXT and ms[2].data == \"Hello\")\n    expect(ms[3].op == CLOSE and ms[3].code == 1000 and ms[3].data == \"bye\")\n    // a close without a code, and binary data that need not be UTF-8\n    let raw = decode_bytes(b\"\\x82\\x02\\xff\\xfe\\x88\\x00\", 1000)\n    expect(raw[0].op == BINARY and raw[0].data.len == 2 and raw[1].code == 1005)\n    expect(decode_problem(b\"\\x81\\x85\\x37\\xfa\\x21\\x3d\\x7f\\x9f\\x4d\\x51\\x58\", 1000) == \"the server masked a frame\")\n    expect(decode_problem(b\"\\xc1\\x00\", 1000) == \"the server set a reserved bit\")\n    expect(decode_problem(b\"\\x09\\x00\", 1000) == \"the server sent a fragmented or long control frame\")\n    expect(decode_problem(b\"\\x80\\x01a\", 1000) == \"the server continued a message it never started\")\n    expect(decode_problem(b\"\\x83\\x00\", 1000) == \"the server sent a frame with a reserved opcode\")\n    expect(decode_problem(b\"\\x81\\x05Hello\", 4) == \"the server sent a frame past the largest message taken\")\n    expect(decode_problem(b\"\\x01\\x03Hel\\x80\\x02lo\", 4) == \"the server sent a message past the largest taken\")\n    expect(decode_problem(b\"\\x81\\x02\\xc3\\x28\", 1000) == \"the server sent text that is not UTF-8\")\n    expect(decode_problem(b\"\\x01\\x01a\\x01\\x01b\", 1000) == \"the server started a message inside another\")\n}\n\n/// A server played from a script over the TLS slot: it answers the\n/// handshake with the right accept, then sends `frames`; it unmasks what\n/// the client sends and keeps each frame (opcode, payload).\nstruct Scripted {\n    frames: String\n    sent: String\n    answered: bool\n    replied: bool\n    step: usize\n    out: String\n    ended: bool\n}\n\nfn scripted(frames: []u8) -> Scripted {\n    return Scripted{ .frames = String.from(frames), .sent = String.new(), .answered = false, .replied = false, .step = 5, .out = String.new(), .ended = false }\n}\n\nimpl Scripted {\n    // the client's frames, unmasked: (opcode, payload), whole ones only\n    fn client_frames(self: *Self) -> List((u8, String)) {\n        var out = List((u8, String)).new()\n        let s = self.sent[..]\n        var at = s.find(\"\\r\\n\\r\\n\").? + 4\n        while at + 6 <= s.len {\n            let op = s[at] & 0x0f\n            let n = (s[at + 1] & 0x7f) as usize\n            let mask = s[at + 2..at + 6]\n            var p = String.new()\n            for i in 0..n { p.push_byte(s[at + 6 + i] ^ mask[i % 4]) }\n            out.append((op, p))\n            at += 6 + n\n        }\n        return out\n    }\n}\n\nimpl http.Transport for Scripted {\n    fn connect(self: *mut Self, host: []u8, port: u16, timeout_ms: i64) -> !void {\n        _ = host\n        _ = port\n        _ = timeout_ms\n    }\n\n    fn send(self: *mut Self, data: []u8) -> !void {\n        self.sent.append(data)\n    }\n\n    fn recv(self: *mut Self) -> !String {\n        if !self.replied {\n            let s = self.sent[..]\n            let k = s.find(\"Sec-WebSocket-Key: \").? + 19\n            var e = k\n            while s[e] != '\\r' { e += 1 }\n            self.out = format(\"HTTP/1.1 101 Switching Protocols\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Accept: {}\\r\\n\\r\\n\", .{accept_for(s[k..e])})\n            self.out.append(self.frames)\n            self.replied = true\n        }\n        let n = @min(self.step, self.out.len)\n        let piece = String.from(self.out[0..n])\n        self.out = String.from(self.out[n..self.out.len])\n        return piece\n    }\n\n    fn truncated(self: *Self) -> bool {\n        _ = self\n        return false\n    }\n\n    fn close(self: *mut Self) {\n        self.ended = true\n    }\n}\n\ntest \"a socket over the TLS slot\" {\n    // a message, a ping, a fragmented message, then the server's close\n    var server = scripted(b\"\\x81\\x05Hello\\x89\\x02hi\\x01\\x03Hel\\x80\\x02lo\\x88\\x05\\x03\\xe8bye\")\n    var ws = try connect_with(Scripted, &mut server, \"wss://example.com/chat\", 1000)\n    try ws.send_text(\"hey\")\n    let a = try ws.recv()\n    expect(a.op == TEXT and a.data == \"Hello\")\n    let b = try ws.recv()\n    expect(b.op == TEXT and b.data == \"Hello\")\n    let c = try ws.recv()\n    expect(c.op == CLOSE and c.code == 1000 and c.data == \"bye\")\n    expect(!ws.is_open() and server.ended)\n    var closed = false\n    _ = ws.recv() catch |e| {\n        closed = e == error.Closed\n        Message{ .op = 0, .data = String.new(), .code = 0 }\n    }\n    expect(closed)\n    // what the client sent: its text, the pong to the ping, the close's answer\n    let sent = server.client_frames()\n    expect(sent.len == 3)\n    expect(sent[0].0 == TEXT and sent[0].1 == \"hey\")\n    expect(sent[1].0 == PONG and sent[1].1 == \"hi\")\n    expect(sent[2].0 == CLOSE and sent[2].1 == b\"\\x03\\xe8\")\n    expect(server.sent[..].starts_with(\"GET /chat HTTP/1.1\\r\\nHost: example.com\\r\\n\"))\n}\n\ntest \"a socket's endings\" {\n    // the connection ends without a close: 1006\n    var cut = scripted(b\"\\x81\\x02ok\")\n    var ws = try connect_with(Scripted, &mut cut, \"wss://example.com/\", 1000)\n    expect((try ws.recv()).data == \"ok\")\n    let end = try ws.recv()\n    expect(end.op == CLOSE and end.code == 1006 and ws.problem.len > 0)\n    // a protocol mistake ends it with 1002\n    var bad = scripted(b\"\\xc1\\x00\")\n    var ws2 = try connect_with(Scripted, &mut bad, \"wss://example.com/\", 1000)\n    var invalid = false\n    _ = ws2.recv() catch |e| {\n        invalid = e == error.InvalidInput\n        Message{ .op = 0, .data = String.new(), .code = 0 }\n    }\n    expect(invalid and ws2.problem == \"the server set a reserved bit\")\n    expect(bad.client_frames()[0].1 == b\"\\x03\\xea\")\n    // closing first: the server's close answers it\n    var polite = scripted(b\"\\x88\\x02\\x03\\xe8\")\n    var ws3 = try connect_with(Scripted, &mut polite, \"wss://example.com/\", 1000)\n    ws3.close(1000, \"done\")\n    expect(polite.client_frames()[0].1 == b\"\\x03\\xe8done\" and polite.ended)\n}\n\n// a WebSocket server for one message: answers the handshake, echoes one\n// frame, and answers the close\nfn echo_once(l: *mut net.TcpListener) -> bool {\n    var c = l.accept_timeout(10000) catch { return false }\n    c.set_timeout(10000)\n    var head = String.new()\n    while head[..].find(\"\\r\\n\\r\\n\") == null {\n        let got = c.recv(4096) catch { return false }\n        if got.len == 0 { return false }\n        head.append(got)\n    }\n    let k = head[..].find(\"Sec-WebSocket-Key: \").? + 19\n    var e = k\n    while head[e] != '\\r' { e += 1 }\n    let answer = format(\"HTTP/1.1 101 Switching Protocols\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Accept: {}\\r\\n\\r\\n\", .{accept_for(head[k..e])})\n    c.send(answer[..]) catch { return false }\n    var n: usize = 0\n    while n < 2 {\n        // a frame from the client: short, masked\n        var fr = String.new()\n        while fr.len < 2 or fr.len < 6 + ((fr[1] & 0x7f) as usize) {\n            let got = c.recv(4096) catch { return false }\n            if got.len == 0 { return false }\n            fr.append(got)\n        }\n        let op = fr[0] & 0x0f\n        let len = (fr[1] & 0x7f) as usize\n        var p = String.new()\n        for i in 0..len { p.push_byte(fr[6 + i] ^ fr[2 + i % 4]) }\n        var reply = String.new()\n        reply.push_byte(0x80 | op)\n        reply.push_byte(@truncate(u8, len))\n        reply.append(p)\n        c.send(reply[..]) catch { return false }\n        n += 1\n        if op == CLOSE { break }\n    }\n    c.close()\n    return true\n}\n\ntest \"an echo over loopback\" {\n    var l = try net.TcpListener.bind(\"127.0.0.1\", 0)\n    let port = try l.port()\n    var server = thread.spawn(net.TcpListener, bool, echo_once, l)\n    var ws = try connect(format(\"ws://127.0.0.1:{}/echo\", .{port})[..], 10000)\n    try ws.send_text(\"ping pong\")\n    let m = try ws.recv()\n    expect(m.op == TEXT and m.data == \"ping pong\")\n    ws.close(1000, \"done\")\n    expect(server.join())\n}\n";
+static const char nx_str_905[33502] = "// std.websocket: a WebSocket client (RFC 6455), written in Nexium over\n// std.http's transports.\n//\n// `import std.websocket` then:\n//\n//     var ws = try websocket.connect(\"ws://localhost:8080/chat\", 10000)\n//     try ws.send_text(\"hello\")\n//     while true {\n//         let m = try ws.recv()                   // a whole message\n//         if m.op == websocket.CLOSE { break }    // the server's close, or the end\n//         println(\"{}\", .{m.data})\n//     }\n//     ws.close(1000, \"done\")\n//\n//     var gw = try websocket.connect_with(NxTls, &mut layer, \"wss://gateway.discord.gg/?v=10\", 10000)\n//\n//     var api = websocket.socket(NxTls, &mut layer)   // with headers of its own\n//     api.header(\"Authorization\", token)\n//     try api.open(\"wss://example.com/stream\", 10000)\n//\n// `wss://` goes over a TLS layer, the slot std.http's client uses\n// (`http.Transport`, which nxtls fills). No extensions are asked for (no\n// compression). A message arrives whole, its fragments joined, up to\n// `max_message` bytes; `recv` answers a ping with a pong on its way. The\n// first protocol mistake by the server ends the connection, with the\n// reason in `problem`. The handshake's key and every frame's mask come\n// from `random.secure`. A `recv` that waits longer than the timeout is\n// `error.Timeout` and may be called again: nothing that came is lost.\n\nimport std.http\nimport std.hash\nimport std.base64\nimport std.net\nimport std.thread\n\npub const CONTINUATION: u8 = 0\npub const TEXT: u8 = 1\npub const BINARY: u8 = 2\npub const CLOSE: u8 = 8\npub const PING: u8 = 9\npub const PONG: u8 = 10\n\n/// The largest message `recv` takes unless `max_message` says otherwise.\npub const MAX_MESSAGE: usize = 16777216\n\n// the most the handshake's answer may be, before its blank line\nconst MAX_HEAD: usize = 16384\n\n// what RFC 6455 appends to the key before hashing it\nconst GUID = \"258EAFA5-E914-47DA-95CA-C5AB0DC85B11\"\n\n/// One whole message: its opcode (TEXT, BINARY, PONG, or CLOSE with its\n/// reason as `data`).\npub struct Message {\n    op: u8\n    data: String\n    /// a CLOSE's status: 1000 normal, 1005 when the server gave none, 1006\n    /// when the connection ended without a close\n    code: u16\n}\n\n// ------------------------------------------------------------------ the handshake\n\n/// The Sec-WebSocket-Accept a server answers `key` with: the base64 of the\n/// SHA-1 of the key and RFC 6455's GUID.\npub fn accept_for(key: []u8) -> String {\n    var k = String.from(key)\n    k.append(GUID)\n    let d = hash.sha1(k[..])\n    return base64.encode(d[..])\n}\n\n/// The opening request for `host` (the Host header, as the server knows\n/// itself) and `path` (with its query); `headers` are added.\npub fn request(host: []u8, path: []u8, key: []u8, headers: []http.Header) -> String {\n    var r = format(\"GET {} HTTP/1.1\\r\\nHost: {}\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Key: {}\\r\\nSec-WebSocket-Version: 13\\r\\n\", .{path, host, key})\n    var agent = false\n    for h in headers {\n        if h.name.eq_ignore_case(\"user-agent\") { agent = true }\n    }\n    if !agent { r.append(\"User-Agent: nexium-websocket/1.4\\r\\n\") }\n    for h in headers {\n        r.append(h.name)\n        r.append(\": \")\n        r.append(h.value)\n        r.append(\"\\r\\n\")\n    }\n    r.append(\"\\r\\n\")\n    return r\n}\n\nfn lower(s: []u8) -> String {\n    var out = String.with_capacity(s.len)\n    for c in s {\n        out.push_byte(if c >= 'A' and c <= 'Z' { c + 32 } else { c })\n    }\n    return out\n}\n\n/// What is wrong with the server's answer to the handshake (`head`, up to\n/// but not including the blank line), or null when it accepts `key`.\npub fn check_response(head: []u8, key: []u8) -> ?String {\n    let lines = head.split(\"\\r\\n\")\n    if lines.len == 0 or !(lines[0].starts_with(\"HTTP/1.1 101\") or lines[0].starts_with(\"HTTP/1.0 101\")) {\n        let first = if lines.len > 0 { lines[0] } else { \"\" }\n        return format(\"the server did not switch to WebSocket: {}\", .{first[0..@min(first.len, 80)]})\n    }\n    var upgrade = false\n    var connection = false\n    var accept = String.new()\n    for i in 1..lines.len {\n        let line = lines[i]\n        let colon = line.find(\":\") orelse continue\n        let name = lower(line[0..colon].trim())\n        let value = line[colon + 1..line.len].trim()\n        if name == \"upgrade\" {\n            upgrade = value.eq_ignore_case(\"websocket\")\n        } else if name == \"connection\" {\n            connection = lower(value).find(\"upgrade\") != null\n        } else if name == \"sec-websocket-accept\" {\n            accept = String.from(value)\n        } else if name == \"sec-websocket-extensions\" {\n            return String.from(\"the server turned on an extension that was not asked for\")\n        }\n    }\n    if !upgrade or !connection {\n        return String.from(\"the server's answer lacks Upgrade: websocket and Connection: Upgrade\")\n    }\n    if accept != accept_for(key) {\n        return String.from(\"the server's Sec-WebSocket-Accept does not match the key\")\n    }\n    return null\n}\n\n// ------------------------------------------------------------------ frames\n\n/// A client frame: final, opcode `op`, masked with the 4 bytes of `mask`.\npub fn frame(op: u8, payload: []u8, mask: []u8) -> String {\n    var out = String.with_capacity(payload.len + 14)\n    out.push_byte(0x80 | op)\n    let n = payload.len\n    if n < 126 {\n        out.push_byte(0x80 | @truncate(u8, n))\n    } else if n < 65536 {\n        out.push_byte(0x80 | 126)\n        out.push_byte(@truncate(u8, n >> 8))\n        out.push_byte(@truncate(u8, n))\n    } else {\n        out.push_byte(0x80 | 127)\n        let v = n as u64\n        for i in 0..8 {\n            out.push_byte(@truncate(u8, v >> ((56 - 8 * i) as u64)))\n        }\n    }\n    out.append(mask[0..4])\n    for i in 0..n {\n        out.push_byte(payload[i] ^ mask[i % 4])\n    }\n    return out\n}\n\n/// The payload of a close frame: the code, big-endian, then the reason,\n/// cut to 123 bytes (a control frame carries 125) at a character's start.\npub fn close_payload(code: u16, reason: []u8) -> String {\n    var p = String.new()\n    p.push_byte(@truncate(u8, code >> 8))\n    p.push_byte(@truncate(u8, code))\n    var n = @min(reason.len, 123)\n    while n > 0 and n < reason.len and (reason[n] & 0xc0) == 0x80 { n -= 1 }\n    p.append(reason[0..n])\n    return p\n}\n\n/// Whether `s` is UTF-8: what a TEXT message must be.\nfn valid_utf8(s: []u8) -> bool {\n    var i: usize = 0\n    while i < s.len {\n        let c = s[i]\n        if c < 0x80 {\n            i += 1\n            continue\n        }\n        var n: usize = 0\n        var cp: u32 = 0\n        var least: u32 = 0\n        if c >= 0xc2 and c <= 0xdf {\n            n = 1\n            cp = (c & 0x1f) as u32\n            least = 0x80\n        } else if c >= 0xe0 and c <= 0xef {\n            n = 2\n            cp = (c & 0x0f) as u32\n            least = 0x800\n        } else if c >= 0xf0 and c <= 0xf4 {\n            n = 3\n            cp = (c & 0x07) as u32\n            least = 0x10000\n        } else {\n            return false\n        }\n        var k: usize = 1\n        while k <= n {\n            if i + k >= s.len { return false }\n            let b = s[i + k]\n            if (b & 0xc0) != 0x80 { return false }\n            cp = (cp << 6) | ((b & 0x3f) as u32)\n            k += 1\n        }\n        // overlong forms, UTF-16's surrogates, past U+10FFFF\n        if cp < least or (cp >= 0xd800 and cp <= 0xdfff) or cp > 0x10ffff { return false }\n        i += n + 1\n    }\n    return true\n}\n\n/// Unframes what a server sends, whatever pieces it arrives in.\npub struct Decoder {\n    buf: String\n    // a fragmented message being put together\n    partial: String\n    partial_op: u8\n    in_message: bool\n    /// the largest message taken\n    max: usize\n    /// set on the first protocol mistake; nothing more is decoded after it\n    problem: String\n}\n\nimpl Decoder {\n    pub fn new(max: usize) -> Decoder {\n        return Decoder{ .buf = String.new(), .partial = String.new(), .partial_op = 0, .in_message = false, .max = max, .problem = String.new() }\n    }\n\n    pub fn feed(self: *mut Self, data: []u8) {\n        self.buf.append(data)\n    }\n\n    fn fail(self: *mut Self, why: []u8) -> ?Message {\n        self.problem = String.from(why)\n        return null\n    }\n\n    /// The next whole message, a control frame as it comes (PING, PONG,\n    /// CLOSE), or null when more bytes are needed or `problem` is set.\n    pub fn next(self: *mut Self) -> ?Message {\n        while true {\n            if self.problem.len > 0 or self.buf.len < 2 {\n                return null\n            }\n            let b0 = self.buf[0]\n            let b1 = self.buf[1]\n            let fin = (b0 & 0x80) != 0\n            let op = b0 & 0x0f\n            if (b0 & 0x70) != 0 {\n                return self.fail(\"the server set a reserved bit\")\n            }\n            if (b1 & 0x80) != 0 {\n                return self.fail(\"the server masked a frame\")\n            }\n            var len = (b1 & 0x7f) as u64\n            var at: usize = 2\n            if len == 126 {\n                if self.buf.len < 4 {\n                    return null\n                }\n                len = ((self.buf[2] as u64) << 8) | (self.buf[3] as u64)\n                at = 4\n            } else if len == 127 {\n                if self.buf.len < 10 {\n                    return null\n                }\n                len = 0\n                for i in 2..10 {\n                    len = (len << 8) | (self.buf[i] as u64)\n                }\n                at = 10\n            }\n            if op >= 8 and (!fin or len > 125) {\n                return self.fail(\"the server sent a fragmented or long control frame\")\n            }\n            if op != CONTINUATION and op != TEXT and op != BINARY and op != CLOSE and op != PING and op != PONG {\n                return self.fail(\"the server sent a frame with a reserved opcode\")\n            }\n            if len > (self.max as u64) {\n                return self.fail(\"the server sent a frame past the largest message taken\")\n            }\n            let n = len as usize\n            if self.buf.len < at + n {\n                return null\n            }\n            let payload = String.from(self.buf[at..at + n])\n            self.buf = String.from(self.buf[at + n..self.buf.len])\n            if op >= 8 {\n                if op == CLOSE {\n                    if n == 1 { return self.fail(\"the server sent a close with half a status code\") }\n                    var code: u16 = 1005\n                    var reason = String.new()\n                    if n >= 2 {\n                        code = ((payload[0] as u16) << 8) | (payload[1] as u16)\n                        reason = String.from(payload[2..n])\n                    }\n                    return Message{ .op = CLOSE, .data = reason, .code = code }\n                }\n                return Message{ .op = op, .data = payload, .code = 0 }\n            }\n            if op == CONTINUATION {\n                if !self.in_message {\n                    return self.fail(\"the server continued a message it never started\")\n                }\n                if self.partial.len + n > self.max {\n                    return self.fail(\"the server sent a message past the largest taken\")\n                }\n                self.partial.append(payload)\n            } else {\n                if self.in_message {\n                    return self.fail(\"the server started a message inside another\")\n                }\n                self.partial = payload\n                self.partial_op = op\n                self.in_message = true\n            }\n            if fin {\n                self.in_message = false\n                let whole = self.partial.clone()\n                self.partial = String.new()\n                if self.partial_op == TEXT and !valid_utf8(whole[..]) {\n                    return self.fail(\"the server sent text that is not UTF-8\")\n                }\n                return Message{ .op = self.partial_op, .data = whole, .code = 0 }\n            }\n        }\n    }\n}\n\n// ------------------------------------------------------------------ the connection\n\nconst OPEN: u8 = 0\n// a close was sent and the server's is awaited\nconst CLOSING: u8 = 1\nconst CLOSED: u8 = 2\n// made by `socket`, not opened yet\nconst NEW: u8 = 3\n\n/// A WebSocket connection over TCP (`ws://`) or a TLS layer, a `T`\n/// (`wss://`). Its calls go straight to the transport, so they have its\n/// effects and no others.\npub struct Socket(T){\n    plain: http.Plain\n    tls: ?*mut T\n    secure: bool\n    /// headers the handshake carries, from `header`\n    headers: List(http.Header)\n    dec: Decoder\n    state: u8\n    /// the largest message `recv` takes (MAX_MESSAGE unless changed)\n    max_message: usize = 16777216\n    /// why the connection ended, when the server or the network ended it\n    problem: String\n}\n\n/// Connects to a `ws://` URL and completes the handshake; the connect and\n/// each wait for data take at most `timeout_ms` (0: no limit).\npub fn connect(url: []u8, timeout_ms: i64) -> !Socket(http.Plain) {\n    var s = socket(http.Plain, null)\n    try s.open(url, timeout_ms)\n    return s\n}\n\n/// Connects to a `wss://` (or `ws://`) URL, TLS over `tls`, a TLS layer:\n/// an `http.Transport`, such as nxtls's.\npub fn connect_with(comptime T: type where T: http.Transport, tls: *mut T, url: []u8, timeout_ms: i64) -> !Socket(T) {\n    var s = socket(T, tls)\n    try s.open(url, timeout_ms)\n    return s\n}\n\n/// A socket to open, after `header` has added what the handshake should\n/// carry (Authorization, Origin, Sec-WebSocket-Protocol). `tls` may be\n/// null for `ws://`.\npub fn socket(comptime T: type, tls: ?*mut T) -> Socket(T) {\n    return Socket(T){ .plain = http.Plain.new(), .tls = tls, .secure = false, .headers = List(http.Header).new(), .dec = Decoder.new(MAX_MESSAGE), .state = NEW, .problem = String.new() }\n}\n\nimpl(T) Socket(T) {\n    /// A header for the handshake to carry.\n    pub fn header(self: *mut Self, name: []u8, value: []u8) {\n        self.headers.append(http.Header{ .name = String.from(name), .value = String.from(value) })\n    }\n\n    /// Connects to a `ws://` or `wss://` URL and completes the handshake;\n    /// `wss://` without a TLS layer is `error.Unsupported`, a URL of\n    /// another scheme and an answer that is not a WebSocket's are\n    /// `error.InvalidInput` (`problem` says how).\n    pub fn open(self: *mut Self, url: []u8, timeout_ms: i64) -> !void {\n        if self.state != NEW { return error.InvalidInput }\n        // ws:// and wss:// read as http:// and https:// as far as the URL goes\n        var as_http = String.new()\n        if url.starts_with(\"ws://\") {\n            as_http.append(\"http://\")\n            as_http.append(url[5..url.len])\n        } else if url.starts_with(\"wss://\") {\n            as_http.append(\"https://\")\n            as_http.append(url[6..url.len])\n        } else {\n            return error.InvalidInput\n        }\n        let u = http.parse_url(as_http[..]) orelse return error.InvalidInput\n        self.secure = u.scheme[..] == \"https\"\n        if self.secure {\n            let t = self.tls orelse return error.Unsupported\n            try t.connect(u.host[..], u.port, timeout_ms)\n        } else {\n            try self.plain.connect(u.host[..], u.port, timeout_ms)\n        }\n        self.state = OPEN\n        var raw: [16]u8 = undefined\n        random.secure(raw[..]) catch |e| {\n            self.end()\n            return e\n        }\n        let key = base64.encode(raw[..])\n        var host = String.from(u.host)\n        if host[..].find(\":\") != null { host = format(\"[{}]\", .{u.host}) }\n        let usual: u16 = if self.secure { 443 } else { 80 }\n        if u.port != usual { host.append(format(\":{}\", .{u.port})) }\n        let req = request(host[..], u.path[..], key[..], self.headers[..])\n        self.send_raw(req[..]) catch |e| {\n            self.end()\n            return e\n        }\n        // the answer's head; what comes after the blank line is frames already\n        var got = String.new()\n        while true {\n            if let at = got[..].find(\"\\r\\n\\r\\n\") {\n                if let why = check_response(got[0..at], key[..]) {\n                    self.problem = why\n                    self.end()\n                    return error.InvalidInput\n                }\n                self.dec.feed(got[at + 4..got.len])\n                return\n            }\n            if got.len > MAX_HEAD {\n                self.problem = String.from(\"the server's answer to the handshake did not end\")\n                self.end()\n                return error.InvalidInput\n            }\n            let piece = self.recv_raw() catch |e| {\n                self.end()\n                return e\n            }\n            if piece.len == 0 {\n                self.problem = String.from(\"the connection ended during the handshake\")\n                self.end()\n                return error.Truncated\n            }\n            got.append(piece)\n        }\n    }\n\n    fn send_raw(self: *mut Self, data: []u8) -> !void {\n        if self.secure {\n            let t = self.tls orelse return error.Closed\n            return t.send(data)\n        }\n        return self.plain.send(data)\n    }\n\n    fn recv_raw(self: *mut Self) -> !String {\n        if self.secure {\n            let t = self.tls orelse return String.new()\n            return t.recv()\n        }\n        return self.plain.recv()\n    }\n\n    // ends the connection, without a word to the server\n    fn end(self: *mut Self) {\n        self.state = CLOSED\n        if self.secure {\n            if let t = self.tls { t.close() }\n        } else {\n            self.plain.close()\n        }\n    }\n\n    fn send_frame(self: *mut Self, op: u8, data: []u8) -> !void {\n        var mask: [4]u8 = undefined\n        try random.secure(mask[..])\n        let f = frame(op, data, mask[..])\n        self.send_raw(f[..]) catch |e| {\n            self.problem = String.from(\"the connection broke while sending\")\n            self.end()\n            return e\n        }\n    }\n\n    /// How long each wait for data takes from now on, in ms (0: no limit):\n    /// `recv` is `error.Timeout` past it, and can be called again.\n    pub fn set_timeout(self: *mut Self, ms: i64) {\n        if self.secure {\n            if let t = self.tls { t.set_timeout(ms) }\n        } else {\n            self.plain.set_timeout(ms)\n        }\n    }\n\n    /// Whether messages can still be sent.\n    pub fn is_open(self: *Self) -> bool {\n        return self.state == OPEN\n    }\n\n    /// Sends a text message; `data` should be UTF-8.\n    pub fn send_text(self: *mut Self, data: []u8) -> !void {\n        if self.state != OPEN { return error.Closed }\n        return self.send_frame(TEXT, data)\n    }\n\n    /// Sends a binary message.\n    pub fn send_binary(self: *mut Self, data: []u8) -> !void {\n        if self.state != OPEN { return error.Closed }\n        return self.send_frame(BINARY, data)\n    }\n\n    /// Sends a ping (at most 125 bytes); its pong comes back through `recv`.\n    pub fn ping(self: *mut Self, data: []u8) -> !void {\n        if self.state != OPEN { return error.Closed }\n        if data.len > 125 { return error.InvalidInput }\n        return self.send_frame(PING, data)\n    }\n\n    /// The next message: TEXT or BINARY whole, a PONG, or CLOSE, either the\n    /// server's (its code and reason) or the end of the connection (1006,\n    /// with `problem` saying so). A ping is answered on the way.\n    /// `error.Timeout` when nothing whole came in time (call again: nothing\n    /// is lost), `error.Closed` once a CLOSE was returned, and\n    /// `error.InvalidInput` for the server's protocol mistake (`problem`\n    /// says which), which ends the connection.\n    pub fn recv(self: *mut Self) -> !Message {\n        self.dec.max = self.max_message\n        while true {\n            if self.state == CLOSED { return error.Closed }\n            if let m = self.dec.next() {\n                if m.op == PING {\n                    self.send_frame(PONG, m.data[..]) catch { }\n                    continue\n                }\n                if m.op == CLOSE {\n                    if self.state == OPEN {\n                        // the server began it: answer with its code, then end\n                        let answer = if m.code == 1005 { String.new() } else { close_payload(m.code, \"\") }\n                        self.send_frame(CLOSE, answer[..]) catch { }\n                    }\n                    self.end()\n                    return m\n                }\n                return m\n            }\n            if self.dec.problem.len > 0 {\n                self.problem = self.dec.problem.clone()\n                // RFC 6455 7.1.7: a protocol error, then the end\n                let why = close_payload(1002, \"\")\n                self.send_frame(CLOSE, why[..]) catch { }\n                self.end()\n                return error.InvalidInput\n            }\n            let piece = try self.recv_raw()\n            if piece.len == 0 {\n                self.problem = String.from(\"the connection ended without a close frame\")\n                self.end()\n                return Message{ .op = CLOSE, .data = String.new(), .code = 1006 }\n            }\n            self.dec.feed(piece[..])\n        }\n    }\n\n    /// Closes the connection with a status (1000: normal) and a reason:\n    /// sends the close frame, reads until the server's close answers it,\n    /// the connection ends or a wait times out, then ends the connection.\n    /// Messages that come meanwhile are dropped.\n    pub fn close(self: *mut Self, code: u16, reason: []u8) {\n        if self.state == OPEN {\n            let payload = close_payload(code, reason)\n            self.state = CLOSING\n            self.send_frame(CLOSE, payload[..]) catch { }\n            while self.state == CLOSING {\n                if let m = self.dec.next() {\n                    if m.op == CLOSE { break }\n                    continue\n                }\n                if self.dec.problem.len > 0 { break }\n                let piece = self.recv_raw() catch { break }\n                if piece.len == 0 { break }\n                self.dec.feed(piece[..])\n            }\n        }\n        self.end()\n    }\n}\n\n// ------------------------------------------------------------------ tests\n\ntest \"the handshake\" {\n    // RFC 6455's own example\n    expect_eq(accept_for(\"dGhlIHNhbXBsZSBub25jZQ==\"), \"s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\")\n    var hs = List(http.Header).new()\n    hs.append(http.Header{ .name = String.from(\"Origin\"), .value = String.from(\"https://example.com\") })\n    let r = request(\"example.com\", \"/chat?x=1\", \"dGhlIHNhbXBsZSBub25jZQ==\", hs[..])\n    expect(r[..].starts_with(\"GET /chat?x=1 HTTP/1.1\\r\\nHost: example.com\\r\\nUpgrade: websocket\\r\\n\"))\n    expect(r[..].find(\"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\\r\\n\") != null)\n    expect(r[..].ends_with(\"Origin: https://example.com\\r\\n\\r\\n\"))\n    let ok = \"HTTP/1.1 101 Switching Protocols\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\"\n    expect(check_response(ok, \"dGhlIHNhbXBsZSBub25jZQ==\") == null)\n    expect(check_response(ok, \"another key, another answer\") != null)\n    expect(check_response(\"HTTP/1.1 200 OK\\r\\nContent-Length: 0\", \"k\") != null)\n    expect(check_response(\"HTTP/1.1 101 Switching Protocols\\r\\nSec-WebSocket-Accept: x\", \"k\") != null)\n    let deflate = \"HTTP/1.1 101 Switching Protocols\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Extensions: permessage-deflate\\r\\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\"\n    expect(check_response(deflate, \"dGhlIHNhbXBsZSBub25jZQ==\") != null)\n}\n\ntest \"frames\" {\n    // RFC 6455 5.7: a masked \"Hello\"\n    let hello = frame(TEXT, \"Hello\", b\"\\x37\\xfa\\x21\\x3d\")\n    expect(hello == b\"\\x81\\x85\\x37\\xfa\\x21\\x3d\\x7f\\x9f\\x4d\\x51\\x58\")\n    var mid = String.new()\n    for _ in 0..300 { mid.push_byte('m') }\n    let f = frame(BINARY, mid[..], \"abcd\")\n    expect(f[0] == 0x82 and f[1] == 0xfe and f[2] == 1 and f[3] == 44 and f.len == 4 + 4 + 300)\n    var big = String.new()\n    for _ in 0..70000 { big.push_byte('b') }\n    let g = frame(BINARY, big[..], \"abcd\")\n    expect(g[1] == 0xff and g[7] == 0x01 and g[8] == 0x11 and g[9] == 0x70 and g.len == 10 + 4 + 70000)\n    let c = close_payload(1000, \"done\")\n    expect(c == b\"\\x03\\xe8done\")\n    // a reason past 123 bytes is cut at a character's start\n    var long = String.new()\n    for _ in 0..62 { long.append(\"\303\251\") }\n    let cut = close_payload(1001, long[..])\n    expect(cut.len == 2 + 122 and valid_utf8(cut[2..cut.len]))\n}\n\ntest \"UTF-8\" {\n    expect(valid_utf8(\"plain ascii\") and valid_utf8(\"h\303\251llo w\303\266rld\") and valid_utf8(\"\346\227\245\346\234\254\350\252\236\") and valid_utf8(\"\360\237\216\211\"))\n    expect(!valid_utf8(b\"\\xc0\\xaf\") and !valid_utf8(b\"\\xe0\\x80\\xaf\") and !valid_utf8(b\"\\xed\\xa0\\x80\"))\n    expect(!valid_utf8(b\"\\xf4\\x90\\x80\\x80\") and !valid_utf8(b\"\\xff\") and !valid_utf8(b\"\\xe6\\x97\") and !valid_utf8(b\"a\\x80\"))\n}\n\n// the messages a decoder makes of `data` fed a byte at a time\nfn decode_bytes(data: []u8, max: usize) -> List(Message) {\n    var d = Decoder.new(max)\n    var out = List(Message).new()\n    for i in 0..data.len {\n        d.feed(data[i..i + 1])\n        while true {\n            let m = d.next() orelse break\n            out.append(m)\n        }\n    }\n    return out\n}\n\n// why a decoder gives up on `data`\nfn decode_problem(data: []u8, max: usize) -> String {\n    var d = Decoder.new(max)\n    d.feed(data)\n    while true {\n        let m = d.next() orelse break\n        _ = m\n    }\n    return d.problem.clone()\n}\n\ntest \"the decoder\" {\n    // RFC 6455 5.7: \"Hello\" unmasked, in two fragments, and a ping between\n    let ms = decode_bytes(b\"\\x81\\x05Hello\\x01\\x03Hel\\x89\\x02hi\\x80\\x02lo\\x88\\x05\\x03\\xe8bye\", 1000)\n    expect(ms.len == 4)\n    expect(ms[0].op == TEXT and ms[0].data == \"Hello\")\n    expect(ms[1].op == PING and ms[1].data == \"hi\")\n    expect(ms[2].op == TEXT and ms[2].data == \"Hello\")\n    expect(ms[3].op == CLOSE and ms[3].code == 1000 and ms[3].data == \"bye\")\n    // a close without a code, and binary data that need not be UTF-8\n    let raw = decode_bytes(b\"\\x82\\x02\\xff\\xfe\\x88\\x00\", 1000)\n    expect(raw[0].op == BINARY and raw[0].data.len == 2 and raw[1].code == 1005)\n    expect(decode_problem(b\"\\x81\\x85\\x37\\xfa\\x21\\x3d\\x7f\\x9f\\x4d\\x51\\x58\", 1000) == \"the server masked a frame\")\n    expect(decode_problem(b\"\\xc1\\x00\", 1000) == \"the server set a reserved bit\")\n    expect(decode_problem(b\"\\x09\\x00\", 1000) == \"the server sent a fragmented or long control frame\")\n    expect(decode_problem(b\"\\x80\\x01a\", 1000) == \"the server continued a message it never started\")\n    expect(decode_problem(b\"\\x83\\x00\", 1000) == \"the server sent a frame with a reserved opcode\")\n    expect(decode_problem(b\"\\x81\\x05Hello\", 4) == \"the server sent a frame past the largest message taken\")\n    expect(decode_problem(b\"\\x01\\x03Hel\\x80\\x02lo\", 4) == \"the server sent a message past the largest taken\")\n    expect(decode_problem(b\"\\x81\\x02\\xc3\\x28\", 1000) == \"the server sent text that is not UTF-8\")\n    expect(decode_problem(b\"\\x01\\x01a\\x01\\x01b\", 1000) == \"the server started a message inside another\")\n}\n\n/// A server played from a script over the TLS slot: it answers the\n/// handshake with the right accept, then sends `frames`; it unmasks what\n/// the client sends and keeps each frame (opcode, payload).\nstruct Scripted {\n    frames: String\n    sent: String\n    answered: bool\n    replied: bool\n    step: usize\n    out: String\n    ended: bool\n}\n\nfn scripted(frames: []u8) -> Scripted {\n    return Scripted{ .frames = String.from(frames), .sent = String.new(), .answered = false, .replied = false, .step = 5, .out = String.new(), .ended = false }\n}\n\nimpl Scripted {\n    // the client's frames, unmasked: (opcode, payload), whole ones only\n    fn client_frames(self: *Self) -> List((u8, String)) {\n        var out = List((u8, String)).new()\n        let s = self.sent[..]\n        var at = s.find(\"\\r\\n\\r\\n\").? + 4\n        while at + 6 <= s.len {\n            let op = s[at] & 0x0f\n            let n = (s[at + 1] & 0x7f) as usize\n            let mask = s[at + 2..at + 6]\n            var p = String.new()\n            for i in 0..n { p.push_byte(s[at + 6 + i] ^ mask[i % 4]) }\n            out.append((op, p))\n            at += 6 + n\n        }\n        return out\n    }\n}\n\nimpl http.Transport for Scripted {\n    fn connect(self: *mut Self, host: []u8, port: u16, timeout_ms: i64) -> !void {\n        _ = host\n        _ = port\n        _ = timeout_ms\n    }\n\n    fn send(self: *mut Self, data: []u8) -> !void {\n        self.sent.append(data)\n    }\n\n    fn recv(self: *mut Self) -> !String {\n        if !self.replied {\n            let s = self.sent[..]\n            let k = s.find(\"Sec-WebSocket-Key: \").? + 19\n            var e = k\n            while s[e] != '\\r' { e += 1 }\n            self.out = format(\"HTTP/1.1 101 Switching Protocols\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Accept: {}\\r\\n\\r\\n\", .{accept_for(s[k..e])})\n            self.out.append(self.frames)\n            self.replied = true\n        }\n        let n = @min(self.step, self.out.len)\n        let piece = String.from(self.out[0..n])\n        self.out = String.from(self.out[n..self.out.len])\n        return piece\n    }\n\n    fn set_timeout(self: *mut Self, ms: i64) {\n        _ = self\n        _ = ms\n    }\n\n    fn truncated(self: *Self) -> bool {\n        _ = self\n        return false\n    }\n\n    fn close(self: *mut Self) {\n        self.ended = true\n    }\n}\n\ntest \"a socket over the TLS slot\" {\n    // a message, a ping, a fragmented message, then the server's close\n    var server = scripted(b\"\\x81\\x05Hello\\x89\\x02hi\\x01\\x03Hel\\x80\\x02lo\\x88\\x05\\x03\\xe8bye\")\n    var ws = try connect_with(Scripted, &mut server, \"wss://example.com/chat\", 1000)\n    try ws.send_text(\"hey\")\n    let a = try ws.recv()\n    expect(a.op == TEXT and a.data == \"Hello\")\n    let b = try ws.recv()\n    expect(b.op == TEXT and b.data == \"Hello\")\n    let c = try ws.recv()\n    expect(c.op == CLOSE and c.code == 1000 and c.data == \"bye\")\n    expect(!ws.is_open() and server.ended)\n    var closed = false\n    _ = ws.recv() catch |e| {\n        closed = e == error.Closed\n        Message{ .op = 0, .data = String.new(), .code = 0 }\n    }\n    expect(closed)\n    // what the client sent: its text, the pong to the ping, the close's answer\n    let sent = server.client_frames()\n    expect(sent.len == 3)\n    expect(sent[0].0 == TEXT and sent[0].1 == \"hey\")\n    expect(sent[1].0 == PONG and sent[1].1 == \"hi\")\n    expect(sent[2].0 == CLOSE and sent[2].1 == b\"\\x03\\xe8\")\n    expect(server.sent[..].starts_with(\"GET /chat HTTP/1.1\\r\\nHost: example.com\\r\\n\"))\n}\n\ntest \"a socket's endings\" {\n    // the connection ends without a close: 1006\n    var cut = scripted(b\"\\x81\\x02ok\")\n    var ws = try connect_with(Scripted, &mut cut, \"wss://example.com/\", 1000)\n    expect((try ws.recv()).data == \"ok\")\n    let end = try ws.recv()\n    expect(end.op == CLOSE and end.code == 1006 and ws.problem.len > 0)\n    // a protocol mistake ends it with 1002\n    var bad = scripted(b\"\\xc1\\x00\")\n    var ws2 = try connect_with(Scripted, &mut bad, \"wss://example.com/\", 1000)\n    var invalid = false\n    _ = ws2.recv() catch |e| {\n        invalid = e == error.InvalidInput\n        Message{ .op = 0, .data = String.new(), .code = 0 }\n    }\n    expect(invalid and ws2.problem == \"the server set a reserved bit\")\n    expect(bad.client_frames()[0].1 == b\"\\x03\\xea\")\n    // closing first: the server's close answers it\n    var polite = scripted(b\"\\x88\\x02\\x03\\xe8\")\n    var ws3 = try connect_with(Scripted, &mut polite, \"wss://example.com/\", 1000)\n    ws3.close(1000, \"done\")\n    expect(polite.client_frames()[0].1 == b\"\\x03\\xe8done\" and polite.ended)\n}\n\n// a WebSocket server for one message: answers the handshake, echoes one\n// frame, and answers the close\nfn echo_once(l: *mut net.TcpListener) -> bool {\n    var c = l.accept_timeout(10000) catch { return false }\n    c.set_timeout(10000)\n    var head = String.new()\n    while head[..].find(\"\\r\\n\\r\\n\") == null {\n        let got = c.recv(4096) catch { return false }\n        if got.len == 0 { return false }\n        head.append(got)\n    }\n    let k = head[..].find(\"Sec-WebSocket-Key: \").? + 19\n    var e = k\n    while head[e] != '\\r' { e += 1 }\n    let answer = format(\"HTTP/1.1 101 Switching Protocols\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Accept: {}\\r\\n\\r\\n\", .{accept_for(head[k..e])})\n    c.send(answer[..]) catch { return false }\n    var n: usize = 0\n    while n < 2 {\n        // a frame from the client: short, masked\n        var fr = String.new()\n        while fr.len < 2 or fr.len < 6 + ((fr[1] & 0x7f) as usize) {\n            let got = c.recv(4096) catch { return false }\n            if got.len == 0 { return false }\n            fr.append(got)\n        }\n        let op = fr[0] & 0x0f\n        let len = (fr[1] & 0x7f) as usize\n        var p = String.new()\n        for i in 0..len { p.push_byte(fr[6 + i] ^ fr[2 + i % 4]) }\n        var reply = String.new()\n        reply.push_byte(0x80 | op)\n        reply.push_byte(@truncate(u8, len))\n        reply.append(p)\n        c.send(reply[..]) catch { return false }\n        n += 1\n        if op == CLOSE { break }\n    }\n    c.close()\n    return true\n}\n\ntest \"an echo over loopback\" {\n    var l = try net.TcpListener.bind(\"127.0.0.1\", 0)\n    let port = try l.port()\n    var server = thread.spawn(net.TcpListener, bool, echo_once, l)\n    var ws = try connect(format(\"ws://127.0.0.1:{}/echo\", .{port})[..], 10000)\n    try ws.send_text(\"ping pong\")\n    let m = try ws.recv()\n    expect(m.op == TEXT and m.data == \"ping pong\")\n    ws.close(1000, \"done\")\n    expect(server.join())\n}\n";
 static const char nx_str_906[4] = ".nx";
 static const char nx_str_907[7] = "<repl>";
 static const char nx_str_908[2] = "+";
@@ -24692,7 +24692,7 @@ static nx_opt_sl_u8 nx_m2_std_source(nx_ctx* c, nx_sl_u8 name_0) {
     }
     if (nx_sl_eq(name_0, nx_lit(nx_str_860, 4)))
     {
-      nx_opt_sl_u8 _t4 = ((nx_opt_sl_u8){ .has = true, .val = nx_lit(nx_str_861, 54021) });
+      nx_opt_sl_u8 _t4 = ((nx_opt_sl_u8){ .has = true, .val = nx_lit(nx_str_861, 54491) });
       return _t4;
     }
     if (nx_sl_eq(name_0, nx_lit(nx_str_862, 4)))
@@ -24817,7 +24817,7 @@ static nx_opt_sl_u8 nx_m2_std_source(nx_ctx* c, nx_sl_u8 name_0) {
     }
     if (nx_sl_eq(name_0, nx_lit(nx_str_904, 9)))
     {
-      nx_opt_sl_u8 _t29 = ((nx_opt_sl_u8){ .has = true, .val = nx_lit(nx_str_905, 33068) });
+      nx_opt_sl_u8 _t29 = ((nx_opt_sl_u8){ .has = true, .val = nx_lit(nx_str_905, 33501) });
       return _t29;
     }
   nx_opt_sl_u8 _t30 = ((nx_opt_sl_u8){ .has = false });
@@ -60167,295 +60167,308 @@ static bool nx_m29_needs_space(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line*
       if (!_t99) {
         _t99 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 24 })));
       }
-      bool _t100 = _t99;
-      return _t100;
-    }
-  bool _t101 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 17 })));
-  if (!_t101) {
-    _t101 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 16 })));
-  }
-    if (_t101)
-    {
-      bool _t102 = true;
-      return _t102;
-    }
-  bool _t103 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 12 })));
-  if (!_t103) {
-    _t103 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 24 })));
-  }
-    if (_t103)
-    {
-      bool _t104 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 12 })));
-      if (!_t104) {
-        _t104 = nx_eq_m7_Kind(&(b_6), &(((nx_m7_Kind){ .tag = 19 })));
-      }
-      bool _t105 = _t104;
+        if (_t99)
+        {
+          bool _t100 = true;
+          return _t100;
+        }
+      bool _t101 = nx_m29_is_kw(c, ta_3, nx_lit(nx_str_78, 5));
+        if (_t101)
+        {
+          bool _t102 = false;
+          return _t102;
+        }
+      size_t _t103 = (*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:336"), (*ctx_1).toks_0.len, "self/fmt.nx:336")];
+      bool _t104 = nx_m29_ends_operand(c, toks_0, _t103);
+      bool _t105 = (!(_t104));
       return _t105;
+    }
+  bool _t106 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 17 })));
+  if (!_t106) {
+    _t106 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 16 })));
+  }
+    if (_t106)
+    {
+      bool _t107 = true;
+      return _t107;
+    }
+  bool _t108 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 12 })));
+  if (!_t108) {
+    _t108 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 24 })));
+  }
+    if (_t108)
+    {
+      bool _t109 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 12 })));
+      if (!_t109) {
+        _t109 = nx_eq_m7_Kind(&(b_6), &(((nx_m7_Kind){ .tag = 19 })));
+      }
+      bool _t110 = _t109;
+      return _t110;
     }
     if (nx_eq_m7_Kind(&(b_6), &(((nx_m7_Kind){ .tag = 13 }))))
     {
       int64_t depth_20 = ((int64_t)0LL);
-      size_t j_21 = nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:336");
+      size_t j_21 = nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:343");
       for (;;) {
-        bool _t106 = true;
-        if (!_t106) break;
-        nx_m7_Kind k_22 = ((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(j_21, (*ctx_1).toks_0.len, "self/fmt.nx:338")], (*toks_0).len, "self/fmt.nx:338")]).kind_0;
+        bool _t111 = true;
+        if (!_t111) break;
+        nx_m7_Kind k_22 = ((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(j_21, (*ctx_1).toks_0.len, "self/fmt.nx:345")], (*toks_0).len, "self/fmt.nx:345")]).kind_0;
           if (nx_eq_m7_Kind(&(k_22), &(((nx_m7_Kind){ .tag = 13 }))))
           {
-            int64_t* _t107 = &(depth_20);
-            *_t107 = nx_add_i64((*_t107), ((int64_t)1LL), "self/fmt.nx:339");
+            int64_t* _t112 = &(depth_20);
+            *_t112 = nx_add_i64((*_t112), ((int64_t)1LL), "self/fmt.nx:346");
           }
           else
           {
-            bool _t108 = nx_eq_m7_Kind(&(k_22), &(((nx_m7_Kind){ .tag = 12 })));
-            if (!_t108) {
-              _t108 = nx_eq_m7_Kind(&(k_22), &(((nx_m7_Kind){ .tag = 24 })));
+            bool _t113 = nx_eq_m7_Kind(&(k_22), &(((nx_m7_Kind){ .tag = 12 })));
+            if (!_t113) {
+              _t113 = nx_eq_m7_Kind(&(k_22), &(((nx_m7_Kind){ .tag = 24 })));
             }
-              if (_t108)
+              if (_t113)
               {
                   if (((depth_20) == (((int64_t)0LL))))
                   {
-                    bool _t109 = ((nx_add_usize(j_21, ((size_t)1ULL), "self/fmt.nx:342")) < (((((*ctx_1)).toks_0).len)));
-                    if (_t109) {
-                      _t109 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_add_usize(j_21, ((size_t)1ULL), "self/fmt.nx:342"), (*ctx_1).toks_0.len, "self/fmt.nx:342")], (*toks_0).len, "self/fmt.nx:342")]).kind_0), &(((nx_m7_Kind){ .tag = 19 })));
+                    bool _t114 = ((nx_add_usize(j_21, ((size_t)1ULL), "self/fmt.nx:349")) < (((((*ctx_1)).toks_0).len)));
+                    if (_t114) {
+                      _t114 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_add_usize(j_21, ((size_t)1ULL), "self/fmt.nx:349"), (*ctx_1).toks_0.len, "self/fmt.nx:349")], (*toks_0).len, "self/fmt.nx:349")]).kind_0), &(((nx_m7_Kind){ .tag = 19 })));
                     }
-                    bool after_dot_23 = _t109;
-                    bool _t110 = nx_eq_m7_Kind(&(k_22), &(((nx_m7_Kind){ .tag = 12 })));
-                    if (!_t110) {
-                      _t110 = after_dot_23;
+                    bool after_dot_23 = _t114;
+                    bool _t115 = nx_eq_m7_Kind(&(k_22), &(((nx_m7_Kind){ .tag = 12 })));
+                    if (!_t115) {
+                      _t115 = after_dot_23;
                     }
-                    bool _t111 = _t110;
-                    return _t111;
+                    bool _t116 = _t115;
+                    return _t116;
                   }
-                int64_t* _t112 = &(depth_20);
-                *_t112 = nx_sub_i64((*_t112), ((int64_t)1LL), "self/fmt.nx:345");
+                int64_t* _t117 = &(depth_20);
+                *_t117 = nx_sub_i64((*_t117), ((int64_t)1LL), "self/fmt.nx:352");
               }
           }
           if (((j_21) == (((size_t)0ULL))))
           {
             goto nx_brk_2;
           }
-        size_t* _t113 = &(j_21);
-        *_t113 = nx_sub_usize((*_t113), ((size_t)1ULL), "self/fmt.nx:348");
+        size_t* _t118 = &(j_21);
+        *_t118 = nx_sub_usize((*_t118), ((size_t)1ULL), "self/fmt.nx:355");
         nx_cont_2: ;
       }
       nx_brk_2: ;
-      bool _t114 = true;
-      return _t114;
+      bool _t119 = true;
+      return _t119;
     }
     if (nx_eq_m7_Kind(&(b_6), &(((nx_m7_Kind){ .tag = 17 }))))
     {
-      bool _t115 = false;
-      return _t115;
+      bool _t120 = false;
+      return _t120;
     }
     if (nx_eq_m7_Kind(&(b_6), &(((nx_m7_Kind){ .tag = 10 }))))
     {
-      bool _t116 = nx_m29_is_kw(c, ta_3, nx_lit(nx_str_61, 4));
-      bool _t117 = _t116;
-      if (!_t117) {
-        bool _t118 = nx_m29_is_kw(c, ta_3, nx_lit(nx_str_51, 2));
-        _t117 = _t118;
+      bool _t121 = nx_m29_is_kw(c, ta_3, nx_lit(nx_str_61, 4));
+      bool _t122 = _t121;
+      if (!_t122) {
+        bool _t123 = nx_m29_is_kw(c, ta_3, nx_lit(nx_str_51, 2));
+        _t122 = _t123;
       }
-      bool _t119 = _t117;
-      if (!_t119) {
-        bool _t120 = nx_m29_is_kw(c, ta_3, nx_lit(nx_str_89, 6));
-        _t119 = _t120;
+      bool _t124 = _t122;
+      if (!_t124) {
+        bool _t125 = nx_m29_is_kw(c, ta_3, nx_lit(nx_str_89, 6));
+        _t124 = _t125;
       }
-      bool _t121 = _t119;
-      if (!_t121) {
-        bool _t122 = nx_m29_is_kw(c, ta_3, nx_lit(nx_str_2436, 6));
-        _t121 = _t122;
+      bool _t126 = _t124;
+      if (!_t126) {
+        bool _t127 = nx_m29_is_kw(c, ta_3, nx_lit(nx_str_2436, 6));
+        _t126 = _t127;
       }
-      bool _t123 = _t121;
-      if (!_t123) {
-        bool _t124 = nx_m29_is_kw(c, ta_3, nx_lit(nx_str_841, 6));
-        _t123 = _t124;
+      bool _t128 = _t126;
+      if (!_t128) {
+        bool _t129 = nx_m29_is_kw(c, ta_3, nx_lit(nx_str_841, 6));
+        _t128 = _t129;
       }
-        if (_t123)
-        {
-          bool _t125 = false;
-          return _t125;
-        }
-      bool _t126 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 11 })));
-      if (_t126) {
-        size_t _t127 = nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:357");
-        bool _t128 = nx_m29_closes_control_head(c, toks_0, ctx_1, _t127);
-        _t126 = _t128;
-      }
-        if (_t126)
-        {
-          bool _t129 = true;
-          return _t129;
-        }
-        if (nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 28 }))))
+        if (_t128)
         {
           bool _t130 = false;
           return _t130;
         }
-      bool _t131 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 36 })));
+      bool _t131 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 11 })));
       if (_t131) {
-        bool _t132 = ((i_2) >= (((size_t)2ULL)));
-        if (_t132) {
-          size_t _t133 = (*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(i_2, ((size_t)2ULL), "self/fmt.nx:362"), (*ctx_1).toks_0.len, "self/fmt.nx:362")];
-          bool _t134 = nx_m29_ends_operand(c, toks_0, _t133);
-          _t132 = _t134;
-        }
-        bool _t135 = _t132;
-        if (_t135) {
-          nx_m7_Token* _t136 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(i_2, ((size_t)2ULL), "self/fmt.nx:362"), (*ctx_1).toks_0.len, "self/fmt.nx:362")], (*toks_0).len, "self/fmt.nx:362")]);
-          bool _t137 = nx_m29_is_kw(c, _t136, nx_lit(nx_str_2437, 4));
-          _t135 = (!(_t137));
-        }
-        _t131 = (!(_t135));
+        size_t _t132 = nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:364");
+        bool _t133 = nx_m29_closes_control_head(c, toks_0, ctx_1, _t132);
+        _t131 = _t133;
       }
         if (_t131)
         {
-          bool _t138 = false;
-          return _t138;
+          bool _t134 = true;
+          return _t134;
         }
-      bool _t139 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 37 })));
-      if (_t139) {
-        bool _t140 = ((i_2) >= (((size_t)2ULL)));
+        if (nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 28 }))))
+        {
+          bool _t135 = false;
+          return _t135;
+        }
+      bool _t136 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 36 })));
+      if (_t136) {
+        bool _t137 = ((i_2) >= (((size_t)2ULL)));
+        if (_t137) {
+          size_t _t138 = (*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(i_2, ((size_t)2ULL), "self/fmt.nx:369"), (*ctx_1).toks_0.len, "self/fmt.nx:369")];
+          bool _t139 = nx_m29_ends_operand(c, toks_0, _t138);
+          _t137 = _t139;
+        }
+        bool _t140 = _t137;
         if (_t140) {
-          size_t _t141 = (*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(i_2, ((size_t)2ULL), "self/fmt.nx:364"), (*ctx_1).toks_0.len, "self/fmt.nx:364")];
-          bool _t142 = nx_m29_ends_operand(c, toks_0, _t141);
-          _t140 = _t142;
+          nx_m7_Token* _t141 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(i_2, ((size_t)2ULL), "self/fmt.nx:369"), (*ctx_1).toks_0.len, "self/fmt.nx:369")], (*toks_0).len, "self/fmt.nx:369")]);
+          bool _t142 = nx_m29_is_kw(c, _t141, nx_lit(nx_str_2437, 4));
+          _t140 = (!(_t142));
         }
-        _t139 = (!(_t140));
+        _t136 = (!(_t140));
       }
-      bool sigil_24 = _t139;
-      size_t _t143 = (*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:365"), (*ctx_1).toks_0.len, "self/fmt.nx:365")];
-      bool _t144 = nx_m29_ends_operand(c, toks_0, _t143);
-      bool _t145 = _t144;
-      if (!_t145) {
-        _t145 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 27 })));
+        if (_t136)
+        {
+          bool _t143 = false;
+          return _t143;
+        }
+      bool _t144 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 37 })));
+      if (_t144) {
+        bool _t145 = ((i_2) >= (((size_t)2ULL)));
+        if (_t145) {
+          size_t _t146 = (*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(i_2, ((size_t)2ULL), "self/fmt.nx:371"), (*ctx_1).toks_0.len, "self/fmt.nx:371")];
+          bool _t147 = nx_m29_ends_operand(c, toks_0, _t146);
+          _t145 = _t147;
+        }
+        _t144 = (!(_t145));
       }
-      bool _t146 = _t145;
-      if (!_t146) {
-        _t146 = sigil_24;
+      bool sigil_24 = _t144;
+      size_t _t148 = (*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:372"), (*ctx_1).toks_0.len, "self/fmt.nx:372")];
+      bool _t149 = nx_m29_ends_operand(c, toks_0, _t148);
+      bool _t150 = _t149;
+      if (!_t150) {
+        _t150 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 27 })));
       }
-      bool _t147 = (!(_t146));
-      if (!_t147) {
-        bool _t148 = nx_m29_is_kw(c, ta_3, nx_lit(nx_str_64, 6));
-        _t147 = _t148;
-      }
-      bool _t149 = _t147;
-      if (!_t149) {
-        bool _t150 = nx_m29_is_kw(c, ta_3, nx_lit(nx_str_65, 2));
-        _t149 = _t150;
-      }
-      bool _t151 = _t149;
+      bool _t151 = _t150;
       if (!_t151) {
-        bool _t152 = nx_m29_is_kw(c, ta_3, nx_lit(nx_str_68, 5));
-        _t151 = _t152;
+        _t151 = sigil_24;
       }
-      bool _t153 = _t151;
-      if (!_t153) {
-        bool _t154 = nx_m29_is_kw(c, ta_3, nx_lit(nx_str_67, 3));
-        _t153 = _t154;
+      bool _t152 = (!(_t151));
+      if (!_t152) {
+        bool _t153 = nx_m29_is_kw(c, ta_3, nx_lit(nx_str_64, 6));
+        _t152 = _t153;
       }
-      bool _t155 = _t153;
-      if (!_t155) {
-        bool _t156 = nx_m29_is_kw(c, ta_3, nx_lit(nx_str_69, 5));
-        _t155 = _t156;
+      bool _t154 = _t152;
+      if (!_t154) {
+        bool _t155 = nx_m29_is_kw(c, ta_3, nx_lit(nx_str_65, 2));
+        _t154 = _t155;
       }
-      bool _t157 = _t155;
-      if (!_t157) {
-        bool _t158 = nx_m29_is_kw(c, ta_3, nx_lit(nx_str_83, 3));
-        _t157 = _t158;
+      bool _t156 = _t154;
+      if (!_t156) {
+        bool _t157 = nx_m29_is_kw(c, ta_3, nx_lit(nx_str_68, 5));
+        _t156 = _t157;
       }
-      bool _t159 = _t157;
-      if (!_t159) {
-        bool _t160 = nx_m29_is_kw(c, ta_3, nx_lit(nx_str_84, 2));
-        _t159 = _t160;
+      bool _t158 = _t156;
+      if (!_t158) {
+        bool _t159 = nx_m29_is_kw(c, ta_3, nx_lit(nx_str_67, 3));
+        _t158 = _t159;
       }
-      bool _t161 = _t159;
-      if (!_t161) {
-        bool _t162 = nx_m29_is_kw(c, ta_3, nx_lit(nx_str_93, 2));
-        _t161 = _t162;
+      bool _t160 = _t158;
+      if (!_t160) {
+        bool _t161 = nx_m29_is_kw(c, ta_3, nx_lit(nx_str_69, 5));
+        _t160 = _t161;
       }
-      bool _t163 = _t161;
-      return _t163;
+      bool _t162 = _t160;
+      if (!_t162) {
+        bool _t163 = nx_m29_is_kw(c, ta_3, nx_lit(nx_str_83, 3));
+        _t162 = _t163;
+      }
+      bool _t164 = _t162;
+      if (!_t164) {
+        bool _t165 = nx_m29_is_kw(c, ta_3, nx_lit(nx_str_84, 2));
+        _t164 = _t165;
+      }
+      bool _t166 = _t164;
+      if (!_t166) {
+        bool _t167 = nx_m29_is_kw(c, ta_3, nx_lit(nx_str_93, 2));
+        _t166 = _t167;
+      }
+      bool _t168 = _t166;
+      return _t168;
     }
     if (nx_eq_m7_Kind(&(b_6), &(((nx_m7_Kind){ .tag = 14 }))))
     {
-      bool _t164 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 27 })));
-      if (!_t164) {
-        _t164 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 37 })));
-      }
-      bool _t165 = _t164;
-      if (!_t165) {
-        _t165 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 28 })));
-      }
-        if (_t165)
-        {
-          bool _t166 = false;
-          return _t166;
-        }
-      size_t _t167 = (*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:371"), (*ctx_1).toks_0.len, "self/fmt.nx:371")];
-      bool _t168 = nx_m29_ends_operand(c, toks_0, _t167);
-      bool _t169 = (!(_t168));
+      bool _t169 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 27 })));
       if (!_t169) {
-        bool _t170 = nx_m29_is_kw(c, ta_3, nx_lit(nx_str_64, 6));
-        _t169 = _t170;
+        _t169 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 37 })));
       }
-      bool _t171 = _t169;
-      if (!_t171) {
-        bool _t172 = nx_m29_is_kw(c, ta_3, nx_lit(nx_str_91, 2));
-        _t171 = _t172;
+      bool _t170 = _t169;
+      if (!_t170) {
+        _t170 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 28 })));
       }
-      bool _t173 = _t171;
-      return _t173;
+        if (_t170)
+        {
+          bool _t171 = false;
+          return _t171;
+        }
+      size_t _t172 = (*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:378"), (*ctx_1).toks_0.len, "self/fmt.nx:378")];
+      bool _t173 = nx_m29_ends_operand(c, toks_0, _t172);
+      bool _t174 = (!(_t173));
+      if (!_t174) {
+        bool _t175 = nx_m29_is_kw(c, ta_3, nx_lit(nx_str_64, 6));
+        _t174 = _t175;
+      }
+      bool _t176 = _t174;
+      if (!_t176) {
+        bool _t177 = nx_m29_is_kw(c, ta_3, nx_lit(nx_str_91, 2));
+        _t176 = _t177;
+      }
+      bool _t178 = _t176;
+      return _t178;
     }
-  bool _t174 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 15 })));
-  if (_t174) {
-    bool _t175 = nx_m29_is_word(c, b_6);
-    _t174 = _t175;
+  bool _t179 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 15 })));
+  if (_t179) {
+    bool _t180 = nx_m29_is_word(c, b_6);
+    _t179 = _t180;
   }
-  bool _t176 = _t174;
-  if (_t176) {
-    bool _t177 = nx_m29_is_keyword_tok(c, tb_4);
-    bool _t178 = (!(_t177));
-    if (!_t178) {
-      bool _t179 = nx_m29_is_kw(c, tb_4, nx_lit(nx_str_94, 3));
-      _t178 = _t179;
+  bool _t181 = _t179;
+  if (_t181) {
+    bool _t182 = nx_m29_is_keyword_tok(c, tb_4);
+    bool _t183 = (!(_t182));
+    if (!_t183) {
+      bool _t184 = nx_m29_is_kw(c, tb_4, nx_lit(nx_str_94, 3));
+      _t183 = _t184;
     }
-    bool _t180 = _t178;
-    if (!_t180) {
-      bool _t181 = nx_m29_is_kw(c, tb_4, nx_lit(nx_str_95, 4));
-      _t180 = _t181;
+    bool _t185 = _t183;
+    if (!_t185) {
+      bool _t186 = nx_m29_is_kw(c, tb_4, nx_lit(nx_str_95, 4));
+      _t185 = _t186;
     }
-    bool _t182 = _t180;
-    if (!_t182) {
-      bool _t183 = nx_m29_is_kw(c, tb_4, nx_lit(nx_str_51, 2));
-      _t182 = _t183;
+    bool _t187 = _t185;
+    if (!_t187) {
+      bool _t188 = nx_m29_is_kw(c, tb_4, nx_lit(nx_str_51, 2));
+      _t187 = _t188;
     }
-    bool _t184 = _t182;
-    if (!_t184) {
-      bool _t185 = nx_m29_is_kw(c, tb_4, nx_lit(nx_str_2259, 3));
-      _t184 = _t185;
+    bool _t189 = _t187;
+    if (!_t189) {
+      bool _t190 = nx_m29_is_kw(c, tb_4, nx_lit(nx_str_2259, 3));
+      _t189 = _t190;
     }
-    _t176 = _t184;
+    _t181 = _t189;
   }
-    if (_t176)
+    if (_t181)
     {
       int64_t depth_25 = ((int64_t)0LL);
-      size_t j_26 = nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:377");
+      size_t j_26 = nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:384");
       for (;;) {
-        bool _t186 = true;
-        if (!_t186) break;
-        nx_m7_Kind k_27 = ((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(j_26, (*ctx_1).toks_0.len, "self/fmt.nx:379")], (*toks_0).len, "self/fmt.nx:379")]).kind_0;
+        bool _t191 = true;
+        if (!_t191) break;
+        nx_m7_Kind k_27 = ((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(j_26, (*ctx_1).toks_0.len, "self/fmt.nx:386")], (*toks_0).len, "self/fmt.nx:386")]).kind_0;
           if (nx_eq_m7_Kind(&(k_27), &(((nx_m7_Kind){ .tag = 15 }))))
           {
-            int64_t* _t187 = &(depth_25);
-            *_t187 = nx_add_i64((*_t187), ((int64_t)1LL), "self/fmt.nx:380");
+            int64_t* _t192 = &(depth_25);
+            *_t192 = nx_add_i64((*_t192), ((int64_t)1LL), "self/fmt.nx:387");
           }
           else
           {
               if (nx_eq_m7_Kind(&(k_27), &(((nx_m7_Kind){ .tag = 14 }))))
               {
-                int64_t* _t188 = &(depth_25);
-                *_t188 = nx_sub_i64((*_t188), ((int64_t)1LL), "self/fmt.nx:382");
+                int64_t* _t193 = &(depth_25);
+                *_t193 = nx_sub_i64((*_t193), ((int64_t)1LL), "self/fmt.nx:389");
                   if (((depth_25) == (((int64_t)0LL))))
                   {
                     goto nx_brk_3;
@@ -60466,208 +60479,208 @@ static bool nx_m29_needs_space(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line*
           {
             goto nx_brk_3;
           }
-        size_t* _t189 = &(j_26);
-        *_t189 = nx_sub_usize((*_t189), ((size_t)1ULL), "self/fmt.nx:386");
+        size_t* _t194 = &(j_26);
+        *_t194 = nx_sub_usize((*_t194), ((size_t)1ULL), "self/fmt.nx:393");
         nx_cont_3: ;
       }
       nx_brk_3: ;
         if (((j_26) == (((size_t)0ULL))))
         {
-          bool _t190 = false;
-          return _t190;
+          bool _t195 = false;
+          return _t195;
         }
-      nx_m7_Token* before_28 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(j_26, ((size_t)1ULL), "self/fmt.nx:389"), (*ctx_1).toks_0.len, "self/fmt.nx:389")], (*toks_0).len, "self/fmt.nx:389")]);
-      bool _t191 = nx_m29_type_position_before(c, before_28);
-      bool _t192 = (!(_t191));
-      if (_t192) {
-        bool _t193 = nx_m29_is_kw(c, before_28, nx_lit(nx_str_2259, 3));
-        _t192 = (!(_t193));
+      nx_m7_Token* before_28 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(j_26, ((size_t)1ULL), "self/fmt.nx:396"), (*ctx_1).toks_0.len, "self/fmt.nx:396")], (*toks_0).len, "self/fmt.nx:396")]);
+      bool _t196 = nx_m29_type_position_before(c, before_28);
+      bool _t197 = (!(_t196));
+      if (_t197) {
+        bool _t198 = nx_m29_is_kw(c, before_28, nx_lit(nx_str_2259, 3));
+        _t197 = (!(_t198));
       }
-      bool _t194 = _t192;
-      return _t194;
+      bool _t199 = _t197;
+      return _t199;
     }
     if (nx_eq_m7_Kind(&(b_6), &(((nx_m7_Kind){ .tag = 12 }))))
     {
-      nx_m7_Token* t0_29 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((size_t)0ULL), (*ctx_1).toks_0.len, "self/fmt.nx:394")], (*toks_0).len, "self/fmt.nx:394")]);
-      bool _t195 = nx_eq_m7_Kind(&(((*t0_29)).kind_0), &(((nx_m7_Kind){ .tag = 0 })));
-      if (_t195) {
-        nx_sl_u8 _t196 = nx_str_slice(((*t0_29)).text_3);
-        bool _t197 = nx_sl_eq(_t196, nx_lit(nx_str_55, 6));
-        if (!_t197) {
-          nx_sl_u8 _t198 = nx_str_slice(((*t0_29)).text_3);
-          _t197 = nx_sl_eq(_t198, nx_lit(nx_str_56, 4));
+      nx_m7_Token* t0_29 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((size_t)0ULL), (*ctx_1).toks_0.len, "self/fmt.nx:401")], (*toks_0).len, "self/fmt.nx:401")]);
+      bool _t200 = nx_eq_m7_Kind(&(((*t0_29)).kind_0), &(((nx_m7_Kind){ .tag = 0 })));
+      if (_t200) {
+        nx_sl_u8 _t201 = nx_str_slice(((*t0_29)).text_3);
+        bool _t202 = nx_sl_eq(_t201, nx_lit(nx_str_55, 6));
+        if (!_t202) {
+          nx_sl_u8 _t203 = nx_str_slice(((*t0_29)).text_3);
+          _t202 = nx_sl_eq(_t203, nx_lit(nx_str_56, 4));
         }
-        bool _t199 = _t197;
-        if (!_t199) {
-          nx_sl_u8 _t200 = nx_str_slice(((*t0_29)).text_3);
-          _t199 = nx_sl_eq(_t200, nx_lit(nx_str_57, 6));
+        bool _t204 = _t202;
+        if (!_t204) {
+          nx_sl_u8 _t205 = nx_str_slice(((*t0_29)).text_3);
+          _t204 = nx_sl_eq(_t205, nx_lit(nx_str_57, 6));
         }
-        bool _t201 = _t199;
-        if (!_t201) {
-          nx_sl_u8 _t202 = nx_str_slice(((*t0_29)).text_3);
-          _t201 = nx_sl_eq(_t202, nx_lit(nx_str_58, 3));
+        bool _t206 = _t204;
+        if (!_t206) {
+          nx_sl_u8 _t207 = nx_str_slice(((*t0_29)).text_3);
+          _t206 = nx_sl_eq(_t207, nx_lit(nx_str_58, 3));
         }
-        bool _t203 = _t201;
-        if (!_t203) {
-          nx_sl_u8 _t204 = nx_str_slice(((*t0_29)).text_3);
-          _t203 = nx_sl_eq(_t204, nx_lit(nx_str_61, 4));
+        bool _t208 = _t206;
+        if (!_t208) {
+          nx_sl_u8 _t209 = nx_str_slice(((*t0_29)).text_3);
+          _t208 = nx_sl_eq(_t209, nx_lit(nx_str_61, 4));
         }
-        bool _t205 = _t203;
-        if (!_t205) {
-          nx_sl_u8 _t206 = nx_str_slice(((*t0_29)).text_3);
-          _t205 = nx_sl_eq(_t206, nx_lit(nx_str_60, 5));
+        bool _t210 = _t208;
+        if (!_t210) {
+          nx_sl_u8 _t211 = nx_str_slice(((*t0_29)).text_3);
+          _t210 = nx_sl_eq(_t211, nx_lit(nx_str_60, 5));
         }
-        bool _t207 = _t205;
-        if (!_t207) {
-          nx_sl_u8 _t208 = nx_str_slice(((*t0_29)).text_3);
-          _t207 = nx_sl_eq(_t208, nx_lit(nx_str_78, 5));
+        bool _t212 = _t210;
+        if (!_t212) {
+          nx_sl_u8 _t213 = nx_str_slice(((*t0_29)).text_3);
+          _t212 = nx_sl_eq(_t213, nx_lit(nx_str_78, 5));
         }
-        bool _t209 = _t207;
-        if (!_t209) {
-          nx_sl_u8 _t210 = nx_str_slice(((*t0_29)).text_3);
-          _t209 = nx_sl_eq(_t210, nx_lit(nx_str_88, 8));
+        bool _t214 = _t212;
+        if (!_t214) {
+          nx_sl_u8 _t215 = nx_str_slice(((*t0_29)).text_3);
+          _t214 = nx_sl_eq(_t215, nx_lit(nx_str_88, 8));
         }
-        bool _t211 = _t209;
-        if (!_t211) {
-          nx_sl_u8 _t212 = nx_str_slice(((*t0_29)).text_3);
-          _t211 = nx_sl_eq(_t212, nx_lit(nx_str_98, 5));
+        bool _t216 = _t214;
+        if (!_t216) {
+          nx_sl_u8 _t217 = nx_str_slice(((*t0_29)).text_3);
+          _t216 = nx_sl_eq(_t217, nx_lit(nx_str_98, 5));
         }
-        bool _t213 = _t211;
-        if (!_t213) {
-          nx_sl_u8 _t214 = nx_str_slice(((*t0_29)).text_3);
-          _t213 = nx_sl_eq(_t214, nx_lit(nx_str_17, 4));
+        bool _t218 = _t216;
+        if (!_t218) {
+          nx_sl_u8 _t219 = nx_str_slice(((*t0_29)).text_3);
+          _t218 = nx_sl_eq(_t219, nx_lit(nx_str_17, 4));
         }
-        _t195 = _t213;
+        _t200 = _t218;
       }
-        if (_t195)
+        if (_t200)
         {
-          bool _t215 = true;
-          return _t215;
+          bool _t220 = true;
+          return _t220;
         }
-      bool _t216 = nx_m29_opens_control_body(c, toks_0, ctx_1, i_2);
-        if (_t216)
+      bool _t221 = nx_m29_opens_control_body(c, toks_0, ctx_1, i_2);
+        if (_t221)
         {
-          bool _t217 = true;
-          return _t217;
+          bool _t222 = true;
+          return _t222;
         }
         if (nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 0 }))))
         {
           bool declared_30 = false;
             if (((i_2) >= (((size_t)2ULL))))
             {
-              nx_m7_Token* t2_31 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((i_2) - (((size_t)2ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:404")], (*toks_0).len, "self/fmt.nx:404")]);
-              bool _t218 = nx_m29_is_kw(c, t2_31, nx_lit(nx_str_55, 6));
-              bool _t219 = _t218;
-              if (!_t219) {
-                bool _t220 = nx_m29_is_kw(c, t2_31, nx_lit(nx_str_56, 4));
-                _t219 = _t220;
+              nx_m7_Token* t2_31 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((i_2) - (((size_t)2ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:411")], (*toks_0).len, "self/fmt.nx:411")]);
+              bool _t223 = nx_m29_is_kw(c, t2_31, nx_lit(nx_str_55, 6));
+              bool _t224 = _t223;
+              if (!_t224) {
+                bool _t225 = nx_m29_is_kw(c, t2_31, nx_lit(nx_str_56, 4));
+                _t224 = _t225;
               }
-              bool _t221 = _t219;
-              if (!_t221) {
-                bool _t222 = nx_m29_is_kw(c, t2_31, nx_lit(nx_str_57, 6));
-                _t221 = _t222;
+              bool _t226 = _t224;
+              if (!_t226) {
+                bool _t227 = nx_m29_is_kw(c, t2_31, nx_lit(nx_str_57, 6));
+                _t226 = _t227;
               }
-              bool _t223 = _t221;
-              if (!_t223) {
-                bool _t224 = nx_m29_is_kw(c, t2_31, nx_lit(nx_str_59, 5));
-                _t223 = _t224;
+              bool _t228 = _t226;
+              if (!_t228) {
+                bool _t229 = nx_m29_is_kw(c, t2_31, nx_lit(nx_str_59, 5));
+                _t228 = _t229;
               }
-              bool _t225 = _t223;
-              if (!_t225) {
-                bool _t226 = nx_m29_is_kw(c, t2_31, nx_lit(nx_str_60, 5));
-                _t225 = _t226;
+              bool _t230 = _t228;
+              if (!_t230) {
+                bool _t231 = nx_m29_is_kw(c, t2_31, nx_lit(nx_str_60, 5));
+                _t230 = _t231;
               }
-              bool _t227 = _t225;
-              if (!_t227) {
-                bool _t228 = nx_m29_is_kw(c, t2_31, nx_lit(nx_str_61, 4));
-                _t227 = _t228;
+              bool _t232 = _t230;
+              if (!_t232) {
+                bool _t233 = nx_m29_is_kw(c, t2_31, nx_lit(nx_str_61, 4));
+                _t232 = _t233;
               }
-              bool _t229 = _t227;
-              if (!_t229) {
-                bool _t230 = nx_m29_is_kw(c, t2_31, nx_lit(nx_str_78, 5));
-                _t229 = _t230;
+              bool _t234 = _t232;
+              if (!_t234) {
+                bool _t235 = nx_m29_is_kw(c, t2_31, nx_lit(nx_str_78, 5));
+                _t234 = _t235;
               }
-              bool _t231 = _t229;
-              if (!_t231) {
-                bool _t232 = nx_m29_is_kw(c, t2_31, nx_lit(nx_str_67, 3));
-                _t231 = _t232;
+              bool _t236 = _t234;
+              if (!_t236) {
+                bool _t237 = nx_m29_is_kw(c, t2_31, nx_lit(nx_str_67, 3));
+                _t236 = _t237;
               }
-              bool _t233 = _t231;
-              if (!_t233) {
-                bool _t234 = nx_m29_is_kw(c, t2_31, nx_lit(nx_str_98, 5));
-                _t233 = _t234;
+              bool _t238 = _t236;
+              if (!_t238) {
+                bool _t239 = nx_m29_is_kw(c, t2_31, nx_lit(nx_str_98, 5));
+                _t238 = _t239;
               }
-              bool _t235 = _t233;
-              if (!_t235) {
-                bool _t236 = nx_m29_is_kw(c, t2_31, nx_lit(nx_str_88, 8));
-                _t235 = _t236;
+              bool _t240 = _t238;
+              if (!_t240) {
+                bool _t241 = nx_m29_is_kw(c, t2_31, nx_lit(nx_str_88, 8));
+                _t240 = _t241;
               }
-              declared_30 = _t235;
+              declared_30 = _t240;
             }
-          bool _t237 = nx_m29_starts_upper(c, ta_3);
-          bool uppercase_32 = _t237;
-          size_t k_33 = nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:409");
+          bool _t242 = nx_m29_starts_upper(c, ta_3);
+          bool uppercase_32 = _t242;
+          size_t k_33 = nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:416");
           for (;;) {
-            bool _t238 = ((k_33) >= (((size_t)2ULL)));
-            if (_t238) {
-              _t238 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(k_33, ((size_t)1ULL), "self/fmt.nx:410"), (*ctx_1).toks_0.len, "self/fmt.nx:410")], (*toks_0).len, "self/fmt.nx:410")]).kind_0), &(((nx_m7_Kind){ .tag = 19 })));
+            bool _t243 = ((k_33) >= (((size_t)2ULL)));
+            if (_t243) {
+              _t243 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(k_33, ((size_t)1ULL), "self/fmt.nx:417"), (*ctx_1).toks_0.len, "self/fmt.nx:417")], (*toks_0).len, "self/fmt.nx:417")]).kind_0), &(((nx_m7_Kind){ .tag = 19 })));
             }
-            bool _t239 = _t238;
-            if (_t239) {
-              _t239 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(k_33, ((size_t)2ULL), "self/fmt.nx:410"), (*ctx_1).toks_0.len, "self/fmt.nx:410")], (*toks_0).len, "self/fmt.nx:410")]).kind_0), &(((nx_m7_Kind){ .tag = 0 })));
+            bool _t244 = _t243;
+            if (_t244) {
+              _t244 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(k_33, ((size_t)2ULL), "self/fmt.nx:417"), (*ctx_1).toks_0.len, "self/fmt.nx:417")], (*toks_0).len, "self/fmt.nx:417")]).kind_0), &(((nx_m7_Kind){ .tag = 0 })));
             }
-            bool _t240 = _t239;
-            if (!_t240) break;
-            size_t* _t241 = &(k_33);
-            *_t241 = nx_sub_usize((*_t241), ((size_t)2ULL), "self/fmt.nx:410");
+            bool _t245 = _t244;
+            if (!_t245) break;
+            size_t* _t246 = &(k_33);
+            *_t246 = nx_sub_usize((*_t246), ((size_t)2ULL), "self/fmt.nx:417");
             nx_cont_4: ;
           }
           nx_brk_4: ;
           for (;;) {
-            bool _t242 = ((k_33) >= (((size_t)2ULL)));
-            if (!_t242) break;
-            bool _t243 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((k_33) - (((size_t)1ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:413")], (*toks_0).len, "self/fmt.nx:413")]).kind_0), &(((nx_m7_Kind){ .tag = 15 })));
-            if (_t243) {
-              _t243 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((k_33) - (((size_t)2ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:413")], (*toks_0).len, "self/fmt.nx:413")]).kind_0), &(((nx_m7_Kind){ .tag = 14 })));
+            bool _t247 = ((k_33) >= (((size_t)2ULL)));
+            if (!_t247) break;
+            bool _t248 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((k_33) - (((size_t)1ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:420")], (*toks_0).len, "self/fmt.nx:420")]).kind_0), &(((nx_m7_Kind){ .tag = 15 })));
+            if (_t248) {
+              _t248 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((k_33) - (((size_t)2ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:420")], (*toks_0).len, "self/fmt.nx:420")]).kind_0), &(((nx_m7_Kind){ .tag = 14 })));
             }
-              if (_t243)
+              if (_t248)
               {
-                size_t* _t244 = &(k_33);
-                *_t244 = nx_sub_usize((*_t244), ((size_t)2ULL), "self/fmt.nx:413");
+                size_t* _t249 = &(k_33);
+                *_t249 = nx_sub_usize((*_t249), ((size_t)2ULL), "self/fmt.nx:420");
                 goto nx_cont_5;
               }
-            bool _t245 = ((k_33) >= (((size_t)3ULL)));
-            if (_t245) {
-              _t245 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((k_33) - (((size_t)1ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:414")], (*toks_0).len, "self/fmt.nx:414")]).kind_0), &(((nx_m7_Kind){ .tag = 15 })));
+            bool _t250 = ((k_33) >= (((size_t)3ULL)));
+            if (_t250) {
+              _t250 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((k_33) - (((size_t)1ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:421")], (*toks_0).len, "self/fmt.nx:421")]).kind_0), &(((nx_m7_Kind){ .tag = 15 })));
             }
-            bool _t246 = _t245;
-            if (_t246) {
-              _t246 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(k_33, ((size_t)3ULL), "self/fmt.nx:414"), (*ctx_1).toks_0.len, "self/fmt.nx:414")], (*toks_0).len, "self/fmt.nx:414")]).kind_0), &(((nx_m7_Kind){ .tag = 14 })));
+            bool _t251 = _t250;
+            if (_t251) {
+              _t251 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(k_33, ((size_t)3ULL), "self/fmt.nx:421"), (*ctx_1).toks_0.len, "self/fmt.nx:421")], (*toks_0).len, "self/fmt.nx:421")]).kind_0), &(((nx_m7_Kind){ .tag = 14 })));
             }
-              if (_t246)
+              if (_t251)
               {
-                size_t* _t247 = &(k_33);
-                *_t247 = nx_sub_usize((*_t247), ((size_t)3ULL), "self/fmt.nx:414");
+                size_t* _t252 = &(k_33);
+                *_t252 = nx_sub_usize((*_t252), ((size_t)3ULL), "self/fmt.nx:421");
                 goto nx_cont_5;
               }
-            nx_m7_Token* _t248 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((k_33) - (((size_t)1ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:416")], (*toks_0).len, "self/fmt.nx:416")]);
-            bool _t249 = nx_m29_is_kw(c, _t248, nx_lit(nx_str_2259, 3));
-            bool _t250 = _t249;
-            if (!_t250) {
-              nx_m7_Token* _t251 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((k_33) - (((size_t)1ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:416")], (*toks_0).len, "self/fmt.nx:416")]);
-              bool _t252 = nx_m29_is_kw(c, _t251, nx_lit(nx_str_94, 3));
-              _t250 = _t252;
+            nx_m7_Token* _t253 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((k_33) - (((size_t)1ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:423")], (*toks_0).len, "self/fmt.nx:423")]);
+            bool _t254 = nx_m29_is_kw(c, _t253, nx_lit(nx_str_2259, 3));
+            bool _t255 = _t254;
+            if (!_t255) {
+              nx_m7_Token* _t256 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((k_33) - (((size_t)1ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:423")], (*toks_0).len, "self/fmt.nx:423")]);
+              bool _t257 = nx_m29_is_kw(c, _t256, nx_lit(nx_str_94, 3));
+              _t255 = _t257;
             }
-            bool _t253 = _t250;
-            if (!_t253) {
-              nx_m7_Token* _t254 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((k_33) - (((size_t)1ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:416")], (*toks_0).len, "self/fmt.nx:416")]);
-              bool _t255 = nx_m29_is_kw(c, _t254, nx_lit(nx_str_95, 4));
-              _t253 = _t255;
+            bool _t258 = _t255;
+            if (!_t258) {
+              nx_m7_Token* _t259 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((k_33) - (((size_t)1ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:423")], (*toks_0).len, "self/fmt.nx:423")]);
+              bool _t260 = nx_m29_is_kw(c, _t259, nx_lit(nx_str_95, 4));
+              _t258 = _t260;
             }
-              if (_t253)
+              if (_t258)
               {
-                size_t* _t256 = &(k_33);
-                *_t256 = nx_sub_usize((*_t256), ((size_t)1ULL), "self/fmt.nx:416");
+                size_t* _t261 = &(k_33);
+                *_t261 = nx_sub_usize((*_t261), ((size_t)1ULL), "self/fmt.nx:423");
                 goto nx_cont_5;
               }
             goto nx_brk_5;
@@ -60677,79 +60690,79 @@ static bool nx_m29_needs_space(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line*
           bool type_pos_34 = false;
             if (((k_33) >= (((size_t)1ULL))))
             {
-              nx_m7_Kind bk_35 = ((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((k_33) - (((size_t)1ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:421")], (*toks_0).len, "self/fmt.nx:421")]).kind_0;
-              bool _t257 = nx_eq_m7_Kind(&(bk_35), &(((nx_m7_Kind){ .tag = 25 })));
-              if (!_t257) {
-                _t257 = nx_eq_m7_Kind(&(bk_35), &(((nx_m7_Kind){ .tag = 17 })));
+              nx_m7_Kind bk_35 = ((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((k_33) - (((size_t)1ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:428")], (*toks_0).len, "self/fmt.nx:428")]).kind_0;
+              bool _t262 = nx_eq_m7_Kind(&(bk_35), &(((nx_m7_Kind){ .tag = 25 })));
+              if (!_t262) {
+                _t262 = nx_eq_m7_Kind(&(bk_35), &(((nx_m7_Kind){ .tag = 17 })));
               }
-              bool _t258 = _t257;
-              if (!_t258) {
-                _t258 = nx_eq_m7_Kind(&(bk_35), &(((nx_m7_Kind){ .tag = 28 })));
+              bool _t263 = _t262;
+              if (!_t263) {
+                _t263 = nx_eq_m7_Kind(&(bk_35), &(((nx_m7_Kind){ .tag = 28 })));
               }
-              bool _t259 = _t258;
-              if (!_t259) {
-                _t259 = nx_eq_m7_Kind(&(bk_35), &(((nx_m7_Kind){ .tag = 27 })));
+              bool _t264 = _t263;
+              if (!_t264) {
+                _t264 = nx_eq_m7_Kind(&(bk_35), &(((nx_m7_Kind){ .tag = 27 })));
               }
-              bool _t260 = _t259;
-              if (!_t260) {
-                _t260 = nx_eq_m7_Kind(&(bk_35), &(((nx_m7_Kind){ .tag = 37 })));
+              bool _t265 = _t264;
+              if (!_t265) {
+                _t265 = nx_eq_m7_Kind(&(bk_35), &(((nx_m7_Kind){ .tag = 37 })));
               }
-              type_pos_34 = _t260;
+              type_pos_34 = _t265;
             }
-          bool _t261 = uppercase_32;
-          if (_t261) {
-            _t261 = (!(declared_30));
+          bool _t266 = uppercase_32;
+          if (_t266) {
+            _t266 = (!(declared_30));
           }
-          bool _t262 = _t261;
-          if (_t262) {
-            _t262 = (!(type_pos_34));
+          bool _t267 = _t266;
+          if (_t267) {
+            _t267 = (!(type_pos_34));
           }
-          bool _t263 = _t262;
-          if (_t263) {
-            _t263 = (!(((*ctx_1)).in_enum_body_1));
+          bool _t268 = _t267;
+          if (_t268) {
+            _t268 = (!(((*ctx_1)).in_enum_body_1));
           }
-          bool _t264 = _t263;
-          if (_t264) {
-            nx_slice_check(0, (*ta_3).text_3.len, (*ta_3).text_3.len, "self/fmt.nx:424");
-            nx_sl_u8 _t265 = ((nx_sl_u8){ nx_padd((*ta_3).text_3.ptr, 0), (*ta_3).text_3.len - 0 });
-            bool _t266 = nx_m7_is_keyword(c, _t265);
-            _t264 = (!(_t266));
+          bool _t269 = _t268;
+          if (_t269) {
+            nx_slice_check(0, (*ta_3).text_3.len, (*ta_3).text_3.len, "self/fmt.nx:431");
+            nx_sl_u8 _t270 = ((nx_sl_u8){ nx_padd((*ta_3).text_3.ptr, 0), (*ta_3).text_3.len - 0 });
+            bool _t271 = nx_m7_is_keyword(c, _t270);
+            _t269 = (!(_t271));
           }
-            if (_t264)
+            if (_t269)
             {
-              bool _t267 = false;
-              return _t267;
+              bool _t272 = false;
+              return _t272;
             }
         }
-      bool _t268 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 11 })));
-      if (_t268) {
-        _t268 = ((i_2) >= (((size_t)2ULL)));
+      bool _t273 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 11 })));
+      if (_t273) {
+        _t273 = ((i_2) >= (((size_t)2ULL)));
       }
-      bool _t269 = _t268;
-      if (_t269) {
-        nx_m7_Kind _t270 = ((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(i_2, ((size_t)2ULL), "self/fmt.nx:426"), (*ctx_1).toks_0.len, "self/fmt.nx:426")], (*toks_0).len, "self/fmt.nx:426")]).kind_0;
-        bool _t271 = nx_m29_is_word(c, _t270);
-        _t269 = _t271;
+      bool _t274 = _t273;
+      if (_t274) {
+        nx_m7_Kind _t275 = ((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(i_2, ((size_t)2ULL), "self/fmt.nx:433"), (*ctx_1).toks_0.len, "self/fmt.nx:433")], (*toks_0).len, "self/fmt.nx:433")]).kind_0;
+        bool _t276 = nx_m29_is_word(c, _t275);
+        _t274 = _t276;
       }
-        if (_t269)
+        if (_t274)
         {
           int64_t depth_36 = ((int64_t)0LL);
           size_t j_37 = ((i_2) - (((size_t)1ULL)));
           for (;;) {
-            bool _t272 = true;
-            if (!_t272) break;
-            nx_m7_Kind k_38 = ((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(j_37, (*ctx_1).toks_0.len, "self/fmt.nx:431")], (*toks_0).len, "self/fmt.nx:431")]).kind_0;
+            bool _t277 = true;
+            if (!_t277) break;
+            nx_m7_Kind k_38 = ((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(j_37, (*ctx_1).toks_0.len, "self/fmt.nx:438")], (*toks_0).len, "self/fmt.nx:438")]).kind_0;
               if (nx_eq_m7_Kind(&(k_38), &(((nx_m7_Kind){ .tag = 11 }))))
               {
-                int64_t* _t273 = &(depth_36);
-                *_t273 = nx_add_i64((*_t273), ((int64_t)1LL), "self/fmt.nx:432");
+                int64_t* _t278 = &(depth_36);
+                *_t278 = nx_add_i64((*_t278), ((int64_t)1LL), "self/fmt.nx:439");
               }
               else
               {
                   if (nx_eq_m7_Kind(&(k_38), &(((nx_m7_Kind){ .tag = 10 }))))
                   {
-                    int64_t* _t274 = &(depth_36);
-                    *_t274 = nx_sub_i64((*_t274), ((int64_t)1LL), "self/fmt.nx:434");
+                    int64_t* _t279 = &(depth_36);
+                    *_t279 = nx_sub_i64((*_t279), ((int64_t)1LL), "self/fmt.nx:441");
                       if (((depth_36) == (((int64_t)0LL))))
                       {
                         goto nx_brk_6;
@@ -60760,274 +60773,274 @@ static bool nx_m29_needs_space(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line*
               {
                 goto nx_brk_6;
               }
-            size_t* _t275 = &(j_37);
-            *_t275 = nx_sub_usize((*_t275), ((size_t)1ULL), "self/fmt.nx:438");
+            size_t* _t280 = &(j_37);
+            *_t280 = nx_sub_usize((*_t280), ((size_t)1ULL), "self/fmt.nx:445");
             nx_cont_6: ;
           }
           nx_brk_6: ;
             if (((j_37) > (((size_t)0ULL))))
             {
-              nx_m7_Token* head_39 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((j_37) - (((size_t)1ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:441")], (*toks_0).len, "self/fmt.nx:441")]);
+              nx_m7_Token* head_39 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((j_37) - (((size_t)1ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:448")], (*toks_0).len, "self/fmt.nx:448")]);
                 if (nx_eq_m7_Kind(&(((*head_39)).kind_0), &(((nx_m7_Kind){ .tag = 0 }))))
                 {
-                  nx_opt_m7_Kind _t276 = nx_m29_kind_back(c, toks_0, ctx_1, j_37, ((size_t)2ULL));
-                  nx_opt_m7_Kind bh_40 = _t276;
-                  nx_m7_Kind _t277 = ((nx_m7_Kind){ .tag = 25 });
-                  bool _t278 = nx_m29_kind_is(c, bh_40, _t277);
-                  bool in_return_type_41 = _t278;
-                  nx_m7_Kind _t279 = ((nx_m7_Kind){ .tag = 28 });
-                  bool _t280 = nx_m29_kind_is(c, bh_40, _t279);
-                  bool _t281 = _t280;
-                  if (!_t281) {
-                    nx_m7_Kind _t282 = ((nx_m7_Kind){ .tag = 27 });
-                    bool _t283 = nx_m29_kind_is(c, bh_40, _t282);
-                    _t281 = _t283;
+                  nx_opt_m7_Kind _t281 = nx_m29_kind_back(c, toks_0, ctx_1, j_37, ((size_t)2ULL));
+                  nx_opt_m7_Kind bh_40 = _t281;
+                  nx_m7_Kind _t282 = ((nx_m7_Kind){ .tag = 25 });
+                  bool _t283 = nx_m29_kind_is(c, bh_40, _t282);
+                  bool in_return_type_41 = _t283;
+                  nx_m7_Kind _t284 = ((nx_m7_Kind){ .tag = 28 });
+                  bool _t285 = nx_m29_kind_is(c, bh_40, _t284);
+                  bool _t286 = _t285;
+                  if (!_t286) {
+                    nx_m7_Kind _t287 = ((nx_m7_Kind){ .tag = 27 });
+                    bool _t288 = nx_m29_kind_is(c, bh_40, _t287);
+                    _t286 = _t288;
                   }
-                  bool _t284 = _t281;
-                  if (_t284) {
-                    _t284 = ((j_37) > (((size_t)2ULL)));
+                  bool _t289 = _t286;
+                  if (_t289) {
+                    _t289 = ((j_37) > (((size_t)2ULL)));
                   }
-                  bool _t285 = _t284;
-                  if (_t285) {
-                    _t285 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(j_37, ((size_t)3ULL), "self/fmt.nx:446"), (*ctx_1).toks_0.len, "self/fmt.nx:446")], (*toks_0).len, "self/fmt.nx:446")]).kind_0), &(((nx_m7_Kind){ .tag = 25 })));
+                  bool _t290 = _t289;
+                  if (_t290) {
+                    _t290 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(j_37, ((size_t)3ULL), "self/fmt.nx:453"), (*ctx_1).toks_0.len, "self/fmt.nx:453")], (*toks_0).len, "self/fmt.nx:453")]).kind_0), &(((nx_m7_Kind){ .tag = 25 })));
                   }
-                    if (_t285)
+                    if (_t290)
                     {
                       in_return_type_41 = true;
                     }
-                  bool _t286 = nx_m29_starts_upper(c, head_39);
-                  bool _t287 = _t286;
-                  if (_t287) {
-                    _t287 = (!(in_return_type_41));
+                  bool _t291 = nx_m29_starts_upper(c, head_39);
+                  bool _t292 = _t291;
+                  if (_t292) {
+                    _t292 = (!(in_return_type_41));
                   }
-                    if (_t287)
+                    if (_t292)
                     {
-                      bool _t288 = false;
-                      return _t288;
+                      bool _t293 = false;
+                      return _t293;
                     }
                 }
             }
         }
-      bool _t289 = true;
-      return _t289;
+      bool _t294 = true;
+      return _t294;
     }
     if (nx_eq_m7_Kind(&(b_6), &(((nx_m7_Kind){ .tag = 28 }))))
     {
       bool next_is_effect_42 = false;
         if (has_next_8)
         {
-          nx_m7_Token* _t290 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_add_usize(i_2, ((size_t)1ULL), "self/fmt.nx:456"), (*ctx_1).toks_0.len, "self/fmt.nx:456")], (*toks_0).len, "self/fmt.nx:456")]);
-          bool _t291 = nx_m29_is_effect_name(c, _t290);
-          next_is_effect_42 = _t291;
+          nx_m7_Token* _t295 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_add_usize(i_2, ((size_t)1ULL), "self/fmt.nx:463"), (*ctx_1).toks_0.len, "self/fmt.nx:463")], (*toks_0).len, "self/fmt.nx:463")]);
+          bool _t296 = nx_m29_is_effect_name(c, _t295);
+          next_is_effect_42 = _t296;
         }
-      bool _t292 = nx_m29_is_word(c, a_5);
-      bool _t293 = _t292;
-      if (_t293) {
-        bool _t294 = nx_m29_is_keyword_tok(c, ta_3);
-        _t293 = (!(_t294));
+      bool _t297 = nx_m29_is_word(c, a_5);
+      bool _t298 = _t297;
+      if (_t298) {
+        bool _t299 = nx_m29_is_keyword_tok(c, ta_3);
+        _t298 = (!(_t299));
       }
-      bool _t295 = _t293;
-      if (_t295) {
-        _t295 = (!(next_is_effect_42));
+      bool _t300 = _t298;
+      if (_t300) {
+        _t300 = (!(next_is_effect_42));
       }
-      bool _t296 = (!(_t295));
-      return _t296;
+      bool _t301 = (!(_t300));
+      return _t301;
     }
     if (nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 28 }))))
     {
-      bool _t297 = false;
-      return _t297;
+      bool _t302 = false;
+      return _t302;
     }
-  bool _t298 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 27 })));
-  if (!_t298) {
-    _t298 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 29 })));
+  bool _t303 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 27 })));
+  if (!_t303) {
+    _t303 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 29 })));
   }
-    if (_t298)
+    if (_t303)
     {
-      bool _t299 = false;
-      return _t299;
+      bool _t304 = false;
+      return _t304;
     }
     if (nx_eq_m7_Kind(&(b_6), &(((nx_m7_Kind){ .tag = 27 }))))
     {
-      bool _t300 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 25 })));
-      if (!_t300) {
-        _t300 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 48 })));
-      }
-      bool _t301 = _t300;
-      if (!_t301) {
-        _t301 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 26 })));
-      }
-      bool _t302 = _t301;
-      if (!_t302) {
-        _t302 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 11 })));
-      }
-      bool _t303 = _t302;
-      if (!_t303) {
-        bool _t304 = nx_m29_is_kw(c, ta_3, nx_lit(nx_str_2259, 3));
-        _t303 = _t304;
-      }
-      bool _t305 = _t303;
+      bool _t305 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 25 })));
       if (!_t305) {
-        bool _t306 = nx_m29_is_kw(c, ta_3, nx_lit(nx_str_91, 2));
-        _t305 = _t306;
+        _t305 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 48 })));
       }
-      bool _t307 = _t305;
+      bool _t306 = _t305;
+      if (!_t306) {
+        _t306 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 26 })));
+      }
+      bool _t307 = _t306;
       if (!_t307) {
-        bool _t308 = nx_m29_is_kw(c, ta_3, nx_lit(nx_str_64, 6));
-        _t307 = _t308;
+        _t307 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 11 })));
       }
-      bool _t309 = _t307;
-      return _t309;
+      bool _t308 = _t307;
+      if (!_t308) {
+        bool _t309 = nx_m29_is_kw(c, ta_3, nx_lit(nx_str_2259, 3));
+        _t308 = _t309;
+      }
+      bool _t310 = _t308;
+      if (!_t310) {
+        bool _t311 = nx_m29_is_kw(c, ta_3, nx_lit(nx_str_91, 2));
+        _t310 = _t311;
+      }
+      bool _t312 = _t310;
+      if (!_t312) {
+        bool _t313 = nx_m29_is_kw(c, ta_3, nx_lit(nx_str_64, 6));
+        _t312 = _t313;
+      }
+      bool _t314 = _t312;
+      return _t314;
     }
-  bool _t310 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 36 })));
-  if (!_t310) {
-    _t310 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 46 })));
+  bool _t315 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 36 })));
+  if (!_t315) {
+    _t315 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 46 })));
   }
-  bool _t311 = _t310;
-  if (!_t311) {
-    _t311 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 37 })));
+  bool _t316 = _t315;
+  if (!_t316) {
+    _t316 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 37 })));
   }
-    if (_t311)
+    if (_t316)
     {
       bool binary_43 = false;
         if (((i_2) >= (((size_t)2ULL))))
         {
-          nx_m7_Token* t2_44 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((i_2) - (((size_t)2ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:469")], (*toks_0).len, "self/fmt.nx:469")]);
-          size_t _t312 = (*ctx_1).toks_0.ptr[nx_idx(((i_2) - (((size_t)2ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:470")];
-          bool _t313 = nx_m29_ends_operand(c, toks_0, _t312);
-          bool _t314 = _t313;
-          if (_t314) {
-            bool _t315 = nx_m29_is_kw(c, t2_44, nx_lit(nx_str_2437, 4));
-            _t314 = (!(_t315));
+          nx_m7_Token* t2_44 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((i_2) - (((size_t)2ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:476")], (*toks_0).len, "self/fmt.nx:476")]);
+          size_t _t317 = (*ctx_1).toks_0.ptr[nx_idx(((i_2) - (((size_t)2ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:477")];
+          bool _t318 = nx_m29_ends_operand(c, toks_0, _t317);
+          bool _t319 = _t318;
+          if (_t319) {
+            bool _t320 = nx_m29_is_kw(c, t2_44, nx_lit(nx_str_2437, 4));
+            _t319 = (!(_t320));
           }
-          binary_43 = _t314;
+          binary_43 = _t319;
         }
         if ((!(binary_43)))
         {
-          bool _t316 = false;
-          return _t316;
+          bool _t321 = false;
+          return _t321;
         }
     }
-  bool _t317 = nx_m29_is_kw(c, ta_3, nx_lit(nx_str_2437, 4));
-  bool _t318 = _t317;
-  if (_t318) {
-    _t318 = nx_eq_m7_Kind(&(b_6), &(((nx_m7_Kind){ .tag = 36 })));
+  bool _t322 = nx_m29_is_kw(c, ta_3, nx_lit(nx_str_2437, 4));
+  bool _t323 = _t322;
+  if (_t323) {
+    _t323 = nx_eq_m7_Kind(&(b_6), &(((nx_m7_Kind){ .tag = 36 })));
   }
-    if (_t318)
+    if (_t323)
     {
-      bool _t319 = true;
-      return _t319;
+      bool _t324 = true;
+      return _t324;
     }
-  bool _t320 = nx_eq_m7_Kind(&(b_6), &(((nx_m7_Kind){ .tag = 36 })));
-  if (!_t320) {
-    _t320 = nx_eq_m7_Kind(&(b_6), &(((nx_m7_Kind){ .tag = 46 })));
+  bool _t325 = nx_eq_m7_Kind(&(b_6), &(((nx_m7_Kind){ .tag = 36 })));
+  if (!_t325) {
+    _t325 = nx_eq_m7_Kind(&(b_6), &(((nx_m7_Kind){ .tag = 46 })));
   }
-  bool _t321 = _t320;
-  if (!_t321) {
-    _t321 = nx_eq_m7_Kind(&(b_6), &(((nx_m7_Kind){ .tag = 37 })));
+  bool _t326 = _t325;
+  if (!_t326) {
+    _t326 = nx_eq_m7_Kind(&(b_6), &(((nx_m7_Kind){ .tag = 37 })));
   }
-  bool _t322 = _t321;
-  if (_t322) {
-    size_t _t323 = (*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:475"), (*ctx_1).toks_0.len, "self/fmt.nx:475")];
-    bool _t324 = nx_m29_ends_operand(c, toks_0, _t323);
-    _t322 = (!(_t324));
+  bool _t327 = _t326;
+  if (_t327) {
+    size_t _t328 = (*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:482"), (*ctx_1).toks_0.len, "self/fmt.nx:482")];
+    bool _t329 = nx_m29_ends_operand(c, toks_0, _t328);
+    _t327 = (!(_t329));
   }
-    if (_t322)
+    if (_t327)
     {
-      bool _t325 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 10 })));
-      if (!_t325) {
-        _t325 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 14 })));
-      }
-      bool _t326 = _t325;
-      if (!_t326) {
-        _t326 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 24 })));
-      }
-      bool _t327 = _t326;
-      if (!_t327) {
-        _t327 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 17 })));
-      }
-      bool _t328 = _t327;
-      if (!_t328) {
-        _t328 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 25 })));
-      }
-      bool _t329 = (!(_t328));
-      if (!_t329) {
-        _t329 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 17 })));
-      }
-      bool _t330 = _t329;
+      bool _t330 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 10 })));
       if (!_t330) {
-        _t330 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 25 })));
+        _t330 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 14 })));
       }
       bool _t331 = _t330;
-      return _t331;
+      if (!_t331) {
+        _t331 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 24 })));
+      }
+      bool _t332 = _t331;
+      if (!_t332) {
+        _t332 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 17 })));
+      }
+      bool _t333 = _t332;
+      if (!_t333) {
+        _t333 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 25 })));
+      }
+      bool _t334 = (!(_t333));
+      if (!_t334) {
+        _t334 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 17 })));
+      }
+      bool _t335 = _t334;
+      if (!_t335) {
+        _t335 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 25 })));
+      }
+      bool _t336 = _t335;
+      return _t336;
     }
     if (nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 31 }))))
     {
-      size_t _t332 = nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:483");
-      uint8_t _t333 = nx_m29_bar_role(c, toks_0, ctx_1, _t332);
-      uint8_t role_45 = _t333;
+      size_t _t337 = nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:490");
+      uint8_t _t338 = nx_m29_bar_role(c, toks_0, ctx_1, _t337);
+      uint8_t role_45 = _t338;
         if (((role_45) == (((uint8_t)2ULL))))
         {
-          bool _t334 = true;
-          return _t334;
+          bool _t339 = true;
+          return _t339;
         }
         if (((role_45) == (((uint8_t)0ULL))))
         {
-          bool _t335 = false;
-          return _t335;
+          bool _t340 = false;
+          return _t340;
         }
-      bool _t336 = nx_m29_is_word(c, b_6);
-      bool _t337 = _t336;
-      if (!_t337) {
-        _t337 = nx_eq_m7_Kind(&(b_6), &(((nx_m7_Kind){ .tag = 10 })));
-      }
-      bool _t338 = _t337;
-      if (!_t338) {
-        _t338 = nx_eq_m7_Kind(&(b_6), &(((nx_m7_Kind){ .tag = 36 })));
-      }
-      bool _t339 = _t338;
-      if (!_t339) {
-        _t339 = nx_eq_m7_Kind(&(b_6), &(((nx_m7_Kind){ .tag = 28 })));
-      }
-      bool _t340 = _t339;
-      if (!_t340) {
-        _t340 = nx_eq_m7_Kind(&(b_6), &(((nx_m7_Kind){ .tag = 30 })));
-      }
-      bool _t341 = _t340;
-      if (!_t341) {
-        _t341 = nx_eq_m7_Kind(&(b_6), &(((nx_m7_Kind){ .tag = 12 })));
-      }
+      bool _t341 = nx_m29_is_word(c, b_6);
       bool _t342 = _t341;
       if (!_t342) {
-        bool _t343 = nx_m29_is_binary_op(c, b_6);
-        bool _t344 = _t343;
-        if (_t344) {
-          _t344 = (!nx_eq_m7_Kind(&(b_6), &(((nx_m7_Kind){ .tag = 31 }))));
-        }
-        _t342 = _t344;
+        _t342 = nx_eq_m7_Kind(&(b_6), &(((nx_m7_Kind){ .tag = 10 })));
       }
-      bool _t345 = _t342;
-      return _t345;
+      bool _t343 = _t342;
+      if (!_t343) {
+        _t343 = nx_eq_m7_Kind(&(b_6), &(((nx_m7_Kind){ .tag = 36 })));
+      }
+      bool _t344 = _t343;
+      if (!_t344) {
+        _t344 = nx_eq_m7_Kind(&(b_6), &(((nx_m7_Kind){ .tag = 28 })));
+      }
+      bool _t345 = _t344;
+      if (!_t345) {
+        _t345 = nx_eq_m7_Kind(&(b_6), &(((nx_m7_Kind){ .tag = 30 })));
+      }
+      bool _t346 = _t345;
+      if (!_t346) {
+        _t346 = nx_eq_m7_Kind(&(b_6), &(((nx_m7_Kind){ .tag = 12 })));
+      }
+      bool _t347 = _t346;
+      if (!_t347) {
+        bool _t348 = nx_m29_is_binary_op(c, b_6);
+        bool _t349 = _t348;
+        if (_t349) {
+          _t349 = (!nx_eq_m7_Kind(&(b_6), &(((nx_m7_Kind){ .tag = 31 }))));
+        }
+        _t347 = _t349;
+      }
+      bool _t350 = _t347;
+      return _t350;
     }
     if (nx_eq_m7_Kind(&(b_6), &(((nx_m7_Kind){ .tag = 31 }))))
     {
-      uint8_t _t346 = nx_m29_bar_role(c, toks_0, ctx_1, i_2);
-      bool _t347 = ((_t346) != (((uint8_t)1ULL)));
-      return _t347;
+      uint8_t _t351 = nx_m29_bar_role(c, toks_0, ctx_1, i_2);
+      bool _t352 = ((_t351) != (((uint8_t)1ULL)));
+      return _t352;
     }
-  bool _t348 = nx_m29_is_binary_op(c, a_5);
-  bool _t349 = _t348;
-  if (!_t349) {
-    bool _t350 = nx_m29_is_binary_op(c, b_6);
-    _t349 = _t350;
+  bool _t353 = nx_m29_is_binary_op(c, a_5);
+  bool _t354 = _t353;
+  if (!_t354) {
+    bool _t355 = nx_m29_is_binary_op(c, b_6);
+    _t354 = _t355;
   }
-    if (_t349)
+    if (_t354)
     {
-      bool _t351 = true;
-      return _t351;
+      bool _t356 = true;
+      return _t356;
     }
-  bool _t352 = true;
-  return _t352;
+  bool _t357 = true;
+  return _t357;
 }
 
 static bool nx_m30_exists(nx_ctx* c, nx_sl_u8 path_0) {

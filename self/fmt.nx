@@ -326,8 +326,15 @@ fn needs_space(toks: *List(lexer.Token), ctx: *Line, i: usize) -> bool {
     if a == lexer.Kind.Pipe and b == lexer.Kind.LBracket { return false }
     // closers and separators never have a space before them
     if b == lexer.Kind.RParen or b == lexer.Kind.RBracket or b == lexer.Kind.Comma or b == lexer.Kind.Semi or b == lexer.Kind.DotStar or b == lexer.Kind.DotQuestion or b == lexer.Kind.QuestionDot { return false }
-    // `.field` after a comma or an opening brace is a field initializer; otherwise member access
-    if b == lexer.Kind.Dot { return a == lexer.Kind.Comma or a == lexer.Kind.LBrace or a == lexer.Kind.DotLBrace }
+    // `.field` after a comma or an opening brace is a field initializer;
+    // `.Red` after an operator or a keyword is an enum literal, spaced as a
+    // word (`x = .Red`, `return .Blue`); otherwise member access, and
+    // `error.Name`
+    if b == lexer.Kind.Dot {
+        if a == lexer.Kind.Comma or a == lexer.Kind.LBrace or a == lexer.Kind.DotLBrace { return true }
+        if is_kw(ta, "error") { return false }
+        return !ends_operand(toks, ctx.toks[i - 1])
+    }
     if a == lexer.Kind.Colon or a == lexer.Kind.Comma { return true }
     // inside braces: `{ .x = 1 }` and blocks get spaces, `.{a, b}` tuples do not
     if a == lexer.Kind.LBrace or a == lexer.Kind.DotLBrace { return a == lexer.Kind.LBrace or b == lexer.Kind.Dot }

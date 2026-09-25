@@ -681,6 +681,15 @@ fn suite_fmt(e: *Env, failures: *mut List(String)) {
     let nf = nx(e, ["fmt", neg[..]][..])
     let ngot = normalize((fs.read(neg[..]) catch { String.new() })[..])
     if nf.code != 0 or ngot[..] != nwant { failures.append(format("fmt: `!(` spacing (exit {}):\n{}{}", .{nf.code, ngot, nf.stderr})) }
+    // an enum literal after an operator or a keyword is spaced as a word;
+    // member access and `error.Name` stay tight
+    let lit = fs.join(e.root[..], "nx-out/cases/enum_literal.nx")
+    let ltext = "fn f(b: bool, c: Color) -> !Color {\n    let x: Color =.Red\n    if b { return.Blue }\n    if c ==.Red and c !=.Blue { return error.Bad }\n    return if b { .Red } else { x.other() }\n}\n"
+    let lwant = "fn f(b: bool, c: Color) -> !Color {\n    let x: Color = .Red\n    if b { return .Blue }\n    if c == .Red and c != .Blue { return error.Bad }\n    return if b { .Red } else { x.other() }\n}\n"
+    fs.write(lit[..], ltext) catch { }
+    let lf = nx(e, ["fmt", lit[..]][..])
+    let lgot = normalize((fs.read(lit[..]) catch { String.new() })[..])
+    if lf.code != 0 or lgot[..] != lwant { failures.append(format("fmt: enum literal spacing (exit {}):\n{}{}", .{lf.code, lgot, lf.stderr})) }
     // and so is a unary minus; a binary one keeps its spaces
     let minus = fs.join(e.root[..], "nx-out/cases/minus.nx")
     let mtext = "fn f(a: i64, b: i64) -> i64 {\n    let c = - (a + b)\n    if a < - (b) { return - (a) }\n    return a - (b) + -(c) * - (a)\n}\n"
