@@ -1,7 +1,7 @@
 # The Debian and RPM packages of a release, built by nfpm from the Linux
 # archives (the release workflow runs it per architecture):
 #
-#     cd <the unpacked archive> && NX_VERSION=1.3.1 NX_ARCH=amd64 nfpm package -p deb -f ../installers/nfpm.yaml -t ..
+#     cd <the unpacked archive> && NX_VERSION=1.3.2 NX_ARCH=amd64 nfpm package -p deb -f ../installers/nfpm.yaml -t ..
 #
 # (run from the directory that holds nx, nx.1, completions/, examples/, docs/
 # and the three text files: the source paths below are relative to it)

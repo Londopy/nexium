@@ -99,6 +99,7 @@ ordering; the name carries the character.
 | 1.2.1 | Annapurna: de Noyelle | patch (roster 9): the liaison officer, permits and diplomacy; the roads in: every registry and package format, completions and a manual page, provenance on every asset, the Topo as a course |
 | 1.3.0 | Annapurna: North Face | the face of the first ascent, the original line followed through: the toolchain grown up; `nx fix`, `nx bench`, `nx debug` and `#line`, `--sanitize`, `if comptime`, the language server from the checker, incremental builds |
 | 1.3.1 | Annapurna: Couzy | patch (roster 5): the engineer; fixes the build, the toolchain and the C: a use-after-free in branch values, the runtime's null copies, syntax errors at their line, the glibc 2.17 floor |
+| 1.3.2 | Annapurna: Oudot | patch (roster 7): the doctor; a write to a connection or pipe the other side has closed no longer ends the program with SIGPIPE, and a connect that fails at once is an error |
 
 ## The plan
 
@@ -173,7 +174,7 @@ summiters lost fingers and toes on the descent.
 | Rébuffat | the guide; roped the snow-blind party together on the descent | ties loose ends: docs, tests, consistency (used: 1.0.1) |
 | Couzy | the engineer of the team | fixes the build, the toolchain, the C (used: 1.3.1) |
 | Schatz | found the summit party in the crevasse the morning after | finds a long-hidden bug (used: 1.0.3) |
-| Oudot | the doctor; amputations on the march out | removes something to save the rest |
+| Oudot | the doctor; amputations on the march out | removes something to save the rest (used: 1.3.2) |
 | Ichac | the filmmaker | is all documentation, examples, screenshots |
 | de Noyelle | liaison officer; permits and diplomacy | packaging, licensing, distribution channels (used: 1.2.1) |
 | Ang Tharkey | the sirdar; declined the summit and kept the camps supplied | CI and infrastructure, the work that carries everything else |

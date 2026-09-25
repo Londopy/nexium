@@ -74,7 +74,7 @@ it against the release's `SHA256SUMS.txt`, installs `nx.exe`, the standard
 library, the examples and the docs to `%LocalAppData%\Programs\Nexium`,
 adds that directory to the user's PATH, and downloads Zig beside it when
 no C compiler is found. No wizard, no administrator rights, nothing
-registered. Variables, set before the line: `NEXIUM_VERSION=v1.3.1` pins a
+registered. Variables, set before the line: `NEXIUM_VERSION=v1.3.2` pins a
 release, `NEXIUM_HOME` changes the directory, `NEXIUM_NO_MODIFY_PATH=1`
 leaves the PATH alone, `NEXIUM_NO_ZIG=1` never downloads Zig. Remove it by
 deleting the directory and the PATH entry.
@@ -132,7 +132,7 @@ board), or the download fails, the script builds `nx` from the one C file
 below with the C compiler it finds (`cc`, `gcc`, `clang` or `zig`) and
 installs that instead.
 
-Variables: `NEXIUM_VERSION=v1.3.1` pins a release, `NEXIUM_HOME` changes the
+Variables: `NEXIUM_VERSION=v1.3.2` pins a release, `NEXIUM_HOME` changes the
 directory, `NEXIUM_NO_MODIFY_PATH=1` leaves shell files alone,
 `NEXIUM_NO_ZIG=1` never downloads Zig, `NEXIUM_FROM_SOURCE=1` builds from
 the one C file even when a release exists. Uninstall by deleting `~/.nexium`
@@ -224,11 +224,11 @@ is the whole `nx`, on any Unix the C compiler runs on, including machines
 no release is built for:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Londopy/nexium/v1.3.1/bootstrap/nx.c -o nx.c
+curl -fsSL https://raw.githubusercontent.com/Londopy/nexium/v1.3.2/bootstrap/nx.c -o nx.c
 cc -std=gnu11 -O2 -w -fno-strict-aliasing -o nx nx.c -lm -lpthread
 ```
 
-(`main` in place of `v1.3.1` gives the seed of the next release, which may
+(`main` in place of `v1.3.2` gives the seed of the next release, which may
 be a little behind `self/`.) `nx` needs a C compiler at run time as well;
 the one that built it will do. On Windows, `zig cc` builds it with
 `-lws2_32` at the end, but the installer is the shorter road there.
@@ -363,7 +363,7 @@ You do not have to ask. Once a day, after a command has done its work,
 says so once, on stderr:
 
 ```
-nx 1.3.2 is available (this is 1.3.1): `nx upgrade` installs it; https://github.com/Londopy/nexium/releases/latest
+nx 1.3.3 is available (this is 1.3.2): `nx upgrade` installs it; https://github.com/Londopy/nexium/releases/latest
 ```
 
 The REPL's banner names it too, and says to leave with `:quit` and run
@@ -398,7 +398,7 @@ workflow built it, that names the repository, the commit and the workflow
 run. Verify one with the GitHub CLI:
 
 ```bash
-gh attestation verify nx-v1.3.1-x86_64-unknown-linux-gnu.tar.gz --owner Londopy
+gh attestation verify nx-v1.3.2-x86_64-unknown-linux-gnu.tar.gz --owner Londopy
 ```
 
 It fails for a file that was not built by this repository's workflow, or
@@ -417,7 +417,7 @@ shasum -a 256 -c SHA256SUMS.txt --ignore-missing   # macOS
 ```
 
 ```powershell
-Get-FileHash .\nexium-1.3.1-setup-x64.exe -Algorithm SHA256
+Get-FileHash .\nexium-1.3.2-setup-x64.exe -Algorithm SHA256
 ```
 
 The install script verifies automatically and refuses a mismatch.
