@@ -10,6 +10,13 @@ Fixed bugs are not listed here; `CHANGELOG.md` and `git log` have them.
 
 ## Compiler
 
+- **`import std.time` hides the builtin `time` namespace.** In a file that
+  imports it, `time.now()` and `time.monotonic()` are errors ("module
+  `std.time` has no function `now`"), though the builtins exist in every
+  other file; std.time names its own `now_utc()` and `now_local()`. Found
+  timing nxtls's `x509.check_chain`, whose file imports std.time. Fix:
+  look a member up in the builtin namespace when the module of that name
+  does not have it, or have std.time forward `now` and `monotonic`.
 
 ## Self-hosting
 
@@ -43,6 +50,14 @@ Fixed bugs are not listed here; `CHANGELOG.md` and `git log` have them.
   the grammar.
 
 ## Tests and CI
+
+- **The benchmark gate fails on a slower runner.** `bench/run.py --check`
+  fails when a Nexium median is a quarter slower than the last run's, in
+  seconds, so a slower GitHub runner fails it with no change to Nexium: the
+  v1.3.1 tag's run (twice) found every language 1.4 to 2.1 times slower
+  than the baseline, C and Python included, and Nexium's ratio to C
+  unchanged. Fix: compare Nexium's time as a ratio to C's (or to the other
+  languages' median) in the same run, which a runner's speed cancels out of.
 
 - **Suites that build files must pass `--out-dir`.** Two cases compiling
   the same source into `nx-out/` at once fail on Windows (the second write
