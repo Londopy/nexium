@@ -42,6 +42,9 @@ jobs:
         shell: bash
         run: |
           if [ "$RUNNER_OS" = macOS ]; then export NX_CC=cc; else export NX_ZIG=zig; fi
+          # zig cc builds for the runner's own glibc unless told otherwise;
+          # the release is for every Linux from glibc 2.17, as its wheel says
+          if [ "$RUNNER_OS" = Linux ]; then export CC="zig cc -target x86_64-linux-gnu.2.17"; fi
           sh bootstrap/build.sh
           mkdir -p build
           if [ "$RUNNER_OS" = Windows ]; then cp nx-out/bootstrap/nx2.exe build/nx.exe; else cp nx-out/bootstrap/nx2 build/nx && strip build/nx; fi
@@ -57,6 +60,15 @@ jobs:
           n=$(objdump -d build/nx | grep -c -E '%[yz]mm' || true)
           echo "AVX instructions: $n"
           [ "$n" = 0 ]
+      # and on every glibc from 2.17, which its wheel's manylinux_2_17 tag
+      # and the .deb promise: no symbol it needs may be newer (1.3.0 needed
+      # 2.34, the runner's own, and failed on Ubuntu 20.04 and Debian 11)
+      - name: The binary runs on glibc 2.17
+        if: runner.os == 'Linux'
+        run: |
+          newest=$(readelf -V build/nx | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -1)
+          echo "newest glibc version needed: $newest"
+          [ "$(printf '%s\n2.17\n' "$newest" | sort -V | tail -1)" = 2.17 ]
       - name: The binary uses the baseline instruction set (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -88,7 +100,10 @@ jobs:
           c=nx-out/bootstrap/nx1.c
           flags="-std=gnu11 -O2 -s -w -fno-strict-aliasing"
           mkdir -p cross/linux cross/windows
-          zig cc $flags -target aarch64-linux-gnu -o cross/linux/nx "$c" -lm -lc
+          zig cc $flags -target aarch64-linux-gnu.2.17 -o cross/linux/nx "$c" -lm -lc
+          newest=$(readelf -V cross/linux/nx | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -1)
+          echo "aarch64: newest glibc version needed: $newest"
+          [ "$(printf '%s\n2.17\n' "$newest" | sort -V | tail -1)" = 2.17 ]
           zig cc $flags -target aarch64-windows-gnu -o cross/windows/nx.exe "$c" -lws2_32
           for t in linux windows; do
             rm -rf dist-cross && mkdir -p dist-cross

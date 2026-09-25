@@ -42,24 +42,6 @@ Fixed bugs are not listed here; `CHANGELOG.md` and `git log` have them.
   significant in arm position, or require a comma after braced arms in
   the grammar.
 
-## Packaging
-
-- **The x86_64 Linux binary needs glibc 2.34 but claims 2.17.** The
-  release builds it natively with `zig cc` on `ubuntu-latest`, which
-  targets the runner's glibc (2.39), so the binary needs
-  `__libc_start_main` and `pthread_create` at `GLIBC_2.34` (and `stat` at
-  2.33, `pow` at 2.29). The wheel is tagged `manylinux_2_17_x86_64`, so pip
-  installs it on Ubuntu 20.04, Debian 11 or Amazon Linux 2, where `nx`
-  fails with "GLIBC_2.34 not found"; the `.deb` and `install.sh` have the
-  same floor. Colab and anything on glibc 2.34 or later are unaffected.
-  Reproduce: build the seed as the release does (`zig cc -target
-  x86_64-linux-gnu.2.39 -std=gnu11 -O2 bootstrap/nx.c -lm -lc`) and list
-  the versions it needs (`objdump -T nx | grep -o 'GLIBC_[0-9.]*' | sort
-  -uV`). Fix: `-target x86_64-linux-gnu.2.17` for the release's Linux
-  build (it links, and needs nothing past 2.17; the aarch64 cross build
-  already targets 2.17), and a release step beside the AVX check that
-  fails when the highest version needed is past 2.17.
-
 ## Tests and CI
 
 - **Suites that build files must pass `--out-dir`.** Two cases compiling

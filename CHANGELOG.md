@@ -82,6 +82,12 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   the block the expression is in, as a plain expression's temporaries are
   (decision 118). Found by QNI's tests against glibc; a spec case runs each
   form under CI's sanitizers.
+- The x86_64 Linux build runs on every glibc from 2.17, as its wheel's
+  `manylinux_2_17` tag and the `.deb` promise. 1.3.0's needed 2.34, the
+  release runner's own, so `pip install nexium-lang` gave Ubuntu 20.04,
+  Debian 11 and Amazon Linux 2 an `nx` that stopped with "GLIBC_2.34 not
+  found". The release now builds both Linux architectures for glibc 2.17
+  and fails when one needs a newer symbol.
 
 ## [1.3.0] - 2026-09-24
 
