@@ -285,7 +285,7 @@ jobs:
         run: |
           npx --yes tree-sitter-cli@0.27 generate
           git diff --exit-code -- src/grammar.json src/node-types.json src/parser.c || (echo "run tree-sitter generate and commit src/"; exit 1)
-          npx --yes tree-sitter-cli@0.27 parse ../../examples/*.nx ../../std/*.nx ../../gui/*.nx ../../self/*.nx --quiet --stat | tee parse.txt
+          npx --yes tree-sitter-cli@0.27 parse ../../examples/*.nx ../../std/*.nx ../../gui/*.nx ../../self/*.nx ../../tests/spec/*.nx ../../tests/parse_smoke.nx --quiet --stat | tee parse.txt
           grep -q "failed parses: 0;" parse.txt
           npx --yes tree-sitter-cli@0.27 query queries/highlights.scm ../../examples/tour.nx > /dev/null
       - name: The per-editor queries match the grammar

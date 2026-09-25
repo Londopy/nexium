@@ -30,13 +30,6 @@ Fixed bugs are not listed here; `CHANGELOG.md` and `git log` have them.
   closure bars from bit-or per line (`self/fmt.nx`, `bar_role`); the tree-wide
   `--check` in CI is the only guard. Add cases for `|x| x | 1`, `a | b`,
   `f(|x| x)`, `Task(T, R)|`.
-- **tree-sitter: a binary pattern after a braced arm parses as a shift.**
-  In `tests/parse_smoke.nx`, `{ return total_len }` followed by a
-  `<<...>>` arm on the next line is read as `{...} << ...`, because the
-  grammar ignores newlines. Editors show one error there; the file is
-  therefore not in CI's parse list. Fix: make the newline before `<<`
-  significant in arm position, or require a comma after braced arms in
-  the grammar.
 
 ## Tests and CI
 

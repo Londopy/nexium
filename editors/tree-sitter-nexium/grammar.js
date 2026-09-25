@@ -76,7 +76,7 @@ module.exports = grammar({
         field('name', $.identifier),
         field('parameters', $.parameters),
         optional(seq('->', field('return_type', $.type))),
-        repeat($.effect),
+        repeat(choice($.effect, alias($._declared_effect, $.effect))),
         optional($.export_clause),
         field('body', $.block),
       ),
@@ -95,6 +95,11 @@ module.exports = grammar({
     where_clause: ($) => seq('where', $.identifier, ':', $.type),
 
     effect: ($) => prec.dynamic(1, seq('!', $.identifier)),
+
+    // `-> !u32 allocates blocks`: a signature can also name effects it has.
+    // Not on a function type, where a struct field named `blocks` could
+    // follow on the next line.
+    _declared_effect: ($) => $.identifier,
 
     export_clause: ($) => seq('export', '(', $.identifier, ')'),
 
@@ -125,7 +130,16 @@ module.exports = grammar({
       ),
 
     enum_item: ($) =>
-      seq(optional($.visibility), 'enum', field('name', $.identifier), optional($.type_parameters), '{', repeat(seq($.variant, optional(','))), '}'),
+      seq(
+        optional($.visibility),
+        'enum',
+        field('name', $.identifier),
+        optional($.type_parameters),
+        repeat($.attribute),
+        '{',
+        repeat(seq($.variant, optional(','))),
+        '}',
+      ),
 
     variant: ($) =>
       seq(field('name', $.identifier), optional(choice(seq('(', sep($.type), ')'), $.field_list))),
@@ -134,7 +148,13 @@ module.exports = grammar({
       seq(optional($.visibility), 'trait', field('name', $.identifier), '{', repeat(choice($.function_item, $.function_signature)), '}'),
 
     function_signature: ($) =>
-      seq('fn', field('name', $.identifier), field('parameters', $.parameters), optional(seq('->', field('return_type', $.type))), repeat($.effect)),
+      seq(
+        'fn',
+        field('name', $.identifier),
+        field('parameters', $.parameters),
+        optional(seq('->', field('return_type', $.type))),
+        repeat(choice($.effect, alias($._declared_effect, $.effect))),
+      ),
 
     impl_item: ($) =>
       seq(
@@ -358,7 +378,13 @@ module.exports = grammar({
       ),
 
     // a match arm body is an expression or one jump statement: `_ => return v`
-    branch: ($) => prec.right(-2, choice($.expression, $.assignment_statement, $.return_statement, $.break_statement, $.continue_statement)),
+    // A braced body ends the arm, as in the compiler: `.A => { ... }` then
+    // `.B(x) => ...` on the next line is two arms, not `{ ... }.B(x)`.
+    branch: ($) =>
+      choice(
+        prec(1, $.block),
+        prec.right(-2, choice($.expression, $.assignment_statement, $.return_statement, $.break_statement, $.continue_statement)),
+      ),
 
     match_expression: ($) => seq('match', field('value', $.expression), '{', repeat(seq($.match_arm, optional(','))), '}'),
 
@@ -420,7 +446,12 @@ module.exports = grammar({
     literal_pattern: ($) => choice($.integer_literal, seq('-', $.integer_literal), $.float_literal, $.string_literal, $.char_literal, $.boolean_literal),
     range_pattern: ($) => prec.left(seq(choice($.integer_literal, $.char_literal), choice('..', '..='), choice($.integer_literal, $.char_literal))),
     enum_pattern: ($) =>
-      seq('.', field('variant', $.identifier), optional(choice(seq('(', sep($.pattern), ')'), seq('{', sep(seq($.identifier, ':', $.pattern)), '}')))),
+      seq(
+        choice(seq('.', field('variant', $.identifier)), $._qualified_variant),
+        optional(choice(seq('(', sep($.pattern), ')'), seq('{', sep(seq($.identifier, ':', $.pattern)), '}'))),
+      ),
+    // `Shape.Dot`, `lexer.Kind.Ident`: the last name is the variant
+    _qualified_variant: ($) => seq(field('type', $.identifier), '.', choice(field('variant', $.identifier), $._qualified_variant)),
     error_pattern: ($) => seq('error', '.', $.identifier),
     tuple_pattern: ($) => seq('(', sep($.pattern), ')'),
     // `[a, b]`, `[first, rest..]`, `[.., last]`

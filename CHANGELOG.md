@@ -129,6 +129,13 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Fixed
 
+- The tree-sitter grammar read four things the compiler accepts as errors:
+  `derive(...)` on an enum (CI failed on `std/toml.nx`), a match arm
+  after a braced one when it begins with `.Variant` or `<<` (it was read
+  as `{ ... }.Variant`), qualified patterns (`Shape.Dot`,
+  `lexer.Kind.Ident`), and bare effect words on a signature
+  (`-> !u32 allocates blocks`). CI now also parses `tests/spec` and
+  `tests/parse_smoke.nx`.
 - `import std.time` hid the builtin `time` namespace: `time.now()` and
   `time.monotonic()` were errors ("module `std.time` has no function
   `now`") in a file that imported it. A std module named like a builtin
