@@ -54,6 +54,33 @@ pub struct FnState {
     // with `#line` directives: the one each C line written now carries, the
     // statement's (or the function's first or last line, outside them)
     dir: String = String.new()
+    // a value-producing `if`, `match` or block keeps the owned temporaries
+    // its branches' values are made of alive past the branch, since the
+    // value may be a view of one (decision 118): while a branch's value is
+    // lowered (`hoisting`), such a temporary is declared zeroed before the
+    // construct, in frame `hoist_frame` of `hoist_frames`, and dropped with
+    // the scope the construct is in, as a temporary of a plain expression is
+    hoisting: bool = false
+    hoist_frame: usize = 0
+    hoist_frames: List(HoistFrame) = List(HoistFrame).new()
+    // the frame of each labeled block in `block_labels` (NONE: none), which
+    // a `break` with a value hoists into
+    block_frames: List(usize) = List(usize).new()
+}
+
+/// The temporaries a value-producing construct keeps (`FnState.hoisting`):
+/// the scope that drops them and their declarations, written before the
+/// construct once it is done.
+struct HoistFrame {
+    scope: usize
+    decls: List(String)
+}
+
+/// A construct's hold on a frame: the one its branches' values hoist into
+/// (NONE: none), and whether it opened that frame and so closes it.
+struct Hoist {
+    frame: usize
+    opened: bool
 }
 
 /// A scalar that crosses the export boundary: its C type, its class (0 int,
@@ -1498,10 +1525,83 @@ impl Gen {
     }
 
     fn register_drop(self: *mut Self, name: []u8, ty: usize) {
+        self.register_drop_at(self.cur.scopes.len - 1, name, ty)
+    }
+
+    fn register_drop_at(self: *mut Self, scope: usize, name: []u8, ty: usize) {
         if !self.needs_drop(ty) { return }
-        let last = self.cur.scopes.len - 1
-        self.cur.scopes[last].drop_names.append(String.from(name))
-        self.cur.scopes[last].drop_tys.append(ty)
+        self.cur.scopes[scope].drop_names.append(String.from(name))
+        self.cur.scopes[scope].drop_tys.append(ty)
+    }
+
+    /// Open the frame of a value-producing `if`, `match` or block
+    /// (`FnState.hoisting`): the construct's code is buffered from here, so
+    /// that the temporaries its branches keep can be declared before it.
+    /// Inside a branch value already being lowered the outer frame serves,
+    /// so the temporaries outlive the outer construct as well.
+    fn hoist_open(self: *mut Self) -> Hoist {
+        if self.cur.hoisting { return Hoist{ .frame = self.cur.hoist_frame, .opened = false } }
+        if self.cur.scopes.len == 0 { return Hoist{ .frame = NONE, .opened = false } }
+        self.cur.hoist_frames.append(HoistFrame{ .scope = self.cur.scopes.len - 1, .decls = List(String).new() })
+        self.push_buf()
+        return Hoist{ .frame = self.cur.hoist_frames.len - 1, .opened = true }
+    }
+
+    /// Close a frame `hoist_open` opened: the declarations of the
+    /// temporaries the construct keeps, then its buffered code.
+    fn hoist_close(self: *mut Self, h: *Hoist) {
+        if !h.opened { return }
+        let code = self.pop_buf()
+        let f = self.cur.hoist_frames.pop() orelse return
+        for d in f.decls { self.line(d[..]) }
+        let last = self.body.len - 1
+        self.body[last].append(code[..])
+    }
+
+    /// Hoist into `frame` from here (NONE: stop hoisting); what to restore.
+    fn hoist_set(self: *mut Self, frame: usize) -> (bool, usize) {
+        let saved = (self.cur.hoisting, self.cur.hoist_frame)
+        self.cur.hoisting = frame != NONE
+        if frame != NONE { self.cur.hoist_frame = frame }
+        return saved
+    }
+
+    fn hoist_restore(self: *mut Self, saved: (bool, usize)) {
+        self.cur.hoisting = saved.0
+        self.cur.hoist_frame = saved.1
+    }
+
+    /// Declare a kept temporary or binding zeroed in the current frame,
+    /// dropped with the frame's scope.
+    fn hoist_decl(self: *mut Self, cn: []u8, name: []u8, ty: usize) {
+        let f = self.cur.hoist_frame
+        self.cur.hoist_frames[f].decls.append(format("{} {} = {{0}};", .{cn, name}))
+        let scope = self.cur.hoist_frames[f].scope
+        self.register_drop_at(scope, name, ty)
+    }
+
+    /// A branch's value, its temporaries hoisted into `frame` (NONE: kept
+    /// by the branch).
+    fn branch_value(self: *mut Self, e: usize, frame: usize) -> String {
+        let saved = self.hoist_set(frame)
+        let v = self.expr_owned(e)
+        self.hoist_restore(saved)
+        return v
+    }
+
+    /// Bind a local (`T name = value;`), dropped with the scope when
+    /// `owned`. While a branch's value is lowered (`FnState.hoisting`) an
+    /// owned binding, a capture or a pattern's, is kept past the branch, as
+    /// the value may be a view of it.
+    fn bind_local(self: *mut Self, name: []u8, ty: usize, value: []u8, owned: bool) {
+        let cn = self.cty(ty)
+        if owned and self.cur.hoisting and self.needs_drop(ty) {
+            self.hoist_decl(cn[..], name, ty)
+            self.line(format("{} = {};", .{name, value})[..])
+            return
+        }
+        self.line(format("{} {} = {};", .{cn, name, value})[..])
+        if owned { self.register_drop(name, ty) }
     }
 
     /// Emit the innermost scope's exits without popping (used before a goto out of an arm).
@@ -1584,15 +1684,19 @@ impl Gen {
     /// A statement, its C lines under its own `#line`; the enclosing
     /// statement's comes back after it.
     fn stmt(self: *mut Self, s: usize) {
+        // a statement's temporaries are its own, never kept for a branch's
+        // value (`FnState.hoisting`): one in a loop would be overwritten
+        let hoisting = self.hoist_set(NONE)
         if !self.line_dirs {
             self.stmt_code(s)
-            return
+        } else {
+            let saved = self.cur.dir.clone()
+            let dir = self.line_dir(self.c.tir.nodes[s].start)
+            if dir.len > 0 { self.cur.dir = dir }
+            self.stmt_code(s)
+            self.cur.dir = saved
         }
-        let saved = self.cur.dir.clone()
-        let dir = self.line_dir(self.c.tir.nodes[s].start)
-        if dir.len > 0 { self.cur.dir = dir }
-        self.stmt_code(s)
-        self.cur.dir = saved
+        self.hoist_restore(hoisting)
     }
 
     fn stmt_code(self: *mut Self, s: usize) {
@@ -1707,7 +1811,8 @@ impl Gen {
                 let brk = self.cur.block_brks[bi].clone()
                 let out = self.cur.block_outs[bi].clone()
                 if kids.len > 0 {
-                    let vc = self.expr_owned(kids[0])
+                    // the block's value: kept past the block like its tail's (decision 118)
+                    let vc = self.branch_value(kids[0], self.cur.block_frames[bi])
                     self.line(format("{} = {};", .{out, vc})[..])
                 }
                 let depth = self.loop_scope_depth(a)
@@ -1939,10 +2044,16 @@ impl Gen {
 
     /// Emit a block and return its value expression ("" when it has none).
     fn block_value(self: *mut Self, b: usize) -> String {
+        return self.block_value_with(b, NONE)
+    }
+
+    /// A block's statements and its value, the temporaries the value is
+    /// made of hoisted into `frame` (NONE: kept by the block).
+    fn block_value_with(self: *mut Self, b: usize, frame: usize) -> String {
         for s in self.c.tir.nodes[b].kids.clone() { self.stmt(s) }
         let tail = self.c.tir.nodes[b].a
         if tail == NONE { return String.new() }
-        let v = self.expr_owned(tail)
+        let v = self.branch_value(tail, frame)
         // a tail that diverges (a panic, say) was typed by coercion as the
         // value the block should have, but yields none: no assignment
         if self.is_void(self.c.tir.nodes[tail].ty) or self.c.expr_diverges(tail) {
@@ -1952,12 +2063,14 @@ impl Gen {
         return v
     }
 
-    /// Emit a block into a fresh C scope, assigning its value to `out` if given.
-    fn block_into(self: *mut Self, b: usize, out: []u8) {
+    /// Emit a block into a fresh C scope, assigning its value to `out` if
+    /// given, the temporaries the value is made of hoisted into `frame`
+    /// (NONE: kept by the block; `FnState.hoisting`).
+    fn block_into(self: *mut Self, b: usize, out: []u8, frame: usize) {
         self.line("{")
         self.push_buf()
         self.push_scope(false)
-        let v = self.block_value(b)
+        let v = self.block_value_with(b, frame)
         if out.len > 0 and v.len > 0 { self.line(format("{} = {};", .{out, v})[..]) }
         self.pop_scope_emit()
         self.splice_buf()
@@ -2040,6 +2153,14 @@ impl Gen {
         if self.c.tir.nodes[e].k == check.TKind.OrElse and self.reads_place(e) and self.needs_drop(ty) { return self.orelse_view(e) }
         let cexpr = self.expr(e)
         if self.is_simple(e) { return cexpr }
+        if self.cur.hoisting and self.is_owned_temp(e) and self.needs_drop(ty) {
+            // a branch's value may be a view of this temporary: it outlives the branch
+            let t = self.tmp()
+            let cn = self.cty(ty)
+            self.hoist_decl(cn[..], t[..], ty)
+            self.line(format("{} = {};", .{t, cexpr})[..])
+            return t
+        }
         let t = self.bind_tmp(cexpr[..], ty)
         if self.is_owned_temp(e) { self.register_drop(t[..], ty) }
         return t
@@ -2057,7 +2178,15 @@ impl Gen {
         let cn = self.cty(ety)
         let d = self.tmp()
         let out = self.tmp()
-        self.line(format("{} {} = {{0}}; {} {};", .{cn, d, cn, out})[..])
+        // in a branch's value the default is kept past the branch, like any
+        // temporary the value may be a view of (`FnState.hoisting`)
+        let hoisted = self.cur.hoisting
+        if hoisted {
+            self.hoist_decl(cn[..], d[..], ety)
+            self.line(format("{} {};", .{cn, out})[..])
+        } else {
+            self.line(format("{} {} = {{0}}; {} {};", .{cn, d, cn, out})[..])
+        }
         self.line(format("if (!{}.has) {{", .{v})[..])
         self.push_buf()
         let dv = self.expr_owned(dflt)
@@ -2065,7 +2194,7 @@ impl Gen {
         else if dv != "0" { self.line(format("{};", .{dv})[..]) }
         self.splice_buf()
         self.line(format("}} else {{ {} = {}.val; }}", .{out, v})[..])
-        self.register_drop(d[..], ety)
+        if !hoisted { self.register_drop(d[..], ety) }
         return out
     }
 
@@ -2301,12 +2430,15 @@ impl Gen {
                 let cn = self.cty(ety)
                 self.line(format("{} {};", .{cn, out})[..])
             }
+            let h = self.hoist_open()
+            let frame = if out.len > 0 { h.frame } else { NONE }
             self.line(format("if ({})", .{cnd})[..])
-            self.block_into(kids[1], out[..])
+            self.block_into(kids[1], out[..], frame)
             if kids.len > 2 {
                 self.line("else")
-                self.block_into(kids[2], out[..])
+                self.block_into(kids[2], out[..], frame)
             }
+            self.hoist_close(&h)
             if out.len == 0 { return String.from("0") }
             return out
         }
@@ -2320,22 +2452,25 @@ impl Gen {
                 let cn = self.cty(ety)
                 self.line(format("{} {};", .{cn, out})[..])
             }
+            let h = self.hoist_open()
+            let frame = if out.len > 0 { h.frame } else { NONE }
             self.line(format("if ({}.has) {{", .{cv})[..])
             self.push_buf()
             self.push_scope(false)
             let name = self.local_name(a)
             let lt = self.cur.local_tys[a]
-            let cn = self.cty(lt)
-            self.line(format("{} {} = {}.val;", .{cn, name, cv})[..])
-            if owned { self.register_drop(name[..], lt) }
-            self.block_into(kids[1], out[..])
+            let saved = self.hoist_set(frame)
+            self.bind_local(name[..], lt, format("{}.val", .{cv})[..], owned)
+            self.hoist_restore(saved)
+            self.block_into(kids[1], out[..], frame)
             self.pop_scope_emit()
             self.splice_buf()
             self.line("}")
             if kids.len > 2 {
                 self.line("else")
-                self.block_into(kids[2], out[..])
+                self.block_into(kids[2], out[..], frame)
             }
+            self.hoist_close(&h)
             if out.len == 0 { return String.from("0") }
             return out
         }
@@ -2358,7 +2493,12 @@ impl Gen {
                 self.cur.block_labels.append(label)
                 self.cur.block_brks.append(brk.clone())
                 self.cur.block_outs.append(out.clone())
-                self.block_into(blk, if out == "0" { "" } else { out[..] })
+                let h = self.hoist_open()
+                let frame = if out != "0" { h.frame } else { NONE }
+                self.cur.block_frames.append(frame)
+                self.block_into(blk, if out == "0" { "" } else { out[..] }, frame)
+                _ = self.cur.block_frames.pop()
+                self.hoist_close(&h)
                 _ = self.cur.block_labels.pop()
                 _ = self.cur.block_brks.pop()
                 _ = self.cur.block_outs.pop()
@@ -2368,13 +2508,15 @@ impl Gen {
                 return out
             }
             if self.is_void(ety) {
-                self.block_into(blk, "")
+                self.block_into(blk, "", NONE)
                 return String.from("0")
             }
             let t = self.tmp()
             let cn = self.cty(ety)
             self.line(format("{} {};", .{cn, t})[..])
-            self.block_into(blk, t[..])
+            let h = self.hoist_open()
+            self.block_into(blk, t[..], h.frame)
+            self.hoist_close(&h)
             return t
         }
         if k == check.TKind.StructLit {
@@ -2845,6 +2987,8 @@ impl Gen {
         let done = format("nx_match_done_{}", .{self.tmp()})
         let loc = self.node_loc(e)
         let sty = self.c.tir.nodes[scrutinee].ty
+        let h = self.hoist_open()
+        let frame = if out.len > 0 { h.frame } else { NONE }
         var ai: usize = 1
         while ai < kids.len {
             let arm = kids[ai]
@@ -2858,13 +3002,16 @@ impl Gen {
             let cond = self.pattern_test(pat, s[..], sty)
             self.line(format("if ({}) {{", .{cond})[..])
             self.push_buf()
+            // the arm's value may be a view of an owned binding (`bind_local`)
+            let saved = self.hoist_set(frame)
             self.pattern_bind(pat, s[..], sty, owned)
+            self.hoist_restore(saved)
             if has_guard {
                 let gc = self.expr(akids[1])
                 self.line(format("if ({}) {{", .{gc})[..])
                 self.push_buf()
             }
-            let v = self.expr_owned(body)
+            let v = self.branch_value(body, frame)
             if out.len > 0 and !self.is_void(self.c.tir.nodes[body].ty) {
                 self.line(format("{} = {};", .{out, v})[..])
             } else if v != "0" {
@@ -2885,6 +3032,7 @@ impl Gen {
         }
         self.line(format("nx_panic(\"no match arm matched\", {});", .{loc})[..])
         self.line(format("{}: ;", .{done})[..])
+        self.hoist_close(&h)
         if out.len == 0 { return String.from("0") }
         return out
     }
@@ -3010,9 +3158,7 @@ impl Gen {
                 self.line(format("{} {} = &({});", .{cn, name, s})[..])
                 return
             }
-            let cn = self.cty(ty)
-            self.line(format("{} {} = {};", .{cn, name, s})[..])
-            if owned { self.register_drop(name[..], ty) }
+            self.bind_local(name[..], ty, s, owned)
             return
         }
         if k == check.TKind.PVariant {
@@ -3046,9 +3192,7 @@ impl Gen {
                 let pn = self.cty(lt)
                 self.line(format("{} {} = &({});", .{pn, name, s})[..])
             } else {
-                let cn = self.cty(ty)
-                self.line(format("{} {} = {};", .{cn, name, s})[..])
-                if owned { self.register_drop(name[..], ty) }
+                self.bind_local(name[..], ty, s, owned)
             }
             self.pattern_bind(kids[0], s, ty, false)
             return

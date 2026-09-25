@@ -181,7 +181,12 @@ or `match` arm is still available in the others, and a branch that diverges
 
 Owned values are released when their scope ends, in reverse order of
 declaration, together with `defer` statements. That release is the only
-automatic action at scope exit.
+automatic action at scope exit. A temporary (an owned value an expression
+makes without binding it) belongs to the block the expression is in, so a
+view of it lasts as long; the temporaries a branch of an `if`, `match` or
+block expression makes for its value, and an owned `if let` capture or
+pattern binding that value may be a view of, belong to the whole
+expression (**decided**, 118).
 
 ### 5.3 Parameters
 

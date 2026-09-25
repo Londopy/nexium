@@ -1,0 +1,43 @@
+// SPEC 5.2, 5.6: the value of an `if`, `match` or block expression may be a
+// view of a String made in its branch, of an `if let` capture or of an arm's
+// binding; that storage belongs to the whole expression and lives to the end
+// of the enclosing block, so the view never reads released memory.
+enum Word { Owned(String), Nothing }
+
+fn show(s: []u8) {
+    println("{}", .{s})
+}
+
+fn maybe(n: i64) -> ?String {
+    if n > 2 { return format("some {}", .{n}) }
+    return null
+}
+
+fn word(n: i64) -> Word {
+    if n > 2 { return Word.Owned(format("word {}", .{n})) }
+    return Word.Nothing
+}
+
+fn main() {
+    let n: i64 = 3
+    show(if n > 2 { format("big {}", .{n}) } else { String.from("small") })
+    show(match n { 3 => format("three {}", .{n}), _ => String.from("other") })
+    let t: []u8 = if n > 2 { format("bound {}", .{n}) } else { String.from("small") }
+    show(t)
+    show(if n > 1 { if n > 2 { format("nested {}", .{n}) } else { String.from("inner") } } else { String.from("outer") })
+    for i in 0..4 {
+        show(if i % 2 == 0 { format("even {}", .{i}) } else { String.from("odd") })
+    }
+    show(if let s = maybe(n) { s } else { String.from("none") })
+    show(match word(n) { .Owned(s) => s, .Nothing => String.from("nothing") })
+    for m in [3, 6] {
+        let lb: []u8 = blk: {
+            if m > 5 { break :blk format("early {}", .{m}) }
+            format("late {}", .{m})
+        }
+        show(lb)
+    }
+    let o: ?String = null
+    show(if n > 2 { o orelse String.from("default") } else { String.from("no") })
+    show(if comptime @target().2 == 64 { format("comptime {}", .{n}) } else { format("comptime {}", .{n}) })
+}
