@@ -357,6 +357,9 @@ fn needs_space(toks: *List(lexer.Token), ctx: *Line, i: usize) -> bool {
         if a == lexer.Kind.RParen and closes_control_head(toks, ctx, i - 1) { return true }
         // `!` is tight before a parenthesis as before a word: `!(a or b)`
         if a == lexer.Kind.Bang { return false }
+        // so is a unary minus, `x = -(a + b)`; after an operand it subtracts:
+        // `a - (b)`
+        if a == lexer.Kind.Minus and !(i >= 2 and ends_operand(toks, ctx.toks[i - 2]) and !is_kw(&toks[ctx.toks[i - 2]], "step")) { return false }
         // `*(A, B)` is a pointer type, but after an operand `*` multiplies: `x * (y)`
         let sigil = a == lexer.Kind.Star and !(i >= 2 and ends_operand(toks, ctx.toks[i - 2]))
         return !(ends_operand(toks, ctx.toks[i - 1]) or a == lexer.Kind.Question or sigil)

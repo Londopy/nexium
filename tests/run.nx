@@ -681,6 +681,14 @@ fn suite_fmt(e: *Env, failures: *mut List(String)) {
     let nf = nx(e, ["fmt", neg[..]][..])
     let ngot = normalize((fs.read(neg[..]) catch { String.new() })[..])
     if nf.code != 0 or ngot[..] != nwant { failures.append(format("fmt: `!(` spacing (exit {}):\n{}{}", .{nf.code, ngot, nf.stderr})) }
+    // and so is a unary minus; a binary one keeps its spaces
+    let minus = fs.join(e.root[..], "nx-out/cases/minus.nx")
+    let mtext = "fn f(a: i64, b: i64) -> i64 {\n    let c = - (a + b)\n    if a < - (b) { return - (a) }\n    return a - (b) + -(c) * - (a)\n}\n"
+    let mwant = "fn f(a: i64, b: i64) -> i64 {\n    let c = -(a + b)\n    if a < -(b) { return -(a) }\n    return a - (b) + -(c) * -(a)\n}\n"
+    fs.write(minus[..], mtext) catch { }
+    let mf = nx(e, ["fmt", minus[..]][..])
+    let mgot = normalize((fs.read(minus[..]) catch { String.new() })[..])
+    if mf.code != 0 or mgot[..] != mwant { failures.append(format("fmt: unary `-(` spacing (exit {}):\n{}{}", .{mf.code, mgot, mf.stderr})) }
     println("fmt: {} files", .{files.len})
 }
 

@@ -269,7 +269,7 @@ pub fn int_signed(name: []u8) -> bool { return name[0] == 'i' }
 pub fn int_min(name: []u8) -> i128 {
     if !int_signed(name) { return 0 }
     if name == "i128" { return -170141183460469231731687303715884105727 - 1 }
-    return - ((1 as i128) << (int_bits(name) - 1))
+    return -((1 as i128) << (int_bits(name) - 1))
 }
 pub fn int_max(name: []u8) -> i128 {
     if name == "i128" { return 170141183460469231731687303715884105727 }

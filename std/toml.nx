@@ -721,7 +721,7 @@ fn int_value(tok: []u8) -> ?i64 {
     }
     if negative {
         if v == 9223372036854775808 { return -9223372036854775807 - 1 }
-        return - (v as i64)
+        return -(v as i64)
     }
     return v as i64
 }

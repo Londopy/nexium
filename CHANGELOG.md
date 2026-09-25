@@ -141,6 +141,9 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   `now`") in a file that imported it. A std module named like a builtin
   namespace (`time`, `process`, `net`, `thread`) now adds to it: a call
   the module does not have goes to the builtin (SPEC 11).
+- `nx fmt` wrote a unary minus before a parenthesis with a space,
+  `return - (v as i64)`, for the same reason as `! (` below. A unary minus
+  is tight before `(` now; after an operand it still subtracts, `a - (b)`.
 - `nx fmt` wrote a negated parenthesis with a space, `if ! (a or b)`:
   the rule that keeps a call's parenthesis tight let `!` through as if
   it began a spaced expression. `!` is tight before `(` now, as before a

@@ -108,7 +108,7 @@ fn power(s: *Session, c: *mut Cursor) -> Calc!f64 {
 fn unary(s: *Session, c: *mut Cursor) -> Calc!f64 {
     if c.is_op('-') {
         c.pos += 1
-        return - (try unary(s, c))
+        return -(try unary(s, c))
     }
     return atom(s, c)
 }
