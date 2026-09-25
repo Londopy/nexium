@@ -384,7 +384,7 @@ runner 上测量（2026-09-25；七次运行的中位数，超过五秒的取三
 | [statusmith](https://github.com/Londopy/statusmith)，从托盘设置 Discord Rich Presence | 它的 SDK 是一个 Nexium 包：`nx add discord_rpc --git https://github.com/Londopy/statusmith --tag sdk-v0.1.0 --dir nexium` 让任何 Nexium 程序都能设置状态（[说明页](../../discord.md)） |
 | [Point of Origin](https://github.com/Londopy/point-of-origin)，地面本身就是谜题的平台游戏 | 整个构建都是 Nexium：`build.nx` 驱动 Odin 模拟的 DLL，`tools/bindgen.nx` 读取 Odin 的导出并写出 Unity 调用的 C# 绑定，`tools/levels.nx` 把关卡地图编译成游戏加载的 JSON（每一关都由同一个模拟生成，因此必有解），`tools/chapters.nx` 据此写出文档 |
 | [QNI](https://github.com/Londopy/qni)，为 Cal Poly 业余无线电俱乐部（W6BHZ）的 Discord 提供网络提醒、签到帮助和网络控制教程 | 整个程序都是 Nexium：斜杠命令和按钮通过 webhook 应答，没有机器人用户也不要权限；每个请求在读取任何内容之前先检查 Discord 的 Ed25519 签名（借助 nxtls）；网络卡片、网络控制练习模式，以及干事自己表格格式的网络日志；针对一个假的 Discord 做端到端测试 |
-| [nxtls](https://github.com/Londopy/nxtls)，纯 Nexium 的密码学 | SHA-2、HMAC、带 TLS 1.3 标签的 HKDF 和 Ed25519 验证，没有 C 也没有 `unsafe`，用标准公布的向量测试；一个包：`nx add nxtls --git https://github.com/Londopy/nxtls --tag v0.1.0`；TLS 1.3 客户端在计划中 |
+| [nxtls](https://github.com/Londopy/nxtls)，纯 Nexium 的密码学与 TLS 1.3 | SHA-2、HMAC、HKDF、X25519、ChaCha20-Poly1305、签名验证（Ed25519、ECDSA、RSA）和 X.509 证书链，以及其上的 TLS 1.3 客户端，没有 C 也没有 `unsafe`，用标准的向量、Python 的 `cryptography` 和 OpenSSL 测试；QNI 通过它与 Discord 通信；一个包：`nx add nxtls --git https://github.com/Londopy/nxtls --tag v0.4.0` |
 
 在哪里用了 Nexium？开一个 issue 或 pull request，它就会出现在这里。
 

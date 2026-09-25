@@ -392,7 +392,7 @@ C のおよそ 2 倍の時間です。Python は Nexium `fast` の 3〜74 倍の
 | [statusmith](https://github.com/Londopy/statusmith)、タスクトレイからの Discord Rich Presence | その SDK は Nexium のパッケージ：`nx add discord_rpc --git https://github.com/Londopy/statusmith --tag sdk-v0.1.0 --dir nexium` でどの Nexium プログラムからもプレゼンスを設定できる（[解説](../../discord.md)） |
 | [Point of Origin](https://github.com/Londopy/point-of-origin)、地面そのものがパズルのプラットフォーマー | ビルド全体が Nexium：`build.nx` が Odin のシミュレーションの DLL を動かし、`tools/bindgen.nx` が Odin のエクスポートを読んで Unity が呼ぶ C# バインディングを書き、`tools/levels.nx` がレベルのマップをゲームが読む JSON にコンパイルし（どのレベルも同じシミュレーションで育つので解ける）、`tools/chapters.nx` がそこからドキュメントを書く |
 | [QNI](https://github.com/Londopy/qni)、Cal Poly アマチュア無線クラブ（W6BHZ）の Discord のためのネットのリマインダー、チェックインの手助け、ネットコントロールのチュートリアル | プログラム全体が Nexium：スラッシュコマンドとボタンを Webhook で応答し、ボットユーザーも権限もなし。すべてのリクエストは何かを読む前に Discord の Ed25519 署名を検査（nxtls 経由）。ネットのカード、ネットコントロールの練習モード、役員のシート形式のネットログ。偽の Discord を相手にエンドツーエンドでテスト |
-| [nxtls](https://github.com/Londopy/nxtls)、純粋な Nexium の暗号 | SHA-2、HMAC、TLS 1.3 のラベル付き HKDF、Ed25519 検証。C も `unsafe` もなく、規格が公開するベクタでテスト。パッケージ：`nx add nxtls --git https://github.com/Londopy/nxtls --tag v0.1.0`。TLS 1.3 クライアントが計画中 |
+| [nxtls](https://github.com/Londopy/nxtls)、純粋な Nexium の暗号と TLS 1.3 | SHA-2、HMAC、HKDF、X25519、ChaCha20-Poly1305、署名検証（Ed25519、ECDSA、RSA）、X.509 チェーンと、その上の TLS 1.3 クライアント。C も `unsafe` もなく、規格のベクタ、Python の `cryptography`、OpenSSL でテスト。QNI はこれを通して Discord と通信。パッケージ：`nx add nxtls --git https://github.com/Londopy/nxtls --tag v0.4.0` |
 
 どこかで Nexium を使っていますか？ issue か pull request を開けばここに載ります。
 

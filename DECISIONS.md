@@ -986,3 +986,27 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     `nondeterministic`, so compile-time evaluation refuses it; the REPL's
     interpreter does not run it yet, as it cannot write through a slice
     argument.
+120. **HTTPS in std goes through a TLS slot: nxtls fills it first, the
+    platform's TLS second.** `std.http`'s client speaks HTTP over any
+    stream, and one interface turns a TCP connection into an encrypted
+    one: connect with a deadline, send, receive, close, and whether the
+    server ended cleanly (close_notify) or the connection was cut. nxtls,
+    the TLS 1.3 client written in Nexium, fills it first: no C, the same
+    behaviour on every platform, tested byte for byte against Python's
+    `cryptography` and OpenSSL, and reviewed and fixed before this was
+    decided (0.4.0). It speaks TLS 1.3 with ChaCha20-Poly1305 over X25519
+    only, which every large host tried accepts (Discord, GitHub, Google,
+    Cloudflare, 1.1.1.1, 8.8.8.8), and it stays a package that a program
+    hands to the client. The platform's TLS fills the same slot second and
+    is std's own `https`: SChannel, Security.framework, OpenSSL where the
+    system has it. It reaches what nxtls cannot: www.echolink.org, probed
+    on 2026-09-25, answers every TLS 1.3 ClientHello with
+    handshake_failure and on TLS 1.2 takes only
+    ECDHE-ECDSA-AES256-GCM-SHA384 over P-256. Neither alone: the platform
+    alone puts C over three operating systems' APIs under every HTTPS
+    call, with their certificate stores and their errors, and leaves
+    nothing that behaves the same everywhere; nxtls alone would need TLS
+    1.2, constant-time AES-GCM and constant-time P-256 key exchange
+    written in Nexium, weeks of cryptography for the old servers the
+    platform already reaches. This replaces the plan of 1.4's first draft,
+    the platform's TLS alone.

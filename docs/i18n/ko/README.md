@@ -390,7 +390,7 @@ C 대비 배수가 이전 측정보다 4분의 1 늘면 실패합니다.
 | [statusmith](https://github.com/Londopy/statusmith), 트레이에서 켜는 Discord Rich Presence | 그 SDK는 Nexium 패키지: `nx add discord_rpc --git https://github.com/Londopy/statusmith --tag sdk-v0.1.0 --dir nexium`으로 어떤 Nexium 프로그램에서든 프레즌스를 설정([설명](../../discord.md)) |
 | [Point of Origin](https://github.com/Londopy/point-of-origin), 땅 자체가 퍼즐인 플랫포머 | 빌드 전체가 Nexium: `build.nx`가 Odin 시뮬레이션의 DLL을 구동하고, `tools/bindgen.nx`가 Odin 익스포트를 읽어 Unity가 부르는 C# 바인딩을 쓰며, `tools/levels.nx`가 레벨 맵을 게임이 읽는 JSON으로 컴파일하고(모든 레벨이 같은 시뮬레이션으로 자라므로 풀 수 있음), `tools/chapters.nx`가 그로부터 문서를 씀 |
 | [QNI](https://github.com/Londopy/qni), Cal Poly 아마추어 무선 클럽(W6BHZ) Discord를 위한 네트 알림, 체크인 도우미, 네트 컨트롤 튜토리얼 | 프로그램 전체가 Nexium: 슬래시 명령과 버튼을 웹훅으로 응답하며 봇 사용자도 권한도 없음. 모든 요청은 무엇이든 읽기 전에 Discord의 Ed25519 서명을 검사(nxtls로). 네트 카드, 네트 컨트롤 연습 모드, 임원진 시트 형식의 네트 로그. 가짜 Discord를 상대로 처음부터 끝까지 테스트 |
-| [nxtls](https://github.com/Londopy/nxtls), 순수 Nexium 암호 라이브러리 | SHA-2, HMAC, TLS 1.3 레이블을 쓰는 HKDF, Ed25519 검증. C도 `unsafe`도 없이, 표준이 공개한 벡터로 테스트. 패키지: `nx add nxtls --git https://github.com/Londopy/nxtls --tag v0.1.0`. TLS 1.3 클라이언트가 계획 |
+| [nxtls](https://github.com/Londopy/nxtls), 순수 Nexium 암호와 TLS 1.3 | SHA-2, HMAC, HKDF, X25519, ChaCha20-Poly1305, 서명 검증(Ed25519, ECDSA, RSA), X.509 체인과 그 위의 TLS 1.3 클라이언트. C도 `unsafe`도 없이, 표준의 벡터, Python의 `cryptography`, OpenSSL로 테스트. QNI가 이것으로 Discord와 통신. 패키지: `nx add nxtls --git https://github.com/Londopy/nxtls --tag v0.4.0` |
 
 어딘가에서 Nexium을 쓰고 있나요? issue나 pull request를 열면 여기에 실립니다.
 

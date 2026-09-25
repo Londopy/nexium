@@ -584,10 +584,39 @@ own sources, and the language server answers from the checker.
   (`std.hash` done: FNV-1a 64, SipHash-2-4, SHA-256. The secure random key
   `Map`'s move to SipHash and `std.uuid` both need is in: `random.secure`,
   from the operating system's generator.)
-- `std.http` client with redirects, timeouts and streaming bodies; TLS
-  through the platform (SChannel, Security.framework, OpenSSL where the
-  system has it) so `https` works without vendoring a library.
-- Discord in the language, on top of that TLS: `std.websocket`, a client
+- `std.http` client with redirects, timeouts and streaming bodies, and
+  HTTPS through a TLS slot (decision 120). The client speaks HTTP over any
+  stream, and one interface turns a TCP connection into an encrypted one:
+  connect with a deadline, send, receive, close, and whether the server
+  ended cleanly (close_notify) or the connection was cut. Two layers fill
+  the slot, in this order:
+  - **First, nxtls**: the TLS 1.3 client written in Nexium
+    ([Londopy/nxtls](https://github.com/Londopy/nxtls)), the one QNI talks
+    to Discord through. No C, the same on every platform, every byte
+    tested against Python's `cryptography` and OpenSSL's server, and
+    reviewed and fixed on 2026-09-25 (0.4.0: a bounded chain search, a
+    cut connection told from a closed one, one deadline for the whole
+    handshake, IP addresses). It speaks TLS 1.3 with ChaCha20-Poly1305
+    over X25519 and nothing else, which every large host tried accepts:
+    Discord, GitHub, Google, Cloudflare, 1.1.1.1 and 8.8.8.8. It stays a
+    package, which a program hands to the client. Once 1.4.0 is out it
+    takes its randomness from `random.secure` and runs on Windows too; it
+    reads /dev/urandom today.
+  - **Then, the platform's TLS**: SChannel on Windows, Security.framework
+    on macOS, OpenSSL where the system has it, behind the same interface,
+    as std's own `https`, which needs no package. It reaches the servers
+    nxtls cannot. www.echolink.org, probed on 2026-09-25, answers every
+    TLS 1.3 ClientHello with a handshake_failure alert, and on TLS 1.2
+    takes only ECDHE-ECDSA-AES256-GCM-SHA384 over P-256; none of that is
+    in nxtls, and QNI reaches it through stunnel.
+  - **Why both, not one**: the platform alone puts C over three operating
+    systems' APIs under every HTTPS call, each with its own certificate
+    store and its own errors, and leaves nothing that behaves the same
+    everywhere. nxtls alone could not reach a server like echolink
+    without TLS 1.2, constant-time AES-GCM and constant-time P-256 key
+    exchange written in Nexium: weeks of careful cryptography for old
+    servers the platform already reaches.
+- Discord in the language, on top of the TLS slot: `std.websocket`, a client
   with the handshake, frames, ping and close (a Discord bot, and every
   gateway like it, needs one), and the second package from the wild
   beside statusmith's presence SDK, `discord`: the gateway (identify,
@@ -604,6 +633,16 @@ own sources, and the language server answers from the checker.
   when the block ends (no handle can escape), atomics in `sync`.
 - `std.testing`: property-based tests (`check(gen, fn)`) with shrinking,
   the same driver the fuzzers use.
+
+Order, with the collections, `std.hash` and `random.secure` in: the small
+modules first (`std.path`, `std.env`, `std.uuid`, `std.log`, `std.csv`,
+`std.toml`, each a few hours' work); `Map` on SipHash with a random key;
+`std.time`, fixing on the way the known issue of `import std.time`
+hiding `time.now()`; the HTTP client and the TLS slot, with nxtls in it;
+`std.websocket` and `discord`, lifted from QNI's working code; then the
+platform's TLS, `std.text`, `std.process` (whose streams end the known
+stall of a child that writes before it reads its input), `std.thread` and
+`std.testing`.
 
 Exit: `examples/tool.nx`, `service.nx` and the self-hosted compiler import
 nothing they had to write themselves.
@@ -1273,7 +1312,8 @@ decision entry first, an implementation second, and none is promised.
   Nexium is the build language of an Odin and Unity game: the native
   build, the bindings generated from the Odin exports, the levels
   compiled to JSON; QNI, a ham radio club's Discord helper; and nxtls,
-  the cryptography package QNI checks Discord's signatures with). A second kind of user, the one who writes their
+  the cryptography package and TLS 1.3 client QNI checks Discord's
+  signatures with and talks to Discord through). A second kind of user, the one who writes their
   tooling in Nexium and their product in something else, is the one the
   `@cImport`, `nx ship` and `std.process` work serves, and the one to
   ask what is missing.
