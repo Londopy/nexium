@@ -613,7 +613,11 @@ own sources, and the language server answers from the checker.
   stream, and one interface turns a TCP connection into an encrypted one:
   connect with a deadline, send, receive, close, and whether the server
   ended cleanly (close_notify) or the connection was cut. Two layers fill
-  the slot, in this order:
+  the slot, in this order (the client, the slot and the first layer done:
+  `http.Client`, `Streaming` and the trait `http.Transport`, which nxtls
+  fills in a few lines, checked against Discord, Google, example.com and
+  GitHub; nxtls ships that adapter itself once 1.4.0 is out, with its
+  randomness from `random.secure`):
   - **First, nxtls**: the TLS 1.3 client written in Nexium
     ([Londopy/nxtls](https://github.com/Londopy/nxtls)), the one QNI talks
     to Discord through. No C, the same on every platform, every byte
@@ -668,10 +672,10 @@ own sources, and the language server answers from the checker.
 
 Order, with the collections, `std.hash`, `random.secure`, the small modules
 (`std.path`, `std.env`, `std.uuid`, `std.log`, `std.csv`, `std.toml`,
-`std.base64`), `Map` on SipHash and `std.time` already in (and with it the
-known issue of `import std.time` hiding `time.now()` fixed): the HTTP
-client and the TLS slot, with nxtls in it;
-`std.websocket` and `discord`, lifted from QNI's working code; then the
+`std.base64`), `Map` on SipHash, `std.time` (and with it the known issue
+of `import std.time` hiding `time.now()` fixed), and the HTTP client with
+the TLS slot and nxtls in it already in: `std.websocket` and `discord`,
+lifted from QNI's working code; then the
 platform's TLS, `std.text`, `std.process` (whose streams end the known
 stall of a child that writes before it reads its input), `std.thread` and
 `std.testing`.

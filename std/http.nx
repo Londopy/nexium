@@ -7,6 +7,15 @@
 //     println("{} {}", .{r.status, r.body.len})
 //     if let ct = r.header("content-type") { ... }
 //
+//     var client = http.client_with(NxTls, &mut layer)   // a TLS layer, for https://
+//     client.timeout_ms = 10000                   // and timeouts, redirects, limits
+//     var s = try client.open("GET", "https://example.com/big", &headers, "")
+//     while true {                                // the body as it arrives
+//         let piece = (try s.next()) orelse break
+//         ...
+//     }
+//     s.close()
+//
 //     fn hello(req: *http.Request) -> http.Response {
 //         return http.text(200, "hello from Nexium")
 //     }
@@ -15,15 +24,21 @@
 //     var server = try http.Server.bind("127.0.0.1", 8080)
 //     try server.serve(&router)                  // forever, one request at a time
 //
-// The client speaks HTTP/1.1 with `Connection: close`, reads bodies by
-// Content-Length, chunked encoding, or until close, and follows up to five
-// redirects. Plain `http://` only; TLS needs a C library through `@cImport`.
-// The server handles one connection at a time, which is what a tool, a
-// local dashboard or a test needs; threads come later in the roadmap.
+// The client speaks HTTP/1.1 with `Connection: close` over a `Transport`:
+// TCP for `http://`, and for `https://` the TLS layer a program hands its
+// client, the slot of decision 120 (nxtls, the TLS 1.3 client written in
+// Nexium, fills it; the platform's TLS will). It reads a body by
+// Content-Length, chunked encoding, or until the connection ends (refused
+// when a TLS connection was cut rather than closed, as nothing then shows
+// the body is whole), whole or as it arrives, follows up to five
+// redirects, and gives up on a connect or a wait after `timeout_ms`. The
+// server handles one connection at a time, which is what a tool, a local
+// dashboard or a test needs; threads come later in the roadmap.
 
 import std.net
 import std.stream
 import std.fs
+import std.thread
 
 const MAX_REDIRECTS: usize = 5
 const MAX_HEADER_LINES: usize = 200
@@ -33,7 +48,7 @@ const MAX_LINE: usize = 65536
 /// past it); `read_request_max` takes another.
 pub const MAX_BODY: usize = 16777216
 
-pub struct Header {
+pub struct Header derive(Clone) {
     name: String
     value: String
 }
@@ -199,11 +214,29 @@ fn parse_status(line: []u8) -> ?(u16, []u8) {
     return (status, reason)
 }
 
-fn read_headers(r: *mut stream.Reader) -> !List(Header) {
+/// What the parser reads a message from: a `stream.Reader` over a socket
+/// or a file, or a transport's input.
+trait Source {
+    /// The next line without its `\r\n`, `error.TooLarge` past `max`
+    /// bytes; null at the end.
+    fn line(self: *mut Self, max: usize) -> !?String
+    /// Up to `n` bytes; "" at the end.
+    fn some(self: *mut Self, n: usize) -> !String
+    /// Everything up to the end.
+    fn rest(self: *mut Self) -> !String
+}
+
+impl Source for stream.Reader {
+    fn line(self: *mut Self, max: usize) -> !?String { return self.read_line_max(max) }
+    fn some(self: *mut Self, n: usize) -> !String { return self.read(n) }
+    fn rest(self: *mut Self) -> !String { return self.read_all() }
+}
+
+fn read_headers(comptime R: type where R: Source, r: *mut R) -> !List(Header) {
     var headers = List(Header).new()
     var n: usize = 0
     while true {
-        let line = (try r.read_line_max(MAX_LINE)) orelse break
+        let line = (try r.line(MAX_LINE)) orelse break
         if line.len == 0 { break }
         n += 1
         if n > MAX_HEADER_LINES { return error.InvalidInput }
@@ -232,11 +265,19 @@ fn hex_value(s: []u8) -> ?usize {
     return if any { v } else { null }
 }
 
-fn read_exact(r: *mut stream.Reader, n: usize) -> !String {
+/// Whether a Transfer-Encoding ends in chunked (`chunked`, `gzip, chunked`):
+/// then chunks frame the body.
+fn is_chunked(te: []u8) -> bool {
+    var start = te.len
+    while start > 0 and te[start - 1] != ',' { start -= 1 }
+    return te[start..te.len].trim().eq_ignore_case("chunked")
+}
+
+fn read_exact(comptime R: type where R: Source, r: *mut R, n: usize) -> !String {
     // the size came from the peer: the buffer grows as the bytes arrive
     var out = String.with_capacity(if n < 65536 { n } else { 65536 })
     while out.len < n {
-        let chunk = try r.read(n - out.len)
+        let chunk = try r.some(n - out.len)
         if chunk.len == 0 { return error.Truncated }
         out.append(chunk)
     }
@@ -245,24 +286,24 @@ fn read_exact(r: *mut stream.Reader, n: usize) -> !String {
 
 /// The body the headers announce; past `max` bytes (0: no limit) it is
 /// `error.TooLarge`, found before it is read.
-fn read_body(r: *mut stream.Reader, headers: *List(Header), allow_until_close: bool, max: usize) -> !String {
+fn read_body(comptime R: type where R: Source, r: *mut R, headers: *List(Header), allow_until_close: bool, max: usize) -> !String {
     if let te = header_value(headers, "transfer-encoding") {
-        if te.eq_ignore_case("chunked") {
+        if is_chunked(te) {
             var body = String.new()
             while true {
-                let size_line = (try r.read_line_max(MAX_LINE)) orelse return error.Truncated
+                let size_line = (try r.line(MAX_LINE)) orelse return error.Truncated
                 let size = hex_value(size_line) orelse return error.InvalidInput
                 if max > 0 and size > max - body.len { return error.TooLarge }
                 if size == 0 {
                     // trailers, then the blank line
                     while true {
-                        let t = (try r.read_line()) orelse break
+                        let t = (try r.line(MAX_LINE)) orelse break
                         if t.len == 0 { break }
                     }
                     break
                 }
                 body.append(try read_exact(r, size))
-                _ = try r.read_line()
+                _ = try r.line(MAX_LINE)
             }
             return body
         }
@@ -272,78 +313,567 @@ fn read_body(r: *mut stream.Reader, headers: *List(Header), allow_until_close: b
         if max > 0 and n > max { return error.TooLarge }
         return read_exact(r, n)
     }
-    if allow_until_close { return r.read_all() }
+    if allow_until_close { return r.rest() }
     return String.new()
 }
 
 /// Read a full response from a reader over the connection.
 pub fn read_response(r: *mut stream.Reader) -> !Response {
-    let line = (try r.read_line()) orelse return error.Truncated
+    let line = (try r.line(MAX_LINE)) orelse return error.Truncated
     let st = parse_status(line) orelse return error.InvalidInput
     let headers = try read_headers(r)
     let body = if st.0 == 204 or st.0 == 304 { String.new() } else { try read_body(r, &headers, true, 0) }
     return Response{ .status = st.0, .reason = String.from(st.1), .headers = headers, .body = body }
 }
 
+/// The request line and the headers of a request, up to the blank line;
+/// `headers` add to the defaults or replace them.
+fn request_head(method: []u8, url: *Url, headers: *List(Header), body_len: usize) -> String {
+    var h = String.from(method)
+    h.push_byte(' ')
+    h.append(url.path)
+    h.append(" HTTP/1.1\r\n")
+    if header_value(headers, "host") == null {
+        h.append("Host: ")
+        // an IPv6 address goes in brackets
+        if url.host[..].find(":") != null {
+            h.push_byte('[')
+            h.append(url.host)
+            h.push_byte(']')
+        } else {
+            h.append(url.host)
+        }
+        let usual: u16 = if url.scheme[..] == "https" { 443 } else { 80 }
+        if url.port != usual { h.append(format(":{}", .{url.port})) }
+        h.append("\r\n")
+    }
+    if header_value(headers, "user-agent") == null { h.append("User-Agent: nexium-http/0.4\r\n") }
+    if header_value(headers, "accept") == null { h.append("Accept: */*\r\n") }
+    h.append("Connection: close\r\n")
+    let sends_body = body_len > 0 or method == "POST" or method == "PUT" or method == "PATCH"
+    if sends_body and header_value(headers, "content-length") == null { h.append(format("Content-Length: {}\r\n", .{body_len})) }
+    for x in headers {
+        h.append(x.name)
+        h.append(": ")
+        h.append(x.value)
+        h.append("\r\n")
+    }
+    h.append("\r\n")
+    return h
+}
+
 /// Write a request; `headers` may add or override the defaults.
 pub fn send_request(w: *mut stream.Writer, method: []u8, url: *Url, headers: *List(Header), body: []u8) -> !void {
-    try w.write(method)
-    try w.write(" ")
-    try w.write(url.path)
-    try w.write(" HTTP/1.1\r\nHost: ")
-    try w.write(url.host)
-    if url.port != 80 { try w.write(format(":{}", .{url.port})) }
-    try w.write("\r\n")
-    if header_value(headers, "user-agent") == null { try w.write("User-Agent: nexium-http/0.3\r\n") }
-    if header_value(headers, "accept") == null { try w.write("Accept: */*\r\n") }
-    try w.write("Connection: close\r\n")
-    if body.len > 0 or method == "POST" or method == "PUT" { try w.write(format("Content-Length: {}\r\n", .{body.len})) }
-    for h in headers {
-        try w.write(h.name)
-        try w.write(": ")
-        try w.write(h.value)
-        try w.write("\r\n")
-    }
-    try w.write("\r\n")
+    try w.write(request_head(method, url, headers, body.len)[..])
     try w.write(body)
     return w.flush()
 }
 
-// ------------------------------------------------------------------ client
+// ------------------------------------------------------------------ transports
 
-fn one_request(method: []u8, url: *Url, headers: *List(Header), body: []u8, timeout_ms: i64) -> !Response {
-    var conn = try net.TcpStream.connect_timeout(url.host, url.port, timeout_ms)
-    conn.set_timeout(timeout_ms)
-    var w = conn.writer()
-    send_request(&mut w, method, url, headers, body) catch |e| {
-        conn.close()
-        return e
-    }
-    var r = conn.reader()
-    let resp = read_response(&mut r)
-    conn.close()
-    return resp
+/// A connection a request travels over, and the TLS slot of decision 120.
+/// `Plain` is TCP, for `http://`. A TLS layer implements it for
+/// `https://` and a program hands it to a client
+/// (`http.client_with(NxTls, &mut layer)`): nxtls, the TLS 1.3 client
+/// written in Nexium, today, and the platform's TLS later. nxtls fills it
+/// in a few lines:
+///
+///     struct NxTls { roots: x509.Store, conn: tls.Conn }
+///
+///     impl http.Transport for NxTls {
+///         fn connect(self: *mut Self, host: []u8, port: u16, timeout_ms: i64) -> !void {
+///             self.conn.close()
+///             self.conn = tls.connect(host, port, &self.roots, time.now(), timeout_ms)
+///             if !self.conn.is_open() { return error.ConnectionRefused }
+///         }
+///         fn send(self: *mut Self, data: []u8) -> !void { return self.conn.send(data) }
+///         fn recv(self: *mut Self) -> !String { return self.conn.recv() }
+///         fn truncated(self: *Self) -> bool { return self.conn.truncated() }
+///         fn close(self: *mut Self) { self.conn.close() }
+///     }
+pub trait Transport {
+    /// Connects to `host` at `port`, closing any connection still open,
+    /// within `timeout_ms` (0: no limit); each wait for data afterwards
+    /// takes at most `timeout_ms` too, and is `error.Timeout` then.
+    fn connect(self: *mut Self, host: []u8, port: u16, timeout_ms: i64) -> !void
+    /// Sends all of `data`.
+    fn send(self: *mut Self, data: []u8) -> !void
+    /// At least one byte, or "" at the end of the connection.
+    fn recv(self: *mut Self) -> !String
+    /// Whether the connection ended without TLS's close_notify, so that
+    /// what came may be cut short. Plain TCP cannot tell, and says false.
+    fn truncated(self: *Self) -> bool
+    /// Closes the connection; a TLS layer says close_notify first.
+    fn close(self: *mut Self)
 }
 
-/// Perform a request, following redirects. `error.InvalidInput` for a URL
-/// this client cannot speak (including `https://`).
-pub fn request(method: []u8, url_text: []u8, headers: *List(Header), body: []u8) -> !Response {
-    var url = parse_url(url_text) orelse return error.InvalidInput
-    if url.scheme != "http" { return error.InvalidInput }
-    var hops: usize = 0
-    while true {
-        let resp = try one_request(method, &url, headers, body, 15000)
-        let is_redirect = resp.status == 301 or resp.status == 302 or resp.status == 303 or resp.status == 307 or resp.status == 308
-        if !is_redirect or hops >= MAX_REDIRECTS { return resp }
-        let loc = resp.header("location") orelse return resp
-        hops += 1
-        if loc.starts_with("http://") or loc.starts_with("https://") {
-            url = parse_url(loc) orelse return error.InvalidInput
-            if url.scheme != "http" { return error.InvalidInput }
-        } else {
-            url.path = String.from(loc)
+/// TCP, the transport of `http://`.
+pub struct Plain {
+    conn: net.TcpStream
+}
+
+impl Plain {
+    pub fn new() -> Plain {
+        var c = net.TcpStream.from_socket(-1)
+        c.open = false
+        return Plain{ .conn = c }
+    }
+}
+
+impl Transport for Plain {
+    fn connect(self: *mut Self, host: []u8, port: u16, timeout_ms: i64) -> !void {
+        self.conn.close()
+        self.conn = try net.TcpStream.connect_timeout(host, port, timeout_ms)
+        self.conn.set_timeout(timeout_ms)
+    }
+
+    fn send(self: *mut Self, data: []u8) -> !void {
+        return self.conn.send(data)
+    }
+
+    fn recv(self: *mut Self) -> !String {
+        return self.conn.recv(65536)
+    }
+
+    fn truncated(self: *Self) -> bool {
+        _ = self
+        return false
+    }
+
+    fn close(self: *mut Self) {
+        self.conn.close()
+    }
+}
+
+/// A request's input, buffered for the parser: from `Plain`, or from the
+/// client's TLS layer, a `T`. Calls go straight to one or the other (no
+/// `dyn`), so a request has the effects of the transports it can use and
+/// no others: a plain client's stay `allocates blocks panics`.
+struct Input(T) {
+    plain: ?*mut Plain
+    tls: ?*mut T
+    buf: String
+    pos: usize
+    eof: bool
+}
+
+impl(T) Input(T) {
+    fn send(self: *mut Self, data: []u8) -> !void {
+        if let p = self.plain { return p.send(data) }
+        let t = self.tls orelse return error.Closed
+        return t.send(data)
+    }
+
+    fn recv(self: *mut Self) -> !String {
+        if let p = self.plain { return p.recv() }
+        let t = self.tls orelse return String.new()
+        return t.recv()
+    }
+
+    fn truncated(self: *Self) -> bool {
+        if let p = self.plain { return p.truncated() }
+        let t = self.tls orelse return false
+        return t.truncated()
+    }
+
+    fn close(self: *mut Self) {
+        if let p = self.plain { p.close() }
+        if let t = self.tls { t.close() }
+    }
+
+    // drop what was read and take the next piece; false at the end
+    fn fill(self: *mut Self) -> !bool {
+        if self.eof { return false }
+        if self.pos > 0 {
+            let left = String.from(self.buf[self.pos..self.buf.len])
+            self.buf = left
+            self.pos = 0
+        }
+        let got = try self.recv()
+        if got.len == 0 {
+            self.eof = true
+            return false
+        }
+        self.buf.append(got)
+        return true
+    }
+}
+
+impl(T) Source for Input(T) {
+    fn line(self: *mut Self, max: usize) -> !?String {
+        while true {
+            var i = self.pos
+            while i < self.buf.len and self.buf[i] != '\n' { i += 1 }
+            if max > 0 and i - self.pos > max { return error.TooLarge }
+            if i < self.buf.len {
+                var end = i
+                if end > self.pos and self.buf[end - 1] == '\r' { end -= 1 }
+                let line = String.from(self.buf[self.pos..end])
+                self.pos = i + 1
+                return line
+            }
+            if !(try self.fill()) {
+                if self.pos < self.buf.len {
+                    let line = String.from(self.buf[self.pos..self.buf.len])
+                    self.pos = self.buf.len
+                    return line
+                }
+                return null
+            }
         }
     }
+
+    fn some(self: *mut Self, n: usize) -> !String {
+        if self.pos >= self.buf.len {
+            if !(try self.fill()) { return String.new() }
+        }
+        var end = self.pos + n
+        if end > self.buf.len { end = self.buf.len }
+        let out = String.from(self.buf[self.pos..end])
+        self.pos = end
+        return out
+    }
+
+    fn rest(self: *mut Self) -> !String {
+        var out = String.from(self.buf[self.pos..self.buf.len])
+        self.pos = self.buf.len
+        while true {
+            if !(try self.fill()) { break }
+            out.append(self.buf[self.pos..self.buf.len])
+            self.pos = self.buf.len
+        }
+        // nothing frames what came: a TLS connection cut rather than closed
+        // may have cut it short
+        if self.truncated() { return error.Truncated }
+        return out
+    }
+}
+
+// ------------------------------------------------------------------ client
+
+const FRAME_NONE: u8 = 0
+const FRAME_LENGTH: u8 = 1
+const FRAME_CHUNKED: u8 = 2
+const FRAME_CLOSE: u8 = 3
+const PIECE: usize = 65536
+
+/// A response read as it arrives, from `Client.open`: the status and the
+/// headers, then the body in pieces (`next`) or whole (`read_all`). It
+/// holds the client's connection until `close`.
+pub struct Streaming(T){
+    status: u16
+    reason: String
+    headers: List(Header)
+    input: Input(T)
+    /// how the body is framed: FRAME_NONE, _LENGTH, _CHUNKED or _CLOSE
+    frame: u8
+    /// what is left of the body (by length) or of the chunk
+    left: usize
+    /// read so far, against `max` (0: no limit)
+    total: usize
+    max: usize
+    /// a chunk's data ended and its line break is still to read
+    chunk_end: bool
+    done: bool
+}
+
+impl(T) Streaming(T) {
+    /// A header value, case-insensitive; null when absent.
+    pub fn header(self: *Self, name: []u8) -> ?[]u8 {
+        return header_value(&self.headers, name)
+    }
+
+    pub fn ok(self: *Self) -> bool {
+        return self.status >= 200 and self.status < 300
+    }
+
+    fn counted(self: *mut Self, n: usize) -> !void {
+        self.total += n
+        if self.max > 0 and self.total > self.max { return error.TooLarge }
+    }
+
+    /// The next piece of the body; null once all of it has come.
+    /// `error.Truncated` when the connection ends before the body does.
+    pub fn next(self: *mut Self) -> !?String {
+        if self.done { return null }
+        if self.frame == FRAME_NONE {
+            self.done = true
+            return null
+        }
+        if self.frame == FRAME_LENGTH {
+            if self.left == 0 {
+                self.done = true
+                return null
+            }
+            let got = try self.input.some(if self.left < PIECE { self.left } else { PIECE })
+            if got.len == 0 { return error.Truncated }
+            self.left -= got.len
+            return got
+        }
+        if self.frame == FRAME_CHUNKED {
+            if self.left == 0 {
+                if self.chunk_end {
+                    _ = (try self.input.line(MAX_LINE)) orelse return error.Truncated
+                    self.chunk_end = false
+                }
+                let size_line = (try self.input.line(MAX_LINE)) orelse return error.Truncated
+                let size = hex_value(size_line) orelse return error.InvalidInput
+                if size == 0 {
+                    // trailers, then the blank line
+                    while true {
+                        let t = (try self.input.line(MAX_LINE)) orelse break
+                        if t.len == 0 { break }
+                    }
+                    self.done = true
+                    return null
+                }
+                if self.max > 0 and size > self.max - self.total { return error.TooLarge }
+                self.left = size
+            }
+            let got = try self.input.some(if self.left < PIECE { self.left } else { PIECE })
+            if got.len == 0 { return error.Truncated }
+            self.left -= got.len
+            if self.left == 0 { self.chunk_end = true }
+            try self.counted(got.len)
+            return got
+        }
+        let got = try self.input.some(PIECE)
+        if got.len == 0 {
+            self.done = true
+            // nothing frames this body: a TLS connection cut rather than
+            // closed may have cut it short
+            if self.input.truncated() { return error.Truncated }
+            return null
+        }
+        try self.counted(got.len)
+        return got
+    }
+
+    /// The rest of the body at once.
+    pub fn read_all(self: *mut Self) -> !String {
+        var body = String.new()
+        while true {
+            let piece = (try self.next()) orelse break
+            body.append(piece)
+        }
+        return body
+    }
+
+    /// Closes the connection.
+    pub fn close(self: *mut Self) {
+        self.input.close()
+        self.done = true
+    }
+}
+
+/// A response up to its body: what `begin` reads, owned.
+struct Head {
+    status: u16
+    reason: String
+    headers: List(Header)
+    frame: u8
+    left: usize
+}
+
+/// Sends a request, whole, over a connected input and reads the response
+/// up to its body. It takes nothing borrowed but the input, so the input
+/// holds no view but its transport.
+fn begin(comptime T: type, input: *mut Input(T), own req: String, is_head: bool, max: usize) -> !Head {
+    try input.send(req[..])
+    var head = Head{ .status = 0, .reason = String.new(), .headers = List(Header).new(), .frame = FRAME_CLOSE, .left = 0 }
+    while true {
+        let line = (try input.line(MAX_LINE)) orelse return error.Truncated
+        let st = parse_status(line) orelse return error.InvalidInput
+        head.status = st.0
+        head.reason = String.from(st.1)
+        head.headers = try read_headers(input)
+        // an interim answer (103 Early Hints), then the real one
+        if head.status < 100 or head.status >= 200 or head.status == 101 { break }
+    }
+    if let te = header_value(&head.headers, "transfer-encoding") {
+        if is_chunked(te) { head.frame = FRAME_CHUNKED }
+    }
+    if head.frame == FRAME_CLOSE {
+        if let cl = header_value(&head.headers, "content-length") {
+            let n = cl.parse_int(usize) catch return error.InvalidInput
+            if max > 0 and n > max { return error.TooLarge }
+            head.frame = FRAME_LENGTH
+            head.left = n
+        }
+    }
+    if is_head or head.status == 204 or head.status == 304 or head.status < 200 { head.frame = FRAME_NONE }
+    return head
+}
+
+/// Where a redirect's `Location` leads from `base`: an absolute URL, one
+/// without its scheme (`//host/path`), a path, or a path relative to
+/// base's directory; null for anything that is not http or https.
+fn follow(base: *Url, loc0: []u8) -> ?Url {
+    var loc = loc0
+    if let hash = loc.find("#") { loc = loc[0..hash] }
+    // a scheme (RFC 3986: a letter, then letters, digits, `+-.`, then `:`)
+    // makes it absolute, and one other than http or https is refused
+    var k: usize = 0
+    while k < loc.len and ((loc[k] >= 'a' and loc[k] <= 'z') or (loc[k] >= 'A' and loc[k] <= 'Z') or (k > 0 and ((loc[k] >= '0' and loc[k] <= '9') or loc[k] == '+' or loc[k] == '-' or loc[k] == '.'))) { k += 1 }
+    if k > 0 and k < loc.len and loc[k] == ':' { return parse_url(loc) }
+    if loc.starts_with("//") { return parse_url(format("{}:{}", .{base.scheme, loc})[..]) }
+    var path = String.new()
+    if loc.starts_with("/") {
+        path.append(loc)
+    } else {
+        var dir = base.path[..]
+        if let q = dir.find("?") { dir = dir[0..q] }
+        var cut = dir.len
+        while cut > 0 and dir[cut - 1] != '/' { cut -= 1 }
+        path.append(dir[0..cut])
+        path.append(loc)
+    }
+    if path.len == 0 { path.append("/") }
+    return Url{ .scheme = base.scheme.clone(), .host = base.host.clone(), .port = base.port, .path = path }
+}
+
+/// `headers` without those named, case-insensitive.
+fn dropping(headers: *List(Header), names: [][]u8) -> List(Header) {
+    var out = List(Header).new()
+    for h in headers.* {
+        var keep = true
+        for n in names {
+            if h.name.eq_ignore_case(n) { keep = false }
+        }
+        if keep { out.append(Header{ .name = h.name.clone(), .value = h.value.clone() }) }
+    }
+    return out
+}
+
+/// Makes requests: `http://` over TCP, `https://` over the TLS layer a
+/// program gives it (the slot of decision 120). `client()` makes one for
+/// `http://` only, `client_with` one with a TLS layer:
+///
+///     var client = http.client_with(NxTls, &mut layer)   // nxtls's
+///     client.timeout_ms = 10000
+///     let r = try client.get("https://example.com/")
+///
+/// A client calls its transports directly, so its requests have their
+/// effects: a plain client's are `allocates blocks panics`, and one with
+/// a TLS layer adds the layer's.
+pub struct Client(T){
+    /// ms a connect, and each wait for data, may take; 0 waits as long as
+    /// the system does
+    timeout_ms: i64 = 15000
+    /// redirects followed at most; past them the redirect is the answer
+    max_redirects: usize = 5
+    /// the largest body read, in bytes (`error.TooLarge` past it); 0: no
+    /// limit
+    max_body: usize = 0
+    /// headers every request carries; a request's own replace them
+    headers: List(Header)
+    /// the TLS layer `https://` goes over; without one it is
+    /// `error.Unsupported`
+    tls: ?*mut T = null
+    plain: Plain
+}
+
+/// A client for `http://`; `https://` is `error.Unsupported`.
+pub fn client() -> Client(Plain) {
+    return Client(Plain){ .headers = List(Header).new(), .plain = Plain.new() }
+}
+
+/// A client whose `https://` goes over `tls`, a TLS layer: a `Transport`,
+/// such as nxtls's.
+pub fn client_with(comptime T: type where T: Transport, tls: *mut T) -> Client(T) {
+    return Client(T){ .headers = List(Header).new(), .tls = tls, .plain = Plain.new() }
+}
+
+impl(T) Client(T) {
+    /// Sends a request and reads the response's status and headers,
+    /// following redirects: a 303, and a 301 or 302 to a POST, turn into a
+    /// GET without the body, and a redirect to another host goes without
+    /// the Authorization and Cookie headers. The body is read from the
+    /// `Streaming` as it arrives; close it when done.
+    pub fn open(self: *mut Self, method: []u8, url_text: []u8, headers: *List(Header), body: []u8) -> !Streaming(T) {
+        var url = parse_url(url_text) orelse return error.InvalidInput
+        var verb = String.from(method)
+        var payload = String.from(body)
+        // the client's headers, unless the request has its own
+        var hs = List(Header).new()
+        for h in self.headers {
+            if header_value(headers, h.name[..]) == null { hs.append(Header{ .name = h.name.clone(), .value = h.value.clone() }) }
+        }
+        for h in headers.* { hs.append(Header{ .name = h.name.clone(), .value = h.value.clone() }) }
+        var hops: usize = 0
+        while true {
+            var input = Input(T){ .plain = null, .tls = null, .buf = String.new(), .pos = 0, .eof = false }
+            if url.scheme[..] == "https" {
+                let t = self.tls orelse return error.Unsupported
+                try t.connect(url.host[..], url.port, self.timeout_ms)
+                input.tls = t
+            } else {
+                try self.plain.connect(url.host[..], url.port, self.timeout_ms)
+                input.plain = &mut self.plain
+            }
+            var req = request_head(verb[..], &url, &hs, payload.len)
+            req.append(payload)
+            let head = begin(T, &mut input, req, verb[..] == "HEAD", self.max_body) catch |e| {
+                input.close()
+                return e
+            }
+            let redirect = head.status == 301 or head.status == 302 or head.status == 303 or head.status == 307 or head.status == 308
+            var next: ?Url = null
+            if redirect and hops < self.max_redirects {
+                if let loc = header_value(&head.headers, "location") { next = follow(&url, loc) }
+            }
+            if next == null {
+                return Streaming(T){
+                    .status = head.status, .reason = head.reason.clone(), .headers = head.headers.clone(),
+                    .input = input, .frame = head.frame, .left = head.left,
+                    .total = 0, .max = self.max_body, .chunk_end = false, .done = false,
+                }
+            }
+            input.close()
+            hops += 1
+            let to = next.?
+            if to.host[..] != url.host[..] or to.port != url.port {
+                hs = dropping(&hs, ["authorization", "cookie", "proxy-authorization"][..])
+            }
+            if head.status == 303 or ((head.status == 301 or head.status == 302) and verb[..] == "POST") {
+                verb = String.from("GET")
+                payload = String.new()
+                hs = dropping(&hs, ["content-type", "content-length"][..])
+            }
+            url = to
+        }
+    }
+
+    /// A request, its response read whole, following redirects.
+    pub fn send(self: *mut Self, method: []u8, url: []u8, headers: *List(Header), body: []u8) -> !Response {
+        var s = try self.open(method, url, headers, body)
+        let whole = s.read_all() catch |e| {
+            s.close()
+            return e
+        }
+        s.close()
+        return Response{ .status = s.status, .reason = s.reason.clone(), .headers = s.headers.clone(), .body = whole }
+    }
+
+    pub fn get(self: *mut Self, url: []u8) -> !Response {
+        let none = List(Header).new()
+        return self.send("GET", url, &none, "")
+    }
+
+    pub fn post(self: *mut Self, url: []u8, content_type: []u8, body: []u8) -> !Response {
+        var headers = List(Header).new()
+        headers.append(Header{ .name = String.from("Content-Type"), .value = String.from(content_type) })
+        return self.send("POST", url, &headers, body)
+    }
+}
+
+/// Perform a request with a plain `client()`, following redirects.
+/// `error.InvalidInput` for a URL that is not http or https,
+/// `error.Unsupported` for `https://`, which needs `client_with` and a TLS
+/// layer.
+pub fn request(method: []u8, url_text: []u8, headers: *List(Header), body: []u8) -> !Response {
+    var c = client()
+    return c.send(method, url_text, headers, body)
 }
 
 pub fn get(url: []u8) -> !Response {
@@ -666,6 +1196,226 @@ test "a peer's sizes are bounded before anything is allocated" {
     // a body within the limit still reads
     let ok = (try request_from("POST /x HTTP/1.1\r\nContent-Length: 5\r\n\r\nhello")).?
     expect_eq(ok.body, "hello")
+}
+
+/// A transport that answers from a script: each connect takes the next
+/// canned reply, and what was sent over each connection, and where to,
+/// is kept.
+struct Scripted {
+    replies: List(String)
+    next: usize
+    reply: String
+    at: usize
+    /// the most bytes a recv gives, to split the reply anywhere
+    step: usize
+    /// the connection ends without close_notify
+    cut: bool
+    sent: List(String)
+    hosts: List(String)
+}
+
+fn scripted(replies: [][]u8, step: usize) -> Scripted {
+    var r = List(String).new()
+    for x in replies { r.append(String.from(x)) }
+    return Scripted{ .replies = r, .next = 0, .reply = String.new(), .at = 0, .step = step, .cut = false, .sent = List(String).new(), .hosts = List(String).new() }
+}
+
+impl Transport for Scripted {
+    fn connect(self: *mut Self, host: []u8, port: u16, timeout_ms: i64) -> !void {
+        _ = timeout_ms
+        if self.next >= self.replies.len { return error.ConnectionRefused }
+        self.reply = self.replies[self.next].clone()
+        self.next += 1
+        self.at = 0
+        self.hosts.append(format("{}:{}", .{host, port}))
+        self.sent.append(String.new())
+    }
+
+    fn send(self: *mut Self, data: []u8) -> !void {
+        self.sent[self.sent.len - 1].append(data)
+    }
+
+    fn recv(self: *mut Self) -> !String {
+        var end = self.at + self.step
+        if end > self.reply.len { end = self.reply.len }
+        let out = String.from(self.reply[self.at..end])
+        self.at = end
+        return out
+    }
+
+    fn truncated(self: *Self) -> bool {
+        return self.cut
+    }
+
+    fn close(self: *mut Self) {
+        self.at = self.reply.len
+    }
+}
+
+// the error a client's GET fails with, as its name
+fn client_error(c: *mut Client(Plain), url: []u8) -> []u8 {
+    _ = c.get(url) catch |e| { return @errorName(e) }
+    return "none"
+}
+
+// the error a GET through a scripted TLS layer fails with, as its name
+fn get_error(tls: *mut Scripted, max_body: usize) -> []u8 {
+    var c = client_with(Scripted, tls)
+    c.max_body = max_body
+    _ = c.get("https://example.com/") catch |e| { return @errorName(e) }
+    return "none"
+}
+
+test "https:// goes through the TLS slot" {
+    var tls = scripted(["HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello"][..], 3)
+    var c = client_with(Scripted, &mut tls)
+    let r = try c.get("https://example.com/a?b=1")
+    expect_eq(r.status, 200)
+    expect_eq(r.body, "hello")
+    expect_eq(tls.hosts[0], "example.com:443")
+    expect(tls.sent[0][..].starts_with("GET /a?b=1 HTTP/1.1\r\nHost: example.com\r\n"))
+    // another port is named in Host; without a TLS layer, https:// is refused
+    var tls2 = scripted(["HTTP/1.1 204 No Content\r\n\r\n"][..], 64)
+    var c2 = client_with(Scripted, &mut tls2)
+    expect_eq((try c2.get("https://[::1]:8443/")).status, 204)
+    expect(tls2.sent[0][..].starts_with("GET / HTTP/1.1\r\nHost: [::1]:8443\r\n"))
+    var none = client()
+    expect_eq(client_error(&mut none, "https://example.com/"), "Unsupported")
+    expect_eq(client_error(&mut none, "ftp://example.com/"), "InvalidInput")
+}
+
+test "a body read as it arrives" {
+    // a byte at a time: chunk sizes, data and line breaks all split
+    var tls = scripted(["HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n6;x=1\r\n world\r\n0\r\nX-Trailer: 1\r\n\r\n"][..], 1)
+    var c = client_with(Scripted, &mut tls)
+    let none = List(Header).new()
+    var s = try c.open("GET", "https://example.com/stream", &none, "")
+    expect(s.ok())
+    var body = String.new()
+    var pieces: usize = 0
+    while true {
+        let piece = (try s.next()) orelse break
+        body.append(piece)
+        pieces += 1
+    }
+    s.close()
+    expect_eq(body, "hello world")
+    expect(pieces > 2)
+    expect(is_chunked("gzip, chunked") and is_chunked(" Chunked ") and !is_chunked("chunked, gzip"))
+}
+
+test "redirects" {
+    var tls = scripted([
+        "HTTP/1.1 302 Found\r\nLocation: next\r\nContent-Length: 0\r\n\r\n",
+        "HTTP/1.1 303 See Other\r\nLocation: https://other.example/done#top\r\n\r\n",
+        "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok",
+    ][..], 7)
+    var c = client_with(Scripted, &mut tls)
+    var hs = List(Header).new()
+    hs.append(Header{ .name = String.from("Authorization"), .value = String.from("Bot secret") })
+    hs.append(Header{ .name = String.from("Content-Type"), .value = String.from("application/json") })
+    let r = try c.send("POST", "https://example.com/api/start", &hs, "{}")
+    expect_eq(r.body, "ok")
+    expect_eq(tls.hosts[1], "example.com:443")
+    expect_eq(tls.hosts[2], "other.example:443")
+    // the POST, then after its 302 a GET without the body; the token goes
+    // to the same host and not to another
+    expect(tls.sent[0][..].starts_with("POST /api/start HTTP/1.1\r\n"))
+    expect(tls.sent[0][..].ends_with("\r\n\r\n{}"))
+    expect(tls.sent[1][..].starts_with("GET /api/next HTTP/1.1\r\n"))
+    expect(tls.sent[1][..].find("Authorization: Bot secret") != null)
+    expect(tls.sent[1][..].find("Content-Type") == null)
+    expect(tls.sent[2][..].starts_with("GET /done HTTP/1.1\r\nHost: other.example\r\n"))
+    expect(tls.sent[2][..].find("Authorization") == null)
+    // past the limit, the redirect is the answer
+    var loop = scripted(["HTTP/1.1 301 Moved\r\nLocation: /a\r\n\r\n", "HTTP/1.1 301 Moved\r\nLocation: /b\r\n\r\n"][..], 64)
+    var c2 = client_with(Scripted, &mut loop)
+    c2.max_redirects = 1
+    let last = try c2.get("https://example.com/")
+    expect_eq(last.status, 301)
+    expect_eq(last.header("location").?, "/b")
+    let u = parse_url("http://h:8080/a/b/c?q=1").?
+    expect_eq(follow(&u, "d").?.path, "/a/b/d")
+    expect_eq(follow(&u, "/x?y").?.path, "/x?y")
+    expect_eq(follow(&u, "//g/p").?.host, "g")
+    expect_eq(follow(&u, "//g/p").?.port, 80)
+    expect(follow(&u, "ftp://x/") == null)
+}
+
+test "bodies that end early, and limits" {
+    // cut inside a body its length announced
+    var short = scripted(["HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nhello"][..], 64)
+    expect_eq(get_error(&mut short, 0), "Truncated")
+    // a body framed by the end of the connection: whole when TLS closed it,
+    // refused when the connection was cut
+    var closed = scripted(["HTTP/1.1 200 OK\r\n\r\nall of it"][..], 4)
+    var c = client_with(Scripted, &mut closed)
+    expect_eq((try c.get("https://example.com/")).body, "all of it")
+    var cut = scripted(["HTTP/1.1 200 OK\r\n\r\nall of it?"][..], 4)
+    cut.cut = true
+    expect_eq(get_error(&mut cut, 0), "Truncated")
+    // bodies past max_body, announced or not
+    var long = scripted(["HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello"][..], 64)
+    expect_eq(get_error(&mut long, 4), "TooLarge")
+    var chunks = scripted(["HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n3\r\ndef\r\n0\r\n\r\n"][..], 64)
+    expect_eq(get_error(&mut chunks, 4), "TooLarge")
+    var open_ended = scripted(["HTTP/1.1 200 OK\r\n\r\nabcdef"][..], 64)
+    expect_eq(get_error(&mut open_ended, 4), "TooLarge")
+    // HEAD has no body, whatever the length says; an interim 103 is skipped
+    var head = scripted(["HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n"][..], 64)
+    var c2 = client_with(Scripted, &mut head)
+    let none = List(Header).new()
+    let h = try c2.send("HEAD", "https://example.com/", &none, "")
+    expect_eq(h.status, 200)
+    expect_eq(h.body.len, 0)
+    var hints = scripted(["HTTP/1.1 103 Early Hints\r\nLink: </a.css>\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nyes"][..], 5)
+    var c3 = client_with(Scripted, &mut hints)
+    expect_eq((try c3.get("https://example.com/")).body, "yes")
+}
+
+test "the plain transport over loopback" {
+    var router = Router.new()
+    router.get("/hello", hello)
+    var server = try Server.bind("127.0.0.1", 0)
+    let port = try server.port()
+    var p = Plain.new()
+    try p.connect("127.0.0.1", port, 5000)
+    try p.send("GET /hello?name=plain HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+    try server.serve_one(&router, 5000)
+    var input = Input(Plain){ .plain = &mut p, .tls = null, .buf = String.new(), .pos = 0, .eof = false }
+    let line = (try input.line(MAX_LINE)).?
+    expect(line[..].starts_with("HTTP/1.1 200"))
+    let hs = try read_headers(&mut input)
+    expect_eq(try read_body(&mut input, &hs, true, 0), "hello plain")
+    p.close()
+    server.close()
+}
+
+/// A server that answers one request, on a thread of its own.
+struct Serving {
+    server: Server
+    router: Router
+}
+
+fn serve_one_request(s: *mut Serving) -> bool {
+    let served = s.server.serve_one(&s.router, 10000)
+    s.server.close()
+    _ = served catch { return false }
+    return true
+}
+
+test "a client and a server on two threads" {
+    var router = Router.new()
+    router.get("/hello", hello)
+    let server = try Server.bind("127.0.0.1", 0)
+    let port = try server.port()
+    var t = thread.spawn(Serving, bool, serve_one_request, Serving{ .server = server, .router = router })
+    var c = client()
+    c.timeout_ms = 10000
+    let r = try c.get(format("http://127.0.0.1:{}/hello?name=threads", .{port})[..])
+    expect(t.join())
+    expect_eq(r.status, 200)
+    expect_eq(r.body, "hello threads")
 }
 
 test "a socket reader keeps the stream's timeout" {

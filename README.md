@@ -466,7 +466,8 @@ people stop supplementing, is under way: collections (`std.sort`,
 the environment and config folders, UUIDs, logging, CSV, TOML and base64
 are in, twenty-eight modules in all; `Map` is hashed against flooding and
 keeps its keys in the order they were put; `std.time` reads time zones from
-the platform's database; next are the HTTP client with TLS and websockets. What Nexium is not yet, and where each is answered, is
+the platform's database, and `std.http`'s client takes HTTPS through a TLS
+layer, which nxtls fills; next are websockets and a Discord package. What Nexium is not yet, and where each is answered, is
 [a section of the roadmap](ROADMAP.md#what-10-is-not-yet): the benchmarks are four
 programs ([Speed](#speed)), and the ecosystem is one maintainer and four
 projects outside the tree ([above](#in-the-wild)).

@@ -117,8 +117,8 @@ impl TcpStream {
         return net.local(self.sock)
     }
 
-    /// A buffered reader over the socket (lines, chunks); does not own it.
-    /// A buffered reader over the socket, with its receive timeout.
+    /// A buffered reader over the socket (lines, chunks), with its receive
+    /// timeout; it does not own the socket.
     pub fn reader(self: *Self) -> stream.Reader {
         return stream.Reader.from_socket_timeout(self.sock, self.timeout_ms)
     }

@@ -112,6 +112,28 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   fraction on the last).
 - `time.zone_rules(name) -> !string`, the call `std.time` gets a zone from
   on Windows: ICU's periods of the zone as text. Elsewhere it is `NotFound`.
+- `std.http` has a client worth keeping and HTTPS through a TLS slot
+  (decision 120). `http.client()` makes a client for `http://`, and
+  `http.client_with(T, &mut layer)` one whose `https://` goes over a TLS
+  layer; a client holds the settings (`timeout_ms` for each connect and
+  each wait, `max_redirects`, `max_body`, headers for every request).
+  `send`, `get` and `post` read the answer whole, and `open` gives a
+  `Streaming` whose body comes in pieces (`next`) as it arrives. The slot
+  is the trait `http.Transport` (connect with a deadline, send, recv,
+  close, and whether the connection was cut rather than closed); `Plain` is
+  TCP, and nxtls fills it in a few lines (the trait's documentation has
+  them), checked against Discord's API, Google, example.com and GitHub,
+  whose redirect from `http://` to `https://` crosses from one transport to
+  the other. A client calls its transports directly, not through `dyn`, so
+  a request has their effects and no others: a plain client's are
+  `allocates blocks panics` as before. Redirects: a 303, and a 301 or 302
+  to a POST, turn into a GET without the body; Authorization and Cookie
+  are not sent to another host; a relative `Location` resolves against the
+  URL, and one with another scheme is refused. Bodies: by Content-Length,
+  by chunks (also after other codings, `gzip, chunked`), or until the end
+  of the connection, which is `error.Truncated` when a TLS connection was
+  cut without close_notify; interim `1xx` answers are skipped and a HEAD
+  has no body.
 - The compiler reads `nexium.toml` with `std.toml`, where it had a reader
   of its own for a subset: a manifest may use all of TOML, and one that is
   not TOML says on which line and why.
@@ -122,6 +144,11 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Changed
 
+- `http.request`, `http.get` and `http.post` go through a plain
+  `http.client()`: the same 15-second waits and five redirects, the new
+  redirect rules, and `error.Unsupported` for an `https://` URL (it was
+  `error.InvalidInput`), which needs `http.client_with` and a TLS layer. The
+  User-Agent says `nexium-http/0.4`, and `http.Header` derives `Clone`.
 - The numbers are measured: the four benchmark programs run about a hundred
   times longer (`fib(42)`, 10,000,000 n-body steps, primes below
   100,000,000, 10,000,000 words), about a second each in the compiled

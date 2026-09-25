@@ -213,9 +213,9 @@ Types: `Heap(T){`
 
 ## std.http
 
-std.http: an HTTP/1.1 client and a small server, written in Nexium over std.net and std.stream. `import std.http` then: let r = try http.get("http://example.com/") println("{} {}", .{r.status, r.body.len}) if let ct = r.header("content-type") { ... } fn hello(req: *http.Request) -> http.Response { return http.text(200, "hello from Nexium") } var router = http.Router.new() router.get("/", hello) var server = try http.Server.bind("127.0.0.1", 8080) try server.serve(&router)                  // forever, one request at a time The client speaks HTTP/1.1 with `Connection: close`, reads bodies by Content-Length, chunked encoding, or until close, and follows up to five redirects. Plain `http://` only; TLS needs a C library through `@cImport`. The server handles one connection at a time, which is what a tool, a local dashboard or a test needs; threads come later in the roadmap.
+std.http: an HTTP/1.1 client and a small server, written in Nexium over std.net and std.stream. `import std.http` then: let r = try http.get("http://example.com/") println("{} {}", .{r.status, r.body.len}) if let ct = r.header("content-type") { ... } var client = http.Client.new()              // timeouts, redirects, limits client.tls = &mut layer                     // a TLS layer, for https:// var s = try client.open("GET", "https://example.com/big", &headers, "") while true {                                // the body as it arrives let piece = (try s.next()) orelse break ... } s.close() fn hello(req: *http.Request) -> http.Response { return http.text(200, "hello from Nexium") } var router = http.Router.new() router.get("/", hello) var server = try http.Server.bind("127.0.0.1", 8080) try server.serve(&router)                  // forever, one request at a time The client speaks HTTP/1.1 with `Connection: close` over a `Transport`: TCP for `http://`, and for `https://` the TLS layer a program hands its Client, the slot of decision 120 (nxtls, the TLS 1.3 client written in Nexium, fills it; the platform's TLS will). It reads a body by Content-Length, chunked encoding, or until the connection ends (refused when a TLS connection was cut rather than closed, as nothing then shows the body is whole), whole or as it arrives, follows up to five redirects, and gives up on a connect or a wait after `timeout_ms`. The server handles one connection at a time, which is what a tool, a local dashboard or a test needs; threads come later in the roadmap.
 
-Types: `Header`, `Url`, `Response`, `Request`, `Route`, `Router`, `Server`
+Types: `Header`, `Url`, `Response`, `Plain`, `Streaming`, `Client`, `Request`, `Route`, `Router`, `Server`
 
 | function | what it does |
 | --- | --- |
@@ -233,7 +233,18 @@ Types: `Header`, `Url`, `Response`, `Request`, `Route`, `Router`, `Server`
 | `content_type_for(path: []u8) -> []u8` | The content type for a file name, by extension. |
 | `read_response(r: *mut stream.Reader) -> !Response` | Read a full response from a reader over the connection. |
 | `send_request(w: *mut stream.Writer, method: []u8, url: *Url, headers: *List(Header), body: []u8) -> !void` | Write a request; `headers` may add or override the defaults. |
-| `request(method: []u8, url_text: []u8, headers: *List(Header), body: []u8) -> !Response` | Perform a request, following redirects. `error.InvalidInput` for a URL this client cannot speak (including `https://`). |
+| `(method) new() -> Plain` |  |
+| `(method) header(self: *Self, name: []u8) -> ?[]u8` | A header value, case-insensitive; null when absent. |
+| `(method) ok(self: *Self) -> bool` |  |
+| `(method) next(self: *mut Self) -> !?String` | The next piece of the body; null once all of it has come. `error.Truncated` when the connection ends before the body does. |
+| `(method) read_all(self: *mut Self) -> !String` | The rest of the body at once. |
+| `(method) close(self: *mut Self)` | Closes the connection. |
+| `(method) new() -> Client` |  |
+| `(method) open(self: *mut Self, method: []u8, url_text: []u8, headers: *List(Header), body: []u8) -> !Streaming` | Sends a request and reads the response's status and headers, following redirects: a 303, and a 301 or 302 to a POST, turn into a GET without the body, and a redirect to another host goes without the Authorization and Cookie headers. The body is read from the `Streaming` as it arrives; close it when done. |
+| `(method) send(self: *mut Self, method: []u8, url: []u8, headers: *List(Header), body: []u8) -> !Response` | A request, its response read whole, following redirects. |
+| `(method) get(self: *mut Self, url: []u8) -> !Response` |  |
+| `(method) post(self: *mut Self, url: []u8, content_type: []u8, body: []u8) -> !Response` |  |
+| `request(method: []u8, url_text: []u8, headers: *List(Header), body: []u8) -> !Response` | Perform a request with a default `Client`, following redirects. `error.InvalidInput` for a URL that is not http or https, `error.Unsupported` for `https://`, which needs a Client with a TLS layer. |
 | `get(url: []u8) -> !Response` |  |
 | `post(url: []u8, content_type: []u8, body: []u8) -> !Response` |  |
 | `(method) header(self: *Self, name: []u8) -> ?[]u8` |  |
@@ -355,7 +366,7 @@ Types: `Addr`, `TcpStream`, `TcpListener`, `Datagram`, `UdpSocket`
 | `(method) recv_all(self: *Self) -> !String` | Everything until the peer closes. |
 | `(method) peer(self: *Self) -> !String` | The remote address as `ip:port`. |
 | `(method) local(self: *Self) -> !String` | The local address as `ip:port`. |
-| `(method) reader(self: *Self) -> stream.Reader` | A buffered reader over the socket (lines, chunks); does not own it. A buffered reader over the socket, with its receive timeout. |
+| `(method) reader(self: *Self) -> stream.Reader` | A buffered reader over the socket (lines, chunks), with its receive timeout; it does not own the socket. |
 | `(method) writer(self: *Self) -> stream.Writer` | A buffered writer over the socket; flush it before waiting for a reply. |
 | `(method) close(self: *mut Self)` |  |
 | `(method) bind(host: []u8, port: u16) -> !TcpListener` | Bind and listen; port 0 picks a free port (see `local`). |

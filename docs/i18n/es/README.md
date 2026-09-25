@@ -463,8 +463,9 @@ completar, está en marcha: las colecciones (`std.sort`, `std.heap`,
 las carpetas de configuración, UUID, registros, CSV, TOML y base64 ya están,
 veintiocho módulos en total; `Map` está protegido contra la
 inundación de hashes y conserva el orden en que llegaron las claves; `std.time` lee
-las zonas horarias de la base de datos de la plataforma; después vienen el
-cliente HTTP con TLS y los websockets. Lo que Nexium todavía no es, y dónde
+las zonas horarias de la base de datos de la plataforma, y el cliente de
+`std.http` habla HTTPS a través de una capa TLS, que pone nxtls; después vienen
+los websockets y un paquete para Discord. Lo que Nexium todavía no es, y dónde
 se responde cada punto, está en [una sección de la hoja de
 ruta](../../../ROADMAP.md#what-10-is-not-yet): las pruebas de rendimiento son cuatro
 programas ([Velocidad](#velocidad)), y el ecosistema es un solo mantenedor y
