@@ -463,8 +463,9 @@ ergänzen muss, ist unterwegs: Collections (`std.sort`, `std.heap`, `std.set`,
 `std.deque`), `std.hash`, `random.secure`, Pfade, Umgebung und
 Konfigurationsordner, UUIDs, Logging, CSV, TOML und Base64 sind da, achtundzwanzig
 Module insgesamt; `Map` ist gegen Hash-Flooding geschützt und behält die
-Reihenfolge, in der die Schlüssel kamen; als Nächstes kommen Zeitzonen, der
-HTTP-Client mit TLS und Websockets. Was Nexium noch nicht ist, und wo jeder Punkt beantwortet wird,
+Reihenfolge, in der die Schlüssel kamen; `std.time` liest Zeitzonen aus der
+Datenbank der Plattform; als Nächstes kommen der HTTP-Client mit TLS und
+Websockets. Was Nexium noch nicht ist, und wo jeder Punkt beantwortet wird,
 steht in [einem Abschnitt der Roadmap](../../../ROADMAP.md#what-10-is-not-yet): die
 Benchmarks sind vier Programme ([Geschwindigkeit](#geschwindigkeit)), und das
 Ökosystem besteht aus einem Maintainer und vier Projekten außerhalb des

@@ -99,6 +99,7 @@ const NS_FNS = [
     NsFn{ .ns = "time", .name = "monotonic", .args = "", .ret = "u64", .op = "TimeMonotonic", .effects = EFF_NONDETERMINISTIC },
     NsFn{ .ns = "time", .name = "sleep", .args = "u64", .ret = "void", .op = "Sleep", .effects = EFF_BLOCKS },
     NsFn{ .ns = "time", .name = "utc_offset", .args = "i64", .ret = "i64", .op = "TimeUtcOffset", .effects = EFF_NONDETERMINISTIC },
+    NsFn{ .ns = "time", .name = "zone_rules", .args = "bytes", .ret = "!string", .op = "TimeZoneRules", .effects = EFF_BLOCKS | EFF_ALLOCATES | EFF_NONDETERMINISTIC },
     NsFn{ .ns = "random", .name = "int", .args = "i64 i64", .ret = "i64", .op = "RandomInt", .effects = EFF_NONDETERMINISTIC },
     NsFn{ .ns = "random", .name = "float", .args = "", .ret = "f64", .op = "RandomFloat", .effects = EFF_NONDETERMINISTIC },
     NsFn{ .ns = "random", .name = "seed", .args = "u64", .ret = "void", .op = "RandomSeed", .effects = 0 },

@@ -84,6 +84,34 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   without padding, as JSON Web Tokens carry it. Decoding is strict (a
   character outside the alphabet, misplaced padding or an impossible length
   is an error); `std.bytes.unbase64` stays the lenient reader.
+- `std.time` has time zones, from the platform's database: `zone(name)`
+  (`Europe/Berlin`, `UTC`, a fixed offset such as `+05:30`, or a POSIX rule
+  such as `EST5EDT,M3.2.0,M11.1.0`) and `local_zone()` (`$TZ`, else the
+  system's). Linux, macOS and the BSDs have the database as zoneinfo files,
+  read as TZif with the rule at their end for the years past their last
+  change (`$TZDIR` first); Windows has it in ICU, which the runtime loads at
+  the first call. A `Zone` gives the offset, the daylight flag and the
+  abbreviation at any instant, breaks an instant down (`at`), turns a wall
+  clock into an instant (`instant`: a skipped time is read with the offset
+  before the change, a doubled one is the first) and formats with `%Z`
+  (`CEST`). The two databases were compared: for 30 zones, every week from
+  1850 to 2150, they give the same offsets, except where Windows' copy of
+  ICU is older than a change (Egypt's summer time since 2023).
+- `std.time` reads and writes the rest of ISO 8601: week dates
+  (`2026-W38-6`, with `iso_week` and `weeks_in_year`) and ordinal dates
+  (`2026-262`), the basic format (`20260919T041514Z`, `iso_basic`), times
+  to the hour or the minute, a comma before the fraction, and offsets as
+  `+0200` or `+02`; `format` has `%G %V %u` (the ISO week), `%A %B` (full
+  names), `%I %p` (the 12-hour clock), `%y` and `%s`. `DateTime` does
+  calendar arithmetic (`add_days`, `add_months`, which keeps to the month's
+  last day, `add_years`) and exact arithmetic (`plus`, `minus`, `until`).
+- `Duration` compares with `==` and `<`, and does arithmetic: `times`,
+  `div`, `ratio`, `neg`, `abs`, `truncate` and `round` to a unit, and
+  `whole_seconds` to `whole_days`. `iso()` writes `PT1H30M` and
+  `Duration.parse_iso` reads it (weeks, days, hours, minutes, seconds; a
+  fraction on the last).
+- `time.zone_rules(name) -> !string`, the call `std.time` gets a zone from
+  on Windows: ICU's periods of the zone as text. Elsewhere it is `NotFound`.
 - The compiler reads `nexium.toml` with `std.toml`, where it had a reader
   of its own for a subset: a manifest may use all of TOML, and one that is
   not TOML says on which line and why.

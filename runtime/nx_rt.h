@@ -1075,6 +1075,158 @@ NX_INLINE int64_t nx_time_utc_offset_min(int64_t epoch_ms) {
     if (loc.tm_year != utc.tm_year) diff += loc.tm_year > utc.tm_year ? 365 * 1440 : -365 * 1440;
     return diff;
 }
+/* time.zone_rules: a zone of the IANA database as text, for std.time. The
+   first line is the zone's name; each further line is a period, `start
+   offset dst abbrev`: start in ms since the epoch (`-` for the first
+   period), the offset in seconds east of UTC, 1 for daylight time.
+   Windows has no zoneinfo files; its ICU (icu.dll, Windows 10 1903 and
+   later) has the database, loaded at the first call so no program links
+   it. An empty name is the system's zone. Changes are listed to 2200;
+   after that the zone keeps its standard offset. Elsewhere std.time reads
+   the zoneinfo files itself and this is NotFound. 0, or 1 for a zone ICU
+   does not know or no ICU. */
+#if defined(_WIN32)
+typedef void* (*nx_ucal_open_fn)(const uint16_t*, int32_t, const char*, int32_t, int32_t*);
+typedef void (*nx_ucal_close_fn)(void*);
+typedef void (*nx_ucal_set_millis_fn)(void*, double, int32_t*);
+typedef int32_t (*nx_ucal_get_fn)(const void*, int32_t, int32_t*);
+typedef int8_t (*nx_ucal_transition_fn)(const void*, int32_t, double*, int32_t*);
+typedef int32_t (*nx_ucal_display_fn)(const void*, int32_t, const char*, uint16_t*, int32_t, int32_t*);
+typedef int32_t (*nx_ucal_default_fn)(uint16_t*, int32_t, int32_t*);
+typedef int32_t (*nx_ucal_canonical_fn)(const uint16_t*, int32_t, uint16_t*, int32_t, int8_t*, int32_t*);
+typedef struct nx_icu_fns {
+    nx_ucal_open_fn open; nx_ucal_close_fn close; nx_ucal_set_millis_fn set_millis; nx_ucal_get_fn get;
+    nx_ucal_transition_fn transition; nx_ucal_display_fn display; nx_ucal_default_fn default_zone;
+    nx_ucal_canonical_fn canonical;
+} nx_icu_fns;
+NX_STATE nx_icu_fns nx_icu;
+NX_STATE int nx_icu_state; /* 0 not loaded yet, 1 loaded, 2 missing */
+NX_INLINE bool nx_icu_load(void) {
+    int st = __atomic_load_n(&nx_icu_state, __ATOMIC_ACQUIRE);
+    if (st != 0) return st == 1;
+    nx_icu_fns f;
+    memset(&f, 0, sizeof f);
+    HMODULE m = LoadLibraryA("icu.dll");
+    if (!m) m = LoadLibraryA("icuin.dll");
+    if (m) {
+        f.open = (nx_ucal_open_fn)(void*)GetProcAddress(m, "ucal_open");
+        f.close = (nx_ucal_close_fn)(void*)GetProcAddress(m, "ucal_close");
+        f.set_millis = (nx_ucal_set_millis_fn)(void*)GetProcAddress(m, "ucal_setMillis");
+        f.get = (nx_ucal_get_fn)(void*)GetProcAddress(m, "ucal_get");
+        f.transition = (nx_ucal_transition_fn)(void*)GetProcAddress(m, "ucal_getTimeZoneTransitionDate");
+        f.display = (nx_ucal_display_fn)(void*)GetProcAddress(m, "ucal_getTimeZoneDisplayName");
+        f.default_zone = (nx_ucal_default_fn)(void*)GetProcAddress(m, "ucal_getDefaultTimeZone");
+        f.canonical = (nx_ucal_canonical_fn)(void*)GetProcAddress(m, "ucal_getCanonicalTimeZoneID");
+    }
+    bool ok = f.open && f.close && f.set_millis && f.get && f.transition && f.display && f.default_zone && f.canonical;
+    /* threads that race here store the same pointers */
+    if (ok) nx_icu = f;
+    __atomic_store_n(&nx_icu_state, ok ? 1 : 2, __ATOMIC_RELEASE);
+    return ok;
+}
+/* one period's line. The abbreviation is ICU's short English name where
+   one of these Englishes has it (CET is British, IST Indian, AEST
+   Australian); else the zoneinfo files' style, `+0530`, or `LMT` for the
+   local mean time a place kept before it took a standard offset */
+NX_INLINE void nx_icu_period(nx_ctx* c, nx_string* s, void* cal, bool first, double at, int32_t offset_ms, bool dst) {
+    static const char* const locales[] = { "en_US", "en_GB", "en_IN", "en_AU" };
+    uint16_t w[48];
+    char line[128], abbr[48];
+    size_t k = 0;
+    for (size_t l = 0; l < sizeof locales / sizeof locales[0]; l++) {
+        int32_t st = 0;
+        /* 1 UCAL_SHORT_STANDARD, 3 UCAL_SHORT_DST */
+        int32_t n = nx_icu.display(cal, dst ? 3 : 1, locales[l], w, 47, &st);
+        k = 0;
+        if (st > 0) continue;
+        for (int32_t i = 0; i < n && k < sizeof abbr - 1; i++) abbr[k++] = w[i] > 32 && w[i] < 127 ? (char)w[i] : '_';
+        /* `GMT+1` is no name, only an offset */
+        if (k > 3 && memcmp(abbr, "GMT", 3) == 0 && (abbr[3] == '+' || abbr[3] == '-')) { k = 0; continue; }
+        if (k > 0) break;
+    }
+    if (k == 0) {
+        int32_t sec = offset_ms / 1000;
+        if (sec % 60 != 0) {
+            memcpy(abbr, "LMT", 3);
+            k = 3;
+        } else {
+            int32_t a = sec < 0 ? -sec : sec;
+            k = (size_t)snprintf(abbr, sizeof abbr, "%c%02d", sec < 0 ? '-' : '+', (int)(a / 3600));
+            if (a % 3600 != 0) k += (size_t)snprintf(abbr + k, sizeof abbr - k, "%02d", (int)(a % 3600 / 60));
+        }
+    }
+    abbr[k] = 0;
+    int len = first
+        ? snprintf(line, sizeof line, "- %ld %d %s\n", (long)(offset_ms / 1000), dst ? 1 : 0, abbr)
+        : snprintf(line, sizeof line, "%lld %ld %d %s\n", (long long)at, (long)(offset_ms / 1000), dst ? 1 : 0, abbr);
+    if (len > 0) nx_str_append(c, s, (const uint8_t*)line, (size_t)len);
+}
+#endif
+NX_INLINE int32_t nx_time_zone_rules(nx_ctx* c, nx_sl_u8 name, nx_string* out) {
+    nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;
+#if defined(_WIN32)
+    if (!nx_icu_load()) return 1;
+    uint16_t id[128];
+    int32_t idlen = 0, st = 0;
+    if (name.len == 0) {
+        idlen = nx_icu.default_zone(id, 127, &st);
+        if (st > 0 || idlen <= 0 || idlen >= 127) return 1;
+    } else {
+        if (name.len >= 127) return 1;
+        for (size_t i = 0; i < name.len; i++) {
+            if (name.ptr[i] < 33 || name.ptr[i] > 126) return 1;
+            id[i] = name.ptr[i];
+        }
+        idlen = (int32_t)name.len;
+        /* an unknown id would open as GMT: ask whether the database has it */
+        uint16_t canon[128];
+        int8_t system = 0;
+        nx_icu.canonical(id, idlen, canon, 127, &system, &st);
+        if (st > 0 || !system) return 1;
+    }
+    for (int32_t i = 0; i < idlen; i++) {
+        uint8_t b = id[i] < 127 ? (uint8_t)id[i] : '?';
+        nx_str_append(c, &s, &b, 1);
+    }
+    nx_str_append(c, &s, (const uint8_t*)"\n", 1);
+    st = 0;
+    /* 1 UCAL_GREGORIAN */
+    void* cal = nx_icu.open(id, idlen, "en_US", 1, &st);
+    if (st > 0 || !cal) { nx_str_free(c, &s); return 1; }
+    /* from 1684, before every zone's first change, to 2200 */
+    double at = -9.0e12;
+    const double end = 7258118400000.0;
+    bool first = true;
+    for (int guard = 0; guard < 5000; guard++) {
+        st = 0;
+        nx_icu.set_millis(cal, at, &st);
+        /* 15 UCAL_ZONE_OFFSET, 16 UCAL_DST_OFFSET, in ms */
+        int32_t raw = nx_icu.get(cal, 15, &st);
+        int32_t dst = nx_icu.get(cal, 16, &st);
+        if (st > 0) break;
+        nx_icu_period(c, &s, cal, first, at, raw + dst, dst != 0);
+        first = false;
+        double next = 0;
+        st = 0;
+        /* 0 UCAL_TZ_TRANSITION_NEXT */
+        if (!nx_icu.transition(cal, 0, &next, &st) || st > 0 || next <= at) break;
+        if (next >= end) {
+            if (dst != 0) {
+                nx_icu.set_millis(cal, next, &st);
+                nx_icu_period(c, &s, cal, false, next, raw, false);
+            }
+            break;
+        }
+        at = next;
+    }
+    nx_icu.close(cal);
+    *out = s;
+    return 0;
+#else
+    (void)name; (void)s; (void)out;
+    return 1;
+#endif
+}
 NX_INLINE uint64_t nx_time_monotonic_ns(void) {
 #if defined(_WIN32)
     LARGE_INTEGER f, c; QueryPerformanceFrequency(&f); QueryPerformanceCounter(&c);

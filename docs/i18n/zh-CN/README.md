@@ -436,7 +436,7 @@ runner 上测量（2026-09-25；七次运行的中位数，超过五秒的取三
 内存安全是视图规则，自 1.3 起是错误。1.4，一个不必再补充的标准库，正在进行：集合
 （`std.sort`、`std.heap`、`std.set`、`std.deque`）、`std.hash`、`random.secure`、路径、环境
 变量与配置目录、UUID、日志、CSV、TOML 和 base64 已经加入，一共二十八个模块；`Map` 能抵御哈希洪水
-攻击并保持键的插入顺序；接下来是时区、带 TLS 的 HTTP 客户端和 websocket。Nexium 还不是什么、每一点在哪里得到回答，见
+攻击并保持键的插入顺序；`std.time` 从平台的数据库读取时区；接下来是带 TLS 的 HTTP 客户端和 websocket。Nexium 还不是什么、每一点在哪里得到回答，见
 [路线图的一节](../../../ROADMAP.md#what-10-is-not-yet)：基准只有四个程序（[速度](#速度)），
 生态只有一位维护者和四个树外的项目（[上文](#实际使用)）。
 [`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md) 列出每个未修复的缺陷及其修法；

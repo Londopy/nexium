@@ -37,7 +37,7 @@ by `scripts/std_docs.py` from the doc comments.
 | [`std.testing`](#stdtesting) | conveniences for `test` blocks, written in Nexium. |
 | [`std.text`](#stdtext) | UTF-8 text by code point, written in Nexium. |
 | [`std.thread`](#stdthread) | threads, channels and mutexes, written in Nexium over the |
-| [`std.time`](#stdtime) | dates, durations and timers, written in Nexium. |
+| [`std.time`](#stdtime) | dates, durations, time zones and timers, written in Nexium. |
 | [`std.toml`](#stdtoml) | TOML 1.0 (toml.io), written in Nexium: reading a document into |
 | [`std.uuid`](#stduuid) | UUIDs (RFC 9562), written in Nexium: random ones (version 4), |
 
@@ -468,7 +468,7 @@ Types: `Set(T){`
 | `(method) len(self: *Self) -> usize` |  |
 | `(method) is_empty(self: *Self) -> bool` |  |
 | `(method) clear(self: *mut Self)` |  |
-| `(method) items(self: *Self) -> List(T)` | The elements, in no particular order. |
+| `(method) items(self: *Self) -> List(T)` | The elements, in the order each was first added. |
 | `union(comptime T: type, a: *Set(T), b: *Set(T)) -> Set(T)` | The values in `a` or `b`. |
 | `intersection(comptime T: type, a: *Set(T), b: *Set(T)) -> Set(T)` | The values in both `a` and `b`. |
 | `difference(comptime T: type, a: *Set(T), b: *Set(T)) -> Set(T)` | The values in `a` that are not in `b`. |
@@ -624,30 +624,43 @@ Types: `Task(T,`, `Thread(T,`, `WorkerTask(T){`, `Worker(T){`, `Channel(T){`, `M
 
 ## std.time
 
-std.time: dates, durations and timers, written in Nexium. `import std.time` then: let now = time.now_utc()                    // a DateTime println("{}", .{now.iso()})                 // 2026-09-19T04:15:14.123Z println("{}", .{now.format("%Y-%m-%d %H:%M")}) let local = time.now_local()                // with the machine's UTC offset let d = time.Duration.minutes(90) println("{}", .{d.text()})                  // 1h 30m var sw = time.Stopwatch.start() ... work ... println("took {}", .{sw.elapsed().text()}) Instants are milliseconds since 1970-01-01T00:00:00Z (`time.now()`), as `i64`; negative values are before the epoch. Calendar arithmetic is the proleptic Gregorian calendar; the only platform call is the local UTC offset, and only `now_local` and `local` use it.
+std.time: dates, durations, time zones and timers, written in Nexium. `import std.time` then: let now = time.now_utc()                    // a DateTime println("{}", .{now.iso()})                 // 2026-09-19T04:15:14.123Z println("{}", .{now.format("%Y-%m-%d %H:%M")}) let local = time.now_local()                // with the machine's UTC offset let ny = try time.zone("America/New_York")  // from the platform's database println("{}", .{ny.format(time.now(), "%H:%M %Z")})    // 00:15 EDT let d = time.Duration.minutes(90) println("{} {}", .{d.text(), d.iso()})      // 1h 30m PT1H30M var sw = time.Stopwatch.start() ... work ... println("took {}", .{sw.elapsed().text()}) Instants are milliseconds since 1970-01-01T00:00:00Z (`time.now()`), as `i64`; negative values are before the epoch. Calendar arithmetic is the proleptic Gregorian calendar. Time zones come from the platform's database: the zoneinfo files on Linux, macOS and the BSDs (under /usr/share/zoneinfo, or `$TZDIR`), ICU on Windows (10, version 1903 and later). `now_local` and `local` take only the local offset, from the C library; `local_zone` is the machine's zone with its history.
 
-Types: `DateTime`, `Duration`, `Stopwatch`
+Types: `DateTime`, `Duration`, `Period`, `RuleDay`, `Rule`, `Zone`, `Stopwatch`
 
 | function | what it does |
 | --- | --- |
 | `is_leap(year: i32) -> bool` |  |
 | `days_in_month(year: i32, month: u8) -> u8` |  |
+| `weeks_in_year(year: i32) -> u8` | 52 or 53: a year has 53 ISO weeks when it begins on a Thursday, or on a Wednesday in a leap year. |
 | `utc(ms: i64) -> DateTime` | Break an instant down in UTC. |
 | `local(ms: i64) -> DateTime` | Break an instant down in the machine's local time zone. |
 | `with_offset(ms: i64, offset_min: i32) -> DateTime` | Break an instant down at a fixed offset in minutes east of UTC. |
 | `now_utc() -> DateTime` | The current instant, in UTC. |
 | `now_local() -> DateTime` | The current instant, in local time. |
 | `date(year: i32, month: u8, day: u8) -> ?DateTime` | A date at midnight UTC; `null` when the fields do not name a real day. |
+| `from_week(year: i32, week: i64, day: i64) -> ?DateTime` | The date of an ISO week date (`day` 1 is Monday); `null` for a week the year does not have. |
+| `from_ordinal(year: i32, n: i64) -> ?DateTime` | The date of an ordinal date, the `n`th day of the year (1-based); `null` past the year's last day. |
 | `(method) to_ms(self: *Self) -> i64` | Milliseconds since the epoch (the offset is subtracted back out). |
 | `(method) to_utc(self: *Self) -> DateTime` | The same instant expressed in UTC. |
 | `(method) weekday(self: *Self) -> u8` | Day of the week, 0 = Monday ... 6 = Sunday. |
 | `(method) day_of_year(self: *Self) -> u16` | Day of the year, 1-based. |
+| `(method) iso_week(self: *Self) -> (i32, u8)` | The ISO 8601 week: the week-numbering year and the week, 1 to 53. Weeks begin on Monday and week 1 holds the year's first Thursday, so January 1 can be in the last week of the year before. |
 | `(method) date_text(self: *Self) -> String` | `YYYY-MM-DD`. |
+| `(method) week_date(self: *Self) -> String` | The ISO 8601 week date, `2026-W38-6` (the day is 1 for Monday). |
+| `(method) ordinal_date(self: *Self) -> String` | The ISO 8601 ordinal date, `2026-262`. |
 | `(method) time_text(self: *Self) -> String` | `HH:MM:SS`. |
 | `(method) offset_text(self: *Self) -> String` | The offset as `Z`, or `+HH:MM` / `-HH:MM`. |
 | `(method) iso(self: *Self) -> String` | ISO 8601 / RFC 3339: `2026-09-19T04:15:14.123Z`, `...+02:00`. |
-| `(method) format(self: *Self, spec: []u8) -> String` | strftime-style formatting: `%Y %m %d %H %M %S %3` (millis) `%z` (offset) `%a %b` (short day and month names) `%j` (day of year) `%%`. Unknown letters are copied through. |
-| `parse_iso(s: []u8) -> ?DateTime` | Parse `YYYY-MM-DD`, optionally followed by `THH:MM[:SS[.mmm]]` and an offset `Z` / `+HH:MM` / `-HH:MM`. Missing parts are zero; `null` when the text is not a date. |
+| `(method) iso_basic(self: *Self) -> String` | ISO 8601's basic format, with no separators: `20260919T041514.123Z`, `...+0200`. |
+| `(method) format(self: *Self, spec: []u8) -> String` | strftime-style formatting: `%Y %m %d %H %M %S`, `%3` (millis), `%y` (two-digit year), `%I %p` (12-hour clock, AM/PM), `%a %A %b %B` (day and month names, short and full), `%j` (day of year), `%G %V %u` (ISO week year, week and weekday, 1 for Monday), `%s` (seconds since the epoch), `%z` (offset, `+02:00`), `%Z` (`UTC`, or the offset as the zoneinfo files abbreviate it, `+02`; `Zone.format` gives the zone's own, `CEST`) and `%%`. Unknown letters are copied through. |
+| `(method) plus(self: *Self, d: Duration) -> DateTime` | The instant `d` later, at the same offset. |
+| `(method) minus(self: *Self, d: Duration) -> DateTime` | The instant `d` earlier, at the same offset. |
+| `(method) until(self: *Self, other: *DateTime) -> Duration` | The time from this instant to `other`, negative when `other` is earlier. |
+| `(method) add_days(self: *Self, n: i64) -> DateTime` | `n` calendar days later (earlier when negative), at the same clock time and offset. In a zone whose offset changes in between, `z.at(z.instant(&later))` keeps the clock time. |
+| `(method) add_months(self: *Self, n: i64) -> DateTime` | `n` months later; a day the month lacks becomes its last, so January 31 plus a month is February 28 or 29. |
+| `(method) add_years(self: *Self, n: i64) -> DateTime` | `n` years later; February 29 becomes February 28 in a common year. |
+| `parse_iso(s: []u8) -> ?DateTime` | Parse ISO 8601 / RFC 3339 text. The date is `2026-09-19` or `20260919`, a week date `2026-W38-6` or `2026W386`, or an ordinal date `2026-262` or `2026262`. A time may follow after `T` (or a space): `04:15:14.123` or `041514.123`, to the hour, the minute or the second, with `.` or `,` before a fraction of a second (read to the millisecond). An offset may end it: `Z`, `+02:00`, `+0200` or `+02`. Missing parts are zero; `null` when the text is not a date. |
 | `(method) millis(n: i64) -> Duration` |  |
 | `(method) seconds(n: i64) -> Duration` |  |
 | `(method) minutes(n: i64) -> Duration` |  |
@@ -658,10 +671,38 @@ Types: `DateTime`, `Duration`, `Stopwatch`
 | `(method) total_seconds(self: *Self) -> f64` |  |
 | `(method) total_minutes(self: *Self) -> f64` |  |
 | `(method) total_hours(self: *Self) -> f64` |  |
+| `(method) whole_seconds(self: *Self) -> i64` | Whole units, rounded toward zero. |
+| `(method) whole_minutes(self: *Self) -> i64` |  |
+| `(method) whole_hours(self: *Self) -> i64` |  |
+| `(method) whole_days(self: *Self) -> i64` |  |
 | `(method) plus(self: *Self, other: Duration) -> Duration` |  |
 | `(method) minus(self: *Self, other: Duration) -> Duration` |  |
+| `(method) times(self: *Self, n: i64) -> Duration` | `n` times as long. |
+| `(method) div(self: *Self, n: i64) -> Duration` | An `n`th of it, rounded toward zero. |
+| `(method) ratio(self: *Self, other: Duration) -> f64` | How many times `other` goes into it: `hours(3).ratio(minutes(90))` is 2.0. |
+| `(method) neg(self: *Self) -> Duration` |  |
+| `(method) abs(self: *Self) -> Duration` |  |
+| `(method) is_zero(self: *Self) -> bool` |  |
+| `(method) is_negative(self: *Self) -> bool` |  |
+| `(method) truncate(self: *Self, unit: Duration) -> Duration` | Cut to a whole number of `unit`s, toward zero: `millis(1999).truncate(seconds(1))` is one second. |
+| `(method) round(self: *Self, unit: Duration) -> Duration` | The nearest whole number of `unit`s; a half goes away from zero. |
 | `(method) text(self: *Self) -> String` | Human text: `250ms`, `3.5s`, `2m 05s`, `1h 02m`, `3d 04h`. |
+| `(method) iso(self: *Self) -> String` | ISO 8601: `PT1H30M`, `PT0.25S`, `PT76H`, `-PT1.5S`, `PT0S`. Hours are the largest unit, since a day in a zone is not always 24 of them. |
+| `(method) parse_iso(s: []u8) -> ?Duration` | Parse ISO 8601 duration text: `PT1H30M`, `PT0.25S`, `P2DT3H`, `P1W`, `-PT5M`. A day is 24 hours here and a week 7 days; years and months (`P1Y`, `P2M`), whose length depends on the calendar, are `null`, as is anything that is not a duration. The last number may have a fraction (`PT1.5H`), read to the millisecond. |
 | `add(ms: i64, d: Duration) -> i64` | `instant + duration`. |
+| `utc_zone() -> Zone` | UTC as a zone. |
+| `zone(name: []u8) -> !Zone` | A time zone by name: an IANA name from the platform's database (`Europe/Berlin`, `America/New_York`, `Asia/Kolkata`), `UTC`, a fixed offset (`+05:30`, `-0800`), or a POSIX rule (`EST5EDT,M3.2.0,M11.1.0`). `error.NotFound` when the database has no such zone, or there is no database (the playground); `error.InvalidInput` for text that cannot name a zone, or a database file that is not one. |
+| `local_zone() -> Zone` | The machine's time zone: `$TZ` when it is set (a zone's name, the path of a TZif file, or a POSIX rule such as `EST5EDT,M3.2.0,M11.1.0`; set but empty is UTC), else the system's: /etc/localtime on Linux, macOS and the BSDs (named by /etc/timezone where there is one, else `Local`), the zone Windows is set to through ICU. When none is found, a zone with the C library's offset now, named `Local`. |
+| `from_tzif(name: []u8, b: []u8) -> !Zone` | A zone from the bytes of a TZif file (RFC 8536), the form the zoneinfo database is kept in; `error.InvalidInput` when they are not one. |
+| `(method) offset_seconds_at(self: *Self, ms: i64) -> i32` | Seconds east of UTC at an instant. A few offsets, the local mean time places kept before they took a standard one (mostly before 1900), are not whole minutes. |
+| `(method) offset_at(self: *Self, ms: i64) -> i32` | Minutes east of UTC at an instant, to the nearest minute: the offset of the `DateTime` that `at` gives. |
+| `(method) is_dst_at(self: *Self, ms: i64) -> bool` | Whether daylight saving time is in force at an instant. |
+| `(method) abbrev_at(self: *Self, ms: i64) -> String` | The zone's abbreviation at an instant: `CEST`, `PST`, or an offset such as `+0530` where the database has no name. |
+| `(method) at(self: *Self, ms: i64) -> DateTime` | An instant broken down in this zone. |
+| `(method) now(self: *Self) -> DateTime` | The current instant in this zone. |
+| `(method) instant(self: *Self, dt: *DateTime) -> i64` | The instant a wall-clock time names in this zone; the offset in `dt` is ignored. A time that happens twice, when clocks are turned back, is the first; one that is skipped, when they are turned forward, is read with the offset before the change, so 02:30 on the night clocks jump from 02:00 to 03:00 is 03:30. |
+| `(method) format(self: *Self, ms: i64, spec: []u8) -> String` | strftime-style text of an instant in this zone: `DateTime.format`'s letters, with `%Z` the zone's abbreviation (`CEST`). |
+| `parse_rule(s: []u8) -> ?Rule` | Parse a POSIX TZ rule: `EST5EDT,M3.2.0,M11.1.0`, `<+0530>-5:30`, `AEST-10AEDT,M10.1.0,M4.1.0/3`. Its offsets are written west of UTC, the other way round from everywhere else; a rule with a daylight name and no dates follows the United States' dates. `null` when the text is not a rule. |
 | `(method) start() -> Stopwatch` |  |
 | `(method) elapsed_ms(self: *Self) -> f64` | Elapsed time in milliseconds, fractional. |
 | `(method) elapsed(self: *Self) -> Duration` | Elapsed time as a Duration (whole milliseconds). |

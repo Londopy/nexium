@@ -4245,6 +4245,14 @@ impl Gen {
             let v = self.simple(args[0])
             return format("nx_time_utc_offset_min({})", .{v})
         }
+        if name == "TimeZoneRules" {
+            let zn = self.simple(args[0])
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            let nf = self.err_id("NotFound")
+            self.line(format("{} {}; {{ nx_string _s; if (nx_time_zone_rules(c, {}, &_s) == 0) {{ {}.err = 0; {}.val = _s; }} else {}.err = {}u; }}", .{cn, t, zn, t, t, t, nf})[..])
+            return t
+        }
         if name == "TimeMonotonic" { return String.from("nx_time_monotonic_ns()") }
         if name == "Sleep" {
             let v = self.simple(args[0])

@@ -651,7 +651,15 @@ own sources, and the language server answers from the checker.
 - `std.text`: grapheme clusters and case mapping tables, `chars()` over
   scalars, width for terminal alignment.
 - `std.time`: time zones from the platform database, ISO 8601 parsing
-  in both directions, `Duration` arithmetic.
+  in both directions, `Duration` arithmetic. (Done: `time.zone(name)`
+  reads the zoneinfo files on Linux, macOS and the BSDs, TZif with the
+  POSIX rule at their end, and ICU on Windows through one runtime call,
+  `time.zone_rules`; `local_zone`, wall clocks to instants across the
+  changes, `%Z`; week and ordinal dates and the basic format both ways;
+  `Duration` compares and does arithmetic, and reads and writes
+  `PT1H30M`. Checked against each other: ICU and the zoneinfo files give
+  the same offset for 30 zones every week from 1850 to 2150, except where
+  Windows' copy of the database is older.)
 - `std.process`: pipes as streams, signals, exit codes by name.
 - `std.thread`: `select` over channels, scoped threads that are joined
   when the block ends (no handle can escape), atomics in `sync`.
@@ -660,9 +668,9 @@ own sources, and the language server answers from the checker.
 
 Order, with the collections, `std.hash`, `random.secure`, the small modules
 (`std.path`, `std.env`, `std.uuid`, `std.log`, `std.csv`, `std.toml`,
-`std.base64`) and `Map` on SipHash already in: `std.time`, fixing on the
-way the known issue of `import std.time`
-hiding `time.now()`; the HTTP client and the TLS slot, with nxtls in it;
+`std.base64`), `Map` on SipHash and `std.time` already in (and with it the
+known issue of `import std.time` hiding `time.now()` fixed): the HTTP
+client and the TLS slot, with nxtls in it;
 `std.websocket` and `discord`, lifted from QNI's working code; then the
 platform's TLS, `std.text`, `std.process` (whose streams end the known
 stall of a child that writes before it reads its input), `std.thread` and

@@ -303,6 +303,13 @@ brings it.
   `time.utc_offset(ms) -> i64` (minutes east of UTC of local time at that
   instant; `std.time` builds dates on these),
   `time.sleep(ms)`.
+- `time.zone_rules(name) -> !string`: a zone of the IANA database as text,
+  for `std.time` on Windows, which keeps the database in ICU rather than
+  in zoneinfo files (Windows 10 1903 and later; loaded at the first call).
+  The first line is the zone's name, then one line a period, `start offset
+  dst abbrev`; an empty name is the system's zone. `NotFound` for a zone
+  ICU lacks, and on every other platform, where `std.time` reads the
+  zoneinfo files itself. Use `time.zone(name)` from `std.time` instead.
 - `random.int(lo, hi)`, `random.float()`, `random.seed(n)`: a fast
   generator that `random.seed` makes repeatable, never for secrets.
 - `random.secure(buf) -> !void`: fills a `[]mut u8` from the operating

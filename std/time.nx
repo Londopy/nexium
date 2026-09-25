@@ -1,4 +1,4 @@
-// std.time: dates, durations and timers, written in Nexium.
+// std.time: dates, durations, time zones and timers, written in Nexium.
 //
 // `import std.time` then:
 //
@@ -6,16 +6,23 @@
 //     println("{}", .{now.iso()})                 // 2026-09-19T04:15:14.123Z
 //     println("{}", .{now.format("%Y-%m-%d %H:%M")})
 //     let local = time.now_local()                // with the machine's UTC offset
+//     let ny = try time.zone("America/New_York")  // from the platform's database
+//     println("{}", .{ny.format(time.now(), "%H:%M %Z")})    // 00:15 EDT
 //     let d = time.Duration.minutes(90)
-//     println("{}", .{d.text()})                  // 1h 30m
+//     println("{} {}", .{d.text(), d.iso()})      // 1h 30m PT1H30M
 //     var sw = time.Stopwatch.start()
 //     ... work ...
 //     println("took {}", .{sw.elapsed().text()})
 //
 // Instants are milliseconds since 1970-01-01T00:00:00Z (`time.now()`), as
 // `i64`; negative values are before the epoch. Calendar arithmetic is the
-// proleptic Gregorian calendar; the only platform call is the local UTC
-// offset, and only `now_local` and `local` use it.
+// proleptic Gregorian calendar. Time zones come from the platform's
+// database: the zoneinfo files on Linux, macOS and the BSDs (under
+// /usr/share/zoneinfo, or `$TZDIR`), ICU on Windows (10, version 1903 and
+// later). `now_local` and `local` take only the local offset, from the C
+// library; `local_zone` is the machine's zone with its history.
+
+import std.fs
 
 // ------------------------------------------------------------------ calendar
 
@@ -42,6 +49,14 @@ pub fn days_in_month(year: i32, month: u8) -> u8 {
     return 31
 }
 
+/// 52 or 53: a year has 53 ISO weeks when it begins on a Thursday, or on
+/// a Wednesday in a leap year.
+pub fn weeks_in_year(year: i32) -> u8 {
+    let wd = floor_mod(days_from_civil(year, 1, 1) + 3, 7)
+    if wd == 3 or (wd == 2 and is_leap(year)) { return 53 }
+    return 52
+}
+
 fn floor_div(a: i64, b: i64) -> i64 {
     var q = a / b
     if (a % b != 0) and ((a < 0) != (b < 0)) { q -= 1 }
@@ -50,6 +65,14 @@ fn floor_div(a: i64, b: i64) -> i64 {
 
 fn floor_mod(a: i64, b: i64) -> i64 {
     return a - floor_div(a, b) * b
+}
+
+fn is_digit(c: u8) -> bool {
+    return c >= '0' and c <= '9'
+}
+
+fn is_alpha(c: u8) -> bool {
+    return (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z')
 }
 
 /// Days since 1970-01-01 of a civil date (Howard Hinnant's algorithm).
@@ -123,6 +146,25 @@ pub fn date(year: i32, month: u8, day: u8) -> ?DateTime {
     return DateTime{ .year = year, .month = month, .day = day, .hour = 0, .minute = 0, .second = 0, .millis = 0, .offset_min = 0 }
 }
 
+/// The date of an ISO week date (`day` 1 is Monday); `null` for a week
+/// the year does not have.
+pub fn from_week(year: i32, week: i64, day: i64) -> ?DateTime {
+    if week < 1 or week > (weeks_in_year(year) as i64) or day < 1 or day > 7 { return null }
+    let jan4 = days_from_civil(year, 1, 4)
+    let monday = jan4 - floor_mod(jan4 + 3, 7)
+    let ymd = civil_from_days(monday + (week - 1) * 7 + day - 1)
+    return date(ymd.0, ymd.1, ymd.2)
+}
+
+/// The date of an ordinal date, the `n`th day of the year (1-based);
+/// `null` past the year's last day.
+pub fn from_ordinal(year: i32, n: i64) -> ?DateTime {
+    let len: i64 = if is_leap(year) { 366 } else { 365 }
+    if n < 1 or n > len { return null }
+    let ymd = civil_from_days(days_from_civil(year, 1, 1) + n - 1)
+    return date(ymd.0, ymd.1, ymd.2)
+}
+
 fn pad(out: *mut String, v: i64, width: usize) {
     var n = if v < 0 { -v } else { v }
     var digits: usize = 1
@@ -139,8 +181,25 @@ fn pad(out: *mut String, v: i64, width: usize) {
     out.append(format("{}", .{n}))
 }
 
+/// An offset as the zoneinfo files abbreviate a zone with no name for it:
+/// `+02`, `+0530`, `-03`; `UTC` for none.
+fn offset_abbrev(secs: i32) -> String {
+    var out = String.new()
+    if secs == 0 {
+        out.append("UTC")
+        return out
+    }
+    let a = if secs < 0 { -(secs as i64) } else { secs as i64 }
+    out.push_byte(if secs < 0 { '-' } else { '+' })
+    pad(&mut out, a / 3600, 2)
+    if a % 3600 != 0 { pad(&mut out, a % 3600 / 60, 2) }
+    return out
+}
+
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
 impl DateTime {
     /// Milliseconds since the epoch (the offset is subtracted back out).
@@ -172,6 +231,17 @@ impl DateTime {
         return n
     }
 
+    /// The ISO 8601 week: the week-numbering year and the week, 1 to 53.
+    /// Weeks begin on Monday and week 1 holds the year's first Thursday,
+    /// so January 1 can be in the last week of the year before.
+    pub fn iso_week(self: *Self) -> (i32, u8) {
+        let days = days_from_civil(self.year, self.month, self.day)
+        let thursday = days - floor_mod(days + 3, 7) + 3
+        let y = civil_from_days(thursday).0
+        let week = (thursday - days_from_civil(y, 1, 1)) / 7 + 1
+        return (y, week as u8)
+    }
+
     /// `YYYY-MM-DD`.
     pub fn date_text(self: *Self) -> String {
         var out = String.new()
@@ -180,6 +250,27 @@ impl DateTime {
         pad(&mut out, self.month as i64, 2)
         out.push_byte('-')
         pad(&mut out, self.day as i64, 2)
+        return out
+    }
+
+    /// The ISO 8601 week date, `2026-W38-6` (the day is 1 for Monday).
+    pub fn week_date(self: *Self) -> String {
+        let w = self.iso_week()
+        var out = String.new()
+        pad(&mut out, w.0 as i64, 4)
+        out.append("-W")
+        pad(&mut out, w.1 as i64, 2)
+        out.push_byte('-')
+        pad(&mut out, (self.weekday() as i64) + 1, 1)
+        return out
+    }
+
+    /// The ISO 8601 ordinal date, `2026-262`.
+    pub fn ordinal_date(self: *Self) -> String {
+        var out = String.new()
+        pad(&mut out, self.year as i64, 4)
+        out.push_byte('-')
+        pad(&mut out, self.day_of_year() as i64, 3)
         return out
     }
 
@@ -223,9 +314,40 @@ impl DateTime {
         return out
     }
 
-    /// strftime-style formatting: `%Y %m %d %H %M %S %3` (millis) `%z` (offset)
-    /// `%a %b` (short day and month names) `%j` (day of year) `%%`.
-    /// Unknown letters are copied through.
+    /// ISO 8601's basic format, with no separators:
+    /// `20260919T041514.123Z`, `...+0200`.
+    pub fn iso_basic(self: *Self) -> String {
+        var out = String.new()
+        pad(&mut out, self.year as i64, 4)
+        pad(&mut out, self.month as i64, 2)
+        pad(&mut out, self.day as i64, 2)
+        out.push_byte('T')
+        pad(&mut out, self.hour as i64, 2)
+        pad(&mut out, self.minute as i64, 2)
+        pad(&mut out, self.second as i64, 2)
+        if self.millis != 0 {
+            out.push_byte('.')
+            pad(&mut out, self.millis as i64, 3)
+        }
+        if self.offset_min == 0 {
+            out.push_byte('Z')
+            return out
+        }
+        let o = self.offset_min as i64
+        out.push_byte(if o < 0 { '-' } else { '+' })
+        let a = if o < 0 { -o } else { o }
+        pad(&mut out, a / 60, 2)
+        pad(&mut out, a % 60, 2)
+        return out
+    }
+
+    /// strftime-style formatting: `%Y %m %d %H %M %S`, `%3` (millis), `%y`
+    /// (two-digit year), `%I %p` (12-hour clock, AM/PM), `%a %A %b %B` (day
+    /// and month names, short and full), `%j` (day of year), `%G %V %u`
+    /// (ISO week year, week and weekday, 1 for Monday), `%s` (seconds since
+    /// the epoch), `%z` (offset, `+02:00`), `%Z` (`UTC`, or the offset as
+    /// the zoneinfo files abbreviate it, `+02`; `Zone.format` gives the
+    /// zone's own, `CEST`) and `%%`. Unknown letters are copied through.
     pub fn format(self: *Self, spec: []u8) -> String {
         var out = String.new()
         var i: usize = 0
@@ -245,10 +367,23 @@ impl DateTime {
             else if f == 'M' { pad(&mut out, self.minute as i64, 2) }
             else if f == 'S' { pad(&mut out, self.second as i64, 2) }
             else if f == '3' { pad(&mut out, self.millis as i64, 3) }
+            else if f == 'y' { pad(&mut out, floor_mod(self.year as i64, 100), 2) }
+            else if f == 'I' {
+                let h = (self.hour % 12) as i64
+                pad(&mut out, if h == 0 { 12 } else { h }, 2)
+            }
+            else if f == 'p' { out.append(if self.hour < 12 { "AM" } else { "PM" }) }
             else if f == 'j' { pad(&mut out, self.day_of_year() as i64, 3) }
+            else if f == 'G' { pad(&mut out, self.iso_week().0 as i64, 4) }
+            else if f == 'V' { pad(&mut out, self.iso_week().1 as i64, 2) }
+            else if f == 'u' { pad(&mut out, (self.weekday() as i64) + 1, 1) }
+            else if f == 's' { out.append(format("{}", .{floor_div(self.to_ms(), 1000)})) }
             else if f == 'z' { out.append(self.offset_text()) }
+            else if f == 'Z' { out.append(offset_abbrev(self.offset_min * 60)) }
             else if f == 'a' { out.append(DAYS[self.weekday() as usize]) }
+            else if f == 'A' { out.append(DAY_NAMES[self.weekday() as usize]) }
             else if f == 'b' { out.append(MONTHS[(self.month - 1) as usize]) }
+            else if f == 'B' { out.append(MONTH_NAMES[(self.month - 1) as usize]) }
             else if f == '%' { out.push_byte('%') }
             else {
                 out.push_byte('%')
@@ -256,6 +391,49 @@ impl DateTime {
             }
         }
         return out
+    }
+
+    /// The instant `d` later, at the same offset.
+    pub fn plus(self: *Self, d: Duration) -> DateTime {
+        return with_offset(self.to_ms() + d.ms, self.offset_min)
+    }
+
+    /// The instant `d` earlier, at the same offset.
+    pub fn minus(self: *Self, d: Duration) -> DateTime {
+        return with_offset(self.to_ms() - d.ms, self.offset_min)
+    }
+
+    /// The time from this instant to `other`, negative when `other` is
+    /// earlier.
+    pub fn until(self: *Self, other: *DateTime) -> Duration {
+        return Duration{ .ms = other.to_ms() - self.to_ms() }
+    }
+
+    /// `n` calendar days later (earlier when negative), at the same clock
+    /// time and offset. In a zone whose offset changes in between,
+    /// `z.at(z.instant(&later))` keeps the clock time.
+    pub fn add_days(self: *Self, n: i64) -> DateTime {
+        let ymd = civil_from_days(days_from_civil(self.year, self.month, self.day) + n)
+        return self.on(ymd.0, ymd.1, ymd.2)
+    }
+
+    /// `n` months later; a day the month lacks becomes its last, so
+    /// January 31 plus a month is February 28 or 29.
+    pub fn add_months(self: *Self, n: i64) -> DateTime {
+        let m0 = (self.year as i64) * 12 + (self.month as i64) - 1 + n
+        let y = floor_div(m0, 12) as i32
+        let m = (floor_mod(m0, 12) + 1) as u8
+        let last = days_in_month(y, m)
+        return self.on(y, m, if self.day > last { last } else { self.day })
+    }
+
+    /// `n` years later; February 29 becomes February 28 in a common year.
+    pub fn add_years(self: *Self, n: i64) -> DateTime {
+        return self.add_months(n * 12)
+    }
+
+    fn on(self: *Self, year: i32, month: u8, day: u8) -> DateTime {
+        return DateTime{ .year = year, .month = month, .day = day, .hour = self.hour, .minute = self.minute, .second = self.second, .millis = self.millis, .offset_min = self.offset_min }
     }
 }
 
@@ -270,68 +448,151 @@ fn digits(s: []u8, start: usize, n: usize) -> ?i64 {
     return v
 }
 
-/// Parse `YYYY-MM-DD`, optionally followed by `THH:MM[:SS[.mmm]]` and an
-/// offset `Z` / `+HH:MM` / `-HH:MM`. Missing parts are zero; `null` when the
-/// text is not a date.
+/// Parse ISO 8601 / RFC 3339 text. The date is `2026-09-19` or
+/// `20260919`, a week date `2026-W38-6` or `2026W386`, or an ordinal date
+/// `2026-262` or `2026262`. A time may follow after `T` (or a space):
+/// `04:15:14.123` or `041514.123`, to the hour, the minute or the second,
+/// with `.` or `,` before a fraction of a second (read to the
+/// millisecond). An offset may end it: `Z`, `+02:00`, `+0200` or `+02`.
+/// Missing parts are zero; `null` when the text is not a date.
 pub fn parse_iso(s: []u8) -> ?DateTime {
-    let year = digits(s, 0, 4) orelse return null
-    if s.len < 10 or s[4] != '-' or s[7] != '-' { return null }
-    let month = digits(s, 5, 2) orelse return null
-    let day = digits(s, 8, 2) orelse return null
-    var dt = date(year as i32, month as u8, day as u8) orelse return null
-    var i: usize = 10
-    if i < s.len and (s[i] == 'T' or s[i] == ' ') {
-        let hour = digits(s, i + 1, 2) orelse return null
-        if i + 3 >= s.len or s[i + 3] != ':' { return null }
-        let minute = digits(s, i + 4, 2) orelse return null
-        if hour > 23 or minute > 59 { return null }
-        dt.hour = hour as u8
-        dt.minute = minute as u8
-        i += 6
-        if i < s.len and s[i] == ':' {
-            let second = digits(s, i + 1, 2) orelse return null
-            if second > 60 { return null }
-            dt.second = second as u8
-            i += 3
-            if i < s.len and s[i] == '.' {
-                var n: usize = 0
-                var ms: i64 = 0
-                while i + 1 + n < s.len and s[i + 1 + n] >= '0' and s[i + 1 + n] <= '9' {
-                    if n < 3 { ms = ms * 10 + ((s[i + 1 + n] - '0') as i64) }
-                    n += 1
+    var p = IsoScan{ .s = s, .i = 0 }
+    var dt = p.read_date() orelse return null
+    if p.i < s.len and (s[p.i] == 'T' or s[p.i] == 't' or s[p.i] == ' ') {
+        p.i += 1
+        if !p.read_clock(&mut dt) { return null }
+    }
+    if !p.read_offset(&mut dt) { return null }
+    if p.i != s.len { return null }
+    return dt
+}
+
+/// A cursor over ISO 8601 text.
+struct IsoScan {
+    s: []u8
+    i: usize
+}
+
+impl IsoScan {
+    fn at(self: *Self, c: u8) -> bool {
+        return self.i < self.s.len and self.s[self.i] == c
+    }
+
+    /// `n` digits as a number, or null (the cursor stays).
+    fn num(self: *mut Self, n: usize) -> ?i64 {
+        let v = digits(self.s, self.i, n) orelse return null
+        self.i += n
+        return v
+    }
+
+    /// How many digits begin at the cursor.
+    fn run(self: *Self) -> usize {
+        var n: usize = 0
+        while self.i + n < self.s.len and is_digit(self.s[self.i + n]) { n += 1 }
+        return n
+    }
+
+    fn read_date(self: *mut Self) -> ?DateTime {
+        let n = self.run()
+        let year = (self.num(4) orelse return null) as i32
+        if n == 8 {
+            let m = self.num(2) orelse return null
+            let d = self.num(2) orelse return null
+            return date(year, m as u8, d as u8)
+        }
+        if n == 7 { return from_ordinal(year, self.num(3) orelse return null) }
+        if n != 4 { return null }
+        let extended = self.at('-')
+        if extended { self.i += 1 }
+        if self.at('W') {
+            self.i += 1
+            let w = self.num(2) orelse return null
+            var d: i64 = 1
+            if extended and self.at('-') {
+                self.i += 1
+                d = self.num(1) orelse return null
+            } else if !extended and self.run() > 0 {
+                d = self.num(1) orelse return null
+            }
+            return from_week(year, w, d)
+        }
+        if !extended { return null }
+        let r = self.run()
+        if r == 3 { return from_ordinal(year, self.num(3) orelse return null) }
+        if r != 2 { return null }
+        let m = self.num(2) orelse return null
+        if !self.at('-') { return null }
+        self.i += 1
+        let d = self.num(2) orelse return null
+        if self.run() != 0 { return null }
+        return date(year, m as u8, d as u8)
+    }
+
+    /// `hh[:mm[:ss[.fff]]]` or `hh[mm[ss[.fff]]]` into `dt`.
+    fn read_clock(self: *mut Self, dt: *mut DateTime) -> bool {
+        let hour = self.num(2) orelse return false
+        var minute: i64 = 0
+        var second: i64 = 0
+        let extended = self.at(':')
+        if extended or self.run() >= 2 {
+            if extended { self.i += 1 }
+            minute = self.num(2) orelse return false
+            let more = if extended { self.at(':') } else { self.run() >= 2 }
+            if more {
+                if extended { self.i += 1 }
+                second = self.num(2) orelse return false
+                if self.at('.') or self.at(',') {
+                    self.i += 1
+                    let n = self.run()
+                    if n == 0 { return false }
+                    var ms: i64 = 0
+                    var k: usize = 0
+                    while k < 3 {
+                        ms *= 10
+                        if k < n { ms += (self.s[self.i + k] - '0') as i64 }
+                        k += 1
+                    }
+                    self.i += n
+                    dt.millis = ms as u16
                 }
-                if n == 0 { return null }
-                while n < 3 {
-                    ms *= 10
-                    n += 1
-                }
-                dt.millis = ms as u16
-                i += 1 + n
             }
         }
+        if hour > 23 or minute > 59 or second > 60 { return false }
+        dt.hour = hour as u8
+        dt.minute = minute as u8
+        dt.second = second as u8
+        return true
     }
-    if i < s.len {
-        let c = s[i]
-        if c == 'Z' {
-            i += 1
-        } else if c == '+' or c == '-' {
-            let oh = digits(s, i + 1, 2) orelse return null
-            if i + 3 >= s.len or s[i + 3] != ':' { return null }
-            let om = digits(s, i + 4, 2) orelse return null
-            var off = (oh * 60 + om) as i32
-            if c == '-' { off = -off }
-            dt.offset_min = off
-            i += 6
+
+    /// `Z`, `+hh:mm`, `+hhmm` or `+hh` into `dt`; no offset is fine too.
+    fn read_offset(self: *mut Self, dt: *mut DateTime) -> bool {
+        if self.at('Z') or self.at('z') {
+            self.i += 1
+            return true
         }
+        if !(self.at('+') or self.at('-')) { return true }
+        let minus = self.at('-')
+        self.i += 1
+        let h = self.num(2) orelse return false
+        var m: i64 = 0
+        if self.at(':') {
+            self.i += 1
+            m = self.num(2) orelse return false
+        } else if self.run() == 2 {
+            m = self.num(2) orelse return false
+        }
+        if h > 23 or m > 59 { return false }
+        let off = (h * 60 + m) as i32
+        dt.offset_min = if minus { -off } else { off }
+        return true
     }
-    if i != s.len { return null }
-    return dt
 }
 
 // ------------------------------------------------------------------ durations
 
-/// A span of time in milliseconds; negative means "before".
-pub struct Duration {
+/// A span of time in milliseconds; negative means "before". Durations
+/// compare with `==` and `<`.
+pub struct Duration derive(Eq, Ord) {
     ms: i64
 }
 
@@ -352,8 +613,45 @@ impl Duration {
     pub fn total_minutes(self: *Self) -> f64 { return (self.ms as f64) / 60000.0 }
     pub fn total_hours(self: *Self) -> f64 { return (self.ms as f64) / 3600000.0 }
 
+    /// Whole units, rounded toward zero.
+    pub fn whole_seconds(self: *Self) -> i64 { return self.ms / 1000 }
+    pub fn whole_minutes(self: *Self) -> i64 { return self.ms / 60000 }
+    pub fn whole_hours(self: *Self) -> i64 { return self.ms / 3600000 }
+    pub fn whole_days(self: *Self) -> i64 { return self.ms / 86400000 }
+
     pub fn plus(self: *Self, other: Duration) -> Duration { return Duration{ .ms = self.ms + other.ms } }
     pub fn minus(self: *Self, other: Duration) -> Duration { return Duration{ .ms = self.ms - other.ms } }
+
+    /// `n` times as long.
+    pub fn times(self: *Self, n: i64) -> Duration { return Duration{ .ms = self.ms * n } }
+
+    /// An `n`th of it, rounded toward zero.
+    pub fn div(self: *Self, n: i64) -> Duration { return Duration{ .ms = self.ms / n } }
+
+    /// How many times `other` goes into it: `hours(3).ratio(minutes(90))`
+    /// is 2.0.
+    pub fn ratio(self: *Self, other: Duration) -> f64 { return (self.ms as f64) / (other.ms as f64) }
+
+    pub fn neg(self: *Self) -> Duration { return Duration{ .ms = -self.ms } }
+    pub fn abs(self: *Self) -> Duration { return Duration{ .ms = if self.ms < 0 { -self.ms } else { self.ms } } }
+    pub fn is_zero(self: *Self) -> bool { return self.ms == 0 }
+    pub fn is_negative(self: *Self) -> bool { return self.ms < 0 }
+
+    /// Cut to a whole number of `unit`s, toward zero:
+    /// `millis(1999).truncate(seconds(1))` is one second.
+    pub fn truncate(self: *Self, unit: Duration) -> Duration {
+        let u = if unit.ms < 0 { -unit.ms } else { unit.ms }
+        return Duration{ .ms = self.ms - self.ms % u }
+    }
+
+    /// The nearest whole number of `unit`s; a half goes away from zero.
+    pub fn round(self: *Self, unit: Duration) -> Duration {
+        let u = if unit.ms < 0 { -unit.ms } else { unit.ms }
+        let r = self.ms % u
+        var q = self.ms - r
+        if r * 2 >= u { q += u } else if r * 2 <= -u { q -= u }
+        return Duration{ .ms = q }
+    }
 
     /// Human text: `250ms`, `3.5s`, `2m 05s`, `1h 02m`, `3d 04h`.
     pub fn text(self: *Self) -> String {
@@ -392,11 +690,700 @@ impl Duration {
         out.push_byte('h')
         return out
     }
+
+    /// ISO 8601: `PT1H30M`, `PT0.25S`, `PT76H`, `-PT1.5S`, `PT0S`. Hours
+    /// are the largest unit, since a day in a zone is not always 24 of
+    /// them.
+    pub fn iso(self: *Self) -> String {
+        var out = String.new()
+        // the magnitude as u64, so the smallest i64 has one too
+        var a: u64 = 0
+        if self.ms < 0 {
+            out.push_byte('-')
+            a = ((-(self.ms + 1)) as u64) + 1
+        } else {
+            a = self.ms as u64
+        }
+        out.append("PT")
+        let h = a / 3600000
+        let m = a / 60000 % 60
+        let s = a / 1000 % 60
+        let f = a % 1000
+        if h > 0 { out.append(format("{}H", .{h})) }
+        if m > 0 { out.append(format("{}M", .{m})) }
+        if s > 0 or f > 0 or (h == 0 and m == 0) {
+            out.append(format("{}", .{s}))
+            if f > 0 {
+                // up to three digits, without the zeros at the end
+                var frac = f
+                var width: usize = 3
+                while frac % 10 == 0 {
+                    frac /= 10
+                    width -= 1
+                }
+                out.push_byte('.')
+                pad(&mut out, frac as i64, width)
+            }
+            out.push_byte('S')
+        }
+        return out
+    }
+
+    /// Parse ISO 8601 duration text: `PT1H30M`, `PT0.25S`, `P2DT3H`, `P1W`,
+    /// `-PT5M`. A day is 24 hours here and a week 7 days; years and months
+    /// (`P1Y`, `P2M`), whose length depends on the calendar, are `null`, as
+    /// is anything that is not a duration. The last number may have a
+    /// fraction (`PT1.5H`), read to the millisecond.
+    pub fn parse_iso(s: []u8) -> ?Duration {
+        var i: usize = 0
+        var neg = false
+        if i < s.len and (s[i] == '-' or s[i] == '+') {
+            neg = s[i] == '-'
+            i += 1
+        }
+        if i >= s.len or s[i] != 'P' { return null }
+        i += 1
+        var total: i64 = 0
+        var in_time = false
+        var any = false
+        var ended = false
+        // each unit must be smaller than the one before
+        var last: i64 = 9223372036854775807
+        while i < s.len {
+            if s[i] == 'T' {
+                if in_time or i + 1 >= s.len { return null }
+                in_time = true
+                i += 1
+                continue
+            }
+            if ended { return null }
+            let start = i
+            while i < s.len and is_digit(s[i]) { i += 1 }
+            if i == start { return null }
+            let whole = s[start..i].parse_int(i64) catch { return null }
+            var num: i64 = 0
+            var den: i64 = 1
+            if i < s.len and (s[i] == '.' or s[i] == ',') {
+                i += 1
+                let fstart = i
+                while i < s.len and is_digit(s[i]) {
+                    if den < 1000000000 {
+                        num = num * 10 + ((s[i] - '0') as i64)
+                        den *= 10
+                    }
+                    i += 1
+                }
+                if i == fstart { return null }
+                ended = true
+            }
+            if i >= s.len { return null }
+            let unit = duration_unit(s[i], in_time)
+            if unit == 0 or unit >= last { return null }
+            last = unit
+            i += 1
+            if whole > 9223372036854775807 / unit { return null }
+            total += whole * unit + num * unit / den
+            any = true
+        }
+        if !any { return null }
+        return Duration{ .ms = if neg { -total } else { total } }
+    }
+}
+
+/// A duration letter's length in ms; 0 for one that is not allowed where
+/// it is (`M` is minutes after `T`, and months, which are not, before).
+fn duration_unit(c: u8, in_time: bool) -> i64 {
+    if in_time {
+        if c == 'H' { return 3600000 }
+        if c == 'M' { return 60000 }
+        if c == 'S' { return 1000 }
+        return 0
+    }
+    if c == 'W' { return 604800000 }
+    if c == 'D' { return 86400000 }
+    return 0
 }
 
 /// `instant + duration`.
 pub fn add(ms: i64, d: Duration) -> i64 {
     return ms + d.ms
+}
+
+// ------------------------------------------------------------------ zones
+
+const MIN_MS: i64 = -9223372036854775808
+
+/// One stretch of a zone's history with one offset.
+pub struct Period derive(Clone) {
+    /// when it began, in ms since the epoch; the first period's is the
+    /// smallest i64
+    start: i64
+    /// seconds east of UTC
+    offset: i32
+    dst: bool
+    abbrev: String
+}
+
+/// A day of the year in a POSIX TZ rule: `Jn` (kind 0: 1 to 365, February
+/// 29 never counted), `n` (kind 1: 0 to 365), or `Mm.w.d` (kind 2:
+/// weekday `d`, 0 for Sunday, of week `w` of month `m`; week 5 is the
+/// last).
+pub struct RuleDay derive(Clone) {
+    kind: u8
+    day: i32
+    month: u8
+    week: u8
+}
+
+/// A POSIX TZ rule, as the zoneinfo files end with and `$TZ` may hold:
+/// a standard offset, and maybe a daylight one with the days and times
+/// it begins and ends each year. Offsets are seconds east of UTC; times
+/// are seconds after local midnight, in standard time for the start and
+/// daylight time for the end.
+pub struct Rule derive(Clone) {
+    std_abbrev: String
+    std_offset: i32
+    has_dst: bool
+    dst_abbrev: String
+    dst_offset: i32
+    start: RuleDay
+    start_time: i32
+    end: RuleDay
+    end_time: i32
+}
+
+/// A time zone: the periods of its history, and the rule it follows after
+/// the last of them.
+pub struct Zone derive(Clone) {
+    name: String
+    periods: List(Period)
+    has_rule: bool
+    rule: Rule
+}
+
+/// Where an instant falls in a zone: one of its periods, or past them,
+/// in its rule's standard or daylight half.
+struct Place {
+    period: usize
+    from_rule: bool
+    rule_dst: bool
+}
+
+fn no_rule() -> Rule {
+    return Rule{
+        .std_abbrev = String.new(), .std_offset = 0, .has_dst = false,
+        .dst_abbrev = String.new(), .dst_offset = 0,
+        .start = RuleDay{ .kind = 0, .day = 1, .month = 1, .week = 1 }, .start_time = 0,
+        .end = RuleDay{ .kind = 0, .day = 1, .month = 1, .week = 1 }, .end_time = 0,
+    }
+}
+
+/// UTC as a zone.
+pub fn utc_zone() -> Zone {
+    return fixed_zone("UTC", 0)
+}
+
+/// A zone always `secs` seconds east of UTC.
+fn fixed_zone(name: []u8, secs: i32) -> Zone {
+    var periods = List(Period).new()
+    periods.append(Period{ .start = MIN_MS, .offset = secs, .dst = false, .abbrev = offset_abbrev(secs) })
+    return Zone{ .name = String.from(name), .periods = periods, .has_rule = false, .rule = no_rule() }
+}
+
+/// A zone that follows a POSIX rule at every instant.
+fn rule_zone(name: []u8, own r: Rule) -> Zone {
+    var periods = List(Period).new()
+    periods.append(Period{ .start = MIN_MS, .offset = r.std_offset, .dst = false, .abbrev = r.std_abbrev.clone() })
+    return Zone{ .name = String.from(name), .periods = periods, .has_rule = true, .rule = r }
+}
+
+/// A time zone by name: an IANA name from the platform's database
+/// (`Europe/Berlin`, `America/New_York`, `Asia/Kolkata`), `UTC`, a fixed
+/// offset (`+05:30`, `-0800`), or a POSIX rule (`EST5EDT,M3.2.0,M11.1.0`).
+/// `error.NotFound` when the database has no such zone, or there is no
+/// database (the playground); `error.InvalidInput` for text that cannot
+/// name a zone, or a database file that is not one.
+pub fn zone(name: []u8) -> !Zone {
+    if name == "UTC" or name == "Z" { return utc_zone() }
+    if name.len > 0 and (name[0] == '+' or name[0] == '-') {
+        var p = IsoScan{ .s = name, .i = 0 }
+        var dt = utc(0)
+        if !p.read_offset(&mut dt) or p.i != name.len { return error.InvalidInput }
+        return fixed_zone(name, dt.offset_min * 60)
+    }
+    let known = zone_name_ok(name)
+    if known {
+        for dir in zoneinfo_dirs() {
+            let data = fs.read(format("{}/{}", .{dir, name})[..]) catch { continue }
+            return from_tzif(name, data[..])
+        }
+        if let text = zone_text(name) { return from_rules_text(text[..]) }
+    }
+    if let r = parse_rule(name) { return rule_zone(name, r) }
+    if known { return error.NotFound }
+    return error.InvalidInput
+}
+
+/// The platform's text for a zone (`time.zone_rules`: ICU on Windows);
+/// null where it has none.
+fn zone_text(name: []u8) -> ?String {
+    let text = time.zone_rules(name) catch { return null }
+    return text
+}
+
+/// A zone's name is ASCII letters, digits and `_-+`, in parts split by
+/// `/`, none of them empty: no path leaves the zoneinfo directory.
+fn zone_name_ok(name: []u8) -> bool {
+    if name.len == 0 or name.len > 128 { return false }
+    var part: usize = 0
+    for c in name {
+        if c == '/' {
+            if part == 0 { return false }
+            part = 0
+            continue
+        }
+        if !(is_alpha(c) or is_digit(c) or c == '_' or c == '-' or c == '+') { return false }
+        part += 1
+    }
+    return part > 0
+}
+
+/// Where the zoneinfo files may be: `$TZDIR`, then where Linux, macOS and
+/// the BSDs keep them (NixOS in /etc/zoneinfo).
+fn zoneinfo_dirs() -> List(String) {
+    var dirs = List(String).new()
+    if let d = os.env("TZDIR") {
+        if d.len > 0 { dirs.append(String.from(d)) }
+    }
+    if @target().0 != "windows" {
+        for d in ["/usr/share/zoneinfo", "/usr/lib/zoneinfo", "/usr/share/lib/zoneinfo", "/etc/zoneinfo"] { dirs.append(String.from(d)) }
+    }
+    return dirs
+}
+
+/// The machine's time zone: `$TZ` when it is set (a zone's name, the path
+/// of a TZif file, or a POSIX rule such as `EST5EDT,M3.2.0,M11.1.0`; set
+/// but empty is UTC), else the system's: /etc/localtime on Linux, macOS
+/// and the BSDs (named by /etc/timezone where there is one, else `Local`),
+/// the zone Windows is set to through ICU. When none is found, a zone
+/// with the C library's offset now, named `Local`.
+pub fn local_zone() -> Zone {
+    if let tz = os.env("TZ") { return zone_from_tz(tz) }
+    if @target().0 == "windows" {
+        let text = zone_text("") orelse return fallback_local()
+        let z = from_rules_text(text[..]) catch { return fallback_local() }
+        return z
+    }
+    let data = fs.read("/etc/localtime") catch { return fallback_local() }
+    let named = fs.read("/etc/timezone") catch { String.new() }
+    let guess = named[..].trim()
+    let name = if zone_name_ok(guess) { guess } else { "Local" }
+    let z = from_tzif(name, data[..]) catch { return fallback_local() }
+    return z
+}
+
+/// The zone `$TZ` names: `:name` or `name`, a TZif file's path, or a rule.
+fn zone_from_tz(tz0: []u8) -> Zone {
+    var tz = tz0
+    if tz.len > 0 and tz[0] == ':' { tz = tz[1..] }
+    if tz.len == 0 { return utc_zone() }
+    if tz[0] == '/' {
+        let data = fs.read(tz) catch { return utc_zone() }
+        // a path into a zoneinfo directory names its zone
+        var name = tz
+        if let k = tz.find("zoneinfo/") { name = tz[k + 9..] }
+        let z = from_tzif(name, data[..]) catch { return utc_zone() }
+        return z
+    }
+    let z = zone(tz) catch { return utc_zone() }
+    return z
+}
+
+/// A zone with the C library's offset now, when nothing says more.
+fn fallback_local() -> Zone {
+    return fixed_zone("Local", (time.utc_offset(time.now()) * 60) as i32)
+}
+
+fn be32u(b: []u8, at: usize) -> u64 {
+    return ((b[at] as u64) << 24) | ((b[at + 1] as u64) << 16) | ((b[at + 2] as u64) << 8) | (b[at + 3] as u64)
+}
+
+fn be32(b: []u8, at: usize) -> i64 {
+    return @bitCast(i32, be32u(b, at) as u32) as i64
+}
+
+fn be64(b: []u8, at: usize) -> i64 {
+    var v: u64 = 0
+    var k: usize = 0
+    while k < 8 {
+        v = (v << 8) | (b[at + k] as u64)
+        k += 1
+    }
+    return @bitCast(i64, v)
+}
+
+/// The length of the data after a TZif header at `at`, with times of
+/// `tsize` bytes; null when the header does not fit.
+fn tzif_block(b: []u8, at: usize, tsize: usize) -> ?usize {
+    if at + 44 > b.len { return null }
+    let isutcnt = be32u(b, at + 20) as usize
+    let isstdcnt = be32u(b, at + 24) as usize
+    let leapcnt = be32u(b, at + 28) as usize
+    let timecnt = be32u(b, at + 32) as usize
+    let typecnt = be32u(b, at + 36) as usize
+    let charcnt = be32u(b, at + 40) as usize
+    return timecnt * tsize + timecnt + typecnt * 6 + charcnt + leapcnt * (tsize + 4) + isstdcnt + isutcnt
+}
+
+/// Seconds to milliseconds, held at the ends of the i64 range: a TZif
+/// file may list a first change at -2^59 s, "the big bang".
+fn secs_to_ms(s: i64) -> i64 {
+    if s <= -9223372036854775 { return MIN_MS }
+    if s >= 9223372036854775 { return 9223372036854775807 }
+    return s * 1000
+}
+
+/// Local time type `t` of a TZif block, from `start` on.
+fn tzif_period(b: []u8, types_at: usize, chars_at: usize, charcnt: usize, t: usize, start: i64) -> !Period {
+    let p = types_at + t * 6
+    let ai = b[p + 5] as usize
+    if ai >= charcnt { return error.InvalidInput }
+    var e = ai
+    while e < charcnt and b[chars_at + e] != 0 { e += 1 }
+    return Period{ .start = start, .offset = be32(b, p) as i32, .dst = b[p + 4] != 0, .abbrev = String.from(b[chars_at + ai..chars_at + e]) }
+}
+
+/// A zone from the bytes of a TZif file (RFC 8536), the form the zoneinfo
+/// database is kept in; `error.InvalidInput` when they are not one.
+pub fn from_tzif(name: []u8, b: []u8) -> !Zone {
+    if b.len < 44 or b[0..4] != "TZif" { return error.InvalidInput }
+    var at: usize = 0
+    var wide = false
+    // version 2 and later repeat the data with 64-bit times after the
+    // 32-bit block, and end with a POSIX rule
+    if b[4] >= '2' {
+        at = 44 + (tzif_block(b, 0, 4) orelse return error.InvalidInput)
+        if at + 44 > b.len or b[at..at + 4] != "TZif" { return error.InvalidInput }
+        wide = true
+    }
+    let tsize: usize = if wide { 8 } else { 4 }
+    let data_len = tzif_block(b, at, tsize) orelse return error.InvalidInput
+    let timecnt = be32u(b, at + 32) as usize
+    let typecnt = be32u(b, at + 36) as usize
+    let charcnt = be32u(b, at + 40) as usize
+    if typecnt == 0 or at + 44 + data_len > b.len { return error.InvalidInput }
+    let times_at = at + 44
+    let index_at = times_at + timecnt * tsize
+    let types_at = index_at + timecnt
+    let chars_at = types_at + typecnt * 6
+    var periods = List(Period).new()
+    // before the first change, the first type
+    periods.append(try tzif_period(b, types_at, chars_at, charcnt, 0, MIN_MS))
+    var i: usize = 0
+    while i < timecnt {
+        let secs = if wide { be64(b, times_at + i * 8) } else { be32(b, times_at + i * 4) }
+        let t = b[index_at + i] as usize
+        if t >= typecnt { return error.InvalidInput }
+        periods.append(try tzif_period(b, types_at, chars_at, charcnt, t, secs_to_ms(secs)))
+        i += 1
+    }
+    var z = Zone{ .name = String.from(name), .periods = periods, .has_rule = false, .rule = no_rule() }
+    // the footer, `\n<rule>\n`, for instants past the last change
+    let foot = at + 44 + data_len
+    if wide and foot < b.len and b[foot] == '\n' {
+        var end = foot + 1
+        while end < b.len and b[end] != '\n' { end += 1 }
+        if end > foot + 1 {
+            if let r = parse_rule(b[foot + 1..end]) {
+                z.rule = r
+                z.has_rule = true
+            }
+        }
+    }
+    return z
+}
+
+/// A zone from `time.zone_rules`' text: its name, then a period a line,
+/// `start offset dst abbrev`, the first period's start `-`.
+fn from_rules_text(text: []u8) -> !Zone {
+    let lines = text.split("\n")
+    if lines.len < 2 { return error.InvalidInput }
+    var periods = List(Period).new()
+    for line, n in lines {
+        if n == 0 or line.len == 0 { continue }
+        let f = line.split(" ")
+        if f.len != 4 { return error.InvalidInput }
+        var start = MIN_MS
+        if f[0] != "-" { start = f[0].parse_int(i64) catch { return error.InvalidInput } }
+        let offset = f[1].parse_int(i32) catch { return error.InvalidInput }
+        periods.append(Period{ .start = start, .offset = offset, .dst = f[2] == "1", .abbrev = String.from(f[3]) })
+    }
+    if periods.len == 0 { return error.InvalidInput }
+    return Zone{ .name = String.from(lines[0]), .periods = periods, .has_rule = false, .rule = no_rule() }
+}
+
+impl Zone {
+    fn place(self: *Self, ms: i64) -> Place {
+        let n = self.periods.len
+        if self.has_rule and ms >= self.periods[n - 1].start {
+            return Place{ .period = n - 1, .from_rule = true, .rule_dst = self.rule.in_dst(ms) }
+        }
+        var lo: usize = 0
+        var hi = n
+        while hi - lo > 1 {
+            let mid = (lo + hi) / 2
+            if self.periods[mid].start <= ms { lo = mid } else { hi = mid }
+        }
+        return Place{ .period = lo, .from_rule = false, .rule_dst = false }
+    }
+
+    /// Seconds east of UTC at an instant. A few offsets, the local mean
+    /// time places kept before they took a standard one (mostly before
+    /// 1900), are not whole minutes.
+    pub fn offset_seconds_at(self: *Self, ms: i64) -> i32 {
+        let p = self.place(ms)
+        if !p.from_rule { return self.periods[p.period].offset }
+        return if p.rule_dst { self.rule.dst_offset } else { self.rule.std_offset }
+    }
+
+    /// Minutes east of UTC at an instant, to the nearest minute: the
+    /// offset of the `DateTime` that `at` gives.
+    pub fn offset_at(self: *Self, ms: i64) -> i32 {
+        let s = self.offset_seconds_at(ms)
+        return (if s < 0 { s - 30 } else { s + 30 }) / 60
+    }
+
+    /// Whether daylight saving time is in force at an instant.
+    pub fn is_dst_at(self: *Self, ms: i64) -> bool {
+        let p = self.place(ms)
+        if !p.from_rule { return self.periods[p.period].dst }
+        return p.rule_dst
+    }
+
+    /// The zone's abbreviation at an instant: `CEST`, `PST`, or an offset
+    /// such as `+0530` where the database has no name.
+    pub fn abbrev_at(self: *Self, ms: i64) -> String {
+        let p = self.place(ms)
+        if !p.from_rule { return self.periods[p.period].abbrev.clone() }
+        return if p.rule_dst { self.rule.dst_abbrev.clone() } else { self.rule.std_abbrev.clone() }
+    }
+
+    /// An instant broken down in this zone.
+    pub fn at(self: *Self, ms: i64) -> DateTime {
+        return with_offset(ms, self.offset_at(ms))
+    }
+
+    /// The current instant in this zone.
+    pub fn now(self: *Self) -> DateTime {
+        return self.at(time.now())
+    }
+
+    /// The instant a wall-clock time names in this zone; the offset in
+    /// `dt` is ignored. A time that happens twice, when clocks are turned
+    /// back, is the first; one that is skipped, when they are turned
+    /// forward, is read with the offset before the change, so 02:30 on the
+    /// night clocks jump from 02:00 to 03:00 is 03:30.
+    pub fn instant(self: *Self, dt: *DateTime) -> i64 {
+        let wall = days_from_civil(dt.year, dt.month, dt.day) * 86400000 + (dt.hour as i64) * 3600000 + (dt.minute as i64) * 60000 + (dt.second as i64) * 1000 + (dt.millis as i64)
+        let before = (self.offset_at(wall - 86400000) as i64) * 60000
+        let after = (self.offset_at(wall + 86400000) as i64) * 60000
+        let early = wall - before
+        let late = wall - after
+        let early_ok = (self.offset_at(early) as i64) * 60000 == before
+        let late_ok = (self.offset_at(late) as i64) * 60000 == after
+        if early_ok and late_ok { return if early < late { early } else { late } }
+        if late_ok { return late }
+        return early
+    }
+
+    /// strftime-style text of an instant in this zone: `DateTime.format`'s
+    /// letters, with `%Z` the zone's abbreviation (`CEST`).
+    pub fn format(self: *Self, ms: i64, spec: []u8) -> String {
+        let abbrev = self.abbrev_at(ms)
+        var s = String.new()
+        var i: usize = 0
+        while i < spec.len {
+            if spec[i] == '%' and i + 1 < spec.len {
+                if spec[i + 1] == 'Z' {
+                    for c in abbrev[..] {
+                        s.push_byte(c)
+                        if c == '%' { s.push_byte('%') }
+                    }
+                } else {
+                    s.push_byte('%')
+                    s.push_byte(spec[i + 1])
+                }
+                i += 2
+                continue
+            }
+            s.push_byte(spec[i])
+            i += 1
+        }
+        let dt = self.at(ms)
+        return dt.format(s[..])
+    }
+}
+
+impl Rule {
+    /// Whether daylight time is in force at an instant.
+    fn in_dst(self: *Self, ms: i64) -> bool {
+        if !self.has_dst { return false }
+        let secs = floor_div(ms, 1000)
+        // the year, in local standard time
+        let y = civil_from_days(floor_div(secs + (self.std_offset as i64), 86400)).0
+        let begins = self.change(y, true)
+        let ends = self.change(y, false)
+        if begins < ends { return secs >= begins and secs < ends }
+        // the southern hemisphere: daylight time spans the new year
+        return secs < ends or secs >= begins
+    }
+
+    /// When daylight time begins (or ends) in year `y`, in seconds since
+    /// the epoch.
+    fn change(self: *Self, y: i32, begins: bool) -> i64 {
+        if begins { return self.start.days_in(y) * 86400 + (self.start_time as i64) - (self.std_offset as i64) }
+        return self.end.days_in(y) * 86400 + (self.end_time as i64) - (self.dst_offset as i64)
+    }
+}
+
+impl RuleDay {
+    /// This day in year `y`, as days since 1970-01-01.
+    fn days_in(self: *Self, y: i32) -> i64 {
+        let jan1 = days_from_civil(y, 1, 1)
+        if self.kind == 0 {
+            var n = (self.day as i64) - 1
+            if is_leap(y) and self.day >= 60 { n += 1 }
+            return jan1 + n
+        }
+        if self.kind == 1 { return jan1 + (self.day as i64) }
+        let first = days_from_civil(y, self.month, 1)
+        // weekdays counted from Sunday, as the rule counts them; 1970-01-01
+        // was a Thursday
+        let wd = floor_mod(first + 4, 7)
+        var d = first + floor_mod((self.day as i64) - wd, 7) + ((self.week as i64) - 1) * 7
+        let last = first + (days_in_month(y, self.month) as i64) - 1
+        while d > last { d -= 7 }
+        return d
+    }
+}
+
+/// Parse a POSIX TZ rule: `EST5EDT,M3.2.0,M11.1.0`, `<+0530>-5:30`,
+/// `AEST-10AEDT,M10.1.0,M4.1.0/3`. Its offsets are written west of UTC,
+/// the other way round from everywhere else; a rule with a daylight name
+/// and no dates follows the United States' dates. `null` when the text is
+/// not a rule.
+pub fn parse_rule(s: []u8) -> ?Rule {
+    var p = RuleScan{ .s = s, .i = 0 }
+    var r = no_rule()
+    r.std_abbrev = p.name() orelse return null
+    r.std_offset = -(p.clock() orelse return null)
+    if p.i == s.len { return r }
+    r.dst_abbrev = p.name() orelse return null
+    r.has_dst = true
+    r.dst_offset = r.std_offset + 3600
+    if p.i < s.len and s[p.i] != ',' { r.dst_offset = -(p.clock() orelse return null) }
+    r.start_time = 7200
+    r.end_time = 7200
+    if p.i == s.len {
+        r.start = RuleDay{ .kind = 2, .day = 0, .month = 3, .week = 2 }
+        r.end = RuleDay{ .kind = 2, .day = 0, .month = 11, .week = 1 }
+        return r
+    }
+    if !p.eat(',') { return null }
+    r.start = p.day() orelse return null
+    if p.eat('/') { r.start_time = p.clock() orelse return null }
+    if !p.eat(',') { return null }
+    r.end = p.day() orelse return null
+    if p.eat('/') { r.end_time = p.clock() orelse return null }
+    if p.i != s.len { return null }
+    return r
+}
+
+/// A cursor over a POSIX TZ rule.
+struct RuleScan {
+    s: []u8
+    i: usize
+}
+
+impl RuleScan {
+    fn eat(self: *mut Self, c: u8) -> bool {
+        if self.i < self.s.len and self.s[self.i] == c {
+            self.i += 1
+            return true
+        }
+        return false
+    }
+
+    /// An abbreviation: three or more letters, or `<...>`, which may hold
+    /// signs and digits too.
+    fn name(self: *mut Self) -> ?String {
+        if self.eat('<') {
+            let start = self.i
+            while self.i < self.s.len and self.s[self.i] != '>' { self.i += 1 }
+            if self.i >= self.s.len or self.i - start < 3 { return null }
+            let n = String.from(self.s[start..self.i])
+            self.i += 1
+            return n
+        }
+        let start = self.i
+        while self.i < self.s.len and is_alpha(self.s[self.i]) { self.i += 1 }
+        if self.i - start < 3 { return null }
+        return String.from(self.s[start..self.i])
+    }
+
+    /// `[+-]h[h][:mm[:ss]]` as seconds; hours up to 167, as RFC 8536
+    /// allows.
+    fn clock(self: *mut Self) -> ?i32 {
+        var sign: i32 = 1
+        if self.eat('-') { sign = -1 } else { _ = self.eat('+') }
+        let h = self.int(3) orelse return null
+        if h > 167 { return null }
+        var secs = h * 3600
+        if self.eat(':') {
+            let m = self.int(2) orelse return null
+            if m > 59 { return null }
+            secs += m * 60
+            if self.eat(':') {
+                let sec = self.int(2) orelse return null
+                if sec > 59 { return null }
+                secs += sec
+            }
+        }
+        return sign * secs
+    }
+
+    /// One to `most` digits.
+    fn int(self: *mut Self, most: usize) -> ?i32 {
+        let start = self.i
+        var v: i32 = 0
+        while self.i < self.s.len and self.i - start < most and is_digit(self.s[self.i]) {
+            v = v * 10 + ((self.s[self.i] - '0') as i32)
+            self.i += 1
+        }
+        if self.i == start { return null }
+        return v
+    }
+
+    /// `Jn`, `n` or `Mm.w.d`.
+    fn day(self: *mut Self) -> ?RuleDay {
+        if self.eat('J') {
+            let n = self.int(3) orelse return null
+            if n < 1 or n > 365 { return null }
+            return RuleDay{ .kind = 0, .day = n, .month = 0, .week = 0 }
+        }
+        if self.eat('M') {
+            let m = self.int(2) orelse return null
+            if !self.eat('.') { return null }
+            let w = self.int(1) orelse return null
+            if !self.eat('.') { return null }
+            let d = self.int(1) orelse return null
+            if m < 1 or m > 12 or w < 1 or w > 5 or d > 6 { return null }
+            return RuleDay{ .kind = 2, .day = d, .month = m as u8, .week = w as u8 }
+        }
+        let n = self.int(3) orelse return null
+        if n > 365 { return null }
+        return RuleDay{ .kind = 1, .day = n, .month = 0, .week = 0 }
+    }
 }
 
 // ------------------------------------------------------------------ timers
@@ -467,6 +1454,30 @@ test "offsets and formatting" {
     expect_eq(m.offset_text(), "-05:30")
     expect_eq(t.format("%Y-%m-%d %H:%M:%S.%3 %a %b %j %z 100%%"), "2026-09-19 06:15:14.123 Sat Sep 262 +02:00 100%")
     expect_eq(t.time_text(), "06:15:14")
+    expect_eq(t.format("%A %B %y %I%p %G-W%V-%u %s %Z"), "Saturday September 26 06AM 2026-W38-6 1789791314 +02")
+    expect_eq(m.format("%Z"), "-0530")
+    expect_eq(utc(0).format("%Z %I %p"), "UTC 12 AM")
+    expect_eq(t.iso_basic(), "20260919T061514.123+0200")
+    expect_eq(utc(0).iso_basic(), "19700101T000000Z")
+}
+
+test "ISO weeks and ordinal dates" {
+    let t = utc(1789791314123)
+    expect_eq(t.week_date(), "2026-W38-6")
+    expect_eq(t.ordinal_date(), "2026-262")
+    // January 3, 2021, a Sunday, is in 2020's 53rd week
+    expect_eq(date(2021, 1, 3).?.week_date(), "2020-W53-7")
+    expect_eq(date(2026, 12, 31).?.week_date(), "2026-W53-4")
+    expect_eq(date(2027, 1, 1).?.week_date(), "2026-W53-5")
+    expect_eq(date(2024, 12, 30).?.week_date(), "2025-W01-1")
+    expect_eq(weeks_in_year(2020), 53)
+    expect_eq(weeks_in_year(2026), 53)
+    expect_eq(weeks_in_year(2025), 52)
+    expect_eq(from_week(2020, 53, 7).?.date_text(), "2021-01-03")
+    expect(from_week(2025, 53, 1) == null)
+    expect(from_week(2026, 1, 8) == null)
+    expect_eq(from_ordinal(2024, 366).?.date_text(), "2024-12-31")
+    expect(from_ordinal(2025, 366) == null)
 }
 
 test "parsing" {
@@ -482,6 +1493,21 @@ test "parsing" {
     expect(parse_iso("2024-02-29T25:00") == null)
     let d = parse_iso("2024-02-29T12:30").?
     expect_eq(d.time_text(), "12:30:00")
+    // the other forms name the same instant
+    let forms = ["20260919T041514.123Z", "2026-W38-6T04:15:14.123Z", "2026W386T041514,123Z", "2026-262T04:15:14.1234567Z", "2026262T041514.123+0000", "2026-09-19T06:15:14.123+02", "2026-09-19t04:15:14.123z"]
+    for f in forms {
+        let p = parse_iso(f).?
+        expect_eq(p.to_ms(), 1789791314123)
+    }
+    expect_eq(parse_iso("2026-09-19T04").?.time_text(), "04:00:00")
+    expect_eq(parse_iso("20260919T0415").?.time_text(), "04:15:00")
+    expect_eq(parse_iso("2026-W38").?.date_text(), "2026-09-14")
+    let bad = ["2026-W54-1", "2026-W38-8", "2025-366", "2026-09", "202609", "2026-09-19T04:15:14.Z", "2026-09-19T04:1", "2026-09-19T04:15+25:00", "2026-09-19T04:15:14Zjunk", "2026-0919", "2026-09-190"]
+    for f in bad { expect(parse_iso(f) == null) }
+    // what the ISO printers write, the parser reads back
+    let e = with_offset(-1234567891011, -570)
+    expect_eq(parse_iso(e.iso()[..]).?.to_ms(), -1234567891011)
+    expect_eq(parse_iso(e.iso_basic()[..]).?.to_ms(), -1234567891011)
 }
 
 test "durations" {
@@ -498,4 +1524,223 @@ test "durations" {
     let d = sw.lap()
     expect(d.ms >= 0)
     expect(sw.elapsed_ms() >= 0.0)
+}
+
+test "duration arithmetic" {
+    let h = Duration.hours(3)
+    expect(Duration.minutes(90) < h)
+    expect(h == Duration.minutes(180))
+    expect(Duration.seconds(-1) < Duration.millis(0))
+    expect_eq(h.times(2).ms, 21600000)
+    expect_eq(h.div(4).ms, 2700000)
+    expect_eq(h.ratio(Duration.minutes(90)), 2.0)
+    expect_eq(h.neg().ms, -10800000)
+    expect_eq(h.neg().abs().ms, 10800000)
+    expect(h.neg().is_negative() and Duration.millis(0).is_zero())
+    expect_eq(Duration.millis(1999).truncate(Duration.seconds(1)).ms, 1000)
+    expect_eq(Duration.millis(-1999).truncate(Duration.seconds(1)).ms, -1000)
+    expect_eq(Duration.millis(1500).round(Duration.seconds(1)).ms, 2000)
+    expect_eq(Duration.millis(1499).round(Duration.seconds(1)).ms, 1000)
+    expect_eq(Duration.millis(-1500).round(Duration.seconds(1)).ms, -2000)
+    expect_eq(Duration.minutes(-150).whole_hours(), -2)
+    expect_eq(Duration.days(3).whole_days(), 3)
+    let t = parse_iso("2024-01-31T10:00:00+01:00").?
+    expect_eq(t.add_months(1).iso(), "2024-02-29T10:00:00+01:00")
+    expect_eq(t.add_months(13).date_text(), "2025-02-28")
+    expect_eq(t.add_months(-2).date_text(), "2023-11-30")
+    expect_eq(t.add_days(30).date_text(), "2024-03-01")
+    expect_eq(t.add_days(-31).date_text(), "2023-12-31")
+    expect_eq(parse_iso("2024-02-29").?.add_years(1).date_text(), "2025-02-28")
+    expect_eq(t.plus(Duration.hours(15)).iso(), "2024-02-01T01:00:00+01:00")
+    expect_eq(t.minus(Duration.days(31)).date_text(), "2023-12-31")
+    let later = t.add_days(1)
+    expect_eq(t.until(&later).ms, 86400000)
+}
+
+test "ISO 8601 durations" {
+    expect_eq(Duration.minutes(90).iso(), "PT1H30M")
+    expect_eq(Duration.millis(250).iso(), "PT0.25S")
+    expect_eq(Duration.millis(5).iso(), "PT0.005S")
+    expect_eq(Duration.hours(76).iso(), "PT76H")
+    expect_eq(Duration.millis(-1500).iso(), "-PT1.5S")
+    expect_eq(Duration.millis(0).iso(), "PT0S")
+    expect_eq(Duration.millis(3723004).iso(), "PT1H2M3.004S")
+    expect_eq(Duration.millis(-9223372036854775807 - 1).iso(), "-PT2562047788015H12M55.808S")
+    expect_eq(Duration.parse_iso("PT1H30M").?.ms, 5400000)
+    expect_eq(Duration.parse_iso("P2DT3H").?.ms, 183600000)
+    expect_eq(Duration.parse_iso("P1W").?.ms, 604800000)
+    expect_eq(Duration.parse_iso("PT1.5H").?.ms, 5400000)
+    expect_eq(Duration.parse_iso("PT0,25S").?.ms, 250)
+    expect_eq(Duration.parse_iso("-PT5M").?.ms, -300000)
+    expect_eq(Duration.parse_iso("PT0.0001S").?.ms, 0)
+    let bad = ["P1Y", "P2M", "PT", "P", "P1DT", "PT1S1H", "PT1.5H30M", "PT1HX", "1H", "PT-5M", "PT99999999999999999999S", "P1D1W"]
+    for s in bad { expect(Duration.parse_iso(s) == null) }
+    let odd = [0, 1, 999, 1000, 59999, 3600000, 90061001, -42]
+    for n in odd { expect_eq(Duration.parse_iso(Duration.millis(n).iso()[..]).?.ms, n) }
+}
+
+test "POSIX rules" {
+    let ny = parse_rule("EST5EDT,M3.2.0,M11.1.0").?
+    expect_eq(ny.std_offset, -18000)
+    expect_eq(ny.dst_offset, -14400)
+    // 2026: daylight time from March 8, 07:00 UTC, to November 1, 06:00
+    expect(!ny.in_dst(1772953199999))
+    expect(ny.in_dst(1772953200000))
+    expect(ny.in_dst(1793512799999))
+    expect(!ny.in_dst(1793512800000))
+    // Sydney, whose summer spans the new year: April 5 03:00 AEDT to
+    // October 4 02:00 AEST
+    let syd = parse_rule("AEST-10AEDT,M10.1.0,M4.1.0/3").?
+    expect(syd.in_dst(1768435200000))
+    expect(!syd.in_dst(1775318400000))
+    expect(syd.in_dst(1775318399999))
+    expect(!syd.in_dst(1791043199999))
+    expect(syd.in_dst(1791043200000))
+    let india = parse_rule("<+0530>-5:30").?
+    expect(!india.has_dst)
+    expect_eq(india.std_offset, 19800)
+    expect_eq(india.std_abbrev, "+0530")
+    // no dates: the United States' rule; J and zero-based days
+    expect(parse_rule("PST8PDT").?.in_dst(1782864000000))
+    let j = parse_rule("XST3XDT,J60/0,J300/0").?
+    expect_eq(j.start.days_in(2024), days_from_civil(2024, 3, 1))
+    expect_eq(parse_rule("XST3XDT,59,300").?.start.days_in(2024), days_from_civil(2024, 2, 29))
+    // permanent daylight time, as RFC 8536 writes it
+    let always = parse_rule("EST5EDT,0/0,J365/25").?
+    expect(always.in_dst(1768435200000) and always.in_dst(1782864000000))
+    let bad = ["EST", "E5", "EST5EDT,M13.1.0,M11.1.0", "EST5EDT,M3.2.0", "EST5EDT,M3.2.7,M11.1.0", "EST5EDT,M3.2.0,M11.1.0,", "<AB-5"]
+    for s in bad { expect(parse_rule(s) == null) }
+}
+
+/// Big-endian bytes of `v`, `n` of them.
+fn put_be(out: *mut String, v: i64, n: usize) {
+    var k = n
+    while k > 0 {
+        k -= 1
+        out.push_byte(@truncate(u8, v >> ((k * 8) as i64)))
+    }
+}
+
+/// A TZif version 2 file of New York's shape: local mean time, then EST
+/// from 1883, EDT and EST in 2026, and the rule after.
+fn sample_tzif() -> String {
+    var b = String.new()
+    b.append("TZif2")
+    var k: usize = 0
+    while k < 15 {
+        b.push_byte(0)
+        k += 1
+    }
+    for c in [0, 0, 0, 0, 1, 4] { put_be(&mut b, c, 4) }
+    put_be(&mut b, -17762, 4)
+    b.push_byte(0)
+    b.push_byte(0)
+    b.append("LMT")
+    b.push_byte(0)
+    b.append("TZif2")
+    k = 0
+    while k < 15 {
+        b.push_byte(0)
+        k += 1
+    }
+    for c in [0, 0, 0, 3, 3, 12] { put_be(&mut b, c, 4) }
+    for t in [-2717650800, 1772953200, 1793512800] { put_be(&mut b, t, 8) }
+    for i in [2, 1, 2] { put_be(&mut b, i, 1) }
+    // the types: offset, daylight, where the abbreviation begins
+    for ty in [(-17762, 0, 0), (-14400, 1, 4), (-18000, 0, 8)] {
+        put_be(&mut b, ty.0, 4)
+        put_be(&mut b, ty.1, 1)
+        put_be(&mut b, ty.2, 1)
+    }
+    b.append("LMT")
+    b.push_byte(0)
+    b.append("EDT")
+    b.push_byte(0)
+    b.append("EST")
+    b.push_byte(0)
+    b.append("\nEST5EDT,M3.2.0,M11.1.0\n")
+    return b
+}
+
+test "TZif files" {
+    let data = sample_tzif()
+    let z = try from_tzif("Test/New_York", data[..])
+    expect_eq(z.periods.len, 4)
+    expect(z.has_rule)
+    // 1874: local mean time, -4:56:02, which rounds to -4:56
+    expect_eq(z.offset_seconds_at(-3000000000000), -17762)
+    expect_eq(z.offset_at(-3000000000000), -296)
+    expect_eq(z.abbrev_at(-3000000000000), "LMT")
+    expect_eq(z.at(-3000000000000).to_ms(), -3000000000000)
+    expect_eq(z.abbrev_at(1768435200000), "EST")
+    expect(!z.is_dst_at(1768435200000))
+    expect_eq(z.abbrev_at(1772953200000), "EDT")
+    expect(z.is_dst_at(1782864000000))
+    expect_eq(z.offset_at(1793512800000), -300)
+    // past the listed changes, the rule
+    expect_eq(z.abbrev_at(1814400000000), "EDT")
+    expect_eq(z.offset_at(1799971200000), -300)
+    expect_eq(z.format(1782864000000, "%Y-%m-%d %H:%M %Z %z"), "2026-06-30 20:00 EDT -04:00")
+    expect(tzif_fails("TZif2 but short"))
+    expect(tzif_fails("not a zone at all, not a zone at all, not one"))
+}
+
+fn tzif_fails(b: []u8) -> bool {
+    _ = from_tzif("x", b) catch { return true }
+    return false
+}
+
+/// The error `zone` gives for a name; null when it finds the zone.
+fn zone_err(name: []u8) -> ?error {
+    _ = zone(name) catch |e| { return e }
+    return null
+}
+
+test "wall clocks in a zone" {
+    let z = try zone("EST5EDT,M3.2.0,M11.1.0")
+    expect_eq(z.name, "EST5EDT,M3.2.0,M11.1.0")
+    let noon = parse_iso("2026-07-04T12:00").?
+    expect_eq(utc(z.instant(&noon)).iso(), "2026-07-04T16:00:00Z")
+    // 02:30 on March 8 does not happen; it is read as 03:30 EDT
+    let skipped = parse_iso("2026-03-08T02:30").?
+    expect_eq(z.at(z.instant(&skipped)).iso(), "2026-03-08T03:30:00-04:00")
+    // 01:30 on November 1 happens twice; the first is EDT
+    let twice = parse_iso("2026-11-01T01:30").?
+    expect_eq(z.at(z.instant(&twice)).iso(), "2026-11-01T01:30:00-04:00")
+    let after = parse_iso("2026-11-01T03:00").?
+    expect_eq(z.at(z.instant(&after)).iso(), "2026-11-01T03:00:00-05:00")
+    // a day later on the clock across the change is 25 hours
+    let evening = parse_iso("2026-10-31T18:00").?
+    let next = evening.add_days(1)
+    expect_eq(Duration.between(z.instant(&evening), z.instant(&next)).whole_hours(), 25)
+    let fixed = try zone("+05:30")
+    expect_eq(fixed.at(0).iso(), "1970-01-01T05:30:00+05:30")
+    expect_eq(fixed.abbrev_at(0), "+0530")
+    expect_eq((try zone("UTC")).offset_at(1789791314123), 0)
+    expect(zone_err("../../etc/passwd").? == error.InvalidInput)
+    expect(zone_err("Nowhere/At_All").? == error.NotFound)
+    expect(zone_err("").? == error.InvalidInput)
+    expect(zone_err("+5").? == error.InvalidInput)
+}
+
+test "the platform's zones" {
+    // where there is a database: every desktop platform, not the playground
+    let ny = zone("America/New_York") catch { return }
+    expect_eq(ny.offset_at(1768435200000), -300)
+    expect_eq(ny.offset_at(1782864000000), -240)
+    expect_eq(ny.abbrev_at(1782864000000), "EDT")
+    expect_eq(ny.offset_at(-2208988800000), -300)
+    let berlin = try zone("Europe/Berlin")
+    expect_eq(berlin.offset_at(1768435200000), 60)
+    expect_eq(berlin.offset_at(1782864000000), 120)
+    let kolkata = try zone("Asia/Kolkata")
+    expect_eq(kolkata.offset_at(1789791314123), 330)
+    let sydney = try zone("Australia/Sydney")
+    expect_eq(sydney.offset_at(1768435200000), 660)
+    expect_eq(sydney.offset_at(1782864000000), 600)
+    // July 2100: from the files' rule, or ICU's list, which runs to 2200
+    expect_eq(ny.offset_at(4118126400000), -240)
+    let here = local_zone()
+    let now = time.now()
+    expect_eq(here.offset_at(now) as i64, time.utc_offset(now))
 }

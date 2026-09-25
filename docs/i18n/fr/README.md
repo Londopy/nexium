@@ -461,8 +461,8 @@ plus besoin de compléter, est en cours : les collections (`std.sort`,
 chemins, l'environnement et les dossiers de configuration, les UUID, la
 journalisation, CSV, TOML et base64 sont là, vingt-huit modules en tout ; `Map` est
 protégé contre l'inondation de hachages et garde l'ordre d'arrivée des clés ;
-viennent ensuite les fuseaux horaires, le client HTTP avec TLS et les
-websockets. Ce que Nexium n'est pas
+`std.time` lit les fuseaux horaires dans la base de la plateforme ; viennent
+ensuite le client HTTP avec TLS et les websockets. Ce que Nexium n'est pas
 encore, et où chaque point trouve sa réponse, est dans [une section de la
 feuille de route](../../../ROADMAP.md#what-10-is-not-yet) : les mesures de performance
 sont quatre programmes ([Vitesse](#vitesse)), et l'écosystème se résume à un

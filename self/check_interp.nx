@@ -3246,6 +3246,12 @@ impl Checker {
         if name == "TimeMonotonic" { return cv_int(time.monotonic() as i128) }
         // the interpreter has no time zone database: local time is UTC at the prompt
         if name == "TimeUtcOffset" { return cv_int(0) }
+        // std.time's zones on Windows: the compiler's own runtime asks ICU
+        if name == "TimeZoneRules" {
+            let zn = cv_bytes(&vs[0]) orelse return null
+            let text = time.zone_rules(zn) catch { return cv_err(self.error_id("NotFound")) }
+            return cv_wrap(VK_OK, cv_owned(text[..]))
+        }
         if name == "Sleep" {
             let ms = cv_as_int(&vs[0]) orelse return null
             time.sleep((if ms < 0 { 0 } else { ms }) as u64)
