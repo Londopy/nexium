@@ -412,7 +412,8 @@ fn needs_space(toks: *List(lexer.Token), ctx: *Line, i: usize) -> bool {
             while k >= 2 {
                 if toks[ctx.toks[k - 1]].kind == lexer.Kind.RBracket and toks[ctx.toks[k - 2]].kind == lexer.Kind.LBracket { k -= 2; continue }
                 if k >= 3 and toks[ctx.toks[k - 1]].kind == lexer.Kind.RBracket and toks[ctx.toks[k - 3]].kind == lexer.Kind.LBracket { k -= 3; continue }
-                if is_kw(&toks[ctx.toks[k - 1]], "mut") { k -= 1; continue }
+                // and over `dyn` and `weak`: `-> !dyn Shape {`
+                if is_kw(&toks[ctx.toks[k - 1]], "mut") or is_kw(&toks[ctx.toks[k - 1]], "dyn") or is_kw(&toks[ctx.toks[k - 1]], "weak") { k -= 1; continue }
                 break
             }
             var type_pos = false

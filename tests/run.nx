@@ -668,7 +668,7 @@ fn suite_fmt(e: *Env, failures: *mut List(String)) {
     if pf.code != 0 or pgot[..] != pwant { failures.append(format("fmt: `.*`, `.?` and `* (` spacing (exit {}):\n{}{}", .{pf.code, pgot, pf.stderr})) }
     // a body brace after a slice or array return type is a body, not a literal
     let rty = fs.join(e.root[..], "nx-out/cases/return_types.nx")
-    let rtext = "fn a() -> []Point { return [] }\nfn b() -> [2]Point { return undefined }\nfn c() -> []mut Point { return [] }\nfn d() -> ?[]Point { return null }\nfn e() -> Point { return Point{ .x = 1 } }\nfn f(p: *mut Point) -> *mut Point { return p }\nfn g(p: *mut Point) -> ?*mut Point { return p }\n"
+    let rtext = "fn a() -> []Point { return [] }\nfn b() -> [2]Point { return undefined }\nfn c() -> []mut Point { return [] }\nfn d() -> ?[]Point { return null }\nfn e() -> Point { return Point{ .x = 1 } }\nfn f(p: *mut Point) -> *mut Point { return p }\nfn g(p: *mut Point) -> ?*mut Point { return p }\nfn h(p: *mut Point) -> !dyn Shape { return p }\n"
     fs.write(rty[..], rtext) catch { }
     let rf = nx(e, ["fmt", rty[..]][..])
     let rgot = normalize((fs.read(rty[..]) catch { String.new() })[..])

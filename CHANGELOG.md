@@ -169,6 +169,10 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   `now`") in a file that imported it. A std module named like a builtin
   namespace (`time`, `process`, `net`, `thread`) now adds to it: a call
   the module does not have goes to the builtin (SPEC 11).
+- `nx fmt` joined a function's brace to a return type that ends in a
+  trait object, `-> !dyn Transport{`, taking `Transport {` for a struct
+  literal; `dyn` and `weak` are passed over, as `mut` was, on the way back
+  to the arrow.
 - `nx fmt` wrote a unary minus before a parenthesis with a space,
   `return - (v as i64)`, for the same reason as `! (` below. A unary minus
   is tight before `(` now; after an operand it still subtracts, `a - (b)`.
