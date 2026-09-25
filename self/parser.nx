@@ -382,7 +382,7 @@ impl Parser {
         } else {
             return self.fail(self.start(), format("expected a declaration but found `{}`", .{s}))
         }
-        if ! (self.at(lexer.Kind.Newline) or self.at(lexer.Kind.Eof) or self.at(lexer.Kind.RBrace)) {
+        if !(self.at(lexer.Kind.Newline) or self.at(lexer.Kind.Eof) or self.at(lexer.Kind.RBrace)) {
             let got = describe(&self.toks[self.pos])
             return self.fail(self.start(), format("expected a newline after declaration but found {}", .{got}))
         }
@@ -602,7 +602,7 @@ impl Parser {
             n.y = dflt
             n.z = constraint
             fields.append(self.tree.add(n))
-            if ! (self.eat(lexer.Kind.Comma) or self.at(lexer.Kind.Newline) or self.at(lexer.Kind.RBrace)) {
+            if !(self.eat(lexer.Kind.Comma) or self.at(lexer.Kind.Newline) or self.at(lexer.Kind.RBrace)) {
                 let got = describe(&self.toks[self.pos])
                 return self.fail(self.start(), format("expected `,` or newline after field but found {}", .{got}))
             }
@@ -645,7 +645,7 @@ impl Parser {
             }
             v.end = self.prev_end()
             variants.append(self.tree.add(v))
-            if ! (self.eat(lexer.Kind.Comma) or self.at(lexer.Kind.Newline) or self.at(lexer.Kind.RBrace)) {
+            if !(self.eat(lexer.Kind.Comma) or self.at(lexer.Kind.Newline) or self.at(lexer.Kind.RBrace)) {
                 let got = describe(&self.toks[self.pos])
                 return self.fail(self.start(), format("expected `,` or newline after enum variant but found {}", .{got}))
             }
@@ -678,7 +678,7 @@ impl Parser {
             } else {
                 methods.append(try self.parse_fn(true, mdocs, false))
             }
-            if ! (self.at(lexer.Kind.Newline) or self.at(lexer.Kind.RBrace)) {
+            if !(self.at(lexer.Kind.Newline) or self.at(lexer.Kind.RBrace)) {
                 return self.fail(self.start(), "expected a newline after trait member")
             }
         }
@@ -729,7 +729,7 @@ impl Parser {
             } else {
                 methods.append(try self.parse_fn(is_pub, mdocs, false))
             }
-            if ! (self.at(lexer.Kind.Newline) or self.at(lexer.Kind.RBrace)) {
+            if !(self.at(lexer.Kind.Newline) or self.at(lexer.Kind.RBrace)) {
                 return self.fail(self.start(), "expected a newline after impl member")
             }
         }
@@ -816,7 +816,7 @@ impl Parser {
             self.skip_newlines()
             if self.at(lexer.Kind.RBrace) { break }
             names.append(try self.expect_ident())
-            if ! (self.eat(lexer.Kind.Comma) or self.at(lexer.Kind.Newline) or self.at(lexer.Kind.RBrace)) {
+            if !(self.eat(lexer.Kind.Comma) or self.at(lexer.Kind.Newline) or self.at(lexer.Kind.RBrace)) {
                 return self.fail(self.start(), "expected `,` or newline in error set")
             }
         }
@@ -898,7 +898,7 @@ impl Parser {
             f.name = k
             f.x = v
             fields.append(self.tree.add(f))
-            if ! (self.eat(lexer.Kind.Comma) or self.at(lexer.Kind.Newline) or self.at(lexer.Kind.RBrace)) {
+            if !(self.eat(lexer.Kind.Comma) or self.at(lexer.Kind.Newline) or self.at(lexer.Kind.RBrace)) {
                 return self.fail(self.start(), "expected `,` or newline in artifact declaration")
             }
         }
@@ -1107,7 +1107,7 @@ impl Parser {
                 }
                 break
             }
-            if ! (self.at(lexer.Kind.Newline) or self.at(lexer.Kind.Semi)) {
+            if !(self.at(lexer.Kind.Newline) or self.at(lexer.Kind.Semi)) {
                 let got = describe(&self.toks[self.pos])
                 self.errors.append(format("error at {}: expected a newline after statement but found {}", .{self.start(), got}))
                 self.recover_stmt()
@@ -1192,7 +1192,7 @@ impl Parser {
                 self.bump()
                 var n = blank(NodeKind.Return, start, start)
                 // a bare jump ends at the end of its line, block, statement or match arm
-                if ! (self.at(lexer.Kind.Newline) or self.at(lexer.Kind.RBrace) or self.at(lexer.Kind.Semi) or self.at(lexer.Kind.Comma)) { n.x = try self.parse_expr() }
+                if !(self.at(lexer.Kind.Newline) or self.at(lexer.Kind.RBrace) or self.at(lexer.Kind.Semi) or self.at(lexer.Kind.Comma)) { n.x = try self.parse_expr() }
                 n.end = self.prev_end()
                 return self.tree.add(n)
             }
@@ -1205,7 +1205,7 @@ impl Parser {
                     n.name = try self.expect_ident()
                 }
                 // a bare jump ends at the end of its line, block, statement or match arm
-                if ! (self.at(lexer.Kind.Newline) or self.at(lexer.Kind.RBrace) or self.at(lexer.Kind.Semi) or self.at(lexer.Kind.Comma)) { n.x = try self.parse_expr() }
+                if !(self.at(lexer.Kind.Newline) or self.at(lexer.Kind.RBrace) or self.at(lexer.Kind.Semi) or self.at(lexer.Kind.Comma)) { n.x = try self.parse_expr() }
                 n.end = self.prev_end()
                 return self.tree.add(n)
             }
@@ -2274,7 +2274,7 @@ impl Parser {
             a.y = guard
             a.z = body
             n.kids.append(self.tree.add(a))
-            if ! (self.eat(lexer.Kind.Comma) or self.at(lexer.Kind.Newline) or self.at(lexer.Kind.RBrace)) {
+            if !(self.eat(lexer.Kind.Comma) or self.at(lexer.Kind.Newline) or self.at(lexer.Kind.RBrace)) {
                 let got = describe(&self.toks[self.pos])
                 return self.fail(self.start(), format("expected `,` or newline after match arm but found {}", .{got}))
             }
@@ -2519,7 +2519,7 @@ impl Parser {
                 while true {
                     let mstart = self.start()
                     let m = try self.expect_ident()
-                    if ! (m == "big" or m == "little" or m == "native" or m == "signed" or m == "unsigned" or m == "float" or m == "utf8" or m == "bytes") {
+                    if !(m == "big" or m == "little" or m == "native" or m == "signed" or m == "unsigned" or m == "float" or m == "utf8" or m == "bytes") {
                         return self.fail(mstart, format("unknown binary segment modifier `{}`", .{m}))
                     }
                     if m == "bytes" {

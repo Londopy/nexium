@@ -712,5 +712,5 @@ test "errors and convenience" {
     expect(rejects("[z-a]"))
     expect(!rejects("a{"))
     expect(try is_match("^\\d{4}-\\d{2}-\\d{2}$", "2026-09-19"))
-    expect(! (try is_match("^\\d{4}-\\d{2}-\\d{2}$", "2026-9-19")))
+    expect(!(try is_match("^\\d{4}-\\d{2}-\\d{2}$", "2026-9-19")))
 }

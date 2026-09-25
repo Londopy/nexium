@@ -645,7 +645,7 @@ impl Checker {
             t = self.tys.shallow(self.tys.list[t].args[0])
             k = self.tys.kind(t)
         }
-        if ! (k == TK.Slice or k == TK.Ptr) {
+        if !(k == TK.Slice or k == TK.Ptr) {
             // a struct, a closure, a list holding a view: where it points (a warning in 1.2, an error since 1.3)
             if !self.holds_view(t) { return }
             for o in self.origins_of(te) {

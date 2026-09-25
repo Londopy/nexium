@@ -605,11 +605,11 @@ impl Checker {
         let is_int = self.tys.is_integer(under)
         let is_float = self.tys.is_float(under)
         let is_bool = self.tys.kind(self.tys.shallow(under)) == TK.Bool
-        if is_bitwise and ! (is_int or is_bool) {
+        if is_bitwise and !(is_int or is_bool) {
             self.fail_here(start, format("bitwise `{}` requires integer operands but found `{}`", .{op, self.ty_name(t)})[..])
             return self.error_expr(start, end)
         }
-        if is_arith and ! (is_int or is_float) {
+        if is_arith and !(is_int or is_float) {
             self.fail_here(start, format("cannot apply `{}` to values of type `{}`", .{op, self.ty_name(t)})[..])
             return self.error_expr(start, end)
         }
@@ -708,7 +708,7 @@ impl Checker {
             let variants = self.enums[d].variants.clone()
             for v in variants { if self.node(em, v).text != "unit" { all_unit = false } }
             let derived = check.list_has(&self.enums[d].derives, "Eq") or check.list_has(&self.enums[d].derives, "Ord")
-            if ! (all_unit or derived) {
+            if !(all_unit or derived) {
                 self.fail_here(start, format("enum `{}` has payloads; add `derive(Eq)` to compare it, or use `match`", .{self.enums[d].name})[..])
             }
             if ordered and !check.list_has(&self.enums[d].derives, "Ord") {
@@ -727,7 +727,7 @@ impl Checker {
                 self.fail_here(start, format("`{}` cannot be compared with `{}`; add `derive({})` to the struct", .{self.structs[d].name, op, want})[..])
             }
         } else if k == TK.Opt and !ordered {
-            if ! (self.tir.nodes[r].k == TKind.OptNull or self.tir.nodes[l].k == TKind.OptNull) {
+            if !(self.tir.nodes[r].k == TKind.OptNull or self.tir.nodes[l].k == TKind.OptNull) {
                 self.fail_here(start, "compare optionals against `null`, or unwrap them first")
             }
         } else {
@@ -805,7 +805,7 @@ impl Checker {
                 if item == null {
                     let b = self.check_builtin_fn(name[..], args[..], start, end)
                     if b != NONE { return b }
-                    if self.env_lookup(name[..]) == NONE and ! (name == "List" or name == "Map" or name == "String" or name == "Allocator") {
+                    if self.env_lookup(name[..]) == NONE and !(name == "List" or name == "Map" or name == "String" or name == "Allocator") {
                         self.fail_here(start, format("cannot find function `{}`", .{name})[..])
                         for a in args { _ = self.check_expr(a, NONE) }
                         return self.error_expr(start, end)
@@ -929,7 +929,7 @@ impl Checker {
         let type_params = self.fn_type_params(fid)
         // value parameters: everything but the type parameters
         var value_params = List(usize).new()
-        for pn in param_nodes { if ! (self.node(nm, pn).flag and self.is_type_param_node(nm, pn)) { value_params.append(pn) } }
+        for pn in param_nodes { if !(self.node(nm, pn).flag and self.is_type_param_node(nm, pn)) { value_params.append(pn) } }
         let n_self: usize = if self_arg != NONE { 1 } else { 0 }
         // explicit type arguments come first: `max(i32, a, b)`
         var explicit = false
@@ -998,7 +998,7 @@ impl Checker {
                     te = self.coerce_or_error(te, self.tys.named(TK.Int, "i32"), "variadic argument")
                 } else if tk == TK.Infer and self.tys.is_float(t) {
                     te = self.coerce_or_error(te, self.tys.named(TK.Float, "f64"), "variadic argument")
-                } else if ! (tk == TK.Int or tk == TK.Float or tk == TK.Bool or tk == TK.Char or tk == TK.Ptr) {
+                } else if !(tk == TK.Int or tk == TK.Float or tk == TK.Bool or tk == TK.Char or tk == TK.Ptr) {
                     self.fail_here(self.tir.nodes[te].start, format("a value of type `{}` cannot be passed to a C variadic parameter; use scalars or pointers", .{self.ty_name(t)})[..])
                 }
                 targs.append(te)
@@ -1270,7 +1270,7 @@ impl Checker {
             }
             let fmt_node = args[0]
             let fn_ = self.node(m, fmt_node)
-            if ! (fn_.k == parser.NodeKind.Lit and fn_.text == "str") {
+            if !(fn_.k == parser.NodeKind.Lit and fn_.text == "str") {
                 self.fail_here(fn_.start, "the format string must be a string literal so it can be checked at compile time (section 7.4)")
                 return self.error_expr(start, end)
             }
@@ -1346,7 +1346,7 @@ impl Checker {
                         next += 1
                     }
                     // a width from an argument: `>name`, `<name`
-                    if spec.len > 1 and (spec[0] == '>' or spec[0] == '<') and ! (spec[1] >= '0' and spec[1] <= '9') {
+                    if spec.len > 1 and (spec[0] == '>' or spec[0] == '<') and !(spec[1] >= '0' and spec[1] <= '9') {
                         if !named {
                             self.fail_here(fstart, "a width taken from an argument needs named arguments, `.{ .w = 8, ... }`")
                             return self.error_expr(start, end)
@@ -1560,7 +1560,7 @@ impl Checker {
         if then_diverges and els_node == NONE { self.moved_restore(&moved_before) }
         if els_node == NONE {
             let tk = self.tys.kind(self.tys.shallow(then_ty))
-            if ! (tk == TK.Void or tk == TK.Never) {
+            if !(tk == TK.Void or tk == TK.Never) {
                 self.fail_here(self.tir.nodes[tb].start, format("an `if` without `else` produces no value, but this block has type `{}`; discard the value with `_ =`", .{self.ty_name(then_ty)})[..])
                 let tail = self.tir.nodes[tb].a
                 if tail != NONE and !value_wanted { self.offer_discard(self.tir.nodes[tail].start) }

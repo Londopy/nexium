@@ -920,7 +920,7 @@ pub fn run(version: []u8, std_dir: []u8, cc: *List(String)) {
                             // the name under the cursor: this use, or the declaration
                             var ps = r.start
                             var pe = r.end
-                            if ! (r.module == 0 and r.start <= off and off <= r.end) {
+                            if !(r.module == 0 and r.start <= off and off <= r.end) {
                                 ps = r.decl_start
                                 pe = r.decl_end
                             }

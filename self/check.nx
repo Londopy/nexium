@@ -2639,7 +2639,7 @@ impl Checker {
         })
         // a std module's tests belong to the compiler's own suite
         let from_std = self.mods[m].name.len >= 4 and self.mods[m].name[0..4] == "std."
-        if is_test and !test_comptime and ! (from_std and m != 0) {
+        if is_test and !test_comptime and !(from_std and m != 0) {
             if self.fns[fid].is_bench { self.benches.append(id) } else { self.tests.append(id) }
         }
         self.queue.append(id)

@@ -43,7 +43,7 @@ fn count_down(n: u32) -> u32 !panics {
 }
 
 fn both(x: u32, y: u32) -> u32 !panics {
-    if ! (y == 0 or x > 100) { return (x + 1) / y }
+    if !(y == 0 or x > 100) { return (x + 1) / y }
     return 0
 }
 

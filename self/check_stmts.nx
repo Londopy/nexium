@@ -224,7 +224,7 @@ impl Checker {
             let tk = self.tys.kind(tt)
             var is_void_expected = false
             if want != NONE { is_void_expected = self.tys.kind(self.tys.shallow(want)) == TK.Void }
-            if is_void_expected and ! (tk == TK.Void or tk == TK.Never) {
+            if is_void_expected and !(tk == TK.Void or tk == TK.Never) {
                 self.check_unused(te)
                 let s = self.tir.add(check.tblank(TKind.SExpr, tt, self.tir.nodes[te].start, self.tir.nodes[te].end))
                 self.tir.nodes[s].kids.append(te)
@@ -906,7 +906,7 @@ impl Checker {
         let items = n.kids2.clone()
         let body_node = n.a
         let n_items = items.len
-        if ! (bindings.len == n_items or bindings.len == n_items + 1) {
+        if !(bindings.len == n_items or bindings.len == n_items + 1) {
             self.fail_here(start, format("this loop iterates {} value(s) and may bind an index; expected {} or {} names but found {}", .{n_items, n_items, n_items + 1, bindings.len})[..])
             return NONE
         }

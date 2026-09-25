@@ -910,7 +910,7 @@ impl Checker {
         if then_diverges and els_node == NONE { self.moved_restore(&moved_before) }
         if els_node == NONE {
             let tk = self.tys.kind(self.tys.shallow(then_ty))
-            if ! (tk == TK.Void or tk == TK.Never) { self.fail_here(self.tir.nodes[tb].start, "an `if` without `else` produces no value") }
+            if !(tk == TK.Void or tk == TK.Never) { self.fail_here(self.tir.nodes[tb].start, "an `if` without `else` produces no value") }
             let r = self.mk(TKind.IfCapture, v, start, end)
             self.tir.nodes[r].a = local
             self.tir.nodes[r].kids.append(c)

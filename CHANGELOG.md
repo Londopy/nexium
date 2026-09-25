@@ -73,6 +73,13 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   summit with its route still to climb. The rule, the plan and every
   mountain's range in `docs/release-names.md` follow.
 
+### Fixed
+
+- `nx fmt` wrote a negated parenthesis with a space, `if ! (a or b)`:
+  the rule that keeps a call's parenthesis tight let `!` through as if
+  it began a spaced expression. `!` is tight before `(` now, as before a
+  word, and the sources the old rule had spaced are respaced.
+
 ## [1.3.2] - 2026-09-25
 
 *Annapurna: Oudot* — the expedition's doctor, and a patch that keeps a program alive. On Linux and macOS, a send to a connection the other side had reset, or input written to a program that had stopped reading it, raised SIGPIPE and ended the whole program before it could see the error; and a connect that failed at once came back looking open, so its first send did the same. Both are errors a program can handle now, each with a regression test, and the seed is regenerated from the final sources.

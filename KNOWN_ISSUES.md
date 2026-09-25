@@ -34,9 +34,6 @@ Fixed bugs are not listed here; `CHANGELOG.md` and `git log` have them.
   Point of Origin's `Level`. Fix: when consecutive lines end in a
   comment, keep the column of the first (or the widest code) for the
   run; a tree-wide `--check` guards it.
-- **`nx fmt` writes `! (x)`.** A negated parenthesized condition
-  `if !(a or b)` becomes `if ! (a or b)`: the no-space rule after `!`
-  does not apply before `(`. Fix: `!` followed by `(` is tight, like `!x`.
 - **Formatter bar classification has no unit test.** `nx fmt` tells
   closure bars from bit-or per line (`self/fmt.nx`, `bar_role`); the tree-wide
   `--check` in CI is the only guard. Add cases for `|x| x | 1`, `a | b`,

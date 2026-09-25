@@ -173,7 +173,7 @@ fn tokenize(src: []u8) -> List(CTok) {
             while i < src.len {
                 let d = src[i]
                 let exp_sign = (d == '+' or d == '-') and i > 0 and (src[i - 1] == 'e' or src[i - 1] == 'E' or src[i - 1] == 'p' or src[i - 1] == 'P')
-                if ! (is_alpha(d) or is_digit(d) or d == '.' or exp_sign) { break }
+                if !(is_alpha(d) or is_digit(d) or d == '.' or exp_sign) { break }
                 i += 1
             }
             out.append(tok(CT_NUM, src[s..i]))
@@ -402,7 +402,7 @@ fn const_lookup(ci: *CImport, name: []u8) -> ?i128 {
 /// references to earlier constants, and `a << b`, `a | b`, `a + b`.
 fn eval_const(toks0: []CTok, ci: *CImport) -> ?i128 {
     var toks = List(CTok).new()
-    for t in toks0 { if ! (is_punct(&t, "(") or is_punct(&t, ")")) { toks.append(tok(t.kind, t.text[..])) } }
+    for t in toks0 { if !(is_punct(&t, "(") or is_punct(&t, ")")) { toks.append(tok(t.kind, t.text[..])) } }
     if toks.len == 1 { return const_val(&toks[0], ci) }
     if toks.len == 2 and is_punct(&toks[0], "-") { let v = const_val(&toks[1], ci) orelse return null; return -v }
     if toks.len == 2 and is_punct(&toks[0], "~") { let v = const_val(&toks[1], ci) orelse return null; return ~v }
@@ -591,7 +591,7 @@ impl CParser {
             }
             if depth >= 1 {
                 if has_body.* {
-                    if ! (depth == 1 and is_punct(&t, "{")) { body.append(tok(t.kind, t.text[..])) }
+                    if !(depth == 1 and is_punct(&t, "{")) { body.append(tok(t.kind, t.text[..])) }
                 }
                 if saw_body_brace { skip_push = true }
             }
@@ -833,7 +833,7 @@ impl CParser {
                         var next_ok = j + 1 >= decl.len
                         if !next_ok { next_ok = is_punct(&decl[j + 1], ",") or is_punct(&decl[j + 1], "[") }
                         let is_name = !is_type_word(nm[..]) and !self.typedefs.contains(nm[..]) and !self.bad_typedefs.contains(nm[..])
-                            and ! (nm == "struct" or nm == "union" or nm == "enum" or nm == "const" or nm == "unsigned" or nm == "signed") and next_ok
+                            and !(nm == "struct" or nm == "union" or nm == "enum" or nm == "const" or nm == "unsigned" or nm == "signed") and next_ok
                         if is_name {
                             if j < base_end { base_end = j }
                             var d = List(CTok).new()
@@ -957,7 +957,7 @@ impl CParser {
         let is_void = type_head(ci, t) == "void"
         for k in 0..stars {
             if k == 0 and is_void { t = named_type(ci, "u8") } // void* is a pointer to bytes
-            t = ptr_type(ci, t, ! (k == 0 and const_target))
+            t = ptr_type(ci, t, !(k == 0 and const_target))
         }
         return t
     }

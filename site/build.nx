@@ -385,7 +385,7 @@ fn link_end(s: []u8, open: usize) -> ?(usize, usize) {
             // a code span inside the text: skip to its end
             let ticks = count_prefix(s[i..], '`')
             var j = i + ticks
-            while j < s.len and ! (s[j] == '`' and count_prefix(s[j..], '`') == ticks) { j += 1 }
+            while j < s.len and !(s[j] == '`' and count_prefix(s[j..], '`') == ticks) { j += 1 }
             i = if j < s.len { j + ticks } else { s.len }
             continue
         }

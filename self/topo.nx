@@ -489,7 +489,7 @@ fn ask_compiler(exe: []u8, q: *Question, dir: []u8) -> ?(String, List(String)) {
         for line in r.stdout[..].lines() {
             if !line.starts_with(format("fn {}(", .{name.trim()})[..]) { continue }
             var cut = line.len
-            while cut > 1 and ! (line[cut - 1] == ' ' and line[cut - 2] == ' ') { cut -= 1 }
+            while cut > 1 and !(line[cut - 1] == ' ' and line[cut - 2] == ' ') { cut -= 1 }
             effects = String.from(line[cut..line.len])
         }
         if effects.len == 0 { eprintln("error: `nx effects` does not list `{}`:\n{}{}", .{name, r.stdout, r.stderr}); return null }

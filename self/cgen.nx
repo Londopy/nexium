@@ -344,7 +344,7 @@ pub fn new_gen(c: *mut check.Checker, mode: u8, entry: u8) -> Gen {
     let bytes = RUNTIME_H
     var i: usize = 0
     while i < bytes.len {
-        let word_start = i == 0 or ! (is_ident_byte(bytes[i - 1]))
+        let word_start = i == 0 or !(is_ident_byte(bytes[i - 1]))
         if word_start and i + 3 <= bytes.len and bytes[i..i + 3] == "nx_" {
             var j = i
             while j < bytes.len and is_ident_byte(bytes[j]) { j += 1 }

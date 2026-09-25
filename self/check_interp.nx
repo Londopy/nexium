@@ -1643,7 +1643,7 @@ impl Checker {
             while true {
                 if !self.it_step() { return FL_FAIL }
                 let c = self.it_eval(kids[0]) orelse return FL_FAIL
-                if ! (c.kind == VK_BOOL and c.flag) { break }
+                if !(c.kind == VK_BOOL and c.flag) { break }
                 let f = self.it_exec_block(kids[1])
                 if f == FL_FAIL { return FL_FAIL }
                 if f == FL_NEXT { continue }
@@ -1680,7 +1680,7 @@ impl Checker {
                 let f = self.it_exec_block(body)
                 if f == FL_FAIL { return FL_FAIL }
                 if f == FL_BREAK and self.it_flow_label == label { break }
-                if f != FL_NEXT and ! (f == FL_CONTINUE and self.it_flow_label == label) { return f }
+                if f != FL_NEXT and !(f == FL_CONTINUE and self.it_flow_label == label) { return f }
                 i += st
             }
             return FL_NEXT
@@ -1714,7 +1714,7 @@ impl Checker {
                 let f = self.it_exec_block(body)
                 if f == FL_FAIL { return FL_FAIL }
                 if f == FL_BREAK and self.it_flow_label == label { break }
-                if f != FL_NEXT and ! (f == FL_CONTINUE and self.it_flow_label == label) { return f }
+                if f != FL_NEXT and !(f == FL_CONTINUE and self.it_flow_label == label) { return f }
             }
             return FL_NEXT
         }
@@ -2536,7 +2536,7 @@ impl Checker {
                 let sl = bytes[bit / 8..bit / 8 + size_bits / 8]
                 if kind == "value" {
                     let want = self.it_eval(value_kid) orelse return -1
-                    if ! (want.kind == VK_STR or want.kind == VK_OWNED_STR) { return -1 }
+                    if !(want.kind == VK_STR or want.kind == VK_OWNED_STR) { return -1 }
                     if want.text[..] != sl { return 0 }
                 } else {
                     self.it_env_set(local, cv_str(sl))
@@ -3320,12 +3320,12 @@ impl Checker {
             return cv_wrap(VK_SOME, v)
         }
         if name == "StringClear" {
-            if ! (k == VK_OWNED_STR or k == VK_STR) { return null }
+            if !(k == VK_OWNED_STR or k == VK_STR) { return null }
             cur.text.clear()
             return cv(VK_VOID)
         }
         if name == "StringPop" {
-            if ! (k == VK_OWNED_STR or k == VK_STR) { return null }
+            if !(k == VK_OWNED_STR or k == VK_STR) { return null }
             let b = cur.text.pop() orelse return cv(VK_NULL)
             return cv_wrap(VK_SOME, cv_int(b as i128))
         }

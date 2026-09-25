@@ -74,7 +74,7 @@ pub fn format_source(src: []u8) -> !String {
         let first_text = toks[ids[0]].text[..]
         let first_word_continues = first == lexer.Kind.Ident and (first_text == "catch" or first_text == "orelse" or first_text == "and" or first_text == "or")
         let continuation = paren > 0 or leading_dot_continues or first == lexer.Kind.PipeGt or first_word_continues or prev_is_binary
-        let extra: i64 = if continuation and ! (first == lexer.Kind.RBrace or first == lexer.Kind.RParen or first == lexer.Kind.RBracket) { 4 } else { 0 }
+        let extra: i64 = if continuation and !(first == lexer.Kind.RBrace or first == lexer.Kind.RParen or first == lexer.Kind.RBracket) { 4 } else { 0 }
         let indent = (if line_depth > 0 { line_depth } else { 0 }) * 4 + extra
         for _ in 0..indent { out.append(" ") }
         var ctx = Line{ .toks = ids.clone(), .in_enum_body = enum_body_depth == depth, .pattern_depth_at_start = pattern_depth }
@@ -287,8 +287,8 @@ fn needs_space(toks: *List(lexer.Token), ctx: *Line, i: usize) -> bool {
     let hb = hole_part(toks, ctx, i)
     if ha > 0 and ha < 3 and hb > 1 { return false }
     if (ha > 0 or hb > 0) and in_pattern(toks, ctx, i) { return false }
-    if hb == 1 { return b != lexer.Kind.DotQuestion and ! (a == lexer.Kind.LParen or a == lexer.Kind.LBracket or a == lexer.Kind.Dot or a == lexer.Kind.DotLBrace or a == lexer.Kind.At) }
-    if ha == 3 { return ! (b == lexer.Kind.RParen or b == lexer.Kind.RBracket or b == lexer.Kind.RBrace or b == lexer.Kind.Comma or b == lexer.Kind.Semi or b == lexer.Kind.LParen or b == lexer.Kind.Dot or b == lexer.Kind.DotStar or b == lexer.Kind.DotQuestion) }
+    if hb == 1 { return b != lexer.Kind.DotQuestion and !(a == lexer.Kind.LParen or a == lexer.Kind.LBracket or a == lexer.Kind.Dot or a == lexer.Kind.DotLBrace or a == lexer.Kind.At) }
+    if ha == 3 { return !(b == lexer.Kind.RParen or b == lexer.Kind.RBracket or b == lexer.Kind.RBrace or b == lexer.Kind.Comma or b == lexer.Kind.Semi or b == lexer.Kind.LParen or b == lexer.Kind.Dot or b == lexer.Kind.DotStar or b == lexer.Kind.DotQuestion) }
     // ranges and member access are tight: `0..n`, `1..=9`
     if a == lexer.Kind.DotDot or b == lexer.Kind.DotDot or (a == lexer.Kind.Eq and kind_is(pp, lexer.Kind.DotDot)) { return false }
     // or-patterns in match arms: `.A | .B => ...`
@@ -316,7 +316,7 @@ fn needs_space(toks: *List(lexer.Token), ctx: *Line, i: usize) -> bool {
             return false
         }
     } else if b == lexer.Kind.LtLt and !ends_operand(toks, ctx.toks[i - 1]) {
-        return ! (a == lexer.Kind.LParen or a == lexer.Kind.LBracket or a == lexer.Kind.Comma) or a == lexer.Kind.Comma
+        return !(a == lexer.Kind.LParen or a == lexer.Kind.LBracket or a == lexer.Kind.Comma) or a == lexer.Kind.Comma
     }
     // `name @ pattern` keeps its spaces; `@builtin` has none after the sign
     if a == lexer.Kind.At and arm_line and kind_is(pp, lexer.Kind.Ident) { return true }
@@ -355,9 +355,11 @@ fn needs_space(toks: *List(lexer.Token), ctx: *Line, i: usize) -> bool {
     if b == lexer.Kind.LParen {
         if is_kw(ta, "impl") or is_kw(ta, "fn") or is_kw(ta, "export") or is_kw(ta, "derive") or is_kw(ta, "layout") { return false }
         if a == lexer.Kind.RParen and closes_control_head(toks, ctx, i - 1) { return true }
+        // `!` is tight before a parenthesis as before a word: `!(a or b)`
+        if a == lexer.Kind.Bang { return false }
         // `*(A, B)` is a pointer type, but after an operand `*` multiplies: `x * (y)`
-        let sigil = a == lexer.Kind.Star and ! (i >= 2 and ends_operand(toks, ctx.toks[i - 2]))
-        return ! (ends_operand(toks, ctx.toks[i - 1]) or a == lexer.Kind.Question or sigil)
+        let sigil = a == lexer.Kind.Star and !(i >= 2 and ends_operand(toks, ctx.toks[i - 2]))
+        return !(ends_operand(toks, ctx.toks[i - 1]) or a == lexer.Kind.Question or sigil)
             or is_kw(ta, "return") or is_kw(ta, "if") or is_kw(ta, "while") or is_kw(ta, "for") or is_kw(ta, "match") or is_kw(ta, "and") or is_kw(ta, "or") or is_kw(ta, "in")
     }
     if b == lexer.Kind.LBracket {
@@ -448,7 +450,7 @@ fn needs_space(toks: *List(lexer.Token), ctx: *Line, i: usize) -> bool {
     if b == lexer.Kind.Bang {
         var next_is_effect = false
         if has_next { next_is_effect = is_effect_name(&toks[ctx.toks[i + 1]]) }
-        return ! (is_word(a) and !is_keyword_tok(ta) and !next_is_effect)
+        return !(is_word(a) and !is_keyword_tok(ta) and !next_is_effect)
     }
     if a == lexer.Kind.Bang { return false }
     if a == lexer.Kind.Question or a == lexer.Kind.Tilde { return false }
@@ -468,7 +470,7 @@ fn needs_space(toks: *List(lexer.Token), ctx: *Line, i: usize) -> bool {
     if is_kw(ta, "step") and b == lexer.Kind.Minus { return true }
     if (b == lexer.Kind.Minus or b == lexer.Kind.Amp or b == lexer.Kind.Star) and !ends_operand(toks, ctx.toks[i - 1]) {
         // unary after an operator or opener: `x = -1`, `f(&x)`, `: *mut T`
-        return ! (a == lexer.Kind.LParen or a == lexer.Kind.LBracket or a == lexer.Kind.DotLBrace or a == lexer.Kind.Colon or a == lexer.Kind.Arrow) or a == lexer.Kind.Colon or a == lexer.Kind.Arrow
+        return !(a == lexer.Kind.LParen or a == lexer.Kind.LBracket or a == lexer.Kind.DotLBrace or a == lexer.Kind.Colon or a == lexer.Kind.Arrow) or a == lexer.Kind.Colon or a == lexer.Kind.Arrow
     }
     // closure parameter bars open where no operand precedes them (`= |x|`,
     // `catch |e|`, `f(|x| x)`) and close at the next bar; any other bar is

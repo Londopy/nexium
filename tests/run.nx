@@ -673,6 +673,14 @@ fn suite_fmt(e: *Env, failures: *mut List(String)) {
     let rf = nx(e, ["fmt", rty[..]][..])
     let rgot = normalize((fs.read(rty[..]) catch { String.new() })[..])
     if rf.code != 0 or rgot[..] != rtext { failures.append(format("fmt: a body brace after a slice return type (exit {}):\n{}{}", .{rf.code, rgot, rf.stderr})) }
+    // `!` is tight before a parenthesis as before a word
+    let neg = fs.join(e.root[..], "nx-out/cases/negation.nx")
+    let ntext = "fn f(a: bool, b: bool) -> bool {\n    if ! (a or b) { return ! a }\n    return !(a and b) or ! (b)\n}\n"
+    let nwant = "fn f(a: bool, b: bool) -> bool {\n    if !(a or b) { return !a }\n    return !(a and b) or !(b)\n}\n"
+    fs.write(neg[..], ntext) catch { }
+    let nf = nx(e, ["fmt", neg[..]][..])
+    let ngot = normalize((fs.read(neg[..]) catch { String.new() })[..])
+    if nf.code != 0 or ngot[..] != nwant { failures.append(format("fmt: `!(` spacing (exit {}):\n{}{}", .{nf.code, ngot, nf.stderr})) }
     println("fmt: {} files", .{files.len})
 }
 
@@ -1091,7 +1099,7 @@ fn suite_play(e: *Env, failures: *mut List(String)) {
         let dir = fs.join("topo/exercises", ch[..])
         let names = fs.list(dir[..]) catch { continue }
         for n in names {
-            if ! (n[..].starts_with("fill_") or n[..].starts_with("fix_")) { continue }
+            if !(n[..].starts_with("fill_") or n[..].starts_with("fix_")) { continue }
             let path = fs.join(dir[..], n[..])
             if n[..].ends_with(".solution.nx") {
                 let stem = fs.stem(fs.stem(n[..])[..])

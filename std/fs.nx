@@ -267,7 +267,7 @@ pub fn normalize(path: []u8) -> String {
                 // skip
             } else if part == ".." {
                 if parts.len > 0 and parts[parts.len - 1] != ".." { _ = parts.pop() }
-                else if ! (path.len > 0 and is_sep(path[0])) { parts.append(part) }
+                else if !(path.len > 0 and is_sep(path[0])) { parts.append(part) }
             } else {
                 parts.append(part)
             }

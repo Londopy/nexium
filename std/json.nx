@@ -252,17 +252,17 @@ impl Parser {
     fn parse_number(self: *mut Self) -> !f64 {
         let start = self.pos
         if self.peek() == '-' { self.pos += 1 }
-        if ! (self.peek() >= '0' and self.peek() <= '9') { return error.InvalidInput }
+        if !(self.peek() >= '0' and self.peek() <= '9') { return error.InvalidInput }
         while self.peek() >= '0' and self.peek() <= '9' { self.pos += 1 }
         if self.peek() == '.' {
             self.pos += 1
-            if ! (self.peek() >= '0' and self.peek() <= '9') { return error.InvalidInput }
+            if !(self.peek() >= '0' and self.peek() <= '9') { return error.InvalidInput }
             while self.peek() >= '0' and self.peek() <= '9' { self.pos += 1 }
         }
         if self.peek() == 'e' or self.peek() == 'E' {
             self.pos += 1
             if self.peek() == '+' or self.peek() == '-' { self.pos += 1 }
-            if ! (self.peek() >= '0' and self.peek() <= '9') { return error.InvalidInput }
+            if !(self.peek() >= '0' and self.peek() <= '9') { return error.InvalidInput }
             while self.peek() >= '0' and self.peek() <= '9' { self.pos += 1 }
         }
         let n = self.src[start..self.pos].parse_float() catch |e| return error.InvalidInput

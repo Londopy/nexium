@@ -403,7 +403,7 @@ impl Checker {
             var all_void = true
             for e in exprs {
                 let k = self.tys.kind(self.tys.shallow(self.tir.nodes[e].ty))
-                if ! (k == TK.Void or k == TK.Never) { all_void = false }
+                if !(k == TK.Void or k == TK.Never) { all_void = false }
             }
             if all_void {
                 target = v
@@ -1043,7 +1043,7 @@ impl Checker {
             let vk = self.tys.kind(vt)
             if vk == TK.Int or vk == TK.Char or vk == TK.Bool {
             } else if vk == TK.Float and self.tys.list[vt].name == "f32" {
-                if ! (size_expr == NONE and bits == 32) and !float { self.fail_here(sstart, "an f32 segment needs `:32/float`") }
+                if !(size_expr == NONE and bits == 32) and !float { self.fail_here(sstart, "an f32 segment needs `:32/float`") }
             } else if vk == TK.Float {
                 if !float { self.fail_here(sstart, "float values need the `/float` modifier") }
             } else if vk == TK.Slice and self.tys.kind(self.tys.shallow(self.tys.list[vt].args[0])) == TK.Int and self.tys.list[self.tys.shallow(self.tys.list[vt].args[0])].name == "u8" {

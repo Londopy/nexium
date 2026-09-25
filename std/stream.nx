@@ -112,7 +112,7 @@ impl Reader {
                 self.pos = i + 1
                 return line
             }
-            if ! (try self.fill()) {
+            if !(try self.fill()) {
                 if self.pos < self.buf.len {
                     var end = self.buf.len
                     if self.buf[end - 1] == '\r' { end -= 1 }
@@ -128,7 +128,7 @@ impl Reader {
     /// Up to `n` bytes; empty at end of input.
     pub fn read(self: *mut Self, n: usize) -> !String {
         if self.pos >= self.buf.len {
-            if ! (try self.fill()) { return String.new() }
+            if !(try self.fill()) { return String.new() }
         }
         var end = self.pos + n
         if end > self.buf.len { end = self.buf.len }

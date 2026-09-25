@@ -195,7 +195,7 @@ pub struct Manifest {
 
 fn is_ident(s: []u8) -> bool {
     if s.len == 0 { return false }
-    for c in s { if ! ((c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '_') { return false } }
+    for c in s { if !((c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '_') { return false } }
     return true
 }
 

@@ -164,7 +164,7 @@ impl Checker {
         if name == "embedFile" {
             if !self.args_n(args[..], 1, "@embedFile", start) { return self.error_expr(start, end) }
             let an = self.node(m, args[0])
-            if ! (an.k == parser.NodeKind.Lit and an.text == "str") {
+            if !(an.k == parser.NodeKind.Lit and an.text == "str") {
                 self.fail_here(an.start, "@embedFile takes a string literal path (a declared build input)")
                 return self.error_expr(start, end)
             }
@@ -182,7 +182,7 @@ impl Checker {
         if name == "cstr" {
             if !self.args_n(args[..], 1, "@cstr", start) { return self.error_expr(start, end) }
             let an = self.node(m, args[0])
-            if ! (an.k == parser.NodeKind.Lit and an.text == "str") {
+            if !(an.k == parser.NodeKind.Lit and an.text == "str") {
                 self.fail_here(an.start, "@cstr takes a string literal and yields a NUL-terminated `*u8` for C")
                 return self.error_expr(start, end)
             }

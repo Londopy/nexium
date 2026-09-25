@@ -208,7 +208,7 @@ pub fn upper_bound(comptime T: type where T: Ord, xs: []T, x: T) -> usize {
 /// In an ascending `xs`, a position holding `x`, or null.
 pub fn binary_search(comptime T: type where T: Ord, xs: []T, x: T) -> ?usize {
     let at = lower_bound(T, xs, x)
-    if at < xs.len and ! (x < xs[at]) { return at }
+    if at < xs.len and !(x < xs[at]) { return at }
     return null
 }
 

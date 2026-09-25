@@ -195,7 +195,7 @@ impl Checker {
             if ret_hint != NONE { is_void_expected = self.tys.kind(self.tys.shallow(ret_hint)) == TK.Void }
             tb = self.mk(TKind.Block, NONE, bstart, bend)
             var ty = self.tys.void()
-            if is_void_expected and ! (tk == TK.Void or tk == TK.Never) {
+            if is_void_expected and !(tk == TK.Void or tk == TK.Never) {
                 self.check_unused(te)
                 let s = self.mk(TKind.SExpr, tt, bstart, bend)
                 self.tir.nodes[s].kids.append(te)
