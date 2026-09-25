@@ -4035,7 +4035,7 @@ impl Gen {
             let n = self.simple(args[0])
             let cn = self.cty(ety)
             let t = self.tmp()
-            self.line(format("{} {}; {{ char _nb[256]; size_t _l = {}.len < 255 ? {}.len : 255; memcpy(_nb, {}.ptr, _l); _nb[_l] = 0; const char* _v = getenv(_nb); {}.has = _v != NULL; if (_v) {{ {}.val.ptr = (uint8_t*)_v; {}.val.len = strlen(_v); }} }}", .{cn, t, n, n, n, t, t, t})[..])
+            self.line(format("{} {}; {{ char _nb[256]; size_t _l = {}.len < 255 ? {}.len : 255; nx_bytes_copy(_nb, {}.ptr, _l); _nb[_l] = 0; const char* _v = getenv(_nb); {}.has = _v != NULL; if (_v) {{ {}.val.ptr = (uint8_t*)_v; {}.val.len = strlen(_v); }} }}", .{cn, t, n, n, n, t, t, t})[..])
             return t
         }
         if name == "SetEnv" {

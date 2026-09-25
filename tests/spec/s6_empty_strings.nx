@@ -1,0 +1,13 @@
+// SPEC 6.1: an empty String has no storage, so its pointer is null; printing
+// it, comparing and searching with it, and handing it to the runtime as a
+// path or as an environment variable's name or value are all defined.
+fn main() {
+    let e = String.new()
+    println("[{}] [{}] {}", .{e, e[..], format("<{}>", .{e})})
+    println("{} {} {} {}", .{"abc".starts_with(e), "abc".ends_with(e), e[..].starts_with(e), e == ""})
+    println("{}", .{io.file_kind(e[..])})
+    let r = io.read_file(e[..]) catch { String.from("no file") }
+    println("{}", .{r})
+    os.set_env("NX_SPEC_EMPTY", e[..])
+    println("{}", .{os.env(e[..]) == null})
+}
