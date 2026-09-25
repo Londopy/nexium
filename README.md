@@ -137,7 +137,7 @@ on Linux when nothing is found), and adds `nx` to your PATH.
 **Docker**: `docker run --rm -v "$PWD":/work ghcr.io/londopy/nexium run hello.nx`
 (Debian; `:alpine` too; amd64 and arm64).
 
-**Chocolatey and winget**: `choco install nexium` ([the package](https://community.chocolatey.org/packages/nexium)) and `winget install Londopy.Nexium`, each once its registry has approved the first version ([the status](docs/install.md#where-to-get-it)).
+**Chocolatey and winget**: `choco install nexium` ([the package](https://community.chocolatey.org/packages/nexium)), each version once Chocolatey's moderators have approved it (it can trail the newest release by days), and `winget install Londopy.Nexium` once winget has merged its first version ([the status](docs/install.md#where-to-get-it)).
 
 **Debian, RPM, Nix, mise**: every release attaches `.deb` and `.rpm` packages (`sudo dpkg -i nexium_*_amd64.deb`); `nix run github:Londopy/nexium` builds it from the one C file; `mise use -g "ubi:Londopy/nexium[exe=nx]"` installs the release binary. Every asset carries signed provenance: `gh attestation verify nx --owner Londopy`. [All the roads](docs/install.md#where-to-get-it).
 
@@ -462,12 +462,13 @@ tutorial program runs in CI on three platforms, under the sanitizers and
 the fuzzer, and gdb and lldb are driven through `nx debug` there too.
 Memory safety is the view rules, errors since 1.3. 1.4, a standard library
 people stop supplementing, is under way: collections (`std.sort`,
-`std.heap`, `std.set`, `std.deque`) and `std.hash` are in, twenty-one
-modules in all, and the HTTP client with TLS, websockets and time zones are
-next. What Nexium is not yet, and where each is answered, is the first
-section of [the roadmap](ROADMAP.md): the only benchmark numbers are
-[the numbers page](https://londopy.github.io/nexium/docs/numbers.html), and the ecosystem is one maintainer
-and four projects outside the tree ([above](#in-the-wild)).
+`std.heap`, `std.set`, `std.deque`), `std.hash` and `random.secure` are in,
+twenty-one modules in all; next are the small modules (paths, config
+folders, UUIDs, logs, CSV, TOML), then time zones, the HTTP client with TLS
+and websockets. What Nexium is not yet, and where each is answered, is
+[a section of the roadmap](ROADMAP.md#what-10-is-not-yet): the benchmarks are four
+programs ([Speed](#speed)), and the ecosystem is one maintainer and four
+projects outside the tree ([above](#in-the-wild)).
 [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) lists every open bug with its fix;
 [`DECISIONS.md`](DECISIONS.md) every call made where the specification was
 open.

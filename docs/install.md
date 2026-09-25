@@ -16,7 +16,7 @@ workflow itself:
 | Docker | `docker run ghcr.io/londopy/nexium` | [the container image](https://github.com/Londopy/nexium/pkgs/container/nexium) |
 | Homebrew | `brew install londopy/tap/nexium` | [the tap is this repository](https://github.com/Londopy/nexium/tree/main/Formula) |
 | Scoop | `scoop bucket add londopy https://github.com/Londopy/scoop-bucket`, then `scoop install nexium` | [Londopy/scoop-bucket](https://github.com/Londopy/scoop-bucket), kept current by Scoop's own updater; the manifest is also [in this repository](https://github.com/Londopy/nexium/tree/main/bucket) |
-| Chocolatey | `choco install nexium` | [community.chocolatey.org/packages/nexium](https://community.chocolatey.org/packages/nexium), from its moderators' approval of the first version on |
+| Chocolatey | `choco install nexium` | [community.chocolatey.org/packages/nexium](https://community.chocolatey.org/packages/nexium), each version once its moderators approve it (1.2.0 was the first) |
 | winget | `winget install Londopy.Nexium` | [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs/tree/master/manifests/l/Londopy/Nexium), from the merge of [the first submission](https://github.com/microsoft/winget-pkgs/pull/438838) on |
 | Debian, Ubuntu | `sudo dpkg -i nexium_<version>_amd64.deb` (also arm64) | [attached to each release](https://github.com/Londopy/nexium/releases/latest) |
 | Fedora, RHEL, SUSE | `sudo rpm -i nexium-<version>.x86_64.rpm` (also aarch64) | [attached to each release](https://github.com/Londopy/nexium/releases/latest) |
@@ -95,11 +95,10 @@ the user's PATH unless `NEXIUM_NO_MODIFY_PATH=1`.
 
 **Chocolatey**: `choco install nexium` from
 [community.chocolatey.org/packages/nexium](https://community.chocolatey.org/packages/nexium)
-(the Chocolatey workflow pushes each version when its release is made;
-Chocolatey's moderators approve a package's first version by hand, so
-1.2.0 is listed there before it is installable, and until it is approved
-Chocolatey takes no further version, so 1.2.1 follows it through the
-queue); each release also attaches the `.nupkg`, which installs with
+(the Chocolatey workflow pushes each version when its release is made,
+and Chocolatey's moderators check every version by hand before it can be
+installed, so the newest one there can trail the newest release by days;
+1.2.0 was the first approved); each release also attaches the `.nupkg`, which installs with
 `choco install nexium --source .` from the directory it is in. The package
 runs the installer silently with `nx` added to the PATH.
 

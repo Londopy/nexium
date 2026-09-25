@@ -126,7 +126,7 @@ C コンパイラを用意し（macOS では Xcode のツール、Linux では�
 **Docker**：`docker run --rm -v "$PWD":/work ghcr.io/londopy/nexium run hello.nx`
 （Debian。`:alpine` もあり。amd64 と arm64）。
 
-**Chocolatey と winget**：`choco install nexium`（[パッケージ](https://community.chocolatey.org/packages/nexium)）と `winget install Londopy.Nexium`。どちらもレジストリが最初のバージョンを承認してから使えます（[状況](../../install.md#where-to-get-it)、英語）。
+**Chocolatey と winget**：`choco install nexium`（[パッケージ](https://community.chocolatey.org/packages/nexium)）は Chocolatey のモデレーターが承認したバージョンから使えます（最新リリースより数日遅れることがあります）。`winget install Londopy.Nexium` は winget が最初のバージョンを取り込んでから使えます（[状況](../../install.md#where-to-get-it)、英語）。
 
 **Debian、RPM、Nix、mise**：各リリースに `.deb` と `.rpm` のパッケージが付きます（`sudo dpkg -i nexium_*_amd64.deb`）。`nix run github:Londopy/nexium` は一つの C ファイルからビルドし、`mise use -g "ubi:Londopy/nexium[exe=nx]"` はリリースのバイナリをインストールします。すべての成果物に署名付きの来歴があります：`gh attestation verify nx --owner Londopy`。[すべての道](../../install.md#where-to-get-it)（英語）。
 
@@ -444,10 +444,11 @@ Nexium で書かれ、自分自身をビルドします。すべてのサンプ�
 プログラムが CI で 3 プラットフォーム上、サニタイザとファザーのもとで実行され、gdb と
 lldb も `nx debug` を通してそこで動かされます。メモリ安全性はビュー規則で、1.3 から
 エラーです。1.4、補う必要のない標準ライブラリは進行中で、コレクション（`std.sort`、
-`std.heap`、`std.set`、`std.deque`）と `std.hash` が入り、全部で 21 モジュール、
-次は TLS 付きの HTTP クライアント、WebSocket、タイムゾーンです。Nexium がまだ何でないか、
-そしてそれぞれがどこで答えられるかは[ロードマップ](../../../ROADMAP.md)の最初の節に
-あります。ベンチマークの数値は[数値のページ](https://londopy.github.io/nexium/docs/numbers.html)だけで、エコシステムは
+`std.heap`、`std.set`、`std.deque`）、`std.hash`、`random.secure` が入り、全部で 21
+モジュール。次は小さなモジュール（パス、設定フォルダ、UUID、ログ、CSV、TOML）、
+その後にタイムゾーン、TLS 付きの HTTP クライアント、WebSocket です。Nexium がまだ
+何でないか、そしてそれぞれがどこで答えられるかは[ロードマップの一節](../../../ROADMAP.md#what-10-is-not-yet)に
+あります。ベンチマークは 4 つのプログラム（[速度](#速度)）だけで、エコシステムは
 メンテナ一人とツリー外のプロジェクト四つです（[上](#実際の利用)）。
 [`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md) は未修正のバグをその修正案とともに、
 [`DECISIONS.md`](../../../DECISIONS.md) は仕様が開いていた箇所でのすべての判断を

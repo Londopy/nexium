@@ -9,42 +9,56 @@ The spec's one sentence is the compass: *a language complete enough to build
 everything in, that is also the best thing to adopt for one piece of
 something else.* The second half is ahead of the first, on purpose.
 
-## Now: 1.0.0
+## Now: 1.3.2, and 1.4 under way
 
-What exists and is verified on Windows, Linux, and macOS:
+What exists and is verified on Windows, Linux, and macOS (1.1, 1.2 and 1.3
+each have a section under *Past 1.0* saying what it added):
 
 - The language: structs, records, enums, `ref class` with ARC and `weak`,
   distinct types, traits and `dyn Trait` with effect bounds, generics by
-  monomorphization, closures with explicit captures, error unions, optionals,
-  `defer`/`errdefer`, labeled blocks, `own` parameters, branch-aware moves,
-  binary pattern matching and construction, `comptime`, `for parallel`,
+  monomorphization, closures with explicit captures, error unions, optionals
+  and `?.` chaining, `defer`/`errdefer`, labeled blocks, `own` parameters,
+  branch-aware moves, binary pattern matching and construction, slice
+  patterns and `x @ pat`, tuple destructuring, iterators, `derive(Clone)`,
+  named format arguments, `comptime` and `if comptime`, `for parallel`,
   `using arena`, recursive types through `List`, matching through pointers.
+- Memory safety without a garbage collector: the view rules of 1.2, which
+  keep a view from outliving what it views, errors since 1.3.
 - Effects: inferred for every function, checked against negative bounds,
   `panics` discharged by proof, effects deciding the C ABI of exports.
 - Interop: `@cImport` of C headers, vendored C, `nx ship` to a C
   library, a Python wheel, a Rust crate, an npm package, an installer.
-- Standard library in Nexium, sixteen modules embedded in the compiler:
-  `strings`, `lists`, `bytes`, `num`, `json`, `args`, `fs`, `time`,
+- Standard library in Nexium, embedded in the compiler: sixteen modules in
+  1.3.2 (`strings`, `lists`, `bytes`, `num`, `json`, `args`, `fs`, `time`,
   `regex`, `text`, `testing`, `stream`, `net`, `http`, `thread`,
-  `process`.
-- Tools: `build run test check tir fix fmt effects audit refcounts doc
-  ship size leaks version doctor lsp repl`, all written in Nexium.
+  `process`), and on `main` for 1.4 `sort`, `heap`, `set`, `deque` and
+  `hash`, with `random.secure`.
+- Tools, all written in Nexium: `build run test bench debug check effects
+  explain audit refcounts leaks size layout emit-c tir fmt fix doc ship
+  version doctor upgrade install lsp repl completions man play topo`, the
+  packages' `init add fetch update`, and `-e` and `-p` for one line. The
+  language server answers from the checker, and a large program's debug
+  build compiles a C file per module, only the ones that changed.
 - Distribution: a Windows installer with bundled Zig, a macOS/Linux install
-  script with checksum verification, editor support for VS Code, Vim,
-  Neovim, Helix, Zed, Emacs, Kate, JetBrains, Sublime Text, Notepad++ and
-  nano, a GitHub Action, and a release template for Nexium programs.
+  script with checksum verification, `pip` and `npm` packages
+  (`nexium-lang`), Homebrew, Scoop and Chocolatey (winget awaits its first
+  merge), `.deb` and `.rpm`, Nix and mise, container images, and `nx
+  upgrade`; editor support for VS Code, Vim, Neovim, Helix, Zed, Emacs,
+  Kate, JetBrains, Sublime Text, Notepad++ and nano, a GitHub Action, and a
+  release template for Nexium programs.
 - Self-hosting: the compiler is written in Nexium and builds itself from
   the C it emits (`bootstrap/nx.c`); no other compiler is involved.
 - nexium-gui: an immediate-mode GUI in Nexium on a 200-line C window layer.
 - Documentation: the site at londopy.github.io/nexium, built by a Nexium
   program from the repository's Markdown, and the Topo, a 23-chapter
-  tutorial whose every program the tests run.
+  tutorial whose every program the tests run, with 41 exercises graded in
+  the terminal (`nx topo`) and in the page, which runs the programs itself.
 
-Numbers: 36.2k lines of Nexium (25.4k of them the compiler and its tools),
-2.0k of C (the runtime and the GUI window layer), 307 std functions,
-32 examples, 21 tutorial programs, 37 spec conformance cases and 49
-compile-fail cases, 13 harness suites, verified on three platforms by CI
-and under the sanitizers.
+Numbers, on `main`: 52.1k lines of Nexium (34.6k of them the compiler and
+its tools), 2.6k of C (the runtime and the GUI window layer), 357 std
+functions, 32 examples, 21 tutorial programs, 71 spec conformance cases
+and 96 compile-fail cases, 14 harness suites, verified on three platforms
+by CI and under the sanitizers.
 
 ## Phase 1: a language you can write your tools in (0.3)
 
@@ -234,6 +248,13 @@ roadmap answers each:
 | Maturity: writing one tutorial found eight compiler bugs; a stranger will find more | the hardening commitments under *Always* below: the corpus, the fuzz budget, the sanitizer job, a patch within a week of a fix |
 | No performance numbers: it compiles through C, which is not the same as a table | the numbers page, pulled forward from 1.6 into 1.1 |
 | No ecosystem: sixteen std modules, no registry, no third-party packages, one maintainer | 1.4 (std), the registry and the second-maintainer items under *Ecosystem*; `async` is answered under *Not planned*, errors with payloads under *2.0 candidates* |
+
+Where the four stand at 1.3.2: memory safety shipped in 1.2 (the view
+rules, errors since 1.3); the numbers page is up, measured every week and
+at every release, and the README's Speed section carries its table;
+maturity is the hardening under *Always*, which goes on; the ecosystem has
+twenty-one std modules on `main` and four projects outside the tree, and
+still one maintainer and no registry.
 
 After 1.0 the language changes only by addition, under the stability policy
 of phase 5. Each minor version has a theme; a bullet moves into a version

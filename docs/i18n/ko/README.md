@@ -125,7 +125,7 @@ curl -fsSL https://raw.githubusercontent.com/Londopy/nexium/main/installers/inst
 **Docker**: `docker run --rm -v "$PWD":/work ghcr.io/londopy/nexium run hello.nx`
 (Debian; `:alpine`도 있음; amd64와 arm64).
 
-**Chocolatey와 winget**: `choco install nexium`([패키지](https://community.chocolatey.org/packages/nexium)) 및 `winget install Londopy.Nexium`. 각 레지스트리가 첫 버전을 승인한 뒤부터 쓸 수 있습니다([현황](../../install.md#where-to-get-it), 영어).
+**Chocolatey와 winget**: `choco install nexium`([패키지](https://community.chocolatey.org/packages/nexium))은 Chocolatey 모더레이터가 승인한 버전부터 쓸 수 있습니다(최신 릴리스보다 며칠 늦을 수 있음). `winget install Londopy.Nexium`은 winget이 첫 버전을 받아들인 뒤부터 쓸 수 있습니다([현황](../../install.md#where-to-get-it), 영어).
 
 **Debian, RPM, Nix, mise**: 모든 릴리스에 `.deb`와 `.rpm` 패키지가 첨부됩니다(`sudo dpkg -i nexium_*_amd64.deb`). `nix run github:Londopy/nexium`은 C 파일 하나에서 빌드하고, `mise use -g "ubi:Londopy/nexium[exe=nx]"`는 릴리스 바이너리를 설치합니다. 모든 산출물에는 서명된 출처 증명이 있습니다: `gh attestation verify nx --owner Londopy`. [모든 경로](../../install.md#where-to-get-it)(영어).
 
@@ -441,11 +441,12 @@ gcc나 clang이 필요), C 연동용 `-I`, `--link`,
 케이스, 튜토리얼 프로그램이 CI에서 세 플랫폼 위에서, 새니타이저와 퍼저 아래에서
 실행되며, gdb와 lldb도 거기서 `nx debug`로 구동됩니다. 메모리 안전성은 뷰 규칙이며
 1.3부터 오류입니다. 1.4, 보탤 필요가 없는 표준 라이브러리는 진행 중입니다. 컬렉션
-(`std.sort`, `std.heap`, `std.set`, `std.deque`)과 `std.hash`가 들어와 모두 스물한
-모듈이고, 다음은 TLS를 갖춘 HTTP 클라이언트, 웹소켓, 시간대입니다. Nexium이 아직 아닌
-것과 각각이 어디서 답을 얻는지는 [로드맵](../../../ROADMAP.md)의 첫 절에 있습니다.
-벤치마크 수치는 [수치 페이지](https://londopy.github.io/nexium/docs/numbers.html)뿐이며, 생태계는 메인테이너 한 명과 트리
-밖의 프로젝트 넷입니다([위](#실제-사용)).
+(`std.sort`, `std.heap`, `std.set`, `std.deque`), `std.hash`, `random.secure`가 들어와
+모두 스물한 모듈이고, 다음은 작은 모듈(경로, 설정 폴더, UUID, 로그, CSV, TOML), 그다음
+시간대, TLS를 갖춘 HTTP 클라이언트, 웹소켓입니다. Nexium이 아직 아닌 것과 각각이
+어디서 답을 얻는지는 [로드맵의 한 절](../../../ROADMAP.md#what-10-is-not-yet)에 있습니다.
+벤치마크는 네 프로그램([속도](#속도))뿐이며, 생태계는 메인테이너 한 명과 트리 밖의
+프로젝트 넷입니다([위](#실제-사용)).
 [`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md)는 미해결 버그를 수정 방안과 함께,
 [`DECISIONS.md`](../../../DECISIONS.md)는 명세가 열려 있던 곳에서 내린 모든 결정을
 나열합니다.

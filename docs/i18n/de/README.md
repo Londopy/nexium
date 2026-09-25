@@ -130,7 +130,7 @@ PATH auf.
 **Docker**: `docker run --rm -v "$PWD":/work ghcr.io/londopy/nexium run hello.nx`
 (Debian; auch `:alpine`; amd64 und arm64).
 
-**Chocolatey und winget**: `choco install nexium` ([das Paket](https://community.chocolatey.org/packages/nexium)) und `winget install Londopy.Nexium`, jeweils sobald die Registry die erste Version freigegeben hat ([der Stand](../../install.md#where-to-get-it), Englisch).
+**Chocolatey und winget**: `choco install nexium` ([das Paket](https://community.chocolatey.org/packages/nexium)), jede Version, sobald die Moderatoren von Chocolatey sie freigegeben haben (sie kann dem neuesten Release einige Tage hinterherhinken), und `winget install Londopy.Nexium`, sobald winget die erste Version aufgenommen hat ([der Stand](../../install.md#where-to-get-it), Englisch).
 
 **Debian, RPM, Nix, mise**: jede Release bringt `.deb`- und `.rpm`-Pakete mit (`sudo dpkg -i nexium_*_amd64.deb`); `nix run github:Londopy/nexium` baut es aus der einen C-Datei; `mise use -g "ubi:Londopy/nexium[exe=nx]"` installiert das Release-Binary. Jedes Asset trägt eine signierte Herkunftsangabe: `gh attestation verify nx --owner Londopy`. [Alle Wege](../../install.md#where-to-get-it) (Englisch).
 
@@ -460,13 +460,14 @@ Plattformen, unter den Sanitizern und dem Fuzzer, und auch gdb und lldb
 werden dort durch `nx debug` gesteuert. Speichersicherheit sind die
 Sichtregeln, seit 1.3 Fehler. 1.4, eine Standardbibliothek, die niemand mehr
 ergänzen muss, ist unterwegs: Collections (`std.sort`, `std.heap`, `std.set`,
-`std.deque`) und `std.hash` sind da, einundzwanzig Module insgesamt, und der
-HTTP-Client mit TLS, Websockets und Zeitzonen kommen als Nächstes. Was Nexium
-noch nicht ist, und wo jeder Punkt beantwortet wird, ist der erste Abschnitt
-der [Roadmap](../../../ROADMAP.md): die einzigen Benchmark-Zahlen sind
-[die Zahlenseite](https://londopy.github.io/nexium/docs/numbers.html), und das Ökosystem besteht aus einem
-Maintainer und vier Projekten außerhalb des Baums
-([oben](#in-freier-wildbahn)). [`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md)
+`std.deque`), `std.hash` und `random.secure` sind da, einundzwanzig Module
+insgesamt; als Nächstes kommen die kleinen Module (Pfade, Konfigurationsordner,
+UUIDs, Logs, CSV, TOML), dann Zeitzonen, der HTTP-Client mit TLS und
+Websockets. Was Nexium noch nicht ist, und wo jeder Punkt beantwortet wird,
+steht in [einem Abschnitt der Roadmap](../../../ROADMAP.md#what-10-is-not-yet): die
+Benchmarks sind vier Programme ([Geschwindigkeit](#geschwindigkeit)), und das
+Ökosystem besteht aus einem Maintainer und vier Projekten außerhalb des
+Baums ([oben](#in-freier-wildbahn)). [`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md)
 führt jeden offenen Fehler mit seiner Lösung;
 [`DECISIONS.md`](../../../DECISIONS.md) jede Entscheidung, die getroffen
 wurde, wo die Spezifikation offen war.

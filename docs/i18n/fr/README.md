@@ -128,7 +128,7 @@ ajoute `nx` à votre PATH.
 **Docker** : `docker run --rm -v "$PWD":/work ghcr.io/londopy/nexium run hello.nx`
 (Debian ; `:alpine` aussi ; amd64 et arm64).
 
-**Chocolatey et winget** : `choco install nexium` ([le paquet](https://community.chocolatey.org/packages/nexium)) et `winget install Londopy.Nexium`, chacun dès que son registre aura approuvé la première version ([l'état](../../install.md#where-to-get-it), en anglais).
+**Chocolatey et winget** : `choco install nexium` ([le paquet](https://community.chocolatey.org/packages/nexium)), chaque version dès que les modérateurs de Chocolatey l'ont approuvée (elle peut avoir quelques jours de retard sur la dernière version), et `winget install Londopy.Nexium` dès que winget aura accepté sa première version ([l'état](../../install.md#where-to-get-it), en anglais).
 
 **Debian, RPM, Nix, mise** : chaque version joint des paquets `.deb` et `.rpm` (`sudo dpkg -i nexium_*_amd64.deb`) ; `nix run github:Londopy/nexium` le construit à partir de l'unique fichier C ; `mise use -g "ubi:Londopy/nexium[exe=nx]"` installe le binaire publié. Chaque fichier publié porte une provenance signée : `gh attestation verify nx --owner Londopy`. [Toutes les voies](../../install.md#where-to-get-it) (anglais).
 
@@ -457,13 +457,14 @@ CI sur trois plateformes, sous les sanitizers et le fuzzer, et gdb et lldb y
 sont aussi pilotés par `nx debug`. La sûreté mémoire, ce sont les règles de
 vues, des erreurs depuis 1.3. La 1.4, une bibliothèque standard qu'on n'a
 plus besoin de compléter, est en cours : les collections (`std.sort`,
-`std.heap`, `std.set`, `std.deque`) et `std.hash` sont là, vingt et un
-modules en tout, et le client HTTP avec TLS, les websockets et les fuseaux
-horaires viennent ensuite. Ce que Nexium n'est pas encore, et où chaque
-point trouve sa réponse, est la première section de [la feuille de
-route](../../../ROADMAP.md) : les seuls chiffres de performance sont [la
-page des chiffres](https://londopy.github.io/nexium/docs/numbers.html), et l'écosystème se résume à un seul
-mainteneur et quatre projets hors de l'arbre ([plus haut](#dans-la-nature)).
+`std.heap`, `std.set`, `std.deque`), `std.hash` et `random.secure` sont là,
+vingt et un modules en tout ; viennent ensuite les petits modules (chemins,
+dossiers de configuration, UUID, journaux, CSV, TOML), puis les fuseaux
+horaires, le client HTTP avec TLS et les websockets. Ce que Nexium n'est pas
+encore, et où chaque point trouve sa réponse, est dans [une section de la
+feuille de route](../../../ROADMAP.md#what-10-is-not-yet) : les mesures de performance
+sont quatre programmes ([Vitesse](#vitesse)), et l'écosystème se résume à un
+seul mainteneur et quatre projets hors de l'arbre ([plus haut](#dans-la-nature)).
 [`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md) liste chaque bogue ouvert avec
 son correctif ; [`DECISIONS.md`](../../../DECISIONS.md), chaque choix fait
 là où la spécification était ouverte.

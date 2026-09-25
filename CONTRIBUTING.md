@@ -169,8 +169,19 @@ skips too (spell it out, "the skip marker", when writing about it).
    `## [x.y.z] - YYYY-MM-DD` heading and add its compare link at the bottom.
    `patchnotes validate CHANGELOG.md` must pass.
 2. Set the same version and release name in `self/nx.nx` (`VERSION`,
-   `RELEASE_NAME`) and regenerate the seed:
-   `nx emit-c self/nx.nx --mode safe > bootstrap/nx.c`.
+   `RELEASE_NAME`, `RELEASE_DATE`) and everywhere else the current release
+   is written; `git grep` for the previous version finds them all
+   (`CITATION.cff`, `.pre-commit-hooks.yaml`, the Chocolatey, extension,
+   npm and PyPI workflows, `docs/install.md`, `packages.md`, `discord.md`
+   and `repl.md`, the Topo's chapters 1 and 4, the editors' package files
+   and tree-sitter's `patch_version` in `src/parser.c`,
+   `installers/nfpm.yaml`). Add the name to the ledger in
+   `docs/release-names.md` and mark it used in the pool. Regenerate the
+   seed at the fixed point: build `self/nx.nx` with any `nx`, build it
+   again with the result, and write
+   `nx emit-c self/nx.nx --mode safe > bootstrap/nx.c` with the second (the
+   two must emit the same C). `sh bootstrap/build.sh` then reproduces it,
+   and the harness, run after that, checks it in its bootstrap suite.
 3. Tag and push: `git tag vx.y.z && git push origin vx.y.z`. The release
    workflow refuses a tag that does not match `self/nx.nx`, builds `nx` from
    the seed for Windows, Linux, and macOS, and publishes a GitHub release
@@ -183,3 +194,31 @@ skips too (spell it out, "the skip marker", when writing about it).
    `git fetch origin packaging/vx.y.z && git cherry-pick FETCH_HEAD && git push origin main`
    (the same for `numbers`; the site reads the numbers page from that
    branch either way).
+
+### Patch releases
+
+A patch (`x.y.z` with `z` above 0) carries fixes and nothing else, so it
+is cut from its minor's line, not from `main`:
+
+1. The first patch of a line makes the branch from the minor's tag,
+   `git switch -c release-x.y vx.y.0`; later patches take the branch as it
+   is. `git cherry-pick -x` each fix from `main`. A conflict in
+   `CHANGELOG.md` or `bootstrap/nx.c` takes the branch's side: the release
+   commit writes both.
+2. The release commit is steps 1 and 2 above on the branch: the fixes'
+   entries from `main`'s `Unreleased`, word for word, under the new
+   version; the version everywhere; the name, which for a patch is the
+   next unused person of the mountain's roster in `docs/release-names.md`
+   unless one plainly fits; the seed at the fixed point.
+3. Push the branch; CI runs on `release-*` branches as it does on `main`.
+   Tag only when every job is green,
+   `git tag -a vx.y.z -m "Nexium x.y.z (Name)"`, and push the tag.
+4. The tag also starts the Bench workflow, with the branch's `bench/`.
+   When `main`'s benchmark programs have changed since the minor, cancel
+   that run (`gh run cancel <id>`): it would push the old programs' numbers
+   to `numbers`, and the site would show them. The weekly run uses
+   `main`'s.
+5. On `main`, "x.y.z is out": the same version and name, the changelog
+   section as the tag has it (its entries leave `Unreleased`), the ledger
+   row, and the seed regenerated; then land `packaging/vx.y.z` as in step 4
+   above.

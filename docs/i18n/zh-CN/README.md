@@ -122,7 +122,7 @@ curl -fsSL https://raw.githubusercontent.com/Londopy/nexium/main/installers/inst
 **Docker**：`docker run --rm -v "$PWD":/work ghcr.io/londopy/nexium run hello.nx`
 （Debian；也有 `:alpine`；amd64 与 arm64）。
 
-**Chocolatey 与 winget**：`choco install nexium`（[软件包](https://community.chocolatey.org/packages/nexium)）和 `winget install Londopy.Nexium`，各自在其注册表批准第一个版本之后可用（[状态](../../install.md#where-to-get-it)，英文）。
+**Chocolatey 与 winget**：`choco install nexium`（[软件包](https://community.chocolatey.org/packages/nexium)）在 Chocolatey 审核员批准各版本后可用（可能比最新发布晚几天）；`winget install Londopy.Nexium` 在 winget 收录第一个版本之后可用（[状态](../../install.md#where-to-get-it)，英文）。
 
 **Debian、RPM、Nix、mise**：每个发布都附带 `.deb` 和 `.rpm` 包（`sudo dpkg -i nexium_*_amd64.deb`）；`nix run github:Londopy/nexium` 从那一个 C 文件构建；`mise use -g "ubi:Londopy/nexium[exe=nx]"` 安装发布的二进制。每个产物都带有签名的来源证明：`gh attestation verify nx --owner Londopy`。[所有途径](../../install.md#where-to-get-it)（英文）。
 
@@ -434,9 +434,10 @@ runner 上测量（2026-09-25；七次运行的中位数，超过五秒的取三
 方式变化；编译器用 Nexium 写成并能构建自身；每个示例、规范用例和教程程序都在 CI 中于
 三个平台上、在 sanitizer 和 fuzzer 之下运行，gdb 和 lldb 也在那里经由 `nx debug` 驱动。
 内存安全是视图规则，自 1.3 起是错误。1.4，一个不必再补充的标准库，正在进行：集合
-（`std.sort`、`std.heap`、`std.set`、`std.deque`）和 `std.hash` 已经加入，一共二十一个
-模块，接下来是带 TLS 的 HTTP 客户端、websocket 和时区。Nexium 还不是什么、每一点在哪里
-得到回答，是[路线图](../../../ROADMAP.md)的第一节：基准数字只有[数字页](https://londopy.github.io/nexium/docs/numbers.html)，
+（`std.sort`、`std.heap`、`std.set`、`std.deque`）、`std.hash` 和 `random.secure` 已经加入，
+一共二十一个模块；接下来是小模块（路径、配置目录、UUID、日志、CSV、TOML），然后是时区、
+带 TLS 的 HTTP 客户端和 websocket。Nexium 还不是什么、每一点在哪里得到回答，见
+[路线图的一节](../../../ROADMAP.md#what-10-is-not-yet)：基准只有四个程序（[速度](#速度)），
 生态只有一位维护者和四个树外的项目（[上文](#实际使用)）。
 [`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md) 列出每个未修复的缺陷及其修法；
 [`DECISIONS.md`](../../../DECISIONS.md) 列出规范未定之处做出的每一个决定。
