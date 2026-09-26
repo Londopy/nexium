@@ -1491,6 +1491,24 @@ static DWORD WINAPI nx_win_drain_thread(LPVOID p) {
     nx_win_drain(j->c, j->h, j->out);
     return 0;
 }
+/* the child's input, written on a helper thread while the output is
+   drained, so a child that writes before it reads cannot stall; it stops
+   when the child no longer reads, and closes the pipe */
+typedef struct { HANDLE h; const uint8_t* p; size_t n; } nx_win_feed_job;
+NX_INLINE void nx_win_feed(nx_win_feed_job* j) {
+    size_t off = 0;
+    while (off < j->n) {
+        DWORD chunk = (DWORD)((j->n - off) > (1u << 30) ? (1u << 30) : (j->n - off));
+        DWORD w = 0;
+        if (!WriteFile(j->h, j->p + off, chunk, &w, NULL) || w == 0) break;
+        off += w;
+    }
+    CloseHandle(j->h);
+}
+static DWORD WINAPI nx_win_feed_thread(LPVOID p) {
+    nx_win_feed((nx_win_feed_job*)p);
+    return 0;
+}
 #endif
 #if defined(NX_WASM)
 NX_INLINE bool nx_run_capture(nx_ctx* c, const nx_sl_u8* argv, size_t argc, nx_sl_u8 input, nx_sl_u8 cwd, int* code) {
@@ -1500,29 +1518,6 @@ NX_INLINE bool nx_run_capture(nx_ctx* c, const nx_sl_u8* argv, size_t argc, nx_s
     return false;
 }
 #else
-#if !defined(_WIN32)
-/* Writes all of p to a pipe; stops early when the reader has gone. That
-   write fails with EPIPE and raises SIGPIPE, which would end the program:
-   SIGPIPE is blocked in this thread meanwhile, and one the write raised is
-   taken before it is unblocked (unless the program had it blocked). */
-NX_INLINE void nx_pipe_write_all(int fd, const uint8_t* p, size_t n) {
-    sigset_t pipe_set, old;
-    sigemptyset(&pipe_set);
-    sigaddset(&pipe_set, SIGPIPE);
-    pthread_sigmask(SIG_BLOCK, &pipe_set, &old);
-    size_t off = 0;
-    while (off < n) {
-        ssize_t w = write(fd, p + off, n - off);
-        if (w < 0 && errno == EINTR) continue;
-        if (w <= 0) break;
-        off += (size_t)w;
-    }
-    sigset_t pending;
-    sigpending(&pending);
-    if (sigismember(&pending, SIGPIPE) && !sigismember(&old, SIGPIPE)) { int sig; sigwait(&pipe_set, &sig); }
-    pthread_sigmask(SIG_SETMASK, &old, NULL);
-}
-#endif
 NX_INLINE bool nx_run_capture(nx_ctx* c, const nx_sl_u8* argv, size_t argc, nx_sl_u8 input, nx_sl_u8 cwd, int* code) {
     if (argc == 0) return false;
     fflush(stdout); fflush(stderr);
@@ -1570,13 +1565,19 @@ NX_INLINE bool nx_run_capture(nx_ctx* c, const nx_sl_u8* argv, size_t argc, nx_s
     nx_str_free(c, &cmd);
     CloseHandle(in_r); CloseHandle(out_w); CloseHandle(err_w);
     if (!ok) { CloseHandle(in_w); CloseHandle(out_r); CloseHandle(err_r); return false; }
-    if (input.len > 0) { DWORD w; WriteFile(in_w, input.ptr, (DWORD)input.len, &w, NULL); }
-    CloseHandle(in_w);
+    /* the input goes in on one helper thread and stderr comes out on
+       another while this one drains stdout: a child that writes before it
+       reads, or fills one pipe before finishing the other, cannot stall */
+    nx_win_feed_job feed; feed.h = in_w; feed.p = input.ptr; feed.n = input.len;
+    HANDLE feeder = NULL;
+    if (input.len > 0) feeder = CreateThread(NULL, 0, nx_win_feed_thread, &feed, 0, NULL);
+    if (!feeder) nx_win_feed(&feed);
     nx_string err_buf; err_buf.ptr = NULL; err_buf.len = 0; err_buf.cap = 0; err_buf.ar = c->arena;
     nx_win_drain_job job; job.c = c; job.h = err_r; job.out = &err_buf;
     HANDLE drain = CreateThread(NULL, 0, nx_win_drain_thread, &job, 0, NULL);
     nx_win_drain(c, out_r, &nx_cap_out);
     if (drain) { WaitForSingleObject(drain, INFINITE); CloseHandle(drain); } else nx_win_drain(c, err_r, &err_buf);
+    if (feeder) { WaitForSingleObject(feeder, INFINITE); CloseHandle(feeder); }
     nx_cap_err = err_buf;
     CloseHandle(out_r); CloseHandle(err_r);
     WaitForSingleObject(pi.hProcess, INFINITE);
@@ -1606,24 +1607,46 @@ NX_INLINE bool nx_run_capture(nx_ctx* c, const nx_sl_u8* argv, size_t argc, nx_s
     close(inp[0]); close(outp[1]); close(errp[1]);
     for (size_t i = 0; i < argc; i++) nx_free_bytes(c, av[i], argv[i].len + 1);
     nx_free_bytes(c, av, (argc + 1) * sizeof(char*));
-    if (input.len > 0) nx_pipe_write_all(inp[1], input.ptr, input.len);
-    close(inp[1]);
-    /* both pipes are drained as the child fills them, so a child that fills one
-       before finishing the other cannot stall */
+    /* the input is written as the child takes it while both output pipes
+       are drained as it fills them: a child that writes before it reads, or
+       fills one pipe before finishing the other, cannot stall. A write to a
+       child that stopped reading fails with EPIPE and raises SIGPIPE, which
+       would end the program: it is blocked meanwhile, and one raised is
+       taken before it is unblocked (unless the program had it blocked). */
+    sigset_t pipe_set, old_set;
+    sigemptyset(&pipe_set);
+    sigaddset(&pipe_set, SIGPIPE);
+    pthread_sigmask(SIG_BLOCK, &pipe_set, &old_set);
+    size_t fed = 0;
+    if (input.len == 0) { close(inp[1]); inp[1] = -1; }
+    else { int fl = fcntl(inp[1], F_GETFL); if (fl >= 0) fcntl(inp[1], F_SETFL, fl | O_NONBLOCK); }
     char buf[65536]; ssize_t n;
-    struct pollfd pfd[2];
+    struct pollfd pfd[3];
     pfd[0].fd = outp[0]; pfd[0].events = POLLIN;
     pfd[1].fd = errp[0]; pfd[1].events = POLLIN;
+    pfd[2].fd = inp[1]; pfd[2].events = POLLOUT;
     int open_fds = 2;
-    while (open_fds > 0) {
-        if (poll(pfd, 2, -1) < 0) { if (errno == EINTR) continue; break; }
+    while (open_fds > 0 || pfd[2].fd >= 0) {
+        if (poll(pfd, 3, -1) < 0) { if (errno == EINTR) continue; break; }
         for (int i = 0; i < 2; i++) {
             if (pfd[i].fd < 0 || !(pfd[i].revents & (POLLIN | POLLHUP | POLLERR))) continue;
             n = read(pfd[i].fd, buf, sizeof buf);
             if (n > 0) nx_str_append(c, i == 0 ? &nx_cap_out : &nx_cap_err, (const uint8_t*)buf, (size_t)n);
             else if (n == 0 || errno != EINTR) { pfd[i].fd = -1; open_fds--; }
         }
+        if (pfd[2].fd >= 0 && (pfd[2].revents & (POLLOUT | POLLHUP | POLLERR))) {
+            ssize_t w = write(pfd[2].fd, input.ptr + fed, input.len - fed);
+            if (w > 0) fed += (size_t)w;
+            /* EPIPE, or another failure: the child reads no more */
+            else if (!(w < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR))) fed = input.len;
+            if (fed >= input.len) { close(pfd[2].fd); pfd[2].fd = -1; }
+        }
     }
+    if (pfd[2].fd >= 0) close(pfd[2].fd);
+    sigset_t pending;
+    sigpending(&pending);
+    if (sigismember(&pending, SIGPIPE) && !sigismember(&old_set, SIGPIPE)) { int sig; sigwait(&pipe_set, &sig); }
+    pthread_sigmask(SIG_SETMASK, &old_set, NULL);
     close(outp[0]); close(errp[0]);
     int st = 0;
     if (waitpid(pid, &st, 0) < 0) return false;

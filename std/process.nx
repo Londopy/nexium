@@ -11,9 +11,9 @@
 //
 // The child inherits the environment. `error.IoError` when the program
 // cannot be started; a non-zero exit is reported in `code`, not as an
-// error. Output is read after stdin is fully written, so a program that
-// produces more than a megabyte of output before reading its input can
-// stall; feed such programs through files.
+// error. The input is written as the child takes it while its output is
+// read as it comes, so a program that writes before it reads its input,
+// however much, finishes as it would in a terminal.
 
 /// What a finished program left behind.
 pub struct Output {
@@ -102,4 +102,24 @@ test "a program that ends without reading its input leaves the caller running" {
     let t = ["true"]
     let r = try run_with(t[..], Options{ .stdin = big, .cwd = "" })
     expect(r.ok())
+}
+
+test "a program that writes before it reads its input cannot stall the caller" {
+    // three megabytes each way, more than a pipe holds anywhere: written
+    // all first, the input waited on a child that waited on its output
+    var big = String.new()
+    for _ in 0..3000000 {
+        big.push_byte('i')
+    }
+    if os.env("COMSPEC") != null and os.env("WINDIR") != null {
+        let ps = ["powershell", "-NoProfile", "-NonInteractive", "-Command", "[Console]::Out.Write('x' * 3000000); [Console]::Out.Flush(); $null = [Console]::In.ReadToEnd()"]
+        let r = try run_with(ps[..], Options{ .stdin = big, .cwd = "" })
+        expect(r.ok())
+        expect_eq(r.stdout.len, 3000000)
+        return
+    }
+    let sh = ["sh", "-c", "head -c 3000000 /dev/zero; cat > /dev/null"]
+    let r = try run_with(sh[..], Options{ .stdin = big, .cwd = "" })
+    expect(r.ok())
+    expect_eq(r.stdout.len, 3000000)
 }

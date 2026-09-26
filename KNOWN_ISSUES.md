@@ -66,6 +66,3 @@ Fixed bugs are not listed here; `CHANGELOG.md` and `git log` have them.
   hits a mapped file). The harness (`tests/run.nx`) gives every case its
   own directory under `nx-out/cases/`; a new suite has to do the same by
   hand, nothing checks it.
-- **`process` drains a child's output after its stdin is fully written.**
-  A child that produces more than the pipe holds before reading its input
-  can stall; feed such programs through files (`std.process` says so).

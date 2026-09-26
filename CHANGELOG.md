@@ -227,6 +227,14 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   and the call for one with too many arguments ("`spawn` takes 2
   argument(s) but 4 were given"); `mod.Type` and `mod.Type(A)` are type
   arguments there, as they are in a type.
+- `process.exec` (and `std.process.run_with`) stalled on a program that
+  wrote more than a pipe holds before reading its input: the input was
+  written whole first, and the child, blocked on its output, never read
+  it. The input now goes in as the child takes it while the output is
+  read: a poll loop with the input among the pipes on Linux, macOS and the
+  BSDs, a thread of its own on Windows. Three megabytes each way finish in
+  8 ms on Linux and 221 ms on Windows (PowerShell's start), where they
+  waited forever.
 - `return println(...)` in a function returning `!void` compiled to C that
   did not: the call's value, which there is none of, was taken for the
   result (another of the fuzzer's mutants). A call that returns nothing is
