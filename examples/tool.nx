@@ -77,21 +77,6 @@ fn line_level(line: []u8) -> []u8 {
     return line[start..i]
 }
 
-struct Tally {
-    level: String
-    count: u32
-}
-
-fn bump(tallies: *mut List(Tally), level: []u8) {
-    for t, i in tallies {
-        if t.level == level {
-            tallies[i].count += 1
-            return
-        }
-    }
-    tallies.append(Tally{ .level = String.from(level), .count = 1 })
-}
-
 fn main() -> !void {
     let opts = try parse_options()
     var watch = time.Stopwatch.start()
@@ -109,7 +94,8 @@ fn main() -> !void {
     var matched: u32 = 0
     var first: i64 = 9223372036854775807
     var last: i64 = -9223372036854775807
-    var tallies = List(Tally).new()
+    // a Map keeps its keys in the order they first came
+    var tallies = Map(String, u32).new()
 
     let files = try fs.walk(opts.root)
     for path in files {
@@ -127,13 +113,15 @@ fn main() -> !void {
             matched += 1
             if stamp < first { first = stamp }
             if stamp > last { last = stamp }
-            bump(&mut tallies, line_level(line))
+            let level = String.from(line_level(line))
+            let seen = tallies.get(level[..]) orelse 0
+            tallies.put(level, seen + 1)
             if !opts.count_only { println("{}:{}: {}", .{path, i + 1, line}) }
         }
     }
 
     println("{} matching line(s) in {} file(s), {} line(s) read", .{matched, files_seen, lines_seen})
-    for t in tallies { println("  {:<6} {}", .{t.level, t.count}) }
+    for (level, count) in tallies { println("  {:<6} {}", .{level, count}) }
     if matched > 0 {
         let span = time.Duration.between(first, last)
         println("  from {} to {} ({})", .{time.utc(first).iso(), time.utc(last).iso(), span.text()})

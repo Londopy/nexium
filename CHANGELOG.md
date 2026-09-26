@@ -301,6 +301,14 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   `is_wide` covering every script. Every code point Python 3.13 (Unicode
   15.1) knows maps as it does, but the two capitals Unicode 16 added (for
   ƛ and ɤ).
+- The compiler uses the library where it had its own: `nx upgrade` checks
+  a download's SHA-256 with `std.hash`, where it ran whichever of
+  `sha256sum`, `shasum` and `certutil` the machine had (a machine with none
+  could not upgrade), and `nx doctor` and `nx upgrade` read GitHub's answer
+  with `std.json` rather than by looking for the first `"tag_name"` in the
+  text. `examples/tool.nx` counts its levels in a `Map`, whose keys keep
+  the order they came. This is 1.4's exit: those two programs and the
+  compiler use the library where they wrote their own.
 - `http.client()` and `http.get` take `https://` over the system's TLS,
   where they were `error.Unsupported`; `Unsupported` is left for a system
   with no TLS library (Linux without libssl) and WebAssembly.

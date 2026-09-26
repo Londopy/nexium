@@ -29,6 +29,8 @@ import topo
 import completions
 import fix
 import std.fs
+import std.hash
+import std.json
 import std.strings
 import std.thread
 
@@ -1757,7 +1759,7 @@ fn doctor_updates() {
         println("latest release: not checked (unexpected answer from api.github.com)", .{})
         return
     }
-    let latest = if tag.starts_with("v") { tag[1..] } else { tag }
+    let latest = if tag[..].starts_with("v") { tag[1..] } else { tag[..] }
     var cache = read_update_cache(update_cache_path()[..])
     cache.checked = time.now() / 1000
     cache.latest = String.from(latest)
@@ -1831,7 +1833,7 @@ fn latest_release(seconds: []u8) -> ?String {
     if code != 0 { return null }
     let out = os.last_stdout()
     let tag = json_string(out[..], "tag_name") orelse return null
-    return String.from(if tag.starts_with("v") { tag[1..] } else { tag })
+    return String.from(if tag[..].starts_with("v") { tag[1..] } else { tag[..] })
 }
 
 /// Once a day, after a command has done its work: is there a newer release?
@@ -1897,10 +1899,10 @@ fn cmd_upgrade(check_only: bool) -> i32 {
         return 1
     }
     let body = os.last_stdout()
-    let tag = String.from(json_string(body[..], "tag_name") orelse {
+    let tag = json_string(body[..], "tag_name") orelse {
         eprintln("error: unexpected answer from api.github.com", .{})
         return 1
-    })
+    }
     let latest = if tag[..].starts_with("v") { tag[1..] } else { tag[..] }
     let c = compare_versions(latest, VERSION)
     if c <= 0 {
@@ -1942,7 +1944,7 @@ fn cmd_upgrade(check_only: bool) -> i32 {
         return 1
     }
     let got = sha256_of(archive[..]) orelse {
-        eprintln("error: no checksum tool found (sha256sum, shasum or certutil); the archive is at {}", .{archive})
+        eprintln("error: cannot read the archive at {} to check it", .{archive})
         return 1
     }
     if want[..] != got[..] {
@@ -2037,43 +2039,19 @@ fn checksum_listed(sums_path: []u8, asset: []u8) -> ?String {
     return null
 }
 
-/// The SHA-256 of a file, by the first checksum tool the machine has.
+/// The SHA-256 of a file, as 64 lower-case hex digits; null when it
+/// cannot be read.
 fn sha256_of(path: []u8) -> ?String {
-    let s1: [][]u8 = ["sha256sum", path]
-    if (os.exec(s1[..], "", "") catch { -1 }) == 0 {
-        let out = os.last_stdout()
-        for w in out[..].split(" ") { if w.len == 64 { return strings.to_lower(w) } }
-    }
-    let s2: [][]u8 = ["shasum", "-a", "256", path]
-    if (os.exec(s2[..], "", "") catch { -1 }) == 0 {
-        let out = os.last_stdout()
-        for w in out[..].split(" ") { if w.len == 64 { return strings.to_lower(w) } }
-    }
-    let s3: [][]u8 = ["certutil", "-hashfile", path, "SHA256"]
-    if (os.exec(s3[..], "", "") catch { -1 }) == 0 {
-        // the hash is the second line; older versions space the bytes
-        let out = os.last_stdout()
-        var n: usize = 0
-        for line in out[..].lines() {
-            n += 1
-            if n != 2 { continue }
-            var hex = String.new()
-            for c in line.trim() { if c != ' ' { hex.push_byte(c) } }
-            if hex.len == 64 { return strings.to_lower(hex[..]) }
-        }
-    }
-    return null
+    let data = io.read_file(path) catch { return null }
+    return hash.sha256_hex(data[..])
 }
 
-/// The string value of a key in a JSON text, by the first `"key"` in it.
-fn json_string(text: []u8, key: []u8) -> ?[]u8 {
-    let quoted = format("\"{}\"", .{key})
-    let i = text.find(quoted[..]) orelse return null
-    let rest = text[i + quoted.len..]
-    let q1 = rest.find("\"") orelse return null
-    let after = rest[q1 + 1..]
-    let q2 = after.find("\"") orelse return null
-    return after[0..q2]
+/// The string value of `key` in a JSON object's text.
+fn json_string(text: []u8, key: []u8) -> ?String {
+    let v = json.parse(text) catch { return null }
+    let field = json.get(&v, key) orelse return null
+    let s = json.as_str(field) orelse return null
+    return String.from(s)
 }
 
 /// Numeric comparison of dotted versions: negative, zero or positive.
