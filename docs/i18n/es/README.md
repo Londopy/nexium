@@ -404,7 +404,8 @@ Programas y paquetes fuera de este repositorio escritos en Nexium:
 | [statusmith](https://github.com/Londopy/statusmith), Discord Rich Presence desde la bandeja | su SDK es un paquete de Nexium: `nx add discord_rpc --git https://github.com/Londopy/statusmith --tag sdk-v0.1.0 --dir nexium` fija una presencia desde cualquier programa de Nexium ([la página](../../discord.md)) |
 | [Point of Origin](https://github.com/Londopy/point-of-origin), un juego de plataformas donde el rompecabezas es el suelo | toda la compilación es Nexium: `build.nx` maneja la DLL de la simulación en Odin, `tools/bindgen.nx` lee las exportaciones de Odin y escribe los bindings de C# que llama Unity, `tools/levels.nx` compila los mapas de niveles al JSON que carga el juego (cada nivel crecido por la misma simulación, así que tiene solución), `tools/chapters.nx` escribe la documentación a partir de ellos |
 | [QNI](https://github.com/Londopy/qni), recordatorios de redes, ayuda para el check-in y un tutorial de control de red para el Discord del club de radioaficionados de Cal Poly (W6BHZ) | todo el programa es Nexium: comandos de barra y botones respondidos por webhooks, sin usuario bot ni permisos; cada petición se comprueba contra la firma Ed25519 de Discord antes de leer nada más (con nxtls); tarjetas de red, un modo de práctica para el control de red y registros en el formato de hoja de los responsables; probado de punta a punta contra un Discord simulado |
-| [nxtls](https://github.com/Londopy/nxtls), criptografía y TLS 1.3 en Nexium puro | SHA-2, HMAC, HKDF, X25519, ChaCha20-Poly1305, verificación de firmas (Ed25519, ECDSA, RSA) y cadenas X.509, y encima un cliente TLS 1.3, sin C y sin `unsafe`, probados contra los vectores de los estándares, el `cryptography` de Python y OpenSSL; QNI habla con Discord a través de él; un paquete: `nx add nxtls --git https://github.com/Londopy/nxtls --tag v0.4.0` |
+| [nxtls](https://github.com/Londopy/nxtls), criptografía y TLS 1.3 en Nexium puro | SHA-2, HMAC, HKDF, X25519, ChaCha20-Poly1305, verificación de firmas (Ed25519, ECDSA, RSA) y cadenas X.509, y encima un cliente TLS 1.3, sin C y sin `unsafe`, probados contra los vectores de los estándares, el `cryptography` de Python y OpenSSL; QNI y nexium-discord hablan con Discord a través de él; un paquete: `nx add nxtls --git https://github.com/Londopy/nxtls --tag v0.5.0` |
+| [nexium-discord](https://github.com/Londopy/nexium-discord), una biblioteca para bots de Discord | la sesión del gateway mantenida viva (latidos, reanudaciones, reconexiones), las llamadas REST esperando lo que piden los límites de Discord, eventos sobre los que hacer `match`, y mensajes, comandos de barra, botones, menús y formularios con los que responder, sobre `std.http` y `std.websocket`; TLS de nxtls, o el de la propia plataforma en Windows; un paquete: `nx add discord --git https://github.com/Londopy/nexium-discord --tag v0.2.0` |
 
 ¿Usas Nexium en algún sitio? Abre un issue o un pull request y va aquí.
 
@@ -474,7 +475,7 @@ viene 1.5, las plataformas. Lo que Nexium todavía no es, y dónde
 se responde cada punto, está en [una sección de la hoja de
 ruta](../../../ROADMAP.md#what-10-is-not-yet): las pruebas de rendimiento son cuatro
 programas ([Velocidad](#velocidad)), y el ecosistema es un solo mantenedor y
-cuatro proyectos fuera del árbol ([arriba](#en-el-mundo-real)). [`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md)
+cinco proyectos fuera del árbol ([arriba](#en-el-mundo-real)). [`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md)
 lista cada error abierto con su arreglo;
 [`DECISIONS.md`](../../../DECISIONS.md), cada decisión tomada donde la
 especificación estaba abierta.
@@ -527,17 +528,18 @@ impulsó el port y se eliminó en 1.0 (decisión 90).
 
 Líneas de código no vacías, excluyendo la salida de compilación, las
 dependencias y los archivos generados (`bootstrap/nx.c`, el parser de
-tree-sitter, `gui/font.bin`, los archivos de bloqueo):
+tree-sitter, las tablas Unicode del final de `std/text.nx`, `gui/font.bin`,
+los archivos de bloqueo):
 
 | lenguaje | líneas | proporción | qué es |
 | --- | --- | --- | --- |
-| Nexium | 48 804 | 87,2 % | el compilador y sus herramientas (33 000 líneas bajo `self/`), la biblioteca estándar (21 módulos), el arnés de pruebas y el fuzzer, los ejemplos, los programas del tutorial, nexium-gui, el generador del sitio, cuatro benchmarks |
-| C | 2 542 | 4,5 % | el runtime `nx_rt.h`, la capa de ventana de la GUI, C de prueba incluido, un benchmark |
-| Python | 1 492 | 2,7 % | los scripts de release (notas, manifiestos de paquetes, wheels y paquetes npm, la documentación de std), los formateadores de gdb y lldb, el ejecutor de benchmarks y cuatro benchmarks |
-| archivos de editores | 1 103 | 2,0 % | consultas de tree-sitter, Emacs Lisp, Vim script, Lua para Neovim, un lexer de Pygments, y las 25 líneas de Rust que Zed exige a una extensión |
-| JavaScript, TypeScript | 939 | 1,7 % | la extensión de VS Code, la gramática de tree-sitter y la capa WASI del playground |
-| Inno Setup, shell, PowerShell | 855 | 1,5 % | el script del instalador de Windows, `install.sh`, `install.ps1`, los scripts de Chocolatey, los scripts de bootstrap |
-| Rust, Go, Ruby | 213 | 0,4 % | cuatro benchmarks en Rust y cuatro en Go, y la fórmula de Homebrew |
+| Nexium | 56 627 | 85,5 % | el compilador y sus herramientas (33 500 líneas bajo `self/`), la biblioteca estándar (29 módulos), el arnés de pruebas y el fuzzer, los ejemplos, los programas del tutorial, nexium-gui, el generador del sitio, cuatro benchmarks |
+| C | 4 517 | 6,8 % | el runtime `nx_rt.h`, la capa de ventana de la GUI, C de prueba incluido, un benchmark |
+| Python | 1 906 | 2,9 % | los scripts de release (notas, manifiestos de paquetes, wheels y paquetes npm, la documentación de std), el generador de las tablas Unicode, el comprobador de enlaces, los formateadores de gdb y lldb, el ejecutor de benchmarks y cuatro benchmarks |
+| archivos de editores | 1 103 | 1,7 % | consultas de tree-sitter, Emacs Lisp, Vim script, Lua para Neovim, un lexer de Pygments, y las 25 líneas de Rust que Zed exige a una extensión |
+| JavaScript, TypeScript | 974 | 1,5 % | la extensión de VS Code, la gramática de tree-sitter y la capa WASI del playground |
+| Inno Setup, shell, PowerShell | 855 | 1,3 % | el script del instalador de Windows, `install.sh`, `install.ps1`, los scripts de Chocolatey, los scripts de bootstrap |
+| Rust, Go, Ruby | 213 | 0,3 % | cuatro benchmarks en Rust y cuatro en Go, y la fórmula de Homebrew |
 
 No hay Rust en el compilador: el primer compilador impulsó el port y se
 eliminó en 1.0 (decisión 90). El Rust que queda es el pegamento de la
@@ -556,6 +558,7 @@ std/            la biblioteca estándar en Nexium, incrustada en el compilador
 self/           el compilador en Nexium, etapa por etapa
 gui/            nexium-gui: GUI de modo inmediato en Nexium, demo y la capa de plataforma en C
 editors/        extensión de VS Code, gramática de tree-sitter y los archivos de diez editores más
+linguist/       el pull request que hará que GitHub reconozca .nx, listo para cuando se alcance el umbral de uso
 examples/       programas con salida registrada, ejecutados por las pruebas
 topo/           el tutorial: los capítulos y los programas que muestran (ejecutados por las pruebas)
 site/           el generador del sitio de documentación, un programa Nexium
@@ -565,7 +568,7 @@ bench/          cuatro programas en cinco lenguajes detrás de la página de cif
 installers/     el script del instalador de Windows, install.sh e install.ps1, los manifiestos de winget y Chocolatey
 docker/         las imágenes del compilador para ghcr.io (Debian y Alpine)
 Formula/, bucket/  este repositorio como tap de Homebrew y bucket de Scoop (escritos en cada release)
-scripts/        notas de release, manifiestos de paquetes, wheels y paquetes npm, la documentación de std
+scripts/        notas de release, manifiestos de paquetes, wheels y paquetes npm, la documentación de std, las tablas Unicode, la comprobación de enlaces
 assets/         logotipo, banner y la vista previa social
 nexium-spec.txt          el diseño
 nexium-systems-spec.txt  el lenguaje de sistemas archivado; las secciones 4 a 9 son la referencia de sintaxis

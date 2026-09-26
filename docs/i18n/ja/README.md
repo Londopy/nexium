@@ -392,7 +392,8 @@ C のおよそ 2 倍の時間です。Python は Nexium `fast` の 3〜74 倍の
 | [statusmith](https://github.com/Londopy/statusmith)、タスクトレイからの Discord Rich Presence | その SDK は Nexium のパッケージ：`nx add discord_rpc --git https://github.com/Londopy/statusmith --tag sdk-v0.1.0 --dir nexium` でどの Nexium プログラムからもプレゼンスを設定できる（[解説](../../discord.md)） |
 | [Point of Origin](https://github.com/Londopy/point-of-origin)、地面そのものがパズルのプラットフォーマー | ビルド全体が Nexium：`build.nx` が Odin のシミュレーションの DLL を動かし、`tools/bindgen.nx` が Odin のエクスポートを読んで Unity が呼ぶ C# バインディングを書き、`tools/levels.nx` がレベルのマップをゲームが読む JSON にコンパイルし（どのレベルも同じシミュレーションで育つので解ける）、`tools/chapters.nx` がそこからドキュメントを書く |
 | [QNI](https://github.com/Londopy/qni)、Cal Poly アマチュア無線クラブ（W6BHZ）の Discord のためのネットのリマインダー、チェックインの手助け、ネットコントロールのチュートリアル | プログラム全体が Nexium：スラッシュコマンドとボタンを Webhook で応答し、ボットユーザーも権限もなし。すべてのリクエストは何かを読む前に Discord の Ed25519 署名を検査（nxtls 経由）。ネットのカード、ネットコントロールの練習モード、役員のシート形式のネットログ。偽の Discord を相手にエンドツーエンドでテスト |
-| [nxtls](https://github.com/Londopy/nxtls)、純粋な Nexium の暗号と TLS 1.3 | SHA-2、HMAC、HKDF、X25519、ChaCha20-Poly1305、署名検証（Ed25519、ECDSA、RSA）、X.509 チェーンと、その上の TLS 1.3 クライアント。C も `unsafe` もなく、規格のベクタ、Python の `cryptography`、OpenSSL でテスト。QNI はこれを通して Discord と通信。パッケージ：`nx add nxtls --git https://github.com/Londopy/nxtls --tag v0.4.0` |
+| [nxtls](https://github.com/Londopy/nxtls)、純粋な Nexium の暗号と TLS 1.3 | SHA-2、HMAC、HKDF、X25519、ChaCha20-Poly1305、署名検証（Ed25519、ECDSA、RSA）、X.509 チェーンと、その上の TLS 1.3 クライアント。C も `unsafe` もなく、規格のベクタ、Python の `cryptography`、OpenSSL でテスト。QNI と nexium-discord はこれを通して Discord と通信。パッケージ：`nx add nxtls --git https://github.com/Londopy/nxtls --tag v0.5.0` |
+| [nexium-discord](https://github.com/Londopy/nexium-discord)、Discord ボットのライブラリ | ゲートウェイのセッションの維持（ハートビート、再開、再接続）、Discord のレート制限を待つ REST 呼び出し、`match` で受けるイベント、返答に使うメッセージ、スラッシュコマンド、ボタン、メニュー、フォームを `std.http` と `std.websocket` の上に。TLS は nxtls、Windows ではプラットフォーム自身のもの。パッケージ：`nx add discord --git https://github.com/Londopy/nexium-discord --tag v0.2.0` |
 
 どこかで Nexium を使っていますか？ issue か pull request を開けばここに載ります。
 
@@ -449,7 +450,7 @@ lldb も `nx debug` を通してそこで動かされます。メモリ安全性
 キーを入れた順を保ちます。`std.time` はプラットフォームのデータベースからタイムゾーンを読みます。`std.http` はプラットフォーム自身の TLS、または nxtls のような TLS 層を通して HTTPS を話し、`std.websocket` も同じで、[nexium-discord](https://github.com/Londopy/nexium-discord) はその上に Discord ボットを作ります。`std.process` は実行中のプログラムとやり取りし、`std.thread` には select、アトミック操作、呼び出しより先に終わるスレッドがあり、`std.text` には書記素クラスタと Unicode の大文字小文字変換が、`std.testing` には見つけたものを縮小するプロパティテストがあります。次は 1.5、プラットフォームです。Nexium がまだ
 何でないか、そしてそれぞれがどこで答えられるかは[ロードマップの一節](../../../ROADMAP.md#what-10-is-not-yet)に
 あります。ベンチマークは 4 つのプログラム（[速度](#速度)）だけで、エコシステムは
-メンテナ一人とツリー外のプロジェクト四つです（[上](#実際の利用)）。
+メンテナ一人とツリー外のプロジェクト五つです（[上](#実際の利用)）。
 [`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md) は未修正のバグをその修正案とともに、
 [`DECISIONS.md`](../../../DECISIONS.md) は仕様が開いていた箇所でのすべての判断を
 列挙します。
@@ -493,18 +494,18 @@ Rust で書かれた最初のコンパイラは移植を牽引し、1.0 で削�
 
 ## リポジトリ内の言語
 
-ビルド出力、依存関係、生成ファイル（`bootstrap/nx.c`、tree-sitter のパーサ、
+ビルド出力、依存関係、生成ファイル（`bootstrap/nx.c`、tree-sitter のパーサ、`std/text.nx` 末尾の Unicode テーブル、
 `gui/font.bin`、ロックファイル）を除いた、空行以外のコード行数：
 
 | 言語 | 行数 | 割合 | 何か |
 | --- | --- | --- | --- |
-| Nexium | 48,804 | 87.2% | コンパイラとそのツール（`self/` 配下に 33,000 行）、標準ライブラリ（21 モジュール）、テストハーネスとファザー、サンプル、チュートリアルのプログラム、nexium-gui、サイト生成器、ベンチマーク 4 つ |
-| C | 2,542 | 4.5% | ランタイム `nx_rt.h`、GUI のウィンドウ層、同梱のテスト用 C、ベンチマーク一つ |
-| Python | 1,492 | 2.7% | リリース用スクリプト（ノート、パッケージのマニフェスト、wheel と npm パッケージ、std ドキュメント）、gdb と lldb のフォーマッタ、ベンチマークランナーとベンチマーク 4 つ |
-| エディタ用ファイル | 1,103 | 2.0% | tree-sitter クエリ、Emacs Lisp、Vim script、Neovim 用 Lua、Pygments のレキサ、そして Zed が拡張に要求する 25 行の Rust |
-| JavaScript、TypeScript | 939 | 1.7% | VS Code 拡張、tree-sitter 文法、プレイグラウンドの WASI 層 |
-| Inno Setup、シェル、PowerShell | 855 | 1.5% | Windows インストーラのスクリプト、`install.sh`、`install.ps1`、Chocolatey のスクリプト、ブートストラップのスクリプト |
-| Rust、Go、Ruby | 213 | 0.4% | Rust と Go にベンチマークが 4 つずつ、そして Homebrew の formula |
+| Nexium | 56,627 | 85.5% | コンパイラとそのツール（`self/` 配下に 33,500 行）、標準ライブラリ（29 モジュール）、テストハーネスとファザー、サンプル、チュートリアルのプログラム、nexium-gui、サイト生成器、ベンチマーク 4 つ |
+| C | 4,517 | 6.8% | ランタイム `nx_rt.h`、GUI のウィンドウ層、同梱のテスト用 C、ベンチマーク一つ |
+| Python | 1,906 | 2.9% | リリース用スクリプト（ノート、パッケージのマニフェスト、wheel と npm パッケージ、std ドキュメント）、Unicode テーブルの生成器、リンクチェッカー、gdb と lldb のフォーマッタ、ベンチマークランナーとベンチマーク 4 つ |
+| エディタ用ファイル | 1,103 | 1.7% | tree-sitter クエリ、Emacs Lisp、Vim script、Neovim 用 Lua、Pygments のレキサ、そして Zed が拡張に要求する 25 行の Rust |
+| JavaScript、TypeScript | 974 | 1.5% | VS Code 拡張、tree-sitter 文法、プレイグラウンドの WASI 層 |
+| Inno Setup、シェル、PowerShell | 855 | 1.3% | Windows インストーラのスクリプト、`install.sh`、`install.ps1`、Chocolatey のスクリプト、ブートストラップのスクリプト |
+| Rust、Go、Ruby | 213 | 0.3% | Rust と Go にベンチマークが 4 つずつ、そして Homebrew の formula |
 
 コンパイラに Rust はありません。最初のコンパイラは移植を牽引して 1.0 で削除され
 （決定 90）、残る Rust は Zed が WebAssembly にコンパイルする Zed 拡張の接着部分と、
@@ -522,6 +523,7 @@ std/            Nexium で書かれた標準ライブラリ。コンパイラに
 self/           Nexium で書かれたコンパイラ、段階ごとに
 gui/            nexium-gui：Nexium の即時モード GUI、デモ、C のプラットフォーム層
 editors/        VS Code 拡張、tree-sitter 文法、さらに 10 のエディタ向けファイル
+linguist/       GitHub に .nx を認識させるプルリクエスト。利用数の基準に達したときのために用意済み
 examples/       出力を記録したプログラム。テストが実行する
 topo/           チュートリアル：各章と、そこで示すプログラム（テストが実行する）
 site/           ドキュメントサイトの生成器。Nexium プログラム
@@ -531,7 +533,7 @@ bench/          数値のページを支える 5 言語 4 プログラム
 installers/     Windows インストーラのスクリプト、install.sh と install.ps1、winget と Chocolatey のマニフェスト
 docker/         ghcr.io 向けのコンパイラのイメージ（Debian と Alpine）
 Formula/, bucket/  Homebrew の tap と Scoop の bucket としてのこのリポジトリ（リリースごとに書き出し）
-scripts/        リリースノート、パッケージのマニフェスト、wheel と npm パッケージ、std のドキュメント
+scripts/        リリースノート、パッケージのマニフェスト、wheel と npm パッケージ、std のドキュメント、Unicode テーブル、リンクのチェック
 assets/         ロゴ、バナー、ソーシャルプレビュー
 nexium-spec.txt          設計
 nexium-systems-spec.txt  アーカイブされたシステム言語。第 4〜9 節が構文リファレンス

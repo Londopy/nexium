@@ -405,7 +405,8 @@ Programme und Pakete außerhalb dieses Repositorys, die in Nexium geschrieben si
 | [statusmith](https://github.com/Londopy/statusmith), Discord Rich Presence aus der Taskleiste | sein SDK ist ein Nexium-Paket: `nx add discord_rpc --git https://github.com/Londopy/statusmith --tag sdk-v0.1.0 --dir nexium` setzt eine Presence aus jedem Nexium-Programm ([die Seite](../../discord.md)) |
 | [Point of Origin](https://github.com/Londopy/point-of-origin), ein Plattformer, in dem der Boden das Rätsel ist | der ganze Build ist Nexium: `build.nx` treibt die DLL der Odin-Simulation, `tools/bindgen.nx` liest die Odin-Exporte und schreibt die C#-Bindings, die Unity aufruft, `tools/levels.nx` kompiliert die Levelkarten zum JSON, das das Spiel lädt (jedes Level von derselben Simulation gewachsen, also lösbar), `tools/chapters.nx` schreibt daraus die Dokumentation |
 | [QNI](https://github.com/Londopy/qni), Netz-Erinnerungen, Check-in-Hilfe und ein Tutorial für die Netzleitung im Discord des Amateurfunkclubs der Cal Poly (W6BHZ) | das ganze Programm ist Nexium: Slash-Befehle und Buttons, über Webhooks beantwortet, ohne Bot-Benutzer und ohne Berechtigungen; jede Anfrage wird auf Discords Ed25519-Signatur geprüft, bevor irgendetwas gelesen wird (über nxtls); Netzkarten, ein Übungsmodus für die Netzleitung und Netzprotokolle im Tabellenformat der Vorstände; durchgehend gegen ein nachgebautes Discord getestet |
-| [nxtls](https://github.com/Londopy/nxtls), Kryptografie und TLS 1.3 in reinem Nexium | SHA-2, HMAC, HKDF, X25519, ChaCha20-Poly1305, Signaturprüfung (Ed25519, ECDSA, RSA) und X.509-Ketten, darauf ein TLS-1.3-Client, ohne C und ohne `unsafe`, getestet gegen die Vektoren der Standards, Pythons `cryptography` und OpenSSL; QNI spricht darüber mit Discord; ein Paket: `nx add nxtls --git https://github.com/Londopy/nxtls --tag v0.4.0` |
+| [nxtls](https://github.com/Londopy/nxtls), Kryptografie und TLS 1.3 in reinem Nexium | SHA-2, HMAC, HKDF, X25519, ChaCha20-Poly1305, Signaturprüfung (Ed25519, ECDSA, RSA) und X.509-Ketten, darauf ein TLS-1.3-Client, ohne C und ohne `unsafe`, getestet gegen die Vektoren der Standards, Pythons `cryptography` und OpenSSL; QNI und nexium-discord sprechen darüber mit Discord; ein Paket: `nx add nxtls --git https://github.com/Londopy/nxtls --tag v0.5.0` |
+| [nexium-discord](https://github.com/Londopy/nexium-discord), eine Bibliothek für Discord-Bots | die Gateway-Sitzung am Leben gehalten (Heartbeats, Wiederaufnahme, Neuverbindung), REST-Aufrufe, die Discords Rate-Limits abwarten, Ereignisse für `match`, und Nachrichten, Slash-Befehle, Buttons, Menüs und Formulare zum Antworten, über `std.http` und `std.websocket`; TLS von nxtls oder unter Windows das der Plattform; ein Paket: `nx add discord --git https://github.com/Londopy/nexium-discord --tag v0.2.0` |
 
 Nexium irgendwo im Einsatz? Ein Issue oder ein Pull Request, und es steht hier.
 
@@ -474,7 +475,7 @@ Graphem-Cluster und die Groß- und Kleinschreibung von Unicode, und
 Nächstes kommt 1.5, die Plattformen. Was Nexium noch nicht ist, und wo jeder Punkt beantwortet wird,
 steht in [einem Abschnitt der Roadmap](../../../ROADMAP.md#what-10-is-not-yet): die
 Benchmarks sind vier Programme ([Geschwindigkeit](#geschwindigkeit)), und das
-Ökosystem besteht aus einem Maintainer und vier Projekten außerhalb des
+Ökosystem besteht aus einem Maintainer und fünf Projekten außerhalb des
 Baums ([oben](#in-freier-wildbahn)). [`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md)
 führt jeden offenen Fehler mit seiner Lösung;
 [`DECISIONS.md`](../../../DECISIONS.md) jede Entscheidung, die getroffen
@@ -526,18 +527,18 @@ Portierung voran und wurde in 1.0 gelöscht (Entscheidung 90).
 ## Sprachen im Repository
 
 Nicht leere Codezeilen, ohne Build-Ausgabe, Abhängigkeiten und generierte
-Dateien (`bootstrap/nx.c`, der tree-sitter-Parser, `gui/font.bin`,
-Lock-Dateien):
+Dateien (`bootstrap/nx.c`, der tree-sitter-Parser, die Unicode-Tabellen am
+Ende von `std/text.nx`, `gui/font.bin`, Lock-Dateien):
 
 | Sprache | Zeilen | Anteil | was es ist |
 | --- | --- | --- | --- |
-| Nexium | 48.804 | 87,2 % | der Compiler und seine Werkzeuge (33.000 Zeilen unter `self/`), die Standardbibliothek (21 Module), der Test-Harness und der Fuzzer, Beispiele, die Programme des Tutorials, nexium-gui, der Site-Generator, vier Benchmarks |
-| C | 2.542 | 4,5 % | die Laufzeit `nx_rt.h`, die GUI-Fensterschicht, mitgeliefertes Test-C, ein Benchmark |
-| Python | 1.492 | 2,7 % | die Release-Skripte (Notes, Paketmanifeste, Wheels und npm-Pakete, die std-Dokumentation), die gdb- und lldb-Formatierer, der Benchmark-Runner und vier Benchmarks |
-| Editor-Dateien | 1.103 | 2,0 % | tree-sitter-Queries, Emacs Lisp, Vim-Script, Lua für Neovim, ein Pygments-Lexer und die 25 Zeilen Rust, die Zed von einer Erweiterung verlangt |
-| JavaScript, TypeScript | 939 | 1,7 % | die VS-Code-Erweiterung, die tree-sitter-Grammatik und die WASI-Schicht des Playgrounds |
-| Inno Setup, Shell, PowerShell | 855 | 1,5 % | das Skript des Windows-Installers, `install.sh`, `install.ps1`, die Chocolatey-Skripte, die Bootstrap-Skripte |
-| Rust, Go, Ruby | 213 | 0,4 % | je vier Benchmarks in Rust und Go, und die Homebrew-Formel |
+| Nexium | 56.627 | 85,5 % | der Compiler und seine Werkzeuge (33.500 Zeilen unter `self/`), die Standardbibliothek (29 Module), der Test-Harness und der Fuzzer, Beispiele, die Programme des Tutorials, nexium-gui, der Site-Generator, vier Benchmarks |
+| C | 4.517 | 6,8 % | die Laufzeit `nx_rt.h`, die GUI-Fensterschicht, mitgeliefertes Test-C, ein Benchmark |
+| Python | 1.906 | 2,9 % | die Release-Skripte (Notes, Paketmanifeste, Wheels und npm-Pakete, die std-Dokumentation), der Generator der Unicode-Tabellen, der Link-Checker, die gdb- und lldb-Formatierer, der Benchmark-Runner und vier Benchmarks |
+| Editor-Dateien | 1.103 | 1,7 % | tree-sitter-Queries, Emacs Lisp, Vim-Script, Lua für Neovim, ein Pygments-Lexer und die 25 Zeilen Rust, die Zed von einer Erweiterung verlangt |
+| JavaScript, TypeScript | 974 | 1,5 % | die VS-Code-Erweiterung, die tree-sitter-Grammatik und die WASI-Schicht des Playgrounds |
+| Inno Setup, Shell, PowerShell | 855 | 1,3 % | das Skript des Windows-Installers, `install.sh`, `install.ps1`, die Chocolatey-Skripte, die Bootstrap-Skripte |
+| Rust, Go, Ruby | 213 | 0,3 % | je vier Benchmarks in Rust und Go, und die Homebrew-Formel |
 
 Im Compiler steckt kein Rust: der erste Compiler trieb die Portierung voran
 und wurde in 1.0 gelöscht (Entscheidung 90). Das verbliebene Rust ist der
@@ -558,6 +559,7 @@ std/            die Standardbibliothek in Nexium, eingebettet in den Compiler
 self/           der Compiler in Nexium, Stufe für Stufe
 gui/            nexium-gui: Immediate-Mode-GUI in Nexium, Demo und die C-Plattformschicht
 editors/        VS-Code-Erweiterung, tree-sitter-Grammatik und die Dateien für zehn weitere Editoren
+linguist/       der Pull Request, mit dem GitHub .nx erkennt, bereit für den Moment, in dem die Nutzungsschwelle erreicht ist
 examples/       Programme mit aufgezeichneter Ausgabe, von den Tests ausgeführt
 topo/           das Tutorial: die Kapitel und die Programme, die sie zeigen (von den Tests ausgeführt)
 site/           der Generator der Dokumentationsseite, ein Nexium-Programm
@@ -567,7 +569,7 @@ bench/          vier Programme in fünf Sprachen hinter der Zahlenseite
 installers/     das Skript des Windows-Installers, install.sh und install.ps1, die winget- und Chocolatey-Manifeste
 docker/         die Compiler-Images für ghcr.io (Debian und Alpine)
 Formula/, bucket/  dieses Repository als Homebrew-Tap und Scoop-Bucket (bei jeder Release geschrieben)
-scripts/        Release-Notes, Paketmanifeste, Wheels und npm-Pakete, die std-Dokumentation
+scripts/        Release-Notes, Paketmanifeste, Wheels und npm-Pakete, die std-Dokumentation, die Unicode-Tabellen, die Link-Prüfung
 assets/         Logo, Banner und die Social-Vorschau
 nexium-spec.txt          der Entwurf
 nexium-systems-spec.txt  die archivierte Systemsprache; Abschnitte 4 bis 9 sind die Syntaxreferenz

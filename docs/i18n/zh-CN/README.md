@@ -384,7 +384,8 @@ runner 上测量（2026-09-25；七次运行的中位数，超过五秒的取三
 | [statusmith](https://github.com/Londopy/statusmith)，从托盘设置 Discord Rich Presence | 它的 SDK 是一个 Nexium 包：`nx add discord_rpc --git https://github.com/Londopy/statusmith --tag sdk-v0.1.0 --dir nexium` 让任何 Nexium 程序都能设置状态（[说明页](../../discord.md)） |
 | [Point of Origin](https://github.com/Londopy/point-of-origin)，地面本身就是谜题的平台游戏 | 整个构建都是 Nexium：`build.nx` 驱动 Odin 模拟的 DLL，`tools/bindgen.nx` 读取 Odin 的导出并写出 Unity 调用的 C# 绑定，`tools/levels.nx` 把关卡地图编译成游戏加载的 JSON（每一关都由同一个模拟生成，因此必有解），`tools/chapters.nx` 据此写出文档 |
 | [QNI](https://github.com/Londopy/qni)，为 Cal Poly 业余无线电俱乐部（W6BHZ）的 Discord 提供网络提醒、签到帮助和网络控制教程 | 整个程序都是 Nexium：斜杠命令和按钮通过 webhook 应答，没有机器人用户也不要权限；每个请求在读取任何内容之前先检查 Discord 的 Ed25519 签名（借助 nxtls）；网络卡片、网络控制练习模式，以及干事自己表格格式的网络日志；针对一个假的 Discord 做端到端测试 |
-| [nxtls](https://github.com/Londopy/nxtls)，纯 Nexium 的密码学与 TLS 1.3 | SHA-2、HMAC、HKDF、X25519、ChaCha20-Poly1305、签名验证（Ed25519、ECDSA、RSA）和 X.509 证书链，以及其上的 TLS 1.3 客户端，没有 C 也没有 `unsafe`，用标准的向量、Python 的 `cryptography` 和 OpenSSL 测试；QNI 通过它与 Discord 通信；一个包：`nx add nxtls --git https://github.com/Londopy/nxtls --tag v0.4.0` |
+| [nxtls](https://github.com/Londopy/nxtls)，纯 Nexium 的密码学与 TLS 1.3 | SHA-2、HMAC、HKDF、X25519、ChaCha20-Poly1305、签名验证（Ed25519、ECDSA、RSA）和 X.509 证书链，以及其上的 TLS 1.3 客户端，没有 C 也没有 `unsafe`，用标准的向量、Python 的 `cryptography` 和 OpenSSL 测试；QNI 和 nexium-discord 通过它与 Discord 通信；一个包：`nx add nxtls --git https://github.com/Londopy/nxtls --tag v0.5.0` |
+| [nexium-discord](https://github.com/Londopy/nexium-discord)，一个 Discord 机器人库 | 基于 `std.http` 和 `std.websocket`：保持网关会话（心跳、恢复、重连），REST 调用会等待 Discord 的速率限制，事件可以直接 `match`，还有用于回复的消息、斜杠命令、按钮、菜单和表单；TLS 来自 nxtls，在 Windows 上则用平台自带的；一个包：`nx add discord --git https://github.com/Londopy/nexium-discord --tag v0.2.0` |
 
 在哪里用了 Nexium？开一个 issue 或 pull request，它就会出现在这里。
 
@@ -438,7 +439,7 @@ runner 上测量（2026-09-25；七次运行的中位数，超过五秒的取三
 变量与配置目录、UUID、日志、CSV、TOML 和 base64；`Map` 能抵御哈希洪水
 攻击并保持键的插入顺序；`std.time` 从平台的数据库读取时区；`std.http` 通过平台自带的 TLS 或 nxtls 这样的 TLS 层发起 HTTPS，`std.websocket` 也是如此，[nexium-discord](https://github.com/Londopy/nexium-discord) 在其上构建 Discord 机器人；`std.process` 与运行中的程序交互，`std.thread` 提供 select、原子操作以及在调用返回前就结束的线程，`std.text` 提供字素簇和 Unicode 的大小写映射，`std.testing` 提供会缩小所找到反例的属性测试。接下来是 1.5：平台。Nexium 还不是什么、每一点在哪里得到回答，见
 [路线图的一节](../../../ROADMAP.md#what-10-is-not-yet)：基准只有四个程序（[速度](#速度)），
-生态只有一位维护者和四个树外的项目（[上文](#实际使用)）。
+生态只有一位维护者和五个树外的项目（[上文](#实际使用)）。
 [`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md) 列出每个未修复的缺陷及其修法；
 [`DECISIONS.md`](../../../DECISIONS.md) 列出规范未定之处做出的每一个决定。
 
@@ -478,18 +479,18 @@ Nexium 程序的测试框架（`nx run tests/run.nx`）驱动，在 CI 中于三
 
 ## 仓库中的语言
 
-非空代码行数，不含构建输出、依赖和生成文件（`bootstrap/nx.c`、tree-sitter 解析器、
+非空代码行数，不含构建输出、依赖和生成文件（`bootstrap/nx.c`、tree-sitter 解析器、`std/text.nx` 末尾的 Unicode 表、
 `gui/font.bin`、锁文件）：
 
 | 语言 | 行数 | 占比 | 是什么 |
 | --- | --- | --- | --- |
-| Nexium | 48,804 | 87.2% | 编译器及其工具（`self/` 下 33,000 行）、标准库（21 个模块）、测试框架与 fuzzer、示例、教程程序、nexium-gui、站点生成器、四个基准程序 |
-| C | 2,542 | 4.5% | 运行时 `nx_rt.h`、GUI 窗口层、随附的测试用 C、一个基准程序 |
-| Python | 1,492 | 2.7% | 发布脚本（说明、包清单、wheel 与 npm 包、std 文档）、gdb 与 lldb 格式化器、基准运行器和四个基准程序 |
-| 编辑器文件 | 1,103 | 2.0% | tree-sitter 查询、Emacs Lisp、Vim script、Neovim 用的 Lua、一个 Pygments 词法分析器，以及 Zed 对扩展要求的 25 行 Rust |
-| JavaScript、TypeScript | 939 | 1.7% | VS Code 扩展、tree-sitter 语法，以及 playground 的 WASI 层 |
-| Inno Setup、shell、PowerShell | 855 | 1.5% | Windows 安装程序脚本、`install.sh`、`install.ps1`、Chocolatey 脚本、自举脚本 |
-| Rust、Go、Ruby | 213 | 0.4% | Rust 与 Go 各四个基准程序，以及 Homebrew 公式 |
+| Nexium | 56,627 | 85.5% | 编译器及其工具（`self/` 下 33,500 行）、标准库（29 个模块）、测试框架与 fuzzer、示例、教程程序、nexium-gui、站点生成器、四个基准程序 |
+| C | 4,517 | 6.8% | 运行时 `nx_rt.h`、GUI 窗口层、随附的测试用 C、一个基准程序 |
+| Python | 1,906 | 2.9% | 发布脚本（说明、包清单、wheel 与 npm 包、std 文档）、Unicode 表的生成器、链接检查器、gdb 与 lldb 格式化器、基准运行器和四个基准程序 |
+| 编辑器文件 | 1,103 | 1.7% | tree-sitter 查询、Emacs Lisp、Vim script、Neovim 用的 Lua、一个 Pygments 词法分析器，以及 Zed 对扩展要求的 25 行 Rust |
+| JavaScript、TypeScript | 974 | 1.5% | VS Code 扩展、tree-sitter 语法，以及 playground 的 WASI 层 |
+| Inno Setup、shell、PowerShell | 855 | 1.3% | Windows 安装程序脚本、`install.sh`、`install.ps1`、Chocolatey 脚本、自举脚本 |
+| Rust、Go、Ruby | 213 | 0.3% | Rust 与 Go 各四个基准程序，以及 Homebrew 公式 |
 
 编译器里没有 Rust：第一个编译器推动了移植并在 1.0 时被删除（决策 90）。剩下的 Rust
 是 Zed 扩展的胶水代码，由 Zed 编译为 WebAssembly，以及四个用来对照测量的基准程序，
@@ -506,6 +507,7 @@ std/            用 Nexium 写的标准库，内嵌于编译器
 self/           用 Nexium 写的编译器，逐阶段
 gui/            nexium-gui：Nexium 即时模式 GUI、演示，以及 C 平台层
 editors/        VS Code 扩展、tree-sitter 语法，以及另外十种编辑器的文件
+linguist/       让 GitHub 识别 .nx 的拉取请求，待使用量达到门槛时提交
 examples/       带记录输出的程序，由测试运行
 topo/           教程：各章及其展示的程序（由测试运行）
 site/           文档站点生成器，一个 Nexium 程序
@@ -515,7 +517,7 @@ bench/          数字页背后的五种语言四个程序
 installers/     Windows 安装程序脚本、install.sh 与 install.ps1、winget 与 Chocolatey 清单
 docker/         ghcr.io 上的编译器镜像（Debian 与 Alpine）
 Formula/, bucket/  这个仓库作为 Homebrew tap 与 Scoop bucket（每次发布时写入）
-scripts/        发布说明、包清单、wheel 与 npm 包、std 文档
+scripts/        发布说明、包清单、wheel 与 npm 包、std 文档、Unicode 表、链接检查
 assets/         标志、横幅与社交预览图
 nexium-spec.txt          设计
 nexium-systems-spec.txt  已归档的系统语言；第 4 至 9 节是语法参考
