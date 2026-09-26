@@ -39,6 +39,20 @@ Fixed bugs are not listed here; `CHANGELOG.md` and `git log` have them.
 
 ## Tools and editors
 
+- **`nx fetch` keeps a dependency at its old commit when its tag
+  changes.** Change a dependency's `tag` in `nexium.toml` (nexium-discord's
+  nxtls, `v0.4.0` to `v0.5.0`) and run `nx fetch`: it writes
+  `nexium.lock` with the new tag beside the old commit, and the build gets
+  the old code. `fetch` (`self/manifest.nx`) holds a dependency to the
+  commit the lock names for it from the same source without comparing the
+  lock's tag with the manifest's: a checkout already at that commit is
+  kept, and a fresh clone of the new tag is checked back out at it. With
+  no lock, a checkout of an older tag in `nexium_modules/` is kept the
+  same way. `nx update name` gets out of it, as it clones afresh. Fix:
+  honour a locked commit only when the lock's tag is the manifest's, and
+  otherwise resolve the tag from a fresh clone, as `nx update` does; a
+  case in `tests/run.nx`'s packages suite that bumps the tag of a local
+  repository.
 - **`nx fmt` collapses aligned trailing comments.** A struct whose fields
   carry comments aligned in one column (`kind: u32            // 0
   playing`) is rewritten with a single space before each comment, losing
