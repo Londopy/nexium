@@ -18,5 +18,7 @@ identifiers stay in English everywhere, because they are what you type and
 what the compiler prints; only the comments inside code blocks are translated.
 
 To add or update a translation: copy the English file, keep every code block
-byte for byte apart from its comments, translate the prose, and open a pull request. The link checker
-in CI verifies that every relative link in `docs/i18n/` resolves.
+byte for byte apart from its comments, translate the prose, and open a pull
+request. The link checker in CI (`scripts/check_links.py`) verifies that every
+relative link resolves, and that every `#anchor` names a heading of the page it
+points into: a translated heading makes a translated anchor.

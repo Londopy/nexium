@@ -319,8 +319,9 @@ jobs:
 
   lint:
     name: lint
-    # every Nexium source in the tree is canonically formatted, and the
-    # compiler's own sources check clean
+    # every Nexium source in the tree is canonically formatted, the links
+    # between Markdown files resolve, and the compiler's own sources check
+    # clean
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -335,6 +336,11 @@ jobs:
       # effect fails here until the lock is regenerated on purpose
       - name: The effects lockfile matches
         run: nx-out/bootstrap/nx2 audit examples/ropesim.nx --check
+
+      # every relative link in the Markdown, translations included, names a
+      # file that exists, and every #anchor a heading in it
+      - name: The links between files resolve
+        run: python3 scripts/check_links.py
 
       - name: The package-manager manifests parse
         run: |

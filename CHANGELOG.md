@@ -10,6 +10,14 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ## [Unreleased]
 
+### Added
+
+- CI checks the links between the repository's Markdown files
+  (`scripts/check_links.py`, in the lint job): every relative link must
+  name a file that exists, spelled with its case, and every `#anchor` a
+  heading of that page as GitHub makes its anchors, translations included.
+  The translations' index had promised this check; it runs now.
+
 ## [1.4.0] - 2026-09-25
 
 *Annapurna: the Sanctuary* — the basin ringed by the peaks, where the first mountain ends: a standard library people stop supplementing. Collections (`std.sort`, `std.heap`, `std.set`, `std.deque`), `std.hash` and `random.secure`, paths, the environment and config folders, UUIDs, logging, CSV, TOML and base64; `Map` hashed with SipHash under a key per process and kept in the order its keys came; time zones and ISO 8601 in `std.time`; an HTTP client with redirects, timeouts and streaming bodies, HTTPS over the platform's own TLS or a TLS layer such as nxtls, and WebSockets, on which [nexium-discord](https://github.com/Londopy/nexium-discord) runs a Discord bot; programs run alongside and talked to while they run, with signals and exit codes by name; select over channels, atomics, and threads that end before the call does; grapheme clusters and Unicode's case mapping; property tests that shrink what they find, on the driver the fuzzer uses. The seed is regenerated from the final sources.
