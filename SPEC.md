@@ -325,7 +325,9 @@ Compound assignment: `= += -= *= /= %= &= |= ^= <<= >>= +%= -%= *%=`.
   braces.
 - `break`, `continue`, `return`, each optionally with a label:
   `outer: for a in ... { ... continue :outer }`. A labeled block yields a
-  value with `break :label value`. `else` may start the next line.
+  value with `break :label value`. `else` may start the next line. A
+  function that returns nothing (or `!void`) may `return` a call that
+  returns nothing: `return println("done", .{})`.
 - `match v { pattern => expr, ... }` (section 7).
 - Blocks are expressions whose value is their trailing expression.
 

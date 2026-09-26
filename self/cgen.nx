@@ -1797,7 +1797,14 @@ impl Gen {
             return
         }
         if k == check.TKind.SReturn {
-            if kids.len > 0 {
+            if kids.len > 0 and self.is_void(self.c.tir.nodes[kids[0]].ty) {
+                // `return println(...)` in a function that returns nothing
+                // (or `!void`): the call, as a statement would make it, then
+                // a plain return
+                let v = self.expr(kids[0])
+                if v != "0" and v.len > 0 { self.line(format("{};", .{v})[..]) }
+                self.emit_return("", false)
+            } else if kids.len > 0 {
                 let v = self.expr_owned(kids[0])
                 self.emit_return(v[..], true)
             } else {

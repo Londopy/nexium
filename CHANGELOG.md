@@ -227,6 +227,10 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   and the call for one with too many arguments ("`spawn` takes 2
   argument(s) but 4 were given"); `mod.Type` and `mod.Type(A)` are type
   arguments there, as they are in a type.
+- `return println(...)` in a function returning `!void` compiled to C that
+  did not: the call's value, which there is none of, was taken for the
+  result (another of the fuzzer's mutants). A call that returns nothing is
+  made, then the function returns (SPEC 6 says so now).
 - An `artifact` block took any key and any kind without a word: a key
   spelled wrong was ignored, so `artifact cli { sHack = "512M" }` (the
   fuzzer's mutant of a spec case) left `main` on the default stack, and

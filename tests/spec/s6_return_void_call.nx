@@ -1,0 +1,17 @@
+// SPEC 6: `return f()` where `f` returns nothing, in a function that
+// returns nothing or `!void`: the call happens, then the return (a mutant
+// the fuzzer found emitted C that did not compile).
+fn say(n: i64) -> !void {
+    if n < 0 { return error.Negative }
+    return println("n is {}", .{n})
+}
+
+fn plain() {
+    return println("plain", .{})
+}
+
+fn main() -> !void {
+    try say(3)
+    plain()
+    say(-1) catch |e| { println("caught {}", .{@errorName(e)}) }
+}
