@@ -1,0 +1,6 @@
+// EXPECT: `sHack` is not a key of `artifact cli`, which takes name, stack
+// a fuzzed spec case: `stack` misspelled was ignored, and the deep
+// recursion the stack was declared for overflowed the default one
+artifact cli { name = "entry_stack", sHack = "512M" }
+
+fn main() { }

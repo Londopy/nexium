@@ -1188,6 +1188,18 @@ pub fn item_key(module: usize, name: []u8) -> String {
     return format("{}:{}", .{module, name})
 }
 
+/// The keys an artifact of a kind takes, as the build reads them; "" for a
+/// kind there is none of. (`exports` is the old way of naming a C ABI's
+/// functions, which `export(...)` on the functions replaced.)
+pub fn artifact_keys(kind: []u8) -> []u8 {
+    if kind == "cli" { return "name, stack" }
+    if kind == "cabi" { return "name, version, exports" }
+    if kind == "python" or kind == "node" or kind == "rustlib" { return "name, version" }
+    if kind == "link" { return "c_sources, libs, include, lib_paths, libs_windows, libs_linux, libs_macos" }
+    if kind == "installer" { return "name, publisher, version, url, license, readme, files, add_to_path" }
+    return ""
+}
+
 impl Checker {
     /// A diagnostic: the message, then where, with the source line and a
     /// caret under the position, in the shape every Nexium tool prints:
@@ -1632,6 +1644,31 @@ impl Checker {
             self.fns.append(FnDef{ .node = it, .node_module = m, .module = m, .impl_id = NONE, .is_generic = false, .is_test = true, .test_name = n.name.clone(), .test_comptime = n.flag, .is_bench = n.flag2 })
         } else if k == parser.NodeKind.Artifact {
             self.artifact_kinds.append(self.node(m, it).name.clone())
+            self.check_artifact(m, it)
+        }
+    }
+
+    /// An artifact's kind and keys are ones the build knows: a key spelled
+    /// wrong would be ignored, and a `stack` typed `stak` would leave `main`
+    /// on the platform's default stack.
+    fn check_artifact(self: *mut Self, m: usize, it: usize) {
+        let kind = self.node(m, it).name.clone()
+        let keys = artifact_keys(kind[..])
+        if keys.len == 0 {
+            let at = self.node(m, it).start
+            self.fail(m, at, format("unknown artifact `{}`: the kinds are cli, cabi, python, node, rustlib, link and installer", .{kind})[..])
+            return
+        }
+        for f in self.node(m, it).kids.clone() {
+            let name = self.node(m, f).name.clone()
+            let at = self.node(m, f).start
+            var known = false
+            for key in keys.split(", ") {
+                if key == name[..] { known = true }
+            }
+            if !known {
+                self.fail(m, at, format("`{}` is not a key of `artifact {}`, which takes {}", .{name, kind, keys})[..])
+            }
         }
     }
 

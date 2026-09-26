@@ -227,6 +227,11 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   and the call for one with too many arguments ("`spawn` takes 2
   argument(s) but 4 were given"); `mod.Type` and `mod.Type(A)` are type
   arguments there, as they are in a type.
+- An `artifact` block took any key and any kind without a word: a key
+  spelled wrong was ignored, so `artifact cli { sHack = "512M" }` (the
+  fuzzer's mutant of a spec case) left `main` on the default stack, and
+  the recursion the stack was declared for overflowed it. An unknown key
+  or kind is an error now, naming the ones there are.
 - `nx fmt` joined an enum literal to the operator or keyword before it,
   `return.Blue` and `x ==.Red`, reading the `.` as member access; one that
   begins a value is spaced as a word now, and member access and
