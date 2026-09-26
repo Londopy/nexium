@@ -42,7 +42,9 @@ import local
 exists, `nx fetch` checks each dependency out at the commit it names,
 whatever the tag points at today, so a fresh clone of your repository
 builds exactly what you built; `nx update` (all of them) or `nx update
-name` resolves the tag again and rewrites the lock. Commit the lock file.
+name` resolves the tag again and rewrites the lock. A dependency whose tag
+or git URL you change in the manifest is resolved again by `nx fetch`
+itself, since the lock's line was for the old one. Commit the lock file.
 Commit `nexium_modules/` too if you want a build with no network at all
 (vendoring); otherwise add it to `.gitignore` and run `nx fetch` after
 cloning.

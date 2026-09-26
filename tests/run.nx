@@ -991,6 +991,34 @@ fn suite_packages(e: *Env, failures: *mut List(String)) {
     if r3.text() != "2" { failures.append(format("packages: after nx update the program printed {}", .{r3.stdout})); return }
     let lock3 = fs.read(fs.join(gitapp[..], "nexium.lock")[..]) catch { String.new() }
     if lock3[..] == lock1[..] { failures.append(String.from("packages: nx update did not rewrite the lock")) }
+    // the manifest's tag changes, v1 to v2, with v1's checkout and lock line
+    // still there: `nx fetch` alone must resolve v2, and lock v2's commit
+    fs.write(fs.join(repo[..], "src/lib.nx")[..], "pub fn v() -> i32 { return 3 }\n") catch { }
+    for step in [["commit", "-qam", "three"][..], ["tag", "v2"][..]] {
+        var argv = g.clone()
+        for a in step { argv.append(a) }
+        let r = run_in(e, argv[..], "", repo[..])
+        if r.code != 0 { failures.append(format("packages: git {} failed:\n{}", .{step[0], r.stderr})); return }
+    }
+    var rp = g.clone()
+    rp.append("rev-parse")
+    rp.append("v2")
+    let v2 = run_in(e, rp[..], "", repo[..])
+    fs.write(fs.join(gitapp[..], "nexium.toml")[..], format("[package]\nname = \"gitapp\"\nversion = \"0.1.0\"\n\n[dependencies]\ngitdep = {{ git = \"{}\", tag = \"v2\" }}\n", .{url})[..]) catch { }
+    let f4 = nx_in(e, ["fetch"][..], "", gitapp[..])
+    if f4.code != 0 { failures.append(format("packages: nx fetch after the manifest's tag changed failed:\n{}", .{f4.stderr})); return }
+    let r4 = nx_in(e, ["run", "main.nx"][..], "", gitapp[..])
+    if r4.text() != "3" { failures.append(format("packages: the manifest's tag changed to v2, and fetch gave the program that printed {} (the old checkout was kept)", .{r4.stdout})); return }
+    let lock4 = fs.read(fs.join(gitapp[..], "nexium.lock")[..]) catch { String.new() }
+    if lock4[..].find(format("\tv2\t{}", .{v2.text()})[..]) == null { failures.append(format("packages: the lock after the tag changed to v2 ({}):\n{}", .{v2.text(), lock4})); return }
+    // no lock, and a checkout of another tag in nexium_modules: fetch
+    // resolves the manifest's tag rather than keep the checkout
+    fs.write(fs.join(gitapp[..], "nexium.toml")[..], format("[package]\nname = \"gitapp\"\nversion = \"0.1.0\"\n\n[dependencies]\ngitdep = {{ git = \"{}\", tag = \"v1\" }}\n", .{url})[..]) catch { }
+    fs.remove(fs.join(gitapp[..], "nexium.lock")[..]) catch { }
+    let f5 = nx_in(e, ["fetch"][..], "", gitapp[..])
+    if f5.code != 0 { failures.append(format("packages: nx fetch with no lock failed:\n{}", .{f5.stderr})); return }
+    let r5 = nx_in(e, ["run", "main.nx"][..], "", gitapp[..])
+    if r5.text() != "2" { failures.append(format("packages: with no lock and v2 checked out, fetch at v1 gave the program that printed {}", .{r5.stdout})); return }
     // a package in a directory of the repository: `dir` names it
     let gitapp2 = fs.join(base[..], "gitapp2")
     fs.make_dirs(gitapp2[..]) catch { }
@@ -1000,7 +1028,7 @@ fn suite_packages(e: *Env, failures: *mut List(String)) {
     if f3.code != 0 { failures.append(format("packages: nx fetch of a package in a directory failed:\n{}", .{f3.stderr})); return }
     let r3 = nx_in(e, ["run", "main.nx"][..], "", gitapp2[..])
     if r3.text() != "10" { failures.append(format("packages: the package in a directory printed {} {}", .{r3.stdout, r3.stderr})); return }
-    println("packages: path dependencies, module imports, the lock file, a git dependency whose tag moves, a package in a directory", .{})
+    println("packages: path dependencies, module imports, the lock file, a git dependency whose tag moves and whose tag the manifest changes, a package in a directory", .{})
 }
 
 /// `artifact installer`: `nx ship` writes an Inno Setup script on Windows

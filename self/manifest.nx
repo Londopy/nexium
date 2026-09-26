@@ -241,10 +241,11 @@ fn has_name(xs: [][]u8, n: []u8) -> bool {
 
 /// Clone every git dependency (transitively) into `nexium_modules/` and
 /// write `nexium.lock` with the commit each one resolved to. A dependency
-/// the lock already names is checked out at the locked commit, whatever
-/// its tag points at today, so another machine builds the same thing; the
-/// dependencies in `update` (or all of them, with `update_all`) have their
-/// tag resolved again and the lock rewritten.
+/// the lock names at the manifest's tag and source is checked out at the
+/// locked commit, whatever its tag points at today, so another machine
+/// builds the same thing. Any other (one the lock does not name, one whose
+/// tag or source the manifest changed, and those in `update`, or all of
+/// them with `update_all`) has its tag resolved again from a fresh clone.
 pub fn fetch(root: *Manifest, update: [][]u8, update_all: bool) -> !List(Locked) {
     let modules = fs.join(root.dir[..], MODULES_DIR)
     let locked = if update_all { List(Locked).new() } else { read_lock(root.dir[..]) }
@@ -265,16 +266,20 @@ pub fn fetch(root: *Manifest, update: [][]u8, update_all: bool) -> !List(Locked)
             let dir = if d.path.len > 0 { fs.join(qdir[..], d.path[..]) } else { fs.join(modules[..], d.name[..]) }
             if d.git.len > 0 {
                 let renew = update_all or has_name(update, d.name[..])
-                // the commit the lock names for this dependency, from this source
+                // the commit the lock names for this dependency, from this
+                // source at this tag: a line for another tag or source (the
+                // manifest changed since) says nothing about what it asks for
                 var want = String.new()
                 if !renew {
-                    for l in locked { if l.name == d.name and l.source == d.git { want = l.commit.clone() } }
+                    for l in locked { if l.name == d.name and l.source == d.git and l.tag == d.tag { want = l.commit.clone() } }
                 }
-                // `nx update`: the tag is resolved again from a fresh clone; a
-                // directory that is not a checkout (a removal that stopped
-                // halfway) is replaced too, or `git` would answer for the
-                // repository above it
-                if fs.exists(dir[..]) and (renew or !fs.exists(fs.join(dir[..], ".git")[..])) {
+                // no locked commit to hold to (`nx update`, a new dependency, a
+                // tag or source that changed): the tag is resolved again from a
+                // fresh clone, since a checkout already there may be of another
+                // tag. A directory that is not a checkout (a removal that
+                // stopped halfway) is replaced too, or `git` would answer for
+                // the repository above it
+                if fs.exists(dir[..]) and (want.len == 0 or !fs.exists(fs.join(dir[..], ".git")[..])) {
                     fs.remove_all(dir[..]) catch {
                         eprintln("error: dependency `{}`: cannot replace {}", .{d.name, dir})
                         return error.IoError

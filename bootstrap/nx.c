@@ -37150,7 +37150,7 @@ static bool nx_m16_has_name(nx_ctx* c, nx_sl_sl_u8 xs_0, nx_sl_u8 n_1) {
 
 static nx_eu_list_m16_Locked nx_m16_fetch(nx_ctx* c, nx_m16_Manifest* root_0, nx_sl_sl_u8 update_1, bool update_all_2) {
   NX_UNUSED(c);
-  nx_slice_check(0, (*root_0).dir_3.len, (*root_0).dir_3.len, "self/manifest.nx:249");
+  nx_slice_check(0, (*root_0).dir_3.len, (*root_0).dir_3.len, "self/manifest.nx:250");
   nx_sl_u8 _t1 = ((nx_sl_u8){ nx_padd((*root_0).dir_3.ptr, 0), (*root_0).dir_3.len - 0 });
   nx_sl_u8 _t2 = nx_lit(nx_str_354, 14);
   nx_string _t3 = nx_m30_join(c, _t1, _t2);
@@ -37162,7 +37162,7 @@ static nx_eu_list_m16_Locked nx_m16_fetch(nx_ctx* c, nx_m16_Manifest* root_0, nx
     }
     else
     {
-      nx_slice_check(0, (*root_0).dir_3.len, (*root_0).dir_3.len, "self/manifest.nx:250");
+      nx_slice_check(0, (*root_0).dir_3.len, (*root_0).dir_3.len, "self/manifest.nx:251");
       nx_sl_u8 _t5 = ((nx_sl_u8){ nx_padd((*root_0).dir_3.ptr, 0), (*root_0).dir_3.len - 0 });
       nx_list_m16_Locked _t6 = nx_m16_read_lock(c, _t5);
       _t4 = _t6;
@@ -37183,12 +37183,12 @@ static nx_eu_list_m16_Locked nx_m16_fetch(nx_ctx* c, nx_m16_Manifest* root_0, nx
   for (;;) {
     bool _t13 = ((qi_8) < (((queue_7).len)));
     if (!_t13) break;
-    nx_list_m16_Dep _t14 = (queue_7.ptr[nx_idx(qi_8, queue_7.len, "self/manifest.nx:257")]).deps_2;
+    nx_list_m16_Dep _t14 = (queue_7.ptr[nx_idx(qi_8, queue_7.len, "self/manifest.nx:258")]).deps_2;
     nx_list_m16_Dep deps_9 = nx_clone_list_m16_Dep(c, &_t14);
-    nx_string _t15 = (queue_7.ptr[nx_idx(qi_8, queue_7.len, "self/manifest.nx:258")]).dir_3;
+    nx_string _t15 = (queue_7.ptr[nx_idx(qi_8, queue_7.len, "self/manifest.nx:259")]).dir_3;
     nx_string qdir_10 = nx_clone_string(c, &_t15);
     size_t* _t16 = &(qi_8);
-    *_t16 = nx_add_usize((*_t16), ((size_t)1ULL), "self/manifest.nx:259");
+    *_t16 = nx_add_usize((*_t16), ((size_t)1ULL), "self/manifest.nx:260");
     nx_sl_m16_Dep _t17 = ((nx_sl_m16_Dep){ deps_9.ptr, deps_9.len });
     for (size_t _t18 = 0; _t18 < _t17.len; _t18++) {
       nx_m16_Dep d_11 = _t17.ptr[_t18];
@@ -37216,18 +37216,18 @@ static nx_eu_list_m16_Locked nx_m16_fetch(nx_ctx* c, nx_m16_Manifest* root_0, nx
       nx_string _t25;
         if ((((((d_11).path_3).len)) > (((size_t)0ULL))))
         {
-          nx_slice_check(0, qdir_10.len, qdir_10.len, "self/manifest.nx:265");
+          nx_slice_check(0, qdir_10.len, qdir_10.len, "self/manifest.nx:266");
           nx_sl_u8 _t26 = ((nx_sl_u8){ nx_padd(qdir_10.ptr, 0), qdir_10.len - 0 });
-          nx_slice_check(0, d_11.path_3.len, d_11.path_3.len, "self/manifest.nx:265");
+          nx_slice_check(0, d_11.path_3.len, d_11.path_3.len, "self/manifest.nx:266");
           nx_sl_u8 _t27 = ((nx_sl_u8){ nx_padd(d_11.path_3.ptr, 0), d_11.path_3.len - 0 });
           nx_string _t28 = nx_m30_join(c, _t26, _t27);
           _t25 = _t28;
         }
         else
         {
-          nx_slice_check(0, modules_3.len, modules_3.len, "self/manifest.nx:265");
+          nx_slice_check(0, modules_3.len, modules_3.len, "self/manifest.nx:266");
           nx_sl_u8 _t29 = ((nx_sl_u8){ nx_padd(modules_3.ptr, 0), modules_3.len - 0 });
-          nx_slice_check(0, d_11.name_0.len, d_11.name_0.len, "self/manifest.nx:265");
+          nx_slice_check(0, d_11.name_0.len, d_11.name_0.len, "self/manifest.nx:266");
           nx_sl_u8 _t30 = ((nx_sl_u8){ nx_padd(d_11.name_0.ptr, 0), d_11.name_0.len - 0 });
           nx_string _t31 = nx_m30_join(c, _t29, _t30);
           _t25 = _t31;
@@ -37237,7 +37237,7 @@ static nx_eu_list_m16_Locked nx_m16_fetch(nx_ctx* c, nx_m16_Manifest* root_0, nx
         {
           bool _t32 = update_all_2;
           if (!_t32) {
-            nx_slice_check(0, d_11.name_0.len, d_11.name_0.len, "self/manifest.nx:267");
+            nx_slice_check(0, d_11.name_0.len, d_11.name_0.len, "self/manifest.nx:268");
             nx_sl_u8 _t33 = ((nx_sl_u8){ nx_padd(d_11.name_0.ptr, 0), d_11.name_0.len - 0 });
             bool _t34 = nx_m16_has_name(c, update_1, _t33);
             _t32 = _t34;
@@ -37258,53 +37258,59 @@ static nx_eu_list_m16_Locked nx_m16_fetch(nx_ctx* c, nx_m16_Manifest* root_0, nx
                   nx_sl_u8 _t42 = nx_str_slice((d_11).git_1);
                   _t40 = nx_sl_eq(_t41, _t42);
                 }
-                  if (_t40)
+                bool _t43 = _t40;
+                if (_t43) {
+                  nx_sl_u8 _t44 = nx_str_slice((l_17).tag_2);
+                  nx_sl_u8 _t45 = nx_str_slice((d_11).tag_2);
+                  _t43 = nx_sl_eq(_t44, _t45);
+                }
+                  if (_t43)
                   {
-                    nx_string _t43 = nx_clone_string(c, &(l_17).commit_3);
+                    nx_string _t46 = nx_clone_string(c, &(l_17).commit_3);
                     nx_drop_string(c, &(want_16));
-                    want_16 = _t43;
+                    want_16 = _t46;
                   }
                 nx_cont_3: ;
               }
               nx_brk_3: ;
             }
-          nx_slice_check(0, dir_14.len, dir_14.len, "self/manifest.nx:277");
-          nx_sl_u8 _t44 = ((nx_sl_u8){ nx_padd(dir_14.ptr, 0), dir_14.len - 0 });
-          bool _t45 = nx_m30_exists(c, _t44);
-          bool _t46 = _t45;
-          if (_t46) {
-            bool _t47 = renew_15;
-            if (!_t47) {
-              nx_slice_check(0, dir_14.len, dir_14.len, "self/manifest.nx:277");
-              nx_sl_u8 _t48 = ((nx_sl_u8){ nx_padd(dir_14.ptr, 0), dir_14.len - 0 });
-              nx_string _t49 = nx_m30_join(c, _t48, nx_lit(nx_str_1284, 4));
-              nx_string _t50 = _t49;
-              nx_slice_check(0, _t50.len, _t50.len, "self/manifest.nx:277");
-              nx_sl_u8 _t51 = ((nx_sl_u8){ nx_padd(_t50.ptr, 0), _t50.len - 0 });
-              bool _t52 = nx_m30_exists(c, _t51);
-              _t47 = (!(_t52));
-              nx_drop_string(c, &_t50);
+          nx_slice_check(0, dir_14.len, dir_14.len, "self/manifest.nx:282");
+          nx_sl_u8 _t47 = ((nx_sl_u8){ nx_padd(dir_14.ptr, 0), dir_14.len - 0 });
+          bool _t48 = nx_m30_exists(c, _t47);
+          bool _t49 = _t48;
+          if (_t49) {
+            bool _t50 = ((((want_16).len)) == (((size_t)0ULL)));
+            if (!_t50) {
+              nx_slice_check(0, dir_14.len, dir_14.len, "self/manifest.nx:282");
+              nx_sl_u8 _t51 = ((nx_sl_u8){ nx_padd(dir_14.ptr, 0), dir_14.len - 0 });
+              nx_string _t52 = nx_m30_join(c, _t51, nx_lit(nx_str_1284, 4));
+              nx_string _t53 = _t52;
+              nx_slice_check(0, _t53.len, _t53.len, "self/manifest.nx:282");
+              nx_sl_u8 _t54 = ((nx_sl_u8){ nx_padd(_t53.ptr, 0), _t53.len - 0 });
+              bool _t55 = nx_m30_exists(c, _t54);
+              _t50 = (!(_t55));
+              nx_drop_string(c, &_t53);
             }
-            _t46 = _t47;
+            _t49 = _t50;
           }
-            if (_t46)
+            if (_t49)
             {
-              nx_slice_check(0, dir_14.len, dir_14.len, "self/manifest.nx:278");
-              nx_sl_u8 _t53 = ((nx_sl_u8){ nx_padd(dir_14.ptr, 0), dir_14.len - 0 });
-              nx_eu_void _t54 = nx_m30_remove_all(c, _t53);
-              nx_eu_void _t55 = _t54;
-              if (_t55.err) {
+              nx_slice_check(0, dir_14.len, dir_14.len, "self/manifest.nx:283");
+              nx_sl_u8 _t56 = ((nx_sl_u8){ nx_padd(dir_14.ptr, 0), dir_14.len - 0 });
+              nx_eu_void _t57 = nx_m30_remove_all(c, _t56);
+              nx_eu_void _t58 = _t57;
+              if (_t58.err) {
                 {
-                  nx_sink _t56 = nx_sink_file(c, c->err);
-                  nx_sl_u8 _t57 = nx_str_slice((d_11).name_0);
-                  nx_sl_u8 _t58 = nx_str_slice(dir_14);
-                  nx_w(&_t56, (const uint8_t*)nx_str_1275, 19);
-                  nx_w_sl(&_t56, _t57);
-                  nx_w(&_t56, (const uint8_t*)nx_str_1285, 18);
-                  nx_w_sl(&_t56, _t58);
-                  nx_w(&_t56, (const uint8_t*)"\n", 1);
-                  nx_sink_flush(&_t56);
-                  nx_eu_list_m16_Locked _t59 = ((nx_eu_list_m16_Locked){ .err = 8u });
+                  nx_sink _t59 = nx_sink_file(c, c->err);
+                  nx_sl_u8 _t60 = nx_str_slice((d_11).name_0);
+                  nx_sl_u8 _t61 = nx_str_slice(dir_14);
+                  nx_w(&_t59, (const uint8_t*)nx_str_1275, 19);
+                  nx_w_sl(&_t59, _t60);
+                  nx_w(&_t59, (const uint8_t*)nx_str_1285, 18);
+                  nx_w_sl(&_t59, _t61);
+                  nx_w(&_t59, (const uint8_t*)"\n", 1);
+                  nx_sink_flush(&_t59);
+                  nx_eu_list_m16_Locked _t62 = ((nx_eu_list_m16_Locked){ .err = 8u });
                   nx_drop_string(c, &want_16);
                   nx_drop_string(c, &dir_14);
                   nx_drop_string(c, &qdir_10);
@@ -37314,28 +37320,28 @@ static nx_eu_list_m16_Locked nx_m16_fetch(nx_ctx* c, nx_m16_Manifest* root_0, nx
                   nx_drop_list_m16_Locked(c, &lock_5);
                   nx_drop_list_m16_Locked(c, &locked_4);
                   nx_drop_string(c, &modules_3);
-                  return _t59;
+                  return _t62;
                 }
               }
             }
-          nx_slice_check(0, dir_14.len, dir_14.len, "self/manifest.nx:283");
-          nx_sl_u8 _t60 = ((nx_sl_u8){ nx_padd(dir_14.ptr, 0), dir_14.len - 0 });
-          bool _t61 = nx_m30_exists(c, _t60);
-            if ((!(_t61)))
+          nx_slice_check(0, dir_14.len, dir_14.len, "self/manifest.nx:288");
+          nx_sl_u8 _t63 = ((nx_sl_u8){ nx_padd(dir_14.ptr, 0), dir_14.len - 0 });
+          bool _t64 = nx_m30_exists(c, _t63);
+            if ((!(_t64)))
             {
-              nx_slice_check(0, modules_3.len, modules_3.len, "self/manifest.nx:284");
-              nx_sl_u8 _t62 = ((nx_sl_u8){ nx_padd(modules_3.ptr, 0), modules_3.len - 0 });
-              nx_eu_void _t63 = nx_m30_make_dirs(c, _t62);
-              nx_eu_void _t64 = _t63;
-              if (_t64.err) {
+              nx_slice_check(0, modules_3.len, modules_3.len, "self/manifest.nx:289");
+              nx_sl_u8 _t65 = ((nx_sl_u8){ nx_padd(modules_3.ptr, 0), modules_3.len - 0 });
+              nx_eu_void _t66 = nx_m30_make_dirs(c, _t65);
+              nx_eu_void _t67 = _t66;
+              if (_t67.err) {
                 {
-                  nx_sink _t65 = nx_sink_file(c, c->err);
-                  nx_sl_u8 _t66 = nx_str_slice(modules_3);
-                  nx_w(&_t65, (const uint8_t*)nx_str_515, 21);
-                  nx_w_sl(&_t65, _t66);
-                  nx_w(&_t65, (const uint8_t*)"\n", 1);
-                  nx_sink_flush(&_t65);
-                  nx_eu_list_m16_Locked _t67 = ((nx_eu_list_m16_Locked){ .err = 8u });
+                  nx_sink _t68 = nx_sink_file(c, c->err);
+                  nx_sl_u8 _t69 = nx_str_slice(modules_3);
+                  nx_w(&_t68, (const uint8_t*)nx_str_515, 21);
+                  nx_w_sl(&_t68, _t69);
+                  nx_w(&_t68, (const uint8_t*)"\n", 1);
+                  nx_sink_flush(&_t68);
+                  nx_eu_list_m16_Locked _t70 = ((nx_eu_list_m16_Locked){ .err = 8u });
                   nx_drop_string(c, &want_16);
                   nx_drop_string(c, &dir_14);
                   nx_drop_string(c, &qdir_10);
@@ -37345,53 +37351,53 @@ static nx_eu_list_m16_Locked nx_m16_fetch(nx_ctx* c, nx_m16_Manifest* root_0, nx
                   nx_drop_list_m16_Locked(c, &lock_5);
                   nx_drop_list_m16_Locked(c, &locked_4);
                   nx_drop_string(c, &modules_3);
-                  return _t67;
+                  return _t70;
                 }
               }
               nx_list_sl_u8 args_18 = ((nx_list_sl_u8){NULL, 0, 0, c->arena});
-              nx_sl_u8 _t68 = nx_lit(nx_str_1286, 5);
-              nx_list_sl_u8* _t69 = &(args_18);
-              if (_t69->len == _t69->cap) nx_list_grow(c, (nx_rawlist*)_t69, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t69->len + 1);
-              _t69->ptr[_t69->len++] = _t68;
-              nx_sl_u8 _t70 = nx_lit(nx_str_1287, 7);
-              nx_list_sl_u8* _t71 = &(args_18);
-              if (_t71->len == _t71->cap) nx_list_grow(c, (nx_rawlist*)_t71, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t71->len + 1);
-              _t71->ptr[_t71->len++] = _t70;
-              nx_sl_u8 _t72 = nx_lit(nx_str_625, 1);
-              nx_list_sl_u8* _t73 = &(args_18);
-              if (_t73->len == _t73->cap) nx_list_grow(c, (nx_rawlist*)_t73, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t73->len + 1);
-              _t73->ptr[_t73->len++] = _t72;
-              nx_sl_u8 _t74 = nx_lit(nx_str_1288, 7);
-              nx_list_sl_u8* _t75 = &(args_18);
-              if (_t75->len == _t75->cap) nx_list_grow(c, (nx_rawlist*)_t75, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t75->len + 1);
-              _t75->ptr[_t75->len++] = _t74;
+              nx_sl_u8 _t71 = nx_lit(nx_str_1286, 5);
+              nx_list_sl_u8* _t72 = &(args_18);
+              if (_t72->len == _t72->cap) nx_list_grow(c, (nx_rawlist*)_t72, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t72->len + 1);
+              _t72->ptr[_t72->len++] = _t71;
+              nx_sl_u8 _t73 = nx_lit(nx_str_1287, 7);
+              nx_list_sl_u8* _t74 = &(args_18);
+              if (_t74->len == _t74->cap) nx_list_grow(c, (nx_rawlist*)_t74, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t74->len + 1);
+              _t74->ptr[_t74->len++] = _t73;
+              nx_sl_u8 _t75 = nx_lit(nx_str_625, 1);
+              nx_list_sl_u8* _t76 = &(args_18);
+              if (_t76->len == _t76->cap) nx_list_grow(c, (nx_rawlist*)_t76, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t76->len + 1);
+              _t76->ptr[_t76->len++] = _t75;
+              nx_sl_u8 _t77 = nx_lit(nx_str_1288, 7);
+              nx_list_sl_u8* _t78 = &(args_18);
+              if (_t78->len == _t78->cap) nx_list_grow(c, (nx_rawlist*)_t78, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t78->len + 1);
+              _t78->ptr[_t78->len++] = _t77;
                 if ((((((d_11).tag_2).len)) > (((size_t)0ULL))))
                 {
-                  nx_sl_u8 _t76 = nx_lit(nx_str_1289, 8);
-                  nx_list_sl_u8* _t77 = &(args_18);
-                  if (_t77->len == _t77->cap) nx_list_grow(c, (nx_rawlist*)_t77, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t77->len + 1);
-                  _t77->ptr[_t77->len++] = _t76;
-                  nx_slice_check(0, d_11.tag_2.len, d_11.tag_2.len, "self/manifest.nx:293");
-                  nx_sl_u8 _t78 = ((nx_sl_u8){ nx_padd(d_11.tag_2.ptr, 0), d_11.tag_2.len - 0 });
-                  nx_list_sl_u8* _t79 = &(args_18);
-                  if (_t79->len == _t79->cap) nx_list_grow(c, (nx_rawlist*)_t79, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t79->len + 1);
-                  _t79->ptr[_t79->len++] = _t78;
+                  nx_sl_u8 _t79 = nx_lit(nx_str_1289, 8);
+                  nx_list_sl_u8* _t80 = &(args_18);
+                  if (_t80->len == _t80->cap) nx_list_grow(c, (nx_rawlist*)_t80, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t80->len + 1);
+                  _t80->ptr[_t80->len++] = _t79;
+                  nx_slice_check(0, d_11.tag_2.len, d_11.tag_2.len, "self/manifest.nx:298");
+                  nx_sl_u8 _t81 = ((nx_sl_u8){ nx_padd(d_11.tag_2.ptr, 0), d_11.tag_2.len - 0 });
+                  nx_list_sl_u8* _t82 = &(args_18);
+                  if (_t82->len == _t82->cap) nx_list_grow(c, (nx_rawlist*)_t82, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t82->len + 1);
+                  _t82->ptr[_t82->len++] = _t81;
                 }
-              nx_slice_check(0, d_11.git_1.len, d_11.git_1.len, "self/manifest.nx:294");
-              nx_sl_u8 _t80 = ((nx_sl_u8){ nx_padd(d_11.git_1.ptr, 0), d_11.git_1.len - 0 });
-              nx_list_sl_u8* _t81 = &(args_18);
-              if (_t81->len == _t81->cap) nx_list_grow(c, (nx_rawlist*)_t81, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t81->len + 1);
-              _t81->ptr[_t81->len++] = _t80;
-              nx_slice_check(0, dir_14.len, dir_14.len, "self/manifest.nx:295");
-              nx_sl_u8 _t82 = ((nx_sl_u8){ nx_padd(dir_14.ptr, 0), dir_14.len - 0 });
-              nx_list_sl_u8* _t83 = &(args_18);
-              if (_t83->len == _t83->cap) nx_list_grow(c, (nx_rawlist*)_t83, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t83->len + 1);
-              _t83->ptr[_t83->len++] = _t82;
-              nx_slice_check(0, args_18.len, args_18.len, "self/manifest.nx:296");
-              nx_sl_sl_u8 _t84 = ((nx_sl_sl_u8){ nx_padd(args_18.ptr, 0), args_18.len - 0 });
-              nx_eu_string _t85 = nx_m16_git(c, _t84, nx_lit(nx_str_5, 0));
-              nx_eu_string _t86 = _t85;
-              if (_t86.err) {
+              nx_slice_check(0, d_11.git_1.len, d_11.git_1.len, "self/manifest.nx:299");
+              nx_sl_u8 _t83 = ((nx_sl_u8){ nx_padd(d_11.git_1.ptr, 0), d_11.git_1.len - 0 });
+              nx_list_sl_u8* _t84 = &(args_18);
+              if (_t84->len == _t84->cap) nx_list_grow(c, (nx_rawlist*)_t84, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t84->len + 1);
+              _t84->ptr[_t84->len++] = _t83;
+              nx_slice_check(0, dir_14.len, dir_14.len, "self/manifest.nx:300");
+              nx_sl_u8 _t85 = ((nx_sl_u8){ nx_padd(dir_14.ptr, 0), dir_14.len - 0 });
+              nx_list_sl_u8* _t86 = &(args_18);
+              if (_t86->len == _t86->cap) nx_list_grow(c, (nx_rawlist*)_t86, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t86->len + 1);
+              _t86->ptr[_t86->len++] = _t85;
+              nx_slice_check(0, args_18.len, args_18.len, "self/manifest.nx:301");
+              nx_sl_sl_u8 _t87 = ((nx_sl_sl_u8){ nx_padd(args_18.ptr, 0), args_18.len - 0 });
+              nx_eu_string _t88 = nx_m16_git(c, _t87, nx_lit(nx_str_5, 0));
+              nx_eu_string _t89 = _t88;
+              if (_t89.err) {
                 nx_drop_list_sl_u8(c, &args_18);
                 nx_drop_string(c, &want_16);
                 nx_drop_string(c, &dir_14);
@@ -37402,28 +37408,28 @@ static nx_eu_list_m16_Locked nx_m16_fetch(nx_ctx* c, nx_m16_Manifest* root_0, nx
                 nx_drop_list_m16_Locked(c, &lock_5);
                 nx_drop_list_m16_Locked(c, &locked_4);
                 nx_drop_string(c, &modules_3);
-                return (nx_eu_list_m16_Locked){ .err = _t86.err };
+                return (nx_eu_list_m16_Locked){ .err = _t89.err };
               }
-              nx_string _t87 = _t86.val;
-              nx_drop_string(c, &_t87);
+              nx_string _t90 = _t89.val;
+              nx_drop_string(c, &_t90);
               nx_drop_list_sl_u8(c, &args_18);
             }
           nx_list_sl_u8 rp_19 = ((nx_list_sl_u8){NULL, 0, 0, c->arena});
-          nx_sl_u8 _t88 = nx_lit(nx_str_1290, 9);
-          nx_list_sl_u8* _t89 = &(rp_19);
-          if (_t89->len == _t89->cap) nx_list_grow(c, (nx_rawlist*)_t89, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t89->len + 1);
-          _t89->ptr[_t89->len++] = _t88;
-          nx_sl_u8 _t90 = nx_lit(nx_str_1291, 4);
-          nx_list_sl_u8* _t91 = &(rp_19);
-          if (_t91->len == _t91->cap) nx_list_grow(c, (nx_rawlist*)_t91, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t91->len + 1);
-          _t91->ptr[_t91->len++] = _t90;
-          nx_slice_check(0, rp_19.len, rp_19.len, "self/manifest.nx:301");
-          nx_sl_sl_u8 _t92 = ((nx_sl_sl_u8){ nx_padd(rp_19.ptr, 0), rp_19.len - 0 });
-          nx_slice_check(0, dir_14.len, dir_14.len, "self/manifest.nx:301");
-          nx_sl_u8 _t93 = ((nx_sl_u8){ nx_padd(dir_14.ptr, 0), dir_14.len - 0 });
-          nx_eu_string _t94 = nx_m16_git(c, _t92, _t93);
-          nx_eu_string _t95 = _t94;
-          if (_t95.err) {
+          nx_sl_u8 _t91 = nx_lit(nx_str_1290, 9);
+          nx_list_sl_u8* _t92 = &(rp_19);
+          if (_t92->len == _t92->cap) nx_list_grow(c, (nx_rawlist*)_t92, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t92->len + 1);
+          _t92->ptr[_t92->len++] = _t91;
+          nx_sl_u8 _t93 = nx_lit(nx_str_1291, 4);
+          nx_list_sl_u8* _t94 = &(rp_19);
+          if (_t94->len == _t94->cap) nx_list_grow(c, (nx_rawlist*)_t94, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t94->len + 1);
+          _t94->ptr[_t94->len++] = _t93;
+          nx_slice_check(0, rp_19.len, rp_19.len, "self/manifest.nx:306");
+          nx_sl_sl_u8 _t95 = ((nx_sl_sl_u8){ nx_padd(rp_19.ptr, 0), rp_19.len - 0 });
+          nx_slice_check(0, dir_14.len, dir_14.len, "self/manifest.nx:306");
+          nx_sl_u8 _t96 = ((nx_sl_u8){ nx_padd(dir_14.ptr, 0), dir_14.len - 0 });
+          nx_eu_string _t97 = nx_m16_git(c, _t95, _t96);
+          nx_eu_string _t98 = _t97;
+          if (_t98.err) {
             nx_drop_list_sl_u8(c, &rp_19);
             nx_drop_string(c, &want_16);
             nx_drop_string(c, &dir_14);
@@ -37434,90 +37440,90 @@ static nx_eu_list_m16_Locked nx_m16_fetch(nx_ctx* c, nx_m16_Manifest* root_0, nx
             nx_drop_list_m16_Locked(c, &lock_5);
             nx_drop_list_m16_Locked(c, &locked_4);
             nx_drop_string(c, &modules_3);
-            return (nx_eu_list_m16_Locked){ .err = _t95.err };
+            return (nx_eu_list_m16_Locked){ .err = _t98.err };
           }
-          nx_string commit_20 = _t95.val;
-          bool _t96 = ((((want_16).len)) > (((size_t)0ULL)));
-          if (_t96) {
-            nx_sl_u8 _t97 = nx_str_slice(want_16);
-            nx_sl_u8 _t98 = nx_str_slice(commit_20);
-            _t96 = (!(nx_sl_eq(_t97, _t98)));
+          nx_string commit_20 = _t98.val;
+          bool _t99 = ((((want_16).len)) > (((size_t)0ULL)));
+          if (_t99) {
+            nx_sl_u8 _t100 = nx_str_slice(want_16);
+            nx_sl_u8 _t101 = nx_str_slice(commit_20);
+            _t99 = (!(nx_sl_eq(_t100, _t101)));
           }
-            if (_t96)
+            if (_t99)
             {
               nx_list_sl_u8 fa_21 = ((nx_list_sl_u8){NULL, 0, 0, c->arena});
-              nx_sl_u8 _t99 = nx_lit(nx_str_919, 5);
-              nx_list_sl_u8* _t100 = &(fa_21);
-              if (_t100->len == _t100->cap) nx_list_grow(c, (nx_rawlist*)_t100, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t100->len + 1);
-              _t100->ptr[_t100->len++] = _t99;
-              nx_sl_u8 _t101 = nx_lit(nx_str_1287, 7);
-              nx_list_sl_u8* _t102 = &(fa_21);
-              if (_t102->len == _t102->cap) nx_list_grow(c, (nx_rawlist*)_t102, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t102->len + 1);
-              _t102->ptr[_t102->len++] = _t101;
-              nx_sl_u8 _t103 = nx_lit(nx_str_625, 1);
-              nx_list_sl_u8* _t104 = &(fa_21);
-              if (_t104->len == _t104->cap) nx_list_grow(c, (nx_rawlist*)_t104, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t104->len + 1);
-              _t104->ptr[_t104->len++] = _t103;
-              nx_sl_u8 _t105 = nx_lit(nx_str_1288, 7);
-              nx_list_sl_u8* _t106 = &(fa_21);
-              if (_t106->len == _t106->cap) nx_list_grow(c, (nx_rawlist*)_t106, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t106->len + 1);
-              _t106->ptr[_t106->len++] = _t105;
-              nx_sl_u8 _t107 = nx_lit(nx_str_1292, 6);
-              nx_list_sl_u8* _t108 = &(fa_21);
-              if (_t108->len == _t108->cap) nx_list_grow(c, (nx_rawlist*)_t108, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t108->len + 1);
-              _t108->ptr[_t108->len++] = _t107;
-              nx_slice_check(0, want_16.len, want_16.len, "self/manifest.nx:311");
-              nx_sl_u8 _t109 = ((nx_sl_u8){ nx_padd(want_16.ptr, 0), want_16.len - 0 });
-              nx_list_sl_u8* _t110 = &(fa_21);
-              if (_t110->len == _t110->cap) nx_list_grow(c, (nx_rawlist*)_t110, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t110->len + 1);
-              _t110->ptr[_t110->len++] = _t109;
-              nx_slice_check(0, fa_21.len, fa_21.len, "self/manifest.nx:314");
-              nx_sl_sl_u8 _t111 = ((nx_sl_sl_u8){ nx_padd(fa_21.ptr, 0), fa_21.len - 0 });
-              nx_slice_check(0, dir_14.len, dir_14.len, "self/manifest.nx:314");
-              nx_sl_u8 _t112 = ((nx_sl_u8){ nx_padd(dir_14.ptr, 0), dir_14.len - 0 });
-              bool _t113 = nx_m16_git_try(c, _t111, _t112);
-              (void)(_t113);
-              nx_list_sl_u8 co_22 = ((nx_list_sl_u8){NULL, 0, 0, c->arena});
-              nx_sl_u8 _t114 = nx_lit(nx_str_1293, 8);
-              nx_list_sl_u8* _t115 = &(co_22);
-              if (_t115->len == _t115->cap) nx_list_grow(c, (nx_rawlist*)_t115, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t115->len + 1);
-              _t115->ptr[_t115->len++] = _t114;
-              nx_sl_u8 _t116 = nx_lit(nx_str_1288, 7);
-              nx_list_sl_u8* _t117 = &(co_22);
-              if (_t117->len == _t117->cap) nx_list_grow(c, (nx_rawlist*)_t117, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t117->len + 1);
-              _t117->ptr[_t117->len++] = _t116;
-              nx_slice_check(0, want_16.len, want_16.len, "self/manifest.nx:318");
-              nx_sl_u8 _t118 = ((nx_sl_u8){ nx_padd(want_16.ptr, 0), want_16.len - 0 });
-              nx_list_sl_u8* _t119 = &(co_22);
-              if (_t119->len == _t119->cap) nx_list_grow(c, (nx_rawlist*)_t119, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t119->len + 1);
-              _t119->ptr[_t119->len++] = _t118;
-              nx_slice_check(0, co_22.len, co_22.len, "self/manifest.nx:319");
-              nx_sl_sl_u8 _t120 = ((nx_sl_sl_u8){ nx_padd(co_22.ptr, 0), co_22.len - 0 });
+              nx_sl_u8 _t102 = nx_lit(nx_str_919, 5);
+              nx_list_sl_u8* _t103 = &(fa_21);
+              if (_t103->len == _t103->cap) nx_list_grow(c, (nx_rawlist*)_t103, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t103->len + 1);
+              _t103->ptr[_t103->len++] = _t102;
+              nx_sl_u8 _t104 = nx_lit(nx_str_1287, 7);
+              nx_list_sl_u8* _t105 = &(fa_21);
+              if (_t105->len == _t105->cap) nx_list_grow(c, (nx_rawlist*)_t105, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t105->len + 1);
+              _t105->ptr[_t105->len++] = _t104;
+              nx_sl_u8 _t106 = nx_lit(nx_str_625, 1);
+              nx_list_sl_u8* _t107 = &(fa_21);
+              if (_t107->len == _t107->cap) nx_list_grow(c, (nx_rawlist*)_t107, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t107->len + 1);
+              _t107->ptr[_t107->len++] = _t106;
+              nx_sl_u8 _t108 = nx_lit(nx_str_1288, 7);
+              nx_list_sl_u8* _t109 = &(fa_21);
+              if (_t109->len == _t109->cap) nx_list_grow(c, (nx_rawlist*)_t109, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t109->len + 1);
+              _t109->ptr[_t109->len++] = _t108;
+              nx_sl_u8 _t110 = nx_lit(nx_str_1292, 6);
+              nx_list_sl_u8* _t111 = &(fa_21);
+              if (_t111->len == _t111->cap) nx_list_grow(c, (nx_rawlist*)_t111, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t111->len + 1);
+              _t111->ptr[_t111->len++] = _t110;
+              nx_slice_check(0, want_16.len, want_16.len, "self/manifest.nx:316");
+              nx_sl_u8 _t112 = ((nx_sl_u8){ nx_padd(want_16.ptr, 0), want_16.len - 0 });
+              nx_list_sl_u8* _t113 = &(fa_21);
+              if (_t113->len == _t113->cap) nx_list_grow(c, (nx_rawlist*)_t113, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t113->len + 1);
+              _t113->ptr[_t113->len++] = _t112;
+              nx_slice_check(0, fa_21.len, fa_21.len, "self/manifest.nx:319");
+              nx_sl_sl_u8 _t114 = ((nx_sl_sl_u8){ nx_padd(fa_21.ptr, 0), fa_21.len - 0 });
               nx_slice_check(0, dir_14.len, dir_14.len, "self/manifest.nx:319");
-              nx_sl_u8 _t121 = ((nx_sl_u8){ nx_padd(dir_14.ptr, 0), dir_14.len - 0 });
-              bool _t122 = nx_m16_git_try(c, _t120, _t121);
-                if ((!(_t122)))
+              nx_sl_u8 _t115 = ((nx_sl_u8){ nx_padd(dir_14.ptr, 0), dir_14.len - 0 });
+              bool _t116 = nx_m16_git_try(c, _t114, _t115);
+              (void)(_t116);
+              nx_list_sl_u8 co_22 = ((nx_list_sl_u8){NULL, 0, 0, c->arena});
+              nx_sl_u8 _t117 = nx_lit(nx_str_1293, 8);
+              nx_list_sl_u8* _t118 = &(co_22);
+              if (_t118->len == _t118->cap) nx_list_grow(c, (nx_rawlist*)_t118, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t118->len + 1);
+              _t118->ptr[_t118->len++] = _t117;
+              nx_sl_u8 _t119 = nx_lit(nx_str_1288, 7);
+              nx_list_sl_u8* _t120 = &(co_22);
+              if (_t120->len == _t120->cap) nx_list_grow(c, (nx_rawlist*)_t120, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t120->len + 1);
+              _t120->ptr[_t120->len++] = _t119;
+              nx_slice_check(0, want_16.len, want_16.len, "self/manifest.nx:323");
+              nx_sl_u8 _t121 = ((nx_sl_u8){ nx_padd(want_16.ptr, 0), want_16.len - 0 });
+              nx_list_sl_u8* _t122 = &(co_22);
+              if (_t122->len == _t122->cap) nx_list_grow(c, (nx_rawlist*)_t122, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t122->len + 1);
+              _t122->ptr[_t122->len++] = _t121;
+              nx_slice_check(0, co_22.len, co_22.len, "self/manifest.nx:324");
+              nx_sl_sl_u8 _t123 = ((nx_sl_sl_u8){ nx_padd(co_22.ptr, 0), co_22.len - 0 });
+              nx_slice_check(0, dir_14.len, dir_14.len, "self/manifest.nx:324");
+              nx_sl_u8 _t124 = ((nx_sl_u8){ nx_padd(dir_14.ptr, 0), dir_14.len - 0 });
+              bool _t125 = nx_m16_git_try(c, _t123, _t124);
+                if ((!(_t125)))
                 {
-                  nx_sink _t123 = nx_sink_file(c, c->err);
-                  nx_sl_u8 _t124 = nx_str_slice((d_11).name_0);
-                  nx_sl_u8 _t125 = nx_lit(nx_str_353, 11);
-                  nx_sl_u8 _t126 = nx_str_slice(want_16);
-                  nx_sl_u8 _t127 = nx_str_slice((d_11).git_1);
-                  nx_sl_u8 _t128 = nx_str_slice((d_11).name_0);
-                  nx_w(&_t123, (const uint8_t*)nx_str_1275, 19);
-                  nx_w_sl(&_t123, _t124);
-                  nx_w(&_t123, (const uint8_t*)nx_str_1277, 3);
-                  nx_w_sl(&_t123, _t125);
-                  nx_w(&_t123, (const uint8_t*)nx_str_1294, 14);
-                  nx_w_sl(&_t123, _t126);
-                  nx_w(&_t123, (const uint8_t*)nx_str_1295, 8);
-                  nx_w_sl(&_t123, _t127);
-                  nx_w(&_t123, (const uint8_t*)nx_str_1296, 27);
-                  nx_w_sl(&_t123, _t128);
-                  nx_w(&_t123, (const uint8_t*)nx_str_1297, 24);
-                  nx_w(&_t123, (const uint8_t*)"\n", 1);
-                  nx_sink_flush(&_t123);
-                  nx_eu_list_m16_Locked _t129 = ((nx_eu_list_m16_Locked){ .err = 7u });
+                  nx_sink _t126 = nx_sink_file(c, c->err);
+                  nx_sl_u8 _t127 = nx_str_slice((d_11).name_0);
+                  nx_sl_u8 _t128 = nx_lit(nx_str_353, 11);
+                  nx_sl_u8 _t129 = nx_str_slice(want_16);
+                  nx_sl_u8 _t130 = nx_str_slice((d_11).git_1);
+                  nx_sl_u8 _t131 = nx_str_slice((d_11).name_0);
+                  nx_w(&_t126, (const uint8_t*)nx_str_1275, 19);
+                  nx_w_sl(&_t126, _t127);
+                  nx_w(&_t126, (const uint8_t*)nx_str_1277, 3);
+                  nx_w_sl(&_t126, _t128);
+                  nx_w(&_t126, (const uint8_t*)nx_str_1294, 14);
+                  nx_w_sl(&_t126, _t129);
+                  nx_w(&_t126, (const uint8_t*)nx_str_1295, 8);
+                  nx_w_sl(&_t126, _t130);
+                  nx_w(&_t126, (const uint8_t*)nx_str_1296, 27);
+                  nx_w_sl(&_t126, _t131);
+                  nx_w(&_t126, (const uint8_t*)nx_str_1297, 24);
+                  nx_w(&_t126, (const uint8_t*)"\n", 1);
+                  nx_sink_flush(&_t126);
+                  nx_eu_list_m16_Locked _t132 = ((nx_eu_list_m16_Locked){ .err = 7u });
                   nx_drop_list_sl_u8(c, &co_22);
                   nx_drop_list_sl_u8(c, &fa_21);
                   nx_drop_string(c, &commit_20);
@@ -37531,46 +37537,46 @@ static nx_eu_list_m16_Locked nx_m16_fetch(nx_ctx* c, nx_m16_Manifest* root_0, nx
                   nx_drop_list_m16_Locked(c, &lock_5);
                   nx_drop_list_m16_Locked(c, &locked_4);
                   nx_drop_string(c, &modules_3);
-                  return _t129;
+                  return _t132;
                 }
-              nx_string _t130 = nx_clone_string(c, &want_16);
+              nx_string _t133 = nx_clone_string(c, &want_16);
               nx_drop_string(c, &(commit_20));
-              commit_20 = _t130;
+              commit_20 = _t133;
               nx_drop_list_sl_u8(c, &co_22);
               nx_drop_list_sl_u8(c, &fa_21);
             }
-          bool _t131 = (((((d_11).dir_4).len)) > (((size_t)0ULL)));
-          if (_t131) {
-            nx_slice_check(0, dir_14.len, dir_14.len, "self/manifest.nx:325");
-            nx_sl_u8 _t132 = ((nx_sl_u8){ nx_padd(dir_14.ptr, 0), dir_14.len - 0 });
-            nx_slice_check(0, d_11.dir_4.len, d_11.dir_4.len, "self/manifest.nx:325");
-            nx_sl_u8 _t133 = ((nx_sl_u8){ nx_padd(d_11.dir_4.ptr, 0), d_11.dir_4.len - 0 });
-            nx_string _t134 = nx_m30_join(c, _t132, _t133);
-            nx_string _t135 = _t134;
-            nx_slice_check(0, _t135.len, _t135.len, "self/manifest.nx:325");
-            nx_sl_u8 _t136 = ((nx_sl_u8){ nx_padd(_t135.ptr, 0), _t135.len - 0 });
-            bool _t137 = nx_m30_exists(c, _t136);
-            _t131 = (!(_t137));
-            nx_drop_string(c, &_t135);
+          bool _t134 = (((((d_11).dir_4).len)) > (((size_t)0ULL)));
+          if (_t134) {
+            nx_slice_check(0, dir_14.len, dir_14.len, "self/manifest.nx:330");
+            nx_sl_u8 _t135 = ((nx_sl_u8){ nx_padd(dir_14.ptr, 0), dir_14.len - 0 });
+            nx_slice_check(0, d_11.dir_4.len, d_11.dir_4.len, "self/manifest.nx:330");
+            nx_sl_u8 _t136 = ((nx_sl_u8){ nx_padd(d_11.dir_4.ptr, 0), d_11.dir_4.len - 0 });
+            nx_string _t137 = nx_m30_join(c, _t135, _t136);
+            nx_string _t138 = _t137;
+            nx_slice_check(0, _t138.len, _t138.len, "self/manifest.nx:330");
+            nx_sl_u8 _t139 = ((nx_sl_u8){ nx_padd(_t138.ptr, 0), _t138.len - 0 });
+            bool _t140 = nx_m30_exists(c, _t139);
+            _t134 = (!(_t140));
+            nx_drop_string(c, &_t138);
           }
-            if (_t131)
+            if (_t134)
             {
-              nx_sink _t138 = nx_sink_file(c, c->err);
-              nx_sl_u8 _t139 = nx_str_slice((d_11).name_0);
-              nx_sl_u8 _t140 = nx_str_slice((d_11).git_1);
-              nx_sl_u8 _t141 = nx_str_slice((d_11).dir_4);
-              nx_sl_u8 _t142 = nx_str_slice((d_11).tag_2);
-              nx_w(&_t138, (const uint8_t*)nx_str_1275, 19);
-              nx_w_sl(&_t138, _t139);
-              nx_w(&_t138, (const uint8_t*)nx_str_1277, 3);
-              nx_w_sl(&_t138, _t140);
-              nx_w(&_t138, (const uint8_t*)nx_str_1278, 19);
-              nx_w_sl(&_t138, _t141);
-              nx_w(&_t138, (const uint8_t*)nx_str_1298, 5);
-              nx_w_sl(&_t138, _t142);
-              nx_w(&_t138, (const uint8_t*)"\n", 1);
-              nx_sink_flush(&_t138);
-              nx_eu_list_m16_Locked _t143 = ((nx_eu_list_m16_Locked){ .err = 7u });
+              nx_sink _t141 = nx_sink_file(c, c->err);
+              nx_sl_u8 _t142 = nx_str_slice((d_11).name_0);
+              nx_sl_u8 _t143 = nx_str_slice((d_11).git_1);
+              nx_sl_u8 _t144 = nx_str_slice((d_11).dir_4);
+              nx_sl_u8 _t145 = nx_str_slice((d_11).tag_2);
+              nx_w(&_t141, (const uint8_t*)nx_str_1275, 19);
+              nx_w_sl(&_t141, _t142);
+              nx_w(&_t141, (const uint8_t*)nx_str_1277, 3);
+              nx_w_sl(&_t141, _t143);
+              nx_w(&_t141, (const uint8_t*)nx_str_1278, 19);
+              nx_w_sl(&_t141, _t144);
+              nx_w(&_t141, (const uint8_t*)nx_str_1298, 5);
+              nx_w_sl(&_t141, _t145);
+              nx_w(&_t141, (const uint8_t*)"\n", 1);
+              nx_sink_flush(&_t141);
+              nx_eu_list_m16_Locked _t146 = ((nx_eu_list_m16_Locked){ .err = 7u });
               nx_drop_string(c, &commit_20);
               nx_drop_list_sl_u8(c, &rp_19);
               nx_drop_string(c, &want_16);
@@ -37582,39 +37588,39 @@ static nx_eu_list_m16_Locked nx_m16_fetch(nx_ctx* c, nx_m16_Manifest* root_0, nx
               nx_drop_list_m16_Locked(c, &lock_5);
               nx_drop_list_m16_Locked(c, &locked_4);
               nx_drop_string(c, &modules_3);
-              return _t143;
+              return _t146;
             }
-          nx_string _t144 = nx_clone_string(c, &(d_11).name_0);
-          nx_string _t145 = nx_clone_string(c, &(d_11).git_1);
-          nx_string _t146 = nx_clone_string(c, &(d_11).tag_2);
-          nx_string _t147 = commit_20; memset(&commit_20, 0, sizeof commit_20);
-          nx_string _t148 = _t147;
-          nx_m16_Locked _t149 = ((nx_m16_Locked){ .name_0 = _t144, .source_1 = _t145, .tag_2 = _t146, .commit_3 = _t148 });
-          nx_list_m16_Locked* _t150 = &(lock_5);
-          if (_t150->len == _t150->cap) nx_list_grow(c, (nx_rawlist*)_t150, sizeof(nx_m16_Locked), _Alignof(nx_m16_Locked), _t150->len + 1);
-          _t150->ptr[_t150->len++] = _t149;
+          nx_string _t147 = nx_clone_string(c, &(d_11).name_0);
+          nx_string _t148 = nx_clone_string(c, &(d_11).git_1);
+          nx_string _t149 = nx_clone_string(c, &(d_11).tag_2);
+          nx_string _t150 = commit_20; memset(&commit_20, 0, sizeof commit_20);
+          nx_string _t151 = _t150;
+          nx_m16_Locked _t152 = ((nx_m16_Locked){ .name_0 = _t147, .source_1 = _t148, .tag_2 = _t149, .commit_3 = _t151 });
+          nx_list_m16_Locked* _t153 = &(lock_5);
+          if (_t153->len == _t153->cap) nx_list_grow(c, (nx_rawlist*)_t153, sizeof(nx_m16_Locked), _Alignof(nx_m16_Locked), _t153->len + 1);
+          _t153->ptr[_t153->len++] = _t152;
           nx_drop_string(c, &commit_20);
           nx_drop_list_sl_u8(c, &rp_19);
           nx_drop_string(c, &want_16);
         }
         else
         {
-          nx_slice_check(0, dir_14.len, dir_14.len, "self/manifest.nx:331");
-          nx_sl_u8 _t151 = ((nx_sl_u8){ nx_padd(dir_14.ptr, 0), dir_14.len - 0 });
-          bool _t152 = nx_m30_exists(c, _t151);
-            if ((!(_t152)))
+          nx_slice_check(0, dir_14.len, dir_14.len, "self/manifest.nx:336");
+          nx_sl_u8 _t154 = ((nx_sl_u8){ nx_padd(dir_14.ptr, 0), dir_14.len - 0 });
+          bool _t155 = nx_m30_exists(c, _t154);
+            if ((!(_t155)))
             {
-              nx_sink _t153 = nx_sink_file(c, c->err);
-              nx_sl_u8 _t154 = nx_str_slice((d_11).name_0);
-              nx_sl_u8 _t155 = nx_str_slice(dir_14);
-              nx_w(&_t153, (const uint8_t*)nx_str_1275, 19);
-              nx_w_sl(&_t153, _t154);
-              nx_w(&_t153, (const uint8_t*)nx_str_1299, 8);
-              nx_w_sl(&_t153, _t155);
-              nx_w(&_t153, (const uint8_t*)nx_str_1300, 15);
-              nx_w(&_t153, (const uint8_t*)"\n", 1);
-              nx_sink_flush(&_t153);
-              nx_eu_list_m16_Locked _t156 = ((nx_eu_list_m16_Locked){ .err = 7u });
+              nx_sink _t156 = nx_sink_file(c, c->err);
+              nx_sl_u8 _t157 = nx_str_slice((d_11).name_0);
+              nx_sl_u8 _t158 = nx_str_slice(dir_14);
+              nx_w(&_t156, (const uint8_t*)nx_str_1275, 19);
+              nx_w_sl(&_t156, _t157);
+              nx_w(&_t156, (const uint8_t*)nx_str_1299, 8);
+              nx_w_sl(&_t156, _t158);
+              nx_w(&_t156, (const uint8_t*)nx_str_1300, 15);
+              nx_w(&_t156, (const uint8_t*)"\n", 1);
+              nx_sink_flush(&_t156);
+              nx_eu_list_m16_Locked _t159 = ((nx_eu_list_m16_Locked){ .err = 7u });
               nx_drop_string(c, &dir_14);
               nx_drop_string(c, &qdir_10);
               nx_drop_list_m16_Dep(c, &deps_9);
@@ -37623,49 +37629,49 @@ static nx_eu_list_m16_Locked nx_m16_fetch(nx_ctx* c, nx_m16_Manifest* root_0, nx
               nx_drop_list_m16_Locked(c, &lock_5);
               nx_drop_list_m16_Locked(c, &locked_4);
               nx_drop_string(c, &modules_3);
-              return _t156;
+              return _t159;
             }
-          nx_string _t157 = nx_clone_string(c, &(d_11).name_0);
-          nx_string _t158 = nx_str_from(c, nx_lit(nx_str_716, 4));
-          nx_string _t159 = _t158;
-          nx_string _t160 = nx_clone_string(c, &(d_11).path_3);
-          nx_string _t161 = {0}; _t161.ar = c->arena;
+          nx_string _t160 = nx_clone_string(c, &(d_11).name_0);
+          nx_string _t161 = nx_str_from(c, nx_lit(nx_str_716, 4));
           nx_string _t162 = _t161;
-          nx_m16_Locked _t163 = ((nx_m16_Locked){ .name_0 = _t157, .source_1 = _t159, .tag_2 = _t160, .commit_3 = _t162 });
-          nx_list_m16_Locked* _t164 = &(lock_5);
-          if (_t164->len == _t164->cap) nx_list_grow(c, (nx_rawlist*)_t164, sizeof(nx_m16_Locked), _Alignof(nx_m16_Locked), _t164->len + 1);
-          _t164->ptr[_t164->len++] = _t163;
+          nx_string _t163 = nx_clone_string(c, &(d_11).path_3);
+          nx_string _t164 = {0}; _t164.ar = c->arena;
+          nx_string _t165 = _t164;
+          nx_m16_Locked _t166 = ((nx_m16_Locked){ .name_0 = _t160, .source_1 = _t162, .tag_2 = _t163, .commit_3 = _t165 });
+          nx_list_m16_Locked* _t167 = &(lock_5);
+          if (_t167->len == _t167->cap) nx_list_grow(c, (nx_rawlist*)_t167, sizeof(nx_m16_Locked), _Alignof(nx_m16_Locked), _t167->len + 1);
+          _t167->ptr[_t167->len++] = _t166;
         }
-      nx_string _t165;
+      nx_string _t168;
         if ((((((d_11).dir_4).len)) > (((size_t)0ULL))))
         {
-          nx_slice_check(0, dir_14.len, dir_14.len, "self/manifest.nx:337");
-          nx_sl_u8 _t166 = ((nx_sl_u8){ nx_padd(dir_14.ptr, 0), dir_14.len - 0 });
-          nx_slice_check(0, d_11.dir_4.len, d_11.dir_4.len, "self/manifest.nx:337");
-          nx_sl_u8 _t167 = ((nx_sl_u8){ nx_padd(d_11.dir_4.ptr, 0), d_11.dir_4.len - 0 });
-          nx_string _t168 = nx_m30_join(c, _t166, _t167);
-          _t165 = _t168;
+          nx_slice_check(0, dir_14.len, dir_14.len, "self/manifest.nx:342");
+          nx_sl_u8 _t169 = ((nx_sl_u8){ nx_padd(dir_14.ptr, 0), dir_14.len - 0 });
+          nx_slice_check(0, d_11.dir_4.len, d_11.dir_4.len, "self/manifest.nx:342");
+          nx_sl_u8 _t170 = ((nx_sl_u8){ nx_padd(d_11.dir_4.ptr, 0), d_11.dir_4.len - 0 });
+          nx_string _t171 = nx_m30_join(c, _t169, _t170);
+          _t168 = _t171;
         }
         else
         {
-          _t165 = nx_clone_string(c, &dir_14);
+          _t168 = nx_clone_string(c, &dir_14);
         }
-      nx_string pkg_23 = _t165;
-      nx_slice_check(0, pkg_23.len, pkg_23.len, "self/manifest.nx:338");
-      nx_sl_u8 _t169 = ((nx_sl_u8){ nx_padd(pkg_23.ptr, 0), pkg_23.len - 0 });
-      nx_sl_u8 _t170 = nx_lit(nx_str_352, 11);
-      nx_string _t171 = nx_m30_join(c, _t169, _t170);
-      nx_string sub_24 = _t171;
-      nx_slice_check(0, sub_24.len, sub_24.len, "self/manifest.nx:339");
-      nx_sl_u8 _t172 = ((nx_sl_u8){ nx_padd(sub_24.ptr, 0), sub_24.len - 0 });
-      bool _t173 = nx_m30_exists(c, _t172);
-        if (_t173)
+      nx_string pkg_23 = _t168;
+      nx_slice_check(0, pkg_23.len, pkg_23.len, "self/manifest.nx:343");
+      nx_sl_u8 _t172 = ((nx_sl_u8){ nx_padd(pkg_23.ptr, 0), pkg_23.len - 0 });
+      nx_sl_u8 _t173 = nx_lit(nx_str_352, 11);
+      nx_string _t174 = nx_m30_join(c, _t172, _t173);
+      nx_string sub_24 = _t174;
+      nx_slice_check(0, sub_24.len, sub_24.len, "self/manifest.nx:344");
+      nx_sl_u8 _t175 = ((nx_sl_u8){ nx_padd(sub_24.ptr, 0), sub_24.len - 0 });
+      bool _t176 = nx_m30_exists(c, _t175);
+        if (_t176)
         {
-          nx_slice_check(0, sub_24.len, sub_24.len, "self/manifest.nx:339");
-          nx_sl_u8 _t174 = ((nx_sl_u8){ nx_padd(sub_24.ptr, 0), sub_24.len - 0 });
-          nx_eu_m16_Manifest _t175 = nx_m16_read(c, _t174);
-          nx_eu_m16_Manifest _t176 = _t175;
-          if (_t176.err) {
+          nx_slice_check(0, sub_24.len, sub_24.len, "self/manifest.nx:344");
+          nx_sl_u8 _t177 = ((nx_sl_u8){ nx_padd(sub_24.ptr, 0), sub_24.len - 0 });
+          nx_eu_m16_Manifest _t178 = nx_m16_read(c, _t177);
+          nx_eu_m16_Manifest _t179 = _t178;
+          if (_t179.err) {
             nx_drop_string(c, &sub_24);
             nx_drop_string(c, &pkg_23);
             nx_drop_string(c, &dir_14);
@@ -37676,12 +37682,12 @@ static nx_eu_list_m16_Locked nx_m16_fetch(nx_ctx* c, nx_m16_Manifest* root_0, nx
             nx_drop_list_m16_Locked(c, &lock_5);
             nx_drop_list_m16_Locked(c, &locked_4);
             nx_drop_string(c, &modules_3);
-            return (nx_eu_list_m16_Locked){ .err = _t176.err };
+            return (nx_eu_list_m16_Locked){ .err = _t179.err };
           }
-          nx_m16_Manifest _t177 = _t176.val;
-          nx_list_m16_Manifest* _t178 = &(queue_7);
-          if (_t178->len == _t178->cap) nx_list_grow(c, (nx_rawlist*)_t178, sizeof(nx_m16_Manifest), _Alignof(nx_m16_Manifest), _t178->len + 1);
-          _t178->ptr[_t178->len++] = _t177;
+          nx_m16_Manifest _t180 = _t179.val;
+          nx_list_m16_Manifest* _t181 = &(queue_7);
+          if (_t181->len == _t181->cap) nx_list_grow(c, (nx_rawlist*)_t181, sizeof(nx_m16_Manifest), _Alignof(nx_m16_Manifest), _t181->len + 1);
+          _t181->ptr[_t181->len++] = _t180;
         }
       nx_drop_string(c, &sub_24);
       nx_drop_string(c, &pkg_23);
@@ -37694,74 +37700,74 @@ static nx_eu_list_m16_Locked nx_m16_fetch(nx_ctx* c, nx_m16_Manifest* root_0, nx
     nx_cont_0: ;
   }
   nx_brk_0: ;
-  nx_string _t179 = nx_str_from(c, nx_lit(nx_str_1301, 68));
-  nx_string text_25 = _t179;
-  nx_sl_m16_Locked _t180 = ((nx_sl_m16_Locked){ lock_5.ptr, lock_5.len });
-  for (size_t _t181 = 0; _t181 < _t180.len; _t181++) {
-    nx_m16_Locked l_26 = _t180.ptr[_t181];
-    nx_string _t182 = {0}; _t182.ar = c->arena;
-    nx_sink _t183 = nx_sink_str(c, &_t182);
-    nx_sl_u8 _t184 = nx_str_slice((l_26).name_0);
-    nx_sl_u8 _t185 = nx_str_slice((l_26).source_1);
-    nx_sl_u8 _t186 = nx_str_slice((l_26).tag_2);
-    nx_sl_u8 _t187 = nx_str_slice((l_26).commit_3);
-    nx_w_sl(&_t183, _t184);
-    nx_w(&_t183, (const uint8_t*)nx_str_1283, 1);
-    nx_w_sl(&_t183, _t185);
-    nx_w(&_t183, (const uint8_t*)nx_str_1283, 1);
-    nx_w_sl(&_t183, _t186);
-    nx_w(&_t183, (const uint8_t*)nx_str_1283, 1);
-    nx_w_sl(&_t183, _t187);
-    nx_w(&_t183, (const uint8_t*)nx_str_547, 1);
-    nx_string _t188 = _t182;
-    nx_slice_check(0, _t188.len, _t188.len, "self/manifest.nx:343");
-    nx_sl_u8 _t189 = ((nx_sl_u8){ nx_padd(_t188.ptr, 0), _t188.len - 0 });
-    nx_str_append(c, &(text_25), _t189.ptr, _t189.len);
-    nx_drop_string(c, &_t188);
+  nx_string _t182 = nx_str_from(c, nx_lit(nx_str_1301, 68));
+  nx_string text_25 = _t182;
+  nx_sl_m16_Locked _t183 = ((nx_sl_m16_Locked){ lock_5.ptr, lock_5.len });
+  for (size_t _t184 = 0; _t184 < _t183.len; _t184++) {
+    nx_m16_Locked l_26 = _t183.ptr[_t184];
+    nx_string _t185 = {0}; _t185.ar = c->arena;
+    nx_sink _t186 = nx_sink_str(c, &_t185);
+    nx_sl_u8 _t187 = nx_str_slice((l_26).name_0);
+    nx_sl_u8 _t188 = nx_str_slice((l_26).source_1);
+    nx_sl_u8 _t189 = nx_str_slice((l_26).tag_2);
+    nx_sl_u8 _t190 = nx_str_slice((l_26).commit_3);
+    nx_w_sl(&_t186, _t187);
+    nx_w(&_t186, (const uint8_t*)nx_str_1283, 1);
+    nx_w_sl(&_t186, _t188);
+    nx_w(&_t186, (const uint8_t*)nx_str_1283, 1);
+    nx_w_sl(&_t186, _t189);
+    nx_w(&_t186, (const uint8_t*)nx_str_1283, 1);
+    nx_w_sl(&_t186, _t190);
+    nx_w(&_t186, (const uint8_t*)nx_str_547, 1);
+    nx_string _t191 = _t185;
+    nx_slice_check(0, _t191.len, _t191.len, "self/manifest.nx:348");
+    nx_sl_u8 _t192 = ((nx_sl_u8){ nx_padd(_t191.ptr, 0), _t191.len - 0 });
+    nx_str_append(c, &(text_25), _t192.ptr, _t192.len);
+    nx_drop_string(c, &_t191);
     nx_cont_4: ;
   }
   nx_brk_4: ;
-  nx_slice_check(0, (*root_0).dir_3.len, (*root_0).dir_3.len, "self/manifest.nx:344");
-  nx_sl_u8 _t190 = ((nx_sl_u8){ nx_padd((*root_0).dir_3.ptr, 0), (*root_0).dir_3.len - 0 });
-  nx_sl_u8 _t191 = nx_lit(nx_str_353, 11);
-  nx_string _t192 = nx_m30_join(c, _t190, _t191);
-  nx_string _t193 = _t192;
-  nx_slice_check(0, _t193.len, _t193.len, "self/manifest.nx:344");
-  nx_sl_u8 _t194 = ((nx_sl_u8){ nx_padd(_t193.ptr, 0), _t193.len - 0 });
-  nx_slice_check(0, text_25.len, text_25.len, "self/manifest.nx:344");
-  nx_sl_u8 _t195 = ((nx_sl_u8){ nx_padd(text_25.ptr, 0), text_25.len - 0 });
-  nx_eu_void _t196 = nx_m30_write(c, _t194, _t195);
-  nx_eu_void _t197 = _t196;
-  if (_t197.err) {
+  nx_slice_check(0, (*root_0).dir_3.len, (*root_0).dir_3.len, "self/manifest.nx:349");
+  nx_sl_u8 _t193 = ((nx_sl_u8){ nx_padd((*root_0).dir_3.ptr, 0), (*root_0).dir_3.len - 0 });
+  nx_sl_u8 _t194 = nx_lit(nx_str_353, 11);
+  nx_string _t195 = nx_m30_join(c, _t193, _t194);
+  nx_string _t196 = _t195;
+  nx_slice_check(0, _t196.len, _t196.len, "self/manifest.nx:349");
+  nx_sl_u8 _t197 = ((nx_sl_u8){ nx_padd(_t196.ptr, 0), _t196.len - 0 });
+  nx_slice_check(0, text_25.len, text_25.len, "self/manifest.nx:349");
+  nx_sl_u8 _t198 = ((nx_sl_u8){ nx_padd(text_25.ptr, 0), text_25.len - 0 });
+  nx_eu_void _t199 = nx_m30_write(c, _t197, _t198);
+  nx_eu_void _t200 = _t199;
+  if (_t200.err) {
     {
-      nx_sink _t198 = nx_sink_file(c, c->err);
-      nx_sl_u8 _t199 = nx_lit(nx_str_353, 11);
-      nx_w(&_t198, (const uint8_t*)nx_str_576, 20);
-      nx_w_sl(&_t198, _t199);
-      nx_w(&_t198, (const uint8_t*)"\n", 1);
-      nx_sink_flush(&_t198);
-      nx_eu_list_m16_Locked _t200 = ((nx_eu_list_m16_Locked){ .err = 8u });
-      nx_drop_string(c, &_t193);
+      nx_sink _t201 = nx_sink_file(c, c->err);
+      nx_sl_u8 _t202 = nx_lit(nx_str_353, 11);
+      nx_w(&_t201, (const uint8_t*)nx_str_576, 20);
+      nx_w_sl(&_t201, _t202);
+      nx_w(&_t201, (const uint8_t*)"\n", 1);
+      nx_sink_flush(&_t201);
+      nx_eu_list_m16_Locked _t203 = ((nx_eu_list_m16_Locked){ .err = 8u });
+      nx_drop_string(c, &_t196);
       nx_drop_string(c, &text_25);
       nx_drop_list_m16_Manifest(c, &queue_7);
       nx_drop_list_string(c, &done_6);
       nx_drop_list_m16_Locked(c, &lock_5);
       nx_drop_list_m16_Locked(c, &locked_4);
       nx_drop_string(c, &modules_3);
-      return _t200;
+      return _t203;
     }
   }
-  nx_list_m16_Locked _t201 = lock_5; memset(&lock_5, 0, sizeof lock_5);
-  nx_eu_list_m16_Locked _t202 = ((nx_eu_list_m16_Locked){ .err = 0, .val = _t201 });
-  nx_drop_string(c, &_t193);
+  nx_list_m16_Locked _t204 = lock_5; memset(&lock_5, 0, sizeof lock_5);
+  nx_eu_list_m16_Locked _t205 = ((nx_eu_list_m16_Locked){ .err = 0, .val = _t204 });
+  nx_drop_string(c, &_t196);
   nx_drop_string(c, &text_25);
   nx_drop_list_m16_Manifest(c, &queue_7);
   nx_drop_list_string(c, &done_6);
   nx_drop_list_m16_Locked(c, &lock_5);
   nx_drop_list_m16_Locked(c, &locked_4);
   nx_drop_string(c, &modules_3);
-  return _t202;
-  nx_drop_string(c, &_t193);
+  return _t205;
+  nx_drop_string(c, &_t196);
   nx_drop_string(c, &text_25);
   nx_drop_list_m16_Manifest(c, &queue_7);
   nx_drop_list_string(c, &done_6);
@@ -37776,7 +37782,7 @@ static nx_eu_list_string nx_m16_init(nx_ctx* c, nx_sl_u8 dir_0, nx_sl_u8 name_1)
   nx_sl_u8 _t1 = nx_lit(nx_str_352, 11);
   nx_string _t2 = nx_m30_join(c, dir_0, _t1);
   nx_string m_3 = _t2;
-  nx_slice_check(0, m_3.len, m_3.len, "self/manifest.nx:356");
+  nx_slice_check(0, m_3.len, m_3.len, "self/manifest.nx:361");
   nx_sl_u8 _t3 = ((nx_sl_u8){ nx_padd(m_3.ptr, 0), m_3.len - 0 });
   bool _t4 = nx_m30_exists(c, _t3);
     if (_t4)
@@ -37793,7 +37799,7 @@ static nx_eu_list_string nx_m16_init(nx_ctx* c, nx_sl_u8 dir_0, nx_sl_u8 name_1)
       nx_drop_list_string(c, &written_2);
       return _t7;
     }
-  nx_slice_check(0, m_3.len, m_3.len, "self/manifest.nx:360");
+  nx_slice_check(0, m_3.len, m_3.len, "self/manifest.nx:365");
   nx_sl_u8 _t8 = ((nx_sl_u8){ nx_padd(m_3.ptr, 0), m_3.len - 0 });
   nx_string _t9 = {0}; _t9.ar = c->arena;
   nx_sink _t10 = nx_sink_str(c, &_t9);
@@ -37801,7 +37807,7 @@ static nx_eu_list_string nx_m16_init(nx_ctx* c, nx_sl_u8 dir_0, nx_sl_u8 name_1)
   nx_w_sl(&_t10, name_1);
   nx_w(&_t10, (const uint8_t*)nx_str_1304, 36);
   nx_string _t11 = _t9;
-  nx_slice_check(0, _t11.len, _t11.len, "self/manifest.nx:360");
+  nx_slice_check(0, _t11.len, _t11.len, "self/manifest.nx:365");
   nx_sl_u8 _t12 = ((nx_sl_u8){ nx_padd(_t11.ptr, 0), _t11.len - 0 });
   nx_eu_void _t13 = nx_m30_write(c, _t8, _t12);
   nx_eu_void _t14 = _t13;
@@ -37840,7 +37846,7 @@ static nx_eu_list_string nx_m16_init(nx_ctx* c, nx_sl_u8 dir_0, nx_sl_u8 name_1)
   nx_sl_string _t25 = ((nx_sl_string){ entries_5.ptr, entries_5.len });
   for (size_t _t26 = 0; _t26 < _t25.len; _t26++) {
     nx_string e_6 = _t25.ptr[_t26];
-    nx_slice_check(0, e_6.len, e_6.len, "self/manifest.nx:367");
+    nx_slice_check(0, e_6.len, e_6.len, "self/manifest.nx:372");
     nx_sl_u8 _t27 = ((nx_sl_u8){ nx_padd(e_6.ptr, 0), e_6.len - 0 });
       if (nx_sl_ends_with(_t27, nx_lit(nx_str_998, 3)))
       {
@@ -37853,7 +37859,7 @@ static nx_eu_list_string nx_m16_init(nx_ctx* c, nx_sl_u8 dir_0, nx_sl_u8 name_1)
     {
       nx_string _t28 = nx_m30_join(c, dir_0, nx_lit(nx_str_1305, 7));
       nx_string main_7 = _t28;
-      nx_slice_check(0, main_7.len, main_7.len, "self/manifest.nx:370");
+      nx_slice_check(0, main_7.len, main_7.len, "self/manifest.nx:375");
       nx_sl_u8 _t29 = ((nx_sl_u8){ nx_padd(main_7.ptr, 0), main_7.len - 0 });
       nx_eu_void _t30 = nx_m30_write(c, _t29, nx_lit(nx_str_1306, 62));
       nx_eu_void _t31 = _t30;
@@ -37932,7 +37938,7 @@ static nx_eu_void nx_m16_add(nx_ctx* c, nx_sl_u8 manifest_path_0, nx_m16_Dep* de
           nx_w_sl(&_t12, _t13);
           nx_w(&_t12, (const uint8_t*)nx_str_658, 1);
           nx_string _t14 = _t11;
-          nx_slice_check(0, _t14.len, _t14.len, "self/manifest.nx:388");
+          nx_slice_check(0, _t14.len, _t14.len, "self/manifest.nx:393");
           nx_sl_u8 _t15 = ((nx_sl_u8){ nx_padd(_t14.ptr, 0), _t14.len - 0 });
           nx_str_append(c, &(fields_4), _t15.ptr, _t15.len);
           nx_drop_string(c, &_t14);
@@ -37946,7 +37952,7 @@ static nx_eu_void nx_m16_add(nx_ctx* c, nx_sl_u8 manifest_path_0, nx_m16_Dep* de
           nx_w_sl(&_t17, _t18);
           nx_w(&_t17, (const uint8_t*)nx_str_658, 1);
           nx_string _t19 = _t16;
-          nx_slice_check(0, _t19.len, _t19.len, "self/manifest.nx:389");
+          nx_slice_check(0, _t19.len, _t19.len, "self/manifest.nx:394");
           nx_sl_u8 _t20 = ((nx_sl_u8){ nx_padd(_t19.ptr, 0), _t19.len - 0 });
           nx_str_append(c, &(fields_4), _t20.ptr, _t20.len);
           nx_drop_string(c, &_t19);
@@ -38014,55 +38020,55 @@ static nx_eu_void nx_m16_add(nx_ctx* c, nx_sl_u8 manifest_path_0, nx_m16_Dep* de
     }
   nx_string _t38 = {0}; _t38.ar = c->arena;
   nx_string out_7 = _t38;
-  nx_slice_check(0, text_2.len, text_2.len, "self/manifest.nx:400");
+  nx_slice_check(0, text_2.len, text_2.len, "self/manifest.nx:405");
   nx_sl_u8 _t39 = ((nx_sl_u8){ nx_padd(text_2.ptr, 0), text_2.len - 0 });
   nx_opt_usize _t40; { size_t _i; _t40.has = nx_sl_find(_t39, nx_lit(nx_str_1315, 14), &_i); _t40.val = _i; }
   nx_opt_usize _t41 = _t40;
     if (_t41.has) {
       size_t i_8 = _t41.val;
       {
-        size_t after_9 = nx_add_usize(i_8, ((nx_lit(nx_str_1315, 14)).len), "self/manifest.nx:401");
+        size_t after_9 = nx_add_usize(i_8, ((nx_lit(nx_str_1315, 14)).len), "self/manifest.nx:406");
         size_t nl_10 = ((text_2).len);
-        nx_slice_check(after_9, text_2.len, text_2.len, "self/manifest.nx:403");
+        nx_slice_check(after_9, text_2.len, text_2.len, "self/manifest.nx:408");
         nx_sl_u8 _t42 = ((nx_sl_u8){ nx_padd(text_2.ptr, after_9), text_2.len - after_9 });
         nx_opt_usize _t43; { size_t _i; _t43.has = nx_sl_find(_t42, nx_lit(nx_str_547, 1), &_i); _t43.val = _i; }
         nx_opt_usize _t44 = _t43;
           if (_t44.has) {
             size_t k_11 = _t44.val;
             {
-              nl_10 = nx_add_usize(nx_add_usize(after_9, k_11, "self/manifest.nx:403"), ((size_t)1ULL), "self/manifest.nx:403");
+              nl_10 = nx_add_usize(nx_add_usize(after_9, k_11, "self/manifest.nx:408"), ((size_t)1ULL), "self/manifest.nx:408");
             }
           }
-        nx_slice_check(((size_t)0ULL), nl_10, text_2.len, "self/manifest.nx:404");
+        nx_slice_check(((size_t)0ULL), nl_10, text_2.len, "self/manifest.nx:409");
         nx_sl_u8 _t45 = ((nx_sl_u8){ nx_padd(text_2.ptr, ((size_t)0ULL)), nl_10 - ((size_t)0ULL) });
         nx_str_append(c, &(out_7), _t45.ptr, _t45.len);
-        nx_slice_check(0, line_3.len, line_3.len, "self/manifest.nx:405");
+        nx_slice_check(0, line_3.len, line_3.len, "self/manifest.nx:410");
         nx_sl_u8 _t46 = ((nx_sl_u8){ nx_padd(line_3.ptr, 0), line_3.len - 0 });
         nx_str_append(c, &(out_7), _t46.ptr, _t46.len);
-        nx_slice_check(nl_10, text_2.len, text_2.len, "self/manifest.nx:406");
+        nx_slice_check(nl_10, text_2.len, text_2.len, "self/manifest.nx:411");
         nx_sl_u8 _t47 = ((nx_sl_u8){ nx_padd(text_2.ptr, nl_10), text_2.len - nl_10 });
         nx_str_append(c, &(out_7), _t47.ptr, _t47.len);
       }
     }
     else
     {
-      nx_slice_check(0, text_2.len, text_2.len, "self/manifest.nx:408");
+      nx_slice_check(0, text_2.len, text_2.len, "self/manifest.nx:413");
       nx_sl_u8 _t48 = ((nx_sl_u8){ nx_padd(text_2.ptr, 0), text_2.len - 0 });
       nx_str_append(c, &(out_7), _t48.ptr, _t48.len);
       bool _t49 = ((((out_7).len)) == (((size_t)0ULL)));
       if (!_t49) {
-        _t49 = ((out_7.ptr[nx_idx(nx_sub_usize(((out_7).len), ((size_t)1ULL), "self/manifest.nx:409"), out_7.len, "self/manifest.nx:409")]) != (((uint8_t)10ULL)));
+        _t49 = ((out_7.ptr[nx_idx(nx_sub_usize(((out_7).len), ((size_t)1ULL), "self/manifest.nx:414"), out_7.len, "self/manifest.nx:414")]) != (((uint8_t)10ULL)));
       }
         if (_t49)
         {
           nx_str_append(c, &(out_7), nx_lit(nx_str_547, 1).ptr, nx_lit(nx_str_547, 1).len);
         }
       nx_str_append(c, &(out_7), nx_lit(nx_str_1316, 16).ptr, nx_lit(nx_str_1316, 16).len);
-      nx_slice_check(0, line_3.len, line_3.len, "self/manifest.nx:411");
+      nx_slice_check(0, line_3.len, line_3.len, "self/manifest.nx:416");
       nx_sl_u8 _t50 = ((nx_sl_u8){ nx_padd(line_3.ptr, 0), line_3.len - 0 });
       nx_str_append(c, &(out_7), _t50.ptr, _t50.len);
     }
-  nx_slice_check(0, out_7.len, out_7.len, "self/manifest.nx:413");
+  nx_slice_check(0, out_7.len, out_7.len, "self/manifest.nx:418");
   nx_sl_u8 _t51 = ((nx_sl_u8){ nx_padd(out_7.ptr, 0), out_7.len - 0 });
   nx_eu_void _t52 = nx_m30_write(c, manifest_path_0, _t51);
   nx_eu_void _t53 = _t52;
@@ -38090,35 +38096,35 @@ static nx_eu_void nx_test_289(nx_ctx* c) {
   NX_UNUSED(c);
   nx_string _t1 = nx_m30_temp_path(c, nx_lit(nx_str_1317, 12));
   nx_string dir_0 = _t1;
-  nx_slice_check(0, dir_0.len, dir_0.len, "self/manifest.nx:421");
+  nx_slice_check(0, dir_0.len, dir_0.len, "self/manifest.nx:426");
   nx_sl_u8 _t2 = ((nx_sl_u8){ nx_padd(dir_0.ptr, 0), dir_0.len - 0 });
   nx_eu_void _t3 = nx_m30_make_dirs(c, _t2);
   nx_eu_void _t4 = _t3;
   if (_t4.err) {
     {
-      if (!(false)) nx_panic("expectation failed: false", "self/manifest.nx:422");
+      if (!(false)) nx_panic("expectation failed: false", "self/manifest.nx:427");
       nx_drop_string(c, &dir_0);
       return (nx_eu_void){ .err = 0 };
     }
   }
-  nx_slice_check(0, dir_0.len, dir_0.len, "self/manifest.nx:425");
+  nx_slice_check(0, dir_0.len, dir_0.len, "self/manifest.nx:430");
   nx_sl_u8 _t5 = ((nx_sl_u8){ nx_padd(dir_0.ptr, 0), dir_0.len - 0 });
   nx_sl_u8 _t6 = nx_lit(nx_str_352, 11);
   nx_string _t7 = nx_m30_join(c, _t5, _t6);
   nx_string file_1 = _t7;
-  nx_slice_check(0, file_1.len, file_1.len, "self/manifest.nx:426");
+  nx_slice_check(0, file_1.len, file_1.len, "self/manifest.nx:431");
   nx_sl_u8 _t8 = ((nx_sl_u8){ nx_padd(file_1.ptr, 0), file_1.len - 0 });
   nx_eu_void _t9 = nx_m30_write(c, _t8, nx_lit(nx_str_1318, 138));
   nx_eu_void _t10 = _t9;
   if (_t10.err) {
     {
-      if (!(false)) nx_panic("expectation failed: false", "self/manifest.nx:427");
+      if (!(false)) nx_panic("expectation failed: false", "self/manifest.nx:432");
       nx_drop_string(c, &file_1);
       nx_drop_string(c, &dir_0);
       return (nx_eu_void){ .err = 0 };
     }
   }
-  nx_slice_check(0, file_1.len, file_1.len, "self/manifest.nx:430");
+  nx_slice_check(0, file_1.len, file_1.len, "self/manifest.nx:435");
   nx_sl_u8 _t11 = ((nx_sl_u8){ nx_padd(file_1.ptr, 0), file_1.len - 0 });
   nx_eu_m16_Manifest _t12 = nx_m16_read(c, _t11);
   nx_eu_m16_Manifest _t13 = _t12;
@@ -38126,36 +38132,36 @@ static nx_eu_void nx_test_289(nx_ctx* c) {
   if (_t13.err) {
     nx_m16_Manifest _t15;
       {
-        if (!(false)) nx_panic("expectation failed: false", "self/manifest.nx:431");
+        if (!(false)) nx_panic("expectation failed: false", "self/manifest.nx:436");
         nx_drop_string(c, &file_1);
         nx_drop_string(c, &dir_0);
         return (nx_eu_void){ .err = 0 };
       }
   } else { _t14 = _t13.val; }
   nx_m16_Manifest m_2 = _t14;
-  nx_slice_check(0, m_2.name_0.len, m_2.name_0.len, "self/manifest.nx:434");
+  nx_slice_check(0, m_2.name_0.len, m_2.name_0.len, "self/manifest.nx:439");
   nx_sl_u8 _t16 = ((nx_sl_u8){ nx_padd(m_2.name_0.ptr, 0), m_2.name_0.len - 0 });
   bool _t17 = nx_sl_eq(_t16, nx_lit(nx_str_706, 3));
-  if (!(_t17)) nx_panic("expectation failed: expect_eq(m.name[..], \"app\")", "self/manifest.nx:434");
-  nx_slice_check(0, m_2.version_1.len, m_2.version_1.len, "self/manifest.nx:435");
+  if (!(_t17)) nx_panic("expectation failed: expect_eq(m.name[..], \"app\")", "self/manifest.nx:439");
+  nx_slice_check(0, m_2.version_1.len, m_2.version_1.len, "self/manifest.nx:440");
   nx_sl_u8 _t18 = ((nx_sl_u8){ nx_padd(m_2.version_1.ptr, 0), m_2.version_1.len - 0 });
   bool _t19 = nx_sl_eq(_t18, nx_lit(nx_str_1319, 3));
-  if (!(_t19)) nx_panic("expectation failed: expect_eq(m.version[..], \"1.0\")", "self/manifest.nx:435");
+  if (!(_t19)) nx_panic("expectation failed: expect_eq(m.version[..], \"1.0\")", "self/manifest.nx:440");
   bool _t20 = (((((m_2).deps_2).len)) == (((size_t)2ULL)));
-  if (!(_t20)) nx_panic("expectation failed: expect_eq(m.deps.len, 2)", "self/manifest.nx:436");
-  nx_slice_check(0, m_2.deps_2.ptr[nx_idx(((size_t)0ULL), m_2.deps_2.len, "self/manifest.nx:437")].git_1.len, m_2.deps_2.ptr[nx_idx(((size_t)0ULL), m_2.deps_2.len, "self/manifest.nx:437")].git_1.len, "self/manifest.nx:437");
-  nx_sl_u8 _t21 = ((nx_sl_u8){ nx_padd(m_2.deps_2.ptr[nx_idx(((size_t)0ULL), m_2.deps_2.len, "self/manifest.nx:437")].git_1.ptr, 0), m_2.deps_2.ptr[nx_idx(((size_t)0ULL), m_2.deps_2.len, "self/manifest.nx:437")].git_1.len - 0 });
+  if (!(_t20)) nx_panic("expectation failed: expect_eq(m.deps.len, 2)", "self/manifest.nx:441");
+  nx_slice_check(0, m_2.deps_2.ptr[nx_idx(((size_t)0ULL), m_2.deps_2.len, "self/manifest.nx:442")].git_1.len, m_2.deps_2.ptr[nx_idx(((size_t)0ULL), m_2.deps_2.len, "self/manifest.nx:442")].git_1.len, "self/manifest.nx:442");
+  nx_sl_u8 _t21 = ((nx_sl_u8){ nx_padd(m_2.deps_2.ptr[nx_idx(((size_t)0ULL), m_2.deps_2.len, "self/manifest.nx:442")].git_1.ptr, 0), m_2.deps_2.ptr[nx_idx(((size_t)0ULL), m_2.deps_2.len, "self/manifest.nx:442")].git_1.len - 0 });
   bool _t22 = nx_sl_eq(_t21, nx_lit(nx_str_1320, 11));
-  if (!(_t22)) nx_panic("expectation failed: expect_eq(m.deps[0].git[..], \"https://x/y\")", "self/manifest.nx:437");
-  nx_slice_check(0, m_2.deps_2.ptr[nx_idx(((size_t)0ULL), m_2.deps_2.len, "self/manifest.nx:438")].tag_2.len, m_2.deps_2.ptr[nx_idx(((size_t)0ULL), m_2.deps_2.len, "self/manifest.nx:438")].tag_2.len, "self/manifest.nx:438");
-  nx_sl_u8 _t23 = ((nx_sl_u8){ nx_padd(m_2.deps_2.ptr[nx_idx(((size_t)0ULL), m_2.deps_2.len, "self/manifest.nx:438")].tag_2.ptr, 0), m_2.deps_2.ptr[nx_idx(((size_t)0ULL), m_2.deps_2.len, "self/manifest.nx:438")].tag_2.len - 0 });
+  if (!(_t22)) nx_panic("expectation failed: expect_eq(m.deps[0].git[..], \"https://x/y\")", "self/manifest.nx:442");
+  nx_slice_check(0, m_2.deps_2.ptr[nx_idx(((size_t)0ULL), m_2.deps_2.len, "self/manifest.nx:443")].tag_2.len, m_2.deps_2.ptr[nx_idx(((size_t)0ULL), m_2.deps_2.len, "self/manifest.nx:443")].tag_2.len, "self/manifest.nx:443");
+  nx_sl_u8 _t23 = ((nx_sl_u8){ nx_padd(m_2.deps_2.ptr[nx_idx(((size_t)0ULL), m_2.deps_2.len, "self/manifest.nx:443")].tag_2.ptr, 0), m_2.deps_2.ptr[nx_idx(((size_t)0ULL), m_2.deps_2.len, "self/manifest.nx:443")].tag_2.len - 0 });
   bool _t24 = nx_sl_eq(_t23, nx_lit(nx_str_1321, 2));
-  if (!(_t24)) nx_panic("expectation failed: expect_eq(m.deps[0].tag[..], \"v1\")", "self/manifest.nx:438");
-  nx_slice_check(0, m_2.deps_2.ptr[nx_idx(((size_t)1ULL), m_2.deps_2.len, "self/manifest.nx:439")].path_3.len, m_2.deps_2.ptr[nx_idx(((size_t)1ULL), m_2.deps_2.len, "self/manifest.nx:439")].path_3.len, "self/manifest.nx:439");
-  nx_sl_u8 _t25 = ((nx_sl_u8){ nx_padd(m_2.deps_2.ptr[nx_idx(((size_t)1ULL), m_2.deps_2.len, "self/manifest.nx:439")].path_3.ptr, 0), m_2.deps_2.ptr[nx_idx(((size_t)1ULL), m_2.deps_2.len, "self/manifest.nx:439")].path_3.len - 0 });
+  if (!(_t24)) nx_panic("expectation failed: expect_eq(m.deps[0].tag[..], \"v1\")", "self/manifest.nx:443");
+  nx_slice_check(0, m_2.deps_2.ptr[nx_idx(((size_t)1ULL), m_2.deps_2.len, "self/manifest.nx:444")].path_3.len, m_2.deps_2.ptr[nx_idx(((size_t)1ULL), m_2.deps_2.len, "self/manifest.nx:444")].path_3.len, "self/manifest.nx:444");
+  nx_sl_u8 _t25 = ((nx_sl_u8){ nx_padd(m_2.deps_2.ptr[nx_idx(((size_t)1ULL), m_2.deps_2.len, "self/manifest.nx:444")].path_3.ptr, 0), m_2.deps_2.ptr[nx_idx(((size_t)1ULL), m_2.deps_2.len, "self/manifest.nx:444")].path_3.len - 0 });
   bool _t26 = nx_sl_eq(_t25, nx_lit(nx_str_1322, 6));
-  if (!(_t26)) nx_panic("expectation failed: expect_eq(m.deps[1].path[..], \"../loc\")", "self/manifest.nx:439");
-  nx_slice_check(0, file_1.len, file_1.len, "self/manifest.nx:440");
+  if (!(_t26)) nx_panic("expectation failed: expect_eq(m.deps[1].path[..], \"../loc\")", "self/manifest.nx:444");
+  nx_slice_check(0, file_1.len, file_1.len, "self/manifest.nx:445");
   nx_sl_u8 _t27 = ((nx_sl_u8){ nx_padd(file_1.ptr, 0), file_1.len - 0 });
   nx_eu_void _t28 = nx_m30_write(c, _t27, nx_lit(nx_str_1323, 38));
   nx_eu_void _t29 = _t28;
@@ -38164,7 +38170,7 @@ static nx_eu_void nx_test_289(nx_ctx* c) {
     }
   }
   bool refused_3 = false;
-  nx_slice_check(0, file_1.len, file_1.len, "self/manifest.nx:442");
+  nx_slice_check(0, file_1.len, file_1.len, "self/manifest.nx:447");
   nx_sl_u8 _t30 = ((nx_sl_u8){ nx_padd(file_1.ptr, 0), file_1.len - 0 });
   nx_eu_m16_Manifest _t31 = nx_m16_read(c, _t30);
   nx_eu_m16_Manifest _t32 = _t31;
@@ -38186,8 +38192,8 @@ static nx_eu_void nx_test_289(nx_ctx* c) {
   } else { _t33 = _t32.val; }
   nx_m16_Manifest _t42 = _t33;
   nx_drop_m16_Manifest(c, &_t42);
-  if (!(refused_3)) nx_panic("expectation failed: refused", "self/manifest.nx:446");
-  nx_slice_check(0, dir_0.len, dir_0.len, "self/manifest.nx:447");
+  if (!(refused_3)) nx_panic("expectation failed: refused", "self/manifest.nx:451");
+  nx_slice_check(0, dir_0.len, dir_0.len, "self/manifest.nx:452");
   nx_sl_u8 _t43 = ((nx_sl_u8){ nx_padd(dir_0.ptr, 0), dir_0.len - 0 });
   nx_eu_void _t44 = nx_m30_remove_all(c, _t43);
   nx_eu_void _t45 = _t44;
