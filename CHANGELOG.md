@@ -214,6 +214,17 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   select and timeouts `sync.wait_for` (a condition wait with a timeout) and
   bells (`sync.bell_new`, `bell_ring`, `bell_wait`, `bell_free`). The tests
   run clean under ThreadSanitizer as under ASan and UBSan.
+- Grapheme clusters in `std.text`: `grapheme_end(s, i)`, `graphemes`,
+  `grapheme_count` and `truncate_graphemes`, by Unicode's extended grapheme
+  clusters (UAX #29, Unicode 16.0), Indic conjuncts (GB9c) and emoji ZWJ
+  sequences included. Checked against ICU (Node's `Intl.Segmenter`, Unicode
+  17) on 200,000 random strings drawn from every break class: all 887
+  differences are data Unicode 17 changed (U+11A3A no longer Prepend, some
+  tiles no longer pictographs, more viramas joining conjuncts).
+- `text.scalars(s)` gives the text's `char`s, `text.fold` and `fold_char`
+  case-fold (full and simple), `pad_left` right-aligns in terminal columns,
+  `truncate_width` cuts to a width between grapheme clusters, and
+  `UNICODE_VERSION` names the tables' version.
 
 ### Changed
 
@@ -254,6 +265,19 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   routes and the way down. Before, 2.0.0 would have stood on Everest's
   summit with its route still to climb. The rule, the plan and every
   mountain's range in `docs/release-names.md` follow.
+- `std.text` maps case and measures width from Unicode 16.0's tables
+  (`scripts/unicode_tables.py` generates them from the character database
+  as Perl compiles it, which Git for Windows ships): `to_upper` and
+  `to_lower` use the full mappings of every script (`straße` is `STRASSE`,
+  `ﬁ` is `FI`, and Armenian, Georgian, Cherokee, Deseret and the rest map,
+  where fixed offsets reached Latin, Greek and Cyrillic only), `to_lower`
+  writes a final sigma where a word ends, `eq_ignore_case` compares by full
+  case folding (`Straße` equals `STRASSE`), `upper_char` and `lower_char`
+  follow the simple mappings, and `width` counts grapheme clusters (an
+  emoji sequence or a flag takes two columns) with `is_zero_width` and
+  `is_wide` covering every script. Every code point Python 3.13 (Unicode
+  15.1) knows maps as it does, but the two capitals Unicode 16 added (for
+  ƛ and ɤ).
 - A started program inherits its three standard streams and nothing else:
   on Windows `process.run`, `process.exec` and `process.start` hand over
   only those handles (a handle list), and elsewhere their pipes close on
