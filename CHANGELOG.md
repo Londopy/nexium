@@ -13,10 +13,26 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 ### Added
 
 - CI checks the links between the repository's Markdown files
-  (`scripts/check_links.py`, in the lint job): every relative link must
-  name a file that exists, spelled with its case, and every `#anchor` a
-  heading of that page as GitHub makes its anchors, translations included.
-  The translations' index had promised this check; it runs now.
+  (`scripts/check_links.py`, in the lint job of CI and of CI (prose), so a
+  change to Markdown alone is checked too): every relative link must name a
+  file that exists, spelled with its case, and every `#anchor` a heading of
+  that page as GitHub makes its anchors, translations included. The
+  translations' index had promised this check; it runs now.
+
+### Fixed
+
+- The Spanish, Japanese and Chinese translations of the language reference
+  and of the tour of the compiler (`docs/i18n/*/language.md` and
+  `architecture.md`) are translated again from the current English. They
+  dated from 0.1, patched once at 1.2: they described the compiler in Rust
+  and lacked everything since, from `own` parameters and benchmarks to the
+  sockets, TLS, threads and child processes of the standard library. The
+  Japanese and Chinese pages keep each paragraph on one line, since a line
+  break between two characters shows in a browser as a space.
+- `docs/architecture.md` gave the runtime as 900 lines (it is about 4,200)
+  and listed none of the platform layer added since: sockets, TLS, threads,
+  child processes. `docs/language.md` left `net`, `thread` and `sync` out of
+  the builtin namespaces.
 
 ## [1.4.0] - 2026-09-25
 

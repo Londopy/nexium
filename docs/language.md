@@ -7,11 +7,12 @@ to `nexium-spec.txt` (the design) and, where marked "archived", to
 ## Files and modules
 
 A file is a module. `import foo.bar` loads `foo/bar.nx` next to the root file;
-its `pub` items are reached as `bar.item`. `import std.strings` (and
-`std.lists`, `std.bytes`, `std.num`) loads a module of the standard library,
-which is written in Nexium and embedded in the compiler; see
+its `pub` items are reached as `bar.item`. `import std.strings` loads a
+module of the standard library (`std.json`, `std.fs`, `std.http` and the
+others), which is written in Nexium and embedded in the compiler; see
 [`std.md`](std.md). The builtin namespaces `math`, `io`, `os`, `time`,
-`random`, `mem`, and `process` are always in scope and need no import.
+`random`, `mem`, `process`, `net`, `thread`, and `sync` are always in scope
+and need no import.
 
 ## Lexical structure (archived 4)
 

@@ -18,8 +18,9 @@ the tools (`fmt.nx`, `doc.nx`, `tools.nx`, `size.nx`, `manifest.nx`,
 
 ## The one-paragraph version
 
-`nx` reads `.nx` source, checks it, and writes one C file. That C file includes `runtime/nx_rt.h` (900 lines of
-plain C embedded in the compiler binary) and is handed to `zig cc`, which is
+`nx` reads `.nx` source, checks it, and writes one C file. That C file
+includes `runtime/nx_rt.h` (about 4,200 lines of plain C embedded in the
+compiler binary) and is handed to `zig cc`, which is
 Clang with a cross-compiling libc bundled in. There is no garbage collector,
 no virtual machine, and no runtime library to install: the output is a native
 executable, shared library, or static archive that depends only on the C
@@ -65,7 +66,7 @@ and so does a line ending in a binary operator or an open bracket.
 
 ### 3. Checker (`self/check.nx` and `self/check_*.nx`)
 
-The largest part of the compiler, about 15,000 lines. It turns the syntax
+The largest part of the compiler, about 16,000 lines. It turns the syntax
 tree into the typed IR (`Tir`, another id-arena, `TKind` per node) and
 produces every diagnostic. Its state is one struct, `Checker`, in
 `check.nx`, with the core: types, definitions, loading, instances and the
@@ -224,7 +225,9 @@ top of every generated file. Its sections: slices, the allocator interface,
 panics, the default (malloc) allocator with optional leak tracking, arenas,
 the parallel-for thread pool, lists, strings, formatting, hash maps,
 reference counting, binary pattern helpers, checked arithmetic, and the
-platform bits (file I/O, time, process spawning) for Windows and POSIX.
+platform bits for Windows and POSIX: the file system and file handles, time,
+starting programs and child processes, sockets, TLS through the system's own
+library, threads, and raw terminal input.
 
 Reference counting is a two-word header (`rc`, `weak`) in front of every
 `ref class` object. `nx_retain` is an inlined increment in the runtime; the

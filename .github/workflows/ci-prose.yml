@@ -3,7 +3,8 @@ name: CI (prose)
 # The CI workflow skips a push or pull request that changes only prose and
 # pictures. Main requires its checks, so this workflow answers for them on
 # those changes with the same job names: the compiler's checks report
-# "nothing to build", and the changelog is validated for real. GitHub's
+# "nothing to build", and the changelog and the links between the Markdown
+# files are checked for real. GitHub's
 # documented shape for a required check that a path filter would otherwise
 # leave pending. The path list mirrors ci.yml's paths-ignore.
 
@@ -53,9 +54,14 @@ jobs:
 
   lint:
     name: lint
+    # no Nexium source changed, so nothing to format; the links between the
+    # Markdown files are what a prose change can break, so they are checked
+    # here as in ci.yml's lint job
     runs-on: ubuntu-latest
     steps:
-      - run: echo "prose only; nothing to format"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: The links between files resolve
+        run: python3 scripts/check_links.py
 
   changelog:
     name: changelog
