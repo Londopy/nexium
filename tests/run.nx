@@ -698,6 +698,14 @@ fn suite_fmt(e: *Env, failures: *mut List(String)) {
     let mf = nx(e, ["fmt", minus[..]][..])
     let mgot = normalize((fs.read(minus[..]) catch { String.new() })[..])
     if mf.code != 0 or mgot[..] != mwant { failures.append(format("fmt: unary `-(` spacing (exit {}):\n{}{}", .{mf.code, mgot, mf.stderr})) }
+    // a `*` after a type's `[]` or `[N]` is a pointer's; after an index it multiplies
+    let ptrs = fs.join(e.root[..], "nx-out/cases/slice_of_pointers.nx")
+    let stext = "fn f(xs: [] * mut Point, ys: [4]* u8, zs: []i64, m: [][]i64, i: usize) -> [] *Point {\n    let a = zs[i]*2 - zs[0]&3\n    let b = m[i][0]-1\n    let c: []*mut Point = xs\n    let d = [1, 2][i]*3 - [7][..].len\n    return c\n}\n"
+    let swant = "fn f(xs: []*mut Point, ys: [4]*u8, zs: []i64, m: [][]i64, i: usize) -> []*Point {\n    let a = zs[i] * 2 - zs[0] & 3\n    let b = m[i][0] - 1\n    let c: []*mut Point = xs\n    let d = [1, 2][i] * 3 - [7][..].len\n    return c\n}\n"
+    fs.write(ptrs[..], stext) catch { }
+    let sf = nx(e, ["fmt", ptrs[..]][..])
+    let sgot = normalize((fs.read(ptrs[..]) catch { String.new() })[..])
+    if sf.code != 0 or sgot[..] != swant { failures.append(format("fmt: a slice of pointers (exit {}):\n{}{}", .{sf.code, sgot, sf.stderr})) }
     println("fmt: {} files", .{files.len})
 }
 

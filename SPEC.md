@@ -599,9 +599,13 @@ programmer's responsibility (**decided**, 39).
 
 Threads: `thread.start(f, arg)` runs a `fn(*mut T) -> void` value on a new
 thread with its own context and returns a handle; `thread.join` waits and
-re-raises a panic from the thread. `sync.*` provides mutexes and condition
-variables as handles. `std.thread` builds `Thread(T, R)`, `Worker(T)`,
-`Channel(T)` and `Mutex(T)` on these. Starting a thread carries the
+re-raises a panic from the thread; `thread.join_all` waits for every thread
+of a list before it re-raises the first panic among them. `sync.*` provides
+mutexes, condition variables (with a timed wait) and bells as handles, and
+atomic operations on an `i64`. `std.thread` builds `Thread(T, R)`,
+`Worker(T)`, `Channel(T)`, `Mutex(T)`, `Atomic`, `select` over channels, and
+`each` and `both`, whose threads all end before the call returns, on these.
+Starting a thread carries the
 `nondeterministic` and `shared_mutable` effects; joining, locking and
 waiting `block`. There is no async: blocking threads and channels are the
 concurrency model (decision 82).

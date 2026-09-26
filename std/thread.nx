@@ -1,5 +1,5 @@
-// std.thread: threads, channels and mutexes, written in Nexium over the
-// `thread.*` and `sync.*` primitives.
+// std.thread: threads, channels, select, mutexes and atomics, written in
+// Nexium over the `thread.*` and `sync.*` primitives.
 //
 // `import std.thread` then:
 //
@@ -17,12 +17,22 @@
 //     let n = counter.lock()                      // *mut i64 while held
 //     n.* += 1
 //     counter.unlock()
+//     var hits = thread.atomic(0)                 // an i64 changed without a lock
+//     _ = hits.add(1)
+//
+//     // two channels at once: which has a value (or closed), null after 1 s
+//     let which = thread.select2(Job, bool, &mut jobs, &mut quit, 1000) orelse continue
+//
+//     // threads that end before the call does, so they may point into locals
+//     thread.each(Stage, stages[..], run_stage)   // a thread for every item
+//     thread.both(Producer, Consumer, &mut p, produce, &mut c, consume)
 //
 // A thread function takes a pointer to its argument, which the `Thread`
-// owns until `join` returns the result. Channels and mutexes are values
-// that threads share by pointer; the owner must join every thread using
-// them before letting them go out of scope, and call `free` when done.
-// Panics inside a thread surface from `join`.
+// owns until `join` returns the result. Channels, mutexes and atomics are
+// values that threads share by pointer; the owner must join every thread
+// using them before letting them go out of scope (`each` and `both` do it
+// themselves), and call `free` when done. Panics inside a thread surface
+// from `join`. Timeouts are in milliseconds, and 0 waits for ever.
 
 /// The argument, function and result of one thread.
 pub struct Task(T, R){
@@ -121,10 +131,12 @@ pub struct Channel(T){
     lock: i64
     cond: i64
     closed: bool
+    // the bells of the selects waiting on it
+    watchers: List(i64)
 }
 
 pub fn channel(comptime T: type) -> Channel(T) {
-    return Channel(T){ .items = List(T).new(), .lock = sync.mutex_new(), .cond = sync.cond_new(), .closed = false }
+    return Channel(T){ .items = List(T).new(), .lock = sync.mutex_new(), .cond = sync.cond_new(), .closed = false, .watchers = List(i64).new() }
 }
 
 impl(T) Channel(T) {
@@ -132,6 +144,7 @@ impl(T) Channel(T) {
         sync.lock(self.lock)
         self.items.append(value)
         sync.signal(self.cond)
+        for w in self.watchers { sync.bell_ring(w) }
         sync.unlock(self.lock)
     }
 
@@ -139,6 +152,26 @@ impl(T) Channel(T) {
     pub fn recv(self: *mut Self) -> ?T {
         sync.lock(self.lock)
         while self.items.len == 0 and !self.closed { sync.wait(self.cond, self.lock) }
+        var out: ?T = null
+        if self.items.len > 0 { out = self.items.remove(0) }
+        sync.unlock(self.lock)
+        return out
+    }
+
+    /// The next value, waiting at most `ms` for one (0: for ever):
+    /// `error.Timeout` when none came in time, null when the channel is
+    /// closed and empty.
+    pub fn recv_for(self: *mut Self, ms: i64) -> !?T {
+        let start = time.monotonic()
+        sync.lock(self.lock)
+        while self.items.len == 0 and !self.closed {
+            let left = left_ms(start, ms)
+            if left == 0 {
+                sync.unlock(self.lock)
+                return error.Timeout
+            }
+            _ = sync.wait_for(self.cond, self.lock, left)
+        }
         var out: ?T = null
         if self.items.len > 0 { out = self.items.remove(0) }
         sync.unlock(self.lock)
@@ -159,7 +192,43 @@ impl(T) Channel(T) {
         sync.lock(self.lock)
         self.closed = true
         sync.broadcast(self.cond)
+        for w in self.watchers { sync.bell_ring(w) }
         sync.unlock(self.lock)
+    }
+
+    pub fn is_closed(self: *mut Self) -> bool {
+        sync.lock(self.lock)
+        let c = self.closed
+        sync.unlock(self.lock)
+        return c
+    }
+
+    // a select waits on this channel with its bell, or no longer
+    fn watch(self: *mut Self, bell: i64) {
+        sync.lock(self.lock)
+        self.watchers.append(bell)
+        sync.unlock(self.lock)
+    }
+
+    fn unwatch(self: *mut Self, bell: i64) {
+        sync.lock(self.lock)
+        var i: usize = 0
+        while i < self.watchers.len {
+            if self.watchers[i] == bell {
+                _ = self.watchers.remove(i)
+            } else {
+                i += 1
+            }
+        }
+        sync.unlock(self.lock)
+    }
+
+    // a value to take, or the end
+    fn ready(self: *mut Self) -> bool {
+        sync.lock(self.lock)
+        let r = self.items.len > 0 or self.closed
+        sync.unlock(self.lock)
+        return r
     }
 
     pub fn len(self: *mut Self) -> usize {
@@ -202,6 +271,138 @@ impl(T) Mutex(T) {
     /// Release the lock; after every user has stopped.
     pub fn free(self: *mut Self) {
         sync.mutex_free(self.lock)
+    }
+}
+
+// what is left of `ms` since `start` (from time.monotonic): -1 for no limit
+// when `ms` is 0, else at least 0
+fn left_ms(start: u64, ms: i64) -> i64 {
+    if ms <= 0 { return -1 }
+    let spent = @bitCast(i64, (time.monotonic() - start) / 1000000)
+    return if spent >= ms { 0 } else { ms - spent }
+}
+
+// ------------------------------------------------------------------ select
+
+/// Wait until one of two channels has a value or is closed: 0 for `a`, 1
+/// for `b` (`a` first when both are), or null when `ms` pass first (0:
+/// waits for ever). Then take the value with `try_recv`: another receiver
+/// may have taken it first, and a closed channel stays ready, so leave one
+/// out once it is closed and drained.
+pub fn select2(comptime A: type, comptime B: type, a: *mut Channel(A), b: *mut Channel(B), ms: i64) -> ?usize {
+    let bell = sync.bell_new()
+    a.watch(bell)
+    b.watch(bell)
+    let start = time.monotonic()
+    var got: ?usize = null
+    while true {
+        if a.ready() {
+            got = 0
+            break
+        }
+        if b.ready() {
+            got = 1
+            break
+        }
+        let left = left_ms(start, ms)
+        if left == 0 { break }
+        _ = sync.bell_wait(bell, left)
+    }
+    a.unwatch(bell)
+    b.unwatch(bell)
+    sync.bell_free(bell)
+    return got
+}
+
+/// `select2` over any number of channels of one type: the index of the
+/// first with a value or closed, or null when `ms` pass first (0: waits
+/// for ever).
+pub fn select(comptime T: type, chans: []*mut Channel(T), ms: i64) -> ?usize {
+    let bell = sync.bell_new()
+    for ch in chans { ch.watch(bell) }
+    let start = time.monotonic()
+    var got: ?usize = null
+    while got == null {
+        for ch, i in chans {
+            if ch.ready() {
+                got = i
+                break
+            }
+        }
+        if got != null { break }
+        let left = left_ms(start, ms)
+        if left == 0 { break }
+        _ = sync.bell_wait(bell, left)
+    }
+    for ch in chans { ch.unwatch(bell) }
+    sync.bell_free(bell)
+    return got
+}
+
+// ------------------------------------------------------------ scoped threads
+
+/// Run `f` on every item, each on a thread of its own, all at once, and
+/// return when every one has finished. Nothing started here outlives the
+/// call, so the items may point into the caller's locals, and the threads
+/// may wait on each other (the stages of a pipeline over channels). A panic
+/// in one is raised here once all have ended. To split work over the
+/// cores, `for parallel` is the tool.
+pub fn each(comptime T: type, items: []mut T, f: fn(*mut T) -> void) {
+    var hs = List(i64).with_capacity(items.len)
+    for i in 0..items.len {
+        hs.append(thread.start(f, &mut items[i]))
+    }
+    thread.join_all(hs[..])
+}
+
+/// Run `fa(a)` and `fb(b)` on two threads at once and return when both have
+/// finished, as `each` does.
+pub fn both(comptime A: type, comptime B: type, a: *mut A, fa: fn(*mut A) -> void, b: *mut B, fb: fn(*mut B) -> void) {
+    let ha = thread.start(fa, a)
+    let hb = thread.start(fb, b)
+    let hs = [ha, hb]
+    thread.join_all(hs[..])
+}
+
+// ------------------------------------------------------------------ atomics
+
+/// An integer threads read and change without a lock, each operation
+/// whole. Shared by pointer, like a `Mutex`; nothing to free.
+pub struct Atomic {
+    value: i64
+}
+
+pub fn atomic(value: i64) -> Atomic {
+    return Atomic{ .value = value }
+}
+
+impl Atomic {
+    pub fn load(self: *Self) -> i64 {
+        return sync.atomic_load(&self.value)
+    }
+
+    pub fn store(self: *mut Self, value: i64) {
+        sync.atomic_store(&mut self.value, value)
+    }
+
+    /// Add `n`; the value before.
+    pub fn add(self: *mut Self, n: i64) -> i64 {
+        return sync.atomic_add(&mut self.value, n)
+    }
+
+    /// Subtract `n`; the value before.
+    pub fn sub(self: *mut Self, n: i64) -> i64 {
+        return sync.atomic_add(&mut self.value, 0 - n)
+    }
+
+    /// Put `value` in; the value before.
+    pub fn swap(self: *mut Self, value: i64) -> i64 {
+        return sync.atomic_swap(&mut self.value, value)
+    }
+
+    /// Put `new` in if the value is `expected`; whether it was.
+    pub fn compare_swap(self: *mut Self, expected: i64, new: i64) -> bool {
+        return sync.atomic_cas(&mut self.value, expected, new)
     }
 }
 
@@ -287,4 +488,123 @@ test "mutex" {
     expect_eq(n.*, 10000)
     counter.unlock()
     counter.free()
+}
+
+struct Late {
+    out: *mut Channel(i64)
+    after_ms: u64
+}
+
+fn send_late(l: *mut Late) {
+    time.sleep(l.after_ms)
+    l.out.send(7)
+}
+
+test "a receive with a timeout" {
+    var ch = channel(i64)
+    var timed_out = false
+    _ = ch.recv_for(20) catch |e| {
+        timed_out = e == error.Timeout
+        null
+    }
+    expect(timed_out)
+    var w = run(Late, send_late, Late{ .out = &mut ch, .after_ms = 20 })
+    expect_eq((try ch.recv_for(5000)).?, 7)
+    w.join()
+    ch.close()
+    expect(try ch.recv_for(5000) == null)
+    expect(ch.is_closed())
+    ch.free()
+}
+
+test "select over channels" {
+    var jobs = channel(i64)
+    var quit = channel(bool)
+    // nothing yet: the wait runs out
+    expect(select2(i64, bool, &mut jobs, &mut quit, 20) == null)
+    // a value that comes while it waits
+    var w = run(Late, send_late, Late{ .out = &mut jobs, .after_ms = 20 })
+    expect_eq(select2(i64, bool, &mut jobs, &mut quit, 5000).?, 0)
+    expect_eq(jobs.try_recv().?, 7)
+    w.join()
+    // a closed channel is ready, and stays so
+    quit.close()
+    expect_eq(select2(i64, bool, &mut jobs, &mut quit, 5000).?, 1)
+    expect(quit.try_recv() == null)
+    expect_eq(select2(i64, bool, &mut jobs, &mut quit, 5000).?, 1)
+    // many of one type: the first ready
+    var a = channel(i64)
+    var b = channel(i64)
+    b.send(1)
+    a.send(2)
+    let chans = [&mut jobs, &mut a, &mut b]
+    expect_eq(select(i64, chans[..], 0).?, 1)
+    expect_eq(a.try_recv().?, 2)
+    expect_eq(select(i64, chans[..], 0).?, 2)
+    // no bell is left behind
+    expect_eq(jobs.watchers.len + a.watchers.len + b.watchers.len + quit.watchers.len, 0)
+    jobs.free()
+    quit.free()
+    a.free()
+    b.free()
+}
+
+struct Square {
+    n: i64
+}
+
+fn square(s: *mut Square) {
+    s.n = s.n * s.n
+}
+
+struct Summer {
+    from: *mut Channel(i64)
+    total: i64
+}
+
+fn sum_all(s: *mut Summer) {
+    while true {
+        let v = s.from.recv() orelse break
+        s.total += v
+    }
+}
+
+test "threads that end before the call does" {
+    var xs = [Square{ .n = 2 }, Square{ .n = 3 }, Square{ .n = 4 }]
+    each(Square, xs[..], square)
+    expect_eq(xs[0].n + xs[1].n + xs[2].n, 29)
+    // both ends of a pipeline at once, over a channel of this test's
+    var ch = channel(i64)
+    var p = Producer{ .out = &mut ch, .n = 100 }
+    var s = Summer{ .from = &mut ch, .total = 0 }
+    both(Producer, Summer, &mut p, produce, &mut s, sum_all)
+    expect_eq(s.total, 4950)
+    ch.free()
+}
+
+struct Hitter {
+    hits: *mut Atomic
+    times: i64
+}
+
+fn hit(h: *mut Hitter) {
+    var i: i64 = 0
+    while i < h.times {
+        _ = h.hits.add(1)
+        i += 1
+    }
+}
+
+test "atomics" {
+    var hits = atomic(0)
+    var hs = [Hitter{ .hits = &mut hits, .times = 10000 }, Hitter{ .hits = &mut hits, .times = 10000 }, Hitter{ .hits = &mut hits, .times = 10000 }, Hitter{ .hits = &mut hits, .times = 10000 }]
+    each(Hitter, hs[..], hit)
+    expect_eq(hits.load(), 40000)
+    expect_eq(hits.swap(5), 40000)
+    expect(!hits.compare_swap(4, 9))
+    expect(hits.compare_swap(5, 9))
+    expect_eq(hits.sub(2), 9)
+    hits.store(-1)
+    expect_eq(hits.add(1), -1)
+    expect_eq(hits.load(), 0)
 }

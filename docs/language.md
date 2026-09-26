@@ -276,15 +276,26 @@ brings it.
   `net.last_peer()` naming the sender. A timeout of 0 waits forever.
   Errors: `NotFound` (name lookup), `ConnectionRefused`, `Timeout`,
   `IoError`. Not available at the REPL.
-- Threads (`std.thread` builds `Thread`, `Channel` and `Mutex` on these):
-  `thread.start(f: fn(*mut T) -> void, arg: *mut T) -> i64` runs `f(arg)` on
-  a new thread with its own context, `thread.join(h)` waits for it and
-  re-raises its panic, `thread.count() -> usize` is the hardware thread
+- Threads (`std.thread` builds `Thread`, `Channel`, `Mutex`, `Atomic`,
+  `select`, `each` and `both` on these): `thread.start(f: fn(*mut T) ->
+  void, arg: *mut T) -> i64` runs `f(arg)` on a new thread with its own
+  context, `thread.join(h)` waits for it and re-raises its panic,
+  `thread.join_all(hs: []i64)` waits for every one before it re-raises the
+  first panic among them, `thread.count() -> usize` is the hardware thread
   count. `sync.mutex_new() -> i64`, `sync.lock(m)`, `sync.unlock(m)`,
   `sync.mutex_free(m)`, `sync.cond_new() -> i64`, `sync.wait(cv, m)`,
-  `sync.signal(cv)`, `sync.broadcast(cv)`, `sync.cond_free(cv)`. Starting a
-  thread carries `nondeterministic` and `shared_mutable`; joining, locking
-  and waiting `block`. Not available at the REPL.
+  `sync.wait_for(cv, m, ms) -> bool` (false when `ms` passed; below 0 waits
+  for ever), `sync.signal(cv)`, `sync.broadcast(cv)`, `sync.cond_free(cv)`.
+  A bell is rung by any thread and waited for by one, a ring before the
+  wait kept for it: `sync.bell_new() -> i64`, `sync.bell_ring(b)`,
+  `sync.bell_wait(b, ms) -> bool`, `sync.bell_free(b)`. Atomics on an
+  `i64`, sequentially consistent: `sync.atomic_load(p: *i64) -> i64`,
+  `sync.atomic_store(p: *mut i64, v)`, `sync.atomic_add(p, n) -> i64` and
+  `sync.atomic_swap(p, v) -> i64` (both give the value before),
+  `sync.atomic_cas(p, expected, new) -> bool`. Starting a thread carries
+  `nondeterministic` and `shared_mutable`; joining, locking and waiting
+  `block`, and the `sync` calls are `shared_mutable`. Not available at the
+  REPL.
 - `os.arch() -> []u8`: the architecture the program runs on (`x86_64`,
   `aarch64`, `x86`, `arm`, `riscv64`, or `unknown`), decided when the
   program was compiled.

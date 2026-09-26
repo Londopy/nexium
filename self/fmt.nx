@@ -207,6 +207,45 @@ fn ends_operand(toks: *List(lexer.Token), id: usize) -> bool {
         or is_kw(t, "true") or is_kw(t, "false") or is_kw(t, "null")
 }
 
+/// Ends an operand a following `-`, `&` or `*` is the binary operator of: as
+/// `ends_operand`, but after a `]` only when the brackets index a value
+/// (`xs[i] * 2`, `[1, 2][i] * 3`). After a type's `[]` or `[N]` the
+/// operator is the next type's sigil (`[]*mut T`, `[4]*u8`), and nothing
+/// multiplies an array literal.
+fn ends_operand_for_op(toks: *List(lexer.Token), id: usize) -> bool {
+    if toks[id].kind != lexer.Kind.RBracket { return ends_operand(toks, id) }
+    // back over the chain of bracket groups that ends here
+    var close = id
+    var groups: usize = 0
+    var first_has_comma = false
+    while true {
+        var open = close
+        var depth: usize = 0
+        first_has_comma = false
+        while true {
+            let k = toks[open].kind
+            if k == lexer.Kind.RBracket { depth += 1 }
+            if k == lexer.Kind.LBracket {
+                depth -= 1
+                if depth == 0 { break }
+            }
+            if k == lexer.Kind.Comma { first_has_comma = true }
+            if open == 0 { return true }
+            open -= 1
+        }
+        groups += 1
+        if open == 0 { break }
+        if toks[open - 1].kind == lexer.Kind.RBracket {
+            close = open - 1
+            continue
+        }
+        if ends_operand(toks, open - 1) { return true }
+        break
+    }
+    // a literal's index, not a type's dimensions
+    return groups >= 2 and first_has_comma
+}
+
 /// Is the token a type-position introducer (`:` `->` `?` `*` `[]`)?
 fn type_position_before(t: *lexer.Token) -> bool {
     let k = t.kind
@@ -368,13 +407,14 @@ fn needs_space(toks: *List(lexer.Token), ctx: *Line, i: usize) -> bool {
         // `a - (b)`
         if a == lexer.Kind.Minus and !(i >= 2 and ends_operand(toks, ctx.toks[i - 2]) and !is_kw(&toks[ctx.toks[i - 2]], "step")) { return false }
         // `*(A, B)` is a pointer type, but after an operand `*` multiplies: `x * (y)`
-        let sigil = a == lexer.Kind.Star and !(i >= 2 and ends_operand(toks, ctx.toks[i - 2]))
+        let sigil = a == lexer.Kind.Star and !(i >= 2 and ends_operand_for_op(toks, ctx.toks[i - 2]))
         return !(ends_operand(toks, ctx.toks[i - 1]) or a == lexer.Kind.Question or sigil)
             or is_kw(ta, "return") or is_kw(ta, "if") or is_kw(ta, "while") or is_kw(ta, "for") or is_kw(ta, "match") or is_kw(ta, "and") or is_kw(ta, "or") or is_kw(ta, "in")
     }
     if b == lexer.Kind.LBracket {
-        // `xs[i]` vs `: []u8`, `-> [N]T`, `= [1, 2]`, `?[]u8`
-        if a == lexer.Kind.Question or a == lexer.Kind.Star or a == lexer.Kind.Bang { return false }
+        // `xs[i]` vs `: []u8`, `-> [N]T`, `= [1, 2]`, `?[]u8`; `][` is tight
+        // in a type (`[][]u8`) as in an index (`m[i][j]`)
+        if a == lexer.Kind.Question or a == lexer.Kind.Star or a == lexer.Kind.Bang or a == lexer.Kind.RBracket { return false }
         return !ends_operand(toks, ctx.toks[i - 1]) or is_kw(ta, "return") or is_kw(ta, "as")
     }
     // `[]u8`, `[N]T`, `[]dyn T`: no space after `]` in type position
@@ -474,14 +514,15 @@ fn needs_space(toks: *List(lexer.Token), ctx: *Line, i: usize) -> bool {
         var binary = false
         if i >= 2 {
             let t2 = &toks[ctx.toks[i - 2]]
-            binary = ends_operand(toks, ctx.toks[i - 2]) and !is_kw(t2, "step")
+            binary = ends_operand_for_op(toks, ctx.toks[i - 2]) and !is_kw(t2, "step")
         }
         if !binary { return false }
     }
     if is_kw(ta, "step") and b == lexer.Kind.Minus { return true }
-    if (b == lexer.Kind.Minus or b == lexer.Kind.Amp or b == lexer.Kind.Star) and !ends_operand(toks, ctx.toks[i - 1]) {
-        // unary after an operator or opener: `x = -1`, `f(&x)`, `: *mut T`
-        return !(a == lexer.Kind.LParen or a == lexer.Kind.LBracket or a == lexer.Kind.DotLBrace or a == lexer.Kind.Colon or a == lexer.Kind.Arrow) or a == lexer.Kind.Colon or a == lexer.Kind.Arrow
+    if (b == lexer.Kind.Minus or b == lexer.Kind.Amp or b == lexer.Kind.Star) and !ends_operand_for_op(toks, ctx.toks[i - 1]) {
+        // unary after an operator or opener: `x = -1`, `f(&x)`, `: *mut T`,
+        // and tight after a type's `[]`: `[]*mut T`
+        return !(a == lexer.Kind.LParen or a == lexer.Kind.LBracket or a == lexer.Kind.DotLBrace or a == lexer.Kind.Colon or a == lexer.Kind.Arrow or a == lexer.Kind.RBracket) or a == lexer.Kind.Colon or a == lexer.Kind.Arrow
     }
     // closure parameter bars open where no operand precedes them (`= |x|`,
     // `catch |e|`, `f(|x| x)`) and close at the next bar; any other bar is

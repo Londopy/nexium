@@ -36,7 +36,7 @@ by `scripts/std_docs.py` from the doc comments.
 | [`std.strings`](#stdstrings) | text utilities on `[]u8` and `String`, written in Nexium. |
 | [`std.testing`](#stdtesting) | conveniences for `test` blocks, written in Nexium. |
 | [`std.text`](#stdtext) | UTF-8 text by code point, written in Nexium. |
-| [`std.thread`](#stdthread) | threads, channels and mutexes, written in Nexium over the |
+| [`std.thread`](#stdthread) | threads, channels, select, mutexes and atomics, written in |
 | [`std.time`](#stdtime) | dates, durations, time zones and timers, written in Nexium. |
 | [`std.toml`](#stdtoml) | TOML 1.0 (toml.io), written in Nexium: reading a document into |
 | [`std.uuid`](#stduuid) | UUIDs (RFC 9562), written in Nexium: random ones (version 4), |
@@ -460,7 +460,8 @@ Types: `Output`, `Options`, `Status`, `Stdio`, `Start`, `PipeReader`, `PipeWrite
 | `(method) pid(self: *Self) -> i64` | The operating system's number for it. |
 | `(method) set_timeout(self: *mut Self, ms: i64)` | Every read and write waits at most `ms`, then fails with `error.Timeout`; 0 waits for ever (the default). |
 | `(method) wait(self: *mut Self) -> !Status` | Close its input and wait for it to end. What it writes meanwhile is kept for the readers. |
-| `(method) wait_for(self: *mut Self, ms: i64) -> !?Status` | How it ended, waiting at most `ms` for it (0: not at all); null while it runs. Its input stays open. |
+| `(method) wait_for(self: *mut Self, ms: i64) -> !?Status` | How it ended, waiting at most `ms` for it (0: for ever); null when it still runs then. Its input stays open. |
+| `(method) try_wait(self: *mut Self) -> !?Status` | How it ended, without waiting; null while it runs. |
 | `(method) signal(self: *mut Self, sig: i32) -> !void` | Send it a signal (`SIGTERM`, `SIGINT` and the others). On Windows, which has none, every signal ends it at once, with exit code 128 + the signal, and `wait` reports the signal. A program that already ended is left alone. |
 | `(method) terminate(self: *mut Self) -> !void` | Ask it to end: SIGTERM. |
 | `(method) kill(self: *mut Self) -> !void` | End it at once: SIGKILL. |
@@ -636,9 +637,9 @@ Types: `Decoded`
 
 ## std.thread
 
-std.thread: threads, channels and mutexes, written in Nexium over the `thread.*` and `sync.*` primitives. `import std.thread` then: fn work(job: *mut Job) -> i64 { ... } var t = thread.spawn(Job, i64, work, Job{ .from = 0, .to = 1000 }) let total = t.join()                        // the function's result fn produce(p: *mut Producer) { ... }        // no result: a Worker var ch = thread.channel(String)             // shared by pointer var producer = thread.run(Producer, produce, Producer{ .out = &mut ch }) let msg = ch.recv() orelse break            // null once closed and drained producer.join() var counter = thread.mutex(i64, 0) let n = counter.lock()                      // *mut i64 while held n.* += 1 counter.unlock() A thread function takes a pointer to its argument, which the `Thread` owns until `join` returns the result. Channels and mutexes are values that threads share by pointer; the owner must join every thread using them before letting them go out of scope, and call `free` when done. Panics inside a thread surface from `join`.
+std.thread: threads, channels, select, mutexes and atomics, written in Nexium over the `thread.*` and `sync.*` primitives. `import std.thread` then: fn work(job: *mut Job) -> i64 { ... } var t = thread.spawn(Job, i64, work, Job{ .from = 0, .to = 1000 }) let total = t.join()                        // the function's result fn produce(p: *mut Producer) { ... }        // no result: a Worker var ch = thread.channel(String)             // shared by pointer var producer = thread.run(Producer, produce, Producer{ .out = &mut ch }) let msg = ch.recv() orelse break            // null once closed and drained producer.join() var counter = thread.mutex(i64, 0) let n = counter.lock()                      // *mut i64 while held n.* += 1 counter.unlock() var hits = thread.atomic(0)                 // an i64 changed without a lock _ = hits.add(1) // two channels at once: which has a value (or closed), null after 1 s let which = thread.select2(Job, bool, &mut jobs, &mut quit, 1000) orelse continue // threads that end before the call does, so they may point into locals thread.each(Stage, stages[..], run_stage)   // a thread for every item thread.both(Producer, Consumer, &mut p, produce, &mut c, consume) A thread function takes a pointer to its argument, which the `Thread` owns until `join` returns the result. Channels, mutexes and atomics are values that threads share by pointer; the owner must join every thread using them before letting them go out of scope (`each` and `both` do it themselves), and call `free` when done. Panics inside a thread surface from `join`. Timeouts are in milliseconds, and 0 waits for ever.
 
-Types: `Task(T,`, `Thread(T,`, `WorkerTask(T){`, `Worker(T){`, `Channel(T){`, `Mutex(T){`
+Types: `Task(T,`, `Thread(T,`, `WorkerTask(T){`, `Worker(T){`, `Channel(T){`, `Mutex(T){`, `Atomic`
 
 | function | what it does |
 | --- | --- |
@@ -652,14 +653,27 @@ Types: `Task(T,`, `Thread(T,`, `WorkerTask(T){`, `Worker(T){`, `Channel(T){`, `M
 | `channel(comptime T: type) -> Channel(T)` |  |
 | `(method) send(self: *mut Self, own value: T)` |  |
 | `(method) recv(self: *mut Self) -> ?T` | The next value, waiting for one; null when closed and empty. |
+| `(method) recv_for(self: *mut Self, ms: i64) -> !?T` | The next value, waiting at most `ms` for one (0: for ever): `error.Timeout` when none came in time, null when the channel is closed and empty. |
 | `(method) try_recv(self: *mut Self) -> ?T` | The next value if one is queued, without waiting. |
 | `(method) close(self: *mut Self)` | No more values will be sent; receivers drain what is left, then see null. |
+| `(method) is_closed(self: *mut Self) -> bool` |  |
 | `(method) len(self: *mut Self) -> usize` |  |
 | `(method) free(self: *mut Self)` | Release the lock and condition variable; after every user has stopped. |
 | `mutex(comptime T: type, own value: T) -> Mutex(T)` |  |
 | `(method) lock(self: *mut Self) -> *mut T` | Take the lock; the pointer is valid until `unlock`. |
 | `(method) unlock(self: *mut Self)` |  |
 | `(method) free(self: *mut Self)` | Release the lock; after every user has stopped. |
+| `select2(comptime A: type, comptime B: type, a: *mut Channel(A), b: *mut Channel(B), ms: i64) -> ?usize` | Wait until one of two channels has a value or is closed: 0 for `a`, 1 for `b` (`a` first when both are), or null when `ms` pass first (0: waits for ever). Then take the value with `try_recv`: another receiver may have taken it first, and a closed channel stays ready, so leave one out once it is closed and drained. |
+| `select(comptime T: type, chans: []*mut Channel(T), ms: i64) -> ?usize` | `select2` over any number of channels of one type: the index of the first with a value or closed, or null when `ms` pass first (0: waits for ever). |
+| `each(comptime T: type, items: []mut T, f: fn(*mut T) -> void)` | Run `f` on every item, each on a thread of its own, all at once, and return when every one has finished. Nothing started here outlives the call, so the items may point into the caller's locals, and the threads may wait on each other (the stages of a pipeline over channels). A panic in one is raised here once all have ended. To split work over the cores, `for parallel` is the tool. |
+| `both(comptime A: type, comptime B: type, a: *mut A, fa: fn(*mut A) -> void, b: *mut B, fb: fn(*mut B) -> void)` | Run `fa(a)` and `fb(b)` on two threads at once and return when both have finished, as `each` does. |
+| `atomic(value: i64) -> Atomic` |  |
+| `(method) load(self: *Self) -> i64` |  |
+| `(method) store(self: *mut Self, value: i64)` |  |
+| `(method) add(self: *mut Self, n: i64) -> i64` | Add `n`; the value before. |
+| `(method) sub(self: *mut Self, n: i64) -> i64` | Subtract `n`; the value before. |
+| `(method) swap(self: *mut Self, value: i64) -> i64` | Put `value` in; the value before. |
+| `(method) compare_swap(self: *mut Self, expected: i64, new: i64) -> bool` | Put `new` in if the value is `expected`; whether it was. |
 
 ## std.time
 

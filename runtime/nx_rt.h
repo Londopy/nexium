@@ -473,6 +473,7 @@ NX_INLINE size_t nx_hw_threads(void) { SYSTEM_INFO si; GetSystemInfo(&si); retur
 #define pthread_cond_init(v, a) ((void)(v), (void)(a), 0)
 #define pthread_cond_destroy(v) ((void)(v), 0)
 #define pthread_cond_wait(v, m) ((void)(v), (void)(m), 0)
+#define pthread_cond_timedwait(v, m, t) ((void)(v), (void)(m), (void)(t), ETIMEDOUT)
 #define pthread_cond_signal(v) ((void)(v), 0)
 #define pthread_cond_broadcast(v) ((void)(v), 0)
 #endif
@@ -1243,6 +1244,13 @@ NX_INLINE void nx_sleep_ms(uint64_t ms) {
     usleep((useconds_t)(ms * 1000));
 #endif
 }
+NX_INLINE int64_t nx_mono_ms(void) { return (int64_t)(nx_time_monotonic_ns() / 1000000u); }
+/* what is left of `timeout_ms` since `start` (ms): -1 for no limit */
+NX_INLINE int64_t nx_left_ms(int64_t start, int64_t timeout_ms) {
+    if (timeout_ms < 0) return -1;
+    int64_t left = timeout_ms - (nx_mono_ms() - start);
+    return left > 0 ? left : 0;
+}
 
 /* ---- `nx bench` ---- */
 /* A value the optimizer must assume is read: what a benchmark computes is
@@ -1859,13 +1867,6 @@ NX_INLINE void nx_cbuf_add(nx_cbuf* b, const uint8_t* p, size_t n) {
     b->len += n;
 }
 NX_INLINE bool nx_cpipe_ready(const nx_cpipe* pp) { return pp->buf.pos < pp->buf.len || pp->eof; }
-NX_INLINE int64_t nx_mono_ms(void) { return (int64_t)(nx_time_monotonic_ns() / 1000000u); }
-/* what is left of `timeout_ms` since `start`: -1 for no limit */
-NX_INLINE int64_t nx_left_ms(int64_t start, int64_t timeout_ms) {
-    if (timeout_ms < 0) return -1;
-    int64_t left = timeout_ms - (nx_mono_ms() - start);
-    return left > 0 ? left : 0;
-}
 #if defined(_WIN32)
 /* A pipe whose far end a child gets: this program's end overlapped, so
    reads, writes and the exit can be waited for together and with a
@@ -3051,9 +3052,11 @@ NX_INLINE int64_t nx_thread_start(nx_ctx* c, void* fnp, void* env, void* arg) {
 #endif
     return (int64_t)(intptr_t)t;
 }
-NX_INLINE void nx_thread_join(int64_t h, const char* loc) {
+/* wait for a thread and free its record; true, with what it said in `msg`,
+   when it panicked */
+NX_INLINE bool nx_thread_wait(int64_t h, char* msg, size_t cap) {
     nx_thread_task* t = (nx_thread_task*)(intptr_t)h;
-    if (!t) return;
+    if (!t) return false;
     if (t->started) {
 #if defined(_WIN32)
         WaitForSingleObject(t->h, INFINITE);
@@ -3063,10 +3066,26 @@ NX_INLINE void nx_thread_join(int64_t h, const char* loc) {
 #endif
     }
     bool panicked = t->panicked;
-    char msg[512];
-    snprintf(msg, sizeof msg, "in a thread: %s (at %s)", t->msg, t->loc);
+    if (panicked) snprintf(msg, cap, "in a thread: %s (at %s)", t->msg, t->loc);
     free(t);
-    if (panicked) nx_panic(msg, loc);
+    return panicked;
+}
+NX_INLINE void nx_thread_join(int64_t h, const char* loc) {
+    char msg[600];
+    if (nx_thread_wait(h, msg, sizeof msg)) nx_panic(msg, loc);
+}
+/* thread.join_all: every thread is waited for before the first panic among
+   them is re-raised, so none runs on with storage the panic releases */
+NX_INLINE void nx_thread_join_all(const int64_t* hs, size_t n, const char* loc) {
+    char msg[600], first[600];
+    bool panicked = false;
+    for (size_t i = 0; i < n; i++) {
+        if (nx_thread_wait(hs[i], msg, sizeof msg) && !panicked) {
+            panicked = true;
+            memcpy(first, msg, sizeof first);
+        }
+    }
+    if (panicked) nx_panic(first, loc);
 }
 /* mutexes and condition variables, as heap handles */
 #if defined(_WIN32)
@@ -3094,6 +3113,75 @@ NX_INLINE void nx_cond_free(int64_t cv) { pthread_cond_destroy((pthread_cond_t*)
    tracker's own lock uses the raw pair, which registers nothing) */
 NX_INLINE void nx_mutex_lock(int64_t m) { nx_mutex_lock_raw(m); nx_track_handle(2, m, true); }
 NX_INLINE void nx_mutex_unlock(int64_t m) { nx_track_handle(2, m, false); nx_mutex_unlock_raw(m); }
+/* sync.wait_for: sync.wait for at most `ms` (negative: for ever); false when
+   the time ran out. Like sync.wait it may also return with nothing
+   signalled, so the caller checks its condition again. */
+NX_INLINE bool nx_cond_wait_for(int64_t cv, int64_t m, int64_t ms) {
+    if (ms < 0) { nx_cond_wait(cv, m); return true; }
+#if defined(_WIN32)
+    return SleepConditionVariableCS((CONDITION_VARIABLE*)(intptr_t)cv, (CRITICAL_SECTION*)(intptr_t)m, ms > 0x7ffffffe ? 0x7ffffffe : (DWORD)ms) != 0;
+#else
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    ts.tv_sec += (time_t)(ms / 1000);
+    ts.tv_nsec += (long)(ms % 1000) * 1000000L;
+    if (ts.tv_nsec >= 1000000000L) { ts.tv_sec += 1; ts.tv_nsec -= 1000000000L; }
+    return pthread_cond_timedwait((pthread_cond_t*)(intptr_t)cv, (pthread_mutex_t*)(intptr_t)m, &ts) == 0;
+#endif
+}
+
+/* A bell: rung by any thread, waited for by one, a ring before the wait
+   kept until it. std.thread's select waits on one while the channels it
+   watches ring it. */
+typedef struct { int64_t m, cv; bool rung; } nx_bell;
+NX_INLINE int64_t nx_bell_new(void) {
+    nx_bell* b = (nx_bell*)malloc(sizeof *b);
+    if (!b) nx_panic("out of memory making a bell", "sync.bell_new");
+    b->m = nx_mutex_new();
+    b->cv = nx_cond_new();
+    b->rung = false;
+    return (int64_t)(intptr_t)b;
+}
+NX_INLINE void nx_bell_ring(int64_t h) {
+    nx_bell* b = (nx_bell*)(intptr_t)h;
+    nx_mutex_lock_raw(b->m);
+    b->rung = true;
+    nx_cond_signal(b->cv);
+    nx_mutex_unlock_raw(b->m);
+}
+/* true when it rang (and it is quiet again), false when `ms` passed first
+   (negative: waits for ever) */
+NX_INLINE bool nx_bell_wait(int64_t h, int64_t ms) {
+    nx_bell* b = (nx_bell*)(intptr_t)h;
+    int64_t start = nx_mono_ms();
+    nx_mutex_lock_raw(b->m);
+    while (!b->rung) {
+        int64_t left = nx_left_ms(start, ms);
+        if (left == 0) break;
+        nx_cond_wait_for(b->cv, b->m, left);
+    }
+    bool rang = b->rung;
+    b->rung = false;
+    nx_mutex_unlock_raw(b->m);
+    return rang;
+}
+NX_INLINE void nx_bell_free(int64_t h) {
+    nx_bell* b = (nx_bell*)(intptr_t)h;
+    if (!b) return;
+    nx_cond_free(b->cv);
+    nx_mutex_free(b->m);
+    free(b);
+}
+
+/* sync.atomic_*: an i64 read and changed whole by any thread, sequentially
+   consistent */
+NX_INLINE int64_t nx_atomic_load(const int64_t* p) { return __atomic_load_n(p, __ATOMIC_SEQ_CST); }
+NX_INLINE void nx_atomic_store(int64_t* p, int64_t v) { __atomic_store_n(p, v, __ATOMIC_SEQ_CST); }
+NX_INLINE int64_t nx_atomic_add(int64_t* p, int64_t v) { return __atomic_fetch_add(p, v, __ATOMIC_SEQ_CST); }
+NX_INLINE int64_t nx_atomic_swap(int64_t* p, int64_t v) { return __atomic_exchange_n(p, v, __ATOMIC_SEQ_CST); }
+NX_INLINE bool nx_atomic_cas(int64_t* p, int64_t expected, int64_t desired) {
+    return __atomic_compare_exchange_n(p, &expected, desired, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+}
 
 /* ---------------------------------------------------- raw terminal input */
 /* `io.raw_mode(true)`: the console gives bytes as they are typed, without

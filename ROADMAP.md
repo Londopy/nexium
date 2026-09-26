@@ -686,7 +686,15 @@ own sources, and the language server answers from the checker.
   before it reads is fixed as well. Windows has no signals: `signal` ends
   the program there, and its status still says which signal.)
 - `std.thread`: `select` over channels, scoped threads that are joined
-  when the block ends (no handle can escape), atomics in `sync`.
+  when the block ends (no handle can escape), atomics in `sync`. (Done:
+  `select2` over two channels of any types and `select` over any number of
+  one type, on bells the channels ring, and `recv_for` with a timeout;
+  `thread.each` and `thread.both`, whose threads all end before the call
+  returns, so no handle escapes and what they point into outlives them
+  (a block that joins when it ends needs a destructor or a block form the
+  language does not have; a call gives the same guarantee), a panic raised
+  once all have ended; `Atomic` over `sync.atomic_*`. Clean under
+  ThreadSanitizer.)
 - `std.testing`: property-based tests (`check(gen, fn)`) with shrinking,
   the same driver the fuzzers use.
 
@@ -694,9 +702,9 @@ Order, with the collections, `std.hash`, `random.secure`, the small modules
 (`std.path`, `std.env`, `std.uuid`, `std.log`, `std.csv`, `std.toml`,
 `std.base64`), `Map` on SipHash, `std.time` (and with it the known issue
 of `import std.time` hiding `time.now()` fixed), the HTTP client with the
-TLS slot and nxtls in it, `std.websocket`, the `discord` package and
-`std.process` already in: the platform's TLS, `std.text`, `std.thread` and
-`std.testing`.
+TLS slot and nxtls in it, `std.websocket`, the `discord` package,
+`std.process` and `std.thread` already in: the platform's TLS, `std.text`
+and `std.testing`.
 
 Exit: `examples/tool.nx`, `service.nx` and the self-hosted compiler import
 nothing they had to write themselves.

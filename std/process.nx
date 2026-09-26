@@ -363,9 +363,18 @@ impl Child {
         return status_of(raw)
     }
 
-    /// How it ended, waiting at most `ms` for it (0: not at all); null while
-    /// it runs. Its input stays open.
+    /// How it ended, waiting at most `ms` for it (0: for ever); null when it
+    /// still runs then. Its input stays open.
     pub fn wait_for(self: *mut Self, ms: i64) -> !?Status {
+        return self.status_within(wait_ms(ms))
+    }
+
+    /// How it ended, without waiting; null while it runs.
+    pub fn try_wait(self: *mut Self) -> !?Status {
+        return self.status_within(0)
+    }
+
+    fn status_within(self: *mut Self, ms: i64) -> !?Status {
         let raw = process.child_wait(self.id, ms) catch |e| {
             if e == error.Timeout { return null }
             return e
@@ -611,7 +620,7 @@ test "output as it comes, and a timeout" {
 test "ending a program that runs on" {
     var c = try sleeper()
     expect(c.pid() > 0)
-    expect(try c.wait_for(0) == null)
+    expect(try c.try_wait() == null)
     expect(try c.wait_for(50) == null)
     try c.kill()
     let st = try c.wait()

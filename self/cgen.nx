@@ -4176,6 +4176,25 @@ impl Gen {
             self.line(format("nx_cond_wait({}, {});", .{cv, mu})[..])
             return String.from("0")
         }
+        if name == "ThreadJoinAll" {
+            let hs = self.simple(args[0])
+            self.line(format("nx_thread_join_all({}.ptr, {}.len, {});", .{hs, hs, loc})[..])
+            return String.from("0")
+        }
+        if name == "BellRing" or name == "BellFree" or name == "AtomicStore" {
+            var a = List(String).new()
+            for x in args { a.append(self.simple(x)) }
+            let f = if name == "BellRing" { "nx_bell_ring" } else if name == "BellFree" { "nx_bell_free" } else { "nx_atomic_store" }
+            self.line(format("{}({});", .{f, join_strings(&a, ", ")})[..])
+            return String.from("0")
+        }
+        if name == "CondWaitFor" or name == "BellNew" or name == "BellWait" or name == "AtomicLoad" or name == "AtomicAdd" or name == "AtomicSwap" or name == "AtomicCas" {
+            var a = List(String).new()
+            for x in args { a.append(self.simple(x)) }
+            let f = if name == "CondWaitFor" { "nx_cond_wait_for" } else if name == "BellNew" { "nx_bell_new" } else if name == "BellWait" { "nx_bell_wait" }
+            else if name == "AtomicLoad" { "nx_atomic_load" } else if name == "AtomicAdd" { "nx_atomic_add" } else if name == "AtomicSwap" { "nx_atomic_swap" } else { "nx_atomic_cas" }
+            return format("{}({})", .{f, join_strings(&a, ", ")})
+        }
         if name == "Environ" {
             let cn = self.cty(ety)
             let t = self.tmp()

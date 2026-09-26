@@ -172,9 +172,10 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   or stderr into stdout) gives a `Child` whose `stdin` is written with
   `write` and `write_line` and whose `stdout` and `stderr` are read by
   `read_line`, `read` or `read_all` as the program writes. `wait` (which
-  closes its input first), `wait_for(ms)`, `kill`, `terminate`, `signal`,
-  `finish` (what `run` gives, for a program already talked to), and
-  `set_timeout` for every wait. While a call waits for one thing, what
+  closes its input first), `wait_for(ms)`, `try_wait`, `kill`, `terminate`,
+  `signal`, `finish` (what `run` gives, for a program already talked to),
+  and `set_timeout` for every wait (0 waits for ever, as every timeout in
+  std does). While a call waits for one thing, what
   arrives on the other pipes is kept, so a program never stalls on a full
   one. A missing program is `error.NotFound` everywhere (glibc says EACCES
   when a directory on PATH cannot be searched; the runtime then looks for
@@ -192,6 +193,27 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   service finishes what it was doing. The builtins beneath (`process.spawn`,
   the `child_*` calls, `trap_signals`, `next_signal`) are in
   docs/language.md.
+- `std.thread`: `select2(A, B, a, b, ms)` waits until one of two channels
+  (of any types) has a value or is closed and says which, and `select(T,
+  chans, ms)` does the same for any number of one type; null when the time
+  runs out. A channel rings the bell of every select waiting on it, so a
+  select sleeps until something happens. `recv_for(ms)` receives with a
+  timeout (`error.Timeout`), and `is_closed` says whether a channel is.
+- `thread.each(T, items, f)` runs `f` on every item, each on a thread of its
+  own, all at once, and `thread.both` runs two functions of different
+  argument types together; both return only when every thread they
+  started has ended, so what the threads point into, the caller's locals
+  among it, outlives them, and a panic in one is raised once all are done
+  (`thread.join_all`). They are for threads that work together, a
+  pipeline's stages over channels; `for parallel` stays the tool for
+  splitting work over the cores.
+- `thread.Atomic`: an `i64` threads read and change without a lock,
+  `load`, `store`, `add` and `sub` (giving the value before), `swap` and
+  `compare_swap`, sequentially consistent. Beneath it, `sync.atomic_load`,
+  `atomic_store`, `atomic_add`, `atomic_swap` and `atomic_cas`, and for
+  select and timeouts `sync.wait_for` (a condition wait with a timeout) and
+  bells (`sync.bell_new`, `bell_ring`, `bell_wait`, `bell_free`). The tests
+  run clean under ThreadSanitizer as under ASan and UBSan.
 
 ### Changed
 
@@ -244,6 +266,12 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Fixed
 
+- `nx fmt` spaced the pointer sigil after a slice or array type's brackets
+  as a multiplication: `chans: []*mut Channel(T)` became `chans: [] * mut
+  Channel(T)`, and `[4]*u8` likewise. A `-`, `&` or `*` after a `]` is now
+  binary only when the brackets index a value (`xs[i] * 2`, `[1, 2][i] *
+  3`); `][` is tight in a type as in an index. Test: the fmt suite's slice
+  of pointers case.
 - The tree-sitter grammar read four things the compiler accepts as errors:
   `derive(...)` on an enum (CI failed on `std/toml.nx`), a match arm
   after a braced one when it begins with `.Variant` or `<<` (it was read

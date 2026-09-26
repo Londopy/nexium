@@ -105,6 +105,17 @@ const NS_FNS = [
     NsFn{ .ns = "sync", .name = "broadcast", .args = "i64", .ret = "void", .op = "CondBroadcast", .effects = EFF_SHARED_MUTABLE },
     NsFn{ .ns = "sync", .name = "cond_free", .args = "i64", .ret = "void", .op = "CondFree", .effects = EFF_SHARED_MUTABLE },
     NsFn{ .ns = "sync", .name = "wait", .args = "i64 i64", .ret = "void", .op = "CondWait", .effects = EFF_BLOCKS | EFF_SHARED_MUTABLE },
+    NsFn{ .ns = "sync", .name = "wait_for", .args = "i64 i64 i64", .ret = "bool", .op = "CondWaitFor", .effects = EFF_BLOCKS | EFF_SHARED_MUTABLE },
+    NsFn{ .ns = "sync", .name = "bell_new", .args = "", .ret = "i64", .op = "BellNew", .effects = EFF_ALLOCATES },
+    NsFn{ .ns = "sync", .name = "bell_ring", .args = "i64", .ret = "void", .op = "BellRing", .effects = EFF_SHARED_MUTABLE },
+    NsFn{ .ns = "sync", .name = "bell_wait", .args = "i64 i64", .ret = "bool", .op = "BellWait", .effects = EFF_BLOCKS | EFF_SHARED_MUTABLE },
+    NsFn{ .ns = "sync", .name = "bell_free", .args = "i64", .ret = "void", .op = "BellFree", .effects = EFF_SHARED_MUTABLE },
+    NsFn{ .ns = "sync", .name = "atomic_load", .args = "*i64", .ret = "i64", .op = "AtomicLoad", .effects = EFF_SHARED_MUTABLE },
+    NsFn{ .ns = "sync", .name = "atomic_store", .args = "*mut:i64 i64", .ret = "void", .op = "AtomicStore", .effects = EFF_SHARED_MUTABLE },
+    NsFn{ .ns = "sync", .name = "atomic_add", .args = "*mut:i64 i64", .ret = "i64", .op = "AtomicAdd", .effects = EFF_SHARED_MUTABLE },
+    NsFn{ .ns = "sync", .name = "atomic_swap", .args = "*mut:i64 i64", .ret = "i64", .op = "AtomicSwap", .effects = EFF_SHARED_MUTABLE },
+    NsFn{ .ns = "sync", .name = "atomic_cas", .args = "*mut:i64 i64 i64", .ret = "bool", .op = "AtomicCas", .effects = EFF_SHARED_MUTABLE },
+    NsFn{ .ns = "thread", .name = "join_all", .args = "[]i64", .ret = "void", .op = "ThreadJoinAll", .effects = EFF_BLOCKS | EFF_PANICS },
     NsFn{ .ns = "time", .name = "now", .args = "", .ret = "i64", .op = "TimeNow", .effects = EFF_NONDETERMINISTIC },
     NsFn{ .ns = "time", .name = "monotonic", .args = "", .ret = "u64", .op = "TimeMonotonic", .effects = EFF_NONDETERMINISTIC },
     NsFn{ .ns = "time", .name = "sleep", .args = "u64", .ret = "void", .op = "Sleep", .effects = EFF_BLOCKS },
@@ -134,6 +145,15 @@ impl Checker {
         if code.len > 5 and code[0..5] == "List(" {
             let inner = self.code_ty(code[5..code.len - 1])
             return self.tys.wrap(TK.List, inner, false)
+        }
+        // pointers, `*mut:T` and `*T` (a code holds no spaces)
+        if code.len > 5 and code[0..5] == "*mut:" {
+            let inner = self.code_ty(code[5..])
+            return self.tys.wrap(TK.Ptr, inner, true)
+        }
+        if code.len > 1 and code[0] == '*' {
+            let inner = self.code_ty(code[1..])
+            return self.tys.wrap(TK.Ptr, inner, false)
         }
         if code == "bytes" { return self.tys.str_slice() }
         if code == "mutbytes" { return self.tys.wrap(TK.Slice, self.tys.int("u8"), true) }
