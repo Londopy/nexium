@@ -5,8 +5,8 @@ type: software
 authors:
   - name: Londopy
     website: https://github.com/Londopy
-version: 1.4.0
-date-released: 2026-09-25
+version: 1.4.1
+date-released: 2026-09-26
 license: MIT
 repository-code: https://github.com/Londopy/nexium
 url: https://londopy.github.io/nexium/

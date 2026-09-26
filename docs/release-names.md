@@ -118,6 +118,7 @@ ordering; the name carries the character.
 | 1.3.1 | Annapurna: Couzy | patch (roster 5): the engineer; fixes the build, the toolchain and the C: a use-after-free in branch values, the runtime's null copies, syntax errors at their line, the glibc 2.17 floor |
 | 1.3.2 | Annapurna: Oudot | patch (roster 7): the doctor; a write to a connection or pipe the other side has closed no longer ends the program with SIGPIPE, and a connect that fails at once is an error |
 | 1.4.0 | Annapurna: the Sanctuary | the basin ringed by the peaks, where the first mountain ends: a standard library people stop supplementing; programs run alongside, HTTPS over the platform's TLS, grapheme clusters, property tests |
+| 1.4.1 | Annapurna: Ang Tharkay | patch (roster 10): the sirdar, who kept the camps supplied; `nx fetch` follows a dependency's tag when the manifest changes it, where it went on building the old one |
 
 ## The plan
 
@@ -192,7 +193,7 @@ summiters lost fingers and toes on the descent.
 | Oudot | the doctor; amputations on the march out | removes something to save the rest (used: 1.3.2) |
 | Ichac | the filmmaker | is all documentation, examples, screenshots |
 | de Noyelle | liaison officer; permits and diplomacy | packaging, licensing, distribution channels (used: 1.2.1) |
-| Ang Tharkey | the sirdar; declined the summit and kept the camps supplied | CI and infrastructure, the work that carries everything else |
+| Ang Tharkay | the sirdar; declined the summit and kept the camps supplied | CI and infrastructure, the work that carries everything else (used: 1.4.1) |
 | Bonington, Whillans, Haston | 1970, the South Face | repairs the biggest feature of a line |
 | Messner, Kammerlander | 1985, the North-West Face | makes something faster |
 | Steck | 2013, the South Face alone in a day | a one-person, one-day fix that changes a lot |
