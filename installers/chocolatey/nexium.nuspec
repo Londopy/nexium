@@ -8,6 +8,7 @@
     <title>Nexium</title>
     <authors>Londopy</authors>
     <owners>Londopy</owners>
+    <copyright>Copyright (c) 2026 Londopy</copyright>
     <projectUrl>https://londopy.github.io/nexium/</projectUrl>
     <projectSourceUrl>https://github.com/Londopy/nexium</projectSourceUrl>
     <packageSourceUrl>https://github.com/Londopy/nexium/tree/main/installers/chocolatey</packageSourceUrl>

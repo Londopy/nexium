@@ -67,6 +67,12 @@ try:
 except OSError:
     release_date = str(date.today())
 
+# LICENSE's copyright line, which the Chocolatey package states too (its
+# moderators ask for a <copyright> element)
+copyright_line = next((l.strip() for l in open(os.path.join(root, "LICENSE"), encoding="utf-8") if l.startswith("Copyright")), "")
+if not copyright_line:
+    sys.exit("LICENSE has no Copyright line")
+
 def write(rel, text):
     path = os.path.join(root, rel)
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -86,6 +92,7 @@ def chocolatey():
     <title>Nexium</title>
     <authors>Londopy</authors>
     <owners>Londopy</owners>
+    <copyright>{copyright_line}</copyright>
     <projectUrl>https://londopy.github.io/nexium/</projectUrl>
     <projectSourceUrl>https://github.com/{REPO}</projectSourceUrl>
     <packageSourceUrl>https://github.com/{REPO}/tree/main/installers/chocolatey</packageSourceUrl>
