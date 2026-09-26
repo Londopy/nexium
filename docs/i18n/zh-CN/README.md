@@ -122,7 +122,7 @@ curl -fsSL https://raw.githubusercontent.com/Londopy/nexium/main/installers/inst
 **Docker**：`docker run --rm -v "$PWD":/work ghcr.io/londopy/nexium run hello.nx`
 （Debian；也有 `:alpine`；amd64 与 arm64）。
 
-**Chocolatey 与 winget**：`choco install nexium`（[软件包](https://community.chocolatey.org/packages/nexium)）在 Chocolatey 审核员批准各版本后可用（可能比最新发布晚几天）；`winget install Londopy.Nexium` 在 winget 收录第一个版本之后可用（[状态](../../install.md#where-to-get-it)，英文）。
+**Chocolatey 与 winget**：`choco install nexium`（[软件包](https://community.chocolatey.org/packages/nexium)）自 1.2.0 起已获批准，现在就能用；每个新版本都要经 Chocolatey 审核员检查后才上架，所以最新版本会在发布几天后到达。`winget install Londopy.Nexium` 要等 winget 收录第一个版本后才可用，该版本仍在审核中（[状态](../../install.md#where-to-get-it)，英文）。
 
 **Debian、RPM、Nix、mise**：每个发布都附带 `.deb` 和 `.rpm` 包（`sudo dpkg -i nexium_*_amd64.deb`）；`nix run github:Londopy/nexium` 从那一个 C 文件构建；`mise use -g "ubi:Londopy/nexium[exe=nx]"` 安装发布的二进制。每个产物都带有签名的来源证明：`gh attestation verify nx --owner Londopy`。[所有途径](../../install.md#where-to-get-it)（英文）。
 

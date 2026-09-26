@@ -126,7 +126,7 @@ C コンパイラを用意し（macOS では Xcode のツール、Linux では�
 **Docker**：`docker run --rm -v "$PWD":/work ghcr.io/londopy/nexium run hello.nx`
 （Debian。`:alpine` もあり。amd64 と arm64）。
 
-**Chocolatey と winget**：`choco install nexium`（[パッケージ](https://community.chocolatey.org/packages/nexium)）は Chocolatey のモデレーターが承認したバージョンから使えます（最新リリースより数日遅れることがあります）。`winget install Londopy.Nexium` は winget が最初のバージョンを取り込んでから使えます（[状況](../../install.md#where-to-get-it)、英語）。
+**Chocolatey と winget**：`choco install nexium`（[パッケージ](https://community.chocolatey.org/packages/nexium)）は 1.2.0 から承認済みで、すでに使えます。新しいバージョンは Chocolatey のモデレーターの確認を経て公開されるので、最新版はリリースの数日後に届きます。`winget install Londopy.Nexium` は、まだ審査中の最初のバージョンを winget が取り込んでから使えます（[状況](../../install.md#where-to-get-it)、英語）。
 
 **Debian、RPM、Nix、mise**：各リリースに `.deb` と `.rpm` のパッケージが付きます（`sudo dpkg -i nexium_*_amd64.deb`）。`nix run github:Londopy/nexium` は一つの C ファイルからビルドし、`mise use -g "ubi:Londopy/nexium[exe=nx]"` はリリースのバイナリをインストールします。すべての成果物に署名付きの来歴があります：`gh attestation verify nx --owner Londopy`。[すべての道](../../install.md#where-to-get-it)（英語）。
 

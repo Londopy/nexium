@@ -125,7 +125,7 @@ curl -fsSL https://raw.githubusercontent.com/Londopy/nexium/main/installers/inst
 **Docker**: `docker run --rm -v "$PWD":/work ghcr.io/londopy/nexium run hello.nx`
 (Debian; `:alpine`도 있음; amd64와 arm64).
 
-**Chocolatey와 winget**: `choco install nexium`([패키지](https://community.chocolatey.org/packages/nexium))은 Chocolatey 모더레이터가 승인한 버전부터 쓸 수 있습니다(최신 릴리스보다 며칠 늦을 수 있음). `winget install Londopy.Nexium`은 winget이 첫 버전을 받아들인 뒤부터 쓸 수 있습니다([현황](../../install.md#where-to-get-it), 영어).
+**Chocolatey와 winget**: `choco install nexium`([패키지](https://community.chocolatey.org/packages/nexium))은 1.2.0부터 승인되어 지금 쓸 수 있습니다. 새 버전은 Chocolatey 모더레이터의 확인을 거쳐 올라가므로, 최신 버전은 릴리스 며칠 뒤에 도착합니다. `winget install Londopy.Nexium`은 아직 검토 중인 첫 버전을 winget이 받아들인 뒤부터 쓸 수 있습니다([현황](../../install.md#where-to-get-it), 영어).
 
 **Debian, RPM, Nix, mise**: 모든 릴리스에 `.deb`와 `.rpm` 패키지가 첨부됩니다(`sudo dpkg -i nexium_*_amd64.deb`). `nix run github:Londopy/nexium`은 C 파일 하나에서 빌드하고, `mise use -g "ubi:Londopy/nexium[exe=nx]"`는 릴리스 바이너리를 설치합니다. 모든 산출물에는 서명된 출처 증명이 있습니다: `gh attestation verify nx --owner Londopy`. [모든 경로](../../install.md#where-to-get-it)(영어).
 

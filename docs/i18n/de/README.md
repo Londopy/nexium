@@ -130,7 +130,7 @@ PATH auf.
 **Docker**: `docker run --rm -v "$PWD":/work ghcr.io/londopy/nexium run hello.nx`
 (Debian; auch `:alpine`; amd64 und arm64).
 
-**Chocolatey und winget**: `choco install nexium` ([das Paket](https://community.chocolatey.org/packages/nexium)), jede Version, sobald die Moderatoren von Chocolatey sie freigegeben haben (sie kann dem neuesten Release einige Tage hinterherhinken), und `winget install Londopy.Nexium`, sobald winget die erste Version aufgenommen hat ([der Stand](../../install.md#where-to-get-it), Englisch).
+**Chocolatey und winget**: `choco install nexium` ([das Paket](https://community.chocolatey.org/packages/nexium)) funktioniert, freigegeben seit 1.2.0; die Moderatoren von Chocolatey prüfen jede neue Version, bevor sie erscheint, daher kommt die neueste einige Tage nach ihrem Release an. `winget install Londopy.Nexium` funktioniert, sobald winget die erste Version aufgenommen hat, die noch bei seinen Prüfern liegt ([der Stand](../../install.md#where-to-get-it), Englisch).
 
 **Debian, RPM, Nix, mise**: jede Release bringt `.deb`- und `.rpm`-Pakete mit (`sudo dpkg -i nexium_*_amd64.deb`); `nix run github:Londopy/nexium` baut es aus der einen C-Datei; `mise use -g "ubi:Londopy/nexium[exe=nx]"` installiert das Release-Binary. Jedes Asset trägt eine signierte Herkunftsangabe: `gh attestation verify nx --owner Londopy`. [Alle Wege](../../install.md#where-to-get-it) (Englisch).
 
