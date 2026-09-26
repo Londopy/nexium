@@ -1898,8 +1898,8 @@ fn cmd_upgrade(check_only: bool) -> i32 {
     }
     let body = os.last_stdout()
     let tag = String.from(json_string(body[..], "tag_name") orelse {
-            eprintln("error: unexpected answer from api.github.com", .{})
-            return 1
+        eprintln("error: unexpected answer from api.github.com", .{})
+        return 1
     })
     let latest = if tag[..].starts_with("v") { tag[1..] } else { tag[..] }
     let c = compare_versions(latest, VERSION)

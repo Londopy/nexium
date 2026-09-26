@@ -9,10 +9,20 @@
 //     testing.expect_snapshot("report", rendered)  // compares to snapshots/report.txt
 //     try testing.snapshot("report", rendered)     // the same, as an error union
 //
+//     fn lists(r: *mut testing.Rng) -> List(i64) { ... r.size(20) ... r.int(-50, 50) ... }
+//     testing.check(List(i64), lists, |xs: *List(i64)| -> bool { ... })   // a property
+//
 // Snapshots live in `snapshots/<name>.txt` under the current directory. A
 // missing file is written and the test passes; a mismatch fails with the
 // first differing line and how to accept the new output. Set
 // `NX_UPDATE_SNAPSHOTS=1` to rewrite them all.
+//
+// A property is checked on 100 random values (`NX_CASES` for more, `NX_SEED`
+// for another seed). Generators draw from a `Rng`, which keeps every
+// choice, so a failing case is shrunk by making it again from fewer and
+// lower choices while it still fails: the report is about the smallest
+// case found, with no shrinking code of the generator's own. `search` is
+// the driver without the panic; the compiler's fuzzer runs on it.
 
 import std.fs
 
@@ -119,6 +129,313 @@ pub fn expect_snapshot(name: []u8, actual: []u8) {
     expect_snapshot_in("snapshots", name, actual)
 }
 
+// ------------------------------------------------------------ properties
+
+/// Random values for property tests and fuzzers, from a seed. Every choice
+/// a generator makes is kept, so a failing case can be made again with its
+/// choices changed: that is how `search` and `check` shrink one to the
+/// smallest they find, for any generator written against this type.
+pub struct Rng {
+    state: u64
+    // the choices of the current case: drawn and kept, or read back
+    choices: List(u64)
+    // the bound each choice was drawn below (0: none), for shrinking
+    bounds: List(u64)
+    replaying: bool
+    at: usize
+}
+
+pub fn rng(seed: u64) -> Rng {
+    return Rng{ .state = seed, .choices = List(u64).new(), .bounds = List(u64).new(), .replaying = false, .at = 0 }
+}
+
+// printable ASCII in the order it shrinks toward: letters first
+const ASCII_ORDER: []u8 = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 .,:;!?-_+*/=<>()[]{}'\"@#$%&^|~`\\"
+
+impl Rng {
+    /// The next choice: 64 random bits (splitmix64), or the kept one when
+    /// replaying (0 past the end of them). Shrinks toward 0.
+    pub fn next(self: *mut Self) -> u64 {
+        self.bounds.append(0)
+        if self.replaying {
+            let c = if self.at < self.choices.len { self.choices[self.at] } else { 0 }
+            self.at += 1
+            return c
+        }
+        self.state = self.state +% 0x9E3779B97F4A7C15
+        var z = self.state
+        z = (z ^ (z >> 30)) *% 0xBF58476D1CE4E5B9
+        z = (z ^ (z >> 27)) *% 0x94D049BB133111EB
+        z = z ^ (z >> 31)
+        self.choices.append(z)
+        self.at += 1
+        return z
+    }
+
+    /// A number below `n` (0 when `n` is 0); shrinks toward 0.
+    pub fn below(self: *mut Self, n: u64) -> u64 {
+        if n == 0 { return 0 }
+        let c = self.next()
+        self.bounds[self.bounds.len - 1] = n
+        return c % n
+    }
+
+    /// An index into `n` things; shrinks toward the first.
+    pub fn pick(self: *mut Self, n: usize) -> usize {
+        return self.below(n as u64) as usize
+    }
+
+    /// True or false alike; shrinks toward false.
+    pub fn flip(self: *mut Self) -> bool {
+        return self.below(2) == 1
+    }
+
+    /// An integer from `lo` to `hi`, both included; shrinks toward 0, or
+    /// toward the end nearer to it when the range does not hold 0.
+    pub fn int(self: *mut Self, lo: i64, hi: i64) -> i64 {
+        if hi <= lo { return lo }
+        if lo >= 0 { return lo + @bitCast(i64, self.below(@bitCast(u64, hi - lo) + 1)) }
+        if hi <= 0 { return hi -% @bitCast(i64, self.below(@bitCast(u64, hi -% lo) +% 1)) }
+        // both signs: the sign, then the size, each shrinking toward 0
+        if self.flip() { return 0 -% @bitCast(i64, self.below(@bitCast(u64, 0 -% lo) +% 1)) }
+        return @bitCast(i64, self.below(@bitCast(u64, hi) + 1))
+    }
+
+    /// A float from 0 up to 1, 1 left out; shrinks toward 0.
+    pub fn float(self: *mut Self) -> f64 {
+        return ((self.next() >> 11) as f64) * (1.0 / 9007199254740992.0)
+    }
+
+    /// A length up to `max`, short ones likelier; shrinks toward 0.
+    pub fn size(self: *mut Self, max: usize) -> usize {
+        if max == 0 { return 0 }
+        let cap = if self.flip() { max } else { if max < 8 { max } else { 8 } }
+        return self.below((cap + 1) as u64) as usize
+    }
+
+    /// Bytes of any value, up to `max` of them.
+    pub fn bytes(self: *mut Self, max: usize) -> String {
+        let n = self.size(max)
+        var out = String.with_capacity(n)
+        for _ in 0..n { out.push_byte(self.below(256) as u8) }
+        return out
+    }
+
+    /// Printable ASCII, up to `max` bytes; shrinks toward `a`s.
+    pub fn ascii(self: *mut Self, max: usize) -> String {
+        let n = self.size(max)
+        var out = String.with_capacity(n)
+        for _ in 0..n { out.push_byte(ASCII_ORDER[self.pick(ASCII_ORDER.len)]) }
+        return out
+    }
+
+    /// UTF-8 text of up to `max` characters: ASCII mostly, with accented
+    /// Latin, Greek, Cyrillic, CJK, emoji and combining marks among it.
+    pub fn text(self: *mut Self, max: usize) -> String {
+        let n = self.size(max)
+        var out = String.new()
+        for _ in 0..n {
+            let kind = self.below(10)
+            var cp: u32 = 0
+            if kind < 5 {
+                cp = ASCII_ORDER[self.pick(ASCII_ORDER.len)] as u32
+            } else if kind == 5 {
+                cp = 0xC0 + self.below(0xC0) as u32
+            } else if kind == 6 {
+                cp = 0x391 + self.below(0xBF) as u32
+            } else if kind == 7 {
+                cp = 0x4E00 + self.below(0x5000) as u32
+            } else if kind == 8 {
+                cp = 0x1F600 + self.below(0x50) as u32
+            } else {
+                cp = 0x300 + self.below(0x70) as u32
+            }
+            push_utf8(&mut out, cp)
+        }
+        return out
+    }
+}
+
+fn push_utf8(out: *mut String, cp: u32) {
+    if cp < 0x80 {
+        out.push_byte(cp as u8)
+    } else if cp < 0x800 {
+        out.push_byte((0xC0 | (cp >> 6)) as u8)
+        out.push_byte((0x80 | (cp & 0x3F)) as u8)
+    } else if cp < 0x10000 {
+        out.push_byte((0xE0 | (cp >> 12)) as u8)
+        out.push_byte((0x80 | ((cp >> 6) & 0x3F)) as u8)
+        out.push_byte((0x80 | (cp & 0x3F)) as u8)
+    } else {
+        out.push_byte((0xF0 | (cp >> 18)) as u8)
+        out.push_byte((0x80 | ((cp >> 12) & 0x3F)) as u8)
+        out.push_byte((0x80 | ((cp >> 6) & 0x3F)) as u8)
+        out.push_byte((0x80 | (cp & 0x3F)) as u8)
+    }
+}
+
+/// How `search` runs: how many cases from which seed, and at most how many
+/// times it makes a case again while shrinking a failure.
+pub struct Search {
+    seed: u64 = 1
+    cases: usize = 100
+    shrink_limit: usize = 2000
+}
+
+/// A property that did not hold: the seed and the case that failed first,
+/// and the choices of the smallest failing case found (`replay` makes its
+/// value again).
+pub struct Failure {
+    seed: u64
+    case: usize
+    choices: List(u64)
+    // smaller failing cases the shrinking went through
+    steps: usize
+}
+
+/// The value `gen` makes from kept choices.
+pub fn replay(comptime T: type, choices: []u64, gen: fn(*mut Rng) -> T) -> T {
+    var r = rng(0)
+    for c in choices { r.choices.append(c) }
+    r.replaying = true
+    return gen(&mut r)
+}
+
+// Does the case the choices make fail? The choices are cut to those the
+// generator read, and each is lowered to the smallest that draws the same
+// value (a choice drawn below `n` as itself modulo `n`).
+fn still_fails(comptime T: type, cand: *mut List(u64), gen: fn(*mut Rng) -> T, holds: fn(*T) -> bool) -> bool {
+    var r = rng(0)
+    r.choices = cand.clone()
+    r.replaying = true
+    let v = gen(&mut r)
+    if holds(&v) { return false }
+    while cand.len > r.at { _ = cand.pop() }
+    for i in 0..cand.len {
+        if i < r.bounds.len and r.bounds[i] > 0 and cand[i] >= r.bounds[i] { cand[i] = cand[i] % r.bounds[i] }
+    }
+    return true
+}
+
+// The smallest failing choices found from `start`: runs of choices deleted
+// and single ones lowered while the case still fails, `limit` replays at
+// most. Shorter is smaller, then lower.
+fn shrink(comptime T: type, own start: List(u64), gen: fn(*mut Rng) -> T, holds: fn(*T) -> bool, limit: usize, steps: *mut usize) -> List(u64) {
+    var cur = start
+    var budget = limit
+    var first = cur.clone()
+    if still_fails(T, &mut first, gen, holds) { cur = first }
+    var improved = true
+    while improved and budget > 0 {
+        improved = false
+        let sizes: [4]usize = [8, 4, 2, 1]
+        for size in sizes {
+            var i: usize = 0
+            while i + size <= cur.len and budget > 0 {
+                var cand = List(u64).with_capacity(cur.len)
+                for j in 0..cur.len {
+                    if j < i or j >= i + size { cand.append(cur[j]) }
+                }
+                budget -= 1
+                if still_fails(T, &mut cand, gen, holds) {
+                    cur = cand
+                    steps.* += 1
+                    improved = true
+                } else {
+                    i += 1
+                }
+            }
+        }
+        var i: usize = 0
+        while i < cur.len and budget > 0 {
+            if cur[i] > 0 {
+                // 0 first, then halving toward the smallest that still fails
+                var cand = cur.clone()
+                cand[i] = 0
+                budget -= 1
+                if still_fails(T, &mut cand, gen, holds) {
+                    cur = cand
+                    steps.* += 1
+                    improved = true
+                } else {
+                    var lo: u64 = 0
+                    var hi = cur[i]
+                    var best = cur.clone()
+                    while lo + 1 < hi and budget > 0 {
+                        let mid = lo + (hi - lo) / 2
+                        var probe = cur.clone()
+                        probe[i] = mid
+                        budget -= 1
+                        if still_fails(T, &mut probe, gen, holds) {
+                            hi = mid
+                            best = probe
+                        } else {
+                            lo = mid
+                        }
+                    }
+                    if i < best.len and best[i] < cur[i] {
+                        cur = best
+                        steps.* += 1
+                        improved = true
+                    }
+                }
+            }
+            i += 1
+        }
+    }
+    return cur
+}
+
+/// Look for a case where `holds` is false among the values `gen` makes, and
+/// shrink the first found; null when every case held. `holds` answers with
+/// false; a panic in it ends the test as it stands, unshrunk.
+pub fn search(comptime T: type, how: Search, gen: fn(*mut Rng) -> T, holds: fn(*T) -> bool) -> ?Failure {
+    var r = rng(how.seed)
+    for k in 0..how.cases {
+        r.choices.clear()
+        r.bounds.clear()
+        r.at = 0
+        let v = gen(&mut r)
+        if !holds(&v) {
+            var steps: usize = 0
+            let small = shrink(T, r.choices.clone(), gen, holds, how.shrink_limit, &mut steps)
+            return Failure{ .seed = how.seed, .case = k, .choices = small, .steps = steps }
+        }
+    }
+    return null
+}
+
+/// The seed `check` starts from: `NX_SEED` when it is set, else 1, so a
+/// run repeats.
+pub fn seed() -> u64 {
+    if let s = os.env("NX_SEED") { return s.parse_int(u64) catch { 1 } }
+    return 1
+}
+
+// the cases `check` tries: `NX_CASES` when it is set, else 100
+fn cases() -> usize {
+    if let s = os.env("NX_CASES") { return s.parse_int(usize) catch { 100 } }
+    return 100
+}
+
+/// Check that `holds` is true of every value `gen` makes: 100 of them
+/// (`NX_CASES` sets how many, `NX_SEED` the seed). A failure is shrunk to
+/// the smallest failing case found and fails the test with the seed that
+/// repeats it; `check_show` prints the value too.
+pub fn check(comptime T: type, gen: fn(*mut Rng) -> T, holds: fn(*T) -> bool) {
+    if let f = search(T, Search{ .seed = seed(), .cases = cases() }, gen, holds) {
+        panic(format("a property failed at case {} of seed {} (shrunk {} times); NX_SEED={} repeats it", .{f.case, f.seed, f.steps, f.seed}))
+    }
+}
+
+/// `check`, with the smallest failing value written by `show` in the failure.
+pub fn check_show(comptime T: type, gen: fn(*mut Rng) -> T, holds: fn(*T) -> bool, show: fn(*T) -> String) {
+    if let f = search(T, Search{ .seed = seed(), .cases = cases() }, gen, holds) {
+        let v = replay(T, f.choices[..], gen)
+        panic(format("a property failed for {} at case {} of seed {} (shrunk {} times); NX_SEED={} repeats it", .{show(&v), f.case, f.seed, f.steps, f.seed}))
+    }
+}
+
 // ------------------------------------------------------------------ tests
 
 fn parse_digit(s: []u8) -> !i32 {
@@ -156,4 +473,97 @@ test "snapshots" {
     expect(fs.exists(fs.join(dir, "first.txt")))
     try snapshot_in(dir, "first", "one\ntwo\n")
     try fs.remove_all(dir)
+}
+
+fn wide_ints(r: *mut Rng) -> i64 {
+    return r.int(-1000000, 1000000)
+}
+
+fn below_1000(x: *i64) -> bool {
+    return x.* < 1000
+}
+
+fn int_lists(r: *mut Rng) -> List(i64) {
+    let n = r.size(20)
+    var out = List(i64).new()
+    for _ in 0..n { out.append(r.int(-50, 50)) }
+    return out
+}
+
+fn reversed_twice_is_itself(xs: *List(i64)) -> bool {
+    var once = List(i64).new()
+    var i = xs.len
+    while i > 0 {
+        i -= 1
+        once.append(xs[i])
+    }
+    var twice = List(i64).new()
+    i = once.len
+    while i > 0 {
+        i -= 1
+        twice.append(once[i])
+    }
+    if twice.len != xs.len { return false }
+    for x, k in twice {
+        if x != xs[k] { return false }
+    }
+    return true
+}
+
+// false: plenty of lists hold two equal neighbours
+fn no_equal_neighbours(xs: *List(i64)) -> bool {
+    var i: usize = 1
+    while i < xs.len {
+        if xs[i] == xs[i - 1] { return false }
+        i += 1
+    }
+    return true
+}
+
+test "properties" {
+    // a true one holds for every case
+    check(List(i64), int_lists, reversed_twice_is_itself)
+    // a false one is found, and shrunk to the smallest failing case
+    let f = search(i64, Search{ .seed = 7, .cases = 1000 }, wide_ints, below_1000).?
+    expect_eq(replay(i64, f.choices[..], wide_ints), 1000)
+    expect(f.steps > 0)
+    let g = search(List(i64), Search{ .seed = 3, .cases = 1000 }, int_lists, no_equal_neighbours).?
+    let smallest = replay(List(i64), g.choices[..], int_lists)
+    expect_eq(smallest.len, 2)
+    expect_eq(smallest[0], 0)
+    expect_eq(smallest[1], 0)
+    // the same seed makes the same cases
+    let again = search(i64, Search{ .seed = 7, .cases = 1000 }, wide_ints, below_1000).?
+    expect_eq(again.case, f.case)
+    // generators and properties may be closures
+    var seen: usize = 0
+    check(String, |r: *mut Rng| -> String { return r.ascii(20) }, |[&mut seen] s: *String| -> bool {
+        seen += 1
+        for c in s[..] {
+            if c < 32 or c > 126 { return false }
+        }
+        return true
+    })
+    expect(seen > 0)
+}
+
+test "generators" {
+    var r = rng(42)
+    for _ in 0..200 {
+        let v = r.int(-5, 3)
+        expect(v >= -5 and v <= 3)
+        let w = r.int(10, 12)
+        expect(w >= 10 and w <= 12)
+        let x = r.float()
+        expect(x >= 0.0 and x < 1.0)
+        expect(r.size(4) <= 4)
+        expect(r.bytes(9).len <= 9)
+    }
+    // the whole range, both ends
+    _ = r.int(-9223372036854775807 - 1, 9223372036854775807)
+    // replaying zeros draws every value's smallest form
+    let zeros: [3]u64 = [0, 0, 0]
+    expect_eq(replay(i64, zeros[..], wide_ints), 0)
+    let empty: [0]u64 = []
+    expect_eq(replay(String, empty[..], |r: *mut Rng| -> String { return r.text(10) }).len, 0)
 }

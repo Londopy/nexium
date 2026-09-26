@@ -169,9 +169,10 @@ jobs:
 
   fuzz:
     name: fuzz
-    # mutated sources through the front end (every tenth accepted one built
-    # in debug mode and run) and random bytes through the binary pattern
-    # engine (tests/fuzz.nx); a crash is a failure
+    # mutated sources through the front end (one accepted mutant in ten
+    # built in debug mode and run) and random bytes through the binary
+    # pattern engine (tests/fuzz.nx, on std.testing's property driver, so a
+    # finding is shrunk before it is saved); a crash is a failure
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

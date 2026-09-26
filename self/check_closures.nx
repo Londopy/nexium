@@ -129,13 +129,13 @@ impl Checker {
         }
         let fname = self.ctx().fn_name.clone()
         self.insts.append(Inst{
-                .name = format("closure in {}", .{fname}), .mangled = format("nx_closure_{}", .{id}), .def = NONE, .targs = List(usize).new(),
-                .gen_names = self.env_names.clone(), .gen_tys = self.env_tys.clone(),
-                .params = params, .ret = ret, .locals = locals, .body = NONE,
-                .own_effects = 0, .effects = 0, .declared_neg = 0, .declared_pos = 0, .export_name = String.from("-"),
-                .is_extern = false, .is_variadic = false, .is_pub = false, .is_test = false, .test_comptime = false,
-                .is_closure = true, .closure_by_ref = cap_refs.clone(), .start = start, .end = end, .module = m, .self_ty = st,
-                .witnesses = List(Witness).new(), .callees = List(usize).new(), .callee_spans = List(usize).new(),
+            .name = format("closure in {}", .{fname}), .mangled = format("nx_closure_{}", .{id}), .def = NONE, .targs = List(usize).new(),
+            .gen_names = self.env_names.clone(), .gen_tys = self.env_tys.clone(),
+            .params = params, .ret = ret, .locals = locals, .body = NONE,
+            .own_effects = 0, .effects = 0, .declared_neg = 0, .declared_pos = 0, .export_name = String.from("-"),
+            .is_extern = false, .is_variadic = false, .is_pub = false, .is_test = false, .test_comptime = false,
+            .is_closure = true, .closure_by_ref = cap_refs.clone(), .start = start, .end = end, .module = m, .self_ty = st,
+            .witnesses = List(Witness).new(), .callees = List(usize).new(), .callee_spans = List(usize).new(),
         })
         self.check_closure_body(id, body_node, &cap_names, &cap_refs, &cap_muts, &cap_tys, &cap_starts, &cap_ends)
         if exp_eff != EFF_ALL { self.oblige(id, EFF_ALL & ~exp_eff, start) }

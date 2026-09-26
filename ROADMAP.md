@@ -701,15 +701,19 @@ own sources, and the language server answers from the checker.
   once all have ended; `Atomic` over `sync.atomic_*`. Clean under
   ThreadSanitizer.)
 - `std.testing`: property-based tests (`check(gen, fn)`) with shrinking,
-  the same driver the fuzzers use.
+  the same driver the fuzzers use. (Done: `testing.check(T, gen, holds)`
+  over generators written against `testing.Rng`, which keeps every choice,
+  so shrinking works on the choices and needs nothing from a generator;
+  `search` beneath it runs `tests/fuzz.nx`, whose findings are shrunk
+  before they are saved. The course's testing chapter has a property.)
 
 Order, with the collections, `std.hash`, `random.secure`, the small modules
 (`std.path`, `std.env`, `std.uuid`, `std.log`, `std.csv`, `std.toml`,
 `std.base64`), `Map` on SipHash, `std.time` (and with it the known issue
 of `import std.time` hiding `time.now()` fixed), the HTTP client with the
 TLS slot and nxtls in it, `std.websocket`, the `discord` package,
-`std.process`, `std.thread` and `std.text` already in: the platform's TLS
-and `std.testing`.
+`std.process`, `std.thread`, `std.text` and `std.testing` already in: the
+platform's TLS.
 
 Exit: `examples/tool.nx`, `service.nx` and the self-hosted compiler import
 nothing they had to write themselves.

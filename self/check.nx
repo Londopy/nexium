@@ -1479,8 +1479,8 @@ impl Checker {
         let opts = cimport.ImportOptions{ .cc = self.cc.clone(), .target = self.target.clone(), .include_dirs = self.include_dirs(), .windows = windows }
         let mid = self.mods.len
         self.mods.append(Mod{
-                .name = format("cimport:{}", .{header}), .source = String.new(), .dir = String.new(), .path = String.new(), .pkg = String.new(),
-                .parsed = parser.Parsed{ .tree = parser.Tree{ .nodes = List(parser.Node).new(), .docs = List(String).new(), .doc_counts = List(usize).new() }, .items = List(usize).new(), .errors = List(String).new() },
+            .name = format("cimport:{}", .{header}), .source = String.new(), .dir = String.new(), .path = String.new(), .pkg = String.new(),
+            .parsed = parser.Parsed{ .tree = parser.Tree{ .nodes = List(parser.Node).new(), .docs = List(String).new(), .doc_counts = List(usize).new() }, .items = List(usize).new(), .errors = List(String).new() },
         })
         let bend = bnode.end
         let ci = cimport.import_header(header[..], &opts, &mut self.mods[mid].parsed.tree) catch |e| {
@@ -2732,11 +2732,11 @@ impl Checker {
             mangled = format("nx_{}_{}", .{sanitize(base[..]), id})
         }
         self.insts.append(Inst{
-                .name = name, .mangled = mangled, .def = fid, .targs = targs, .gen_names = gen_names, .gen_tys = gen_tys, .params = params, .ret = ret, .locals = locals, .body = NONE,
-                .own_effects = 0, .effects = 0, .declared_neg = neg, .declared_pos = pos, .export_name = export_name,
-                .is_extern = is_extern, .is_variadic = is_variadic, .is_pub = is_pub, .is_test = is_test, .test_comptime = test_comptime,
-                .is_closure = false, .closure_by_ref = List(bool).new(), .start = start, .end = end, .module = m, .self_ty = self_ty,
-                .witnesses = List(Witness).new(), .callees = List(usize).new(), .callee_spans = List(usize).new(),
+            .name = name, .mangled = mangled, .def = fid, .targs = targs, .gen_names = gen_names, .gen_tys = gen_tys, .params = params, .ret = ret, .locals = locals, .body = NONE,
+            .own_effects = 0, .effects = 0, .declared_neg = neg, .declared_pos = pos, .export_name = export_name,
+            .is_extern = is_extern, .is_variadic = is_variadic, .is_pub = is_pub, .is_test = is_test, .test_comptime = test_comptime,
+            .is_closure = false, .closure_by_ref = List(bool).new(), .start = start, .end = end, .module = m, .self_ty = self_ty,
+            .witnesses = List(Witness).new(), .callees = List(usize).new(), .callee_spans = List(usize).new(),
         })
         // a std module's tests belong to the compiler's own suite
         let from_std = self.mods[m].name.len >= 4 and self.mods[m].name[0..4] == "std."

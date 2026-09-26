@@ -225,6 +225,16 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   case-fold (full and simple), `pad_left` right-aligns in terminal columns,
   `truncate_width` cuts to a width between grapheme clusters, and
   `UNICODE_VERSION` names the tables' version.
+- Property tests in `std.testing`: `check(T, gen, holds)` asks a generator
+  for 100 values (`NX_CASES` for more, `NX_SEED` for another seed) and
+  fails the test when `holds` is false of one; `check_show` writes the
+  failing value. Generators draw from a `testing.Rng` (`int`, `size`,
+  `pick`, `flip`, `float`, `bytes`, `ascii`, `text`), which keeps every
+  choice: a failing case is shrunk by making it again from fewer and lower
+  choices while it still fails, so any generator shrinks without code of
+  its own (a failing list of ints comes out as `[0, 0]`, a bound as the
+  bound itself). `search` and `replay` are the driver beneath, returning
+  what they found; generators and properties may be closures.
 
 ### Changed
 
@@ -278,6 +288,12 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   `is_wide` covering every script. Every code point Python 3.13 (Unicode
   15.1) knows maps as it does, but the two capitals Unicode 16 added (for
   ƛ and ɤ).
+- The fuzzer (`tests/fuzz.nx`) runs on std.testing's property driver:
+  its cases come from a `testing.Rng` of the seed, and the first finding
+  of each engine is shrunk (fewer edits, a shorter input) before it is
+  saved. The hunter builds and runs one accepted mutant in N, chosen with
+  the case, where it took every Nth, so a shrunk case is hunted the same
+  way.
 - A started program inherits its three standard streams and nothing else:
   on Windows `process.run`, `process.exec` and `process.start` hand over
   only those handles (a handle list), and elsewhere their pipes close on
@@ -290,6 +306,12 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Fixed
 
+- `nx fmt` indented a block opened inside parentheses, a closure's body
+  passed to a call or a struct literal as an argument, two levels, and its
+  inner closing braces one: the body of `check(T, gen, |x| -> bool {` came
+  out ragged. Such a block is now one level in, like any other; three
+  places in the compiler written the old way are respaced. Test: the fmt
+  suite's block inside parentheses case.
 - `nx fmt` spaced the pointer sigil after a slice or array type's brackets
   as a multiplication: `chans: []*mut Channel(T)` became `chans: [] * mut
   Channel(T)`, and `[4]*u8` likewise. A `-`, `&` or `*` after a `]` is now

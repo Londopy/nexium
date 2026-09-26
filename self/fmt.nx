@@ -44,6 +44,10 @@ pub fn format_source(src: []u8) -> !String {
     var out = String.new()
     var depth: i64 = 0
     var paren: i64 = 0
+    // the paren depth at each open brace: inside a block opened within
+    // parentheses (a closure's body passed to a call) a line continues only
+    // when parentheses opened in that block are open
+    var brace_paren = List(i64).new()
     var blank_run: i64 = 0
     var prev_line_last: ?lexer.Kind = null
     // depth at which an `enum` body opened (variants with `{` payloads live there)
@@ -73,7 +77,8 @@ pub fn format_source(src: []u8) -> !String {
         let leading_dot_continues = first == lexer.Kind.Dot and !prev_blocks_dot
         let first_text = toks[ids[0]].text[..]
         let first_word_continues = first == lexer.Kind.Ident and (first_text == "catch" or first_text == "orelse" or first_text == "and" or first_text == "or")
-        let continuation = paren > 0 or leading_dot_continues or first == lexer.Kind.PipeGt or first_word_continues or prev_is_binary
+        let base = if brace_paren.len > 0 { brace_paren[brace_paren.len - 1] } else { 0 }
+        let continuation = paren > base or leading_dot_continues or first == lexer.Kind.PipeGt or first_word_continues or prev_is_binary
         let extra: i64 = if continuation and !(first == lexer.Kind.RBrace or first == lexer.Kind.RParen or first == lexer.Kind.RBracket) { 4 } else { 0 }
         let indent = (if line_depth > 0 { line_depth } else { 0 }) * 4 + extra
         for _ in 0..indent { out.append(" ") }
@@ -85,6 +90,7 @@ pub fn format_source(src: []u8) -> !String {
             let k = t.kind
             if k == lexer.Kind.LBrace or k == lexer.Kind.DotLBrace {
                 depth += 1
+                brace_paren.append(paren)
                 if pending_enum {
                     enum_body_depth = depth
                     pending_enum = false
@@ -92,6 +98,7 @@ pub fn format_source(src: []u8) -> !String {
             } else if k == lexer.Kind.RBrace {
                 if enum_body_depth == depth { enum_body_depth = -1 }
                 depth -= 1
+                if brace_paren.len > 0 { _ = brace_paren.pop() }
             } else if k == lexer.Kind.LParen or k == lexer.Kind.LBracket {
                 paren += 1
             } else if k == lexer.Kind.RParen or k == lexer.Kind.RBracket {

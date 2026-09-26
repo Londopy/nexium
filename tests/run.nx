@@ -706,6 +706,15 @@ fn suite_fmt(e: *Env, failures: *mut List(String)) {
     let sf = nx(e, ["fmt", ptrs[..]][..])
     let sgot = normalize((fs.read(ptrs[..]) catch { String.new() })[..])
     if sf.code != 0 or sgot[..] != swant { failures.append(format("fmt: a slice of pointers (exit {}):\n{}{}", .{sf.code, sgot, sf.stderr})) }
+    // a block opened inside parentheses, a closure's body or a literal passed
+    // to a call, is indented one level, not two
+    let blocks = fs.join(e.root[..], "nx-out/cases/blocks_in_calls.nx")
+    let btext = "fn f() {\n    check(String, |r: *mut Rng| -> String { return r.ascii(9) }, |[&mut seen] s: *String| -> bool {\n    seen += 1\n    for c in s[..] {\n    if c < 32 { return false }\n    }\n    return g(1,\n    2)\n    })\n    xs.append(Point{\n    .x = 1,\n    })\n}\n"
+    let bwant = "fn f() {\n    check(String, |r: *mut Rng| -> String { return r.ascii(9) }, |[&mut seen] s: *String| -> bool {\n        seen += 1\n        for c in s[..] {\n            if c < 32 { return false }\n        }\n        return g(1,\n            2)\n    })\n    xs.append(Point{\n        .x = 1,\n    })\n}\n"
+    fs.write(blocks[..], btext) catch { }
+    let bf = nx(e, ["fmt", blocks[..]][..])
+    let bgot = normalize((fs.read(blocks[..]) catch { String.new() })[..])
+    if bf.code != 0 or bgot[..] != bwant { failures.append(format("fmt: a block inside parentheses (exit {}):\n{}{}", .{bf.code, bgot, bf.stderr})) }
     println("fmt: {} files", .{files.len})
 }
 

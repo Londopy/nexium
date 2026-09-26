@@ -589,7 +589,9 @@ std.strings: text utilities on `[]u8` and `String`, written in Nexium. `import s
 
 ## std.testing
 
-std.testing: conveniences for `test` blocks, written in Nexium. `import std.testing` then, inside a test: testing.expect_approx(area, 3.14159, 0.001) testing.expect_err(i32, parse("nope")) testing.expect_contains(output, "42 items") testing.expect_lines(rendered, expected)    // reports the first differing line testing.expect_snapshot("report", rendered)  // compares to snapshots/report.txt try testing.snapshot("report", rendered)     // the same, as an error union Snapshots live in `snapshots/<name>.txt` under the current directory. A missing file is written and the test passes; a mismatch fails with the first differing line and how to accept the new output. Set `NX_UPDATE_SNAPSHOTS=1` to rewrite them all.
+std.testing: conveniences for `test` blocks, written in Nexium. `import std.testing` then, inside a test: testing.expect_approx(area, 3.14159, 0.001) testing.expect_err(i32, parse("nope")) testing.expect_contains(output, "42 items") testing.expect_lines(rendered, expected)    // reports the first differing line testing.expect_snapshot("report", rendered)  // compares to snapshots/report.txt try testing.snapshot("report", rendered)     // the same, as an error union fn lists(r: *mut testing.Rng) -> List(i64) { ... r.size(20) ... r.int(-50, 50) ... } testing.check(List(i64), lists, |xs: *List(i64)| -> bool { ... })   // a property Snapshots live in `snapshots/<name>.txt` under the current directory. A missing file is written and the test passes; a mismatch fails with the first differing line and how to accept the new output. Set `NX_UPDATE_SNAPSHOTS=1` to rewrite them all. A property is checked on 100 random values (`NX_CASES` for more, `NX_SEED` for another seed). Generators draw from a `Rng`, which keeps every choice, so a failing case is shrunk by making it again from fewer and lower choices while it still fails: the report is about the smallest case found, with no shrinking code of the generator's own. `search` is the driver without the panic; the compiler's fuzzer runs on it.
+
+Types: `Rng`, `Search`, `Failure`
 
 | function | what it does |
 | --- | --- |
@@ -604,6 +606,22 @@ std.testing: conveniences for `test` blocks, written in Nexium. `import std.test
 | `snapshot(name: []u8, actual: []u8) -> !void` | `snapshot_in("snapshots", name, actual)`. |
 | `expect_snapshot_in(dir: []u8, name: []u8, actual: []u8)` | `snapshot_in`, in the `expect_` form: a mismatch fails the test naming the file, the first differing line and how to accept the new output; a file that cannot be read or written fails it too, instead of returning an error for the test to handle. |
 | `expect_snapshot(name: []u8, actual: []u8)` | `expect_snapshot_in("snapshots", name, actual)`. |
+| `rng(seed: u64) -> Rng` |  |
+| `(method) next(self: *mut Self) -> u64` | The next choice: 64 random bits (splitmix64), or the kept one when replaying (0 past the end of them). Shrinks toward 0. |
+| `(method) below(self: *mut Self, n: u64) -> u64` | A number below `n` (0 when `n` is 0); shrinks toward 0. |
+| `(method) pick(self: *mut Self, n: usize) -> usize` | An index into `n` things; shrinks toward the first. |
+| `(method) flip(self: *mut Self) -> bool` | True or false alike; shrinks toward false. |
+| `(method) int(self: *mut Self, lo: i64, hi: i64) -> i64` | An integer from `lo` to `hi`, both included; shrinks toward 0, or toward the end nearer to it when the range does not hold 0. |
+| `(method) float(self: *mut Self) -> f64` | A float from 0 up to 1, 1 left out; shrinks toward 0. |
+| `(method) size(self: *mut Self, max: usize) -> usize` | A length up to `max`, short ones likelier; shrinks toward 0. |
+| `(method) bytes(self: *mut Self, max: usize) -> String` | Bytes of any value, up to `max` of them. |
+| `(method) ascii(self: *mut Self, max: usize) -> String` | Printable ASCII, up to `max` bytes; shrinks toward `a`s. |
+| `(method) text(self: *mut Self, max: usize) -> String` | UTF-8 text of up to `max` characters: ASCII mostly, with accented Latin, Greek, Cyrillic, CJK, emoji and combining marks among it. |
+| `replay(comptime T: type, choices: []u64, gen: fn(*mut Rng) -> T) -> T` | The value `gen` makes from kept choices. |
+| `search(comptime T: type, how: Search, gen: fn(*mut Rng) -> T, holds: fn(*T) -> bool) -> ?Failure` | Look for a case where `holds` is false among the values `gen` makes, and shrink the first found; null when every case held. `holds` answers with false; a panic in it ends the test as it stands, unshrunk. |
+| `seed() -> u64` | The seed `check` starts from: `NX_SEED` when it is set, else 1, so a run repeats. |
+| `check(comptime T: type, gen: fn(*mut Rng) -> T, holds: fn(*T) -> bool)` | Check that `holds` is true of every value `gen` makes: 100 of them (`NX_CASES` sets how many, `NX_SEED` the seed). A failure is shrunk to the smallest failing case found and fails the test with the seed that repeats it; `check_show` prints the value too. |
+| `check_show(comptime T: type, gen: fn(*mut Rng) -> T, holds: fn(*T) -> bool, show: fn(*T) -> String)` | `check`, with the smallest failing value written by `show` in the failure. |
 
 ## std.text
 

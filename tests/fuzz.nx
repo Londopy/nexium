@@ -7,12 +7,15 @@
 //! Every mutant of a corpus file (`examples/`, `tests/spec/`, `std/`) goes
 //! through `nx check`; exit 0 (accepted) and exit 1 (rejected with a
 //! diagnostic) are the two right answers, anything else (a panic, a signal,
-//! a timeout) is saved under `nx-out/fuzzing/findings/` and reported. Then a
-//! program full of binary patterns is built once and fed random byte
-//! strings: it must answer every one without crashing. The exit code is the
-//! number of findings, capped at 100.
+//! a timeout) is a finding. Then a program full of binary patterns is built
+//! once and fed random byte strings: it must answer every one without
+//! crashing. Both engines run on std.testing's property driver: the cases
+//! come from a `testing.Rng` of the seed, and the first finding of each is
+//! shrunk to the smallest case that still fails, then saved under
+//! `nx-out/fuzzing/findings/` and reported. The exit code is the number of
+//! findings.
 //!
-//! `--run N` is the hunter of 1.2: every Nth accepted mutant is built in
+//! `--run N` is the hunter of 1.2: one accepted mutant in N is built in
 //! debug mode, where released storage is filled with `0xDD`, and run. A
 //! signal or an abort is a finding (a view the rules of SPEC 5.6 and 5.7
 //! missed reads released storage and dies there instead of by luck); a
@@ -23,13 +26,14 @@
 import std.fs
 import std.process
 import std.strings
+import std.testing
 
 struct Env {
     nx: String
     windows: bool
     dir: String
     findings: usize
-    // build and run every Nth accepted mutant in debug mode (0: none)
+    // build and run one accepted mutant in N in debug mode (0: none)
     run_every: usize
 }
 
@@ -62,22 +66,32 @@ fn note_finding(e: *mut Env, what: []u8, text: []u8, out: *process.Output) {
 }
 
 /// The hunter: an accepted mutant built in debug mode and run under a time
-/// limit where the platform has one.
-fn run_mutant(e: *mut Env, path: []u8, mutant: []u8) {
+/// limit where the platform has one. True when it found something: the kind
+/// in `what`, the output in `out`.
+fn run_mutant(e: *Env, path: []u8, what: *mut String, out: *mut process.Output) -> bool {
     let exe = fs.join(e.dir[..], if e.windows { "mutant.exe" } else { "mutant" })
     var build_args = List([]u8).new()
     build_args.append(e.nx[..])
     for a in ["build", path, "-o", exe[..], "--mode", "debug", "--out-dir", e.dir[..]] { build_args.append(a) }
     let b = run_in(build_args[..], "", "")
-    if b.code != 0 { note_finding(e, "emit", mutant, &b); return }
+    if b.code != 0 {
+        what.* = String.from("emit")
+        out.* = b
+        return true
+    }
     // no `main`: a library object, nothing to execute
-    if b.stderr[..].find("building a library object") != null { return }
+    if b.stderr[..].find("building a library object") != null { return false }
     var argv = List([]u8).new()
     if !e.windows { argv.append("timeout"); argv.append("10") }
     argv.append(exe[..])
     let r = run_in(argv[..], "", "")
     // 0 to 100 are a program's own codes, 101 a panic, 124 the time limit
-    if r.code < 0 or (r.code > 101 and r.code != 124) { note_finding(e, "dangling", mutant, &r) }
+    if r.code < 0 or (r.code > 101 and r.code != 124) {
+        what.* = String.from("dangling")
+        out.* = r
+        return true
+    }
+    return false
 }
 
 // ----- mutations ---------------------------------------------------------------
@@ -87,75 +101,76 @@ const TOKENS = ["fn", "let", "var", "if", "else", "for", "while", "match", "retu
     "null", "true", "undefined", "self", "Self", "String", "List", "Map", "i32", "u8", "usize", "f64", "bool", "error", "try", "catch", "orelse", "own", "pub", "test",
     "\n", " ", "\t", "\r", b"\x00", b"\xff", b"\xe2\x82", "{{", "}}", "{}", ".{", "%", "/", "-", "+", "1", "0", "999999999999999999999", "\"\"", "''"]
 
-fn rand_below(n: usize) -> usize {
-    if n == 0 { return 0 }
-    return random.int(0, (n - 1) as i64) as usize
-}
-
 /// One random edit of the text.
-fn mutate(src: []u8, other: []u8) -> String {
+fn mutate(r: *mut testing.Rng, src: []u8, other: []u8) -> String {
     var out = String.new()
     let n = src.len
-    let kind = rand_below(8)
-    if n == 0 { out.append(TOKENS[rand_below(TOKENS.len)]); return out }
+    let kind = r.pick(8)
+    if n == 0 { out.append(TOKENS[r.pick(TOKENS.len)]); return out }
     if kind == 0 {
         // delete a range
-        let a = rand_below(n)
-        let b = a + rand_below(if n - a < 64 { n - a } else { 64 }) + 1
+        let a = r.pick(n)
+        let b = a + r.pick(if n - a < 64 { n - a } else { 64 }) + 1
         out.append(src[0..a])
         if b < n { out.append(src[b..]) }
     } else if kind == 1 {
         // duplicate a range
-        let a = rand_below(n)
-        let b = a + rand_below(if n - a < 128 { n - a } else { 128 }) + 1
+        let a = r.pick(n)
+        let b = a + r.pick(if n - a < 128 { n - a } else { 128 }) + 1
         let bb = if b > n { n } else { b }
         out.append(src[0..bb])
         out.append(src[a..bb])
         out.append(src[bb..])
     } else if kind == 2 {
         // insert a token
-        let a = rand_below(n + 1)
+        let a = r.pick(n + 1)
         out.append(src[0..a])
-        out.append(TOKENS[rand_below(TOKENS.len)])
+        out.append(TOKENS[r.pick(TOKENS.len)])
         out.append(src[a..])
     } else if kind == 3 {
         // replace a byte with a random printable one, or a control byte
-        let a = rand_below(n)
+        let a = r.pick(n)
         out.append(src[0..a])
-        let c = if rand_below(4) == 0 { rand_below(32) as u8 } else { (32 + rand_below(95)) as u8 }
+        let c = if r.pick(4) == 0 { r.pick(32) as u8 } else { (32 + r.pick(95)) as u8 }
         out.push_byte(c)
         out.append(src[a + 1..])
     } else if kind == 4 {
         // truncate
-        out.append(src[0..rand_below(n)])
+        out.append(src[0..r.pick(n)])
     } else if kind == 5 {
         // swap two lines
         var lines = List([]u8).new()
         for l in src.lines() { lines.append(l) }
         if lines.len < 2 { out.append(src); return out }
-        let i = rand_below(lines.len)
-        let j = rand_below(lines.len)
+        let i = r.pick(lines.len)
+        let j = r.pick(lines.len)
         for l, k in lines {
             if k > 0 { out.append("\n") }
             out.append(if k == i { lines[j] } else if k == j { lines[i] } else { l })
         }
     } else if kind == 6 {
         // splice: the head of this file and the tail of another
-        let a = rand_below(n)
-        let b = rand_below(other.len + 1)
+        let a = r.pick(n)
+        let b = r.pick(other.len + 1)
         out.append(src[0..a])
         out.append(other[b..])
     } else {
         // several edits at once
         var cur = String.from(src)
-        for k in 0..(2 + rand_below(4)) { cur = mutate(cur[..], other) }
+        for k in 0..(2 + r.pick(4)) { cur = mutate(r, cur[..], other) }
         return cur
     }
     return out
 }
 
+/// A mutant, and whether the hunter builds and runs it.
+struct Mutant {
+    text: String
+    run: bool
+}
+
 /// Mutated corpus files through the front end.
-fn fuzz_sources(e: *mut Env, iterations: usize) {
+fn fuzz_sources(e: *mut Env, iterations: usize, seed: u64) {
     var corpus = List(String).new()
     for dir in ["examples", "tests/spec", "std"] {
         let names = fs.list(dir) catch { continue }
@@ -165,32 +180,59 @@ fn fuzz_sources(e: *mut Env, iterations: usize) {
     var texts = List(String).new()
     for f in corpus { texts.append(fs.read(f[..]) catch { String.new() }) }
     let case_path = fs.join(e.dir[..], "case.nx")
+    let run_every = e.run_every
+    var cases: usize = 0
     var accepted: usize = 0
     var rejected: usize = 0
     var ran: usize = 0
-    for i in 0..iterations {
-        let src = &texts[rand_below(texts.len)]
-        let other = &texts[rand_below(texts.len)]
-        let mutant = mutate(src[..], other[..])
-        fs.write(case_path[..], mutant[..]) catch { println("cannot write {}", .{case_path}); return }
-        let out = check(e, case_path[..])
-        if out.code == 0 {
-            accepted += 1
-            if e.run_every > 0 and accepted % e.run_every == 0 {
-                ran += 1
-                run_mutant(e, case_path[..], mutant[..])
-            }
-        }
-        else if out.code == 1 { rejected += 1 }
-        else { note_finding(e, "source", mutant[..], &out) }
+    // counted until the first finding: after it, cases are its shrinking
+    var found = false
+    // what the last failing case found
+    var what = String.new()
+    var last = process.Output{ .code = 0, .stdout = String.new(), .stderr = String.new() }
+    let gen = |[&texts, run_every] r: *mut testing.Rng| -> Mutant {
+        let src = &texts[r.pick(texts.len)]
+        let other = &texts[r.pick(texts.len)]
+        let text = mutate(r, src[..], other[..])
+        let run = run_every > 0 and r.pick(run_every) == 0
+        return Mutant{ .text = text, .run = run }
     }
-    println("sources: {} mutants, {} accepted, {} rejected, {} run in debug mode, {} finding(s)", .{iterations, accepted, rejected, ran, e.findings})
+    let holds = |[e, &case_path, &mut cases, &mut accepted, &mut rejected, &mut ran, &mut found, &mut what, &mut last] m: *Mutant| -> bool {
+        if !found { cases += 1 }
+        fs.write(case_path[..], m.text[..]) catch { return true }
+        let out = check(e, case_path[..])
+        if out.code == 1 {
+            if !found { rejected += 1 }
+            return true
+        }
+        if out.code != 0 {
+            found = true
+            what = String.from("source")
+            last = out
+            return false
+        }
+        if !found { accepted += 1 }
+        if !m.run { return true }
+        if !found { ran += 1 }
+        let hit = run_mutant(e, case_path[..], &mut what, &mut last)
+        if hit { found = true }
+        return !hit
+    }
+    let how = testing.Search{ .seed = seed, .cases = iterations, .shrink_limit = 300 }
+    if let f = testing.search(Mutant, how, gen, holds) {
+        // the smallest mutant found, run once more for its own output
+        let m = testing.replay(Mutant, f.choices[..], gen)
+        _ = holds(&m)
+        println("sources: case {} failed; shrunk {} times", .{f.case, f.steps})
+        note_finding(e, what[..], m.text[..], &last)
+    }
+    println("sources: {} cases, {} accepted, {} rejected, {} run in debug mode, {} finding(s)", .{cases, accepted, rejected, ran, e.findings})
 }
 
 // ----- the binary pattern engine ---------------------------------------------------
 
 /// The pattern program, built once and fed random bytes.
-fn fuzz_binary(e: *mut Env, iterations: usize) {
+fn fuzz_binary(e: *mut Env, iterations: usize, seed: u64) {
     let src = String.from("tests/fuzz_patterns.nx")
     let exe = fs.join(e.dir[..], if e.windows { "patterns.exe" } else { "patterns" })
     var build_args = List([]u8).new()
@@ -198,20 +240,39 @@ fn fuzz_binary(e: *mut Env, iterations: usize) {
     build_args.insert(0, e.nx[..])
     let b = run_in(build_args[..], "", "")
     if b.code != 0 { println("the pattern program did not build:\n{}", .{b.stderr}); e.findings += 1; return }
+    var cases: usize = 0
     var ok: usize = 0
-    for i in 0..iterations {
+    var found = false
+    var last = process.Output{ .code = 0, .stdout = String.new(), .stderr = String.new() }
+    let gen = |r: *mut testing.Rng| -> String {
         var data = String.new()
-        let n = rand_below(if rand_below(4) == 0 { 300 } else { 24 })
+        let n = r.pick(if r.pick(4) == 0 { 300 } else { 24 })
         for k in 0..n {
-            let pick = rand_below(6)
-            if pick == 0 { data.push_byte(0x1b) } else if pick == 1 { data.push_byte(0x45) } else if pick == 2 { data.push_byte('N') } else if pick == 3 { data.push_byte(0) } else { data.push_byte(rand_below(256) as u8) }
+            let pick = r.pick(6)
+            if pick == 0 { data.push_byte(0x1b) } else if pick == 1 { data.push_byte(0x45) } else if pick == 2 { data.push_byte('N') } else if pick == 3 { data.push_byte(0) } else { data.push_byte(r.pick(256) as u8) }
         }
-        var run_args = List([]u8).new()
-        run_args.append(exe[..])
-        let out = run_in(run_args[..], data[..], "")
-        if out.code != 0 { note_finding(e, "binary", data[..], &out) } else { ok += 1 }
+        return data
     }
-    println("binary: {} inputs, {} answered, {} finding(s)", .{iterations, ok, e.findings})
+    let holds = |[&exe, &mut cases, &mut ok, &mut found, &mut last] data: *String| -> bool {
+        if !found { cases += 1 }
+        let argv = [exe[..]]
+        let out = run_in(argv[..], data[..], "")
+        if out.code != 0 {
+            found = true
+            last = out
+            return false
+        }
+        if !found { ok += 1 }
+        return true
+    }
+    let how = testing.Search{ .seed = seed, .cases = iterations, .shrink_limit = 500 }
+    if let f = testing.search(String, how, gen, holds) {
+        let data = testing.replay(String, f.choices[..], gen)
+        _ = holds(&data)
+        println("binary: case {} failed; shrunk {} times", .{f.case, f.steps})
+        note_finding(e, "binary", data[..], &last)
+    }
+    println("binary: {} inputs, {} answered, {} finding(s)", .{cases, ok, e.findings})
 }
 
 // ----- main --------------------------------------------------------------------
@@ -232,15 +293,14 @@ fn main() -> u8 {
         eprintln("usage: nx run tests/fuzz.nx -- [--nx PATH] [--iterations N] [--seed N] [--run N]", .{})
         return 2
     }
-    random.seed(seed)
     // the compiler's path as the platform spells it, from anywhere
     if !fs.is_absolute(e.nx[..]) { e.nx = fs.join((fs.cwd() catch { String.from(".") })[..], e.nx[..]) }
     if e.windows { e.nx = strings.replace(e.nx[..], "/", "\\") }
     if e.windows { os.set_env("NX_ZIG", "zig") } else if io.file_kind("/System/Library/CoreServices") == 2 { os.set_env("NX_CC", "cc") } else { os.set_env("NX_ZIG", "zig") }
     fs.make_dirs(e.dir[..]) catch { }
     println("fuzz: {} with seed {}, {} iterations per engine", .{e.nx, seed, iterations})
-    fuzz_sources(&mut e, iterations)
-    fuzz_binary(&mut e, iterations)
+    fuzz_sources(&mut e, iterations, seed)
+    fuzz_binary(&mut e, iterations, seed)
     if e.findings == 0 { println("ok: no findings", .{}); return 0 }
     return (if e.findings > 100 { 100 } else { e.findings }) as u8
 }

@@ -5206,7 +5206,7 @@ static const char nx_str_955[9260] = "// std.stream: buffered readers and writer
 static const char nx_str_956[8] = "strings";
 static const char nx_str_957[8221] = "// std.strings: text utilities on `[]u8` and `String`, written in Nexium.\n//\n// `import std.strings` then `strings.join(parts, \", \")`. The core methods\n// (`len`, `split`, `trim`, `find`, `starts_with`, `parse_int`, ...) are\n// compiler builtins; this module adds what is naturally written in the\n// language itself. Slices returned here point into the argument they were cut\n// from; `String` results are owned by the caller.\n\n/// Concatenate `parts` with `sep` between them.\npub fn join(parts: [][]u8, sep: []u8) -> String {\n    var out = String.new()\n    for p, i in parts {\n        if i > 0 { out.append(sep) }\n        out.append(p)\n    }\n    return out\n}\n\n/// `s` repeated `n` times.\npub fn repeat(s: []u8, n: usize) -> String {\n    var out = String.with_capacity(s.len * n)\n    for _ in 0..n { out.append(s) }\n    return out\n}\n\n/// Left-pad with `fill` to at least `width` bytes.\npub fn pad_left(s: []u8, width: usize, fill: u8) -> String {\n    var out = String.with_capacity(if width > s.len { width } else { s.len })\n    if width > s.len {\n        for _ in 0..width - s.len { out.push_byte(fill) }\n    }\n    out.append(s)\n    return out\n}\n\n/// Right-pad with `fill` to at least `width` bytes.\npub fn pad_right(s: []u8, width: usize, fill: u8) -> String {\n    var out = String.from(s)\n    if width > s.len {\n        for _ in 0..width - s.len { out.push_byte(fill) }\n    }\n    return out\n}\n\n/// Center in `width` bytes, extra fill on the right.\npub fn center(s: []u8, width: usize, fill: u8) -> String {\n    if width <= s.len { return String.from(s) }\n    let total = width - s.len\n    let left = total / 2\n    var out = String.with_capacity(width)\n    for _ in 0..left { out.push_byte(fill) }\n    out.append(s)\n    for _ in 0..total - left { out.push_byte(fill) }\n    return out\n}\n\n/// How many non-overlapping times `needle` occurs in `s`.\npub fn count(s: []u8, needle: []u8) -> usize {\n    if needle.len == 0 or needle.len > s.len { return 0 }\n    var n: usize = 0\n    var i: usize = 0\n    while i + needle.len <= s.len {\n        if s[i..i + needle.len] == needle {\n            n += 1\n            i += needle.len\n        } else {\n            i += 1\n        }\n    }\n    return n\n}\n\n/// Every occurrence of `from` replaced by `to`.\npub fn replace(s: []u8, from: []u8, to: []u8) -> String {\n    var out = String.with_capacity(s.len)\n    if from.len == 0 {\n        out.append(s)\n        return out\n    }\n    var i: usize = 0\n    while i < s.len {\n        if i + from.len <= s.len and s[i..i + from.len] == from {\n            out.append(to)\n            i += from.len\n        } else {\n            out.push_byte(s[i])\n            i += 1\n        }\n    }\n    return out\n}\n\n/// Position of `needle` at or after `start`.\npub fn index_from(s: []u8, needle: []u8, start: usize) -> ?usize {\n    if start > s.len { return null }\n    let rest = s[start..]\n    if let i = rest.find(needle) { return start + i }\n    return null\n}\n\n/// Position of the last occurrence of `needle`.\npub fn last_index(s: []u8, needle: []u8) -> ?usize {\n    if needle.len == 0 or needle.len > s.len { return null }\n    var i = s.len - needle.len + 1\n    while i > 0 {\n        i -= 1\n        if s[i..i + needle.len] == needle { return i }\n    }\n    return null\n}\n\n/// `s` without a leading `prefix`, or null when it does not start with it.\npub fn strip_prefix(s: []u8, prefix: []u8) -> ?[]u8 {\n    if s.starts_with(prefix) { return s[prefix.len..] }\n    return null\n}\n\n/// `s` without a trailing `suffix`, or null when it does not end with it.\npub fn strip_suffix(s: []u8, suffix: []u8) -> ?[]u8 {\n    if s.ends_with(suffix) { return s[0..s.len - suffix.len] }\n    return null\n}\n\nfn is_space(c: u8) -> bool { return c == ' ' or c == '\\t' or c == '\\n' or c == '\\r' }\n\n/// Leading ASCII whitespace removed.\npub fn trim_left(s: []u8) -> []u8 {\n    var i: usize = 0\n    while i < s.len and is_space(s[i]) { i += 1 }\n    return s[i..]\n}\n\n/// Trailing ASCII whitespace removed.\npub fn trim_right(s: []u8) -> []u8 {\n    var n = s.len\n    while n > 0 and is_space(s[n - 1]) { n -= 1 }\n    return s[0..n]\n}\n\n/// True when `s` is empty or only ASCII whitespace.\npub fn is_blank(s: []u8) -> bool {\n    for c in s { if !is_space(c) { return false } }\n    return true\n}\n\n/// Split on runs of ASCII whitespace; no empty pieces.\npub fn split_whitespace(s: []u8) -> List([]u8) {\n    var out = List([]u8).new()\n    var i: usize = 0\n    while i < s.len {\n        while i < s.len and is_space(s[i]) { i += 1 }\n        let start = i\n        while i < s.len and !is_space(s[i]) { i += 1 }\n        if i > start { out.append(s[start..i]) }\n    }\n    return out\n}\n\n/// ASCII letters upper-cased; other bytes unchanged.\npub fn to_upper(s: []u8) -> String {\n    var out = String.with_capacity(s.len)\n    for c in s {\n        if c >= 'a' and c <= 'z' { out.push_byte(c - 32) }\n        else { out.push_byte(c) }\n    }\n    return out\n}\n\n/// ASCII letters lower-cased; other bytes unchanged.\npub fn to_lower(s: []u8) -> String {\n    var out = String.with_capacity(s.len)\n    for c in s {\n        if c >= 'A' and c <= 'Z' { out.push_byte(c + 32) }\n        else { out.push_byte(c) }\n    }\n    return out\n}\n\n/// First ASCII letter upper-cased.\npub fn capitalize(s: []u8) -> String {\n    var out = String.from(s)\n    if s.len > 0 and s[0] >= 'a' and s[0] <= 'z' {\n        out.clear()\n        out.push_byte(s[0] - 32)\n        out.append(s[1..])\n    }\n    return out\n}\n\n/// Bytes in reverse order (bytes, not code points).\npub fn reverse(s: []u8) -> String {\n    var out = String.with_capacity(s.len)\n    var i = s.len\n    while i > 0 {\n        i -= 1\n        out.push_byte(s[i])\n    }\n    return out\n}\n\n/// Cut at the first `sep`: (before, after), or null when `sep` is absent.\npub fn split_once(s: []u8, sep: []u8) -> ?([]u8, []u8) {\n    if let i = s.find(sep) { return (s[0..i], s[i + sep.len..]) }\n    return null\n}\n\n/// Truncate to `max` bytes, appending `...` when something was cut.\npub fn ellipsize(s: []u8, max: usize) -> String {\n    if s.len <= max { return String.from(s) }\n    var out = String.with_capacity(max)\n    if max > 3 { out.append(s[0..max - 3]) }\n    out.append(\"...\")\n    return out\n}\n\ntest \"join and repeat\" {\n    let parts = [\"a\", \"b\", \"c\"]\n    expect_eq(join(parts[..], \", \"), \"a, b, c\")\n    expect_eq(join(parts[0..0], \", \"), \"\")\n    expect_eq(repeat(\"ab\", 3), \"ababab\")\n    expect_eq(repeat(\"x\", 0), \"\")\n}\n\ntest \"padding\" {\n    expect_eq(pad_left(\"7\", 3, '0'), \"007\")\n    expect_eq(pad_right(\"ab\", 4, '.'), \"ab..\")\n    expect_eq(pad_left(\"long\", 2, ' '), \"long\")\n    expect_eq(center(\"hi\", 6, '-'), \"--hi--\")\n    expect_eq(center(\"hi\", 5, '-'), \"-hi--\")\n}\n\ntest \"count and replace\" {\n    expect_eq(count(\"banana\", \"an\"), 2)\n    expect_eq(count(\"aaaa\", \"aa\"), 2)\n    expect_eq(count(\"abc\", \"\"), 0)\n    expect_eq(replace(\"a-b-c\", \"-\", \"+\"), \"a+b+c\")\n    expect_eq(replace(\"aaa\", \"a\", \"bb\"), \"bbbbbb\")\n    expect_eq(replace(\"abc\", \"\", \"x\"), \"abc\")\n}\n\ntest \"searching\" {\n    expect_eq(index_from(\"abcabc\", \"bc\", 2) orelse 99, 4)\n    expect_eq(index_from(\"abc\", \"z\", 0) orelse 99, 99)\n    expect_eq(last_index(\"abcabc\", \"bc\") orelse 99, 4)\n    expect_eq(last_index(\"abc\", \"abcd\") orelse 99, 99)\n    expect_eq(strip_prefix(\"prefix-body\", \"prefix-\") orelse \"none\", \"body\")\n    expect_eq(strip_prefix(\"body\", \"prefix-\") orelse \"none\", \"none\")\n    expect_eq(strip_suffix(\"file.nx\", \".nx\") orelse \"none\", \"file\")\n}\n\ntest \"whitespace\" {\n    expect_eq(trim_left(\"  \\t x \"), \"x \")\n    expect_eq(trim_right(\" x \\n\"), \" x\")\n    expect(is_blank(\" \\t\\n\"))\n    expect(!is_blank(\" a \"))\n    let words = split_whitespace(\"  one two\\tthree\\n\")\n    expect_eq(words.len, 3)\n    expect_eq(words[1], \"two\")\n}\n\ntest \"case and reverse\" {\n    expect_eq(to_upper(\"MiXed 1\"), \"MIXED 1\")\n    expect_eq(to_lower(\"MiXed 1\"), \"mixed 1\")\n    expect_eq(capitalize(\"nexium\"), \"Nexium\")\n    expect_eq(capitalize(\"\"), \"\")\n    expect_eq(reverse(\"abc\"), \"cba\")\n}\n\ntest \"split_once and ellipsize\" {\n    if let kv = split_once(\"key=value=x\", \"=\") {\n        expect_eq(kv.0, \"key\")\n        expect_eq(kv.1, \"value=x\")\n    } else {\n        expect(false)\n    }\n    expect(split_once(\"novalue\", \"=\") == null)\n    expect_eq(ellipsize(\"hello world\", 8), \"hello...\")\n    expect_eq(ellipsize(\"hi\", 8), \"hi\")\n}\n";
 static const char nx_str_958[8] = "testing";
-static const char nx_str_959[5894] = "// std.testing: conveniences for `test` blocks, written in Nexium.\n//\n// `import std.testing` then, inside a test:\n//\n//     testing.expect_approx(area, 3.14159, 0.001)\n//     testing.expect_err(i32, parse(\"nope\"))\n//     testing.expect_contains(output, \"42 items\")\n//     testing.expect_lines(rendered, expected)    // reports the first differing line\n//     testing.expect_snapshot(\"report\", rendered)  // compares to snapshots/report.txt\n//     try testing.snapshot(\"report\", rendered)     // the same, as an error union\n//\n// Snapshots live in `snapshots/<name>.txt` under the current directory. A\n// missing file is written and the test passes; a mismatch fails with the\n// first differing line and how to accept the new output. Set\n// `NX_UPDATE_SNAPSHOTS=1` to rewrite them all.\n\nimport std.fs\n\n/// Are two floats within `eps` of each other?\npub fn approx(a: f64, b: f64, eps: f64) -> bool {\n    let d = if a > b { a - b } else { b - a }\n    return d <= eps\n}\n\n/// Panics unless `a` and `b` are within `eps`.\npub fn expect_approx(a: f64, b: f64, eps: f64) {\n    if !approx(a, b, eps) { panic(format(\"expected {} to be within {} of {}\", .{a, eps, b})) }\n}\n\n/// Did the call fail? (Any error counts.)\npub fn is_err(comptime T: type, own r: !T) -> bool {\n    _ = r catch { return true }\n    return false\n}\n\n/// Panics unless the result is an error.\npub fn expect_err(comptime T: type, own r: !T) {\n    if !is_err(T, r) { panic(\"expected an error but the call succeeded\") }\n}\n\n/// Panics unless the result is exactly `err`.\npub fn expect_error(comptime T: type, own r: !T, err: error) {\n    _ = r catch |e| {\n        if e != err { panic(format(\"expected error {} but got {}\", .{err, e})) }\n        return\n    }\n    panic(format(\"expected error {} but the call succeeded\", .{err}))\n}\n\n/// Panics unless `hay` contains `needle`.\npub fn expect_contains(hay: []u8, needle: []u8) {\n    if hay.find(needle) == null { panic(format(\"expected to find {} in {}\", .{needle, hay})) }\n}\n\n/// Compares line by line; panics naming the first line that differs.\npub fn expect_lines(actual: []u8, expected: []u8) {\n    let a = actual.lines()\n    let e = expected.lines()\n    var i: usize = 0\n    while i < a.len and i < e.len {\n        if a[i] != e[i] { panic(format(\"line {} differs:\\n  expected: {}\\n  actual:   {}\", .{i + 1, e[i], a[i]})) }\n        i += 1\n    }\n    if a.len != e.len { panic(format(\"expected {} line(s) but got {}\", .{e.len, a.len})) }\n}\n\n/// Compare `actual` to `<dir>/<name>.txt`; write it when missing or when\n/// NX_UPDATE_SNAPSHOTS is set.\npub fn snapshot_in(dir: []u8, name: []u8, actual: []u8) -> !void {\n    var file = fs.join(dir, name)\n    file.append(\".txt\")\n    let update = os.env(\"NX_UPDATE_SNAPSHOTS\") != null\n    if update or !fs.exists(file) {\n        try fs.make_dirs(dir)\n        try fs.write(file, actual)\n        eprintln(\"wrote snapshot {}\", .{file})\n        return\n    }\n    let expected = try fs.read(file)\n    expect_lines(actual, expected)\n}\n\n/// `snapshot_in(\"snapshots\", name, actual)`.\npub fn snapshot(name: []u8, actual: []u8) -> !void {\n    return snapshot_in(\"snapshots\", name, actual)\n}\n\n/// `snapshot_in`, in the `expect_` form: a mismatch fails the test naming\n/// the file, the first differing line and how to accept the new output;\n/// a file that cannot be read or written fails it too, instead of\n/// returning an error for the test to handle.\npub fn expect_snapshot_in(dir: []u8, name: []u8, actual: []u8) {\n    var file = fs.join(dir, name)\n    file.append(\".txt\")\n    let update = os.env(\"NX_UPDATE_SNAPSHOTS\") != null\n    if update or !fs.exists(file) {\n        fs.make_dirs(dir) catch { panic(format(\"snapshot {}: cannot create the directory {}\", .{file, dir})) }\n        fs.write(file, actual) catch { panic(format(\"snapshot {}: cannot write it\", .{file})) }\n        eprintln(\"wrote snapshot {}\", .{file})\n        return\n    }\n    let expected = fs.read(file) catch { panic(format(\"snapshot {}: cannot read it\", .{file})) }\n    let a = actual.lines()\n    let e = expected[..].lines()\n    var i: usize = 0\n    while i < a.len and i < e.len {\n        if a[i] != e[i] {\n            panic(format(\"snapshot {} differs at line {}:\\n  expected: {}\\n  actual:   {}\\nNX_UPDATE_SNAPSHOTS=1 accepts the new output\", .{file, i + 1, e[i], a[i]}))\n        }\n        i += 1\n    }\n    if a.len != e.len {\n        panic(format(\"snapshot {}: expected {} line(s) but got {}; NX_UPDATE_SNAPSHOTS=1 accepts the new output\", .{file, e.len, a.len}))\n    }\n}\n\n/// `expect_snapshot_in(\"snapshots\", name, actual)`.\npub fn expect_snapshot(name: []u8, actual: []u8) {\n    expect_snapshot_in(\"snapshots\", name, actual)\n}\n\n// ------------------------------------------------------------------ tests\n\nfn parse_digit(s: []u8) -> !i32 {\n    if s.len != 1 or s[0] < '0' or s[0] > '9' { return error.InvalidInput }\n    return (s[0] - '0') as i32\n}\n\ntest \"snapshots\" {\n    let dir = fs.join(io.temp_dir()[..], \"nx-testing-snapshots\")\n    fs.remove_all(dir[..]) catch { }\n    expect_snapshot_in(dir[..], \"report\", \"one\\ntwo\\n\") // written\n    expect_snapshot_in(dir[..], \"report\", \"one\\ntwo\\n\") // read back, equal\n    expect(fs.exists(fs.join(dir[..], \"report.txt\")))\n    fs.remove_all(dir[..]) catch { }\n}\n\ntest \"floats and errors\" {\n    expect(approx(1.0, 1.0001, 0.001))\n    expect(!approx(1.0, 1.1, 0.001))\n    expect_approx(0.1 + 0.2, 0.3, 0.000001)\n    expect(is_err(i32, parse_digit(\"x\")))\n    expect(!is_err(i32, parse_digit(\"7\")))\n    expect_err(i32, parse_digit(\"nope\"))\n    expect_error(i32, parse_digit(\"nope\"), error.InvalidInput)\n}\n\ntest \"text\" {\n    expect_contains(\"42 items found\", \"items\")\n    expect_lines(\"a\\nb\\n\", \"a\\nb\\n\")\n}\n\ntest \"snapshots\" {\n    let dir = fs.temp_path(\"nxsnap-\")\n    try snapshot_in(dir, \"first\", \"one\\ntwo\\n\")\n    expect(fs.exists(fs.join(dir, \"first.txt\")))\n    try snapshot_in(dir, \"first\", \"one\\ntwo\\n\")\n    try fs.remove_all(dir)\n}\n";
+static const char nx_str_959[20911] = "// std.testing: conveniences for `test` blocks, written in Nexium.\n//\n// `import std.testing` then, inside a test:\n//\n//     testing.expect_approx(area, 3.14159, 0.001)\n//     testing.expect_err(i32, parse(\"nope\"))\n//     testing.expect_contains(output, \"42 items\")\n//     testing.expect_lines(rendered, expected)    // reports the first differing line\n//     testing.expect_snapshot(\"report\", rendered)  // compares to snapshots/report.txt\n//     try testing.snapshot(\"report\", rendered)     // the same, as an error union\n//\n//     fn lists(r: *mut testing.Rng) -> List(i64) { ... r.size(20) ... r.int(-50, 50) ... }\n//     testing.check(List(i64), lists, |xs: *List(i64)| -> bool { ... })   // a property\n//\n// Snapshots live in `snapshots/<name>.txt` under the current directory. A\n// missing file is written and the test passes; a mismatch fails with the\n// first differing line and how to accept the new output. Set\n// `NX_UPDATE_SNAPSHOTS=1` to rewrite them all.\n//\n// A property is checked on 100 random values (`NX_CASES` for more, `NX_SEED`\n// for another seed). Generators draw from a `Rng`, which keeps every\n// choice, so a failing case is shrunk by making it again from fewer and\n// lower choices while it still fails: the report is about the smallest\n// case found, with no shrinking code of the generator's own. `search` is\n// the driver without the panic; the compiler's fuzzer runs on it.\n\nimport std.fs\n\n/// Are two floats within `eps` of each other?\npub fn approx(a: f64, b: f64, eps: f64) -> bool {\n    let d = if a > b { a - b } else { b - a }\n    return d <= eps\n}\n\n/// Panics unless `a` and `b` are within `eps`.\npub fn expect_approx(a: f64, b: f64, eps: f64) {\n    if !approx(a, b, eps) { panic(format(\"expected {} to be within {} of {}\", .{a, eps, b})) }\n}\n\n/// Did the call fail? (Any error counts.)\npub fn is_err(comptime T: type, own r: !T) -> bool {\n    _ = r catch { return true }\n    return false\n}\n\n/// Panics unless the result is an error.\npub fn expect_err(comptime T: type, own r: !T) {\n    if !is_err(T, r) { panic(\"expected an error but the call succeeded\") }\n}\n\n/// Panics unless the result is exactly `err`.\npub fn expect_error(comptime T: type, own r: !T, err: error) {\n    _ = r catch |e| {\n        if e != err { panic(format(\"expected error {} but got {}\", .{err, e})) }\n        return\n    }\n    panic(format(\"expected error {} but the call succeeded\", .{err}))\n}\n\n/// Panics unless `hay` contains `needle`.\npub fn expect_contains(hay: []u8, needle: []u8) {\n    if hay.find(needle) == null { panic(format(\"expected to find {} in {}\", .{needle, hay})) }\n}\n\n/// Compares line by line; panics naming the first line that differs.\npub fn expect_lines(actual: []u8, expected: []u8) {\n    let a = actual.lines()\n    let e = expected.lines()\n    var i: usize = 0\n    while i < a.len and i < e.len {\n        if a[i] != e[i] { panic(format(\"line {} differs:\\n  expected: {}\\n  actual:   {}\", .{i + 1, e[i], a[i]})) }\n        i += 1\n    }\n    if a.len != e.len { panic(format(\"expected {} line(s) but got {}\", .{e.len, a.len})) }\n}\n\n/// Compare `actual` to `<dir>/<name>.txt`; write it when missing or when\n/// NX_UPDATE_SNAPSHOTS is set.\npub fn snapshot_in(dir: []u8, name: []u8, actual: []u8) -> !void {\n    var file = fs.join(dir, name)\n    file.append(\".txt\")\n    let update = os.env(\"NX_UPDATE_SNAPSHOTS\") != null\n    if update or !fs.exists(file) {\n        try fs.make_dirs(dir)\n        try fs.write(file, actual)\n        eprintln(\"wrote snapshot {}\", .{file})\n        return\n    }\n    let expected = try fs.read(file)\n    expect_lines(actual, expected)\n}\n\n/// `snapshot_in(\"snapshots\", name, actual)`.\npub fn snapshot(name: []u8, actual: []u8) -> !void {\n    return snapshot_in(\"snapshots\", name, actual)\n}\n\n/// `snapshot_in`, in the `expect_` form: a mismatch fails the test naming\n/// the file, the first differing line and how to accept the new output;\n/// a file that cannot be read or written fails it too, instead of\n/// returning an error for the test to handle.\npub fn expect_snapshot_in(dir: []u8, name: []u8, actual: []u8) {\n    var file = fs.join(dir, name)\n    file.append(\".txt\")\n    let update = os.env(\"NX_UPDATE_SNAPSHOTS\") != null\n    if update or !fs.exists(file) {\n        fs.make_dirs(dir) catch { panic(format(\"snapshot {}: cannot create the directory {}\", .{file, dir})) }\n        fs.write(file, actual) catch { panic(format(\"snapshot {}: cannot write it\", .{file})) }\n        eprintln(\"wrote snapshot {}\", .{file})\n        return\n    }\n    let expected = fs.read(file) catch { panic(format(\"snapshot {}: cannot read it\", .{file})) }\n    let a = actual.lines()\n    let e = expected[..].lines()\n    var i: usize = 0\n    while i < a.len and i < e.len {\n        if a[i] != e[i] {\n            panic(format(\"snapshot {} differs at line {}:\\n  expected: {}\\n  actual:   {}\\nNX_UPDATE_SNAPSHOTS=1 accepts the new output\", .{file, i + 1, e[i], a[i]}))\n        }\n        i += 1\n    }\n    if a.len != e.len {\n        panic(format(\"snapshot {}: expected {} line(s) but got {}; NX_UPDATE_SNAPSHOTS=1 accepts the new output\", .{file, e.len, a.len}))\n    }\n}\n\n/// `expect_snapshot_in(\"snapshots\", name, actual)`.\npub fn expect_snapshot(name: []u8, actual: []u8) {\n    expect_snapshot_in(\"snapshots\", name, actual)\n}\n\n// ------------------------------------------------------------ properties\n\n/// Random values for property tests and fuzzers, from a seed. Every choice\n/// a generator makes is kept, so a failing case can be made again with its\n/// choices changed: that is how `search` and `check` shrink one to the\n/// smallest they find, for any generator written against this type.\npub struct Rng {\n    state: u64\n    // the choices of the current case: drawn and kept, or read back\n    choices: List(u64)\n    // the bound each choice was drawn below (0: none), for shrinking\n    bounds: List(u64)\n    replaying: bool\n    at: usize\n}\n\npub fn rng(seed: u64) -> Rng {\n    return Rng{ .state = seed, .choices = List(u64).new(), .bounds = List(u64).new(), .replaying = false, .at = 0 }\n}\n\n// printable ASCII in the order it shrinks toward: letters first\nconst ASCII_ORDER: []u8 = \"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 .,:;!?-_+*/=<>()[]{}'\\\"@#$%&^|~`\\\\\"\n\nimpl Rng {\n    /// The next choice: 64 random bits (splitmix64), or the kept one when\n    /// replaying (0 past the end of them). Shrinks toward 0.\n    pub fn next(self: *mut Self) -> u64 {\n        self.bounds.append(0)\n        if self.replaying {\n            let c = if self.at < self.choices.len { self.choices[self.at] } else { 0 }\n            self.at += 1\n            return c\n        }\n        self.state = self.state +% 0x9E3779B97F4A7C15\n        var z = self.state\n        z = (z ^ (z >> 30)) *% 0xBF58476D1CE4E5B9\n        z = (z ^ (z >> 27)) *% 0x94D049BB133111EB\n        z = z ^ (z >> 31)\n        self.choices.append(z)\n        self.at += 1\n        return z\n    }\n\n    /// A number below `n` (0 when `n` is 0); shrinks toward 0.\n    pub fn below(self: *mut Self, n: u64) -> u64 {\n        if n == 0 { return 0 }\n        let c = self.next()\n        self.bounds[self.bounds.len - 1] = n\n        return c % n\n    }\n\n    /// An index into `n` things; shrinks toward the first.\n    pub fn pick(self: *mut Self, n: usize) -> usize {\n        return self.below(n as u64) as usize\n    }\n\n    /// True or false alike; shrinks toward false.\n    pub fn flip(self: *mut Self) -> bool {\n        return self.below(2) == 1\n    }\n\n    /// An integer from `lo` to `hi`, both included; shrinks toward 0, or\n    /// toward the end nearer to it when the range does not hold 0.\n    pub fn int(self: *mut Self, lo: i64, hi: i64) -> i64 {\n        if hi <= lo { return lo }\n        if lo >= 0 { return lo + @bitCast(i64, self.below(@bitCast(u64, hi - lo) + 1)) }\n        if hi <= 0 { return hi -% @bitCast(i64, self.below(@bitCast(u64, hi -% lo) +% 1)) }\n        // both signs: the sign, then the size, each shrinking toward 0\n        if self.flip() { return 0 -% @bitCast(i64, self.below(@bitCast(u64, 0 -% lo) +% 1)) }\n        return @bitCast(i64, self.below(@bitCast(u64, hi) + 1))\n    }\n\n    /// A float from 0 up to 1, 1 left out; shrinks toward 0.\n    pub fn float(self: *mut Self) -> f64 {\n        return ((self.next() >> 11) as f64) * (1.0 / 9007199254740992.0)\n    }\n\n    /// A length up to `max`, short ones likelier; shrinks toward 0.\n    pub fn size(self: *mut Self, max: usize) -> usize {\n        if max == 0 { return 0 }\n        let cap = if self.flip() { max } else { if max < 8 { max } else { 8 } }\n        return self.below((cap + 1) as u64) as usize\n    }\n\n    /// Bytes of any value, up to `max` of them.\n    pub fn bytes(self: *mut Self, max: usize) -> String {\n        let n = self.size(max)\n        var out = String.with_capacity(n)\n        for _ in 0..n { out.push_byte(self.below(256) as u8) }\n        return out\n    }\n\n    /// Printable ASCII, up to `max` bytes; shrinks toward `a`s.\n    pub fn ascii(self: *mut Self, max: usize) -> String {\n        let n = self.size(max)\n        var out = String.with_capacity(n)\n        for _ in 0..n { out.push_byte(ASCII_ORDER[self.pick(ASCII_ORDER.len)]) }\n        return out\n    }\n\n    /// UTF-8 text of up to `max` characters: ASCII mostly, with accented\n    /// Latin, Greek, Cyrillic, CJK, emoji and combining marks among it.\n    pub fn text(self: *mut Self, max: usize) -> String {\n        let n = self.size(max)\n        var out = String.new()\n        for _ in 0..n {\n            let kind = self.below(10)\n            var cp: u32 = 0\n            if kind < 5 {\n                cp = ASCII_ORDER[self.pick(ASCII_ORDER.len)] as u32\n            } else if kind == 5 {\n                cp = 0xC0 + self.below(0xC0) as u32\n            } else if kind == 6 {\n                cp = 0x391 + self.below(0xBF) as u32\n            } else if kind == 7 {\n                cp = 0x4E00 + self.below(0x5000) as u32\n            } else if kind == 8 {\n                cp = 0x1F600 + self.below(0x50) as u32\n            } else {\n                cp = 0x300 + self.below(0x70) as u32\n            }\n            push_utf8(&mut out, cp)\n        }\n        return out\n    }\n}\n\nfn push_utf8(out: *mut String, cp: u32) {\n    if cp < 0x80 {\n        out.push_byte(cp as u8)\n    } else if cp < 0x800 {\n        out.push_byte((0xC0 | (cp >> 6)) as u8)\n        out.push_byte((0x80 | (cp & 0x3F)) as u8)\n    } else if cp < 0x10000 {\n        out.push_byte((0xE0 | (cp >> 12)) as u8)\n        out.push_byte((0x80 | ((cp >> 6) & 0x3F)) as u8)\n        out.push_byte((0x80 | (cp & 0x3F)) as u8)\n    } else {\n        out.push_byte((0xF0 | (cp >> 18)) as u8)\n        out.push_byte((0x80 | ((cp >> 12) & 0x3F)) as u8)\n        out.push_byte((0x80 | ((cp >> 6) & 0x3F)) as u8)\n        out.push_byte((0x80 | (cp & 0x3F)) as u8)\n    }\n}\n\n/// How `search` runs: how many cases from which seed, and at most how many\n/// times it makes a case again while shrinking a failure.\npub struct Search {\n    seed: u64 = 1\n    cases: usize = 100\n    shrink_limit: usize = 2000\n}\n\n/// A property that did not hold: the seed and the case that failed first,\n/// and the choices of the smallest failing case found (`replay` makes its\n/// value again).\npub struct Failure {\n    seed: u64\n    case: usize\n    choices: List(u64)\n    // smaller failing cases the shrinking went through\n    steps: usize\n}\n\n/// The value `gen` makes from kept choices.\npub fn replay(comptime T: type, choices: []u64, gen: fn(*mut Rng) -> T) -> T {\n    var r = rng(0)\n    for c in choices { r.choices.append(c) }\n    r.replaying = true\n    return gen(&mut r)\n}\n\n// Does the case the choices make fail? The choices are cut to those the\n// generator read, and each is lowered to the smallest that draws the same\n// value (a choice drawn below `n` as itself modulo `n`).\nfn still_fails(comptime T: type, cand: *mut List(u64), gen: fn(*mut Rng) -> T, holds: fn(*T) -> bool) -> bool {\n    var r = rng(0)\n    r.choices = cand.clone()\n    r.replaying = true\n    let v = gen(&mut r)\n    if holds(&v) { return false }\n    while cand.len > r.at { _ = cand.pop() }\n    for i in 0..cand.len {\n        if i < r.bounds.len and r.bounds[i] > 0 and cand[i] >= r.bounds[i] { cand[i] = cand[i] % r.bounds[i] }\n    }\n    return true\n}\n\n// The smallest failing choices found from `start`: runs of choices deleted\n// and single ones lowered while the case still fails, `limit` replays at\n// most. Shorter is smaller, then lower.\nfn shrink(comptime T: type, own start: List(u64), gen: fn(*mut Rng) -> T, holds: fn(*T) -> bool, limit: usize, steps: *mut usize) -> List(u64) {\n    var cur = start\n    var budget = limit\n    var first = cur.clone()\n    if still_fails(T, &mut first, gen, holds) { cur = first }\n    var improved = true\n    while improved and budget > 0 {\n        improved = false\n        let sizes: [4]usize = [8, 4, 2, 1]\n        for size in sizes {\n            var i: usize = 0\n            while i + size <= cur.len and budget > 0 {\n                var cand = List(u64).with_capacity(cur.len)\n                for j in 0..cur.len {\n                    if j < i or j >= i + size { cand.append(cur[j]) }\n                }\n                budget -= 1\n                if still_fails(T, &mut cand, gen, holds) {\n                    cur = cand\n                    steps.* += 1\n                    improved = true\n                } else {\n                    i += 1\n                }\n            }\n        }\n        var i: usize = 0\n        while i < cur.len and budget > 0 {\n            if cur[i] > 0 {\n                // 0 first, then halving toward the smallest that still fails\n                var cand = cur.clone()\n                cand[i] = 0\n                budget -= 1\n                if still_fails(T, &mut cand, gen, holds) {\n                    cur = cand\n                    steps.* += 1\n                    improved = true\n                } else {\n                    var lo: u64 = 0\n                    var hi = cur[i]\n                    var best = cur.clone()\n                    while lo + 1 < hi and budget > 0 {\n                        let mid = lo + (hi - lo) / 2\n                        var probe = cur.clone()\n                        probe[i] = mid\n                        budget -= 1\n                        if still_fails(T, &mut probe, gen, holds) {\n                            hi = mid\n                            best = probe\n                        } else {\n                            lo = mid\n                        }\n                    }\n                    if i < best.len and best[i] < cur[i] {\n                        cur = best\n                        steps.* += 1\n                        improved = true\n                    }\n                }\n            }\n            i += 1\n        }\n    }\n    return cur\n}\n\n/// Look for a case where `holds` is false among the values `gen` makes, and\n/// shrink the first found; null when every case held. `holds` answers with\n/// false; a panic in it ends the test as it stands, unshrunk.\npub fn search(comptime T: type, how: Search, gen: fn(*mut Rng) -> T, holds: fn(*T) -> bool) -> ?Failure {\n    var r = rng(how.seed)\n    for k in 0..how.cases {\n        r.choices.clear()\n        r.bounds.clear()\n        r.at = 0\n        let v = gen(&mut r)\n        if !holds(&v) {\n            var steps: usize = 0\n            let small = shrink(T, r.choices.clone(), gen, holds, how.shrink_limit, &mut steps)\n            return Failure{ .seed = how.seed, .case = k, .choices = small, .steps = steps }\n        }\n    }\n    return null\n}\n\n/// The seed `check` starts from: `NX_SEED` when it is set, else 1, so a\n/// run repeats.\npub fn seed() -> u64 {\n    if let s = os.env(\"NX_SEED\") { return s.parse_int(u64) catch { 1 } }\n    return 1\n}\n\n// the cases `check` tries: `NX_CASES` when it is set, else 100\nfn cases() -> usize {\n    if let s = os.env(\"NX_CASES\") { return s.parse_int(usize) catch { 100 } }\n    return 100\n}\n\n/// Check that `holds` is true of every value `gen` makes: 100 of them\n/// (`NX_CASES` sets how many, `NX_SEED` the seed). A failure is shrunk to\n/// the smallest failing case found and fails the test with the seed that\n/// repeats it; `check_show` prints the value too.\npub fn check(comptime T: type, gen: fn(*mut Rng) -> T, holds: fn(*T) -> bool) {\n    if let f = search(T, Search{ .seed = seed(), .cases = cases() }, gen, holds) {\n        panic(format(\"a property failed at case {} of seed {} (shrunk {} times); NX_SEED={} repeats it\", .{f.case, f.seed, f.steps, f.seed}))\n    }\n}\n\n/// `check`, with the smallest failing value written by `show` in the failure.\npub fn check_show(comptime T: type, gen: fn(*mut Rng) -> T, holds: fn(*T) -> bool, show: fn(*T) -> String) {\n    if let f = search(T, Search{ .seed = seed(), .cases = cases() }, gen, holds) {\n        let v = replay(T, f.choices[..], gen)\n        panic(format(\"a property failed for {} at case {} of seed {} (shrunk {} times); NX_SEED={} repeats it\", .{show(&v), f.case, f.seed, f.steps, f.seed}))\n    }\n}\n\n// ------------------------------------------------------------------ tests\n\nfn parse_digit(s: []u8) -> !i32 {\n    if s.len != 1 or s[0] < '0' or s[0] > '9' { return error.InvalidInput }\n    return (s[0] - '0') as i32\n}\n\ntest \"snapshots\" {\n    let dir = fs.join(io.temp_dir()[..], \"nx-testing-snapshots\")\n    fs.remove_all(dir[..]) catch { }\n    expect_snapshot_in(dir[..], \"report\", \"one\\ntwo\\n\") // written\n    expect_snapshot_in(dir[..], \"report\", \"one\\ntwo\\n\") // read back, equal\n    expect(fs.exists(fs.join(dir[..], \"report.txt\")))\n    fs.remove_all(dir[..]) catch { }\n}\n\ntest \"floats and errors\" {\n    expect(approx(1.0, 1.0001, 0.001))\n    expect(!approx(1.0, 1.1, 0.001))\n    expect_approx(0.1 + 0.2, 0.3, 0.000001)\n    expect(is_err(i32, parse_digit(\"x\")))\n    expect(!is_err(i32, parse_digit(\"7\")))\n    expect_err(i32, parse_digit(\"nope\"))\n    expect_error(i32, parse_digit(\"nope\"), error.InvalidInput)\n}\n\ntest \"text\" {\n    expect_contains(\"42 items found\", \"items\")\n    expect_lines(\"a\\nb\\n\", \"a\\nb\\n\")\n}\n\ntest \"snapshots\" {\n    let dir = fs.temp_path(\"nxsnap-\")\n    try snapshot_in(dir, \"first\", \"one\\ntwo\\n\")\n    expect(fs.exists(fs.join(dir, \"first.txt\")))\n    try snapshot_in(dir, \"first\", \"one\\ntwo\\n\")\n    try fs.remove_all(dir)\n}\n\nfn wide_ints(r: *mut Rng) -> i64 {\n    return r.int(-1000000, 1000000)\n}\n\nfn below_1000(x: *i64) -> bool {\n    return x.* < 1000\n}\n\nfn int_lists(r: *mut Rng) -> List(i64) {\n    let n = r.size(20)\n    var out = List(i64).new()\n    for _ in 0..n { out.append(r.int(-50, 50)) }\n    return out\n}\n\nfn reversed_twice_is_itself(xs: *List(i64)) -> bool {\n    var once = List(i64).new()\n    var i = xs.len\n    while i > 0 {\n        i -= 1\n        once.append(xs[i])\n    }\n    var twice = List(i64).new()\n    i = once.len\n    while i > 0 {\n        i -= 1\n        twice.append(once[i])\n    }\n    if twice.len != xs.len { return false }\n    for x, k in twice {\n        if x != xs[k] { return false }\n    }\n    return true\n}\n\n// false: plenty of lists hold two equal neighbours\nfn no_equal_neighbours(xs: *List(i64)) -> bool {\n    var i: usize = 1\n    while i < xs.len {\n        if xs[i] == xs[i - 1] { return false }\n        i += 1\n    }\n    return true\n}\n\ntest \"properties\" {\n    // a true one holds for every case\n    check(List(i64), int_lists, reversed_twice_is_itself)\n    // a false one is found, and shrunk to the smallest failing case\n    let f = search(i64, Search{ .seed = 7, .cases = 1000 }, wide_ints, below_1000).?\n    expect_eq(replay(i64, f.choices[..], wide_ints), 1000)\n    expect(f.steps > 0)\n    let g = search(List(i64), Search{ .seed = 3, .cases = 1000 }, int_lists, no_equal_neighbours).?\n    let smallest = replay(List(i64), g.choices[..], int_lists)\n    expect_eq(smallest.len, 2)\n    expect_eq(smallest[0], 0)\n    expect_eq(smallest[1], 0)\n    // the same seed makes the same cases\n    let again = search(i64, Search{ .seed = 7, .cases = 1000 }, wide_ints, below_1000).?\n    expect_eq(again.case, f.case)\n    // generators and properties may be closures\n    var seen: usize = 0\n    check(String, |r: *mut Rng| -> String { return r.ascii(20) }, |[&mut seen] s: *String| -> bool {\n        seen += 1\n        for c in s[..] {\n            if c < 32 or c > 126 { return false }\n        }\n        return true\n    })\n    expect(seen > 0)\n}\n\ntest \"generators\" {\n    var r = rng(42)\n    for _ in 0..200 {\n        let v = r.int(-5, 3)\n        expect(v >= -5 and v <= 3)\n        let w = r.int(10, 12)\n        expect(w >= 10 and w <= 12)\n        let x = r.float()\n        expect(x >= 0.0 and x < 1.0)\n        expect(r.size(4) <= 4)\n        expect(r.bytes(9).len <= 9)\n    }\n    // the whole range, both ends\n    _ = r.int(-9223372036854775807 - 1, 9223372036854775807)\n    // replaying zeros draws every value's smallest form\n    let zeros: [3]u64 = [0, 0, 0]\n    expect_eq(replay(i64, zeros[..], wide_ints), 0)\n    let empty: [0]u64 = []\n    expect_eq(replay(String, empty[..], |r: *mut Rng| -> String { return r.text(10) }).len, 0)\n}\n";
 static const char nx_str_960[5] = "text";
 static const char nx_str_961[67259] = "// std.text: UTF-8 text by code point and by grapheme cluster, written in\n// Nexium, with the Unicode tables it needs.\n//\n// `import std.text` then:\n//\n//     let n = text.char_count(\"h\303\251llo\")            // 5 code points, not 6 bytes\n//     for c in text.scalars(\"h\303\251llo\") { ... }       // chars (Unicode scalars)\n//     let g = text.grapheme_count(\"\360\237\207\257\360\237\207\265 e\\u{301}\")   // 3: a flag, a space, an \303\251\n//     for g in text.graphemes(s) { ... }           // what a reader counts as characters\n//     let w = text.width(\"\346\227\245\346\234\254\350\252\236\")                   // 6 columns on a terminal\n//     let cell = text.pad_right(text.truncate_width(name, 20), 20)\n//     let s = text.to_upper(\"stra\303\237e\")               // \"STRASSE\"\n//     let same = text.eq_ignore_case(\"Stra\303\237e\", \"STRASSE\")\n//     let t = text.truncate(\"h\303\251llo w\303\266rld\", 5)       // \"h\303\251llo\", never mid-character\n//\n// Strings are bytes; this module reads them as UTF-8, tolerating bad input\n// (an invalid byte decodes as U+FFFD and advances one byte). Grapheme\n// clusters are Unicode's extended grapheme clusters (UAX #29): a letter and\n// its marks, a Hangul syllable, an emoji sequence joined by ZWJ, a flag, an\n// Indic conjunct. Case mapping is Unicode's full mapping for every script,\n// without the rules that depend on a language (Turkish and Lithuanian i);\n// `to_lower` writes a final sigma where a word ends. `width` counts\n// terminal columns as terminals draw them: East Asian wide and fullwidth\n// characters and emoji sequences take two, marks and zero-width characters\n// none. The tables at the end are generated by scripts/unicode_tables.py\n// (`UNICODE_VERSION` says from which version).\n\npub const REPLACEMENT: u32 = 0xFFFD\n\n/// A decoded code point and the number of bytes it took.\npub struct Decoded {\n    cp: u32\n    len: usize\n}\n\n/// Decode the code point starting at byte `i`. Invalid input yields\n/// U+FFFD with length 1 so callers always make progress.\npub fn decode_at(s: []u8, i: usize) -> Decoded {\n    if i >= s.len { return Decoded{ .cp = REPLACEMENT, .len = 0 } }\n    let b0 = s[i]\n    if b0 < 0x80 { return Decoded{ .cp = b0 as u32, .len = 1 } }\n    var need: usize = 0\n    var cp: u32 = 0\n    var min: u32 = 0\n    if b0 >= 0xC2 and b0 <= 0xDF {\n        need = 1\n        cp = (b0 & 0x1F) as u32\n        min = 0x80\n    } else if b0 >= 0xE0 and b0 <= 0xEF {\n        need = 2\n        cp = (b0 & 0x0F) as u32\n        min = 0x800\n    } else if b0 >= 0xF0 and b0 <= 0xF4 {\n        need = 3\n        cp = (b0 & 0x07) as u32\n        min = 0x10000\n    } else {\n        return Decoded{ .cp = REPLACEMENT, .len = 1 }\n    }\n    var k: usize = 1\n    while k <= need {\n        if i + k >= s.len { return Decoded{ .cp = REPLACEMENT, .len = 1 } }\n        let b = s[i + k]\n        if b < 0x80 or b > 0xBF { return Decoded{ .cp = REPLACEMENT, .len = 1 } }\n        cp = (cp << 6) | ((b & 0x3F) as u32)\n        k += 1\n    }\n    if cp < min or cp > 0x10FFFF or (cp >= 0xD800 and cp <= 0xDFFF) { return Decoded{ .cp = REPLACEMENT, .len = 1 } }\n    return Decoded{ .cp = cp, .len = need + 1 }\n}\n\n/// Append a code point as UTF-8.\npub fn push(out: *mut String, cp: u32) {\n    if cp < 0x80 {\n        out.push_byte(cp as u8)\n    } else if cp < 0x800 {\n        out.push_byte((0xC0 | (cp >> 6)) as u8)\n        out.push_byte((0x80 | (cp & 0x3F)) as u8)\n    } else if cp < 0x10000 {\n        out.push_byte((0xE0 | (cp >> 12)) as u8)\n        out.push_byte((0x80 | ((cp >> 6) & 0x3F)) as u8)\n        out.push_byte((0x80 | (cp & 0x3F)) as u8)\n    } else {\n        out.push_byte((0xF0 | (cp >> 18)) as u8)\n        out.push_byte((0x80 | ((cp >> 12) & 0x3F)) as u8)\n        out.push_byte((0x80 | ((cp >> 6) & 0x3F)) as u8)\n        out.push_byte((0x80 | (cp & 0x3F)) as u8)\n    }\n}\n\n/// A code point as a String.\npub fn encode(cp: u32) -> String {\n    var out = String.new()\n    push(&mut out, cp)\n    return out\n}\n\n/// Is the text well-formed UTF-8?\npub fn is_valid(s: []u8) -> bool {\n    var i: usize = 0\n    while i < s.len {\n        let d = decode_at(s, i)\n        if d.cp == REPLACEMENT and (d.len == 1 and s[i] != 0xEF) { return false }\n        i += d.len\n    }\n    return true\n}\n\n/// All code points.\npub fn chars(s: []u8) -> List(u32) {\n    var out = List(u32).new()\n    var i: usize = 0\n    while i < s.len {\n        let d = decode_at(s, i)\n        out.append(d.cp)\n        i += d.len\n    }\n    return out\n}\n\n/// The number of code points.\npub fn char_count(s: []u8) -> usize {\n    var n: usize = 0\n    var i: usize = 0\n    while i < s.len {\n        i += decode_at(s, i).len\n        n += 1\n    }\n    return n\n}\n\n/// The byte offset of the `n`th code point (or `s.len` when past the end).\npub fn byte_offset(s: []u8, n: usize) -> usize {\n    var i: usize = 0\n    var k: usize = 0\n    while i < s.len and k < n {\n        i += decode_at(s, i).len\n        k += 1\n    }\n    return i\n}\n\n/// The `n`th code point, or null.\npub fn char_at(s: []u8, n: usize) -> ?u32 {\n    let i = byte_offset(s, n)\n    if i >= s.len { return null }\n    return decode_at(s, i).cp\n}\n\n/// Code points `from` (inclusive) to `to` (exclusive), as a slice of `s`.\npub fn slice(s: []u8, from: usize, to: usize) -> []u8 {\n    let a = byte_offset(s, from)\n    let b = byte_offset(s, to)\n    if b < a { return s[a..a] }\n    return s[a..b]\n}\n\n/// The first `n` code points; never cuts a character in half.\npub fn truncate(s: []u8, n: usize) -> []u8 {\n    return s[0..byte_offset(s, n)]\n}\n\n/// The code points in reverse order.\npub fn reverse(s: []u8) -> String {\n    let cps = chars(s)\n    var out = String.with_capacity(s.len)\n    var i = cps.len\n    while i > 0 {\n        i -= 1\n        push(&mut out, cps[i])\n    }\n    return out\n}\n\n/// The Unicode scalars, as `char`s (an invalid byte reads as U+FFFD).\npub fn scalars(s: []u8) -> List(char) {\n    var out = List(char).new()\n    var i: usize = 0\n    while i < s.len {\n        let d = decode_at(s, i)\n        out.append(d.cp as char)\n        i += d.len\n    }\n    return out\n}\n\n// ------------------------------------------------------------------ lookups\n\n// the index of the range in sorted, disjoint `los`..`his` that holds `cp`\nfn find_range(los: []u32, his: []u32, cp: u32) -> ?usize {\n    var lo: usize = 0\n    var hi = los.len\n    while lo < hi {\n        let mid = lo + (hi - lo) / 2\n        if cp < los[mid] {\n            hi = mid\n        } else if cp > his[mid] {\n            lo = mid + 1\n        } else {\n            return mid\n        }\n    }\n    return null\n}\n\n// where `cp` is in the sorted `cps`\nfn find_cp(cps: []u32, cp: u32) -> ?usize {\n    var lo: usize = 0\n    var hi = cps.len\n    while lo < hi {\n        let mid = lo + (hi - lo) / 2\n        if cp < cps[mid] {\n            hi = mid\n        } else if cp > cps[mid] {\n            lo = mid + 1\n        } else {\n            return mid\n        }\n    }\n    return null\n}\n\n// ------------------------------------------------------------------ graphemes\n\n// grapheme cluster break classes (UAX #29), with Extended_Pictographic and\n// Indic_Conjunct_Break folded in as the generated table has them\nconst GB_OTHER: u8 = 0\nconst GB_CR: u8 = 1\nconst GB_LF: u8 = 2\nconst GB_CONTROL: u8 = 3\nconst GB_EXTEND: u8 = 4\nconst GB_ZWJ: u8 = 5\nconst GB_RI: u8 = 6\nconst GB_PREPEND: u8 = 7\nconst GB_SPACING: u8 = 8\nconst GB_L: u8 = 9\nconst GB_V: u8 = 10\nconst GB_T: u8 = 11\nconst GB_LV: u8 = 12\nconst GB_LVT: u8 = 13\n// Extended_Pictographic (its break class is Other)\nconst GB_PICT: u8 = 14\n// Indic_Conjunct_Break=Consonant (Other)\nconst GB_CONSONANT: u8 = 15\n// Indic_Conjunct_Break=Extend and =Linker (both Extend)\nconst GB_INCB_EXTEND: u8 = 16\nconst GB_LINKER: u8 = 17\n\nfn gb_kind(cp: u32) -> u8 {\n    if cp < 0x80 {\n        if cp == 0x0D { return GB_CR }\n        if cp == 0x0A { return GB_LF }\n        if cp < 0x20 or cp == 0x7F { return GB_CONTROL }\n        return GB_OTHER\n    }\n    // a Hangul syllable is LV every 28th from U+AC00, LVT between\n    if cp >= 0xAC00 and cp <= 0xD7A3 { return if (cp - 0xAC00) % 28 == 0 { GB_LV } else { GB_LVT } }\n    if let i = find_range(GB_LO[..], GB_HI[..], cp) { return GB_KIND[i] }\n    return GB_OTHER\n}\n\nfn gb_extend(k: u8) -> bool {\n    return k == GB_EXTEND or k == GB_INCB_EXTEND or k == GB_LINKER\n}\n\n// No break between `prev` and `cur`: rules GB3 to GB13, with `ri` the\n// regional indicators in a row up to `prev`, `pict` 2 after a pictograph,\n// its extenders and a ZWJ, and `conj` 2 after a consonant and extenders or\n// linkers with a linker among them. Anything else breaks (GB999).\nfn joins(prev: u8, cur: u8, ri: usize, pict: u8, conj: u8) -> bool {\n    if prev == GB_CR and cur == GB_LF { return true }\n    if prev == GB_CR or prev == GB_LF or prev == GB_CONTROL { return false }\n    if cur == GB_CR or cur == GB_LF or cur == GB_CONTROL { return false }\n    if prev == GB_L and (cur == GB_L or cur == GB_V or cur == GB_LV or cur == GB_LVT) { return true }\n    if (prev == GB_LV or prev == GB_V) and (cur == GB_V or cur == GB_T) { return true }\n    if (prev == GB_LVT or prev == GB_T) and cur == GB_T { return true }\n    if gb_extend(cur) or cur == GB_ZWJ or cur == GB_SPACING { return true }\n    if prev == GB_PREPEND { return true }\n    if cur == GB_CONSONANT and conj == 2 { return true }\n    if cur == GB_PICT and prev == GB_ZWJ and pict == 2 { return true }\n    return cur == GB_RI and prev == GB_RI and ri % 2 == 1\n}\n\n/// The byte offset where the grapheme cluster that starts at byte `i`\n/// ends. A grapheme cluster is what a reader takes for one character: a\n/// letter and its marks, a Hangul syllable, an emoji sequence joined by\n/// ZWJ, a flag, an Indic conjunct, CR LF (Unicode's extended grapheme\n/// clusters, UAX #29).\npub fn grapheme_end(s: []u8, i: usize) -> usize {\n    if i >= s.len { return s.len }\n    let first = decode_at(s, i)\n    var prev = gb_kind(first.cp)\n    var j = i + first.len\n    var ri: usize = if prev == GB_RI { 1 } else { 0 }\n    var pict: u8 = if prev == GB_PICT { 1 } else { 0 }\n    var conj: u8 = if prev == GB_CONSONANT { 1 } else { 0 }\n    while j < s.len {\n        let d = decode_at(s, j)\n        let cur = gb_kind(d.cp)\n        if !joins(prev, cur, ri, pict, conj) { break }\n        ri = if cur == GB_RI { ri + 1 } else { 0 }\n        if cur == GB_PICT {\n            pict = 1\n        } else if pict == 1 and cur == GB_ZWJ {\n            pict = 2\n        } else if !(pict == 1 and gb_extend(cur)) {\n            pict = 0\n        }\n        if cur == GB_CONSONANT {\n            conj = 1\n        } else if conj >= 1 and cur == GB_LINKER {\n            conj = 2\n        } else if !(conj >= 1 and (cur == GB_INCB_EXTEND or cur == GB_ZWJ)) {\n            conj = 0\n        }\n        prev = cur\n        j += d.len\n    }\n    return j\n}\n\n/// The grapheme clusters, as slices of the text.\npub fn graphemes(s: []u8) -> List([]u8) {\n    var out = List([]u8).new()\n    var i: usize = 0\n    while i < s.len {\n        let j = grapheme_end(s, i)\n        out.append(s[i..j])\n        i = j\n    }\n    return out\n}\n\n/// The number of grapheme clusters: the characters a reader counts.\npub fn grapheme_count(s: []u8) -> usize {\n    var n: usize = 0\n    var i: usize = 0\n    while i < s.len {\n        i = grapheme_end(s, i)\n        n += 1\n    }\n    return n\n}\n\n/// The first `n` grapheme clusters; never splits one.\npub fn truncate_graphemes(s: []u8, n: usize) -> []u8 {\n    var i: usize = 0\n    var k: usize = 0\n    while i < s.len and k < n {\n        i = grapheme_end(s, i)\n        k += 1\n    }\n    return s[0..i]\n}\n\n// ------------------------------------------------------------------ width\n\n/// Does the code point take no columns (combining and enclosing marks,\n/// format and zero-width characters, controls, Hangul vowels and finals)?\npub fn is_zero_width(cp: u32) -> bool {\n    if cp < 0x20 or (cp >= 0x7F and cp <= 0x9F) { return true }\n    if cp < 0x300 { return false }\n    return find_range(ZERO_LO[..], ZERO_HI[..], cp) != null\n}\n\n/// Does the code point take two columns (East Asian wide and fullwidth,\n/// emoji among them)?\npub fn is_wide(cp: u32) -> bool {\n    if cp < 0x1100 { return false }\n    return find_range(WIDE_LO[..], WIDE_HI[..], cp) != null\n}\n\n/// Columns a code point takes on a terminal: 0, 1 or 2.\npub fn char_width(cp: u32) -> usize {\n    if is_zero_width(cp) { return 0 }\n    if is_wide(cp) { return 2 }\n    return 1\n}\n\n// The columns of one grapheme cluster: its first character's, and two for\n// a flag and for an emoji sequence (a wide character in it, or U+FE0F\n// asking for the emoji form).\nfn cluster_width(g: []u8) -> usize {\n    let first = decode_at(g, 0)\n    if first.len >= g.len { return char_width(first.cp) }\n    if is_wide(first.cp) or (first.cp >= 0x1F1E6 and first.cp <= 0x1F1FF) { return 2 }\n    var i = first.len\n    while i < g.len {\n        let d = decode_at(g, i)\n        if d.cp == 0xFE0F or is_wide(d.cp) { return 2 }\n        i += d.len\n    }\n    return char_width(first.cp)\n}\n\n/// Columns the text takes on a terminal, grapheme cluster by cluster, as\n/// terminals draw it: `e` with an accent is one, a family emoji two.\npub fn width(s: []u8) -> usize {\n    var w: usize = 0\n    var i: usize = 0\n    while i < s.len {\n        let j = grapheme_end(s, i)\n        w += cluster_width(s[i..j])\n        i = j\n    }\n    return w\n}\n\n/// Pad on the right to `columns` terminal columns (by width, not bytes).\npub fn pad_right(s: []u8, columns: usize) -> String {\n    var out = String.from(s)\n    var w = width(s)\n    while w < columns {\n        out.push_byte(' ')\n        w += 1\n    }\n    return out\n}\n\n/// Pad on the left to `columns` terminal columns: the text right-aligned.\npub fn pad_left(s: []u8, columns: usize) -> String {\n    var out = String.new()\n    var w = width(s)\n    while w < columns {\n        out.push_byte(' ')\n        w += 1\n    }\n    out.append(s)\n    return out\n}\n\n/// The longest start of the text that fits in `columns` terminal columns,\n/// cut between grapheme clusters.\npub fn truncate_width(s: []u8, columns: usize) -> []u8 {\n    var w: usize = 0\n    var i: usize = 0\n    while i < s.len {\n        let j = grapheme_end(s, i)\n        let cw = cluster_width(s[i..j])\n        if w + cw > columns { break }\n        w += cw\n        i = j\n    }\n    return s[0..i]\n}\n\n// ------------------------------------------------------------------ case\n\n// `cp` by a table of runs (`lo`, `lo + step`, ... `hi` each add their\n// delta), or `cp` itself\nfn map_runs(los: []u32, his: []u32, deltas: []i32, steps: []u8, cp: u32) -> u32 {\n    if let i = find_range(los, his, cp) {\n        if (cp - los[i]) % (steps[i] as u32) == 0 { return ((cp as i64) + (deltas[i] as i64)) as u32 }\n    }\n    return cp\n}\n\n/// Upper-case a code point by Unicode's simple mapping, one code point to\n/// one: `\303\237` stays `\303\237` here, where `to_upper` writes `SS`.\npub fn upper_char(cp: u32) -> u32 {\n    if cp < 0x80 { return if cp >= 'a' as u32 and cp <= 'z' as u32 { cp - 32 } else { cp } }\n    return map_runs(UPPER_LO[..], UPPER_HI[..], UPPER_DELTA[..], UPPER_STEP[..], cp)\n}\n\n/// Lower-case a code point by Unicode's simple mapping.\npub fn lower_char(cp: u32) -> u32 {\n    if cp < 0x80 { return if cp >= 'A' as u32 and cp <= 'Z' as u32 { cp + 32 } else { cp } }\n    return map_runs(LOWER_LO[..], LOWER_HI[..], LOWER_DELTA[..], LOWER_STEP[..], cp)\n}\n\n/// Case-fold a code point by Unicode's simple folding (`\317\202` and `\317\203` fold\n/// alike); `fold` does the full folding of a text.\npub fn fold_char(cp: u32) -> u32 {\n    if cp < 0x80 { return lower_char(cp) }\n    if let i = find_cp(FOLD_CP[..], cp) { return FOLD_TO[i] }\n    return lower_char(cp)\n}\n\n// the code points a mapping to more than one gives `cp`, or null\nfn special_of(cps: []u32, at: []u16, to: []u32, cp: u32) -> ?[]u32 {\n    if let i = find_cp(cps, cp) { return to[(at[i] as usize)..(at[i + 1] as usize)] }\n    return null\n}\n\n// a letter with a case, for the final sigma\nfn is_cased(cp: u32) -> bool {\n    return upper_char(cp) != cp or lower_char(cp) != cp\n}\n\n// may the code point sit inside a word without ending it: a mark, a format\n// character, an apostrophe, a period (Unicode's Case_Ignorable, roughly)\nfn is_case_ignorable(cp: u32) -> bool {\n    if cp == 0x27 or cp == 0x2E or cp == 0x3A or cp == 0xAD or cp == 0xB7 or cp == 0x2018 or cp == 0x2019 or cp == 0x2024 { return true }\n    return cp >= 0x300 and is_zero_width(cp)\n}\n\n// Does the capital sigma at byte `i` end a word: a cased letter before it\n// (past ignorable ones) and none after?\nfn final_sigma(s: []u8, i: usize, len: usize) -> bool {\n    var j = i\n    var before = false\n    while j > 0 {\n        var k = j - 1\n        while k > 0 and (s[k] & 0xC0) == 0x80 { k -= 1 }\n        let d = decode_at(s, k)\n        j = k\n        if is_case_ignorable(d.cp) { continue }\n        before = is_cased(d.cp)\n        break\n    }\n    if !before { return false }\n    var n = i + len\n    while n < s.len {\n        let d = decode_at(s, n)\n        n += d.len\n        if is_case_ignorable(d.cp) { continue }\n        return !is_cased(d.cp)\n    }\n    return true\n}\n\nfn map_full(s: []u8, upper: bool) -> String {\n    var out = String.with_capacity(s.len)\n    var i: usize = 0\n    while i < s.len {\n        let d = decode_at(s, i)\n        if upper {\n            if let m = special_of(UPPER_SPECIAL_CP[..], UPPER_SPECIAL_AT[..], UPPER_SPECIAL_TO[..], d.cp) {\n                for c in m { push(&mut out, c) }\n            } else {\n                push(&mut out, upper_char(d.cp))\n            }\n        } else if d.cp == 0x3A3 {\n            push(&mut out, if final_sigma(s, i, d.len) { 0x3C2 } else { 0x3C3 })\n        } else {\n            if let m = special_of(LOWER_SPECIAL_CP[..], LOWER_SPECIAL_AT[..], LOWER_SPECIAL_TO[..], d.cp) {\n                for c in m { push(&mut out, c) }\n            } else {\n                push(&mut out, lower_char(d.cp))\n            }\n        }\n        i += d.len\n    }\n    return out\n}\n\n/// Upper-case by Unicode's full mapping, every script: `stra\303\237e` becomes\n/// `STRASSE`, `\357\254\201` becomes `FI`.\npub fn to_upper(s: []u8) -> String {\n    return map_full(s, true)\n}\n\n/// Lower-case by Unicode's full mapping, with `\317\202` for a sigma that ends a\n/// word: `\316\237\316\224\316\237\316\243` becomes `\316\277\316\264\316\277\317\202`.\npub fn to_lower(s: []u8) -> String {\n    return map_full(s, false)\n}\n\n/// Case-fold by Unicode's full folding, to compare or look up text without\n/// regard to case: `Stra\303\237e`, `STRASSE` and `strasse` fold alike.\npub fn fold(s: []u8) -> String {\n    var out = String.with_capacity(s.len)\n    var i: usize = 0\n    while i < s.len {\n        let d = decode_at(s, i)\n        if let m = special_of(FOLD_SPECIAL_CP[..], FOLD_SPECIAL_AT[..], FOLD_SPECIAL_TO[..], d.cp) {\n            for c in m { push(&mut out, c) }\n        } else {\n            push(&mut out, fold_char(d.cp))\n        }\n        i += d.len\n    }\n    return out\n}\n\n/// Compare ignoring case, by full case folding.\npub fn eq_ignore_case(a: []u8, b: []u8) -> bool {\n    let fa = fold(a)\n    let fb = fold(b)\n    return fa[..] == fb[..]\n}\n\n// ------------------------------------------------------------------ tests\n\ntest \"decode and encode\" {\n    expect_eq(char_count(\"h\303\251llo\"), 5)\n    expect_eq(char_count(\"\346\227\245\346\234\254\350\252\236\"), 3)\n    expect_eq(chars(\"a\303\251\346\227\245\360\237\230\200\").len, 4)\n    expect_eq(chars(\"a\303\251\346\227\245\360\237\230\200\")[3], 0x1F600)\n    expect_eq(encode(0xE9), \"\303\251\")\n    expect_eq(encode(0x65E5), \"\346\227\245\")\n    expect_eq(encode(0x1F600), \"\360\237\230\200\")\n    expect(is_valid(\"h\303\251llo \346\227\245\346\234\254\"))\n    expect(!is_valid(b\"\\xff\\xfe\"))\n    expect(!is_valid(b\"\\xe6\\x97\"))\n    let bad = decode_at(b\"\\xff\", 0)\n    expect_eq(bad.cp, REPLACEMENT)\n    expect_eq(bad.len, 1)\n    expect_eq(char_at(\"h\303\251llo\", 1).?, 0xE9)\n    expect(char_at(\"h\303\251\", 2) == null)\n    expect_eq(slice(\"h\303\251llo w\303\266rld\", 6, 11), \"w\303\266rld\")\n    expect_eq(truncate(\"h\303\251llo w\303\266rld\", 5), \"h\303\251llo\")\n    expect_eq(reverse(\"h\303\251llo\"), \"oll\303\251h\")\n    expect_eq(byte_offset(\"h\303\251llo\", 2), 3)\n}\n\ntest \"scalars\" {\n    let cs = scalars(\"a\303\251\346\227\245\360\237\230\200\")\n    expect_eq(cs.len, 4)\n    expect_eq(cs[1], '\303\251')\n    expect_eq(cs[3], '\360\237\230\200')\n    let bad = scalars(b\"a\\xffb\")\n    expect_eq(bad[1] as u32, REPLACEMENT)\n}\n\ntest \"grapheme clusters\" {\n    // a letter and its accent, CR LF, flags, a family, a skin tone, a\n    // syllable in jamo and precomposed, a Devanagari conjunct (GB9c), a\n    // prepended mark, a ZWJ between letters\n    expect_eq(grapheme_count(\"e\\u{301}\"), 1)\n    expect_eq(grapheme_count(\"\\r\\n\"), 1)\n    expect_eq(grapheme_count(\"\\n\\r\"), 2)\n    expect_eq(grapheme_count(\"\360\237\207\257\360\237\207\265\360\237\207\253\360\237\207\267\"), 2)\n    expect_eq(grapheme_count(\"\360\237\207\257\360\237\207\265\360\237\207\253\"), 2)\n    expect_eq(grapheme_count(\"\360\237\221\250\\u{200D}\360\237\221\251\\u{200D}\360\237\221\247\"), 1)\n    expect_eq(grapheme_count(\"\360\237\221\215\360\237\217\275\"), 1)\n    expect_eq(grapheme_count(\"\\u{1100}\\u{1161}\\u{11A8}\"), 1)\n    expect_eq(grapheme_count(\"\352\260\201\"), 1)\n    expect_eq(grapheme_count(\"\\u{915}\\u{94D}\\u{937}\\u{93F}\"), 1)\n    expect_eq(grapheme_count(\"\\u{915}\\u{94D}\"), 1)\n    expect_eq(grapheme_count(\"\\u{600}1\"), 1)\n    expect_eq(grapheme_count(\"a\\u{200D}b\"), 2)\n    expect_eq(grapheme_count(\"h\303\251llo\"), 5)\n    let gs = graphemes(\"e\\u{301}\360\237\207\257\360\237\207\265x\")\n    expect_eq(gs.len, 3)\n    expect_eq(gs[0], \"e\\u{301}\")\n    expect_eq(gs[1], \"\360\237\207\257\360\237\207\265\")\n    expect_eq(truncate_graphemes(\"e\\u{301}e\\u{301}e\", 2), \"e\\u{301}e\\u{301}\")\n    expect_eq(grapheme_end(\"ab\", 0), 1)\n    expect_eq(grapheme_end(\"ab\", 2), 2)\n    expect_eq(grapheme_count(\"\"), 0)\n}\n\ntest \"width\" {\n    expect_eq(width(\"hello\"), 5)\n    expect_eq(width(\"\346\227\245\346\234\254\350\252\236\"), 6)\n    expect_eq(width(\"e\\u{301}\"), 1)\n    expect_eq(width(\"a\\u{200B}b\"), 2)\n    expect_eq(char_width(0x1F600), 2)\n    expect_eq(char_width(0x591), 0)\n    expect_eq(char_width(0xFF21), 2)\n    expect_eq(pad_right(\"\346\227\245\346\234\254\", 6), \"\346\227\245\346\234\254  \")\n    // emoji sequences and flags take two columns, however many code points\n    expect_eq(width(\"\360\237\221\250\\u{200D}\360\237\221\251\\u{200D}\360\237\221\247\"), 2)\n    expect_eq(width(\"\360\237\207\257\360\237\207\265\"), 2)\n    expect_eq(width(\"\\u{2764}\\u{FE0F}\"), 2)\n    expect_eq(width(\"\\u{2764}\"), 1)\n    expect_eq(width(\"\\u{1100}\\u{1161}\\u{11A8}\"), 2)\n    expect_eq(pad_left(\"\346\227\245\346\234\254\", 6), \"  \346\227\245\346\234\254\")\n    expect_eq(truncate_width(\"\346\227\245\346\234\254\350\252\236\", 5), \"\346\227\245\346\234\254\")\n    expect_eq(truncate_width(\"ab\346\227\245\", 3), \"ab\")\n    expect_eq(truncate_width(\"e\\u{301}x\", 1), \"e\\u{301}\")\n}\n\ntest \"case\" {\n    expect_eq(to_upper(\"h\303\251llo w\303\266rld\"), \"H\303\211LLO W\303\226RLD\")\n    expect_eq(to_lower(\"\303\200\303\211\303\216\303\225\303\234\"), \"\303\240\303\251\303\256\303\265\303\274\")\n    expect_eq(to_upper(\"stra\303\237e\"), \"STRASSE\")\n    expect_eq(to_upper(\"\316\261\316\262\316\263\"), \"\316\221\316\222\316\223\")\n    expect_eq(to_lower(\"\316\221\316\222\316\223\316\243\"), \"\316\261\316\262\316\263\317\202\")\n    expect_eq(to_lower(\"\316\243\316\221\316\243 \316\243\316\221\316\243.\"), \"\317\203\316\261\317\202 \317\203\316\261\317\202.\")\n    expect_eq(to_lower(\"\316\243\"), \"\317\203\")\n    expect_eq(to_upper(\"\320\277\321\200\320\270\320\262\320\265\321\202\"), \"\320\237\320\240\320\230\320\222\320\225\320\242\")\n    expect_eq(to_lower(\"\320\237\320\240\320\230\320\222\320\225\320\242 \320\201\320\226\"), \"\320\277\321\200\320\270\320\262\320\265\321\202 \321\221\320\266\")\n    expect_eq(to_upper(\"\305\202\303\263d\305\272\"), \"\305\201\303\223D\305\271\")\n    expect_eq(to_lower(\"\305\201\303\223D\305\271\"), \"\305\202\303\263d\305\272\")\n    // scripts the old offsets did not reach: Armenian, Georgian, Deseret\n    expect_eq(to_upper(\"\325\242\325\241\326\200\325\253\"), \"\324\262\324\261\325\220\324\273\")\n    expect_eq(to_lower(\"\341\262\220\341\262\221\341\262\222\"), \"\341\203\220\341\203\221\341\203\222\")\n    expect_eq(to_upper(\"\341\203\220\341\203\221\341\203\222\"), \"\341\262\220\341\262\221\341\262\222\")\n    expect_eq(to_upper(\"\360\220\220\250\"), \"\360\220\220\200\")\n    expect_eq(to_upper(\"\357\254\201\"), \"FI\")\n    expect_eq(to_lower(\"\304\260\"), \"i\\u{307}\")\n    expect_eq(to_upper(\"\307\205\"), \"\307\204\")\n    expect(eq_ignore_case(\"H\303\251llo\", \"h\303\211LLO\"))\n    expect(!eq_ignore_case(\"H\303\251llo\", \"hello\"))\n    expect(eq_ignore_case(\"Stra\303\237e\", \"STRASSE\"))\n    expect(eq_ignore_case(\"\316\243\316\221\316\243\", \"\317\203\316\261\317\202\"))\n    expect_eq(fold(\"Stra\303\237e\"), \"strasse\")\n    expect_eq(fold(\"\357\254\201\"), \"fi\")\n    expect_eq(upper_char('a' as u32), 'A' as u32)\n    expect_eq(lower_char(0x3A3), 0x3C3)\n    expect_eq(upper_char(0xDF), 0xDF)\n    expect_eq(fold_char(0x3C2), 0x3C3)\n}\n\n// ---------------------------------------------- generated: Unicode tables\n// by scripts/unicode_tables.py from the Unicode Character Database 16.0.0;\n// run it again rather than editing these.\n\npub const UNICODE_VERSION: []u8 = \"16.0.0\"\n\n// grapheme cluster break classes of the code points from U+0080 on, the\n// Hangul syllables aside (GB_* above)\nconst GB_LO: [678]u32 = [\n    0x80, 0xA9, 0xAD, 0xAE, 0x300, 0x483, 0x591, 0x5BF,\n    0x5C1, 0x5C4, 0x5C7, 0x600, 0x610, 0x61C, 0x64B, 0x670,\n    0x6D6, 0x6DD, 0x6DF, 0x6E7, 0x6EA, 0x70F, 0x711, 0x730,\n    0x7A6, 0x7EB, 0x7FD, 0x816, 0x81B, 0x825, 0x829, 0x859,\n    0x890, 0x897, 0x8CA, 0x8E2, 0x8E3, 0x903, 0x915, 0x93A,\n    0x93B, 0x93C, 0x93E, 0x941, 0x949, 0x94D, 0x94E, 0x951,\n    0x958, 0x962, 0x978, 0x981, 0x982, 0x995, 0x9AA, 0x9B2,\n    0x9B6, 0x9BC, 0x9BE, 0x9BF, 0x9C1, 0x9C7, 0x9CB, 0x9CD,\n    0x9D7, 0x9DC, 0x9DF, 0x9E2, 0x9F0, 0x9FE, 0xA01, 0xA03,\n    0xA3C, 0xA3E, 0xA41, 0xA47, 0xA4B, 0xA51, 0xA70, 0xA75,\n    0xA81, 0xA83, 0xA95, 0xAAA, 0xAB2, 0xAB5, 0xABC, 0xABE,\n    0xAC1, 0xAC7, 0xAC9, 0xACB, 0xACD, 0xAE2, 0xAF9, 0xAFA,\n    0xB01, 0xB02, 0xB15, 0xB2A, 0xB32, 0xB35, 0xB3C, 0xB3E,\n    0xB40, 0xB41, 0xB47, 0xB4B, 0xB4D, 0xB55, 0xB5C, 0xB5F,\n    0xB62, 0xB71, 0xB82, 0xBBE, 0xBBF, 0xBC0, 0xBC1, 0xBC6,\n    0xBCA, 0xBCD, 0xBD7, 0xC00, 0xC01, 0xC04, 0xC15, 0xC2A,\n    0xC3C, 0xC3E, 0xC41, 0xC46, 0xC4A, 0xC4D, 0xC55, 0xC58,\n    0xC62, 0xC81, 0xC82, 0xCBC, 0xCBE, 0xCBF, 0xCC1, 0xCC2,\n    0xCC3, 0xCC6, 0xCCA, 0xCD5, 0xCE2, 0xCF3, 0xD00, 0xD02,\n    0xD15, 0xD3B, 0xD3E, 0xD3F, 0xD41, 0xD46, 0xD4A, 0xD4D,\n    0xD4E, 0xD57, 0xD62, 0xD81, 0xD82, 0xDCA, 0xDCF, 0xDD0,\n    0xDD2, 0xDD6, 0xDD8, 0xDDF, 0xDF2, 0xE31, 0xE33, 0xE34,\n    0xE47, 0xEB1, 0xEB3, 0xEB4, 0xEC8, 0xF18, 0xF35, 0xF37,\n    0xF39, 0xF3E, 0xF71, 0xF7F, 0xF80, 0xF86, 0xF8D, 0xF99,\n    0xFC6, 0x102D, 0x1031, 0x1032, 0x1039, 0x103B, 0x103D, 0x1056,\n    0x1058, 0x105E, 0x1071, 0x1082, 0x1084, 0x1085, 0x108D, 0x109D,\n    0x1100, 0x1160, 0x11A8, 0x135D, 0x1712, 0x1732, 0x1752, 0x1772,\n    0x17B4, 0x17B6, 0x17B7, 0x17BE, 0x17C6, 0x17C7, 0x17C9, 0x17DD,\n    0x180B, 0x180E, 0x180F, 0x1885, 0x18A9, 0x1920, 0x1923, 0x1927,\n    0x1929, 0x1930, 0x1932, 0x1933, 0x1939, 0x1A17, 0x1A19, 0x1A1B,\n    0x1A55, 0x1A56, 0x1A57, 0x1A58, 0x1A60, 0x1A62, 0x1A65, 0x1A6D,\n    0x1A73, 0x1A7F, 0x1AB0, 0x1B00, 0x1B04, 0x1B34, 0x1B3E, 0x1B42,\n    0x1B6B, 0x1B80, 0x1B82, 0x1BA1, 0x1BA2, 0x1BA6, 0x1BA8, 0x1BE6,\n    0x1BE7, 0x1BE8, 0x1BEA, 0x1BED, 0x1BEE, 0x1BEF, 0x1C24, 0x1C2C,\n    0x1C34, 0x1C36, 0x1CD0, 0x1CD4, 0x1CE1, 0x1CE2, 0x1CED, 0x1CF4,\n    0x1CF7, 0x1CF8, 0x1DC0, 0x200B, 0x200C, 0x200D, 0x200E, 0x2028,\n    0x203C, 0x2049, 0x2060, 0x20D0, 0x2122, 0x2139, 0x2194, 0x21A9,\n    0x231A, 0x2328, 0x2388, 0x23CF, 0x23E9, 0x23F8, 0x24C2, 0x25AA,\n    0x25B6, 0x25C0, 0x25FB, 0x2600, 0x2607, 0x2614, 0x2690, 0x2708,\n    0x2714, 0x2716, 0x271D, 0x2721, 0x2728, 0x2733, 0x2744, 0x2747,\n    0x274C, 0x274E, 0x2753, 0x2757, 0x2763, 0x2795, 0x27A1, 0x27B0,\n    0x27BF, 0x2934, 0x2B05, 0x2B1B, 0x2B50, 0x2B55, 0x2CEF, 0x2D7F,\n    0x2DE0, 0x302A, 0x3030, 0x303D, 0x3099, 0x3297, 0x3299, 0xA66F,\n    0xA674, 0xA69E, 0xA6F0, 0xA802, 0xA806, 0xA80B, 0xA823, 0xA825,\n    0xA827, 0xA82C, 0xA880, 0xA8B4, 0xA8C4, 0xA8E0, 0xA8FF, 0xA926,\n    0xA947, 0xA952, 0xA953, 0xA960, 0xA980, 0xA983, 0xA9B3, 0xA9B4,\n    0xA9B6, 0xA9BA, 0xA9BC, 0xA9BE, 0xA9C0, 0xA9E5, 0xAA29, 0xAA2F,\n    0xAA31, 0xAA33, 0xAA35, 0xAA43, 0xAA4C, 0xAA4D, 0xAA7C, 0xAAB0,\n    0xAAB2, 0xAAB7, 0xAABE, 0xAAC1, 0xAAEB, 0xAAEC, 0xAAEE, 0xAAF5,\n    0xAAF6, 0xABE3, 0xABE5, 0xABE6, 0xABE8, 0xABE9, 0xABEC, 0xABED,\n    0xD7B0, 0xD7CB, 0xFB1E, 0xFE00, 0xFE20, 0xFEFF, 0xFF9E, 0xFFF0,\n    0x101FD, 0x102E0, 0x10376, 0x10A01, 0x10A05, 0x10A0C, 0x10A38, 0x10A3F,\n    0x10AE5, 0x10D24, 0x10D69, 0x10EAB, 0x10EFC, 0x10F46, 0x10F82, 0x11000,\n    0x11001, 0x11002, 0x11038, 0x11070, 0x11073, 0x1107F, 0x11082, 0x110B0,\n    0x110B3, 0x110B7, 0x110B9, 0x110BD, 0x110C2, 0x110CD, 0x11100, 0x11127,\n    0x1112C, 0x1112D, 0x11145, 0x11173, 0x11180, 0x11182, 0x111B3, 0x111B6,\n    0x111BF, 0x111C0, 0x111C2, 0x111C9, 0x111CE, 0x111CF, 0x1122C, 0x1122F,\n    0x11232, 0x11234, 0x1123E, 0x11241, 0x112DF, 0x112E0, 0x112E3, 0x11300,\n    0x11302, 0x1133B, 0x1133E, 0x1133F, 0x11340, 0x11341, 0x11347, 0x1134B,\n    0x1134D, 0x11357, 0x11362, 0x11366, 0x11370, 0x113B8, 0x113B9, 0x113BB,\n    0x113C2, 0x113C5, 0x113C7, 0x113CA, 0x113CC, 0x113CE, 0x113D1, 0x113D2,\n    0x113E1, 0x11435, 0x11438, 0x11440, 0x11442, 0x11445, 0x11446, 0x1145E,\n    0x114B0, 0x114B1, 0x114B3, 0x114B9, 0x114BA, 0x114BB, 0x114BD, 0x114BE,\n    0x114BF, 0x114C1, 0x114C2, 0x115AF, 0x115B0, 0x115B2, 0x115B8, 0x115BC,\n    0x115BE, 0x115BF, 0x115DC, 0x11630, 0x11633, 0x1163B, 0x1163D, 0x1163E,\n    0x1163F, 0x116AB, 0x116AC, 0x116AD, 0x116AE, 0x116B0, 0x1171D, 0x1171E,\n    0x1171F, 0x11722, 0x11726, 0x11727, 0x1182C, 0x1182F, 0x11838, 0x11839,\n    0x11930, 0x11931, 0x11937, 0x1193B, 0x1193F, 0x11940, 0x11941, 0x11942,\n    0x11943, 0x119D1, 0x119D4, 0x119DA, 0x119DC, 0x119E0, 0x119E4, 0x11A01,\n    0x11A33, 0x11A39, 0x11A3A, 0x11A3B, 0x11A47, 0x11A51, 0x11A57, 0x11A59,\n    0x11A84, 0x11A8A, 0x11A97, 0x11A98, 0x11C2F, 0x11C30, 0x11C38, 0x11C3E,\n    0x11C3F, 0x11C92, 0x11CA9, 0x11CAA, 0x11CB1, 0x11CB2, 0x11CB4, 0x11CB5,\n    0x11D31, 0x11D3A, 0x11D3C, 0x11D3F, 0x11D46, 0x11D47, 0x11D8A, 0x11D90,\n    0x11D93, 0x11D95, 0x11D96, 0x11D97, 0x11EF3, 0x11EF5, 0x11F00, 0x11F02,\n    0x11F03, 0x11F34, 0x11F36, 0x11F3E, 0x11F40, 0x11F5A, 0x13430, 0x13440,\n    0x13447, 0x1611E, 0x1612A, 0x1612D, 0x16AF0, 0x16B30, 0x16D63, 0x16D67,\n    0x16F4F, 0x16F51, 0x16F8F, 0x16FE4, 0x16FF0, 0x1BC9D, 0x1BCA0, 0x1CF00,\n    0x1CF30, 0x1D165, 0x1D16D, 0x1D173, 0x1D17B, 0x1D185, 0x1D1AA, 0x1D242,\n    0x1DA00, 0x1DA3B, 0x1DA75, 0x1DA84, 0x1DA9B, 0x1DAA1, 0x1E000, 0x1E008,\n    0x1E01B, 0x1E023, 0x1E026, 0x1E08F, 0x1E130, 0x1E2AE, 0x1E2EC, 0x1E4EC,\n    0x1E5EE, 0x1E8D0, 0x1E944, 0x1F000, 0x1F10D, 0x1F12F, 0x1F16C, 0x1F17E,\n    0x1F18E, 0x1F191, 0x1F1AD, 0x1F1E6, 0x1F201, 0x1F21A, 0x1F22F, 0x1F232,\n    0x1F23C, 0x1F249, 0x1F3FB, 0x1F400, 0x1F546, 0x1F680, 0x1F774, 0x1F7D5,\n    0x1F80C, 0x1F848, 0x1F85A, 0x1F888, 0x1F8AE, 0x1F90C, 0x1F93C, 0x1F947,\n    0x1FC00, 0xE0000, 0xE0020, 0xE0080, 0xE0100, 0xE01F0,\n]\n\nconst GB_HI: [678]u32 = [\n    0x9F, 0xA9, 0xAD, 0xAE, 0x36F, 0x489, 0x5BD, 0x5BF,\n    0x5C2, 0x5C5, 0x5C7, 0x605, 0x61A, 0x61C, 0x65F, 0x670,\n    0x6DC, 0x6DD, 0x6E4, 0x6E8, 0x6ED, 0x70F, 0x711, 0x74A,\n    0x7B0, 0x7F3, 0x7FD, 0x819, 0x823, 0x827, 0x82D, 0x85B,\n    0x891, 0x89F, 0x8E1, 0x8E2, 0x902, 0x903, 0x939, 0x93A,\n    0x93B, 0x93C, 0x940, 0x948, 0x94C, 0x94D, 0x94F, 0x957,\n    0x95F, 0x963, 0x97F, 0x981, 0x983, 0x9A8, 0x9B0, 0x9B2,\n    0x9B9, 0x9BC, 0x9BE, 0x9C0, 0x9C4, 0x9C8, 0x9CC, 0x9CD,\n    0x9D7, 0x9DD, 0x9DF, 0x9E3, 0x9F1, 0x9FE, 0xA02, 0xA03,\n    0xA3C, 0xA40, 0xA42, 0xA48, 0xA4D, 0xA51, 0xA71, 0xA75,\n    0xA82, 0xA83, 0xAA8, 0xAB0, 0xAB3, 0xAB9, 0xABC, 0xAC0,\n    0xAC5, 0xAC8, 0xAC9, 0xACC, 0xACD, 0xAE3, 0xAF9, 0xAFF,\n    0xB01, 0xB03, 0xB28, 0xB30, 0xB33, 0xB39, 0xB3C, 0xB3F,\n    0xB40, 0xB44, 0xB48, 0xB4C, 0xB4D, 0xB57, 0xB5D, 0xB5F,\n    0xB63, 0xB71, 0xB82, 0xBBE, 0xBBF, 0xBC0, 0xBC2, 0xBC8,\n    0xBCC, 0xBCD, 0xBD7, 0xC00, 0xC03, 0xC04, 0xC28, 0xC39,\n    0xC3C, 0xC40, 0xC44, 0xC48, 0xC4C, 0xC4D, 0xC56, 0xC5A,\n    0xC63, 0xC81, 0xC83, 0xCBC, 0xCBE, 0xCC0, 0xCC1, 0xCC2,\n    0xCC4, 0xCC8, 0xCCD, 0xCD6, 0xCE3, 0xCF3, 0xD01, 0xD03,\n    0xD3A, 0xD3C, 0xD3E, 0xD40, 0xD44, 0xD48, 0xD4C, 0xD4D,\n    0xD4E, 0xD57, 0xD63, 0xD81, 0xD83, 0xDCA, 0xDCF, 0xDD1,\n    0xDD4, 0xDD6, 0xDDE, 0xDDF, 0xDF3, 0xE31, 0xE33, 0xE3A,\n    0xE4E, 0xEB1, 0xEB3, 0xEBC, 0xECE, 0xF19, 0xF35, 0xF37,\n    0xF39, 0xF3F, 0xF7E, 0xF7F, 0xF84, 0xF87, 0xF97, 0xFBC,\n    0xFC6, 0x1030, 0x1031, 0x1037, 0x103A, 0x103C, 0x103E, 0x1057,\n    0x1059, 0x1060, 0x1074, 0x1082, 0x1084, 0x1086, 0x108D, 0x109D,\n    0x115F, 0x11A7, 0x11FF, 0x135F, 0x1715, 0x1734, 0x1753, 0x1773,\n    0x17B5, 0x17B6, 0x17BD, 0x17C5, 0x17C6, 0x17C8, 0x17D3, 0x17DD,\n    0x180D, 0x180E, 0x180F, 0x1886, 0x18A9, 0x1922, 0x1926, 0x1928,\n    0x192B, 0x1931, 0x1932, 0x1938, 0x193B, 0x1A18, 0x1A1A, 0x1A1B,\n    0x1A55, 0x1A56, 0x1A57, 0x1A5E, 0x1A60, 0x1A62, 0x1A6C, 0x1A72,\n    0x1A7C, 0x1A7F, 0x1ACE, 0x1B03, 0x1B04, 0x1B3D, 0x1B41, 0x1B44,\n    0x1B73, 0x1B81, 0x1B82, 0x1BA1, 0x1BA5, 0x1BA7, 0x1BAD, 0x1BE6,\n    0x1BE7, 0x1BE9, 0x1BEC, 0x1BED, 0x1BEE, 0x1BF3, 0x1C2B, 0x1C33,\n    0x1C35, 0x1C37, 0x1CD2, 0x1CE0, 0x1CE1, 0x1CE8, 0x1CED, 0x1CF4,\n    0x1CF7, 0x1CF9, 0x1DFF, 0x200B, 0x200C, 0x200D, 0x200F, 0x202E,\n    0x203C, 0x2049, 0x206F, 0x20F0, 0x2122, 0x2139, 0x2199, 0x21AA,\n    0x231B, 0x2328, 0x2388, 0x23CF, 0x23F3, 0x23FA, 0x24C2, 0x25AB,\n    0x25B6, 0x25C0, 0x25FE, 0x2605, 0x2612, 0x2685, 0x2705, 0x2712,\n    0x2714, 0x2716, 0x271D, 0x2721, 0x2728, 0x2734, 0x2744, 0x2747,\n    0x274C, 0x274E, 0x2755, 0x2757, 0x2767, 0x2797, 0x27A1, 0x27B0,\n    0x27BF, 0x2935, 0x2B07, 0x2B1C, 0x2B50, 0x2B55, 0x2CF1, 0x2D7F,\n    0x2DFF, 0x302F, 0x3030, 0x303D, 0x309A, 0x3297, 0x3299, 0xA672,\n    0xA67D, 0xA69F, 0xA6F1, 0xA802, 0xA806, 0xA80B, 0xA824, 0xA826,\n    0xA827, 0xA82C, 0xA881, 0xA8C3, 0xA8C5, 0xA8F1, 0xA8FF, 0xA92D,\n    0xA951, 0xA952, 0xA953, 0xA97C, 0xA982, 0xA983, 0xA9B3, 0xA9B5,\n    0xA9B9, 0xA9BB, 0xA9BD, 0xA9BF, 0xA9C0, 0xA9E5, 0xAA2E, 0xAA30,\n    0xAA32, 0xAA34, 0xAA36, 0xAA43, 0xAA4C, 0xAA4D, 0xAA7C, 0xAAB0,\n    0xAAB4, 0xAAB8, 0xAABF, 0xAAC1, 0xAAEB, 0xAAED, 0xAAEF, 0xAAF5,\n    0xAAF6, 0xABE4, 0xABE5, 0xABE7, 0xABE8, 0xABEA, 0xABEC, 0xABED,\n    0xD7C6, 0xD7FB, 0xFB1E, 0xFE0F, 0xFE2F, 0xFEFF, 0xFF9F, 0xFFFB,\n    0x101FD, 0x102E0, 0x1037A, 0x10A03, 0x10A06, 0x10A0F, 0x10A3A, 0x10A3F,\n    0x10AE6, 0x10D27, 0x10D6D, 0x10EAC, 0x10EFF, 0x10F50, 0x10F85, 0x11000,\n    0x11001, 0x11002, 0x11046, 0x11070, 0x11074, 0x11081, 0x11082, 0x110B2,\n    0x110B6, 0x110B8, 0x110BA, 0x110BD, 0x110C2, 0x110CD, 0x11102, 0x1112B,\n    0x1112C, 0x11134, 0x11146, 0x11173, 0x11181, 0x11182, 0x111B5, 0x111BE,\n    0x111BF, 0x111C0, 0x111C3, 0x111CC, 0x111CE, 0x111CF, 0x1122E, 0x11231,\n    0x11233, 0x11237, 0x1123E, 0x11241, 0x112DF, 0x112E2, 0x112EA, 0x11301,\n    0x11303, 0x1133C, 0x1133E, 0x1133F, 0x11340, 0x11344, 0x11348, 0x1134C,\n    0x1134D, 0x11357, 0x11363, 0x1136C, 0x11374, 0x113B8, 0x113BA, 0x113C0,\n    0x113C2, 0x113C5, 0x113C9, 0x113CA, 0x113CD, 0x113D0, 0x113D1, 0x113D2,\n    0x113E2, 0x11437, 0x1143F, 0x11441, 0x11444, 0x11445, 0x11446, 0x1145E,\n    0x114B0, 0x114B2, 0x114B8, 0x114B9, 0x114BA, 0x114BC, 0x114BD, 0x114BE,\n    0x114C0, 0x114C1, 0x114C3, 0x115AF, 0x115B1, 0x115B5, 0x115BB, 0x115BD,\n    0x115BE, 0x115C0, 0x115DD, 0x11632, 0x1163A, 0x1163C, 0x1163D, 0x1163E,\n    0x11640, 0x116AB, 0x116AC, 0x116AD, 0x116AF, 0x116B7, 0x1171D, 0x1171E,\n    0x1171F, 0x11725, 0x11726, 0x1172B, 0x1182E, 0x11837, 0x11838, 0x1183A,\n    0x11930, 0x11935, 0x11938, 0x1193E, 0x1193F, 0x11940, 0x11941, 0x11942,\n    0x11943, 0x119D3, 0x119D7, 0x119DB, 0x119DF, 0x119E0, 0x119E4, 0x11A0A,\n    0x11A38, 0x11A39, 0x11A3A, 0x11A3E, 0x11A47, 0x11A56, 0x11A58, 0x11A5B,\n    0x11A89, 0x11A96, 0x11A97, 0x11A99, 0x11C2F, 0x11C36, 0x11C3D, 0x11C3E,\n    0x11C3F, 0x11CA7, 0x11CA9, 0x11CB0, 0x11CB1, 0x11CB3, 0x11CB4, 0x11CB6,\n    0x11D36, 0x11D3A, 0x11D3D, 0x11D45, 0x11D46, 0x11D47, 0x11D8E, 0x11D91,\n    0x11D94, 0x11D95, 0x11D96, 0x11D97, 0x11EF4, 0x11EF6, 0x11F01, 0x11F02,\n    0x11F03, 0x11F35, 0x11F3A, 0x11F3F, 0x11F42, 0x11F5A, 0x1343F, 0x13440,\n    0x13455, 0x16129, 0x1612C, 0x1612F, 0x16AF4, 0x16B36, 0x16D63, 0x16D6A,\n    0x16F4F, 0x16F87, 0x16F92, 0x16FE4, 0x16FF1, 0x1BC9E, 0x1BCA3, 0x1CF2D,\n    0x1CF46, 0x1D169, 0x1D172, 0x1D17A, 0x1D182, 0x1D18B, 0x1D1AD, 0x1D244,\n    0x1DA36, 0x1DA6C, 0x1DA75, 0x1DA84, 0x1DA9F, 0x1DAAF, 0x1E006, 0x1E018,\n    0x1E021, 0x1E024, 0x1E02A, 0x1E08F, 0x1E136, 0x1E2AE, 0x1E2EF, 0x1E4EF,\n    0x1E5EF, 0x1E8D6, 0x1E94A, 0x1F0FF, 0x1F10F, 0x1F12F, 0x1F171, 0x1F17F,\n    0x1F18E, 0x1F19A, 0x1F1E5, 0x1F1FF, 0x1F20F, 0x1F21A, 0x1F22F, 0x1F23A,\n    0x1F23F, 0x1F3FA, 0x1F3FF, 0x1F53D, 0x1F64F, 0x1F6FF, 0x1F77F, 0x1F7FF,\n    0x1F80F, 0x1F84F, 0x1F85F, 0x1F88F, 0x1F8FF, 0x1F93A, 0x1F945, 0x1FAFF,\n    0x1FFFD, 0xE001F, 0xE007F, 0xE00FF, 0xE01EF, 0xE0FFF,\n]\n\nconst GB_KIND: [678]u8 = [\n    3, 14, 3, 14, 16, 16, 16, 16, 16, 16, 16, 7, 16, 3, 16, 16, 16, 7, 16, 16, 16, 7, 16, 16,\n    16, 16, 16, 16, 16, 16, 16, 16, 7, 16, 16, 7, 16, 8, 15, 16, 8, 16, 8, 16, 8, 17, 8, 16,\n    15, 16, 15, 16, 8, 15, 15, 15, 15, 16, 16, 8, 16, 8, 8, 17, 16, 15, 15, 16, 15, 16, 16, 8,\n    16, 8, 16, 16, 16, 16, 16, 16, 16, 8, 15, 15, 15, 15, 16, 8, 16, 16, 8, 8, 17, 16, 15, 16,\n    16, 8, 15, 15, 15, 15, 16, 16, 8, 16, 8, 8, 17, 16, 15, 15, 16, 15, 16, 16, 8, 16, 8, 8,\n    8, 16, 16, 16, 8, 16, 15, 15, 16, 16, 8, 16, 16, 17, 16, 15, 16, 16, 8, 16, 8, 16, 8, 16,\n    8, 16, 16, 16, 16, 8, 16, 8, 15, 16, 16, 8, 16, 8, 8, 17, 7, 16, 16, 16, 8, 16, 16, 8,\n    16, 16, 8, 16, 8, 16, 8, 16, 16, 16, 8, 16, 16, 16, 16, 16, 16, 8, 16, 8, 16, 16, 16, 16,\n    16, 16, 8, 16, 16, 8, 16, 8, 16, 16, 16, 16, 8, 16, 16, 16, 9, 10, 11, 16, 16, 16, 16, 16,\n    16, 8, 16, 8, 16, 8, 16, 16, 16, 3, 16, 16, 16, 16, 8, 16, 8, 8, 16, 8, 16, 16, 8, 16,\n    8, 16, 8, 16, 16, 16, 16, 8, 16, 16, 16, 16, 8, 16, 8, 16, 16, 16, 8, 8, 16, 8, 16, 16,\n    8, 16, 8, 16, 8, 16, 8, 16, 8, 16, 16, 16, 8, 16, 16, 16, 8, 16, 16, 3, 4, 5, 3, 3,\n    14, 14, 3, 16, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14,\n    14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 16, 16,\n    16, 16, 14, 14, 16, 14, 14, 16, 16, 16, 16, 16, 16, 16, 8, 16, 8, 16, 8, 8, 16, 16, 16, 16,\n    16, 8, 16, 9, 16, 8, 16, 8, 16, 8, 16, 8, 16, 16, 16, 8, 16, 8, 16, 16, 16, 8, 16, 16,\n    16, 16, 16, 16, 8, 16, 8, 8, 16, 8, 16, 8, 16, 8, 8, 16, 10, 11, 16, 16, 16, 3, 16, 3,\n    16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 8, 16, 8, 16, 16, 16, 16, 8, 8,\n    16, 8, 16, 7, 16, 7, 16, 16, 8, 16, 8, 16, 16, 8, 8, 16, 8, 16, 7, 16, 8, 16, 8, 16,\n    8, 16, 16, 16, 16, 8, 16, 16, 8, 16, 16, 8, 16, 8, 8, 8, 16, 16, 8, 16, 16, 16, 8, 16,\n    16, 16, 16, 8, 8, 16, 7, 16, 16, 8, 16, 8, 16, 8, 16, 16, 16, 8, 16, 8, 16, 8, 16, 8,\n    16, 8, 16, 16, 8, 16, 8, 16, 8, 16, 16, 8, 16, 8, 16, 8, 16, 16, 8, 16, 8, 16, 16, 8,\n    16, 16, 8, 16, 8, 16, 8, 16, 16, 8, 8, 16, 7, 8, 7, 8, 16, 8, 16, 16, 8, 16, 8, 16,\n    16, 8, 7, 16, 16, 16, 8, 16, 7, 16, 8, 16, 8, 16, 16, 8, 16, 16, 8, 16, 8, 16, 8, 16,\n    16, 16, 16, 16, 7, 16, 8, 16, 8, 16, 8, 16, 16, 8, 16, 7, 8, 8, 16, 8, 16, 16, 3, 16,\n    16, 16, 8, 16, 16, 16, 10, 10, 16, 8, 16, 16, 16, 16, 3, 16, 16, 16, 16, 3, 16, 16, 16, 16,\n    16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 14, 14, 14, 14, 14,\n    14, 14, 14, 6, 14, 14, 14, 14, 14, 14, 16, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14,\n    14, 3, 16, 3, 16, 3,\n]\n\n// no columns: nonspacing and enclosing marks, format characters but the\n// soft hyphen, Hangul vowels and finals\nconst ZERO_LO: [372]u32 = [\n    0x300, 0x483, 0x591, 0x5BF, 0x5C1, 0x5C4, 0x5C7, 0x600,\n    0x610, 0x61C, 0x64B, 0x670, 0x6D6, 0x6DF, 0x6E7, 0x6EA,\n    0x70F, 0x711, 0x730, 0x7A6, 0x7EB, 0x7FD, 0x816, 0x81B,\n    0x825, 0x829, 0x859, 0x890, 0x897, 0x8CA, 0x93A, 0x93C,\n    0x941, 0x94D, 0x951, 0x962, 0x981, 0x9BC, 0x9C1, 0x9CD,\n    0x9E2, 0x9FE, 0xA01, 0xA3C, 0xA41, 0xA47, 0xA4B, 0xA51,\n    0xA70, 0xA75, 0xA81, 0xABC, 0xAC1, 0xAC7, 0xACD, 0xAE2,\n    0xAFA, 0xB01, 0xB3C, 0xB3F, 0xB41, 0xB4D, 0xB55, 0xB62,\n    0xB82, 0xBC0, 0xBCD, 0xC00, 0xC04, 0xC3C, 0xC3E, 0xC46,\n    0xC4A, 0xC55, 0xC62, 0xC81, 0xCBC, 0xCBF, 0xCC6, 0xCCC,\n    0xCE2, 0xD00, 0xD3B, 0xD41, 0xD4D, 0xD62, 0xD81, 0xDCA,\n    0xDD2, 0xDD6, 0xE31, 0xE34, 0xE47, 0xEB1, 0xEB4, 0xEC8,\n    0xF18, 0xF35, 0xF37, 0xF39, 0xF71, 0xF80, 0xF86, 0xF8D,\n    0xF99, 0xFC6, 0x102D, 0x1032, 0x1039, 0x103D, 0x1058, 0x105E,\n    0x1071, 0x1082, 0x1085, 0x108D, 0x109D, 0x1160, 0x135D, 0x1712,\n    0x1732, 0x1752, 0x1772, 0x17B4, 0x17B7, 0x17C6, 0x17C9, 0x17DD,\n    0x180B, 0x1885, 0x18A9, 0x1920, 0x1927, 0x1932, 0x1939, 0x1A17,\n    0x1A1B, 0x1A56, 0x1A58, 0x1A60, 0x1A62, 0x1A65, 0x1A73, 0x1A7F,\n    0x1AB0, 0x1B00, 0x1B34, 0x1B36, 0x1B3C, 0x1B42, 0x1B6B, 0x1B80,\n    0x1BA2, 0x1BA8, 0x1BAB, 0x1BE6, 0x1BE8, 0x1BED, 0x1BEF, 0x1C2C,\n    0x1C36, 0x1CD0, 0x1CD4, 0x1CE2, 0x1CED, 0x1CF4, 0x1CF8, 0x1DC0,\n    0x200B, 0x202A, 0x2060, 0x2066, 0x20D0, 0x2CEF, 0x2D7F, 0x2DE0,\n    0x302A, 0x3099, 0xA66F, 0xA674, 0xA69E, 0xA6F0, 0xA802, 0xA806,\n    0xA80B, 0xA825, 0xA82C, 0xA8C4, 0xA8E0, 0xA8FF, 0xA926, 0xA947,\n    0xA980, 0xA9B3, 0xA9B6, 0xA9BC, 0xA9E5, 0xAA29, 0xAA31, 0xAA35,\n    0xAA43, 0xAA4C, 0xAA7C, 0xAAB0, 0xAAB2, 0xAAB7, 0xAABE, 0xAAC1,\n    0xAAEC, 0xAAF6, 0xABE5, 0xABE8, 0xABED, 0xD7B0, 0xD7CB, 0xFB1E,\n    0xFE00, 0xFE20, 0xFEFF, 0xFFF9, 0x101FD, 0x102E0, 0x10376, 0x10A01,\n    0x10A05, 0x10A0C, 0x10A38, 0x10A3F, 0x10AE5, 0x10D24, 0x10D69, 0x10EAB,\n    0x10EFC, 0x10F46, 0x10F82, 0x11001, 0x11038, 0x11070, 0x11073, 0x1107F,\n    0x110B3, 0x110B9, 0x110BD, 0x110C2, 0x110CD, 0x11100, 0x11127, 0x1112D,\n    0x11173, 0x11180, 0x111B6, 0x111C9, 0x111CF, 0x1122F, 0x11234, 0x11236,\n    0x1123E, 0x11241, 0x112DF, 0x112E3, 0x11300, 0x1133B, 0x11340, 0x11366,\n    0x11370, 0x113BB, 0x113CE, 0x113D0, 0x113D2, 0x113E1, 0x11438, 0x11442,\n    0x11446, 0x1145E, 0x114B3, 0x114BA, 0x114BF, 0x114C2, 0x115B2, 0x115BC,\n    0x115BF, 0x115DC, 0x11633, 0x1163D, 0x1163F, 0x116AB, 0x116AD, 0x116B0,\n    0x116B7, 0x1171D, 0x1171F, 0x11722, 0x11727, 0x1182F, 0x11839, 0x1193B,\n    0x1193E, 0x11943, 0x119D4, 0x119DA, 0x119E0, 0x11A01, 0x11A33, 0x11A3B,\n    0x11A47, 0x11A51, 0x11A59, 0x11A8A, 0x11A98, 0x11C30, 0x11C38, 0x11C3F,\n    0x11C92, 0x11CAA, 0x11CB2, 0x11CB5, 0x11D31, 0x11D3A, 0x11D3C, 0x11D3F,\n    0x11D47, 0x11D90, 0x11D95, 0x11D97, 0x11EF3, 0x11F00, 0x11F36, 0x11F40,\n    0x11F42, 0x11F5A, 0x13430, 0x13447, 0x1611E, 0x1612D, 0x16AF0, 0x16B30,\n    0x16D63, 0x16D67, 0x16F4F, 0x16F8F, 0x16FE4, 0x1BC9D, 0x1BCA0, 0x1CF00,\n    0x1CF30, 0x1D167, 0x1D173, 0x1D185, 0x1D1AA, 0x1D242, 0x1DA00, 0x1DA3B,\n    0x1DA75, 0x1DA84, 0x1DA9B, 0x1DAA1, 0x1E000, 0x1E008, 0x1E01B, 0x1E023,\n    0x1E026, 0x1E08F, 0x1E130, 0x1E2AE, 0x1E2EC, 0x1E4EC, 0x1E5EE, 0x1E8D0,\n    0x1E944, 0xE0001, 0xE0020, 0xE0100,\n]\n\nconst ZERO_HI: [372]u32 = [\n    0x36F, 0x489, 0x5BD, 0x5BF, 0x5C2, 0x5C5, 0x5C7, 0x605,\n    0x61A, 0x61C, 0x65F, 0x670, 0x6DD, 0x6E4, 0x6E8, 0x6ED,\n    0x70F, 0x711, 0x74A, 0x7B0, 0x7F3, 0x7FD, 0x819, 0x823,\n    0x827, 0x82D, 0x85B, 0x891, 0x89F, 0x902, 0x93A, 0x93C,\n    0x948, 0x94D, 0x957, 0x963, 0x981, 0x9BC, 0x9C4, 0x9CD,\n    0x9E3, 0x9FE, 0xA02, 0xA3C, 0xA42, 0xA48, 0xA4D, 0xA51,\n    0xA71, 0xA75, 0xA82, 0xABC, 0xAC5, 0xAC8, 0xACD, 0xAE3,\n    0xAFF, 0xB01, 0xB3C, 0xB3F, 0xB44, 0xB4D, 0xB56, 0xB63,\n    0xB82, 0xBC0, 0xBCD, 0xC00, 0xC04, 0xC3C, 0xC40, 0xC48,\n    0xC4D, 0xC56, 0xC63, 0xC81, 0xCBC, 0xCBF, 0xCC6, 0xCCD,\n    0xCE3, 0xD01, 0xD3C, 0xD44, 0xD4D, 0xD63, 0xD81, 0xDCA,\n    0xDD4, 0xDD6, 0xE31, 0xE3A, 0xE4E, 0xEB1, 0xEBC, 0xECE,\n    0xF19, 0xF35, 0xF37, 0xF39, 0xF7E, 0xF84, 0xF87, 0xF97,\n    0xFBC, 0xFC6, 0x1030, 0x1037, 0x103A, 0x103E, 0x1059, 0x1060,\n    0x1074, 0x1082, 0x1086, 0x108D, 0x109D, 0x11FF, 0x135F, 0x1714,\n    0x1733, 0x1753, 0x1773, 0x17B5, 0x17BD, 0x17C6, 0x17D3, 0x17DD,\n    0x180F, 0x1886, 0x18A9, 0x1922, 0x1928, 0x1932, 0x193B, 0x1A18,\n    0x1A1B, 0x1A56, 0x1A5E, 0x1A60, 0x1A62, 0x1A6C, 0x1A7C, 0x1A7F,\n    0x1ACE, 0x1B03, 0x1B34, 0x1B3A, 0x1B3C, 0x1B42, 0x1B73, 0x1B81,\n    0x1BA5, 0x1BA9, 0x1BAD, 0x1BE6, 0x1BE9, 0x1BED, 0x1BF1, 0x1C33,\n    0x1C37, 0x1CD2, 0x1CE0, 0x1CE8, 0x1CED, 0x1CF4, 0x1CF9, 0x1DFF,\n    0x200F, 0x202E, 0x2064, 0x206F, 0x20F0, 0x2CF1, 0x2D7F, 0x2DFF,\n    0x302D, 0x309A, 0xA672, 0xA67D, 0xA69F, 0xA6F1, 0xA802, 0xA806,\n    0xA80B, 0xA826, 0xA82C, 0xA8C5, 0xA8F1, 0xA8FF, 0xA92D, 0xA951,\n    0xA982, 0xA9B3, 0xA9B9, 0xA9BD, 0xA9E5, 0xAA2E, 0xAA32, 0xAA36,\n    0xAA43, 0xAA4C, 0xAA7C, 0xAAB0, 0xAAB4, 0xAAB8, 0xAABF, 0xAAC1,\n    0xAAED, 0xAAF6, 0xABE5, 0xABE8, 0xABED, 0xD7C6, 0xD7FB, 0xFB1E,\n    0xFE0F, 0xFE2F, 0xFEFF, 0xFFFB, 0x101FD, 0x102E0, 0x1037A, 0x10A03,\n    0x10A06, 0x10A0F, 0x10A3A, 0x10A3F, 0x10AE6, 0x10D27, 0x10D6D, 0x10EAC,\n    0x10EFF, 0x10F50, 0x10F85, 0x11001, 0x11046, 0x11070, 0x11074, 0x11081,\n    0x110B6, 0x110BA, 0x110BD, 0x110C2, 0x110CD, 0x11102, 0x1112B, 0x11134,\n    0x11173, 0x11181, 0x111BE, 0x111CC, 0x111CF, 0x11231, 0x11234, 0x11237,\n    0x1123E, 0x11241, 0x112DF, 0x112EA, 0x11301, 0x1133C, 0x11340, 0x1136C,\n    0x11374, 0x113C0, 0x113CE, 0x113D0, 0x113D2, 0x113E2, 0x1143F, 0x11444,\n    0x11446, 0x1145E, 0x114B8, 0x114BA, 0x114C0, 0x114C3, 0x115B5, 0x115BD,\n    0x115C0, 0x115DD, 0x1163A, 0x1163D, 0x11640, 0x116AB, 0x116AD, 0x116B5,\n    0x116B7, 0x1171D, 0x1171F, 0x11725, 0x1172B, 0x11837, 0x1183A, 0x1193C,\n    0x1193E, 0x11943, 0x119D7, 0x119DB, 0x119E0, 0x11A0A, 0x11A38, 0x11A3E,\n    0x11A47, 0x11A56, 0x11A5B, 0x11A96, 0x11A99, 0x11C36, 0x11C3D, 0x11C3F,\n    0x11CA7, 0x11CB0, 0x11CB3, 0x11CB6, 0x11D36, 0x11D3A, 0x11D3D, 0x11D45,\n    0x11D47, 0x11D91, 0x11D95, 0x11D97, 0x11EF4, 0x11F01, 0x11F3A, 0x11F40,\n    0x11F42, 0x11F5A, 0x13440, 0x13455, 0x16129, 0x1612F, 0x16AF4, 0x16B36,\n    0x16D63, 0x16D6A, 0x16F4F, 0x16F92, 0x16FE4, 0x1BC9E, 0x1BCA3, 0x1CF2D,\n    0x1CF46, 0x1D169, 0x1D182, 0x1D18B, 0x1D1AD, 0x1D244, 0x1DA36, 0x1DA6C,\n    0x1DA75, 0x1DA84, 0x1DA9F, 0x1DAAF, 0x1E006, 0x1E018, 0x1E021, 0x1E024,\n    0x1E02A, 0x1E08F, 0x1E136, 0x1E2AE, 0x1E2EF, 0x1E4EF, 0x1E5EF, 0x1E8D6,\n    0x1E94A, 0xE0001, 0xE007F, 0xE01EF,\n]\n\n// two columns: East Asian wide and fullwidth\nconst WIDE_LO: [122]u32 = [\n    0x1100, 0x231A, 0x2329, 0x23E9, 0x23F0, 0x23F3, 0x25FD, 0x2614,\n    0x2630, 0x2648, 0x267F, 0x268A, 0x2693, 0x26A1, 0x26AA, 0x26BD,\n    0x26C4, 0x26CE, 0x26D4, 0x26EA, 0x26F2, 0x26F5, 0x26FA, 0x26FD,\n    0x2705, 0x270A, 0x2728, 0x274C, 0x274E, 0x2753, 0x2757, 0x2795,\n    0x27B0, 0x27BF, 0x2B1B, 0x2B50, 0x2B55, 0x2E80, 0x2E9B, 0x2F00,\n    0x2FF0, 0x3041, 0x3099, 0x3105, 0x3131, 0x3190, 0x31EF, 0x3220,\n    0x3250, 0xA490, 0xA960, 0xAC00, 0xF900, 0xFE10, 0xFE30, 0xFE54,\n    0xFE68, 0xFF01, 0xFFE0, 0x16FE0, 0x16FF0, 0x17000, 0x18800, 0x18CFF,\n    0x1AFF0, 0x1AFF5, 0x1AFFD, 0x1B000, 0x1B132, 0x1B150, 0x1B155, 0x1B164,\n    0x1B170, 0x1D300, 0x1D360, 0x1F004, 0x1F0CF, 0x1F18E, 0x1F191, 0x1F200,\n    0x1F210, 0x1F240, 0x1F250, 0x1F260, 0x1F300, 0x1F32D, 0x1F337, 0x1F37E,\n    0x1F3A0, 0x1F3CF, 0x1F3E0, 0x1F3F4, 0x1F3F8, 0x1F440, 0x1F442, 0x1F4FF,\n    0x1F54B, 0x1F550, 0x1F57A, 0x1F595, 0x1F5A4, 0x1F5FB, 0x1F680, 0x1F6CC,\n    0x1F6D0, 0x1F6D5, 0x1F6DC, 0x1F6EB, 0x1F6F4, 0x1F7E0, 0x1F7F0, 0x1F90C,\n    0x1F93C, 0x1F947, 0x1FA70, 0x1FA80, 0x1FA8F, 0x1FACE, 0x1FADF, 0x1FAF0,\n    0x20000, 0x30000,\n]\n\nconst WIDE_HI: [122]u32 = [\n    0x115F, 0x231B, 0x232A, 0x23EC, 0x23F0, 0x23F3, 0x25FE, 0x2615,\n    0x2637, 0x2653, 0x267F, 0x268F, 0x2693, 0x26A1, 0x26AB, 0x26BE,\n    0x26C5, 0x26CE, 0x26D4, 0x26EA, 0x26F3, 0x26F5, 0x26FA, 0x26FD,\n    0x2705, 0x270B, 0x2728, 0x274C, 0x274E, 0x2755, 0x2757, 0x2797,\n    0x27B0, 0x27BF, 0x2B1C, 0x2B50, 0x2B55, 0x2E99, 0x2EF3, 0x2FD5,\n    0x303E, 0x3096, 0x30FF, 0x312F, 0x318E, 0x31E5, 0x321E, 0x3247,\n    0xA48C, 0xA4C6, 0xA97C, 0xD7A3, 0xFAFF, 0xFE19, 0xFE52, 0xFE66,\n    0xFE6B, 0xFF60, 0xFFE6, 0x16FE4, 0x16FF1, 0x187F7, 0x18CD5, 0x18D08,\n    0x1AFF3, 0x1AFFB, 0x1AFFE, 0x1B122, 0x1B132, 0x1B152, 0x1B155, 0x1B167,\n    0x1B2FB, 0x1D356, 0x1D376, 0x1F004, 0x1F0CF, 0x1F18E, 0x1F19A, 0x1F202,\n    0x1F23B, 0x1F248, 0x1F251, 0x1F265, 0x1F320, 0x1F335, 0x1F37C, 0x1F393,\n    0x1F3CA, 0x1F3D3, 0x1F3F0, 0x1F3F4, 0x1F43E, 0x1F440, 0x1F4FC, 0x1F53D,\n    0x1F54E, 0x1F567, 0x1F57A, 0x1F596, 0x1F5A4, 0x1F64F, 0x1F6C5, 0x1F6CC,\n    0x1F6D2, 0x1F6D7, 0x1F6DF, 0x1F6EC, 0x1F6FC, 0x1F7EB, 0x1F7F0, 0x1F93A,\n    0x1F945, 0x1F9FF, 0x1FA7C, 0x1FA89, 0x1FAC6, 0x1FADC, 0x1FAE9, 0x1FAF8,\n    0x2FFFD, 0x3FFFD,\n]\n\n// the simple lowercase mapping: LO, LO + STEP, ... HI each add DELTA\nconst LOWER_LO: [187]u32 = [\n    0x41, 0xC0, 0xD8, 0x100, 0x130, 0x132, 0x139, 0x14A,\n    0x178, 0x179, 0x181, 0x182, 0x186, 0x187, 0x189, 0x18B,\n    0x18E, 0x18F, 0x190, 0x191, 0x193, 0x194, 0x196, 0x197,\n    0x198, 0x19C, 0x19D, 0x19F, 0x1A0, 0x1A6, 0x1A7, 0x1A9,\n    0x1AC, 0x1AE, 0x1AF, 0x1B1, 0x1B3, 0x1B7, 0x1B8, 0x1BC,\n    0x1C4, 0x1C5, 0x1C7, 0x1C8, 0x1CA, 0x1CB, 0x1DE, 0x1F1,\n    0x1F2, 0x1F6, 0x1F7, 0x1F8, 0x220, 0x222, 0x23A, 0x23B,\n    0x23D, 0x23E, 0x241, 0x243, 0x244, 0x245, 0x246, 0x370,\n    0x376, 0x37F, 0x386, 0x388, 0x38C, 0x38E, 0x391, 0x3A3,\n    0x3CF, 0x3D8, 0x3F4, 0x3F7, 0x3F9, 0x3FA, 0x3FD, 0x400,\n    0x410, 0x460, 0x48A, 0x4C0, 0x4C1, 0x4D0, 0x531, 0x10A0,\n    0x10C7, 0x10CD, 0x13A0, 0x13F0, 0x1C89, 0x1C90, 0x1CBD, 0x1E00,\n    0x1E9E, 0x1EA0, 0x1F08, 0x1F18, 0x1F28, 0x1F38, 0x1F48, 0x1F59,\n    0x1F68, 0x1F88, 0x1F98, 0x1FA8, 0x1FB8, 0x1FBA, 0x1FBC, 0x1FC8,\n    0x1FCC, 0x1FD8, 0x1FDA, 0x1FE8, 0x1FEA, 0x1FEC, 0x1FF8, 0x1FFA,\n    0x1FFC, 0x2126, 0x212A, 0x212B, 0x2132, 0x2160, 0x2183, 0x24B6,\n    0x2C00, 0x2C60, 0x2C62, 0x2C63, 0x2C64, 0x2C67, 0x2C6D, 0x2C6E,\n    0x2C6F, 0x2C70, 0x2C72, 0x2C75, 0x2C7E, 0x2C80, 0x2CEB, 0x2CF2,\n    0xA640, 0xA680, 0xA722, 0xA732, 0xA779, 0xA77D, 0xA77E, 0xA78B,\n    0xA78D, 0xA790, 0xA796, 0xA7AA, 0xA7AB, 0xA7AC, 0xA7AD, 0xA7AE,\n    0xA7B0, 0xA7B1, 0xA7B2, 0xA7B3, 0xA7B4, 0xA7C4, 0xA7C5, 0xA7C6,\n    0xA7C7, 0xA7CB, 0xA7CC, 0xA7D0, 0xA7D6, 0xA7DC, 0xA7F5, 0xFF21,\n    0x10400, 0x104B0, 0x10570, 0x1057C, 0x1058C, 0x10594, 0x10C80, 0x10D50,\n    0x118A0, 0x16E40, 0x1E900,\n]\n\nconst LOWER_HI: [187]u32 = [\n    0x5A, 0xD6, 0xDE, 0x12E, 0x130, 0x136, 0x147, 0x176,\n    0x178, 0x17D, 0x181, 0x184, 0x186, 0x187, 0x18A, 0x18B,\n    0x18E, 0x18F, 0x190, 0x191, 0x193, 0x194, 0x196, 0x197,\n    0x198, 0x19C, 0x19D, 0x19F, 0x1A4, 0x1A6, 0x1A7, 0x1A9,\n    0x1AC, 0x1AE, 0x1AF, 0x1B2, 0x1B5, 0x1B7, 0x1B8, 0x1BC,\n    0x1C4, 0x1C5, 0x1C7, 0x1C8, 0x1CA, 0x1DB, 0x1EE, 0x1F1,\n    0x1F4, 0x1F6, 0x1F7, 0x21E, 0x220, 0x232, 0x23A, 0x23B,\n    0x23D, 0x23E, 0x241, 0x243, 0x244, 0x245, 0x24E, 0x372,\n    0x376, 0x37F, 0x386, 0x38A, 0x38C, 0x38F, 0x3A1, 0x3AB,\n    0x3CF, 0x3EE, 0x3F4, 0x3F7, 0x3F9, 0x3FA, 0x3FF, 0x40F,\n    0x42F, 0x480, 0x4BE, 0x4C0, 0x4CD, 0x52E, 0x556, 0x10C5,\n    0x10C7, 0x10CD, 0x13EF, 0x13F5, 0x1C89, 0x1CBA, 0x1CBF, 0x1E94,\n    0x1E9E, 0x1EFE, 0x1F0F, 0x1F1D, 0x1F2F, 0x1F3F, 0x1F4D, 0x1F5F,\n    0x1F6F, 0x1F8F, 0x1F9F, 0x1FAF, 0x1FB9, 0x1FBB, 0x1FBC, 0x1FCB,\n    0x1FCC, 0x1FD9, 0x1FDB, 0x1FE9, 0x1FEB, 0x1FEC, 0x1FF9, 0x1FFB,\n    0x1FFC, 0x2126, 0x212A, 0x212B, 0x2132, 0x216F, 0x2183, 0x24CF,\n    0x2C2F, 0x2C60, 0x2C62, 0x2C63, 0x2C64, 0x2C6B, 0x2C6D, 0x2C6E,\n    0x2C6F, 0x2C70, 0x2C72, 0x2C75, 0x2C7F, 0x2CE2, 0x2CED, 0x2CF2,\n    0xA66C, 0xA69A, 0xA72E, 0xA76E, 0xA77B, 0xA77D, 0xA786, 0xA78B,\n    0xA78D, 0xA792, 0xA7A8, 0xA7AA, 0xA7AB, 0xA7AC, 0xA7AD, 0xA7AE,\n    0xA7B0, 0xA7B1, 0xA7B2, 0xA7B3, 0xA7C2, 0xA7C4, 0xA7C5, 0xA7C6,\n    0xA7C9, 0xA7CB, 0xA7CC, 0xA7D0, 0xA7DA, 0xA7DC, 0xA7F5, 0xFF3A,\n    0x10427, 0x104D3, 0x1057A, 0x1058A, 0x10592, 0x10595, 0x10CB2, 0x10D65,\n    0x118BF, 0x16E5F, 0x1E921,\n]\n\nconst LOWER_DELTA: [187]i32 = [\n    32, 32, 32, 1, -199, 1, 1, 1, -121, 1, 210, 1,\n    206, 1, 205, 1, 79, 202, 203, 1, 205, 207, 211, 209,\n    1, 211, 213, 214, 1, 218, 1, 218, 1, 218, 1, 217,\n    1, 219, 1, 1, 2, 1, 2, 1, 2, 1, 1, 2,\n    1, -97, -56, 1, -130, 1, 10795, 1, -163, 10792, 1, -195,\n    69, 71, 1, 1, 1, 116, 38, 37, 64, 63, 32, 32,\n    8, 1, -60, 1, -7, 1, -130, 80, 32, 1, 1, 15,\n    1, 1, 48, 7264, 7264, 7264, 38864, 8, 1, -3008, -3008, 1,\n    -7615, 1, -8, -8, -8, -8, -8, -8, -8, -8, -8, -8,\n    -8, -74, -9, -86, -9, -8, -100, -8, -112, -7, -128, -126,\n    -9, -7517, -8383, -8262, 28, 16, 1, 26, 48, 1, -10743, -3814,\n    -10727, 1, -10780, -10749, -10783, -10782, 1, 1, -10815, 1, 1, 1,\n    1, 1, 1, 1, 1, -35332, 1, 1, -42280, 1, 1, -42308,\n    -42319, -42315, -42305, -42308, -42258, -42282, -42261, 928, 1, -48, -42307, -35384,\n    1, -42343, 1, 1, 1, -42561, 1, 32, 40, 40, 39, 39,\n    39, 39, 64, 32, 32, 32, 34,\n]\n\nconst LOWER_STEP: [187]u8 = [\n    1, 1, 1, 2, 1, 2, 2, 2, 1, 2, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,\n    1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1,\n    2, 1, 1, 2, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1,\n    1, 2, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2,\n    1, 2, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,\n    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1,\n    2, 2, 2, 2, 2, 1, 2, 1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1,\n    2, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,\n]\n\n// the simple uppercase mapping: LO, LO + STEP, ... HI each add DELTA\nconst UPPER_LO: [205]u32 = [\n    0x61, 0xB5, 0xE0, 0xF8, 0xFF, 0x101, 0x131, 0x133,\n    0x13A, 0x14B, 0x17A, 0x17F, 0x180, 0x183, 0x188, 0x18C,\n    0x192, 0x195, 0x199, 0x19A, 0x19B, 0x19E, 0x1A1, 0x1A8,\n    0x1AD, 0x1B0, 0x1B4, 0x1B9, 0x1BD, 0x1BF, 0x1C5, 0x1C6,\n    0x1C8, 0x1C9, 0x1CB, 0x1CC, 0x1CE, 0x1DD, 0x1DF, 0x1F2,\n    0x1F3, 0x1F5, 0x1F9, 0x223, 0x23C, 0x23F, 0x242, 0x247,\n    0x250, 0x251, 0x252, 0x253, 0x254, 0x256, 0x259, 0x25B,\n    0x25C, 0x260, 0x261, 0x263, 0x264, 0x265, 0x266, 0x268,\n    0x269, 0x26A, 0x26B, 0x26C, 0x26F, 0x271, 0x272, 0x275,\n    0x27D, 0x280, 0x282, 0x283, 0x287, 0x288, 0x289, 0x28A,\n    0x28C, 0x292, 0x29D, 0x29E, 0x345, 0x371, 0x377, 0x37B,\n    0x3AC, 0x3AD, 0x3B1, 0x3C2, 0x3C3, 0x3CC, 0x3CD, 0x3D0,\n    0x3D1, 0x3D5, 0x3D6, 0x3D7, 0x3D9, 0x3F0, 0x3F1, 0x3F2,\n    0x3F3, 0x3F5, 0x3F8, 0x3FB, 0x430, 0x450, 0x461, 0x48B,\n    0x4C2, 0x4CF, 0x4D1, 0x561, 0x10D0, 0x10FD, 0x13F8, 0x1C80,\n    0x1C81, 0x1C82, 0x1C83, 0x1C85, 0x1C86, 0x1C87, 0x1C88, 0x1C8A,\n    0x1D79, 0x1D7D, 0x1D8E, 0x1E01, 0x1E9B, 0x1EA1, 0x1F00, 0x1F10,\n    0x1F20, 0x1F30, 0x1F40, 0x1F51, 0x1F60, 0x1F70, 0x1F72, 0x1F76,\n    0x1F78, 0x1F7A, 0x1F7C, 0x1F80, 0x1F90, 0x1FA0, 0x1FB0, 0x1FB3,\n    0x1FBE, 0x1FC3, 0x1FD0, 0x1FE0, 0x1FE5, 0x1FF3, 0x214E, 0x2170,\n    0x2184, 0x24D0, 0x2C30, 0x2C61, 0x2C65, 0x2C66, 0x2C68, 0x2C73,\n    0x2C76, 0x2C81, 0x2CEC, 0x2CF3, 0x2D00, 0x2D27, 0x2D2D, 0xA641,\n    0xA681, 0xA723, 0xA733, 0xA77A, 0xA77F, 0xA78C, 0xA791, 0xA794,\n    0xA797, 0xA7B5, 0xA7C8, 0xA7CD, 0xA7D1, 0xA7D7, 0xA7F6, 0xAB53,\n    0xAB70, 0xFF41, 0x10428, 0x104D8, 0x10597, 0x105A3, 0x105B3, 0x105BB,\n    0x10CC0, 0x10D70, 0x118C0, 0x16E60, 0x1E922,\n]\n\nconst UPPER_HI: [205]u32 = [\n    0x7A, 0xB5, 0xF6, 0xFE, 0xFF, 0x12F, 0x131, 0x137,\n    0x148, 0x177, 0x17E, 0x17F, 0x180, 0x185, 0x188, 0x18C,\n    0x192, 0x195, 0x199, 0x19A, 0x19B, 0x19E, 0x1A5, 0x1A8,\n    0x1AD, 0x1B0, 0x1B6, 0x1B9, 0x1BD, 0x1BF, 0x1C5, 0x1C6,\n    0x1C8, 0x1C9, 0x1CB, 0x1CC, 0x1DC, 0x1DD, 0x1EF, 0x1F2,\n    0x1F3, 0x1F5, 0x21F, 0x233, 0x23C, 0x240, 0x242, 0x24F,\n    0x250, 0x251, 0x252, 0x253, 0x254, 0x257, 0x259, 0x25B,\n    0x25C, 0x260, 0x261, 0x263, 0x264, 0x265, 0x266, 0x268,\n    0x269, 0x26A, 0x26B, 0x26C, 0x26F, 0x271, 0x272, 0x275,\n    0x27D, 0x280, 0x282, 0x283, 0x287, 0x288, 0x289, 0x28B,\n    0x28C, 0x292, 0x29D, 0x29E, 0x345, 0x373, 0x377, 0x37D,\n    0x3AC, 0x3AF, 0x3C1, 0x3C2, 0x3CB, 0x3CC, 0x3CE, 0x3D0,\n    0x3D1, 0x3D5, 0x3D6, 0x3D7, 0x3EF, 0x3F0, 0x3F1, 0x3F2,\n    0x3F3, 0x3F5, 0x3F8, 0x3FB, 0x44F, 0x45F, 0x481, 0x4BF,\n    0x4CE, 0x4CF, 0x52F, 0x586, 0x10FA, 0x10FF, 0x13FD, 0x1C80,\n    0x1C81, 0x1C82, 0x1C84, 0x1C85, 0x1C86, 0x1C87, 0x1C88, 0x1C8A,\n    0x1D79, 0x1D7D, 0x1D8E, 0x1E95, 0x1E9B, 0x1EFF, 0x1F07, 0x1F15,\n    0x1F27, 0x1F37, 0x1F45, 0x1F57, 0x1F67, 0x1F71, 0x1F75, 0x1F77,\n    0x1F79, 0x1F7B, 0x1F7D, 0x1F87, 0x1F97, 0x1FA7, 0x1FB1, 0x1FB3,\n    0x1FBE, 0x1FC3, 0x1FD1, 0x1FE1, 0x1FE5, 0x1FF3, 0x214E, 0x217F,\n    0x2184, 0x24E9, 0x2C5F, 0x2C61, 0x2C65, 0x2C66, 0x2C6C, 0x2C73,\n    0x2C76, 0x2CE3, 0x2CEE, 0x2CF3, 0x2D25, 0x2D27, 0x2D2D, 0xA66D,\n    0xA69B, 0xA72F, 0xA76F, 0xA77C, 0xA787, 0xA78C, 0xA793, 0xA794,\n    0xA7A9, 0xA7C3, 0xA7CA, 0xA7CD, 0xA7D1, 0xA7DB, 0xA7F6, 0xAB53,\n    0xABBF, 0xFF5A, 0x1044F, 0x104FB, 0x105A1, 0x105B1, 0x105B9, 0x105BC,\n    0x10CF2, 0x10D85, 0x118DF, 0x16E7F, 0x1E943,\n]\n\nconst UPPER_DELTA: [205]i32 = [\n    -32, 743, -32, -32, 121, -1, -232, -1, -1, -1, -1, -300,\n    195, -1, -1, -1, -1, 97, -1, 163, 42561, 130, -1, -1,\n    -1, -1, -1, -1, -1, 56, -1, -2, -1, -2, -1, -2,\n    -1, -79, -1, -1, -2, -1, -1, -1, -1, 10815, -1, -1,\n    10783, 10780, 10782, -210, -206, -205, -202, -203, 42319, -205, 42315, -207,\n    42343, 42280, 42308, -209, -211, 42308, 10743, 42305, -211, 10749, -213, -214,\n    10727, -218, 42307, -218, 42282, -218, -69, -217, -71, -219, 42261, 42258,\n    84, -1, -1, 130, -38, -37, -32, -31, -32, -64, -63, -62,\n    -57, -47, -54, -8, -1, -86, -80, 7, -116, -96, -1, -1,\n    -32, -80, -1, -1, -1, -15, -1, -48, 3008, 3008, -8, -6254,\n    -6253, -6244, -6242, -6243, -6236, -6181, 35266, -1, 35332, 3814, 35384, -1,\n    -59, -1, 8, 8, 8, 8, 8, 8, 8, 74, 86, 100,\n    128, 112, 126, 8, 8, 8, 8, 9, -7205, 9, 8, 8,\n    7, 9, -28, -16, -1, -26, -48, -1, -10795, -10792, -1, -1,\n    -1, -1, -1, -1, -7264, -7264, -7264, -1, -1, -1, -1, -1,\n    -1, -1, -1, 48, -1, -1, -1, -1, -1, -1, -1, -928,\n    -38864, -32, -40, -40, -39, -39, -39, -39, -64, -32, -32, -32,\n    -34,\n]\n\nconst UPPER_STEP: [205]u8 = [\n    1, 1, 1, 1, 1, 2, 1, 2, 2, 2, 2, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1,\n    1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 2, 1, 1, 1, 2, 2, 1, 1, 1, 2,\n    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,\n    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,\n    1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 1, 2, 1, 1, 1, 1, 1,\n    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 2, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1,\n    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1,\n    1, 2, 2, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 1, 2, 1, 2, 2, 2, 1, 1, 2, 1, 1,\n    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,\n]\n\n// where case folding differs from the simple lowercase mapping\nconst FOLD_CP: [198]u32 = [\n    0xB5, 0x130, 0x17F, 0x345, 0x3C2, 0x3D0, 0x3D1, 0x3D5,\n    0x3D6, 0x3F0, 0x3F1, 0x3F5, 0x13A0, 0x13A1, 0x13A2, 0x13A3,\n    0x13A4, 0x13A5, 0x13A6, 0x13A7, 0x13A8, 0x13A9, 0x13AA, 0x13AB,\n    0x13AC, 0x13AD, 0x13AE, 0x13AF, 0x13B0, 0x13B1, 0x13B2, 0x13B3,\n    0x13B4, 0x13B5, 0x13B6, 0x13B7, 0x13B8, 0x13B9, 0x13BA, 0x13BB,\n    0x13BC, 0x13BD, 0x13BE, 0x13BF, 0x13C0, 0x13C1, 0x13C2, 0x13C3,\n    0x13C4, 0x13C5, 0x13C6, 0x13C7, 0x13C8, 0x13C9, 0x13CA, 0x13CB,\n    0x13CC, 0x13CD, 0x13CE, 0x13CF, 0x13D0, 0x13D1, 0x13D2, 0x13D3,\n    0x13D4, 0x13D5, 0x13D6, 0x13D7, 0x13D8, 0x13D9, 0x13DA, 0x13DB,\n    0x13DC, 0x13DD, 0x13DE, 0x13DF, 0x13E0, 0x13E1, 0x13E2, 0x13E3,\n    0x13E4, 0x13E5, 0x13E6, 0x13E7, 0x13E8, 0x13E9, 0x13EA, 0x13EB,\n    0x13EC, 0x13ED, 0x13EE, 0x13EF, 0x13F0, 0x13F1, 0x13F2, 0x13F3,\n    0x13F4, 0x13F5, 0x13F8, 0x13F9, 0x13FA, 0x13FB, 0x13FC, 0x13FD,\n    0x1C80, 0x1C81, 0x1C82, 0x1C83, 0x1C84, 0x1C85, 0x1C86, 0x1C87,\n    0x1C88, 0x1E9B, 0x1FBE, 0x1FD3, 0x1FE3, 0xAB70, 0xAB71, 0xAB72,\n    0xAB73, 0xAB74, 0xAB75, 0xAB76, 0xAB77, 0xAB78, 0xAB79, 0xAB7A,\n    0xAB7B, 0xAB7C, 0xAB7D, 0xAB7E, 0xAB7F, 0xAB80, 0xAB81, 0xAB82,\n    0xAB83, 0xAB84, 0xAB85, 0xAB86, 0xAB87, 0xAB88, 0xAB89, 0xAB8A,\n    0xAB8B, 0xAB8C, 0xAB8D, 0xAB8E, 0xAB8F, 0xAB90, 0xAB91, 0xAB92,\n    0xAB93, 0xAB94, 0xAB95, 0xAB96, 0xAB97, 0xAB98, 0xAB99, 0xAB9A,\n    0xAB9B, 0xAB9C, 0xAB9D, 0xAB9E, 0xAB9F, 0xABA0, 0xABA1, 0xABA2,\n    0xABA3, 0xABA4, 0xABA5, 0xABA6, 0xABA7, 0xABA8, 0xABA9, 0xABAA,\n    0xABAB, 0xABAC, 0xABAD, 0xABAE, 0xABAF, 0xABB0, 0xABB1, 0xABB2,\n    0xABB3, 0xABB4, 0xABB5, 0xABB6, 0xABB7, 0xABB8, 0xABB9, 0xABBA,\n    0xABBB, 0xABBC, 0xABBD, 0xABBE, 0xABBF, 0xFB05,\n]\n\nconst FOLD_TO: [198]u32 = [\n    0x3BC, 0x130, 0x73, 0x3B9, 0x3C3, 0x3B2, 0x3B8, 0x3C6,\n    0x3C0, 0x3BA, 0x3C1, 0x3B5, 0x13A0, 0x13A1, 0x13A2, 0x13A3,\n    0x13A4, 0x13A5, 0x13A6, 0x13A7, 0x13A8, 0x13A9, 0x13AA, 0x13AB,\n    0x13AC, 0x13AD, 0x13AE, 0x13AF, 0x13B0, 0x13B1, 0x13B2, 0x13B3,\n    0x13B4, 0x13B5, 0x13B6, 0x13B7, 0x13B8, 0x13B9, 0x13BA, 0x13BB,\n    0x13BC, 0x13BD, 0x13BE, 0x13BF, 0x13C0, 0x13C1, 0x13C2, 0x13C3,\n    0x13C4, 0x13C5, 0x13C6, 0x13C7, 0x13C8, 0x13C9, 0x13CA, 0x13CB,\n    0x13CC, 0x13CD, 0x13CE, 0x13CF, 0x13D0, 0x13D1, 0x13D2, 0x13D3,\n    0x13D4, 0x13D5, 0x13D6, 0x13D7, 0x13D8, 0x13D9, 0x13DA, 0x13DB,\n    0x13DC, 0x13DD, 0x13DE, 0x13DF, 0x13E0, 0x13E1, 0x13E2, 0x13E3,\n    0x13E4, 0x13E5, 0x13E6, 0x13E7, 0x13E8, 0x13E9, 0x13EA, 0x13EB,\n    0x13EC, 0x13ED, 0x13EE, 0x13EF, 0x13F0, 0x13F1, 0x13F2, 0x13F3,\n    0x13F4, 0x13F5, 0x13F0, 0x13F1, 0x13F2, 0x13F3, 0x13F4, 0x13F5,\n    0x432, 0x434, 0x43E, 0x441, 0x442, 0x442, 0x44A, 0x463,\n    0xA64B, 0x1E61, 0x3B9, 0x390, 0x3B0, 0x13A0, 0x13A1, 0x13A2,\n    0x13A3, 0x13A4, 0x13A5, 0x13A6, 0x13A7, 0x13A8, 0x13A9, 0x13AA,\n    0x13AB, 0x13AC, 0x13AD, 0x13AE, 0x13AF, 0x13B0, 0x13B1, 0x13B2,\n    0x13B3, 0x13B4, 0x13B5, 0x13B6, 0x13B7, 0x13B8, 0x13B9, 0x13BA,\n    0x13BB, 0x13BC, 0x13BD, 0x13BE, 0x13BF, 0x13C0, 0x13C1, 0x13C2,\n    0x13C3, 0x13C4, 0x13C5, 0x13C6, 0x13C7, 0x13C8, 0x13C9, 0x13CA,\n    0x13CB, 0x13CC, 0x13CD, 0x13CE, 0x13CF, 0x13D0, 0x13D1, 0x13D2,\n    0x13D3, 0x13D4, 0x13D5, 0x13D6, 0x13D7, 0x13D8, 0x13D9, 0x13DA,\n    0x13DB, 0x13DC, 0x13DD, 0x13DE, 0x13DF, 0x13E0, 0x13E1, 0x13E2,\n    0x13E3, 0x13E4, 0x13E5, 0x13E6, 0x13E7, 0x13E8, 0x13E9, 0x13EA,\n    0x13EB, 0x13EC, 0x13ED, 0x13EE, 0x13EF, 0xFB06,\n]\n\n// upper mappings to more than one code point: CP[i] becomes TO[AT[i]..AT[i + 1]]\nconst UPPER_SPECIAL_CP: [102]u32 = [\n    0xDF, 0x149, 0x1F0, 0x390, 0x3B0, 0x587, 0x1E96, 0x1E97,\n    0x1E98, 0x1E99, 0x1E9A, 0x1F50, 0x1F52, 0x1F54, 0x1F56, 0x1F80,\n    0x1F81, 0x1F82, 0x1F83, 0x1F84, 0x1F85, 0x1F86, 0x1F87, 0x1F88,\n    0x1F89, 0x1F8A, 0x1F8B, 0x1F8C, 0x1F8D, 0x1F8E, 0x1F8F, 0x1F90,\n    0x1F91, 0x1F92, 0x1F93, 0x1F94, 0x1F95, 0x1F96, 0x1F97, 0x1F98,\n    0x1F99, 0x1F9A, 0x1F9B, 0x1F9C, 0x1F9D, 0x1F9E, 0x1F9F, 0x1FA0,\n    0x1FA1, 0x1FA2, 0x1FA3, 0x1FA4, 0x1FA5, 0x1FA6, 0x1FA7, 0x1FA8,\n    0x1FA9, 0x1FAA, 0x1FAB, 0x1FAC, 0x1FAD, 0x1FAE, 0x1FAF, 0x1FB2,\n    0x1FB3, 0x1FB4, 0x1FB6, 0x1FB7, 0x1FBC, 0x1FC2, 0x1FC3, 0x1FC4,\n    0x1FC6, 0x1FC7, 0x1FCC, 0x1FD2, 0x1FD3, 0x1FD6, 0x1FD7, 0x1FE2,\n    0x1FE3, 0x1FE4, 0x1FE6, 0x1FE7, 0x1FF2, 0x1FF3, 0x1FF4, 0x1FF6,\n    0x1FF7, 0x1FFC, 0xFB00, 0xFB01, 0xFB02, 0xFB03, 0xFB04, 0xFB05,\n    0xFB06, 0xFB13, 0xFB14, 0xFB15, 0xFB16, 0xFB17,\n]\n\nconst UPPER_SPECIAL_AT: [103]u16 = [\n    0, 2, 4, 6, 9, 12, 14, 16, 18, 20, 22, 24, 26, 29, 32, 35,\n    37, 39, 41, 43, 45, 47, 49, 51, 53, 55, 57, 59, 61, 63, 65, 67,\n    69, 71, 73, 75, 77, 79, 81, 83, 85, 87, 89, 91, 93, 95, 97, 99,\n    101, 103, 105, 107, 109, 111, 113, 115, 117, 119, 121, 123, 125, 127, 129, 131,\n    133, 135, 137, 139, 142, 144, 146, 148, 150, 152, 155, 157, 160, 163, 165, 168,\n    171, 174, 176, 178, 181, 183, 185, 187, 189, 192, 194, 196, 198, 200, 203, 206,\n    208, 210, 212, 214, 216, 218, 220,\n]\n\nconst UPPER_SPECIAL_TO: [220]u32 = [\n    0x53, 0x53, 0x2BC, 0x4E, 0x4A, 0x30C, 0x399, 0x308,\n    0x301, 0x3A5, 0x308, 0x301, 0x535, 0x552, 0x48, 0x331,\n    0x54, 0x308, 0x57, 0x30A, 0x59, 0x30A, 0x41, 0x2BE,\n    0x3A5, 0x313, 0x3A5, 0x313, 0x300, 0x3A5, 0x313, 0x301,\n    0x3A5, 0x313, 0x342, 0x1F08, 0x399, 0x1F09, 0x399, 0x1F0A,\n    0x399, 0x1F0B, 0x399, 0x1F0C, 0x399, 0x1F0D, 0x399, 0x1F0E,\n    0x399, 0x1F0F, 0x399, 0x1F08, 0x399, 0x1F09, 0x399, 0x1F0A,\n    0x399, 0x1F0B, 0x399, 0x1F0C, 0x399, 0x1F0D, 0x399, 0x1F0E,\n    0x399, 0x1F0F, 0x399, 0x1F28, 0x399, 0x1F29, 0x399, 0x1F2A,\n    0x399, 0x1F2B, 0x399, 0x1F2C, 0x399, 0x1F2D, 0x399, 0x1F2E,\n    0x399, 0x1F2F, 0x399, 0x1F28, 0x399, 0x1F29, 0x399, 0x1F2A,\n    0x399, 0x1F2B, 0x399, 0x1F2C, 0x399, 0x1F2D, 0x399, 0x1F2E,\n    0x399, 0x1F2F, 0x399, 0x1F68, 0x399, 0x1F69, 0x399, 0x1F6A,\n    0x399, 0x1F6B, 0x399, 0x1F6C, 0x399, 0x1F6D, 0x399, 0x1F6E,\n    0x399, 0x1F6F, 0x399, 0x1F68, 0x399, 0x1F69, 0x399, 0x1F6A,\n    0x399, 0x1F6B, 0x399, 0x1F6C, 0x399, 0x1F6D, 0x399, 0x1F6E,\n    0x399, 0x1F6F, 0x399, 0x1FBA, 0x399, 0x391, 0x399, 0x386,\n    0x399, 0x391, 0x342, 0x391, 0x342, 0x399, 0x391, 0x399,\n    0x1FCA, 0x399, 0x397, 0x399, 0x389, 0x399, 0x397, 0x342,\n    0x397, 0x342, 0x399, 0x397, 0x399, 0x399, 0x308, 0x300,\n    0x399, 0x308, 0x301, 0x399, 0x342, 0x399, 0x308, 0x342,\n    0x3A5, 0x308, 0x300, 0x3A5, 0x308, 0x301, 0x3A1, 0x313,\n    0x3A5, 0x342, 0x3A5, 0x308, 0x342, 0x1FFA, 0x399, 0x3A9,\n    0x399, 0x38F, 0x399, 0x3A9, 0x342, 0x3A9, 0x342, 0x399,\n    0x3A9, 0x399, 0x46, 0x46, 0x46, 0x49, 0x46, 0x4C,\n    0x46, 0x46, 0x49, 0x46, 0x46, 0x4C, 0x53, 0x54,\n    0x53, 0x54, 0x544, 0x546, 0x544, 0x535, 0x544, 0x53B,\n    0x54E, 0x546, 0x544, 0x53D,\n]\n\n// lower mappings to more than one code point: CP[i] becomes TO[AT[i]..AT[i + 1]]\nconst LOWER_SPECIAL_CP: [1]u32 = [\n    0x130,\n]\n\nconst LOWER_SPECIAL_AT: [2]u16 = [\n    0, 2,\n]\n\nconst LOWER_SPECIAL_TO: [2]u32 = [\n    0x69, 0x307,\n]\n\n// fold mappings to more than one code point: CP[i] becomes TO[AT[i]..AT[i + 1]]\nconst FOLD_SPECIAL_CP: [104]u32 = [\n    0xDF, 0x130, 0x149, 0x1F0, 0x390, 0x3B0, 0x587, 0x1E96,\n    0x1E97, 0x1E98, 0x1E99, 0x1E9A, 0x1E9E, 0x1F50, 0x1F52, 0x1F54,\n    0x1F56, 0x1F80, 0x1F81, 0x1F82, 0x1F83, 0x1F84, 0x1F85, 0x1F86,\n    0x1F87, 0x1F88, 0x1F89, 0x1F8A, 0x1F8B, 0x1F8C, 0x1F8D, 0x1F8E,\n    0x1F8F, 0x1F90, 0x1F91, 0x1F92, 0x1F93, 0x1F94, 0x1F95, 0x1F96,\n    0x1F97, 0x1F98, 0x1F99, 0x1F9A, 0x1F9B, 0x1F9C, 0x1F9D, 0x1F9E,\n    0x1F9F, 0x1FA0, 0x1FA1, 0x1FA2, 0x1FA3, 0x1FA4, 0x1FA5, 0x1FA6,\n    0x1FA7, 0x1FA8, 0x1FA9, 0x1FAA, 0x1FAB, 0x1FAC, 0x1FAD, 0x1FAE,\n    0x1FAF, 0x1FB2, 0x1FB3, 0x1FB4, 0x1FB6, 0x1FB7, 0x1FBC, 0x1FC2,\n    0x1FC3, 0x1FC4, 0x1FC6, 0x1FC7, 0x1FCC, 0x1FD2, 0x1FD3, 0x1FD6,\n    0x1FD7, 0x1FE2, 0x1FE3, 0x1FE4, 0x1FE6, 0x1FE7, 0x1FF2, 0x1FF3,\n    0x1FF4, 0x1FF6, 0x1FF7, 0x1FFC, 0xFB00, 0xFB01, 0xFB02, 0xFB03,\n    0xFB04, 0xFB05, 0xFB06, 0xFB13, 0xFB14, 0xFB15, 0xFB16, 0xFB17,\n]\n\nconst FOLD_SPECIAL_AT: [105]u16 = [\n    0, 2, 4, 6, 8, 11, 14, 16, 18, 20, 22, 24, 26, 28, 30, 33,\n    36, 39, 41, 43, 45, 47, 49, 51, 53, 55, 57, 59, 61, 63, 65, 67,\n    69, 71, 73, 75, 77, 79, 81, 83, 85, 87, 89, 91, 93, 95, 97, 99,\n    101, 103, 105, 107, 109, 111, 113, 115, 117, 119, 121, 123, 125, 127, 129, 131,\n    133, 135, 137, 139, 141, 143, 146, 148, 150, 152, 154, 156, 159, 161, 164, 167,\n    169, 172, 175, 178, 180, 182, 185, 187, 189, 191, 193, 196, 198, 200, 202, 204,\n    207, 210, 212, 214, 216, 218, 220, 222, 224,\n]\n\nconst FOLD_SPECIAL_TO: [224]u32 = [\n    0x73, 0x73, 0x69, 0x307, 0x2BC, 0x6E, 0x6A, 0x30C,\n    0x3B9, 0x308, 0x301, 0x3C5, 0x308, 0x301, 0x565, 0x582,\n    0x68, 0x331, 0x74, 0x308, 0x77, 0x30A, 0x79, 0x30A,\n    0x61, 0x2BE, 0x73, 0x73, 0x3C5, 0x313, 0x3C5, 0x313,\n    0x300, 0x3C5, 0x313, 0x301, 0x3C5, 0x313, 0x342, 0x1F00,\n    0x3B9, 0x1F01, 0x3B9, 0x1F02, 0x3B9, 0x1F03, 0x3B9, 0x1F04,\n    0x3B9, 0x1F05, 0x3B9, 0x1F06, 0x3B9, 0x1F07, 0x3B9, 0x1F00,\n    0x3B9, 0x1F01, 0x3B9, 0x1F02, 0x3B9, 0x1F03, 0x3B9, 0x1F04,\n    0x3B9, 0x1F05, 0x3B9, 0x1F06, 0x3B9, 0x1F07, 0x3B9, 0x1F20,\n    0x3B9, 0x1F21, 0x3B9, 0x1F22, 0x3B9, 0x1F23, 0x3B9, 0x1F24,\n    0x3B9, 0x1F25, 0x3B9, 0x1F26, 0x3B9, 0x1F27, 0x3B9, 0x1F20,\n    0x3B9, 0x1F21, 0x3B9, 0x1F22, 0x3B9, 0x1F23, 0x3B9, 0x1F24,\n    0x3B9, 0x1F25, 0x3B9, 0x1F26, 0x3B9, 0x1F27, 0x3B9, 0x1F60,\n    0x3B9, 0x1F61, 0x3B9, 0x1F62, 0x3B9, 0x1F63, 0x3B9, 0x1F64,\n    0x3B9, 0x1F65, 0x3B9, 0x1F66, 0x3B9, 0x1F67, 0x3B9, 0x1F60,\n    0x3B9, 0x1F61, 0x3B9, 0x1F62, 0x3B9, 0x1F63, 0x3B9, 0x1F64,\n    0x3B9, 0x1F65, 0x3B9, 0x1F66, 0x3B9, 0x1F67, 0x3B9, 0x1F70,\n    0x3B9, 0x3B1, 0x3B9, 0x3AC, 0x3B9, 0x3B1, 0x342, 0x3B1,\n    0x342, 0x3B9, 0x3B1, 0x3B9, 0x1F74, 0x3B9, 0x3B7, 0x3B9,\n    0x3AE, 0x3B9, 0x3B7, 0x342, 0x3B7, 0x342, 0x3B9, 0x3B7,\n    0x3B9, 0x3B9, 0x308, 0x300, 0x3B9, 0x308, 0x301, 0x3B9,\n    0x342, 0x3B9, 0x308, 0x342, 0x3C5, 0x308, 0x300, 0x3C5,\n    0x308, 0x301, 0x3C1, 0x313, 0x3C5, 0x342, 0x3C5, 0x308,\n    0x342, 0x1F7C, 0x3B9, 0x3C9, 0x3B9, 0x3CE, 0x3B9, 0x3C9,\n    0x342, 0x3C9, 0x342, 0x3B9, 0x3C9, 0x3B9, 0x66, 0x66,\n    0x66, 0x69, 0x66, 0x6C, 0x66, 0x66, 0x69, 0x66,\n    0x66, 0x6C, 0x73, 0x74, 0x73, 0x74, 0x574, 0x576,\n    0x574, 0x565, 0x574, 0x56B, 0x57E, 0x576, 0x574, 0x56D,\n]\n\n// ---------------------------------------------- end of the generated tables\n";
 static const char nx_str_962[18054] = "// std.thread: threads, channels, select, mutexes and atomics, written in\n// Nexium over the `thread.*` and `sync.*` primitives.\n//\n// `import std.thread` then:\n//\n//     fn work(job: *mut Job) -> i64 { ... }\n//     var t = thread.spawn(Job, i64, work, Job{ .from = 0, .to = 1000 })\n//     let total = t.join()                        // the function's result\n//\n//     fn produce(p: *mut Producer) { ... }        // no result: a Worker\n//     var ch = thread.channel(String)             // shared by pointer\n//     var producer = thread.run(Producer, produce, Producer{ .out = &mut ch })\n//     let msg = ch.recv() orelse break            // null once closed and drained\n//     producer.join()\n//\n//     var counter = thread.mutex(i64, 0)\n//     let n = counter.lock()                      // *mut i64 while held\n//     n.* += 1\n//     counter.unlock()\n//     var hits = thread.atomic(0)                 // an i64 changed without a lock\n//     _ = hits.add(1)\n//\n//     // two channels at once: which has a value (or closed), null after 1 s\n//     let which = thread.select2(Job, bool, &mut jobs, &mut quit, 1000) orelse continue\n//\n//     // threads that end before the call does, so they may point into locals\n//     thread.each(Stage, stages[..], run_stage)   // a thread for every item\n//     thread.both(Producer, Consumer, &mut p, produce, &mut c, consume)\n//\n// A thread function takes a pointer to its argument, which the `Thread`\n// owns until `join` returns the result. Channels, mutexes and atomics are\n// values that threads share by pointer; the owner must join every thread\n// using them before letting them go out of scope (`each` and `both` do it\n// themselves), and call `free` when done. Panics inside a thread surface\n// from `join`. Timeouts are in milliseconds, and 0 waits for ever.\n\n/// The argument, function and result of one thread.\npub struct Task(T, R){\n    f: fn(*mut T) -> R\n    arg: T\n    result: List(R)\n}\n\n/// A running or finished thread.\npub struct Thread(T, R){\n    cell: List(Task(T, R))\n    handle: i64\n    joined: bool\n}\n\n/// Run `f(&mut arg)` on a new thread.\npub fn spawn(comptime T: type, comptime R: type, f: fn(*mut T) -> R, own arg: T) -> Thread(T, R) {\n    var cell = List(Task(T, R)).with_capacity(1)\n    cell.append(Task(T, R){ .f = f, .arg = arg, .result = List(R).new() })\n    let entry = |task: *mut Task(T, R)| {\n        let g = task.f\n        let r = g(&mut task.arg)\n        task.result.append(r)\n    }\n    let handle = thread.start(entry, &mut cell[0])\n    return Thread(T, R){ .cell = cell, .handle = handle, .joined = false }\n}\n\nimpl(T, R) Thread(T, R) {\n    /// Wait for the thread and take its result. Joining twice panics.\n    pub fn join(self: *mut Self) -> R {\n        if self.joined { panic(\"thread joined twice\") }\n        thread.join(self.handle)\n        self.joined = true\n        return self.cell[0].result.pop().?\n    }\n\n    /// The argument after the thread finished (for results written in place).\n    pub fn arg(self: *Self) -> *T {\n        if !self.joined { panic(\"the argument is shared with the running thread until join\") }\n        return &self.cell[0].arg\n    }\n}\n\n/// The argument and function of a thread without a result.\npub struct WorkerTask(T){\n    f: fn(*mut T) -> void\n    arg: T\n}\n\n/// A running or finished thread whose function returns nothing.\npub struct Worker(T){\n    cell: List(WorkerTask(T))\n    handle: i64\n    joined: bool\n}\n\n/// Run `f(&mut arg)` on a new thread, for functions without a result.\npub fn run(comptime T: type, f: fn(*mut T) -> void, own arg: T) -> Worker(T) {\n    var cell = List(WorkerTask(T)).with_capacity(1)\n    cell.append(WorkerTask(T){ .f = f, .arg = arg })\n    let entry = |task: *mut WorkerTask(T)| {\n        let g = task.f\n        g(&mut task.arg)\n    }\n    let handle = thread.start(entry, &mut cell[0])\n    return Worker(T){ .cell = cell, .handle = handle, .joined = false }\n}\n\nimpl(T) Worker(T) {\n    /// Wait for the thread. Joining twice panics.\n    pub fn join(self: *mut Self) {\n        if self.joined { panic(\"thread joined twice\") }\n        thread.join(self.handle)\n        self.joined = true\n    }\n\n    /// The argument after the thread finished (for results written in place).\n    pub fn arg(self: *Self) -> *T {\n        if !self.joined { panic(\"the argument is shared with the running thread until join\") }\n        return &self.cell[0].arg\n    }\n}\n\n/// The number of hardware threads.\npub fn count() -> usize {\n    return thread.count()\n}\n\n// ------------------------------------------------------------------ channels\n\n/// An unbounded queue between threads. `recv` blocks while it is empty\n/// and open, and returns null once it is closed and drained.\npub struct Channel(T){\n    items: List(T)\n    lock: i64\n    cond: i64\n    closed: bool\n    // the bells of the selects waiting on it\n    watchers: List(i64)\n}\n\npub fn channel(comptime T: type) -> Channel(T) {\n    return Channel(T){ .items = List(T).new(), .lock = sync.mutex_new(), .cond = sync.cond_new(), .closed = false, .watchers = List(i64).new() }\n}\n\nimpl(T) Channel(T) {\n    pub fn send(self: *mut Self, own value: T) {\n        sync.lock(self.lock)\n        self.items.append(value)\n        sync.signal(self.cond)\n        for w in self.watchers { sync.bell_ring(w) }\n        sync.unlock(self.lock)\n    }\n\n    /// The next value, waiting for one; null when closed and empty.\n    pub fn recv(self: *mut Self) -> ?T {\n        sync.lock(self.lock)\n        while self.items.len == 0 and !self.closed { sync.wait(self.cond, self.lock) }\n        var out: ?T = null\n        if self.items.len > 0 { out = self.items.remove(0) }\n        sync.unlock(self.lock)\n        return out\n    }\n\n    /// The next value, waiting at most `ms` for one (0: for ever):\n    /// `error.Timeout` when none came in time, null when the channel is\n    /// closed and empty.\n    pub fn recv_for(self: *mut Self, ms: i64) -> !?T {\n        let start = time.monotonic()\n        sync.lock(self.lock)\n        while self.items.len == 0 and !self.closed {\n            let left = left_ms(start, ms)\n            if left == 0 {\n                sync.unlock(self.lock)\n                return error.Timeout\n            }\n            _ = sync.wait_for(self.cond, self.lock, left)\n        }\n        var out: ?T = null\n        if self.items.len > 0 { out = self.items.remove(0) }\n        sync.unlock(self.lock)\n        return out\n    }\n\n    /// The next value if one is queued, without waiting.\n    pub fn try_recv(self: *mut Self) -> ?T {\n        sync.lock(self.lock)\n        var out: ?T = null\n        if self.items.len > 0 { out = self.items.remove(0) }\n        sync.unlock(self.lock)\n        return out\n    }\n\n    /// No more values will be sent; receivers drain what is left, then see null.\n    pub fn close(self: *mut Self) {\n        sync.lock(self.lock)\n        self.closed = true\n        sync.broadcast(self.cond)\n        for w in self.watchers { sync.bell_ring(w) }\n        sync.unlock(self.lock)\n    }\n\n    pub fn is_closed(self: *mut Self) -> bool {\n        sync.lock(self.lock)\n        let c = self.closed\n        sync.unlock(self.lock)\n        return c\n    }\n\n    // a select waits on this channel with its bell, or no longer\n    fn watch(self: *mut Self, bell: i64) {\n        sync.lock(self.lock)\n        self.watchers.append(bell)\n        sync.unlock(self.lock)\n    }\n\n    fn unwatch(self: *mut Self, bell: i64) {\n        sync.lock(self.lock)\n        var i: usize = 0\n        while i < self.watchers.len {\n            if self.watchers[i] == bell {\n                _ = self.watchers.remove(i)\n            } else {\n                i += 1\n            }\n        }\n        sync.unlock(self.lock)\n    }\n\n    // a value to take, or the end\n    fn ready(self: *mut Self) -> bool {\n        sync.lock(self.lock)\n        let r = self.items.len > 0 or self.closed\n        sync.unlock(self.lock)\n        return r\n    }\n\n    pub fn len(self: *mut Self) -> usize {\n        sync.lock(self.lock)\n        let n = self.items.len\n        sync.unlock(self.lock)\n        return n\n    }\n\n    /// Release the lock and condition variable; after every user has stopped.\n    pub fn free(self: *mut Self) {\n        sync.cond_free(self.cond)\n        sync.mutex_free(self.lock)\n    }\n}\n\n// ------------------------------------------------------------------ mutexes\n\n/// A value guarded by a lock.\npub struct Mutex(T){\n    lock: i64\n    value: T\n}\n\npub fn mutex(comptime T: type, own value: T) -> Mutex(T) {\n    return Mutex(T){ .lock = sync.mutex_new(), .value = value }\n}\n\nimpl(T) Mutex(T) {\n    /// Take the lock; the pointer is valid until `unlock`.\n    pub fn lock(self: *mut Self) -> *mut T {\n        sync.lock(self.lock)\n        return &mut self.value\n    }\n\n    pub fn unlock(self: *mut Self) {\n        sync.unlock(self.lock)\n    }\n\n    /// Release the lock; after every user has stopped.\n    pub fn free(self: *mut Self) {\n        sync.mutex_free(self.lock)\n    }\n}\n\n// what is left of `ms` since `start` (from time.monotonic): -1 for no limit\n// when `ms` is 0, else at least 0\nfn left_ms(start: u64, ms: i64) -> i64 {\n    if ms <= 0 { return -1 }\n    let spent = @bitCast(i64, (time.monotonic() - start) / 1000000)\n    return if spent >= ms { 0 } else { ms - spent }\n}\n\n// ------------------------------------------------------------------ select\n\n/// Wait until one of two channels has a value or is closed: 0 for `a`, 1\n/// for `b` (`a` first when both are), or null when `ms` pass first (0:\n/// waits for ever). Then take the value with `try_recv`: another receiver\n/// may have taken it first, and a closed channel stays ready, so leave one\n/// out once it is closed and drained.\npub fn select2(comptime A: type, comptime B: type, a: *mut Channel(A), b: *mut Channel(B), ms: i64) -> ?usize {\n    let bell = sync.bell_new()\n    a.watch(bell)\n    b.watch(bell)\n    let start = time.monotonic()\n    var got: ?usize = null\n    while true {\n        if a.ready() {\n            got = 0\n            break\n        }\n        if b.ready() {\n            got = 1\n            break\n        }\n        let left = left_ms(start, ms)\n        if left == 0 { break }\n        _ = sync.bell_wait(bell, left)\n    }\n    a.unwatch(bell)\n    b.unwatch(bell)\n    sync.bell_free(bell)\n    return got\n}\n\n/// `select2` over any number of channels of one type: the index of the\n/// first with a value or closed, or null when `ms` pass first (0: waits\n/// for ever).\npub fn select(comptime T: type, chans: []*mut Channel(T), ms: i64) -> ?usize {\n    let bell = sync.bell_new()\n    for ch in chans { ch.watch(bell) }\n    let start = time.monotonic()\n    var got: ?usize = null\n    while got == null {\n        for ch, i in chans {\n            if ch.ready() {\n                got = i\n                break\n            }\n        }\n        if got != null { break }\n        let left = left_ms(start, ms)\n        if left == 0 { break }\n        _ = sync.bell_wait(bell, left)\n    }\n    for ch in chans { ch.unwatch(bell) }\n    sync.bell_free(bell)\n    return got\n}\n\n// ------------------------------------------------------------ scoped threads\n\n/// Run `f` on every item, each on a thread of its own, all at once, and\n/// return when every one has finished. Nothing started here outlives the\n/// call, so the items may point into the caller's locals, and the threads\n/// may wait on each other (the stages of a pipeline over channels). A panic\n/// in one is raised here once all have ended. To split work over the\n/// cores, `for parallel` is the tool.\npub fn each(comptime T: type, items: []mut T, f: fn(*mut T) -> void) {\n    var hs = List(i64).with_capacity(items.len)\n    for i in 0..items.len {\n        hs.append(thread.start(f, &mut items[i]))\n    }\n    thread.join_all(hs[..])\n}\n\n/// Run `fa(a)` and `fb(b)` on two threads at once and return when both have\n/// finished, as `each` does.\npub fn both(comptime A: type, comptime B: type, a: *mut A, fa: fn(*mut A) -> void, b: *mut B, fb: fn(*mut B) -> void) {\n    let ha = thread.start(fa, a)\n    let hb = thread.start(fb, b)\n    let hs = [ha, hb]\n    thread.join_all(hs[..])\n}\n\n// ------------------------------------------------------------------ atomics\n\n/// An integer threads read and change without a lock, each operation\n/// whole. Shared by pointer, like a `Mutex`; nothing to free.\npub struct Atomic {\n    value: i64\n}\n\npub fn atomic(value: i64) -> Atomic {\n    return Atomic{ .value = value }\n}\n\nimpl Atomic {\n    pub fn load(self: *Self) -> i64 {\n        return sync.atomic_load(&self.value)\n    }\n\n    pub fn store(self: *mut Self, value: i64) {\n        sync.atomic_store(&mut self.value, value)\n    }\n\n    /// Add `n`; the value before.\n    pub fn add(self: *mut Self, n: i64) -> i64 {\n        return sync.atomic_add(&mut self.value, n)\n    }\n\n    /// Subtract `n`; the value before.\n    pub fn sub(self: *mut Self, n: i64) -> i64 {\n        return sync.atomic_add(&mut self.value, 0 - n)\n    }\n\n    /// Put `value` in; the value before.\n    pub fn swap(self: *mut Self, value: i64) -> i64 {\n        return sync.atomic_swap(&mut self.value, value)\n    }\n\n    /// Put `new` in if the value is `expected`; whether it was.\n    pub fn compare_swap(self: *mut Self, expected: i64, new: i64) -> bool {\n        return sync.atomic_cas(&mut self.value, expected, new)\n    }\n}\n\n// ------------------------------------------------------------------ tests\n\nstruct Range {\n    from: i64\n    to: i64\n}\n\nfn sum_range(r: *mut Range) -> i64 {\n    var s: i64 = 0\n    var i = r.from\n    while i < r.to {\n        s += i\n        i += 1\n    }\n    return s\n}\n\nstruct Producer {\n    out: *mut Channel(i64)\n    n: i64\n}\n\nfn produce(p: *mut Producer) {\n    var i: i64 = 0\n    while i < p.n {\n        p.out.send(i)\n        i += 1\n    }\n    p.out.close()\n}\n\nstruct Bumper {\n    counter: *mut Mutex(i64)\n    times: i64\n}\n\nfn bump(b: *mut Bumper) {\n    var i: i64 = 0\n    while i < b.times {\n        let n = b.counter.lock()\n        n.* += 1\n        b.counter.unlock()\n        i += 1\n    }\n}\n\ntest \"spawn and join\" {\n    var a = spawn(Range, i64, sum_range, Range{ .from = 0, .to = 1000 })\n    var b = spawn(Range, i64, sum_range, Range{ .from = 1000, .to = 2000 })\n    let total = a.join() + b.join()\n    expect_eq(total, 1999000)\n    expect(count() >= 1)\n}\n\ntest \"channel\" {\n    var ch = channel(i64)\n    var p = run(Producer, produce, Producer{ .out = &mut ch, .n = 100 })\n    var sum: i64 = 0\n    var got: i64 = 0\n    while true {\n        let v = ch.recv() orelse break\n        sum += v\n        got += 1\n    }\n    p.join()\n    expect_eq(got, 100)\n    expect_eq(sum, 4950)\n    expect(ch.try_recv() == null)\n    ch.free()\n}\n\ntest \"mutex\" {\n    var counter = mutex(i64, 0)\n    var ts = List(Worker(Bumper)).new()\n    for _ in 0..4 {\n        ts.append(run(Bumper, bump, Bumper{ .counter = &mut counter, .times = 2500 }))\n    }\n    for i in 0..ts.len { ts[i].join() }\n    let n = counter.lock()\n    expect_eq(n.*, 10000)\n    counter.unlock()\n    counter.free()\n}\n\nstruct Late {\n    out: *mut Channel(i64)\n    after_ms: u64\n}\n\nfn send_late(l: *mut Late) {\n    time.sleep(l.after_ms)\n    l.out.send(7)\n}\n\ntest \"a receive with a timeout\" {\n    var ch = channel(i64)\n    var timed_out = false\n    _ = ch.recv_for(20) catch |e| {\n        timed_out = e == error.Timeout\n        null\n    }\n    expect(timed_out)\n    var w = run(Late, send_late, Late{ .out = &mut ch, .after_ms = 20 })\n    expect_eq((try ch.recv_for(5000)).?, 7)\n    w.join()\n    ch.close()\n    expect(try ch.recv_for(5000) == null)\n    expect(ch.is_closed())\n    ch.free()\n}\n\ntest \"select over channels\" {\n    var jobs = channel(i64)\n    var quit = channel(bool)\n    // nothing yet: the wait runs out\n    expect(select2(i64, bool, &mut jobs, &mut quit, 20) == null)\n    // a value that comes while it waits\n    var w = run(Late, send_late, Late{ .out = &mut jobs, .after_ms = 20 })\n    expect_eq(select2(i64, bool, &mut jobs, &mut quit, 5000).?, 0)\n    expect_eq(jobs.try_recv().?, 7)\n    w.join()\n    // a closed channel is ready, and stays so\n    quit.close()\n    expect_eq(select2(i64, bool, &mut jobs, &mut quit, 5000).?, 1)\n    expect(quit.try_recv() == null)\n    expect_eq(select2(i64, bool, &mut jobs, &mut quit, 5000).?, 1)\n    // many of one type: the first ready\n    var a = channel(i64)\n    var b = channel(i64)\n    b.send(1)\n    a.send(2)\n    let chans = [&mut jobs, &mut a, &mut b]\n    expect_eq(select(i64, chans[..], 0).?, 1)\n    expect_eq(a.try_recv().?, 2)\n    expect_eq(select(i64, chans[..], 0).?, 2)\n    // no bell is left behind\n    expect_eq(jobs.watchers.len + a.watchers.len + b.watchers.len + quit.watchers.len, 0)\n    jobs.free()\n    quit.free()\n    a.free()\n    b.free()\n}\n\nstruct Square {\n    n: i64\n}\n\nfn square(s: *mut Square) {\n    s.n = s.n * s.n\n}\n\nstruct Summer {\n    from: *mut Channel(i64)\n    total: i64\n}\n\nfn sum_all(s: *mut Summer) {\n    while true {\n        let v = s.from.recv() orelse break\n        s.total += v\n    }\n}\n\ntest \"threads that end before the call does\" {\n    var xs = [Square{ .n = 2 }, Square{ .n = 3 }, Square{ .n = 4 }]\n    each(Square, xs[..], square)\n    expect_eq(xs[0].n + xs[1].n + xs[2].n, 29)\n    // both ends of a pipeline at once, over a channel of this test's\n    var ch = channel(i64)\n    var p = Producer{ .out = &mut ch, .n = 100 }\n    var s = Summer{ .from = &mut ch, .total = 0 }\n    both(Producer, Summer, &mut p, produce, &mut s, sum_all)\n    expect_eq(s.total, 4950)\n    ch.free()\n}\n\nstruct Hitter {\n    hits: *mut Atomic\n    times: i64\n}\n\nfn hit(h: *mut Hitter) {\n    var i: i64 = 0\n    while i < h.times {\n        _ = h.hits.add(1)\n        i += 1\n    }\n}\n\ntest \"atomics\" {\n    var hits = atomic(0)\n    var hs = [Hitter{ .hits = &mut hits, .times = 10000 }, Hitter{ .hits = &mut hits, .times = 10000 }, Hitter{ .hits = &mut hits, .times = 10000 }, Hitter{ .hits = &mut hits, .times = 10000 }]\n    each(Hitter, hs[..], hit)\n    expect_eq(hits.load(), 40000)\n    expect_eq(hits.swap(5), 40000)\n    expect(!hits.compare_swap(4, 9))\n    expect(hits.compare_swap(5, 9))\n    expect_eq(hits.sub(2), 9)\n    hits.store(-1)\n    expect_eq(hits.add(1), -1)\n    expect_eq(hits.load(), 0)\n}\n";
@@ -25914,7 +25914,7 @@ static nx_opt_sl_u8 nx_m2_std_source(nx_ctx* c, nx_sl_u8 name_0) {
     }
     if (nx_sl_eq(name_0, nx_lit(nx_str_958, 7)))
     {
-      nx_opt_sl_u8 _t13 = ((nx_opt_sl_u8){ .has = true, .val = nx_lit(nx_str_959, 5893) });
+      nx_opt_sl_u8 _t13 = ((nx_opt_sl_u8){ .has = true, .val = nx_lit(nx_str_959, 20910) });
       return _t13;
     }
     if (nx_sl_eq(name_0, nx_lit(nx_str_960, 4)))
@@ -59975,257 +59975,277 @@ static nx_eu_string nx_m29_format_source(nx_ctx* c, nx_sl_u8 src_0) {
   nx_string out_11 = _t18;
   int64_t depth_12 = ((int64_t)0LL);
   int64_t paren_13 = ((int64_t)0LL);
-  int64_t blank_run_14 = ((int64_t)0LL);
-  nx_opt_m7_Kind prev_line_last_15 = ((nx_opt_m7_Kind){ .has = false });
-  int64_t enum_body_depth_16 = ((int64_t)-1LL);
-  bool pending_enum_17 = false;
-  bool had_content_18 = false;
-  int64_t pattern_depth_19 = ((int64_t)0LL);
+  nx_list_i64 brace_paren_14 = ((nx_list_i64){NULL, 0, 0, c->arena});
+  int64_t blank_run_15 = ((int64_t)0LL);
+  nx_opt_m7_Kind prev_line_last_16 = ((nx_opt_m7_Kind){ .has = false });
+  int64_t enum_body_depth_17 = ((int64_t)-1LL);
+  bool pending_enum_18 = false;
+  bool had_content_19 = false;
+  int64_t pattern_depth_20 = ((int64_t)0LL);
   nx_sl_list_usize _t19 = ((nx_sl_list_usize){ lines_5.ptr, lines_5.len });
   for (size_t _t20 = 0; _t20 < _t19.len; _t20++) {
-    nx_list_usize ids_20 = _t19.ptr[_t20];
-      if (((((ids_20).len)) == (((size_t)0ULL))))
+    nx_list_usize ids_21 = _t19.ptr[_t20];
+      if (((((ids_21).len)) == (((size_t)0ULL))))
       {
-          if (had_content_18)
+          if (had_content_19)
           {
-            int64_t* _t21 = &(blank_run_14);
-            *_t21 = nx_add_i64((*_t21), ((int64_t)1LL), "self/fmt.nx:57");
-              if (((blank_run_14) == (((int64_t)1LL))))
+            int64_t* _t21 = &(blank_run_15);
+            *_t21 = nx_add_i64((*_t21), ((int64_t)1LL), "self/fmt.nx:61");
+              if (((blank_run_15) == (((int64_t)1LL))))
               {
                 nx_str_append(c, &(out_11), nx_lit(nx_str_531, 1).ptr, nx_lit(nx_str_531, 1).len);
               }
           }
         goto nx_cont_4;
       }
-    had_content_18 = true;
-    blank_run_14 = ((int64_t)0LL);
-    int64_t line_depth_21 = depth_12;
-    nx_m7_Kind first_22 = ((*toks_2).ptr[nx_idx(ids_20.ptr[nx_idx(((size_t)0ULL), ids_20.len, "self/fmt.nx:65")], (*toks_2).len, "self/fmt.nx:65")]).kind_0;
-      if (nx_eq_m7_Kind(&(first_22), &(((nx_m7_Kind){ .tag = 13 }))))
+    had_content_19 = true;
+    blank_run_15 = ((int64_t)0LL);
+    int64_t line_depth_22 = depth_12;
+    nx_m7_Kind first_23 = ((*toks_2).ptr[nx_idx(ids_21.ptr[nx_idx(((size_t)0ULL), ids_21.len, "self/fmt.nx:69")], (*toks_2).len, "self/fmt.nx:69")]).kind_0;
+      if (nx_eq_m7_Kind(&(first_23), &(((nx_m7_Kind){ .tag = 13 }))))
       {
-        int64_t* _t22 = &(line_depth_21);
-        *_t22 = nx_sub_i64((*_t22), ((int64_t)1LL), "self/fmt.nx:66");
+        int64_t* _t22 = &(line_depth_22);
+        *_t22 = nx_sub_i64((*_t22), ((int64_t)1LL), "self/fmt.nx:70");
       }
-    bool prev_blocks_dot_23 = true;
-    bool prev_is_binary_24 = false;
-      if (prev_line_last_15.has) {
-        nx_m7_Kind pk_25 = prev_line_last_15.val;
+    bool prev_blocks_dot_24 = true;
+    bool prev_is_binary_25 = false;
+      if (prev_line_last_16.has) {
+        nx_m7_Kind pk_26 = prev_line_last_16.val;
         {
-          bool _t23 = nx_eq_m7_Kind(&(pk_25), &(((nx_m7_Kind){ .tag = 12 })));
+          bool _t23 = nx_eq_m7_Kind(&(pk_26), &(((nx_m7_Kind){ .tag = 12 })));
           if (!_t23) {
-            _t23 = nx_eq_m7_Kind(&(pk_25), &(((nx_m7_Kind){ .tag = 16 })));
+            _t23 = nx_eq_m7_Kind(&(pk_26), &(((nx_m7_Kind){ .tag = 16 })));
           }
           bool _t24 = _t23;
           if (!_t24) {
-            _t24 = nx_eq_m7_Kind(&(pk_25), &(((nx_m7_Kind){ .tag = 26 })));
+            _t24 = nx_eq_m7_Kind(&(pk_26), &(((nx_m7_Kind){ .tag = 26 })));
           }
           bool _t25 = _t24;
           if (!_t25) {
-            _t25 = nx_eq_m7_Kind(&(pk_25), &(((nx_m7_Kind){ .tag = 13 })));
+            _t25 = nx_eq_m7_Kind(&(pk_26), &(((nx_m7_Kind){ .tag = 13 })));
           }
-          prev_blocks_dot_23 = _t25;
-          bool _t26 = nx_m29_is_binary_op(c, pk_25);
+          prev_blocks_dot_24 = _t25;
+          bool _t26 = nx_m29_is_binary_op(c, pk_26);
           bool _t27 = _t26;
           if (_t27) {
-            _t27 = (!nx_eq_m7_Kind(&(pk_25), &(((nx_m7_Kind){ .tag = 26 }))));
+            _t27 = (!nx_eq_m7_Kind(&(pk_26), &(((nx_m7_Kind){ .tag = 26 }))));
           }
           bool _t28 = _t27;
           if (_t28) {
-            _t28 = (!nx_eq_m7_Kind(&(pk_25), &(((nx_m7_Kind){ .tag = 48 }))));
+            _t28 = (!nx_eq_m7_Kind(&(pk_26), &(((nx_m7_Kind){ .tag = 48 }))));
           }
-          prev_is_binary_24 = _t28;
+          prev_is_binary_25 = _t28;
         }
       }
-    bool _t29 = nx_eq_m7_Kind(&(first_22), &(((nx_m7_Kind){ .tag = 19 })));
+    bool _t29 = nx_eq_m7_Kind(&(first_23), &(((nx_m7_Kind){ .tag = 19 })));
     if (_t29) {
-      _t29 = (!(prev_blocks_dot_23));
+      _t29 = (!(prev_blocks_dot_24));
     }
-    bool leading_dot_continues_26 = _t29;
-    nx_slice_check(0, (*toks_2).ptr[nx_idx(ids_20.ptr[nx_idx(((size_t)0ULL), ids_20.len, "self/fmt.nx:74")], (*toks_2).len, "self/fmt.nx:74")].text_3.len, (*toks_2).ptr[nx_idx(ids_20.ptr[nx_idx(((size_t)0ULL), ids_20.len, "self/fmt.nx:74")], (*toks_2).len, "self/fmt.nx:74")].text_3.len, "self/fmt.nx:74");
-    nx_sl_u8 first_text_27 = ((nx_sl_u8){ nx_padd((*toks_2).ptr[nx_idx(ids_20.ptr[nx_idx(((size_t)0ULL), ids_20.len, "self/fmt.nx:74")], (*toks_2).len, "self/fmt.nx:74")].text_3.ptr, 0), (*toks_2).ptr[nx_idx(ids_20.ptr[nx_idx(((size_t)0ULL), ids_20.len, "self/fmt.nx:74")], (*toks_2).len, "self/fmt.nx:74")].text_3.len - 0 });
-    bool _t30 = nx_eq_m7_Kind(&(first_22), &(((nx_m7_Kind){ .tag = 0 })));
+    bool leading_dot_continues_27 = _t29;
+    nx_slice_check(0, (*toks_2).ptr[nx_idx(ids_21.ptr[nx_idx(((size_t)0ULL), ids_21.len, "self/fmt.nx:78")], (*toks_2).len, "self/fmt.nx:78")].text_3.len, (*toks_2).ptr[nx_idx(ids_21.ptr[nx_idx(((size_t)0ULL), ids_21.len, "self/fmt.nx:78")], (*toks_2).len, "self/fmt.nx:78")].text_3.len, "self/fmt.nx:78");
+    nx_sl_u8 first_text_28 = ((nx_sl_u8){ nx_padd((*toks_2).ptr[nx_idx(ids_21.ptr[nx_idx(((size_t)0ULL), ids_21.len, "self/fmt.nx:78")], (*toks_2).len, "self/fmt.nx:78")].text_3.ptr, 0), (*toks_2).ptr[nx_idx(ids_21.ptr[nx_idx(((size_t)0ULL), ids_21.len, "self/fmt.nx:78")], (*toks_2).len, "self/fmt.nx:78")].text_3.len - 0 });
+    bool _t30 = nx_eq_m7_Kind(&(first_23), &(((nx_m7_Kind){ .tag = 0 })));
     if (_t30) {
-      bool _t31 = nx_sl_eq(first_text_27, nx_lit(nx_str_73, 5));
+      bool _t31 = nx_sl_eq(first_text_28, nx_lit(nx_str_73, 5));
       if (!_t31) {
-        _t31 = nx_sl_eq(first_text_27, nx_lit(nx_str_92, 6));
+        _t31 = nx_sl_eq(first_text_28, nx_lit(nx_str_92, 6));
       }
       bool _t32 = _t31;
       if (!_t32) {
-        _t32 = nx_sl_eq(first_text_27, nx_lit(nx_str_83, 3));
+        _t32 = nx_sl_eq(first_text_28, nx_lit(nx_str_83, 3));
       }
       bool _t33 = _t32;
       if (!_t33) {
-        _t33 = nx_sl_eq(first_text_27, nx_lit(nx_str_84, 2));
+        _t33 = nx_sl_eq(first_text_28, nx_lit(nx_str_84, 2));
       }
       _t30 = _t33;
     }
-    bool first_word_continues_28 = _t30;
-    bool _t34 = ((paren_13) > (((int64_t)0LL)));
-    if (!_t34) {
-      _t34 = leading_dot_continues_26;
-    }
-    bool _t35 = _t34;
-    if (!_t35) {
-      _t35 = nx_eq_m7_Kind(&(first_22), &(((nx_m7_Kind){ .tag = 32 })));
-    }
-    bool _t36 = _t35;
-    if (!_t36) {
-      _t36 = first_word_continues_28;
-    }
-    bool _t37 = _t36;
-    if (!_t37) {
-      _t37 = prev_is_binary_24;
-    }
-    bool continuation_29 = _t37;
-    bool _t38 = continuation_29;
-    if (_t38) {
-      bool _t39 = nx_eq_m7_Kind(&(first_22), &(((nx_m7_Kind){ .tag = 13 })));
-      if (!_t39) {
-        _t39 = nx_eq_m7_Kind(&(first_22), &(((nx_m7_Kind){ .tag = 11 })));
-      }
-      bool _t40 = _t39;
-      if (!_t40) {
-        _t40 = nx_eq_m7_Kind(&(first_22), &(((nx_m7_Kind){ .tag = 15 })));
-      }
-      _t38 = (!(_t40));
-    }
-    int64_t _t41;
-      if (_t38)
+    bool first_word_continues_29 = _t30;
+    int64_t _t34;
+      if (((((brace_paren_14).len)) > (((size_t)0ULL))))
       {
-        _t41 = ((int64_t)4LL);
+        _t34 = brace_paren_14.ptr[nx_idx(nx_sub_usize(((brace_paren_14).len), ((size_t)1ULL), "self/fmt.nx:80"), brace_paren_14.len, "self/fmt.nx:80")];
       }
       else
       {
-        _t41 = ((int64_t)0LL);
+        _t34 = ((int64_t)0LL);
       }
-    int64_t extra_30 = _t41;
+    int64_t base_30 = _t34;
+    bool _t35 = ((paren_13) > (base_30));
+    if (!_t35) {
+      _t35 = leading_dot_continues_27;
+    }
+    bool _t36 = _t35;
+    if (!_t36) {
+      _t36 = nx_eq_m7_Kind(&(first_23), &(((nx_m7_Kind){ .tag = 32 })));
+    }
+    bool _t37 = _t36;
+    if (!_t37) {
+      _t37 = first_word_continues_29;
+    }
+    bool _t38 = _t37;
+    if (!_t38) {
+      _t38 = prev_is_binary_25;
+    }
+    bool continuation_31 = _t38;
+    bool _t39 = continuation_31;
+    if (_t39) {
+      bool _t40 = nx_eq_m7_Kind(&(first_23), &(((nx_m7_Kind){ .tag = 13 })));
+      if (!_t40) {
+        _t40 = nx_eq_m7_Kind(&(first_23), &(((nx_m7_Kind){ .tag = 11 })));
+      }
+      bool _t41 = _t40;
+      if (!_t41) {
+        _t41 = nx_eq_m7_Kind(&(first_23), &(((nx_m7_Kind){ .tag = 15 })));
+      }
+      _t39 = (!(_t41));
+    }
     int64_t _t42;
-      if (((line_depth_21) > (((int64_t)0LL))))
+      if (_t39)
       {
-        _t42 = line_depth_21;
+        _t42 = ((int64_t)4LL);
       }
       else
       {
         _t42 = ((int64_t)0LL);
       }
-    int64_t indent_31 = nx_add_i64(nx_mul_i64(_t42, ((int64_t)4LL), "self/fmt.nx:78"), extra_30, "self/fmt.nx:78");
-    int64_t _t43 = indent_31;
-    for (int64_t __32 = ((int64_t)0LL); __32 < _t43; __32++) {
+    int64_t extra_32 = _t42;
+    int64_t _t43;
+      if (((line_depth_22) > (((int64_t)0LL))))
+      {
+        _t43 = line_depth_22;
+      }
+      else
+      {
+        _t43 = ((int64_t)0LL);
+      }
+    int64_t indent_33 = nx_add_i64(nx_mul_i64(_t43, ((int64_t)4LL), "self/fmt.nx:83"), extra_32, "self/fmt.nx:83");
+    int64_t _t44 = indent_33;
+    for (int64_t __34 = ((int64_t)0LL); __34 < _t44; __34++) {
       nx_str_append(c, &(out_11), nx_lit(nx_str_473, 1).ptr, nx_lit(nx_str_473, 1).len);
       nx_cont_5: ;
     }
     nx_brk_5: ;
-    nx_list_usize _t44 = nx_clone_list_usize(c, &ids_20);
-    bool _t45 = ((enum_body_depth_16) == (depth_12));
-    int64_t _t46 = pattern_depth_19;
-    nx_m29_Line ctx_33 = ((nx_m29_Line){ .toks_0 = _t44, .in_enum_body_1 = _t45, .pattern_depth_at_start_2 = _t46 });
-    nx_sl_usize _t47 = ((nx_sl_usize){ ids_20.ptr, ids_20.len });
-    for (size_t i_35 = 0; i_35 < _t47.len; i_35++) {
-      size_t id_34 = _t47.ptr[i_35];
-      nx_m7_Token* t_36 = &((*toks_2).ptr[nx_idx(id_34, (*toks_2).len, "self/fmt.nx:82")]);
-      bool _t48 = ((i_35) > (((size_t)0ULL)));
-      if (_t48) {
-        nx_m29_Line* _t49 = &(ctx_33);
-        bool _t50 = nx_m29_needs_space(c, toks_2, _t49, i_35);
-        _t48 = _t50;
+    nx_list_usize _t45 = nx_clone_list_usize(c, &ids_21);
+    bool _t46 = ((enum_body_depth_17) == (depth_12));
+    int64_t _t47 = pattern_depth_20;
+    nx_m29_Line ctx_35 = ((nx_m29_Line){ .toks_0 = _t45, .in_enum_body_1 = _t46, .pattern_depth_at_start_2 = _t47 });
+    nx_sl_usize _t48 = ((nx_sl_usize){ ids_21.ptr, ids_21.len });
+    for (size_t i_37 = 0; i_37 < _t48.len; i_37++) {
+      size_t id_36 = _t48.ptr[i_37];
+      nx_m7_Token* t_38 = &((*toks_2).ptr[nx_idx(id_36, (*toks_2).len, "self/fmt.nx:87")]);
+      bool _t49 = ((i_37) > (((size_t)0ULL)));
+      if (_t49) {
+        nx_m29_Line* _t50 = &(ctx_35);
+        bool _t51 = nx_m29_needs_space(c, toks_2, _t50, i_37);
+        _t49 = _t51;
       }
-        if (_t48)
+        if (_t49)
         {
           nx_str_append(c, &(out_11), nx_lit(nx_str_473, 1).ptr, nx_lit(nx_str_473, 1).len);
         }
-      nx_slice_check(((*t_36)).start_1, ((*t_36)).end_2, src_0.len, "self/fmt.nx:84");
-      nx_sl_u8 _t51 = ((nx_sl_u8){ nx_padd(src_0.ptr, ((*t_36)).start_1), ((*t_36)).end_2 - ((*t_36)).start_1 });
-      nx_str_append(c, &(out_11), _t51.ptr, _t51.len);
-      nx_m7_Kind k_37 = ((*t_36)).kind_0;
-      bool _t52 = nx_eq_m7_Kind(&(k_37), &(((nx_m7_Kind){ .tag = 12 })));
-      if (!_t52) {
-        _t52 = nx_eq_m7_Kind(&(k_37), &(((nx_m7_Kind){ .tag = 24 })));
+      nx_slice_check(((*t_38)).start_1, ((*t_38)).end_2, src_0.len, "self/fmt.nx:89");
+      nx_sl_u8 _t52 = ((nx_sl_u8){ nx_padd(src_0.ptr, ((*t_38)).start_1), ((*t_38)).end_2 - ((*t_38)).start_1 });
+      nx_str_append(c, &(out_11), _t52.ptr, _t52.len);
+      nx_m7_Kind k_39 = ((*t_38)).kind_0;
+      bool _t53 = nx_eq_m7_Kind(&(k_39), &(((nx_m7_Kind){ .tag = 12 })));
+      if (!_t53) {
+        _t53 = nx_eq_m7_Kind(&(k_39), &(((nx_m7_Kind){ .tag = 24 })));
       }
-        if (_t52)
+        if (_t53)
         {
-          int64_t* _t53 = &(depth_12);
-          *_t53 = nx_add_i64((*_t53), ((int64_t)1LL), "self/fmt.nx:87");
-            if (pending_enum_17)
+          int64_t* _t54 = &(depth_12);
+          *_t54 = nx_add_i64((*_t54), ((int64_t)1LL), "self/fmt.nx:92");
+          int64_t _t55 = paren_13;
+          nx_list_i64* _t56 = &(brace_paren_14);
+          if (_t56->len == _t56->cap) nx_list_grow(c, (nx_rawlist*)_t56, sizeof(int64_t), _Alignof(int64_t), _t56->len + 1);
+          _t56->ptr[_t56->len++] = _t55;
+            if (pending_enum_18)
             {
-              enum_body_depth_16 = depth_12;
-              pending_enum_17 = false;
+              enum_body_depth_17 = depth_12;
+              pending_enum_18 = false;
             }
         }
         else
         {
-            if (nx_eq_m7_Kind(&(k_37), &(((nx_m7_Kind){ .tag = 13 }))))
+            if (nx_eq_m7_Kind(&(k_39), &(((nx_m7_Kind){ .tag = 13 }))))
             {
-                if (((enum_body_depth_16) == (depth_12)))
+                if (((enum_body_depth_17) == (depth_12)))
                 {
-                  enum_body_depth_16 = ((int64_t)-1LL);
+                  enum_body_depth_17 = ((int64_t)-1LL);
                 }
-              int64_t* _t54 = &(depth_12);
-              *_t54 = nx_sub_i64((*_t54), ((int64_t)1LL), "self/fmt.nx:94");
+              int64_t* _t57 = &(depth_12);
+              *_t57 = nx_sub_i64((*_t57), ((int64_t)1LL), "self/fmt.nx:100");
+                if (((((brace_paren_14).len)) > (((size_t)0ULL))))
+                {
+                  nx_opt_i64 _t58; if ((brace_paren_14).len) { _t58.has = true; _t58.val = (brace_paren_14).ptr[--(brace_paren_14).len]; } else _t58.has = false;
+                  (void)(_t58);
+                }
             }
             else
             {
-              bool _t55 = nx_eq_m7_Kind(&(k_37), &(((nx_m7_Kind){ .tag = 10 })));
-              if (!_t55) {
-                _t55 = nx_eq_m7_Kind(&(k_37), &(((nx_m7_Kind){ .tag = 14 })));
+              bool _t59 = nx_eq_m7_Kind(&(k_39), &(((nx_m7_Kind){ .tag = 10 })));
+              if (!_t59) {
+                _t59 = nx_eq_m7_Kind(&(k_39), &(((nx_m7_Kind){ .tag = 14 })));
               }
-                if (_t55)
+                if (_t59)
                 {
-                  int64_t* _t56 = &(paren_13);
-                  *_t56 = nx_add_i64((*_t56), ((int64_t)1LL), "self/fmt.nx:96");
+                  int64_t* _t60 = &(paren_13);
+                  *_t60 = nx_add_i64((*_t60), ((int64_t)1LL), "self/fmt.nx:103");
                 }
                 else
                 {
-                  bool _t57 = nx_eq_m7_Kind(&(k_37), &(((nx_m7_Kind){ .tag = 11 })));
-                  if (!_t57) {
-                    _t57 = nx_eq_m7_Kind(&(k_37), &(((nx_m7_Kind){ .tag = 15 })));
+                  bool _t61 = nx_eq_m7_Kind(&(k_39), &(((nx_m7_Kind){ .tag = 11 })));
+                  if (!_t61) {
+                    _t61 = nx_eq_m7_Kind(&(k_39), &(((nx_m7_Kind){ .tag = 15 })));
                   }
-                    if (_t57)
+                    if (_t61)
                     {
-                      int64_t* _t58 = &(paren_13);
-                      *_t58 = nx_sub_i64((*_t58), ((int64_t)1LL), "self/fmt.nx:98");
+                      int64_t* _t62 = &(paren_13);
+                      *_t62 = nx_sub_i64((*_t62), ((int64_t)1LL), "self/fmt.nx:105");
                     }
                     else
                     {
-                      bool _t59 = nx_eq_m7_Kind(&(k_37), &(((nx_m7_Kind){ .tag = 0 })));
-                      if (_t59) {
-                        nx_sl_u8 _t60 = nx_str_slice(((*t_36)).text_3);
-                        _t59 = nx_sl_eq(_t60, nx_lit(nx_str_56, 4));
+                      bool _t63 = nx_eq_m7_Kind(&(k_39), &(((nx_m7_Kind){ .tag = 0 })));
+                      if (_t63) {
+                        nx_sl_u8 _t64 = nx_str_slice(((*t_38)).text_3);
+                        _t63 = nx_sl_eq(_t64, nx_lit(nx_str_56, 4));
                       }
-                        if (_t59)
+                        if (_t63)
                         {
-                          pending_enum_17 = true;
+                          pending_enum_18 = true;
                         }
                         else
                         {
-                          bool _t61 = nx_eq_m7_Kind(&(k_37), &(((nx_m7_Kind){ .tag = 68 })));
-                          if (_t61) {
-                            bool _t62 = ((i_35) == (((size_t)0ULL)));
-                            if (!_t62) {
-                              size_t _t63 = ids_20.ptr[nx_idx(nx_sub_usize(i_35, ((size_t)1ULL), "self/fmt.nx:101"), ids_20.len, "self/fmt.nx:101")];
-                              bool _t64 = nx_m29_ends_operand(c, toks_2, _t63);
-                              _t62 = (!(_t64));
+                          bool _t65 = nx_eq_m7_Kind(&(k_39), &(((nx_m7_Kind){ .tag = 68 })));
+                          if (_t65) {
+                            bool _t66 = ((i_37) == (((size_t)0ULL)));
+                            if (!_t66) {
+                              size_t _t67 = ids_21.ptr[nx_idx(nx_sub_usize(i_37, ((size_t)1ULL), "self/fmt.nx:108"), ids_21.len, "self/fmt.nx:108")];
+                              bool _t68 = nx_m29_ends_operand(c, toks_2, _t67);
+                              _t66 = (!(_t68));
                             }
-                            _t61 = _t62;
+                            _t65 = _t66;
                           }
-                            if (_t61)
+                            if (_t65)
                             {
-                              int64_t* _t65 = &(pattern_depth_19);
-                              *_t65 = nx_add_i64((*_t65), ((int64_t)1LL), "self/fmt.nx:102");
-                              int64_t* _t66 = &(paren_13);
-                              *_t66 = nx_add_i64((*_t66), ((int64_t)1LL), "self/fmt.nx:103");
+                              int64_t* _t69 = &(pattern_depth_20);
+                              *_t69 = nx_add_i64((*_t69), ((int64_t)1LL), "self/fmt.nx:109");
+                              int64_t* _t70 = &(paren_13);
+                              *_t70 = nx_add_i64((*_t70), ((int64_t)1LL), "self/fmt.nx:110");
                             }
                             else
                             {
-                              bool _t67 = nx_eq_m7_Kind(&(k_37), &(((nx_m7_Kind){ .tag = 69 })));
-                              if (_t67) {
-                                _t67 = ((pattern_depth_19) > (((int64_t)0LL)));
+                              bool _t71 = nx_eq_m7_Kind(&(k_39), &(((nx_m7_Kind){ .tag = 69 })));
+                              if (_t71) {
+                                _t71 = ((pattern_depth_20) > (((int64_t)0LL)));
                               }
-                                if (_t67)
+                                if (_t71)
                                 {
-                                  int64_t* _t68 = &(pattern_depth_19);
-                                  *_t68 = nx_sub_i64((*_t68), ((int64_t)1LL), "self/fmt.nx:105");
-                                  int64_t* _t69 = &(paren_13);
-                                  *_t69 = nx_sub_i64((*_t69), ((int64_t)1LL), "self/fmt.nx:106");
+                                  int64_t* _t72 = &(pattern_depth_20);
+                                  *_t72 = nx_sub_i64((*_t72), ((int64_t)1LL), "self/fmt.nx:112");
+                                  int64_t* _t73 = &(paren_13);
+                                  *_t73 = nx_sub_i64((*_t73), ((int64_t)1LL), "self/fmt.nx:113");
                                 }
                             }
                         }
@@ -60237,53 +60257,55 @@ static nx_eu_string nx_m29_format_source(nx_ctx* c, nx_sl_u8 src_0) {
     }
     nx_brk_6: ;
     for (;;) {
-      bool _t70 = ((((out_11).len)) > (((size_t)0ULL)));
-      if (_t70) {
-        _t70 = ((out_11.ptr[nx_idx(nx_sub_usize(((out_11).len), ((size_t)1ULL), "self/fmt.nx:109"), out_11.len, "self/fmt.nx:109")]) == (((uint8_t)32ULL)));
+      bool _t74 = ((((out_11).len)) > (((size_t)0ULL)));
+      if (_t74) {
+        _t74 = ((out_11.ptr[nx_idx(nx_sub_usize(((out_11).len), ((size_t)1ULL), "self/fmt.nx:116"), out_11.len, "self/fmt.nx:116")]) == (((uint8_t)32ULL)));
       }
-      bool _t71 = _t70;
-      if (!_t71) break;
-      nx_opt_u8 _t72; if ((out_11).len) { _t72.has = true; _t72.val = (out_11).ptr[--(out_11).len]; } else _t72.has = false;
-      (void)(_t72);
+      bool _t75 = _t74;
+      if (!_t75) break;
+      nx_opt_u8 _t76; if ((out_11).len) { _t76.has = true; _t76.val = (out_11).ptr[--(out_11).len]; } else _t76.has = false;
+      (void)(_t76);
       nx_cont_7: ;
     }
     nx_brk_7: ;
     nx_str_append(c, &(out_11), nx_lit(nx_str_531, 1).ptr, nx_lit(nx_str_531, 1).len);
-    prev_line_last_15 = ((nx_opt_m7_Kind){ .has = true, .val = ((*toks_2).ptr[nx_idx(ids_20.ptr[nx_idx(nx_sub_usize(((ids_20).len), ((size_t)1ULL), "self/fmt.nx:111"), ids_20.len, "self/fmt.nx:111")], (*toks_2).len, "self/fmt.nx:111")]).kind_0 });
-    nx_drop_m29_Line(c, &ctx_33);
+    prev_line_last_16 = ((nx_opt_m7_Kind){ .has = true, .val = ((*toks_2).ptr[nx_idx(ids_21.ptr[nx_idx(nx_sub_usize(((ids_21).len), ((size_t)1ULL), "self/fmt.nx:118"), ids_21.len, "self/fmt.nx:118")], (*toks_2).len, "self/fmt.nx:118")]).kind_0 });
+    nx_drop_m29_Line(c, &ctx_35);
     nx_cont_4: ;
   }
   nx_brk_4: ;
   for (;;) {
-    bool _t73 = ((((out_11).len)) >= (((size_t)2ULL)));
-    if (_t73) {
-      _t73 = ((out_11.ptr[nx_idx(nx_sub_usize(((out_11).len), ((size_t)1ULL), "self/fmt.nx:113"), out_11.len, "self/fmt.nx:113")]) == (((uint8_t)10ULL)));
+    bool _t77 = ((((out_11).len)) >= (((size_t)2ULL)));
+    if (_t77) {
+      _t77 = ((out_11.ptr[nx_idx(nx_sub_usize(((out_11).len), ((size_t)1ULL), "self/fmt.nx:120"), out_11.len, "self/fmt.nx:120")]) == (((uint8_t)10ULL)));
     }
-    bool _t74 = _t73;
-    if (_t74) {
-      _t74 = ((out_11.ptr[nx_idx(nx_sub_usize(((out_11).len), ((size_t)2ULL), "self/fmt.nx:113"), out_11.len, "self/fmt.nx:113")]) == (((uint8_t)10ULL)));
+    bool _t78 = _t77;
+    if (_t78) {
+      _t78 = ((out_11.ptr[nx_idx(nx_sub_usize(((out_11).len), ((size_t)2ULL), "self/fmt.nx:120"), out_11.len, "self/fmt.nx:120")]) == (((uint8_t)10ULL)));
     }
-    bool _t75 = _t74;
-    if (!_t75) break;
-    nx_opt_u8 _t76; if ((out_11).len) { _t76.has = true; _t76.val = (out_11).ptr[--(out_11).len]; } else _t76.has = false;
-    (void)(_t76);
+    bool _t79 = _t78;
+    if (!_t79) break;
+    nx_opt_u8 _t80; if ((out_11).len) { _t80.has = true; _t80.val = (out_11).ptr[--(out_11).len]; } else _t80.has = false;
+    (void)(_t80);
     nx_cont_8: ;
   }
   nx_brk_8: ;
-  bool _t77 = ((((out_11).len)) == (((size_t)0ULL)));
-  if (!_t77) {
-    _t77 = ((out_11.ptr[nx_idx(nx_sub_usize(((out_11).len), ((size_t)1ULL), "self/fmt.nx:114"), out_11.len, "self/fmt.nx:114")]) != (((uint8_t)10ULL)));
+  bool _t81 = ((((out_11).len)) == (((size_t)0ULL)));
+  if (!_t81) {
+    _t81 = ((out_11.ptr[nx_idx(nx_sub_usize(((out_11).len), ((size_t)1ULL), "self/fmt.nx:121"), out_11.len, "self/fmt.nx:121")]) != (((uint8_t)10ULL)));
   }
-    if (_t77)
+    if (_t81)
     {
       nx_str_append(c, &(out_11), nx_lit(nx_str_531, 1).ptr, nx_lit(nx_str_531, 1).len);
     }
-  nx_string _t78 = out_11; memset(&out_11, 0, sizeof out_11);
-  nx_eu_string _t79 = ((nx_eu_string){ .err = 0, .val = _t78 });
+  nx_string _t82 = out_11; memset(&out_11, 0, sizeof out_11);
+  nx_eu_string _t83 = ((nx_eu_string){ .err = 0, .val = _t82 });
+  nx_drop_list_i64(c, &brace_paren_14);
   nx_drop_string(c, &out_11);
   nx_drop_list_list_usize(c, &lines_5);
   nx_drop_m7_Lexer(c, &lx_1);
-  return _t79;
+  return _t83;
+  nx_drop_list_i64(c, &brace_paren_14);
   nx_drop_string(c, &out_11);
   nx_drop_list_list_usize(c, &lines_5);
   nx_drop_m7_Lexer(c, &lx_1);
@@ -60294,12 +60316,12 @@ static bool nx_m29_in_pattern(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line* 
   int64_t d_3 = ((*ctx_1)).pattern_depth_at_start_2;
   size_t _t1 = i_2;
   for (size_t j_4 = ((size_t)0ULL); j_4 < _t1; j_4++) {
-    nx_m7_Kind k_5 = ((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(j_4, (*ctx_1).toks_0.len, "self/fmt.nx:122")], (*toks_0).len, "self/fmt.nx:122")]).kind_0;
+    nx_m7_Kind k_5 = ((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(j_4, (*ctx_1).toks_0.len, "self/fmt.nx:129")], (*toks_0).len, "self/fmt.nx:129")]).kind_0;
     bool _t2 = nx_eq_m7_Kind(&(k_5), &(((nx_m7_Kind){ .tag = 68 })));
     if (_t2) {
       bool _t3 = ((j_4) == (((size_t)0ULL)));
       if (!_t3) {
-        size_t _t4 = (*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(j_4, ((size_t)1ULL), "self/fmt.nx:123"), (*ctx_1).toks_0.len, "self/fmt.nx:123")];
+        size_t _t4 = (*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(j_4, ((size_t)1ULL), "self/fmt.nx:130"), (*ctx_1).toks_0.len, "self/fmt.nx:130")];
         bool _t5 = nx_m29_ends_operand(c, toks_0, _t4);
         _t3 = (!(_t5));
       }
@@ -60308,7 +60330,7 @@ static bool nx_m29_in_pattern(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line* 
       if (_t2)
       {
         int64_t* _t6 = &(d_3);
-        *_t6 = nx_add_i64((*_t6), ((int64_t)1LL), "self/fmt.nx:123");
+        *_t6 = nx_add_i64((*_t6), ((int64_t)1LL), "self/fmt.nx:130");
       }
       else
       {
@@ -60319,7 +60341,7 @@ static bool nx_m29_in_pattern(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line* 
           if (_t7)
           {
             int64_t* _t8 = &(d_3);
-            *_t8 = nx_sub_i64((*_t8), ((int64_t)1LL), "self/fmt.nx:124");
+            *_t8 = nx_sub_i64((*_t8), ((int64_t)1LL), "self/fmt.nx:131");
           }
       }
     nx_cont_0: ;
@@ -60524,7 +60546,7 @@ static bool nx_m29_is_keyword_tok(nx_ctx* c, nx_m7_Token* t_0) {
   NX_UNUSED(c);
   bool _t1 = nx_eq_m7_Kind(&(((*t_0)).kind_0), &(((nx_m7_Kind){ .tag = 0 })));
   if (_t1) {
-    nx_slice_check(0, (*t_0).text_3.len, (*t_0).text_3.len, "self/fmt.nx:147");
+    nx_slice_check(0, (*t_0).text_3.len, (*t_0).text_3.len, "self/fmt.nx:154");
     nx_sl_u8 _t2 = ((nx_sl_u8){ nx_padd((*t_0).text_3.ptr, 0), (*t_0).text_3.len - 0 });
     bool _t3 = nx_m7_is_keyword(c, _t2);
     _t1 = _t3;
@@ -60560,10 +60582,10 @@ static uint8_t nx_m29_bar_role(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line*
   NX_UNUSED(c);
   bool open_3 = false;
   uint8_t role_4 = ((uint8_t)2ULL);
-  size_t _t1 = nx_add_usize(at_2, ((size_t)1ULL), "self/fmt.nx:164");
+  size_t _t1 = nx_add_usize(at_2, ((size_t)1ULL), "self/fmt.nx:171");
   size_t _t2 = _t1;
   for (size_t k_5 = ((size_t)0ULL); k_5 < _t2; k_5++) {
-      if ((!nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(k_5, (*ctx_1).toks_0.len, "self/fmt.nx:165")], (*toks_0).len, "self/fmt.nx:165")]).kind_0), &(((nx_m7_Kind){ .tag = 31 })))))
+      if ((!nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(k_5, (*ctx_1).toks_0.len, "self/fmt.nx:172")], (*toks_0).len, "self/fmt.nx:172")]).kind_0), &(((nx_m7_Kind){ .tag = 31 })))))
       {
         goto nx_cont_0;
       }
@@ -60576,7 +60598,7 @@ static uint8_t nx_m29_bar_role(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line*
       {
         bool _t3 = ((k_5) > (((size_t)0ULL)));
         if (_t3) {
-          size_t _t4 = (*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(k_5, ((size_t)1ULL), "self/fmt.nx:169"), (*ctx_1).toks_0.len, "self/fmt.nx:169")];
+          size_t _t4 = (*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(k_5, ((size_t)1ULL), "self/fmt.nx:176"), (*ctx_1).toks_0.len, "self/fmt.nx:176")];
           bool _t5 = nx_m29_ends_operand(c, toks_0, _t4);
           _t3 = _t5;
         }
@@ -60599,13 +60621,13 @@ static uint8_t nx_m29_bar_role(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line*
 
 static bool nx_m29_adjacent(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line* ctx_1, size_t x_2, size_t y_3) {
   NX_UNUSED(c);
-  bool _t1 = ((((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(x_2, (*ctx_1).toks_0.len, "self/fmt.nx:181")], (*toks_0).len, "self/fmt.nx:181")]).end_2) == (((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(y_3, (*ctx_1).toks_0.len, "self/fmt.nx:181")], (*toks_0).len, "self/fmt.nx:181")]).start_1));
+  bool _t1 = ((((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(x_2, (*ctx_1).toks_0.len, "self/fmt.nx:188")], (*toks_0).len, "self/fmt.nx:188")]).end_2) == (((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(y_3, (*ctx_1).toks_0.len, "self/fmt.nx:188")], (*toks_0).len, "self/fmt.nx:188")]).start_1));
   return _t1;
 }
 
 static uint8_t nx_m29_hole_part(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line* ctx_1, size_t j_2) {
   NX_UNUSED(c);
-  nx_m7_Kind k0_3 = ((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(j_2, (*ctx_1).toks_0.len, "self/fmt.nx:189")], (*toks_0).len, "self/fmt.nx:189")]).kind_0;
+  nx_m7_Kind k0_3 = ((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(j_2, (*ctx_1).toks_0.len, "self/fmt.nx:196")], (*toks_0).len, "self/fmt.nx:196")]).kind_0;
   bool _t1 = (!nx_eq_m7_Kind(&(k0_3), &(((nx_m7_Kind){ .tag = 27 }))));
   if (_t1) {
     _t1 = (!nx_eq_m7_Kind(&(k0_3), &(((nx_m7_Kind){ .tag = 21 }))));
@@ -60621,68 +60643,68 @@ static uint8_t nx_m29_hole_part(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line
       for (;;) {
         bool _t3 = ((s_4) > (((size_t)0ULL)));
         if (_t3) {
-          _t3 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(s_4, ((size_t)1ULL), "self/fmt.nx:193"), (*ctx_1).toks_0.len, "self/fmt.nx:193")], (*toks_0).len, "self/fmt.nx:193")]).kind_0), &(((nx_m7_Kind){ .tag = 27 })));
+          _t3 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(s_4, ((size_t)1ULL), "self/fmt.nx:200"), (*ctx_1).toks_0.len, "self/fmt.nx:200")], (*toks_0).len, "self/fmt.nx:200")]).kind_0), &(((nx_m7_Kind){ .tag = 27 })));
         }
         bool _t4 = _t3;
         if (_t4) {
-          size_t _t5 = nx_sub_usize(s_4, ((size_t)1ULL), "self/fmt.nx:193");
+          size_t _t5 = nx_sub_usize(s_4, ((size_t)1ULL), "self/fmt.nx:200");
           bool _t6 = nx_m29_adjacent(c, toks_0, ctx_1, _t5, s_4);
           _t4 = _t6;
         }
         bool _t7 = _t4;
         if (!_t7) break;
         size_t* _t8 = &(s_4);
-        *_t8 = nx_sub_usize((*_t8), ((size_t)1ULL), "self/fmt.nx:193");
+        *_t8 = nx_sub_usize((*_t8), ((size_t)1ULL), "self/fmt.nx:200");
         nx_cont_0: ;
       }
       nx_brk_0: ;
       bool _t9 = ((s_4) > (((size_t)0ULL)));
       if (_t9) {
-        _t9 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(s_4, ((size_t)1ULL), "self/fmt.nx:194"), (*ctx_1).toks_0.len, "self/fmt.nx:194")], (*toks_0).len, "self/fmt.nx:194")]).kind_0), &(((nx_m7_Kind){ .tag = 21 })));
+        _t9 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(s_4, ((size_t)1ULL), "self/fmt.nx:201"), (*ctx_1).toks_0.len, "self/fmt.nx:201")], (*toks_0).len, "self/fmt.nx:201")]).kind_0), &(((nx_m7_Kind){ .tag = 21 })));
       }
       bool _t10 = _t9;
       if (_t10) {
-        size_t _t11 = nx_sub_usize(s_4, ((size_t)1ULL), "self/fmt.nx:194");
+        size_t _t11 = nx_sub_usize(s_4, ((size_t)1ULL), "self/fmt.nx:201");
         bool _t12 = nx_m29_adjacent(c, toks_0, ctx_1, _t11, s_4);
         _t10 = _t12;
       }
         if (_t10)
         {
           size_t* _t13 = &(s_4);
-          *_t13 = nx_sub_usize((*_t13), ((size_t)1ULL), "self/fmt.nx:194");
+          *_t13 = nx_sub_usize((*_t13), ((size_t)1ULL), "self/fmt.nx:201");
         }
     }
   size_t e_5 = j_2;
   for (;;) {
-    bool _t14 = ((nx_add_usize(e_5, ((size_t)1ULL), "self/fmt.nx:197")) < (((((*ctx_1)).toks_0).len)));
+    bool _t14 = ((nx_add_usize(e_5, ((size_t)1ULL), "self/fmt.nx:204")) < (((((*ctx_1)).toks_0).len)));
     if (_t14) {
-      _t14 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_add_usize(e_5, ((size_t)1ULL), "self/fmt.nx:197"), (*ctx_1).toks_0.len, "self/fmt.nx:197")], (*toks_0).len, "self/fmt.nx:197")]).kind_0), &(((nx_m7_Kind){ .tag = 27 })));
+      _t14 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_add_usize(e_5, ((size_t)1ULL), "self/fmt.nx:204"), (*ctx_1).toks_0.len, "self/fmt.nx:204")], (*toks_0).len, "self/fmt.nx:204")]).kind_0), &(((nx_m7_Kind){ .tag = 27 })));
     }
     bool _t15 = _t14;
     if (_t15) {
-      size_t _t16 = nx_add_usize(e_5, ((size_t)1ULL), "self/fmt.nx:197");
+      size_t _t16 = nx_add_usize(e_5, ((size_t)1ULL), "self/fmt.nx:204");
       bool _t17 = nx_m29_adjacent(c, toks_0, ctx_1, e_5, _t16);
       _t15 = _t17;
     }
     bool _t18 = _t15;
     if (!_t18) break;
     size_t* _t19 = &(e_5);
-    *_t19 = nx_add_usize((*_t19), ((size_t)1ULL), "self/fmt.nx:197");
+    *_t19 = nx_add_usize((*_t19), ((size_t)1ULL), "self/fmt.nx:204");
     nx_cont_1: ;
   }
   nx_brk_1: ;
-    if (((nx_add_usize(nx_sub_usize(e_5, s_4, "self/fmt.nx:198"), ((size_t)1ULL), "self/fmt.nx:198")) != (((size_t)3ULL))))
+    if (((nx_add_usize(nx_sub_usize(e_5, s_4, "self/fmt.nx:205"), ((size_t)1ULL), "self/fmt.nx:205")) != (((size_t)3ULL))))
     {
       uint8_t _t20 = ((uint8_t)0ULL);
       return _t20;
     }
-  uint8_t _t21 = ((uint8_t)nx_cast_check((nx_i128)(nx_add_usize(nx_sub_usize(j_2, s_4, "self/fmt.nx:199"), ((size_t)1ULL), "self/fmt.nx:199")), ((nx_i128)0LL), ((nx_i128)255LL), "self/fmt.nx:199"));
+  uint8_t _t21 = ((uint8_t)nx_cast_check((nx_i128)(nx_add_usize(nx_sub_usize(j_2, s_4, "self/fmt.nx:206"), ((size_t)1ULL), "self/fmt.nx:206")), ((nx_i128)0LL), ((nx_i128)255LL), "self/fmt.nx:206"));
   return _t21;
 }
 
 static bool nx_m29_ends_operand(nx_ctx* c, nx_list_m7_Token* toks_0, size_t id_1) {
   NX_UNUSED(c);
-  nx_m7_Token* t_2 = &((*toks_0).ptr[nx_idx(id_1, (*toks_0).len, "self/fmt.nx:204")]);
+  nx_m7_Token* t_2 = &((*toks_0).ptr[nx_idx(id_1, (*toks_0).len, "self/fmt.nx:211")]);
   nx_m7_Kind k_3 = ((*t_2)).kind_0;
   bool _t1 = nx_m29_is_word(c, k_3);
   bool _t2 = _t1;
@@ -60731,7 +60753,7 @@ static bool nx_m29_ends_operand(nx_ctx* c, nx_list_m7_Token* toks_0, size_t id_1
 
 static bool nx_m29_ends_operand_for_op(nx_ctx* c, nx_list_m7_Token* toks_0, size_t id_1) {
   NX_UNUSED(c);
-    if ((!nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx(id_1, (*toks_0).len, "self/fmt.nx:216")]).kind_0), &(((nx_m7_Kind){ .tag = 15 })))))
+    if ((!nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx(id_1, (*toks_0).len, "self/fmt.nx:223")]).kind_0), &(((nx_m7_Kind){ .tag = 15 })))))
     {
       bool _t1 = nx_m29_ends_operand(c, toks_0, id_1);
       bool _t2 = _t1;
@@ -60749,16 +60771,16 @@ static bool nx_m29_ends_operand_for_op(nx_ctx* c, nx_list_m7_Token* toks_0, size
     for (;;) {
       bool _t4 = true;
       if (!_t4) break;
-      nx_m7_Kind k_7 = ((*toks_0).ptr[nx_idx(open_5, (*toks_0).len, "self/fmt.nx:226")]).kind_0;
+      nx_m7_Kind k_7 = ((*toks_0).ptr[nx_idx(open_5, (*toks_0).len, "self/fmt.nx:233")]).kind_0;
         if (nx_eq_m7_Kind(&(k_7), &(((nx_m7_Kind){ .tag = 15 }))))
         {
           size_t* _t5 = &(depth_6);
-          *_t5 = nx_add_usize((*_t5), ((size_t)1ULL), "self/fmt.nx:227");
+          *_t5 = nx_add_usize((*_t5), ((size_t)1ULL), "self/fmt.nx:234");
         }
         if (nx_eq_m7_Kind(&(k_7), &(((nx_m7_Kind){ .tag = 14 }))))
         {
           size_t* _t6 = &(depth_6);
-          *_t6 = nx_sub_usize((*_t6), ((size_t)1ULL), "self/fmt.nx:229");
+          *_t6 = nx_sub_usize((*_t6), ((size_t)1ULL), "self/fmt.nx:236");
             if (((depth_6) == (((size_t)0ULL))))
             {
               goto nx_brk_1;
@@ -60774,22 +60796,22 @@ static bool nx_m29_ends_operand_for_op(nx_ctx* c, nx_list_m7_Token* toks_0, size
           return _t7;
         }
       size_t* _t8 = &(open_5);
-      *_t8 = nx_sub_usize((*_t8), ((size_t)1ULL), "self/fmt.nx:234");
+      *_t8 = nx_sub_usize((*_t8), ((size_t)1ULL), "self/fmt.nx:241");
       nx_cont_1: ;
     }
     nx_brk_1: ;
     size_t* _t9 = &(groups_3);
-    *_t9 = nx_add_usize((*_t9), ((size_t)1ULL), "self/fmt.nx:236");
+    *_t9 = nx_add_usize((*_t9), ((size_t)1ULL), "self/fmt.nx:243");
       if (((open_5) == (((size_t)0ULL))))
       {
         goto nx_brk_0;
       }
-      if (nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx(nx_sub_usize(open_5, ((size_t)1ULL), "self/fmt.nx:238"), (*toks_0).len, "self/fmt.nx:238")]).kind_0), &(((nx_m7_Kind){ .tag = 15 }))))
+      if (nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx(nx_sub_usize(open_5, ((size_t)1ULL), "self/fmt.nx:245"), (*toks_0).len, "self/fmt.nx:245")]).kind_0), &(((nx_m7_Kind){ .tag = 15 }))))
       {
-        close_2 = nx_sub_usize(open_5, ((size_t)1ULL), "self/fmt.nx:239");
+        close_2 = nx_sub_usize(open_5, ((size_t)1ULL), "self/fmt.nx:246");
         goto nx_cont_0;
       }
-    size_t _t10 = nx_sub_usize(open_5, ((size_t)1ULL), "self/fmt.nx:242");
+    size_t _t10 = nx_sub_usize(open_5, ((size_t)1ULL), "self/fmt.nx:249");
     bool _t11 = nx_m29_ends_operand(c, toks_0, _t10);
       if (_t11)
       {
@@ -60883,18 +60905,18 @@ static bool nx_m29_closes_control_head(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m
   for (;;) {
     bool _t1 = true;
     if (!_t1) break;
-    nx_m7_Kind k_5 = ((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(j_4, (*ctx_1).toks_0.len, "self/fmt.nx:261")], (*toks_0).len, "self/fmt.nx:261")]).kind_0;
+    nx_m7_Kind k_5 = ((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(j_4, (*ctx_1).toks_0.len, "self/fmt.nx:268")], (*toks_0).len, "self/fmt.nx:268")]).kind_0;
       if (nx_eq_m7_Kind(&(k_5), &(((nx_m7_Kind){ .tag = 11 }))))
       {
         int64_t* _t2 = &(depth_3);
-        *_t2 = nx_add_i64((*_t2), ((int64_t)1LL), "self/fmt.nx:262");
+        *_t2 = nx_add_i64((*_t2), ((int64_t)1LL), "self/fmt.nx:269");
       }
       else
       {
           if (nx_eq_m7_Kind(&(k_5), &(((nx_m7_Kind){ .tag = 10 }))))
           {
             int64_t* _t3 = &(depth_3);
-            *_t3 = nx_sub_i64((*_t3), ((int64_t)1LL), "self/fmt.nx:264");
+            *_t3 = nx_sub_i64((*_t3), ((int64_t)1LL), "self/fmt.nx:271");
               if (((depth_3) == (((int64_t)0LL))))
               {
                 goto nx_brk_0;
@@ -60907,7 +60929,7 @@ static bool nx_m29_closes_control_head(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m
         return _t4;
       }
     size_t* _t5 = &(j_4);
-    *_t5 = nx_sub_usize((*_t5), ((size_t)1ULL), "self/fmt.nx:268");
+    *_t5 = nx_sub_usize((*_t5), ((size_t)1ULL), "self/fmt.nx:275");
     nx_cont_0: ;
   }
   nx_brk_0: ;
@@ -60916,7 +60938,7 @@ static bool nx_m29_closes_control_head(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m
       bool _t6 = false;
       return _t6;
     }
-  nx_m7_Token* t_6 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(j_4, ((size_t)1ULL), "self/fmt.nx:271"), (*ctx_1).toks_0.len, "self/fmt.nx:271")], (*toks_0).len, "self/fmt.nx:271")]);
+  nx_m7_Token* t_6 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(j_4, ((size_t)1ULL), "self/fmt.nx:278"), (*ctx_1).toks_0.len, "self/fmt.nx:278")], (*toks_0).len, "self/fmt.nx:278")]);
   bool _t7 = nx_m29_is_kw(c, t_6, nx_lit(nx_str_65, 2));
   bool _t8 = _t7;
   if (!_t8) {
@@ -60940,8 +60962,8 @@ static bool nx_m29_opens_control_body(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m2
     bool _t1 = ((j_4) > (((size_t)0ULL)));
     if (!_t1) break;
     size_t* _t2 = &(j_4);
-    *_t2 = nx_sub_usize((*_t2), ((size_t)1ULL), "self/fmt.nx:282");
-    nx_m7_Token* t_5 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(j_4, (*ctx_1).toks_0.len, "self/fmt.nx:283")], (*toks_0).len, "self/fmt.nx:283")]);
+    *_t2 = nx_sub_usize((*_t2), ((size_t)1ULL), "self/fmt.nx:289");
+    nx_m7_Token* t_5 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(j_4, (*ctx_1).toks_0.len, "self/fmt.nx:290")], (*toks_0).len, "self/fmt.nx:290")]);
     nx_m7_Kind k_6 = ((*t_5)).kind_0;
     bool _t3 = nx_eq_m7_Kind(&(k_6), &(((nx_m7_Kind){ .tag = 11 })));
     if (!_t3) {
@@ -60950,7 +60972,7 @@ static bool nx_m29_opens_control_body(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m2
       if (_t3)
       {
         int64_t* _t4 = &(depth_3);
-        *_t4 = nx_add_i64((*_t4), ((int64_t)1LL), "self/fmt.nx:285");
+        *_t4 = nx_add_i64((*_t4), ((int64_t)1LL), "self/fmt.nx:292");
       }
       else
       {
@@ -60961,7 +60983,7 @@ static bool nx_m29_opens_control_body(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m2
           if (_t5)
           {
             int64_t* _t6 = &(depth_3);
-            *_t6 = nx_sub_i64((*_t6), ((int64_t)1LL), "self/fmt.nx:287");
+            *_t6 = nx_sub_i64((*_t6), ((int64_t)1LL), "self/fmt.nx:294");
               if (((depth_3) < (((int64_t)0LL))))
               {
                 bool _t7 = false;
@@ -61035,7 +61057,7 @@ static nx_opt_m7_Kind nx_m29_kind_back(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m
       nx_opt_m7_Kind _t1 = ((nx_opt_m7_Kind){ .has = false });
       return _t1;
     }
-  nx_opt_m7_Kind _t2 = ((nx_opt_m7_Kind){ .has = true, .val = ((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(i_2, n_3, "self/fmt.nx:302"), (*ctx_1).toks_0.len, "self/fmt.nx:302")], (*toks_0).len, "self/fmt.nx:302")]).kind_0 });
+  nx_opt_m7_Kind _t2 = ((nx_opt_m7_Kind){ .has = true, .val = ((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(i_2, n_3, "self/fmt.nx:309"), (*ctx_1).toks_0.len, "self/fmt.nx:309")], (*toks_0).len, "self/fmt.nx:309")]).kind_0 });
   return _t2;
 }
 
@@ -61056,11 +61078,11 @@ static bool nx_m29_starts_upper(nx_ctx* c, nx_m7_Token* t_0) {
   NX_UNUSED(c);
   bool _t1 = ((((((*t_0)).text_3).len)) > (((size_t)0ULL)));
   if (_t1) {
-    _t1 = (((*t_0).text_3.ptr[nx_idx(((size_t)0ULL), (*t_0).text_3.len, "self/fmt.nx:311")]) >= (((uint8_t)65ULL)));
+    _t1 = (((*t_0).text_3.ptr[nx_idx(((size_t)0ULL), (*t_0).text_3.len, "self/fmt.nx:318")]) >= (((uint8_t)65ULL)));
   }
   bool _t2 = _t1;
   if (_t2) {
-    _t2 = (((*t_0).text_3.ptr[nx_idx(((size_t)0ULL), (*t_0).text_3.len, "self/fmt.nx:311")]) <= (((uint8_t)90ULL)));
+    _t2 = (((*t_0).text_3.ptr[nx_idx(((size_t)0ULL), (*t_0).text_3.len, "self/fmt.nx:318")]) <= (((uint8_t)90ULL)));
   }
   bool _t3 = _t2;
   return _t3;
@@ -61068,13 +61090,13 @@ static bool nx_m29_starts_upper(nx_ctx* c, nx_m7_Token* t_0) {
 
 static bool nx_m29_needs_space(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line* ctx_1, size_t i_2) {
   NX_UNUSED(c);
-  nx_m7_Token* ta_3 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:316"), (*ctx_1).toks_0.len, "self/fmt.nx:316")], (*toks_0).len, "self/fmt.nx:316")]);
-  nx_m7_Token* tb_4 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(i_2, (*ctx_1).toks_0.len, "self/fmt.nx:317")], (*toks_0).len, "self/fmt.nx:317")]);
+  nx_m7_Token* ta_3 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:323"), (*ctx_1).toks_0.len, "self/fmt.nx:323")], (*toks_0).len, "self/fmt.nx:323")]);
+  nx_m7_Token* tb_4 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(i_2, (*ctx_1).toks_0.len, "self/fmt.nx:324")], (*toks_0).len, "self/fmt.nx:324")]);
   nx_m7_Kind a_5 = ((*ta_3)).kind_0;
   nx_m7_Kind b_6 = ((*tb_4)).kind_0;
   nx_opt_m7_Kind _t1 = nx_m29_kind_back(c, toks_0, ctx_1, i_2, ((size_t)2ULL));
   nx_opt_m7_Kind pp_7 = _t1;
-  bool has_next_8 = ((nx_add_usize(i_2, ((size_t)1ULL), "self/fmt.nx:321")) < (((((*ctx_1)).toks_0).len)));
+  bool has_next_8 = ((nx_add_usize(i_2, ((size_t)1ULL), "self/fmt.nx:328")) < (((((*ctx_1)).toks_0).len)));
   bool _t2 = nx_eq_m7_Kind(&(b_6), &(((nx_m7_Kind){ .tag = 7 })));
   if (!_t2) {
     _t2 = nx_eq_m7_Kind(&(b_6), &(((nx_m7_Kind){ .tag = 6 })));
@@ -61084,7 +61106,7 @@ static bool nx_m29_needs_space(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line*
       bool _t3 = true;
       return _t3;
     }
-  size_t _t4 = nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:325");
+  size_t _t4 = nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:332");
   uint8_t _t5 = nx_m29_hole_part(c, toks_0, ctx_1, _t4);
   uint8_t ha_9 = _t5;
   uint8_t _t6 = nx_m29_hole_part(c, toks_0, ctx_1, i_2);
@@ -61201,7 +61223,7 @@ static bool nx_m29_needs_space(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line*
   size_t _t35 = ((((*ctx_1)).toks_0).len);
   size_t _t36 = _t35;
   for (size_t j_12 = i_2; j_12 < _t36; j_12++) {
-      if (nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(j_12, (*ctx_1).toks_0.len, "self/fmt.nx:335")], (*toks_0).len, "self/fmt.nx:335")]).kind_0), &(((nx_m7_Kind){ .tag = 26 }))))
+      if (nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(j_12, (*ctx_1).toks_0.len, "self/fmt.nx:342")], (*toks_0).len, "self/fmt.nx:342")]).kind_0), &(((nx_m7_Kind){ .tag = 26 }))))
       {
         arm_line_11 = true;
       }
@@ -61214,7 +61236,7 @@ static bool nx_m29_needs_space(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line*
   for (size_t j_14 = ((size_t)0ULL); j_14 < _t38; j_14++) {
     bool _t39 = ((first_bar_13) == (((((*ctx_1)).toks_0).len)));
     if (_t39) {
-      _t39 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(j_14, (*ctx_1).toks_0.len, "self/fmt.nx:337")], (*toks_0).len, "self/fmt.nx:337")]).kind_0), &(((nx_m7_Kind){ .tag = 31 })));
+      _t39 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(j_14, (*ctx_1).toks_0.len, "self/fmt.nx:344")], (*toks_0).len, "self/fmt.nx:344")]).kind_0), &(((nx_m7_Kind){ .tag = 31 })));
     }
       if (_t39)
       {
@@ -61230,7 +61252,7 @@ static bool nx_m29_needs_space(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line*
   }
     if (_t40)
     {
-      nx_m7_Token* fp_16 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((first_bar_13) - (((size_t)1ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:340")], (*toks_0).len, "self/fmt.nx:340")]);
+      nx_m7_Token* fp_16 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((first_bar_13) - (((size_t)1ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:347")], (*toks_0).len, "self/fmt.nx:347")]);
       nx_m7_Kind fk_17 = ((*fp_16)).kind_0;
       bool _t41 = nx_eq_m7_Kind(&(fk_17), &(((nx_m7_Kind){ .tag = 48 })));
       if (!_t41) {
@@ -61293,7 +61315,7 @@ static bool nx_m29_needs_space(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line*
   }
     if (_t56)
     {
-      nx_m7_Token* t2_18 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((i_2) - (((size_t)2ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:348")], (*toks_0).len, "self/fmt.nx:348")]);
+      nx_m7_Token* t2_18 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((i_2) - (((size_t)2ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:355")], (*toks_0).len, "self/fmt.nx:355")]);
       bool _t57 = nx_m29_is_kw(c, t2_18, nx_lit(nx_str_70, 5));
       bool _t58 = _t57;
       if (!_t58) {
@@ -61356,7 +61378,7 @@ static bool nx_m29_needs_space(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line*
     {
       bool _t72 = nx_eq_m7_Kind(&(b_6), &(((nx_m7_Kind){ .tag = 68 })));
       if (_t72) {
-        size_t _t73 = (*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:357"), (*ctx_1).toks_0.len, "self/fmt.nx:357")];
+        size_t _t73 = (*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:364"), (*ctx_1).toks_0.len, "self/fmt.nx:364")];
         bool _t74 = nx_m29_ends_operand(c, toks_0, _t73);
         _t72 = (!(_t74));
       }
@@ -61473,7 +61495,7 @@ static bool nx_m29_needs_space(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line*
           bool _t102 = false;
           return _t102;
         }
-      size_t _t103 = (*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:375"), (*ctx_1).toks_0.len, "self/fmt.nx:375")];
+      size_t _t103 = (*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:382"), (*ctx_1).toks_0.len, "self/fmt.nx:382")];
       bool _t104 = nx_m29_ends_operand(c, toks_0, _t103);
       bool _t105 = (!(_t104));
       return _t105;
@@ -61503,15 +61525,15 @@ static bool nx_m29_needs_space(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line*
     if (nx_eq_m7_Kind(&(b_6), &(((nx_m7_Kind){ .tag = 13 }))))
     {
       int64_t depth_20 = ((int64_t)0LL);
-      size_t j_21 = nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:382");
+      size_t j_21 = nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:389");
       for (;;) {
         bool _t111 = true;
         if (!_t111) break;
-        nx_m7_Kind k_22 = ((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(j_21, (*ctx_1).toks_0.len, "self/fmt.nx:384")], (*toks_0).len, "self/fmt.nx:384")]).kind_0;
+        nx_m7_Kind k_22 = ((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(j_21, (*ctx_1).toks_0.len, "self/fmt.nx:391")], (*toks_0).len, "self/fmt.nx:391")]).kind_0;
           if (nx_eq_m7_Kind(&(k_22), &(((nx_m7_Kind){ .tag = 13 }))))
           {
             int64_t* _t112 = &(depth_20);
-            *_t112 = nx_add_i64((*_t112), ((int64_t)1LL), "self/fmt.nx:385");
+            *_t112 = nx_add_i64((*_t112), ((int64_t)1LL), "self/fmt.nx:392");
           }
           else
           {
@@ -61523,9 +61545,9 @@ static bool nx_m29_needs_space(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line*
               {
                   if (((depth_20) == (((int64_t)0LL))))
                   {
-                    bool _t114 = ((nx_add_usize(j_21, ((size_t)1ULL), "self/fmt.nx:388")) < (((((*ctx_1)).toks_0).len)));
+                    bool _t114 = ((nx_add_usize(j_21, ((size_t)1ULL), "self/fmt.nx:395")) < (((((*ctx_1)).toks_0).len)));
                     if (_t114) {
-                      _t114 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_add_usize(j_21, ((size_t)1ULL), "self/fmt.nx:388"), (*ctx_1).toks_0.len, "self/fmt.nx:388")], (*toks_0).len, "self/fmt.nx:388")]).kind_0), &(((nx_m7_Kind){ .tag = 19 })));
+                      _t114 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_add_usize(j_21, ((size_t)1ULL), "self/fmt.nx:395"), (*ctx_1).toks_0.len, "self/fmt.nx:395")], (*toks_0).len, "self/fmt.nx:395")]).kind_0), &(((nx_m7_Kind){ .tag = 19 })));
                     }
                     bool after_dot_23 = _t114;
                     bool _t115 = nx_eq_m7_Kind(&(k_22), &(((nx_m7_Kind){ .tag = 12 })));
@@ -61536,7 +61558,7 @@ static bool nx_m29_needs_space(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line*
                     return _t116;
                   }
                 int64_t* _t117 = &(depth_20);
-                *_t117 = nx_sub_i64((*_t117), ((int64_t)1LL), "self/fmt.nx:391");
+                *_t117 = nx_sub_i64((*_t117), ((int64_t)1LL), "self/fmt.nx:398");
               }
           }
           if (((j_21) == (((size_t)0ULL))))
@@ -61544,7 +61566,7 @@ static bool nx_m29_needs_space(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line*
             goto nx_brk_2;
           }
         size_t* _t118 = &(j_21);
-        *_t118 = nx_sub_usize((*_t118), ((size_t)1ULL), "self/fmt.nx:394");
+        *_t118 = nx_sub_usize((*_t118), ((size_t)1ULL), "self/fmt.nx:401");
         nx_cont_2: ;
       }
       nx_brk_2: ;
@@ -61586,7 +61608,7 @@ static bool nx_m29_needs_space(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line*
         }
       bool _t131 = nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 11 })));
       if (_t131) {
-        size_t _t132 = nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:403");
+        size_t _t132 = nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:410");
         bool _t133 = nx_m29_closes_control_head(c, toks_0, ctx_1, _t132);
         _t131 = _t133;
       }
@@ -61604,13 +61626,13 @@ static bool nx_m29_needs_space(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line*
       if (_t136) {
         bool _t137 = ((i_2) >= (((size_t)2ULL)));
         if (_t137) {
-          size_t _t138 = (*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(i_2, ((size_t)2ULL), "self/fmt.nx:408"), (*ctx_1).toks_0.len, "self/fmt.nx:408")];
+          size_t _t138 = (*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(i_2, ((size_t)2ULL), "self/fmt.nx:415"), (*ctx_1).toks_0.len, "self/fmt.nx:415")];
           bool _t139 = nx_m29_ends_operand(c, toks_0, _t138);
           _t137 = _t139;
         }
         bool _t140 = _t137;
         if (_t140) {
-          nx_m7_Token* _t141 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(i_2, ((size_t)2ULL), "self/fmt.nx:408"), (*ctx_1).toks_0.len, "self/fmt.nx:408")], (*toks_0).len, "self/fmt.nx:408")]);
+          nx_m7_Token* _t141 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(i_2, ((size_t)2ULL), "self/fmt.nx:415"), (*ctx_1).toks_0.len, "self/fmt.nx:415")], (*toks_0).len, "self/fmt.nx:415")]);
           bool _t142 = nx_m29_is_kw(c, _t141, nx_lit(nx_str_2524, 4));
           _t140 = (!(_t142));
         }
@@ -61625,14 +61647,14 @@ static bool nx_m29_needs_space(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line*
       if (_t144) {
         bool _t145 = ((i_2) >= (((size_t)2ULL)));
         if (_t145) {
-          size_t _t146 = (*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(i_2, ((size_t)2ULL), "self/fmt.nx:410"), (*ctx_1).toks_0.len, "self/fmt.nx:410")];
+          size_t _t146 = (*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(i_2, ((size_t)2ULL), "self/fmt.nx:417"), (*ctx_1).toks_0.len, "self/fmt.nx:417")];
           bool _t147 = nx_m29_ends_operand_for_op(c, toks_0, _t146);
           _t145 = _t147;
         }
         _t144 = (!(_t145));
       }
       bool sigil_24 = _t144;
-      size_t _t148 = (*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:411"), (*ctx_1).toks_0.len, "self/fmt.nx:411")];
+      size_t _t148 = (*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:418"), (*ctx_1).toks_0.len, "self/fmt.nx:418")];
       bool _t149 = nx_m29_ends_operand(c, toks_0, _t148);
       bool _t150 = _t149;
       if (!_t150) {
@@ -61704,7 +61726,7 @@ static bool nx_m29_needs_space(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line*
           bool _t172 = false;
           return _t172;
         }
-      size_t _t173 = (*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:418"), (*ctx_1).toks_0.len, "self/fmt.nx:418")];
+      size_t _t173 = (*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:425"), (*ctx_1).toks_0.len, "self/fmt.nx:425")];
       bool _t174 = nx_m29_ends_operand(c, toks_0, _t173);
       bool _t175 = (!(_t174));
       if (!_t175) {
@@ -61752,22 +61774,22 @@ static bool nx_m29_needs_space(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line*
     if (_t182)
     {
       int64_t depth_25 = ((int64_t)0LL);
-      size_t j_26 = nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:424");
+      size_t j_26 = nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:431");
       for (;;) {
         bool _t192 = true;
         if (!_t192) break;
-        nx_m7_Kind k_27 = ((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(j_26, (*ctx_1).toks_0.len, "self/fmt.nx:426")], (*toks_0).len, "self/fmt.nx:426")]).kind_0;
+        nx_m7_Kind k_27 = ((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(j_26, (*ctx_1).toks_0.len, "self/fmt.nx:433")], (*toks_0).len, "self/fmt.nx:433")]).kind_0;
           if (nx_eq_m7_Kind(&(k_27), &(((nx_m7_Kind){ .tag = 15 }))))
           {
             int64_t* _t193 = &(depth_25);
-            *_t193 = nx_add_i64((*_t193), ((int64_t)1LL), "self/fmt.nx:427");
+            *_t193 = nx_add_i64((*_t193), ((int64_t)1LL), "self/fmt.nx:434");
           }
           else
           {
               if (nx_eq_m7_Kind(&(k_27), &(((nx_m7_Kind){ .tag = 14 }))))
               {
                 int64_t* _t194 = &(depth_25);
-                *_t194 = nx_sub_i64((*_t194), ((int64_t)1LL), "self/fmt.nx:429");
+                *_t194 = nx_sub_i64((*_t194), ((int64_t)1LL), "self/fmt.nx:436");
                   if (((depth_25) == (((int64_t)0LL))))
                   {
                     goto nx_brk_3;
@@ -61779,7 +61801,7 @@ static bool nx_m29_needs_space(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line*
             goto nx_brk_3;
           }
         size_t* _t195 = &(j_26);
-        *_t195 = nx_sub_usize((*_t195), ((size_t)1ULL), "self/fmt.nx:433");
+        *_t195 = nx_sub_usize((*_t195), ((size_t)1ULL), "self/fmt.nx:440");
         nx_cont_3: ;
       }
       nx_brk_3: ;
@@ -61788,7 +61810,7 @@ static bool nx_m29_needs_space(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line*
           bool _t196 = false;
           return _t196;
         }
-      nx_m7_Token* before_28 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(j_26, ((size_t)1ULL), "self/fmt.nx:436"), (*ctx_1).toks_0.len, "self/fmt.nx:436")], (*toks_0).len, "self/fmt.nx:436")]);
+      nx_m7_Token* before_28 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(j_26, ((size_t)1ULL), "self/fmt.nx:443"), (*ctx_1).toks_0.len, "self/fmt.nx:443")], (*toks_0).len, "self/fmt.nx:443")]);
       bool _t197 = nx_m29_type_position_before(c, before_28);
       bool _t198 = (!(_t197));
       if (_t198) {
@@ -61800,7 +61822,7 @@ static bool nx_m29_needs_space(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line*
     }
     if (nx_eq_m7_Kind(&(b_6), &(((nx_m7_Kind){ .tag = 12 }))))
     {
-      nx_m7_Token* t0_29 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((size_t)0ULL), (*ctx_1).toks_0.len, "self/fmt.nx:441")], (*toks_0).len, "self/fmt.nx:441")]);
+      nx_m7_Token* t0_29 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((size_t)0ULL), (*ctx_1).toks_0.len, "self/fmt.nx:448")], (*toks_0).len, "self/fmt.nx:448")]);
       bool _t201 = nx_eq_m7_Kind(&(((*t0_29)).kind_0), &(((nx_m7_Kind){ .tag = 0 })));
       if (_t201) {
         nx_sl_u8 _t202 = nx_str_slice(((*t0_29)).text_3);
@@ -61867,7 +61889,7 @@ static bool nx_m29_needs_space(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line*
           bool declared_30 = false;
             if (((i_2) >= (((size_t)2ULL))))
             {
-              nx_m7_Token* t2_31 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((i_2) - (((size_t)2ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:451")], (*toks_0).len, "self/fmt.nx:451")]);
+              nx_m7_Token* t2_31 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((i_2) - (((size_t)2ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:458")], (*toks_0).len, "self/fmt.nx:458")]);
               bool _t224 = nx_m29_is_kw(c, t2_31, nx_lit(nx_str_55, 6));
               bool _t225 = _t224;
               if (!_t225) {
@@ -61918,68 +61940,68 @@ static bool nx_m29_needs_space(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line*
             }
           bool _t243 = nx_m29_starts_upper(c, ta_3);
           bool uppercase_32 = _t243;
-          size_t k_33 = nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:456");
+          size_t k_33 = nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:463");
           for (;;) {
             bool _t244 = ((k_33) >= (((size_t)2ULL)));
             if (_t244) {
-              _t244 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(k_33, ((size_t)1ULL), "self/fmt.nx:457"), (*ctx_1).toks_0.len, "self/fmt.nx:457")], (*toks_0).len, "self/fmt.nx:457")]).kind_0), &(((nx_m7_Kind){ .tag = 19 })));
+              _t244 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(k_33, ((size_t)1ULL), "self/fmt.nx:464"), (*ctx_1).toks_0.len, "self/fmt.nx:464")], (*toks_0).len, "self/fmt.nx:464")]).kind_0), &(((nx_m7_Kind){ .tag = 19 })));
             }
             bool _t245 = _t244;
             if (_t245) {
-              _t245 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(k_33, ((size_t)2ULL), "self/fmt.nx:457"), (*ctx_1).toks_0.len, "self/fmt.nx:457")], (*toks_0).len, "self/fmt.nx:457")]).kind_0), &(((nx_m7_Kind){ .tag = 0 })));
+              _t245 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(k_33, ((size_t)2ULL), "self/fmt.nx:464"), (*ctx_1).toks_0.len, "self/fmt.nx:464")], (*toks_0).len, "self/fmt.nx:464")]).kind_0), &(((nx_m7_Kind){ .tag = 0 })));
             }
             bool _t246 = _t245;
             if (!_t246) break;
             size_t* _t247 = &(k_33);
-            *_t247 = nx_sub_usize((*_t247), ((size_t)2ULL), "self/fmt.nx:457");
+            *_t247 = nx_sub_usize((*_t247), ((size_t)2ULL), "self/fmt.nx:464");
             nx_cont_4: ;
           }
           nx_brk_4: ;
           for (;;) {
             bool _t248 = ((k_33) >= (((size_t)2ULL)));
             if (!_t248) break;
-            bool _t249 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((k_33) - (((size_t)1ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:460")], (*toks_0).len, "self/fmt.nx:460")]).kind_0), &(((nx_m7_Kind){ .tag = 15 })));
+            bool _t249 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((k_33) - (((size_t)1ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:467")], (*toks_0).len, "self/fmt.nx:467")]).kind_0), &(((nx_m7_Kind){ .tag = 15 })));
             if (_t249) {
-              _t249 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((k_33) - (((size_t)2ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:460")], (*toks_0).len, "self/fmt.nx:460")]).kind_0), &(((nx_m7_Kind){ .tag = 14 })));
+              _t249 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((k_33) - (((size_t)2ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:467")], (*toks_0).len, "self/fmt.nx:467")]).kind_0), &(((nx_m7_Kind){ .tag = 14 })));
             }
               if (_t249)
               {
                 size_t* _t250 = &(k_33);
-                *_t250 = nx_sub_usize((*_t250), ((size_t)2ULL), "self/fmt.nx:460");
+                *_t250 = nx_sub_usize((*_t250), ((size_t)2ULL), "self/fmt.nx:467");
                 goto nx_cont_5;
               }
             bool _t251 = ((k_33) >= (((size_t)3ULL)));
             if (_t251) {
-              _t251 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((k_33) - (((size_t)1ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:461")], (*toks_0).len, "self/fmt.nx:461")]).kind_0), &(((nx_m7_Kind){ .tag = 15 })));
+              _t251 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((k_33) - (((size_t)1ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:468")], (*toks_0).len, "self/fmt.nx:468")]).kind_0), &(((nx_m7_Kind){ .tag = 15 })));
             }
             bool _t252 = _t251;
             if (_t252) {
-              _t252 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(k_33, ((size_t)3ULL), "self/fmt.nx:461"), (*ctx_1).toks_0.len, "self/fmt.nx:461")], (*toks_0).len, "self/fmt.nx:461")]).kind_0), &(((nx_m7_Kind){ .tag = 14 })));
+              _t252 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(k_33, ((size_t)3ULL), "self/fmt.nx:468"), (*ctx_1).toks_0.len, "self/fmt.nx:468")], (*toks_0).len, "self/fmt.nx:468")]).kind_0), &(((nx_m7_Kind){ .tag = 14 })));
             }
               if (_t252)
               {
                 size_t* _t253 = &(k_33);
-                *_t253 = nx_sub_usize((*_t253), ((size_t)3ULL), "self/fmt.nx:461");
+                *_t253 = nx_sub_usize((*_t253), ((size_t)3ULL), "self/fmt.nx:468");
                 goto nx_cont_5;
               }
-            nx_m7_Token* _t254 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((k_33) - (((size_t)1ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:463")], (*toks_0).len, "self/fmt.nx:463")]);
+            nx_m7_Token* _t254 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((k_33) - (((size_t)1ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:470")], (*toks_0).len, "self/fmt.nx:470")]);
             bool _t255 = nx_m29_is_kw(c, _t254, nx_lit(nx_str_2346, 3));
             bool _t256 = _t255;
             if (!_t256) {
-              nx_m7_Token* _t257 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((k_33) - (((size_t)1ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:463")], (*toks_0).len, "self/fmt.nx:463")]);
+              nx_m7_Token* _t257 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((k_33) - (((size_t)1ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:470")], (*toks_0).len, "self/fmt.nx:470")]);
               bool _t258 = nx_m29_is_kw(c, _t257, nx_lit(nx_str_94, 3));
               _t256 = _t258;
             }
             bool _t259 = _t256;
             if (!_t259) {
-              nx_m7_Token* _t260 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((k_33) - (((size_t)1ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:463")], (*toks_0).len, "self/fmt.nx:463")]);
+              nx_m7_Token* _t260 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((k_33) - (((size_t)1ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:470")], (*toks_0).len, "self/fmt.nx:470")]);
               bool _t261 = nx_m29_is_kw(c, _t260, nx_lit(nx_str_95, 4));
               _t259 = _t261;
             }
               if (_t259)
               {
                 size_t* _t262 = &(k_33);
-                *_t262 = nx_sub_usize((*_t262), ((size_t)1ULL), "self/fmt.nx:463");
+                *_t262 = nx_sub_usize((*_t262), ((size_t)1ULL), "self/fmt.nx:470");
                 goto nx_cont_5;
               }
             goto nx_brk_5;
@@ -61989,7 +62011,7 @@ static bool nx_m29_needs_space(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line*
           bool type_pos_34 = false;
             if (((k_33) >= (((size_t)1ULL))))
             {
-              nx_m7_Kind bk_35 = ((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((k_33) - (((size_t)1ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:468")], (*toks_0).len, "self/fmt.nx:468")]).kind_0;
+              nx_m7_Kind bk_35 = ((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((k_33) - (((size_t)1ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:475")], (*toks_0).len, "self/fmt.nx:475")]).kind_0;
               bool _t263 = nx_eq_m7_Kind(&(bk_35), &(((nx_m7_Kind){ .tag = 25 })));
               if (!_t263) {
                 _t263 = nx_eq_m7_Kind(&(bk_35), &(((nx_m7_Kind){ .tag = 17 })));
@@ -62022,7 +62044,7 @@ static bool nx_m29_needs_space(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line*
           }
           bool _t270 = _t269;
           if (_t270) {
-            nx_slice_check(0, (*ta_3).text_3.len, (*ta_3).text_3.len, "self/fmt.nx:471");
+            nx_slice_check(0, (*ta_3).text_3.len, (*ta_3).text_3.len, "self/fmt.nx:478");
             nx_sl_u8 _t271 = ((nx_sl_u8){ nx_padd((*ta_3).text_3.ptr, 0), (*ta_3).text_3.len - 0 });
             bool _t272 = nx_m7_is_keyword(c, _t271);
             _t270 = (!(_t272));
@@ -62039,7 +62061,7 @@ static bool nx_m29_needs_space(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line*
       }
       bool _t275 = _t274;
       if (_t275) {
-        nx_m7_Kind _t276 = ((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(i_2, ((size_t)2ULL), "self/fmt.nx:473"), (*ctx_1).toks_0.len, "self/fmt.nx:473")], (*toks_0).len, "self/fmt.nx:473")]).kind_0;
+        nx_m7_Kind _t276 = ((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(i_2, ((size_t)2ULL), "self/fmt.nx:480"), (*ctx_1).toks_0.len, "self/fmt.nx:480")], (*toks_0).len, "self/fmt.nx:480")]).kind_0;
         bool _t277 = nx_m29_is_word(c, _t276);
         _t275 = _t277;
       }
@@ -62050,18 +62072,18 @@ static bool nx_m29_needs_space(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line*
           for (;;) {
             bool _t278 = true;
             if (!_t278) break;
-            nx_m7_Kind k_38 = ((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(j_37, (*ctx_1).toks_0.len, "self/fmt.nx:478")], (*toks_0).len, "self/fmt.nx:478")]).kind_0;
+            nx_m7_Kind k_38 = ((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(j_37, (*ctx_1).toks_0.len, "self/fmt.nx:485")], (*toks_0).len, "self/fmt.nx:485")]).kind_0;
               if (nx_eq_m7_Kind(&(k_38), &(((nx_m7_Kind){ .tag = 11 }))))
               {
                 int64_t* _t279 = &(depth_36);
-                *_t279 = nx_add_i64((*_t279), ((int64_t)1LL), "self/fmt.nx:479");
+                *_t279 = nx_add_i64((*_t279), ((int64_t)1LL), "self/fmt.nx:486");
               }
               else
               {
                   if (nx_eq_m7_Kind(&(k_38), &(((nx_m7_Kind){ .tag = 10 }))))
                   {
                     int64_t* _t280 = &(depth_36);
-                    *_t280 = nx_sub_i64((*_t280), ((int64_t)1LL), "self/fmt.nx:481");
+                    *_t280 = nx_sub_i64((*_t280), ((int64_t)1LL), "self/fmt.nx:488");
                       if (((depth_36) == (((int64_t)0LL))))
                       {
                         goto nx_brk_6;
@@ -62073,13 +62095,13 @@ static bool nx_m29_needs_space(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line*
                 goto nx_brk_6;
               }
             size_t* _t281 = &(j_37);
-            *_t281 = nx_sub_usize((*_t281), ((size_t)1ULL), "self/fmt.nx:485");
+            *_t281 = nx_sub_usize((*_t281), ((size_t)1ULL), "self/fmt.nx:492");
             nx_cont_6: ;
           }
           nx_brk_6: ;
             if (((j_37) > (((size_t)0ULL))))
             {
-              nx_m7_Token* head_39 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((j_37) - (((size_t)1ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:488")], (*toks_0).len, "self/fmt.nx:488")]);
+              nx_m7_Token* head_39 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((j_37) - (((size_t)1ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:495")], (*toks_0).len, "self/fmt.nx:495")]);
                 if (nx_eq_m7_Kind(&(((*head_39)).kind_0), &(((nx_m7_Kind){ .tag = 0 }))))
                 {
                   nx_opt_m7_Kind _t282 = nx_m29_kind_back(c, toks_0, ctx_1, j_37, ((size_t)2ULL));
@@ -62101,7 +62123,7 @@ static bool nx_m29_needs_space(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line*
                   }
                   bool _t291 = _t290;
                   if (_t291) {
-                    _t291 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(j_37, ((size_t)3ULL), "self/fmt.nx:493"), (*ctx_1).toks_0.len, "self/fmt.nx:493")], (*toks_0).len, "self/fmt.nx:493")]).kind_0), &(((nx_m7_Kind){ .tag = 25 })));
+                    _t291 = nx_eq_m7_Kind(&(((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(j_37, ((size_t)3ULL), "self/fmt.nx:500"), (*ctx_1).toks_0.len, "self/fmt.nx:500")], (*toks_0).len, "self/fmt.nx:500")]).kind_0), &(((nx_m7_Kind){ .tag = 25 })));
                   }
                     if (_t291)
                     {
@@ -62128,7 +62150,7 @@ static bool nx_m29_needs_space(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line*
       bool next_is_effect_42 = false;
         if (has_next_8)
         {
-          nx_m7_Token* _t296 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_add_usize(i_2, ((size_t)1ULL), "self/fmt.nx:503"), (*ctx_1).toks_0.len, "self/fmt.nx:503")], (*toks_0).len, "self/fmt.nx:503")]);
+          nx_m7_Token* _t296 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(nx_add_usize(i_2, ((size_t)1ULL), "self/fmt.nx:510"), (*ctx_1).toks_0.len, "self/fmt.nx:510")], (*toks_0).len, "self/fmt.nx:510")]);
           bool _t297 = nx_m29_is_effect_name(c, _t296);
           next_is_effect_42 = _t297;
         }
@@ -62204,8 +62226,8 @@ static bool nx_m29_needs_space(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line*
       bool binary_43 = false;
         if (((i_2) >= (((size_t)2ULL))))
         {
-          nx_m7_Token* t2_44 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((i_2) - (((size_t)2ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:516")], (*toks_0).len, "self/fmt.nx:516")]);
-          size_t _t318 = (*ctx_1).toks_0.ptr[nx_idx(((i_2) - (((size_t)2ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:517")];
+          nx_m7_Token* t2_44 = &((*toks_0).ptr[nx_idx((*ctx_1).toks_0.ptr[nx_idx(((i_2) - (((size_t)2ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:523")], (*toks_0).len, "self/fmt.nx:523")]);
+          size_t _t318 = (*ctx_1).toks_0.ptr[nx_idx(((i_2) - (((size_t)2ULL))), (*ctx_1).toks_0.len, "self/fmt.nx:524")];
           bool _t319 = nx_m29_ends_operand_for_op(c, toks_0, _t318);
           bool _t320 = _t319;
           if (_t320) {
@@ -62240,7 +62262,7 @@ static bool nx_m29_needs_space(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line*
   }
   bool _t328 = _t327;
   if (_t328) {
-    size_t _t329 = (*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:522"), (*ctx_1).toks_0.len, "self/fmt.nx:522")];
+    size_t _t329 = (*ctx_1).toks_0.ptr[nx_idx(nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:529"), (*ctx_1).toks_0.len, "self/fmt.nx:529")];
     bool _t330 = nx_m29_ends_operand_for_op(c, toks_0, _t329);
     _t328 = (!(_t330));
   }
@@ -62279,7 +62301,7 @@ static bool nx_m29_needs_space(nx_ctx* c, nx_list_m7_Token* toks_0, nx_m29_Line*
     }
     if (nx_eq_m7_Kind(&(a_5), &(((nx_m7_Kind){ .tag = 31 }))))
     {
-      size_t _t339 = nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:531");
+      size_t _t339 = nx_sub_usize(i_2, ((size_t)1ULL), "self/fmt.nx:538");
       uint8_t _t340 = nx_m29_bar_role(c, toks_0, ctx_1, _t339);
       uint8_t role_45 = _t340;
         if (((role_45) == (((uint8_t)2ULL))))

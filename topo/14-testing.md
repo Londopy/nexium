@@ -14,8 +14,9 @@ ok    body temperature, approximately
 ok    median of odd, even and empty
 ok    errors
 ok    text
+ok    the median lies between the smallest and the largest
 
-5 passed, 0 failed
+6 passed, 0 failed
 ```
 
 ## `test` blocks
@@ -54,6 +55,31 @@ tedious to write by hand:
   first line that differs. `try snapshot(name, actual)` is the same as an
   error union. Snapshot tests are how a program's whole output is kept
   honest with one line.
+
+## Properties
+
+An example checks one input; a property states a rule and lets the
+machine look for an input that breaks it. `testing.check(T, gen, holds)`
+asks `gen` for 100 values and fails the test when `holds` is false of one:
+
+```nexium
+test "the median lies between the smallest and the largest" {
+    testing.check(List(i32), readings, |xs: *List(i32)| -> bool {
+```
+
+`gen` draws from a `testing.Rng`: `r.int(lo, hi)`, `r.size(max)` for a
+length, `r.pick(n)`, `r.flip()`, `r.float()`, `r.bytes(max)`,
+`r.ascii(max)`, and `r.text(max)` for UTF-8 with accents, CJK and emoji in
+it. The Rng keeps every choice it made, and that makes a failure worth
+reading: the failing case is made again with its choices cut short and
+lowered for as long as it still fails, so the report is about the
+smallest case found, a list of two zeros rather than of fifteen random
+numbers, with no shrinking code of your own. `check_show` writes that case
+with a function you give it. The failure names its seed, and
+`NX_SEED=<seed> nx test` runs the same cases again (`NX_CASES` says how
+many). `testing.search` is the same driver returning what it found instead
+of failing the test, and the compiler's fuzzer, `tests/fuzz.nx`, runs on
+it: what it finds is shrunk before it is saved.
 
 ## The command
 

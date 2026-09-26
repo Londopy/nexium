@@ -53,6 +53,22 @@ test "text" {
     testing.expect_lines("a\nb\n", "a\nb\n")
 }
 
+/// Up to nine readings between -40 and 40, for the property below.
+fn readings(r: *mut testing.Rng) -> List(i32) {
+    var out = List(i32).new()
+    for _ in 0..r.size(9) { out.append(r.int(-40, 40) as i32) }
+    return out
+}
+
+test "the median lies between the smallest and the largest" {
+    testing.check(List(i32), readings, |xs: *List(i32)| -> bool {
+        var sorted = xs.clone()
+        sorted[..].sort()
+        let m = median(sorted[..]) orelse return true
+        return m >= sorted[0] and m <= sorted[sorted.len - 1]
+    })
+}
+
 comptime test "runs while compiling" {
     expect_eq(median([5][..]) orelse 0, 5)
 }
