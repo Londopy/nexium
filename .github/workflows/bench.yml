@@ -4,7 +4,8 @@
 # last run fails the job (a slower runner does not). A protected main
 # refuses the workflow's push: the numbers then live on the branch
 # `numbers`, the last run there is the baseline, and the site reads the
-# page from there.
+# page from there. A patch release's tag, on release-X.Y, publishes its
+# numbers the same way, unless its bench suite is not main's.
 name: Bench
 
 on:
@@ -51,8 +52,22 @@ jobs:
           python bench/run.py --runs 7 --nx nx-out/bootstrap/nx2 --check nx-out/baseline.json --out bench/results/latest.json --page docs/numbers.md
       - name: Commit the numbers
         run: |
+          # carried across the switch to main: a run from a tag off main (a
+          # patch release's, on release-X.Y) has older copies of these files
+          # than main does, and git would not check main out over them
+          keep="$RUNNER_TEMP/numbers"
+          mkdir -p "$keep"
+          cp bench/results/latest.json docs/numbers.md "$keep/"
           git fetch --depth=1 origin main
-          git checkout -B main origin/main
+          # a run whose bench suite is not main's measured other programs,
+          # so its numbers stay off the page
+          if ! git diff --quiet HEAD origin/main -- bench ':(exclude)bench/results'; then
+            echo "::notice::this run's bench suite is not main's, so its numbers are not published"
+            exit 0
+          fi
+          git checkout -f -B main origin/main
+          cp "$keep/latest.json" bench/results/latest.json
+          cp "$keep/numbers.md" docs/numbers.md
           git add bench/results/latest.json docs/numbers.md
           if ! git -c user.name=Londopy -c user.email=Londopy@users.noreply.github.com commit -q -m "bench: the numbers for $(date -u +%Y-%m-%d)"; then
             echo "the numbers did not change"
