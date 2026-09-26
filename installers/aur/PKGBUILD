@@ -1,7 +1,7 @@
 # Maintainer: Londopy <https://github.com/Londopy>
 # Written by scripts/packaging.py at each release of https://github.com/Londopy/nexium
 pkgname=nexium-bin
-pkgver=1.4.0
+pkgver=1.4.1
 pkgrel=1
 pkgdesc="The Nexium language: a compiler that emits C and ships libraries, packages and tools"
 arch=('x86_64' 'aarch64')
@@ -12,10 +12,10 @@ optdepends=('zig: the C compiler nx uses by default'
             'gcc: a C compiler nx falls back to when there is no zig')
 provides=('nexium')
 conflicts=('nexium')
-source_x86_64=("nx-v1.4.0-x86_64-unknown-linux-gnu.tar.gz::https://github.com/Londopy/nexium/releases/download/v1.4.0/nx-v1.4.0-x86_64-unknown-linux-gnu.tar.gz")
-source_aarch64=("nx-v1.4.0-aarch64-unknown-linux-gnu.tar.gz::https://github.com/Londopy/nexium/releases/download/v1.4.0/nx-v1.4.0-aarch64-unknown-linux-gnu.tar.gz")
-sha256sums_x86_64=('d2bee5ed476ae9aa84f2061185d81c2e76c6f7c0cda6303bfff110ff1db30dab')
-sha256sums_aarch64=('65354d5aede09b8542e48c445c420cc1fc546574f7568aaaaebab827f26a2647')
+source_x86_64=("nx-v1.4.1-x86_64-unknown-linux-gnu.tar.gz::https://github.com/Londopy/nexium/releases/download/v1.4.1/nx-v1.4.1-x86_64-unknown-linux-gnu.tar.gz")
+source_aarch64=("nx-v1.4.1-aarch64-unknown-linux-gnu.tar.gz::https://github.com/Londopy/nexium/releases/download/v1.4.1/nx-v1.4.1-aarch64-unknown-linux-gnu.tar.gz")
+sha256sums_x86_64=('30cede4f75a67d8cc948aed0b7ac4b6fe6ecbccae669465aa2d66df653e4f4e9')
+sha256sums_aarch64=('41d1a15d8e8565969f8763e72f5d6d6990dd8d88faabe9ec0d2a0abfa8d8fdaf')
 
 package() {
   install -Dm755 nx "$pkgdir/usr/bin/nx"
