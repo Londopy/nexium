@@ -1,5 +1,5 @@
-// std.process: run programs and capture what they print, written in Nexium
-// over the `process.*` primitives.
+// std.process: run programs and capture what they print, or talk to them
+// while they run, written in Nexium over the `process.*` primitives.
 //
 // `import std.process` then:
 //
@@ -14,6 +14,27 @@
 // error. The input is written as the child takes it while its output is
 // read as it comes, so a program that writes before it reads its input,
 // however much, finishes as it would in a terminal.
+//
+// A program can also run alongside, talked to while it runs:
+//
+//     var py = try process.start(["python", "-i", "-q"])
+//     try py.stdin.write_line("print(6 * 7)")
+//     let answer = try py.stdout.read_line()         // "42"
+//     let status = try py.wait()                     // closes its input first
+//
+//     var build = try process.start_with(["make"], process.Start{ .stderr = process.Stdio.Merge })
+//     while true {
+//         let line = (try build.stdout.read_line()) orelse break
+//         println("{}", .{line})
+//     }
+//
+// Output a program writes while this one waits for something else (its
+// input to go in, the other stream, its end) is kept until read, so it
+// never stalls on a full pipe. `set_timeout` bounds every wait
+// (`error.Timeout`); `kill` and `terminate` end it early. Exit codes and
+// signals have names (`EXIT_USAGE`, `SIGTERM`, `exit_name`,
+// `signal_name`), and `trap_signals` lets this program catch Ctrl-C and
+// SIGTERM to finish cleanly (`caught`, `wait_signal`).
 
 /// What a finished program left behind.
 pub struct Output {
@@ -57,6 +78,374 @@ pub fn shell(command: []u8) -> !Output {
     }
     let argv = ["sh", "-c", command]
     return run(argv[..])
+}
+
+// ------------------------------------------------------ exit codes, signals
+
+pub const EXIT_SUCCESS: i32 = 0
+pub const EXIT_FAILURE: i32 = 1
+/// The command was used wrongly: bad arguments or options (sysexits' EX_USAGE).
+pub const EXIT_USAGE: i32 = 64
+/// The input data was wrong.
+pub const EXIT_DATA_ERROR: i32 = 65
+/// An input file was missing or unreadable.
+pub const EXIT_NO_INPUT: i32 = 66
+pub const EXIT_NO_USER: i32 = 67
+pub const EXIT_NO_HOST: i32 = 68
+/// A service it needs is unavailable.
+pub const EXIT_UNAVAILABLE: i32 = 69
+/// An internal error: a bug.
+pub const EXIT_SOFTWARE: i32 = 70
+pub const EXIT_OS_ERROR: i32 = 71
+pub const EXIT_OS_FILE: i32 = 72
+/// An output file could not be created.
+pub const EXIT_CANNOT_CREATE: i32 = 73
+pub const EXIT_IO_ERROR: i32 = 74
+/// A failure that may pass: try again later.
+pub const EXIT_TEMP_FAILURE: i32 = 75
+pub const EXIT_PROTOCOL: i32 = 76
+pub const EXIT_NO_PERMISSION: i32 = 77
+pub const EXIT_CONFIG: i32 = 78
+/// The shell found the program but could not run it.
+pub const EXIT_CANNOT_RUN: i32 = 126
+/// The shell did not find the program.
+pub const EXIT_NOT_FOUND: i32 = 127
+
+const EXIT_CODES: [19]i32 = [0, 1, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 126, 127]
+const EXIT_NAMES = ["success", "failure", "usage", "data error", "no input", "no user", "no host", "unavailable", "software", "os error", "os file", "cannot create", "io error", "temporary failure", "protocol", "no permission", "config", "cannot run", "not found"]
+
+/// What an exit code says by convention (sysexits and the shells): "usage"
+/// for 64, "not found" for 127; empty for a code with no common meaning.
+pub fn exit_name(code: i32) -> []u8 {
+    for c, i in EXIT_CODES {
+        if c == code { return EXIT_NAMES[i] }
+    }
+    return ""
+}
+
+// the signals with the same number on Linux, macOS and the BSDs
+pub const SIGHUP: i32 = 1
+pub const SIGINT: i32 = 2
+pub const SIGQUIT: i32 = 3
+pub const SIGILL: i32 = 4
+pub const SIGTRAP: i32 = 5
+pub const SIGABRT: i32 = 6
+pub const SIGFPE: i32 = 8
+pub const SIGKILL: i32 = 9
+pub const SIGSEGV: i32 = 11
+pub const SIGPIPE: i32 = 13
+pub const SIGALRM: i32 = 14
+pub const SIGTERM: i32 = 15
+/// Windows' Ctrl-Break, as `caught` reports it.
+pub const SIGBREAK: i32 = 21
+
+const SIGNAL_NUMBERS: [12]i32 = [1, 2, 3, 4, 5, 6, 8, 9, 11, 13, 14, 15]
+const SIGNAL_NAMES = ["SIGHUP", "SIGINT", "SIGQUIT", "SIGILL", "SIGTRAP", "SIGABRT", "SIGFPE", "SIGKILL", "SIGSEGV", "SIGPIPE", "SIGALRM", "SIGTERM"]
+
+/// "SIGTERM" for 15; empty for a number without a portable name.
+pub fn signal_name(sig: i32) -> []u8 {
+    for s, i in SIGNAL_NUMBERS {
+        if s == sig { return SIGNAL_NAMES[i] }
+    }
+    if sig == SIGBREAK and @target().0 == "windows" { return "SIGBREAK" }
+    return ""
+}
+
+/// How a program ended.
+pub struct Status {
+    /// Its exit code; for a signal, 128 + its number, as shells report it.
+    code: i32
+    /// The signal that ended it, 0 when it exited by itself.
+    signal: i32
+}
+
+impl Status {
+    pub fn ok(self: *Self) -> bool {
+        return self.code == 0 and self.signal == 0
+    }
+
+    /// `exit 0 (success)`, `exit 3`, `signal 15 (SIGTERM)`.
+    pub fn text(self: *Self) -> String {
+        if self.signal != 0 {
+            let s = signal_name(self.signal)
+            if s.len == 0 { return format("signal {}", .{self.signal}) }
+            return format("signal {} ({})", .{self.signal, s})
+        }
+        let name = exit_name(self.code)
+        if name.len == 0 { return format("exit {}", .{self.code}) }
+        return format("exit {} ({})", .{self.code, name})
+    }
+}
+
+fn status_of(raw: i64) -> Status {
+    return Status{ .code = @truncate(i32, raw), .signal = @truncate(i32, raw >> 32) }
+}
+
+// --------------------------------------------------- programs run alongside
+
+/// Where a started program's standard stream goes.
+pub enum Stdio {
+    /// A pipe to this program, through the `Child`.
+    Pipe,
+    /// This program's own: the terminal, or wherever its stream goes.
+    Inherit,
+    /// Nowhere: no input, and output thrown away.
+    Discard,
+    /// For stderr: into stdout, in the order the program wrote them.
+    Merge,
+}
+
+fn stdio_bits(s: Stdio) -> i64 {
+    return match s {
+        .Inherit => 0,
+        .Pipe => 1,
+        .Discard => 2,
+        .Merge => 3,
+    }
+}
+
+/// How to start a program: its working directory (empty: this program's)
+/// and where each of its streams goes.
+pub struct Start {
+    cwd: []u8 = ""
+    stdin: Stdio = Stdio.Pipe
+    stdout: Stdio = Stdio.Pipe
+    stderr: Stdio = Stdio.Inherit
+}
+
+const CHUNK: usize = 65536
+
+// a timeout as the runtime takes it: below 0 waits for ever
+fn wait_ms(ms: i64) -> i64 {
+    return if ms > 0 { ms } else { -1 }
+}
+
+/// A running program's stdout or stderr, read as it comes.
+pub struct PipeReader {
+    child: i64
+    stream: i64
+    piped: bool
+    buf: String
+    pos: usize
+    eof: bool
+    /// How long a read waits for output, in ms, before `error.Timeout`; 0
+    /// waits for ever.
+    timeout_ms: i64 = 0
+}
+
+impl PipeReader {
+    // Pull in what the program wrote next; false at the end of its output.
+    fn fill(self: *mut Self) -> !bool {
+        if self.eof { return false }
+        if self.pos > 0 {
+            let rest = String.from(self.buf[self.pos..self.buf.len])
+            self.buf = rest
+            self.pos = 0
+        }
+        let chunk = try process.child_read(self.child, self.stream, CHUNK, wait_ms(self.timeout_ms))
+        if chunk.len == 0 {
+            self.eof = true
+            return false
+        }
+        self.buf.append(chunk)
+        return true
+    }
+
+    /// The next line without its `\n` (or `\r\n`), waiting for it; null at
+    /// the end of the output. After a timeout, what came of the line so far
+    /// is kept for the next call.
+    pub fn read_line(self: *mut Self) -> !?String {
+        while true {
+            var i = self.pos
+            while i < self.buf.len and self.buf[i] != '\n' { i += 1 }
+            if i < self.buf.len {
+                var end = i
+                if end > self.pos and self.buf[end - 1] == '\r' { end -= 1 }
+                let line = String.from(self.buf[self.pos..end])
+                self.pos = i + 1
+                return line
+            }
+            if !(try self.fill()) {
+                if self.pos < self.buf.len {
+                    var end = self.buf.len
+                    if self.buf[end - 1] == '\r' { end -= 1 }
+                    let line = String.from(self.buf[self.pos..end])
+                    self.pos = self.buf.len
+                    return line
+                }
+                return null
+            }
+        }
+    }
+
+    /// What the program has written and was not read yet, up to `n` bytes,
+    /// waiting for some; empty at the end of the output.
+    pub fn read(self: *mut Self, n: usize) -> !String {
+        if self.pos >= self.buf.len {
+            if !(try self.fill()) { return String.new() }
+        }
+        var end = self.pos + n
+        if end > self.buf.len { end = self.buf.len }
+        let out = String.from(self.buf[self.pos..end])
+        self.pos = end
+        return out
+    }
+
+    /// Everything to the end of the output: until the program closes it,
+    /// usually by ending.
+    pub fn read_all(self: *mut Self) -> !String {
+        while (try self.fill()) { }
+        let out = String.from(self.buf[self.pos..self.buf.len])
+        self.pos = self.buf.len
+        return out
+    }
+}
+
+/// A running program's stdin.
+pub struct PipeWriter {
+    child: i64
+    /// How long a write waits for the program to take it, in ms, before
+    /// `error.Timeout` (what was not taken is dropped); 0 waits for ever.
+    timeout_ms: i64 = 0
+}
+
+impl PipeWriter {
+    /// Write all of `data` as the program takes it. `error.IoError` once it
+    /// no longer reads (it closed its input or ended).
+    pub fn write(self: *mut Self, data: []u8) -> !void {
+        return process.child_write(self.child, data, wait_ms(self.timeout_ms))
+    }
+
+    /// `line` and a `\n`, in one write.
+    pub fn write_line(self: *mut Self, line: []u8) -> !void {
+        var s = String.from(line)
+        s.push_byte('\n')
+        return self.write(s)
+    }
+
+    /// End the input: the program reads to its end.
+    pub fn close(self: *mut Self) {
+        process.child_close_input(self.child)
+    }
+}
+
+/// A program running alongside this one. Reading or writing a stream that
+/// is not a pipe fails with `error.IoError`.
+pub struct Child {
+    id: i64
+    /// Its input (a pipe unless started otherwise).
+    stdin: PipeWriter
+    /// Its output (a pipe unless started otherwise).
+    stdout: PipeReader
+    /// Its errors, when started with `stderr = Stdio.Pipe`.
+    stderr: PipeReader
+}
+
+impl Child {
+    /// The operating system's number for it.
+    pub fn pid(self: *Self) -> i64 {
+        return process.child_pid(self.id)
+    }
+
+    /// Every read and write waits at most `ms`, then fails with
+    /// `error.Timeout`; 0 waits for ever (the default).
+    pub fn set_timeout(self: *mut Self, ms: i64) {
+        self.stdin.timeout_ms = ms
+        self.stdout.timeout_ms = ms
+        self.stderr.timeout_ms = ms
+    }
+
+    /// Close its input and wait for it to end. What it writes meanwhile is
+    /// kept for the readers.
+    pub fn wait(self: *mut Self) -> !Status {
+        self.stdin.close()
+        let raw = try process.child_wait(self.id, -1)
+        return status_of(raw)
+    }
+
+    /// How it ended, waiting at most `ms` for it (0: not at all); null while
+    /// it runs. Its input stays open.
+    pub fn wait_for(self: *mut Self, ms: i64) -> !?Status {
+        let raw = process.child_wait(self.id, ms) catch |e| {
+            if e == error.Timeout { return null }
+            return e
+        }
+        return status_of(raw)
+    }
+
+    /// Send it a signal (`SIGTERM`, `SIGINT` and the others). On Windows,
+    /// which has none, every signal ends it at once, with exit code 128 +
+    /// the signal, and `wait` reports the signal. A program that already
+    /// ended is left alone.
+    pub fn signal(self: *mut Self, sig: i32) -> !void {
+        return process.child_signal(self.id, sig)
+    }
+
+    /// Ask it to end: SIGTERM.
+    pub fn terminate(self: *mut Self) -> !void {
+        return self.signal(SIGTERM)
+    }
+
+    /// End it at once: SIGKILL.
+    pub fn kill(self: *mut Self) -> !void {
+        return self.signal(SIGKILL)
+    }
+
+    /// Close its input, read all it writes and wait for it: what `run`
+    /// gives, for a program already talked to.
+    pub fn finish(self: *mut Self) -> !Output {
+        let status = try self.wait()
+        var out = String.new()
+        var err = String.new()
+        if self.stdout.piped { out = try self.stdout.read_all() }
+        if self.stderr.piped { err = try self.stderr.read_all() }
+        return Output{ .code = status.code, .stdout = out, .stderr = err }
+    }
+
+    /// Let it go: its pipes close and what was not read is dropped. A
+    /// program still running goes on by itself.
+    pub fn close(self: *mut Self) {
+        process.child_close(self.id)
+    }
+}
+
+/// Start a program alongside this one, with its input and output as pipes
+/// to this one and its errors where this program's go. `error.NotFound`
+/// when there is no such program.
+pub fn start(argv: [][]u8) -> !Child {
+    return start_with(argv, Start{ })
+}
+
+/// Start a program as `how` says.
+pub fn start_with(argv: [][]u8, how: Start) -> !Child {
+    let flags = stdio_bits(how.stdin) | (stdio_bits(how.stdout) << 2) | (stdio_bits(how.stderr) << 4)
+    let id = try process.spawn(argv, how.cwd, flags)
+    return Child{
+        .id = id,
+        .stdin = PipeWriter{ .child = id },
+        .stdout = PipeReader{ .child = id, .stream = 1, .piped = stdio_bits(how.stdout) == 1, .buf = String.new(), .pos = 0, .eof = false },
+        .stderr = PipeReader{ .child = id, .stream = 2, .piped = stdio_bits(how.stderr) == 1, .buf = String.new(), .pos = 0, .eof = false },
+    }
+}
+
+/// Keep SIGINT (Ctrl-C), SIGTERM and SIGHUP from ending this program: each
+/// is queued instead, for `caught` and `wait_signal`, so the program can
+/// finish what it was doing. On Windows: Ctrl-C (`SIGINT`), Ctrl-Break
+/// (`SIGBREAK`), the console closing (`SIGHUP`) and logoff or shutdown
+/// (`SIGTERM`); after those three the system ends the program within
+/// seconds.
+pub fn trap_signals() {
+    process.trap_signals()
+}
+
+/// The next signal caught and not taken yet, or 0; never waits.
+pub fn caught() -> i32 {
+    return process.next_signal(0)
+}
+
+/// Wait for a caught signal; 0 when `ms` pass first (0: waits for ever).
+pub fn wait_signal(ms: i64) -> i32 {
+    return process.next_signal(wait_ms(ms))
 }
 
 // ------------------------------------------------------------------ tests
@@ -122,4 +511,215 @@ test "a program that writes before it reads its input cannot stall the caller" {
     let r = try run_with(sh[..], Options{ .stdin = big, .cwd = "" })
     expect(r.ok())
     expect_eq(r.stdout.len, 3000000)
+}
+
+// Programs for the tests below, the same on Windows (cmd, ping) and
+// elsewhere (sh, sleep).
+
+fn on_windows() -> bool {
+    return @target().0 == "windows"
+}
+
+// answers each line as it reads it
+fn talker() -> !Child {
+    if on_windows() {
+        let argv = ["cmd", "/V:ON", "/C", "set /p A=&(echo got !A!)&set /p B=&(echo got !B!)"]
+        return start(argv[..])
+    }
+    let argv = ["sh", "-c", "read a; echo got $a; read b; echo got $b"]
+    return start(argv[..])
+}
+
+// "first", a second's pause, "second"
+fn slow_printer() -> !Child {
+    if on_windows() {
+        let argv = ["cmd", "/C", "echo first& ping -n 2 127.0.0.1 >nul& echo second"]
+        return start(argv[..])
+    }
+    let argv = ["sh", "-c", "echo first; sleep 1; echo second"]
+    return start(argv[..])
+}
+
+// runs half a minute unless ended
+fn sleeper() -> !Child {
+    let how = Start{ .stdin = Stdio.Discard, .stdout = Stdio.Discard }
+    if on_windows() {
+        let argv = ["ping", "-n", "30", "127.0.0.1"]
+        return start_with(argv[..], how)
+    }
+    let argv = ["sleep", "30"]
+    return start_with(argv[..], how)
+}
+
+// "out" on stdout, "err" on stderr
+fn two_streams(how: Start) -> !Child {
+    if on_windows() {
+        let argv = ["cmd", "/C", "echo out&(echo err)1>&2"]
+        return start_with(argv[..], how)
+    }
+    let argv = ["sh", "-c", "echo out; echo err 1>&2"]
+    return start_with(argv[..], how)
+}
+
+// exits with 3 at once, reading nothing
+fn quitter() -> !Child {
+    if on_windows() {
+        let argv = ["cmd", "/C", "exit 3"]
+        return start(argv[..])
+    }
+    let argv = ["sh", "-c", "exit 3"]
+    return start(argv[..])
+}
+
+fn starts(argv: [][]u8) -> !bool {
+    var c = try start(argv)
+    c.close()
+    return true
+}
+
+test "a conversation with a running program" {
+    var c = try talker()
+    c.set_timeout(10000)
+    try c.stdin.write_line("one")
+    expect_eq((try c.stdout.read_line()).?, "got one")
+    try c.stdin.write_line("two")
+    expect_eq((try c.stdout.read_line()).?, "got two")
+    let st = try c.wait()
+    expect(st.ok())
+    expect(try c.stdout.read_line() == null)
+    c.close()
+}
+
+test "output as it comes, and a timeout" {
+    var c = try slow_printer()
+    c.set_timeout(10000)
+    expect_eq((try c.stdout.read_line()).?, "first")
+    c.stdout.timeout_ms = 100
+    var timed_out = false
+    _ = c.stdout.read_line() catch |e| {
+        timed_out = e == error.Timeout
+        null
+    }
+    expect(timed_out)
+    c.stdout.timeout_ms = 10000
+    expect_eq((try c.stdout.read_line()).?, "second")
+    expect(try c.stdout.read_line() == null)
+    expect((try c.wait()).ok())
+    c.close()
+}
+
+test "ending a program that runs on" {
+    var c = try sleeper()
+    expect(c.pid() > 0)
+    expect(try c.wait_for(0) == null)
+    expect(try c.wait_for(50) == null)
+    try c.kill()
+    let st = try c.wait()
+    expect(!st.ok())
+    expect_eq(st.signal, SIGKILL)
+    expect_eq(st.code, 128 + SIGKILL)
+    expect_eq(st.text(), "signal 9 (SIGKILL)")
+    // one that ended is left alone
+    try c.kill()
+    c.close()
+}
+
+test "stderr apart, and merged into stdout" {
+    var apart = try two_streams(Start{ .stderr = Stdio.Pipe })
+    let out = try apart.finish()
+    expect(out.ok())
+    expect_eq(out.text(), "out")
+    expect_eq(out.stderr.trim(), "err")
+    apart.close()
+
+    var merged = try two_streams(Start{ .stderr = Stdio.Merge })
+    let both = try merged.finish()
+    expect(both.stdout.find("out") != null)
+    expect(both.stdout.find("err") != null)
+    expect_eq(both.stderr.len, 0)
+    merged.close()
+}
+
+test "a program that does not exist" {
+    let nope = ["definitely-not-a-program-nx"]
+    var missing = false
+    _ = starts(nope[..]) catch |e| {
+        missing = e == error.NotFound
+        false
+    }
+    expect(missing)
+}
+
+test "exit codes and signals by name" {
+    expect_eq(exit_name(EXIT_USAGE), "usage")
+    expect_eq(exit_name(127), "not found")
+    expect_eq(exit_name(3), "")
+    expect_eq(signal_name(SIGTERM), "SIGTERM")
+    expect_eq(signal_name(40), "")
+    let usage = Status{ .code = 64, .signal = 0 }
+    expect_eq(usage.text(), "exit 64 (usage)")
+
+    var c = try quitter()
+    let st = try c.wait()
+    expect_eq(st.code, 3)
+    expect_eq(st.signal, 0)
+    expect(!st.ok())
+    expect_eq(st.text(), "exit 3")
+    c.close()
+}
+
+test "writing to a program that no longer reads" {
+    // it ends at once, and a megabyte is more than a pipe holds
+    var c = try quitter()
+    var big = String.new()
+    for _ in 0..1000000 {
+        big.push_byte('x')
+    }
+    var refused = false
+    c.stdin.write(big) catch |e| {
+        refused = e == error.IoError
+    }
+    expect(refused)
+    expect_eq((try c.wait()).code, 3)
+    c.close()
+}
+
+test "a program written to while it writes does not stall" {
+    var big = String.new()
+    for _ in 0..3000000 {
+        big.push_byte('i')
+    }
+    var c = try big_talker()
+    c.set_timeout(60000)
+    try c.stdin.write(big)
+    let out = try c.finish()
+    expect(out.ok())
+    expect_eq(out.stdout.len, 3000000)
+    c.close()
+}
+
+// three megabytes out before it reads its three megabytes in
+fn big_talker() -> !Child {
+    if on_windows() {
+        let argv = ["powershell", "-NoProfile", "-NonInteractive", "-Command", "[Console]::Out.Write('x' * 3000000); [Console]::Out.Flush(); $null = [Console]::In.ReadToEnd()"]
+        return start(argv[..])
+    }
+    let argv = ["sh", "-c", "head -c 3000000 /dev/zero; cat > /dev/null"]
+    return start(argv[..])
+}
+
+test "a caught signal" {
+    trap_signals()
+    expect_eq(caught(), 0)
+    expect_eq(wait_signal(10), 0)
+    if on_windows() {
+        // a console event would reach every program on the console
+        return
+    }
+    // sh's parent is this program
+    let argv = ["sh", "-c", "kill -TERM $PPID"]
+    let r = try run(argv[..])
+    expect(r.ok())
+    expect_eq(wait_signal(5000), SIGTERM)
+    expect_eq(caught(), 0)
 }

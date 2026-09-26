@@ -28,7 +28,7 @@ by `scripts/std_docs.py` from the doc comments.
 | [`std.net`](#stdnet) | TCP and UDP with addresses, written in Nexium over the `net.*` |
 | [`std.num`](#stdnum) | integer utilities, written in Nexium. |
 | [`std.path`](#stdpath) | paths as text, written in Nexium: joining, splitting, comparing |
-| [`std.process`](#stdprocess) | run programs and capture what they print, written in Nexium |
+| [`std.process`](#stdprocess) | run programs and capture what they print, or talk to them |
 | [`std.regex`](#stdregex) | regular expressions without backtracking, written in Nexium. |
 | [`std.set`](#stdset) | a set of values, written in Nexium over `Map(T, bool)`: its |
 | [`std.sort`](#stdsort) | sorting by a comparison of your own, stable sorting, and |
@@ -436,9 +436,9 @@ std.path: paths as text, written in Nexium: joining, splitting, comparing and no
 
 ## std.process
 
-std.process: run programs and capture what they print, written in Nexium over the `process.*` primitives. `import std.process` then: let out = try process.run(["git", "status", "--short"]) if out.ok() { print("{}", .{out.stdout}) } let r = try process.run_with(["sort"], process.Options{ .stdin = "b\na\n", .cwd = "" }) let sh = try process.shell("echo hi")          // cmd /C on Windows, sh -c elsewhere The child inherits the environment. `error.IoError` when the program cannot be started; a non-zero exit is reported in `code`, not as an error. Output is read after stdin is fully written, so a program that produces more than a megabyte of output before reading its input can stall; feed such programs through files.
+std.process: run programs and capture what they print, or talk to them while they run, written in Nexium over the `process.*` primitives. `import std.process` then: let out = try process.run(["git", "status", "--short"]) if out.ok() { print("{}", .{out.stdout}) } let r = try process.run_with(["sort"], process.Options{ .stdin = "b\na\n", .cwd = "" }) let sh = try process.shell("echo hi")          // cmd /C on Windows, sh -c elsewhere The child inherits the environment. `error.IoError` when the program cannot be started; a non-zero exit is reported in `code`, not as an error. The input is written as the child takes it while its output is read as it comes, so a program that writes before it reads its input, however much, finishes as it would in a terminal. A program can also run alongside, talked to while it runs: var py = try process.start(["python", "-i", "-q"]) try py.stdin.write_line("print(6 * 7)") let answer = try py.stdout.read_line()         // "42" let status = try py.wait()                     // closes its input first var build = try process.start_with(["make"], process.Start{ .stderr = process.Stdio.Merge }) while true { let line = (try build.stdout.read_line()) orelse break println("{}", .{line}) } Output a program writes while this one waits for something else (its input to go in, the other stream, its end) is kept until read, so it never stalls on a full pipe. `set_timeout` bounds every wait (`error.Timeout`); `kill` and `terminate` end it early. Exit codes and signals have names (`EXIT_USAGE`, `SIGTERM`, `exit_name`, `signal_name`), and `trap_signals` lets this program catch Ctrl-C and SIGTERM to finish cleanly (`caught`, `wait_signal`).
 
-Types: `Output`, `Options`
+Types: `Output`, `Options`, `Status`, `Stdio`, `Start`, `PipeReader`, `PipeWriter`, `Child`
 
 | function | what it does |
 | --- | --- |
@@ -447,6 +447,30 @@ Types: `Output`, `Options`
 | `run_with(argv: [][]u8, opts: Options) -> !Output` |  |
 | `run(argv: [][]u8) -> !Output` | Run and capture, inheriting the working directory, with no stdin. |
 | `shell(command: []u8) -> !Output` | Run a command line through the platform shell. |
+| `exit_name(code: i32) -> []u8` | What an exit code says by convention (sysexits and the shells): "usage" for 64, "not found" for 127; empty for a code with no common meaning. |
+| `signal_name(sig: i32) -> []u8` | "SIGTERM" for 15; empty for a number without a portable name. |
+| `(method) ok(self: *Self) -> bool` |  |
+| `(method) text(self: *Self) -> String` | `exit 0 (success)`, `exit 3`, `signal 15 (SIGTERM)`. |
+| `(method) read_line(self: *mut Self) -> !?String` | The next line without its `\n` (or `\r\n`), waiting for it; null at the end of the output. After a timeout, what came of the line so far is kept for the next call. |
+| `(method) read(self: *mut Self, n: usize) -> !String` | What the program has written and was not read yet, up to `n` bytes, waiting for some; empty at the end of the output. |
+| `(method) read_all(self: *mut Self) -> !String` | Everything to the end of the output: until the program closes it, usually by ending. |
+| `(method) write(self: *mut Self, data: []u8) -> !void` | Write all of `data` as the program takes it. `error.IoError` once it no longer reads (it closed its input or ended). |
+| `(method) write_line(self: *mut Self, line: []u8) -> !void` | `line` and a `\n`, in one write. |
+| `(method) close(self: *mut Self)` | End the input: the program reads to its end. |
+| `(method) pid(self: *Self) -> i64` | The operating system's number for it. |
+| `(method) set_timeout(self: *mut Self, ms: i64)` | Every read and write waits at most `ms`, then fails with `error.Timeout`; 0 waits for ever (the default). |
+| `(method) wait(self: *mut Self) -> !Status` | Close its input and wait for it to end. What it writes meanwhile is kept for the readers. |
+| `(method) wait_for(self: *mut Self, ms: i64) -> !?Status` | How it ended, waiting at most `ms` for it (0: not at all); null while it runs. Its input stays open. |
+| `(method) signal(self: *mut Self, sig: i32) -> !void` | Send it a signal (`SIGTERM`, `SIGINT` and the others). On Windows, which has none, every signal ends it at once, with exit code 128 + the signal, and `wait` reports the signal. A program that already ended is left alone. |
+| `(method) terminate(self: *mut Self) -> !void` | Ask it to end: SIGTERM. |
+| `(method) kill(self: *mut Self) -> !void` | End it at once: SIGKILL. |
+| `(method) finish(self: *mut Self) -> !Output` | Close its input, read all it writes and wait for it: what `run` gives, for a program already talked to. |
+| `(method) close(self: *mut Self)` | Let it go: its pipes close and what was not read is dropped. A program still running goes on by itself. |
+| `start(argv: [][]u8) -> !Child` | Start a program alongside this one, with its input and output as pipes to this one and its errors where this program's go. `error.NotFound` when there is no such program. |
+| `start_with(argv: [][]u8, how: Start) -> !Child` | Start a program as `how` says. |
+| `trap_signals()` | Keep SIGINT (Ctrl-C), SIGTERM and SIGHUP from ending this program: each is queued instead, for `caught` and `wait_signal`, so the program can finish what it was doing. On Windows: Ctrl-C (`SIGINT`), Ctrl-Break (`SIGBREAK`), the console closing (`SIGHUP`) and logoff or shutdown (`SIGTERM`); after those three the system ends the program within seconds. |
+| `caught() -> i32` | The next signal caught and not taken yet, or 0; never waits. |
+| `wait_signal(ms: i64) -> i32` | Wait for a caught signal; 0 when `ms` pass first (0: waits for ever). |
 
 ## std.regex
 
@@ -788,6 +812,7 @@ Types: `Message`, `Decoder`, `Socket(T){`
 | `socket(comptime T: type, tls: ?*mut T) -> Socket(T)` | A socket to open, after `header` has added what the handshake should carry (Authorization, Origin, Sec-WebSocket-Protocol). `tls` may be null for `ws://`. |
 | `(method) header(self: *mut Self, name: []u8, value: []u8)` | A header for the handshake to carry. |
 | `(method) open(self: *mut Self, url: []u8, timeout_ms: i64) -> !void` | Connects to a `ws://` or `wss://` URL and completes the handshake; `wss://` without a TLS layer is `error.Unsupported`, a URL of another scheme and an answer that is not a WebSocket's are `error.InvalidInput` (`problem` says how). |
+| `(method) set_timeout(self: *mut Self, ms: i64)` | How long each wait for data takes from now on, in ms (0: no limit): `recv` is `error.Timeout` past it, and can be called again. |
 | `(method) is_open(self: *Self) -> bool` | Whether messages can still be sent. |
 | `(method) send_text(self: *mut Self, data: []u8) -> !void` | Sends a text message; `data` should be UTF-8. |
 | `(method) send_binary(self: *mut Self, data: []u8) -> !void` | Sends a binary message. |

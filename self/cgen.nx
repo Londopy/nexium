@@ -4245,6 +4245,62 @@ impl Gen {
             self.line(format("{} {}; {{ int _code = 0; if (nx_run_capture(c, {}.ptr, {}.len, {}, {}, &_code)) {{ {}.err = 0; {}.val = _code; }} else {}.err = {}u; }}", .{cn, t, argv, argv, input, cwd, t, t, t, io})[..])
             return t
         }
+        if name == "ChildSpawn" {
+            let argv = self.simple(args[0])
+            let cwd = self.simple(args[1])
+            let flags = self.simple(args[2])
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            let errs = self.net_errs()
+            self.line(format("{} {}; {{ int64_t _h = 0; int32_t _r = nx_child_spawn(c, {}.ptr, {}.len, {}, {}, &_h); if (_r == 0) {{ {}.err = 0; {}.val = _h; }} else {}.err = {}; }}", .{cn, t, argv, argv, cwd, flags, t, t, t, errs})[..])
+            return t
+        }
+        if name == "ChildWrite" or name == "ChildSignal" {
+            var a = List(String).new()
+            for x in args { a.append(self.simple(x)) }
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            let f = if name == "ChildWrite" { "nx_child_write" } else { "nx_child_signal" }
+            let errs = self.net_errs()
+            self.line(format("{} {}; {{ int32_t _r = {}({}); {}.err = _r == 0 ? 0 : {}; }}", .{cn, t, f, join_strings(&a, ", "), t, errs})[..])
+            return t
+        }
+        if name == "ChildRead" {
+            var a = List(String).new()
+            for x in args { a.append(self.simple(x)) }
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            let errs = self.net_errs()
+            self.line(format("{} {}; {{ nx_string _s; int32_t _r = nx_child_read(c, {}, &_s); if (_r == 0) {{ {}.err = 0; {}.val = _s; }} else {}.err = {}; }}", .{cn, t, join_strings(&a, ", "), t, t, t, errs})[..])
+            return t
+        }
+        if name == "ChildWait" {
+            let h = self.simple(args[0])
+            let ms = self.simple(args[1])
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            let errs = self.net_errs()
+            self.line(format("{} {}; {{ int64_t _v = 0; int32_t _r = nx_child_wait({}, {}, &_v); if (_r == 0) {{ {}.err = 0; {}.val = _v; }} else {}.err = {}; }}", .{cn, t, h, ms, t, t, t, errs})[..])
+            return t
+        }
+        if name == "ChildCloseInput" or name == "ChildClose" {
+            let h = self.simple(args[0])
+            let f = if name == "ChildClose" { "nx_child_close" } else { "nx_child_close_input" }
+            self.line(format("{}({});", .{f, h})[..])
+            return String.from("0")
+        }
+        if name == "ChildPid" {
+            let h = self.simple(args[0])
+            return format("nx_child_pid({})", .{h})
+        }
+        if name == "TrapSignals" {
+            self.line("nx_trap_signals();")
+            return String.from("0")
+        }
+        if name == "NextSignal" {
+            let ms = self.simple(args[0])
+            return format("nx_next_signal({})", .{ms})
+        }
         if name == "LastStdout" { return String.from("nx_last_stdout(c)") }
         if name == "LastStderr" { return String.from("nx_last_stderr(c)") }
         if name == "TimeNow" { return String.from("nx_time_now_ms()") }

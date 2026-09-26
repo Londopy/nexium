@@ -672,7 +672,19 @@ own sources, and the language server answers from the checker.
   `PT1H30M`. Checked against each other: ICU and the zoneinfo files give
   the same offset for 30 zones every week from 1850 to 2150, except where
   Windows' copy of the database is older.)
-- `std.process`: pipes as streams, signals, exit codes by name.
+- `std.process`: pipes as streams, signals, exit codes by name. (Done:
+  `process.start` runs a program alongside, its stdin a `PipeWriter` and
+  its stdout and stderr `PipeReader`s read by line or chunk as the output
+  comes, each stream a pipe, this program's, nowhere, or stderr merged
+  into stdout; `wait`, `wait_for`, `kill`, `terminate` and `signal`, with
+  timeouts on every wait; while it waits for one thing, the runtime keeps
+  what arrives on the other pipes, so a child never stalls on a full one.
+  `Status` names signals and exit codes (`SIGTERM`, `EXIT_USAGE`, sysexits
+  and the shells' 126 and 127), and `trap_signals` turns SIGINT, SIGTERM
+  and SIGHUP (Ctrl-C, Ctrl-Break and the console closing on Windows) into
+  values to wait for. The stall of `process.exec` on a child that writes
+  before it reads is fixed as well. Windows has no signals: `signal` ends
+  the program there, and its status still says which signal.)
 - `std.thread`: `select` over channels, scoped threads that are joined
   when the block ends (no handle can escape), atomics in `sync`.
 - `std.testing`: property-based tests (`check(gen, fn)`) with shrinking,
@@ -682,10 +694,8 @@ Order, with the collections, `std.hash`, `random.secure`, the small modules
 (`std.path`, `std.env`, `std.uuid`, `std.log`, `std.csv`, `std.toml`,
 `std.base64`), `Map` on SipHash, `std.time` (and with it the known issue
 of `import std.time` hiding `time.now()` fixed), the HTTP client with the
-TLS slot and nxtls in it, `std.websocket` and the `discord` package
-already in: the
-platform's TLS, `std.text`, `std.process` (whose streams end the known
-stall of a child that writes before it reads its input), `std.thread` and
+TLS slot and nxtls in it, `std.websocket`, the `discord` package and
+`std.process` already in: the platform's TLS, `std.text`, `std.thread` and
 `std.testing`.
 
 Exit: `examples/tool.nx`, `service.nx` and the self-hosted compiler import

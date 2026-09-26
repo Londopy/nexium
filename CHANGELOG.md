@@ -167,6 +167,31 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   program in Google Colab or Jupyter on the wheel (`!pip install -q
   nexium-lang`, a `%%writefile` cell holding the program, `!nx run`), tried
   in Colab; the README's Install section points at them.
+- Programs run alongside: `process.start(argv)` (and `start_with` with a
+  `Start` saying where each stream goes: a pipe, this program's, nowhere,
+  or stderr into stdout) gives a `Child` whose `stdin` is written with
+  `write` and `write_line` and whose `stdout` and `stderr` are read by
+  `read_line`, `read` or `read_all` as the program writes. `wait` (which
+  closes its input first), `wait_for(ms)`, `kill`, `terminate`, `signal`,
+  `finish` (what `run` gives, for a program already talked to), and
+  `set_timeout` for every wait. While a call waits for one thing, what
+  arrives on the other pipes is kept, so a program never stalls on a full
+  one. A missing program is `error.NotFound` everywhere (glibc says EACCES
+  when a directory on PATH cannot be searched; the runtime then looks for
+  the file itself). Windows gets overlapped named pipes for it; Linux,
+  macOS and the BSDs a poll loop.
+- `Status` and names for exit codes and signals: `EXIT_USAGE` and the rest
+  of sysexits, `EXIT_NOT_FOUND` (127) and `EXIT_CANNOT_RUN` (126),
+  `exit_name`, the signals numbered alike on Linux, macOS and the BSDs
+  (`SIGTERM`, `SIGKILL`, ...) and `signal_name`. On Windows, which has no
+  signals, `signal` ends the program with exit code 128 + the signal, and
+  its `Status` still says which.
+- `process.trap_signals()`: SIGINT, SIGTERM and SIGHUP (on Windows Ctrl-C,
+  Ctrl-Break, the console closing, logoff and shutdown) no longer end the
+  program but are queued for `process.caught()` and `wait_signal(ms)`, so a
+  service finishes what it was doing. The builtins beneath (`process.spawn`,
+  the `child_*` calls, `trap_signals`, `next_signal`) are in
+  docs/language.md.
 
 ### Changed
 
@@ -207,6 +232,15 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   routes and the way down. Before, 2.0.0 would have stood on Everest's
   summit with its route still to climb. The rule, the plan and every
   mountain's range in `docs/release-names.md` follow.
+- A started program inherits its three standard streams and nothing else:
+  on Windows `process.run`, `process.exec` and `process.start` hand over
+  only those handles (a handle list), and elsewhere their pipes close on
+  exec, so a program started at the same moment on another thread no
+  longer holds another one's pipes open (its reader waited for an end that
+  came only when that other program exited). `process.run` on Windows
+  passes this program's standard handles explicitly, so a child writes
+  where this program's output was sent even when that handle was not
+  inheritable.
 
 ### Fixed
 

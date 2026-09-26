@@ -39,7 +39,7 @@ const NAMESPACE_MEMBERS = [
     "PI E TAU INF NAN sqrt abs floor ceil round sin cos tan exp log log2 min max pow atan2 clamp",
     "read_file write_file append_file read_line file_kind file_size file_modified make_dir remove_file remove_dir rename list_dir cwd temp_dir open read write flush close",
     "args env environ exit",
-    "run exec last_stdout last_stderr",
+    "run exec last_stdout last_stderr spawn child_write child_close_input child_read child_wait child_signal child_pid child_close trap_signals next_signal",
     "now monotonic sleep utc_offset zone_rules",
     "int float seed",
     "connect listen accept send recv close peer local resolve udp_bind send_to recv_from last_peer",

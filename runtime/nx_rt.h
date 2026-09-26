@@ -1384,6 +1384,158 @@ NX_INLINE bool nx_os_random(uint8_t* p, size_t n) {
 #endif
 }
 
+/* ---------------------------------------------------------- starting programs */
+#if defined(_WIN32)
+/* a command line CommandLineToArgvW takes apart into `argv` again; the
+   program's slashes become backslashes, which CreateProcess wants there */
+NX_INLINE void nx_win_cmdline(nx_ctx* c, const nx_sl_u8* argv, size_t argc, nx_string* cmd) {
+    cmd->ptr = NULL; cmd->len = 0; cmd->cap = 0; cmd->ar = NULL;
+    char prog[4096];
+    for (size_t i = 0; i < argc; i++) {
+        if (i) nx_str_append(c, cmd, (const uint8_t*)" ", 1);
+        nx_sl_u8 a = argv[i];
+        if (i == 0 && a.len < sizeof prog) {
+            for (size_t j = 0; j < a.len; j++) prog[j] = a.ptr[j] == '/' ? '\\' : (char)a.ptr[j];
+            a.ptr = (uint8_t*)prog;
+        }
+        bool quote = a.len == 0;
+        for (size_t j = 0; j < a.len && !quote; j++) quote = a.ptr[j] == ' ' || a.ptr[j] == '\t' || a.ptr[j] == '"';
+        if (quote) nx_str_append(c, cmd, (const uint8_t*)"\"", 1);
+        size_t bs = 0;
+        for (size_t j = 0; j < a.len; j++) {
+            uint8_t ch = a.ptr[j];
+            if (ch == '\\') { bs++; continue; }
+            if (ch == '"') { for (size_t k = 0; k < bs * 2 + 1; k++) nx_str_append(c, cmd, (const uint8_t*)"\\", 1); bs = 0; nx_str_append(c, cmd, &ch, 1); continue; }
+            for (size_t k = 0; k < bs; k++) nx_str_append(c, cmd, (const uint8_t*)"\\", 1);
+            bs = 0;
+            nx_str_append(c, cmd, &ch, 1);
+        }
+        for (size_t k = 0; k < bs * (quote ? 2 : 1); k++) nx_str_append(c, cmd, (const uint8_t*)"\\", 1);
+        if (quote) nx_str_append(c, cmd, (const uint8_t*)"\"", 1);
+    }
+    nx_str_append(c, cmd, (const uint8_t*)"", 1); /* NUL */
+}
+/* this program's standard handle `which` as one a child can inherit, or
+   NULL (the caller closes it once the child has started) */
+NX_INLINE HANDLE nx_win_std_dup(DWORD which) {
+    HANDLE h = GetStdHandle(which), d = NULL;
+    if (!h || h == INVALID_HANDLE_VALUE) return NULL;
+    if (!DuplicateHandle(GetCurrentProcess(), h, GetCurrentProcess(), &d, 0, TRUE, DUPLICATE_SAME_ACCESS)) return NULL;
+    return d;
+}
+/* Start `cmd` in `cwd` (NULL: this program's) with `give` as its stdin,
+   stdout and stderr, inheritable handles or NULL, and no other handle of
+   this program's: a program started at the same time on another thread
+   cannot hold these pipes open, nor this one theirs. 0 when it started,
+   else CreateProcess's error. */
+NX_INLINE DWORD nx_win_start(char* cmd, const char* cwd, HANDLE give[3], PROCESS_INFORMATION* pi) {
+    STARTUPINFOEXA si;
+    memset(&si, 0, sizeof si);
+    si.StartupInfo.cb = sizeof si;
+    si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+    si.StartupInfo.hStdInput = give[0]; si.StartupInfo.hStdOutput = give[1]; si.StartupInfo.hStdError = give[2];
+    /* each handle once; a console's pseudo handle needs no inheriting and cannot be listed */
+    HANDLE list[3]; DWORD nl = 0;
+    for (int i = 0; i < 3; i++) {
+        HANDLE h = give[i];
+        if (!h || h == INVALID_HANDLE_VALUE) continue;
+        if ((((uintptr_t)h) & 3) == 3 && GetFileType(h) == FILE_TYPE_CHAR) continue;
+        bool seen = false;
+        for (DWORD j = 0; j < nl; j++) seen = seen || list[j] == h;
+        if (!seen) list[nl++] = h;
+    }
+    LPPROC_THREAD_ATTRIBUTE_LIST attrs = NULL;
+    DWORD flags = 0;
+    if (nl > 0) {
+        SIZE_T size = 0;
+        InitializeProcThreadAttributeList(NULL, 1, 0, &size);
+        attrs = (LPPROC_THREAD_ATTRIBUTE_LIST)malloc(size);
+        if (attrs && InitializeProcThreadAttributeList(attrs, 1, 0, &size)) {
+            if (UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, list, nl * sizeof(HANDLE), NULL, NULL)) {
+                si.lpAttributeList = attrs;
+                flags = EXTENDED_STARTUPINFO_PRESENT;
+            } else { DeleteProcThreadAttributeList(attrs); free(attrs); attrs = NULL; }
+        } else { free(attrs); attrs = NULL; }
+    }
+    memset(pi, 0, sizeof *pi);
+    BOOL ok = CreateProcessA(NULL, cmd, NULL, NULL, TRUE, flags, NULL, cwd, &si.StartupInfo, pi);
+    DWORD err = ok ? 0 : GetLastError();
+    if (attrs) { DeleteProcThreadAttributeList(attrs); free(attrs); }
+    return err;
+}
+#elif !defined(NX_WASM)
+/* a pipe no program inherits: a child gets its end as 0, 1 or 2 */
+NX_INLINE int nx_pipe_cloexec(int p[2]) {
+#if defined(__linux__) && defined(SYS_pipe2)
+    if (syscall(SYS_pipe2, p, O_CLOEXEC) == 0) return 0;
+    if (errno != ENOSYS) return -1;
+#endif
+    if (pipe(p) != 0) return -1;
+    fcntl(p[0], F_SETFD, FD_CLOEXEC);
+    fcntl(p[1], F_SETFD, FD_CLOEXEC);
+    return 0;
+}
+/* In a child between fork and exec: make `fds[i]` its descriptor i (-1
+   leaves i as it is), with only the calls that are safe there. */
+NX_INLINE void nx_child_std(int fds[3]) {
+    /* one already below 3 would be overwritten before its turn: move it up */
+    for (int i = 0; i < 3; i++) {
+        if (fds[i] >= 0 && fds[i] < 3 && fds[i] != i) fds[i] = fcntl(fds[i], F_DUPFD_CLOEXEC, 3);
+    }
+    for (int i = 0; i < 3; i++) {
+        if (fds[i] < 0) continue;
+        if (fds[i] == i) {
+            int fl = fcntl(i, F_GETFD);
+            if (fl >= 0) fcntl(i, F_SETFD, fl & ~FD_CLOEXEC);
+        } else dup2(fds[i], i);
+    }
+}
+/* Is there a file `prog` names (along PATH when it has no slash)? exec
+   says EACCES both for a program that is there but cannot run and for a
+   directory on PATH it may not search, which leaves a missing program
+   looking like a forbidden one. */
+NX_INLINE bool nx_prog_exists(const char* prog) {
+    struct stat st;
+    if (strchr(prog, '/')) return stat(prog, &st) == 0;
+    const char* path = getenv("PATH");
+    if (!path || !*path) path = "/bin:/usr/bin";
+    char buf[4096];
+    size_t pl = strlen(prog);
+    for (;;) {
+        const char* e = strchr(path, ':');
+        size_t dl = e ? (size_t)(e - path) : strlen(path);
+        /* an empty entry is the working directory */
+        const char* dir = dl ? path : ".";
+        if (!dl) dl = 1;
+        if (dl + 1 + pl < sizeof buf) {
+            memcpy(buf, dir, dl);
+            buf[dl] = '/';
+            memcpy(buf + dl + 1, prog, pl + 1);
+            if (stat(buf, &st) == 0 && !S_ISDIR(st.st_mode)) return true;
+        }
+        if (!e) return false;
+        path = e + 1;
+    }
+}
+/* A write to a pipe whose reader is gone raises SIGPIPE, which would end
+   the program: held off while a child's input is written, and one raised
+   meanwhile is taken before it is let through (unless it was held already). */
+NX_INLINE void nx_sigpipe_hold(sigset_t* old) {
+    sigset_t s;
+    sigemptyset(&s);
+    sigaddset(&s, SIGPIPE);
+    pthread_sigmask(SIG_BLOCK, &s, old);
+}
+NX_INLINE void nx_sigpipe_release(const sigset_t* old) {
+    sigset_t s, pending;
+    sigemptyset(&s);
+    sigaddset(&s, SIGPIPE);
+    sigpending(&pending);
+    if (sigismember(&pending, SIGPIPE) && !sigismember(old, SIGPIPE)) { int sig; sigwait(&s, &sig); }
+    pthread_sigmask(SIG_SETMASK, old, NULL);
+}
+#endif
+
 /* process.run: spawn argv[0] with the given arguments (searching PATH), wait,
  * and return its exit code. False when the process could not be started. */
 #if defined(NX_WASM)
@@ -1397,38 +1549,20 @@ NX_INLINE bool nx_run(nx_ctx* c, const nx_sl_u8* argv, size_t argc, int* code) {
     if (argc == 0) return false;
     fflush(stdout); fflush(stderr);
 #if defined(_WIN32)
-    /* build a command line CommandLineToArgvW can take apart again */
-    nx_string cmd; cmd.ptr = NULL; cmd.len = 0; cmd.cap = 0; cmd.ar = NULL;
-    /* CreateProcess reads the program from the command line and wants backslashes there */
-    char prog[4096];
-    for (size_t i = 0; i < argc; i++) {
-        if (i) nx_str_append(c, &cmd, (const uint8_t*)" ", 1);
-        nx_sl_u8 a = argv[i];
-        if (i == 0 && a.len < sizeof prog) {
-            for (size_t j = 0; j < a.len; j++) prog[j] = a.ptr[j] == '/' ? '\\' : (char)a.ptr[j];
-            a.ptr = (uint8_t*)prog;
-        }
-        bool quote = a.len == 0;
-        for (size_t j = 0; j < a.len && !quote; j++) quote = a.ptr[j] == ' ' || a.ptr[j] == '\t' || a.ptr[j] == '"';
-        if (quote) nx_str_append(c, &cmd, (const uint8_t*)"\"", 1);
-        size_t bs = 0;
-        for (size_t j = 0; j < a.len; j++) {
-            uint8_t ch = a.ptr[j];
-            if (ch == '\\') { bs++; continue; }
-            if (ch == '"') { for (size_t k = 0; k < bs * 2 + 1; k++) nx_str_append(c, &cmd, (const uint8_t*)"\\", 1); bs = 0; nx_str_append(c, &cmd, &ch, 1); continue; }
-            for (size_t k = 0; k < bs; k++) nx_str_append(c, &cmd, (const uint8_t*)"\\", 1);
-            bs = 0;
-            nx_str_append(c, &cmd, &ch, 1);
-        }
-        for (size_t k = 0; k < bs * (quote ? 2 : 1); k++) nx_str_append(c, &cmd, (const uint8_t*)"\\", 1);
-        if (quote) nx_str_append(c, &cmd, (const uint8_t*)"\"", 1);
+    nx_string cmd;
+    nx_win_cmdline(c, argv, argc, &cmd);
+    /* the child writes where this program does */
+    static const DWORD std_ids[3] = { STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE };
+    HANDLE give[3], dups[3];
+    for (int i = 0; i < 3; i++) {
+        dups[i] = nx_win_std_dup(std_ids[i]);
+        give[i] = dups[i] ? dups[i] : GetStdHandle(std_ids[i]);
     }
-    nx_str_append(c, &cmd, (const uint8_t*)"", 1); /* NUL */
-    STARTUPINFOA si; PROCESS_INFORMATION pi;
-    memset(&si, 0, sizeof si); si.cb = sizeof si; memset(&pi, 0, sizeof pi);
-    BOOL ok = CreateProcessA(NULL, (char*)cmd.ptr, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi);
+    PROCESS_INFORMATION pi;
+    DWORD err = nx_win_start((char*)cmd.ptr, NULL, give, &pi);
+    for (int i = 0; i < 3; i++) if (dups[i]) CloseHandle(dups[i]);
     nx_str_free(c, &cmd);
-    if (!ok) return false;
+    if (err) return false;
     WaitForSingleObject(pi.hProcess, INFINITE);
     DWORD ec = 1;
     GetExitCodeProcess(pi.hProcess, &ec);
@@ -1526,45 +1660,20 @@ NX_INLINE bool nx_run_capture(nx_ctx* c, const nx_sl_u8* argv, size_t argc, nx_s
     const char* cwdp = NULL;
     if (cwd.len > 0) { if (!nx_cpath(cwd, dir, sizeof dir)) return false; cwdp = dir; }
 #if defined(_WIN32)
-    nx_string cmd; cmd.ptr = NULL; cmd.len = 0; cmd.cap = 0; cmd.ar = NULL;
-    /* CreateProcess reads the program from the command line and wants backslashes there */
-    char prog[4096];
-    for (size_t i = 0; i < argc; i++) {
-        if (i) nx_str_append(c, &cmd, (const uint8_t*)" ", 1);
-        nx_sl_u8 a = argv[i];
-        if (i == 0 && a.len < sizeof prog) {
-            for (size_t j = 0; j < a.len; j++) prog[j] = a.ptr[j] == '/' ? '\\' : (char)a.ptr[j];
-            a.ptr = (uint8_t*)prog;
-        }
-        bool quote = a.len == 0;
-        for (size_t j = 0; j < a.len && !quote; j++) quote = a.ptr[j] == ' ' || a.ptr[j] == '\t' || a.ptr[j] == '"';
-        if (quote) nx_str_append(c, &cmd, (const uint8_t*)"\"", 1);
-        size_t bs = 0;
-        for (size_t j = 0; j < a.len; j++) {
-            uint8_t ch = a.ptr[j];
-            if (ch == '\\') { bs++; continue; }
-            if (ch == '"') { for (size_t k = 0; k < bs * 2 + 1; k++) nx_str_append(c, &cmd, (const uint8_t*)"\\", 1); bs = 0; nx_str_append(c, &cmd, &ch, 1); continue; }
-            for (size_t k = 0; k < bs; k++) nx_str_append(c, &cmd, (const uint8_t*)"\\", 1);
-            bs = 0;
-            nx_str_append(c, &cmd, &ch, 1);
-        }
-        for (size_t k = 0; k < bs * (quote ? 2 : 1); k++) nx_str_append(c, &cmd, (const uint8_t*)"\\", 1);
-        if (quote) nx_str_append(c, &cmd, (const uint8_t*)"\"", 1);
-    }
-    nx_str_append(c, &cmd, (const uint8_t*)"", 1);
+    nx_string cmd;
+    nx_win_cmdline(c, argv, argc, &cmd);
     SECURITY_ATTRIBUTES sa; sa.nLength = sizeof sa; sa.bInheritHandle = TRUE; sa.lpSecurityDescriptor = NULL;
     HANDLE in_r = NULL, in_w = NULL, out_r = NULL, out_w = NULL, err_r = NULL, err_w = NULL;
     if (!CreatePipe(&in_r, &in_w, &sa, 1 << 20) || !CreatePipe(&out_r, &out_w, &sa, 1 << 20) || !CreatePipe(&err_r, &err_w, &sa, 1 << 20)) { nx_str_free(c, &cmd); return false; }
     SetHandleInformation(in_w, HANDLE_FLAG_INHERIT, 0);
     SetHandleInformation(out_r, HANDLE_FLAG_INHERIT, 0);
     SetHandleInformation(err_r, HANDLE_FLAG_INHERIT, 0);
-    STARTUPINFOA si; PROCESS_INFORMATION pi;
-    memset(&si, 0, sizeof si); si.cb = sizeof si; memset(&pi, 0, sizeof pi);
-    si.dwFlags = STARTF_USESTDHANDLES; si.hStdInput = in_r; si.hStdOutput = out_w; si.hStdError = err_w;
-    BOOL ok = CreateProcessA(NULL, (char*)cmd.ptr, NULL, NULL, TRUE, 0, NULL, cwdp, &si, &pi);
+    HANDLE give[3] = { in_r, out_w, err_w };
+    PROCESS_INFORMATION pi;
+    DWORD err = nx_win_start((char*)cmd.ptr, cwdp, give, &pi);
     nx_str_free(c, &cmd);
     CloseHandle(in_r); CloseHandle(out_w); CloseHandle(err_w);
-    if (!ok) { CloseHandle(in_w); CloseHandle(out_r); CloseHandle(err_r); return false; }
+    if (err) { CloseHandle(in_w); CloseHandle(out_r); CloseHandle(err_r); return false; }
     /* the input goes in on one helper thread and stderr comes out on
        another while this one drains stdout: a child that writes before it
        reads, or fills one pipe before finishing the other, cannot stall */
@@ -1594,12 +1703,12 @@ NX_INLINE bool nx_run_capture(nx_ctx* c, const nx_sl_u8* argv, size_t argc, nx_s
     }
     av[argc] = NULL;
     int inp[2], outp[2], errp[2];
-    if (pipe(inp) != 0 || pipe(outp) != 0 || pipe(errp) != 0) return false;
+    if (nx_pipe_cloexec(inp) != 0 || nx_pipe_cloexec(outp) != 0 || nx_pipe_cloexec(errp) != 0) return false;
     pid_t pid = fork();
     if (pid < 0) return false;
     if (pid == 0) {
-        dup2(inp[0], 0); dup2(outp[1], 1); dup2(errp[1], 2);
-        close(inp[0]); close(inp[1]); close(outp[0]); close(outp[1]); close(errp[0]); close(errp[1]);
+        int fds[3] = { inp[0], outp[1], errp[1] };
+        nx_child_std(fds);
         if (cwdp && chdir(cwdp) != 0) _exit(126);
         execvp(av[0], av);
         _exit(127);
@@ -1610,13 +1719,9 @@ NX_INLINE bool nx_run_capture(nx_ctx* c, const nx_sl_u8* argv, size_t argc, nx_s
     /* the input is written as the child takes it while both output pipes
        are drained as it fills them: a child that writes before it reads, or
        fills one pipe before finishing the other, cannot stall. A write to a
-       child that stopped reading fails with EPIPE and raises SIGPIPE, which
-       would end the program: it is blocked meanwhile, and one raised is
-       taken before it is unblocked (unless the program had it blocked). */
-    sigset_t pipe_set, old_set;
-    sigemptyset(&pipe_set);
-    sigaddset(&pipe_set, SIGPIPE);
-    pthread_sigmask(SIG_BLOCK, &pipe_set, &old_set);
+       child that stopped reading fails with EPIPE, and SIGPIPE is held off. */
+    sigset_t old_set;
+    nx_sigpipe_hold(&old_set);
     size_t fed = 0;
     if (input.len == 0) { close(inp[1]); inp[1] = -1; }
     else { int fl = fcntl(inp[1], F_GETFL); if (fl >= 0) fcntl(inp[1], F_SETFL, fl | O_NONBLOCK); }
@@ -1643,10 +1748,7 @@ NX_INLINE bool nx_run_capture(nx_ctx* c, const nx_sl_u8* argv, size_t argc, nx_s
         }
     }
     if (pfd[2].fd >= 0) close(pfd[2].fd);
-    sigset_t pending;
-    sigpending(&pending);
-    if (sigismember(&pending, SIGPIPE) && !sigismember(&old_set, SIGPIPE)) { int sig; sigwait(&pipe_set, &sig); }
-    pthread_sigmask(SIG_SETMASK, &old_set, NULL);
+    nx_sigpipe_release(&old_set);
     close(outp[0]); close(errp[0]);
     int st = 0;
     if (waitpid(pid, &st, 0) < 0) return false;
@@ -1655,6 +1757,622 @@ NX_INLINE bool nx_run_capture(nx_ctx* c, const nx_sl_u8* argv, size_t argc, nx_s
 #endif
 }
 #endif
+
+/* --------------------------------------------------------- child processes */
+/* process.spawn and the child_* calls: a program started with pipes to this
+   one, written to and read from while it runs. Output that arrives while
+   the caller waits for something else (its input to go in, the other
+   stream, the exit) is kept until it is read, so the child never stalls
+   on a full pipe while this program waits on it. A handle is 1 + its slot.
+   Results: 0 ok, 1 no such program, 3 timed out, 4 any other failure (the
+   codes of the socket calls). Timeouts in ms: negative waits for ever, 0
+   looks without waiting. */
+#define NX_MAX_CHILDREN 64
+typedef struct { uint8_t* p; size_t len, cap, pos; } nx_cbuf;
+typedef struct {
+#if defined(_WIN32)
+    HANDLE h;              /* this program's end, overlapped; NULL once closed */
+    OVERLAPPED ov;
+    bool busy;             /* a read or write is in flight */
+    uint8_t* stage;        /* where an output pipe's reads land */
+#else
+    int fd;                /* -1 once closed */
+#endif
+    bool piped;
+    bool eof;              /* an output pipe the child closed */
+    nx_cbuf buf;           /* output read and not yet taken */
+} nx_cpipe;
+typedef struct {
+    int state;             /* 0 free, 1 being set up or let go, 2 in use */
+    int64_t pid;
+#if defined(_WIN32)
+    HANDLE proc;
+    int32_t sent;          /* the signal child_signal ended it with */
+#endif
+    nx_cpipe in, out, err;
+    bool done;             /* it ended and was waited for */
+    int32_t code, sig;
+} nx_child;
+NX_STATE nx_child nx_children[NX_MAX_CHILDREN];
+enum { NX_CH_WRITTEN, NX_CH_OUT, NX_CH_ERR, NX_CH_EXIT };
+
+NX_INLINE nx_child* nx_child_at(int64_t h) {
+    if (h < 1 || h > NX_MAX_CHILDREN) return NULL;
+    nx_child* ch = &nx_children[h - 1];
+    return __atomic_load_n(&ch->state, __ATOMIC_ACQUIRE) == 2 ? ch : NULL;
+}
+NX_INLINE int64_t nx_child_pid(int64_t h) {
+    nx_child* ch = nx_child_at(h);
+    return ch ? ch->pid : -1;
+}
+#if defined(NX_WASM)
+NX_INLINE int32_t nx_child_spawn(nx_ctx* c, const nx_sl_u8* argv, size_t argc, nx_sl_u8 cwd, int64_t flags, int64_t* out) {
+    (void)c; (void)argv; (void)argc; (void)cwd; (void)flags; (void)out;
+    return 4;
+}
+NX_INLINE int32_t nx_child_write(int64_t h, nx_sl_u8 data, int64_t timeout_ms) { (void)h; (void)data; (void)timeout_ms; return 4; }
+NX_INLINE int32_t nx_child_read(nx_ctx* c, int64_t h, int64_t stream, size_t n, int64_t timeout_ms, nx_string* out) {
+    (void)c; (void)h; (void)stream; (void)n; (void)timeout_ms; (void)out;
+    return 4;
+}
+NX_INLINE int32_t nx_child_wait(int64_t h, int64_t timeout_ms, int64_t* status) { (void)h; (void)timeout_ms; (void)status; return 4; }
+NX_INLINE int32_t nx_child_signal(int64_t h, int32_t sig) { (void)h; (void)sig; return 4; }
+NX_INLINE void nx_child_close_input(int64_t h) { (void)h; }
+NX_INLINE void nx_child_close(int64_t h) { (void)h; }
+NX_INLINE void nx_trap_signals(void) { }
+NX_INLINE int32_t nx_next_signal(int64_t timeout_ms) { (void)timeout_ms; return 0; }
+#else
+NX_INLINE int nx_child_claim(void) {
+    for (int i = 0; i < NX_MAX_CHILDREN; i++) {
+        int expected = 0;
+        if (__atomic_compare_exchange_n(&nx_children[i].state, &expected, 1, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) return i;
+    }
+    return -1;
+}
+NX_INLINE void nx_child_reset(nx_child* ch) {
+    ch->pid = 0; ch->done = false; ch->code = 0; ch->sig = 0;
+#if defined(_WIN32)
+    ch->proc = NULL; ch->sent = 0;
+#endif
+    nx_cpipe* pipes[3] = { &ch->in, &ch->out, &ch->err };
+    for (int i = 0; i < 3; i++) {
+        memset(pipes[i], 0, sizeof *pipes[i]);
+#if !defined(_WIN32)
+        pipes[i]->fd = -1;
+#endif
+    }
+}
+NX_INLINE void nx_cbuf_add(nx_cbuf* b, const uint8_t* p, size_t n) {
+    if (b->pos == b->len) { b->pos = 0; b->len = 0; }
+    else if (b->pos > 0 && b->len + n > b->cap) {
+        memmove(b->p, b->p + b->pos, b->len - b->pos);
+        b->len -= b->pos; b->pos = 0;
+    }
+    if (b->len + n > b->cap) {
+        size_t cap = b->cap ? b->cap : 65536;
+        while (cap < b->len + n) cap *= 2;
+        uint8_t* q = (uint8_t*)realloc(b->p, cap);
+        if (!q) nx_panic("out of memory keeping a child's output", "process");
+        b->p = q; b->cap = cap;
+    }
+    memcpy(b->p + b->len, p, n);
+    b->len += n;
+}
+NX_INLINE bool nx_cpipe_ready(const nx_cpipe* pp) { return pp->buf.pos < pp->buf.len || pp->eof; }
+NX_INLINE int64_t nx_mono_ms(void) { return (int64_t)(nx_time_monotonic_ns() / 1000000u); }
+/* what is left of `timeout_ms` since `start`: -1 for no limit */
+NX_INLINE int64_t nx_left_ms(int64_t start, int64_t timeout_ms) {
+    if (timeout_ms < 0) return -1;
+    int64_t left = timeout_ms - (nx_mono_ms() - start);
+    return left > 0 ? left : 0;
+}
+#if defined(_WIN32)
+/* A pipe whose far end a child gets: this program's end overlapped, so
+   reads, writes and the exit can be waited for together and with a
+   timeout (an anonymous pipe cannot be); the child's an ordinary one. */
+NX_STATE volatile LONG nx_pipe_serial;
+#ifndef PIPE_REJECT_REMOTE_CLIENTS
+#define PIPE_REJECT_REMOTE_CLIENTS 0x00000008
+#endif
+NX_INLINE bool nx_win_pipe(bool child_reads, HANDLE* ours, HANDLE* theirs) {
+    char name[96];
+    snprintf(name, sizeof name, "\\\\.\\pipe\\nx-%lu-%ld", (unsigned long)GetCurrentProcessId(), (long)InterlockedIncrement(&nx_pipe_serial));
+    DWORD mode = (child_reads ? PIPE_ACCESS_OUTBOUND : PIPE_ACCESS_INBOUND) | FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE;
+    HANDLE s = CreateNamedPipeA(name, mode, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS, 1, 65536, 65536, 0, NULL);
+    if (s == INVALID_HANDLE_VALUE) return false;
+    SECURITY_ATTRIBUTES sa; sa.nLength = sizeof sa; sa.bInheritHandle = TRUE; sa.lpSecurityDescriptor = NULL;
+    HANDLE t = CreateFileA(name, child_reads ? GENERIC_READ : GENERIC_WRITE, 0, &sa, OPEN_EXISTING, 0, NULL);
+    if (t == INVALID_HANDLE_VALUE) { CloseHandle(s); return false; }
+    *ours = s; *theirs = t;
+    return true;
+}
+NX_INLINE void nx_cpipe_close(nx_cpipe* pp) {
+    if (!pp->h) return;
+    if (pp->busy) {
+        DWORD x = 0;
+        CancelIoEx(pp->h, &pp->ov);
+        GetOverlappedResult(pp->h, &pp->ov, &x, TRUE);
+        pp->busy = false;
+    }
+    CloseHandle(pp->h);
+    pp->h = NULL;
+}
+/* keep a read waiting on an output pipe; what comes at once is kept */
+NX_INLINE void nx_cpipe_post(nx_cpipe* pp) {
+    while (pp->h && !pp->busy) {
+        DWORD got = 0;
+        ResetEvent(pp->ov.hEvent);
+        if (!ReadFile(pp->h, pp->stage, 65536, NULL, &pp->ov)) {
+            if (GetLastError() == ERROR_IO_PENDING) { pp->busy = true; return; }
+            /* ERROR_BROKEN_PIPE: the child closed its end */
+            nx_cpipe_close(pp);
+            pp->eof = true;
+            return;
+        }
+        if (GetOverlappedResult(pp->h, &pp->ov, &got, FALSE) && got > 0) nx_cbuf_add(&pp->buf, pp->stage, got);
+    }
+}
+/* take a read that completed */
+NX_INLINE void nx_cpipe_finish(nx_cpipe* pp) {
+    if (!pp->busy) return;
+    DWORD got = 0;
+    if (GetOverlappedResult(pp->h, &pp->ov, &got, FALSE)) {
+        pp->busy = false;
+        if (got > 0) nx_cbuf_add(&pp->buf, pp->stage, got);
+        return;
+    }
+    if (GetLastError() == ERROR_IO_INCOMPLETE) return;
+    pp->busy = false;
+    nx_cpipe_close(pp);
+    pp->eof = true;
+}
+NX_INLINE bool nx_child_reap(nx_child* ch, bool block) {
+    if (ch->done) return true;
+    if (WaitForSingleObject(ch->proc, block ? INFINITE : 0) != WAIT_OBJECT_0) return false;
+    DWORD ec = 1;
+    GetExitCodeProcess(ch->proc, &ec);
+    ch->done = true;
+    ch->code = (int32_t)ec;
+    ch->sig = ch->sent && ec == (DWORD)(128 + ch->sent) ? ch->sent : 0;
+    return true;
+}
+#else
+NX_INLINE void nx_cpipe_close(nx_cpipe* pp) {
+    if (pp->fd >= 0) { close(pp->fd); pp->fd = -1; }
+}
+/* one read from an output pipe the poll found ready */
+NX_INLINE void nx_cpipe_pull(nx_cpipe* pp) {
+    uint8_t buf[65536];
+    ssize_t n = read(pp->fd, buf, sizeof buf);
+    if (n > 0) { nx_cbuf_add(&pp->buf, buf, (size_t)n); return; }
+    if (n < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) return;
+    nx_cpipe_close(pp);
+    pp->eof = true;
+}
+NX_INLINE bool nx_child_reap(nx_child* ch, bool block) {
+    if (ch->done) return true;
+    int st = 0;
+    pid_t r;
+    do { r = waitpid((pid_t)ch->pid, &st, block ? 0 : WNOHANG); } while (r < 0 && errno == EINTR);
+    if (r == 0) return false;
+    ch->done = true;
+    if (r < 0) { ch->code = -1; ch->sig = 0; return true; } /* waited for elsewhere */
+    if (WIFSIGNALED(st)) { ch->sig = WTERMSIG(st); ch->code = 128 + ch->sig; }
+    else { ch->sig = 0; ch->code = WIFEXITED(st) ? WEXITSTATUS(st) : -1; }
+    return true;
+}
+#endif
+NX_INLINE bool nx_child_holds(nx_child* ch, int until, size_t n, const size_t* off) {
+    if (until == NX_CH_WRITTEN) return *off >= n;
+    if (until == NX_CH_OUT) return nx_cpipe_ready(&ch->out);
+    if (until == NX_CH_ERR) return nx_cpipe_ready(&ch->err);
+    return nx_child_reap(ch, false);
+}
+/* Serve the child's pipes until `until` holds or `timeout_ms` passes:
+   output that arrives is kept, and for NX_CH_WRITTEN `src[*off..n]` goes in
+   as the child takes it. 0 when it held, 3 on timeout, 4 when the input
+   broke (the child reads no more) or waiting failed. */
+static int32_t nx_child_serve(nx_child* ch, int until, const uint8_t* src, size_t n, size_t* off, int64_t timeout_ms) {
+    int64_t start = nx_mono_ms();
+#if defined(_WIN32)
+    int32_t result = 3;
+    for (;;) {
+        nx_cpipe_post(&ch->out);
+        nx_cpipe_post(&ch->err);
+        if (until == NX_CH_WRITTEN && !ch->in.busy && *off < n) {
+            if (!ch->in.h) { result = 4; break; }
+            DWORD chunk = (DWORD)(n - *off > (1u << 30) ? (1u << 30) : n - *off), w = 0;
+            ResetEvent(ch->in.ov.hEvent);
+            if (WriteFile(ch->in.h, src + *off, chunk, NULL, &ch->in.ov)) {
+                if (GetOverlappedResult(ch->in.h, &ch->in.ov, &w, FALSE)) *off += w;
+                continue;
+            }
+            /* ERROR_NO_DATA or ERROR_BROKEN_PIPE: the child reads no more */
+            if (GetLastError() != ERROR_IO_PENDING) { result = 4; break; }
+            ch->in.busy = true;
+        }
+        if (nx_child_holds(ch, until, n, off)) { result = 0; break; }
+        int64_t left = nx_left_ms(start, timeout_ms);
+        HANDLE ev[4];
+        DWORD k = 0;
+        if (ch->out.busy) ev[k++] = ch->out.ov.hEvent;
+        if (ch->err.busy) ev[k++] = ch->err.ov.hEvent;
+        if (ch->in.busy) ev[k++] = ch->in.ov.hEvent;
+        if (until == NX_CH_EXIT) ev[k++] = ch->proc;
+        if (k == 0) { result = 4; break; } /* nothing could change: a stream not piped */
+        DWORD r = WaitForMultipleObjects(k, ev, FALSE, left < 0 ? INFINITE : (DWORD)(left > 0x7fffffff ? 0x7fffffff : left));
+        if (r == WAIT_FAILED) { result = 4; break; }
+        nx_cpipe_finish(&ch->out);
+        nx_cpipe_finish(&ch->err);
+        if (ch->in.busy) {
+            DWORD w = 0;
+            if (GetOverlappedResult(ch->in.h, &ch->in.ov, &w, FALSE)) { ch->in.busy = false; *off += w; }
+            else if (GetLastError() != ERROR_IO_INCOMPLETE) { ch->in.busy = false; result = 4; break; }
+        }
+        if (nx_child_holds(ch, until, n, off)) { result = 0; break; }
+        if (r == WAIT_TIMEOUT && nx_left_ms(start, timeout_ms) == 0) { result = 3; break; }
+    }
+    /* a write still in flight reads the caller's bytes: it is called off before they go */
+    if (ch->in.busy) {
+        DWORD w = 0;
+        CancelIoEx(ch->in.h, &ch->in.ov);
+        if (GetOverlappedResult(ch->in.h, &ch->in.ov, &w, TRUE)) *off += w;
+        ch->in.busy = false;
+    }
+    return result;
+#else
+    int nap = 1;
+    for (;;) {
+        if (nx_child_holds(ch, until, n, off)) return 0;
+        int64_t left = nx_left_ms(start, timeout_ms);
+        struct pollfd p[3];
+        int np = 0, io = -1, ie = -1, ii = -1;
+        if (ch->out.fd >= 0) { p[np].fd = ch->out.fd; p[np].events = POLLIN; p[np].revents = 0; io = np++; }
+        if (ch->err.fd >= 0) { p[np].fd = ch->err.fd; p[np].events = POLLIN; p[np].revents = 0; ie = np++; }
+        if (until == NX_CH_WRITTEN) {
+            if (ch->in.fd < 0) return 4;
+            p[np].fd = ch->in.fd; p[np].events = POLLOUT; p[np].revents = 0; ii = np++;
+        }
+        int wait = left < 0 ? -1 : left > 1000000000 ? 1000000000 : (int)left;
+        if (until == NX_CH_EXIT) {
+            /* an exit cannot be polled for: with pipes to watch, look again
+               every 20 ms; with none, wait for it, or nap a little longer each time */
+            if (np == 0) {
+                if (wait < 0) { nx_child_reap(ch, true); continue; }
+                if (nap < wait) wait = nap;
+                if (nap < 32) nap *= 2;
+            } else if (wait < 0 || wait > 20) wait = 20;
+        } else if (np == 0) return 4; /* nothing could change: a stream not piped */
+        int r = 0;
+        if (np == 0) nx_sleep_ms((uint64_t)wait);
+        else r = poll(p, (nfds_t)np, wait);
+        if (r < 0 && errno != EINTR) return 4;
+        if (r > 0) {
+            if (io >= 0 && p[io].revents) nx_cpipe_pull(&ch->out);
+            if (ie >= 0 && p[ie].revents) nx_cpipe_pull(&ch->err);
+            if (ii >= 0 && p[ii].revents) {
+                ssize_t w = write(ch->in.fd, src + *off, n - *off);
+                if (w > 0) *off += (size_t)w;
+                /* EPIPE: the child reads no more */
+                else if (w < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) return 4;
+            }
+        }
+        if (!nx_child_holds(ch, until, n, off) && nx_left_ms(start, timeout_ms) == 0) return 3;
+    }
+#endif
+}
+/* Start argv[0] (found on PATH) in `cwd` when given. `flags` says where each
+   stream goes, two bits each (stdin, then stdout, then stderr): 0 this
+   program's, 1 a pipe, 2 nowhere (the null device); 3 for stderr: into
+   stdout. `*out` gets the handle. */
+NX_INLINE int32_t nx_child_spawn(nx_ctx* c, const nx_sl_u8* argv, size_t argc, nx_sl_u8 cwd, int64_t flags, int64_t* out) {
+    if (argc == 0) return 4;
+    char dir[4096];
+    const char* cwdp = NULL;
+    if (cwd.len > 0) { if (!nx_cpath(cwd, dir, sizeof dir)) return 4; cwdp = dir; }
+    int mode[3] = { (int)(flags & 3), (int)((flags >> 2) & 3), (int)((flags >> 4) & 3) };
+    if (mode[0] == 3 || mode[1] == 3) return 4;
+    int slot = nx_child_claim();
+    if (slot < 0) return 4;
+    nx_child* ch = &nx_children[slot];
+    nx_child_reset(ch);
+    nx_cpipe* pipes[3] = { &ch->in, &ch->out, &ch->err };
+    fflush(stdout); fflush(stderr);
+#if defined(_WIN32)
+    static const DWORD std_ids[3] = { STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE };
+    SECURITY_ATTRIBUTES sa; sa.nLength = sizeof sa; sa.bInheritHandle = TRUE; sa.lpSecurityDescriptor = NULL;
+    HANDLE ours[3] = { NULL, NULL, NULL }, give[3] = { NULL, NULL, NULL }, shut[3] = { NULL, NULL, NULL };
+    HANDLE nul = NULL;
+    int nshut = 0;
+    bool ok = true;
+    for (int i = 0; i < 3 && ok; i++) {
+        if (mode[i] == 1) {
+            ok = nx_win_pipe(i == 0, &ours[i], &give[i]);
+            if (ok) shut[nshut++] = give[i];
+        } else if (mode[i] == 2) {
+            if (!nul) {
+                nul = CreateFileA("NUL", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, NULL);
+                if (nul == INVALID_HANDLE_VALUE) { nul = NULL; ok = false; break; }
+                shut[nshut++] = nul;
+            }
+            give[i] = nul;
+        } else if (mode[i] == 3) give[i] = give[1];
+        else {
+            HANDLE d = nx_win_std_dup(std_ids[i]);
+            if (d) { give[i] = d; shut[nshut++] = d; } else give[i] = GetStdHandle(std_ids[i]);
+        }
+    }
+    DWORD err = 0;
+    PROCESS_INFORMATION pi;
+    if (ok) {
+        nx_string cmd;
+        nx_win_cmdline(c, argv, argc, &cmd);
+        err = nx_win_start((char*)cmd.ptr, cwdp, give, &pi);
+        nx_str_free(c, &cmd);
+    }
+    for (int i = 0; i < nshut; i++) CloseHandle(shut[i]);
+    if (!ok || err) {
+        for (int i = 0; i < 3; i++) if (ours[i]) CloseHandle(ours[i]);
+        __atomic_store_n(&ch->state, 0, __ATOMIC_RELEASE);
+        return err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND ? 1 : 4;
+    }
+    CloseHandle(pi.hThread);
+    ch->proc = pi.hProcess;
+    ch->pid = (int64_t)pi.dwProcessId;
+    for (int i = 0; i < 3; i++) {
+        if (!ours[i]) continue;
+        nx_cpipe* pp = pipes[i];
+        pp->h = ours[i];
+        pp->piped = true;
+        pp->ov.hEvent = CreateEventA(NULL, TRUE, FALSE, NULL);
+        if (i > 0) pp->stage = (uint8_t*)malloc(65536);
+    }
+#else
+    char** av = (char**)nx_alloc_bytes(c, (argc + 1) * sizeof(char*), 8);
+    for (size_t i = 0; i < argc; i++) {
+        av[i] = (char*)nx_alloc_bytes(c, argv[i].len + 1, 1);
+        nx_bytes_copy(av[i], argv[i].ptr, argv[i].len); av[i][argv[i].len] = 0;
+    }
+    av[argc] = NULL;
+    int ends[3][2] = { { -1, -1 }, { -1, -1 }, { -1, -1 } };
+    int nul = -1, fail[2] = { -1, -1 };
+    bool ok = nx_pipe_cloexec(fail) == 0;
+    for (int i = 0; i < 3 && ok; i++) {
+        if (mode[i] == 1) ok = nx_pipe_cloexec(ends[i]) == 0;
+        else if (mode[i] == 2 && nul < 0) { nul = open("/dev/null", O_RDWR | O_CLOEXEC); ok = nul >= 0; }
+    }
+    pid_t pid = ok ? fork() : -1;
+    if (pid == 0) {
+        /* the child: its end of each pipe, the null device, or this program's */
+        int fds[3];
+        for (int i = 0; i < 3; i++) {
+            if (mode[i] == 1) fds[i] = i == 0 ? ends[0][0] : ends[i][1];
+            else if (mode[i] == 2) fds[i] = nul;
+            else if (mode[i] == 3) fds[i] = fds[1] >= 0 ? fds[1] : 1;
+            else fds[i] = -1;
+        }
+        nx_child_std(fds);
+        int why[2] = { 0, 0 };
+        if (cwdp && chdir(cwdp) != 0) { why[0] = 1; why[1] = errno; }
+        else {
+            /* what this program held back or caught, the child starts without */
+            sigset_t none;
+            sigemptyset(&none);
+            sigprocmask(SIG_SETMASK, &none, NULL);
+            execvp(av[0], av);
+            why[1] = errno;
+        }
+        /* the fail pipe closes when exec succeeds; failing, it says why */
+        ssize_t w = write(fail[1], why, sizeof why);
+        (void)w;
+        _exit(127);
+    }
+    /* the child's ends are its own now */
+    if (ends[0][0] >= 0) close(ends[0][0]);
+    if (ends[1][1] >= 0) close(ends[1][1]);
+    if (ends[2][1] >= 0) close(ends[2][1]);
+    if (nul >= 0) close(nul);
+    if (fail[1] >= 0) close(fail[1]);
+    int why[2] = { 0, 0 };
+    ssize_t got = 0;
+    if (pid > 0) {
+        do { got = read(fail[0], why, sizeof why); } while (got < 0 && errno == EINTR);
+    }
+    if (fail[0] >= 0) close(fail[0]);
+    bool failed = pid <= 0 || got == (ssize_t)sizeof why;
+    /* not found: exec found no such file anywhere it looked */
+    bool missing = failed && pid > 0 && why[0] == 0 && (why[1] == ENOENT || why[1] == ENOTDIR || why[1] == EACCES) && !nx_prog_exists(av[0]);
+    for (size_t i = 0; i < argc; i++) nx_free_bytes(c, av[i], argv[i].len + 1);
+    nx_free_bytes(c, av, (argc + 1) * sizeof(char*));
+    if (failed) {
+        if (pid > 0) { int st; while (waitpid(pid, &st, 0) < 0 && errno == EINTR) { } }
+        if (ends[0][1] >= 0) close(ends[0][1]);
+        if (ends[1][0] >= 0) close(ends[1][0]);
+        if (ends[2][0] >= 0) close(ends[2][0]);
+        __atomic_store_n(&ch->state, 0, __ATOMIC_RELEASE);
+        return missing ? 1 : 4;
+    }
+    ch->pid = (int64_t)pid;
+    ch->in.fd = ends[0][1];
+    ch->out.fd = ends[1][0];
+    ch->err.fd = ends[2][0];
+    for (int i = 0; i < 3; i++) pipes[i]->piped = mode[i] == 1;
+    /* the input goes in as the child takes it: a write never blocks */
+    if (ch->in.fd >= 0) { int fl = fcntl(ch->in.fd, F_GETFL); if (fl >= 0) fcntl(ch->in.fd, F_SETFL, fl | O_NONBLOCK); }
+#endif
+    __atomic_store_n(&ch->state, 2, __ATOMIC_RELEASE);
+    *out = slot + 1;
+    return 0;
+}
+/* Write all of `data` as the child takes it, keeping its output meanwhile. */
+NX_INLINE int32_t nx_child_write(int64_t h, nx_sl_u8 data, int64_t timeout_ms) {
+    nx_child* ch = nx_child_at(h);
+    if (!ch || !ch->in.piped) return 4;
+    size_t off = 0;
+#if defined(_WIN32)
+    return nx_child_serve(ch, NX_CH_WRITTEN, data.ptr, data.len, &off, timeout_ms);
+#else
+    sigset_t old;
+    nx_sigpipe_hold(&old);
+    int32_t r = nx_child_serve(ch, NX_CH_WRITTEN, data.ptr, data.len, &off, timeout_ms);
+    nx_sigpipe_release(&old);
+    return r;
+#endif
+}
+/* the end of the child's input */
+NX_INLINE void nx_child_close_input(int64_t h) {
+    nx_child* ch = nx_child_at(h);
+    if (ch) nx_cpipe_close(&ch->in);
+}
+/* Up to `n` bytes the child wrote to `stream` (1 stdout, 2 stderr), waiting
+   for some; empty at its end. */
+NX_INLINE int32_t nx_child_read(nx_ctx* c, int64_t h, int64_t stream, size_t n, int64_t timeout_ms, nx_string* out) {
+    nx_child* ch = nx_child_at(h);
+    if (!ch || (stream != 1 && stream != 2)) return 4;
+    nx_cpipe* pp = stream == 2 ? &ch->err : &ch->out;
+    if (!pp->piped) return 4;
+    size_t none = 0;
+    int32_t r = nx_child_serve(ch, stream == 2 ? NX_CH_ERR : NX_CH_OUT, NULL, 0, &none, timeout_ms);
+    if (r) return r;
+    nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;
+    size_t have = pp->buf.len - pp->buf.pos;
+    if (have > n) have = n;
+    if (have > 0) { nx_str_append(c, &s, pp->buf.p + pp->buf.pos, have); pp->buf.pos += have; }
+    *out = s;
+    return 0;
+}
+/* Wait for the child to end, keeping its output meanwhile; `*status` is
+   its exit code in the low 32 bits and the signal that ended it above. */
+NX_INLINE int32_t nx_child_wait(int64_t h, int64_t timeout_ms, int64_t* status) {
+    nx_child* ch = nx_child_at(h);
+    if (!ch) return 4;
+    size_t none = 0;
+    int32_t r = nx_child_serve(ch, NX_CH_EXIT, NULL, 0, &none, timeout_ms);
+    if (r) return r;
+    *status = ((int64_t)ch->sig << 32) | (int64_t)(uint32_t)ch->code;
+    return 0;
+}
+/* Send the child a signal; on Windows, which has none, any but 0 ends it
+   with exit code 128 + sig, and child_wait reports the signal. Nothing
+   happens to a child that already ended. */
+NX_INLINE int32_t nx_child_signal(int64_t h, int32_t sig) {
+    nx_child* ch = nx_child_at(h);
+    if (!ch || sig < 0 || sig > 64) return 4;
+    if (ch->done) return 0;
+#if defined(_WIN32)
+    if (sig == 0 || WaitForSingleObject(ch->proc, 0) == WAIT_OBJECT_0) return 0;
+    ch->sent = sig;
+    if (!TerminateProcess(ch->proc, (UINT)(128 + sig))) return WaitForSingleObject(ch->proc, 0) == WAIT_OBJECT_0 ? 0 : 4;
+    return 0;
+#else
+    return kill((pid_t)ch->pid, sig) == 0 || errno == ESRCH ? 0 : 4;
+#endif
+}
+/* Let the child go: its pipes close and what was not read is dropped. A
+   program still running goes on (and is not waited for). */
+NX_INLINE void nx_child_close(int64_t h) {
+    nx_child* ch = nx_child_at(h);
+    if (!ch) return;
+    int expected = 2;
+    if (!__atomic_compare_exchange_n(&ch->state, &expected, 1, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) return;
+    nx_cpipe* pipes[3] = { &ch->in, &ch->out, &ch->err };
+    for (int i = 0; i < 3; i++) {
+        nx_cpipe* pp = pipes[i];
+        nx_cpipe_close(pp);
+        free(pp->buf.p);
+        pp->buf.p = NULL;
+#if defined(_WIN32)
+        if (pp->ov.hEvent) CloseHandle(pp->ov.hEvent);
+        free(pp->stage);
+#endif
+    }
+    nx_child_reap(ch, false); /* one that ended leaves nothing behind */
+#if defined(_WIN32)
+    CloseHandle(ch->proc);
+#endif
+    __atomic_store_n(&ch->state, 0, __ATOMIC_RELEASE);
+}
+
+/* process.trap_signals and next_signal: SIGINT, SIGTERM and SIGHUP (on
+   Windows Ctrl-C, Ctrl-Break, the console closing, logoff and shutdown)
+   no longer end the program; each is queued, and next_signal takes them
+   in order. */
+NX_STATE int nx_sig_trapped;
+#if defined(_WIN32)
+NX_STATE HANDLE nx_sig_sem;
+NX_STATE volatile LONG nx_sig_head, nx_sig_tail;
+NX_STATE volatile LONG nx_sig_ring[64];
+static BOOL WINAPI nx_sig_console(DWORD kind) {
+    LONG sig = kind == CTRL_C_EVENT ? 2 : kind == CTRL_BREAK_EVENT ? 21 : kind == CTRL_CLOSE_EVENT ? 1 : 15;
+    LONG t = InterlockedIncrement(&nx_sig_tail) - 1;
+    nx_sig_ring[t & 63] = sig;
+    ReleaseSemaphore(nx_sig_sem, 1, NULL);
+    /* the console closing, logoff and shutdown end the program once this
+       returns: it does not, so the program has until the system's limit
+       (a few seconds) to finish */
+    if (kind == CTRL_CLOSE_EVENT || kind == CTRL_LOGOFF_EVENT || kind == CTRL_SHUTDOWN_EVENT) Sleep(INFINITE);
+    return TRUE;
+}
+NX_INLINE void nx_trap_signals(void) {
+    int expected = 0;
+    if (!__atomic_compare_exchange_n(&nx_sig_trapped, &expected, 1, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) return;
+    nx_sig_sem = CreateSemaphoreA(NULL, 0, 64, NULL);
+    SetConsoleCtrlHandler(nx_sig_console, TRUE);
+}
+NX_INLINE int32_t nx_next_signal(int64_t timeout_ms) {
+    if (!nx_sig_sem) return 0;
+    DWORD r = WaitForSingleObject(nx_sig_sem, timeout_ms < 0 ? INFINITE : (DWORD)(timeout_ms > 0x7fffffff ? 0x7fffffff : timeout_ms));
+    if (r != WAIT_OBJECT_0) return 0;
+    LONG hd = InterlockedIncrement(&nx_sig_head) - 1;
+    return (int32_t)nx_sig_ring[hd & 63];
+}
+#else
+/* the handler writes the signal's number to a pipe (all a handler may
+   safely do), and next_signal reads it back */
+NX_STATE int nx_sig_rd NX_STATE_INIT(-1);
+NX_STATE int nx_sig_wr NX_STATE_INIT(-1);
+static void nx_sig_caught(int sig) {
+    int saved = errno;
+    unsigned char b = (unsigned char)sig;
+    ssize_t w = write(nx_sig_wr, &b, 1);
+    (void)w;
+    errno = saved;
+}
+NX_INLINE void nx_trap_signals(void) {
+    int expected = 0;
+    if (!__atomic_compare_exchange_n(&nx_sig_trapped, &expected, 1, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) return;
+    int p[2];
+    if (nx_pipe_cloexec(p) != 0) return;
+    fcntl(p[0], F_SETFL, fcntl(p[0], F_GETFL) | O_NONBLOCK);
+    fcntl(p[1], F_SETFL, fcntl(p[1], F_GETFL) | O_NONBLOCK);
+    nx_sig_wr = p[1];
+    __atomic_store_n(&nx_sig_rd, p[0], __ATOMIC_RELEASE);
+    struct sigaction sa;
+    memset(&sa, 0, sizeof sa);
+    sa.sa_handler = nx_sig_caught;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART;
+    sigaction(SIGINT, &sa, NULL);
+    sigaction(SIGTERM, &sa, NULL);
+    sigaction(SIGHUP, &sa, NULL);
+}
+NX_INLINE int32_t nx_next_signal(int64_t timeout_ms) {
+    int fd = __atomic_load_n(&nx_sig_rd, __ATOMIC_ACQUIRE);
+    if (fd < 0) return 0;
+    int64_t start = nx_mono_ms();
+    for (;;) {
+        unsigned char b = 0;
+        if (read(fd, &b, 1) == 1) return (int32_t)b;
+        int64_t left = nx_left_ms(start, timeout_ms);
+        if (left == 0) return 0;
+        struct pollfd p;
+        p.fd = fd; p.events = POLLIN; p.revents = 0;
+        if (poll(&p, 1, left < 0 ? -1 : left > 1000000000 ? 1000000000 : (int)left) < 0 && errno != EINTR) return 0;
+    }
+}
+#endif
+#endif
+
 NX_INLINE bool nx_read_file(nx_ctx* c, nx_sl_u8 path, nx_string* out) {
     char p[4096];
     if (path.len >= sizeof p) return false;

@@ -299,6 +299,28 @@ brings it.
   when non-empty, and stdout/stderr captured) followed by
   `process.last_stdout()` / `process.last_stderr() -> String`; `std.process`
   wraps these.
+- Programs that run alongside (`std.process` builds `Child` on these; every
+  call but `child_pid` `blocks`): `process.spawn(argv, cwd, flags) -> !i64`
+  starts one (in `cwd`, or this program's directory when empty) with each
+  standard stream, two bits of `flags` apiece in the order stdin, stdout,
+  stderr, as this program's (0), a pipe (1) or nowhere (2), or stderr into
+  stdout (3). `process.child_write(h, bytes, timeout_ms) -> !void` writes
+  all of `bytes` as the program takes them, `process.child_close_input(h)`
+  ends its input, `process.child_read(h, stream, n, timeout_ms) -> !String`
+  is up to `n` bytes of stream 1 (stdout) or 2 (stderr), empty at its end,
+  `process.child_wait(h, timeout_ms) -> !i64` is the exit code in the low
+  32 bits and the signal that ended it above them, `process.child_signal(h,
+  sig) -> !void` sends one (on Windows, which has none, every signal but 0
+  ends the program with exit code 128 + `sig`), `process.child_pid(h) ->
+  i64`, and `process.child_close(h)` lets it go. While a call waits, what
+  the program writes is kept for later reads, so it never stalls on a full
+  pipe. A timeout below 0 waits for ever, and 0 does not wait. Errors:
+  `NotFound` (no such program), `Timeout`, `IoError` (among them a program
+  that no longer reads its input). `process.trap_signals()` keeps SIGINT,
+  SIGTERM and SIGHUP from ending the program (on Windows Ctrl-C, 2,
+  Ctrl-Break, 21, the console closing, 1, and logoff or shutdown, 15), and
+  `process.next_signal(timeout_ms) -> i32` takes the next one caught, 0
+  when none came in time. Not available at the REPL.
 - `time.now() -> i64` (ms since the epoch), `time.monotonic() -> u64` (ns),
   `time.utc_offset(ms) -> i64` (minutes east of UTC of local time at that
   instant; `std.time` builds dates on these),
