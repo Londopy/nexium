@@ -1,5 +1,5 @@
 {
-    "version": "1.4.0",
+    "version": "1.4.1",
     "description": "The Nexium language: a compiler that emits C and ships libraries, packages and tools",
     "homepage": "https://londopy.github.io/nexium/",
     "license": "MIT",
@@ -9,12 +9,12 @@
     ],
     "architecture": {
         "64bit": {
-            "url": "https://github.com/Londopy/nexium/releases/download/v1.4.0/nx-v1.4.0-x86_64-pc-windows-msvc.zip",
-            "hash": "0f88135f79a2caf0d82e0542017d098c1f6b83fc41a94f281ad87f186fd05844"
+            "url": "https://github.com/Londopy/nexium/releases/download/v1.4.1/nx-v1.4.1-x86_64-pc-windows-msvc.zip",
+            "hash": "bd8af6a166520789ba393f996b67fcaaa7f10ba2ceed7ac2c5be6c7e8ac1bee9"
         },
         "arm64": {
-            "url": "https://github.com/Londopy/nexium/releases/download/v1.4.0/nx-v1.4.0-aarch64-pc-windows-msvc.zip",
-            "hash": "842dd8c0b7aea0dfd9c9c75b71a1e171b54a960537a511f316bd72e25e90151f"
+            "url": "https://github.com/Londopy/nexium/releases/download/v1.4.1/nx-v1.4.1-aarch64-pc-windows-msvc.zip",
+            "hash": "79833adbaa772dc0b5a86bbf81db5af22d4fb95cdb45d87cbcd0c6da6ddb058a"
         }
     },
     "bin": "nx.exe",

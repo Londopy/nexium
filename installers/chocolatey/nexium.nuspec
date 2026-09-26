@@ -4,7 +4,7 @@
 <package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
   <metadata>
     <id>nexium</id>
-    <version>1.4.0</version>
+    <version>1.4.1</version>
     <title>Nexium</title>
     <authors>Londopy</authors>
     <owners>Londopy</owners>
@@ -16,7 +16,7 @@
     <bugTrackerUrl>https://github.com/Londopy/nexium/issues</bugTrackerUrl>
     <licenseUrl>https://github.com/Londopy/nexium/blob/main/LICENSE</licenseUrl>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
-    <releaseNotes>https://github.com/Londopy/nexium/releases/tag/v1.4.0</releaseNotes>
+    <releaseNotes>https://github.com/Londopy/nexium/releases/tag/v1.4.1</releaseNotes>
     <tags>nexium compiler language c programming</tags>
     <summary>The Nexium language: a compiler that emits C and ships libraries, packages and tools</summary>
     <description>Nexium compiles to native code through C, has reference counting without a tracing collector, a checked effect system that says whether a function allocates, blocks or can panic, and a compiler that turns one source tree into a C library, a Python wheel, a Rust crate, an npm package or a command line tool.
