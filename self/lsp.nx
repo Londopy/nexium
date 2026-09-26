@@ -42,7 +42,7 @@ const NAMESPACE_MEMBERS = [
     "run exec last_stdout last_stderr spawn child_write child_close_input child_read child_wait child_signal child_pid child_close trap_signals next_signal",
     "now monotonic sleep utc_offset zone_rules",
     "int float seed",
-    "connect listen accept send recv close peer local resolve udp_bind send_to recv_from last_peer",
+    "connect listen accept send recv close peer local resolve udp_bind send_to recv_from last_peer tls_available tls_connect tls_send tls_recv tls_truncated tls_close tls_problem",
     "start join join_all count",
     "mutex_new lock unlock mutex_free cond_new wait wait_for signal broadcast cond_free bell_new bell_ring bell_wait bell_free atomic_load atomic_store atomic_add atomic_swap atomic_cas",
     "copy",

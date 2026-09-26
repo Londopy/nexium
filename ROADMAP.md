@@ -636,7 +636,11 @@ own sources, and the language server answers from the checker.
     nxtls cannot. www.echolink.org, probed on 2026-09-25, answers every
     TLS 1.3 ClientHello with a handshake_failure alert, and on TLS 1.2
     takes only ECDHE-ECDSA-AES256-GCM-SHA384 over P-256; none of that is
-    in nxtls, and QNI reaches it through stunnel.
+    in nxtls, and QNI reaches it through stunnel. (Done: `http.SystemTls`
+    over `net.tls_*`, each platform's library loaded when first used, so
+    no program links one; `http.get("https://...")` needs nothing else.
+    Certificates are checked against the system's roots and the host's
+    name, and a refusal says why.)
   - **Why both, not one**: the platform alone puts C over three operating
     systems' APIs under every HTTPS call, each with its own certificate
     store and its own errors, and leaves nothing that behaves the same
@@ -712,8 +716,8 @@ Order, with the collections, `std.hash`, `random.secure`, the small modules
 `std.base64`), `Map` on SipHash, `std.time` (and with it the known issue
 of `import std.time` hiding `time.now()` fixed), the HTTP client with the
 TLS slot and nxtls in it, `std.websocket`, the `discord` package,
-`std.process`, `std.thread`, `std.text` and `std.testing` already in: the
-platform's TLS.
+`std.process`, `std.thread`, `std.text`, `std.testing` and the platform's
+TLS all in.
 
 Exit: `examples/tool.nx`, `service.nx` and the self-hosted compiler import
 nothing they had to write themselves.

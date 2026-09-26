@@ -3,11 +3,11 @@
 //
 // `import std.http` then:
 //
-//     let r = try http.get("http://example.com/")
+//     let r = try http.get("https://example.com/")  // TLS by the system's own library
 //     println("{} {}", .{r.status, r.body.len})
 //     if let ct = r.header("content-type") { ... }
 //
-//     var client = http.client_with(NxTls, &mut layer)   // a TLS layer, for https://
+//     var client = http.client_with(NxTls, &mut layer)   // or a TLS layer of a package's
 //     client.timeout_ms = 10000                   // and timeouts, redirects, limits
 //     var s = try client.open("GET", "https://example.com/big", &headers, "")
 //     while true {                                // the body as it arrives
@@ -26,8 +26,12 @@
 //
 // The client speaks HTTP/1.1 with `Connection: close` over a `Transport`:
 // TCP for `http://`, and for `https://` the TLS layer a program hands its
-// client, the slot of decision 120 (nxtls, the TLS 1.3 client written in
-// Nexium, fills it; the platform's TLS will). It reads a body by
+// client (the slot of decision 120, which nxtls, the TLS 1.3 client written
+// in Nexium, fills), or without one `SystemTls`, the platform's own:
+// SChannel on Windows, Security.framework on macOS, OpenSSL on Linux and
+// the BSDs, each checking the server's certificate against the system's
+// roots and the host's name (`SystemTls.problem()` says why one failed).
+// It reads a body by
 // Content-Length, chunked encoding, or until the connection ends (refused
 // when a TLS connection was cut rather than closed, as nothing then shows
 // the body is whole), whole or as it arrives, follows up to five
@@ -454,13 +458,75 @@ impl Transport for Plain {
     }
 }
 
-/// A request's input, buffered for the parser: from `Plain`, or from the
-/// client's TLS layer, a `T`. Calls go straight to one or the other (no
-/// `dyn`), so a request has the effects of the transports it can use and
-/// no others: a plain client's stay `allocates blocks panics`.
+/// TLS by the platform's own library, the transport of `https://` for a
+/// client without a TLS layer of its own: SChannel on Windows,
+/// Security.framework on macOS, OpenSSL's libssl on Linux and the BSDs,
+/// loaded when first used (a program links none of them). The server's
+/// certificate is checked against the system's roots and the host's name;
+/// a connection that fails that is `error.IoError`, and `problem` says why.
+pub struct SystemTls {
+    handle: i64 = 0
+    timeout_ms: i64 = 0
+}
+
+impl SystemTls {
+    pub fn new() -> SystemTls {
+        return SystemTls{ }
+    }
+
+    /// Does this system have a TLS library? Windows and macOS always do;
+    /// Linux and the BSDs when OpenSSL's libssl (3 or 1.1) is installed.
+    pub fn available() -> bool {
+        return net.tls_available()
+    }
+
+    /// Why the last TLS connection or call on this thread failed, in words:
+    /// "the server's certificate has expired", "no such host".
+    pub fn problem() -> String {
+        return net.tls_problem()
+    }
+}
+
+impl Transport for SystemTls {
+    fn connect(self: *mut Self, host: []u8, port: u16, timeout_ms: i64) -> !void {
+        self.close()
+        self.handle = try net.tls_connect(host, port, timeout_ms)
+        self.timeout_ms = timeout_ms
+    }
+
+    fn send(self: *mut Self, data: []u8) -> !void {
+        return net.tls_send(self.handle, data)
+    }
+
+    fn recv(self: *mut Self) -> !String {
+        return net.tls_recv(self.handle, 65536, self.timeout_ms)
+    }
+
+    fn set_timeout(self: *mut Self, ms: i64) {
+        self.timeout_ms = ms
+    }
+
+    fn truncated(self: *Self) -> bool {
+        return self.handle != 0 and net.tls_truncated(self.handle)
+    }
+
+    fn close(self: *mut Self) {
+        if self.handle != 0 {
+            net.tls_close(self.handle)
+            self.handle = 0
+        }
+    }
+}
+
+/// A request's input, buffered for the parser: from `Plain`, from the
+/// client's TLS layer, a `T`, or from `SystemTls`. Calls go straight to
+/// one of them (no `dyn`), so a request has the effects of the transports
+/// it can use and no others: a plain client's stay `allocates blocks
+/// panics`.
 struct Input(T) {
     plain: ?*mut Plain
     tls: ?*mut T
+    system: ?*mut SystemTls = null
     buf: String
     pos: usize
     eof: bool
@@ -469,24 +535,28 @@ struct Input(T) {
 impl(T) Input(T) {
     fn send(self: *mut Self, data: []u8) -> !void {
         if let p = self.plain { return p.send(data) }
+        if let s = self.system { return s.send(data) }
         let t = self.tls orelse return error.Closed
         return t.send(data)
     }
 
     fn recv(self: *mut Self) -> !String {
         if let p = self.plain { return p.recv() }
+        if let s = self.system { return s.recv() }
         let t = self.tls orelse return String.new()
         return t.recv()
     }
 
     fn truncated(self: *Self) -> bool {
         if let p = self.plain { return p.truncated() }
+        if let s = self.system { return s.truncated() }
         let t = self.tls orelse return false
         return t.truncated()
     }
 
     fn close(self: *mut Self) {
         if let p = self.plain { p.close() }
+        if let s = self.system { s.close() }
         if let t = self.tls { t.close() }
     }
 
@@ -755,8 +825,9 @@ fn dropping(headers: *List(Header), names: [][]u8) -> List(Header) {
 }
 
 /// Makes requests: `http://` over TCP, `https://` over the TLS layer a
-/// program gives it (the slot of decision 120). `client()` makes one for
-/// `http://` only, `client_with` one with a TLS layer:
+/// program gives it (the slot of decision 120) or, without one, over
+/// `SystemTls`. `client()` makes one with the system's TLS, `client_with`
+/// one with a TLS layer:
 ///
 ///     var client = http.client_with(NxTls, &mut layer)   // nxtls's
 ///     client.timeout_ms = 10000
@@ -776,13 +847,15 @@ pub struct Client(T){
     max_body: usize = 0
     /// headers every request carries; a request's own replace them
     headers: List(Header)
-    /// the TLS layer `https://` goes over; without one it is
-    /// `error.Unsupported`
+    /// the TLS layer `https://` goes over; without one it goes over the
+    /// system's (`error.Unsupported` where the system has none)
     tls: ?*mut T = null
     plain: Plain
+    system: SystemTls = SystemTls{ }
 }
 
-/// A client for `http://`; `https://` is `error.Unsupported`.
+/// A client for `http://`, and for `https://` over the system's TLS
+/// (`SystemTls`).
 pub fn client() -> Client(Plain) {
     return Client(Plain){ .headers = List(Header).new(), .plain = Plain.new() }
 }
@@ -813,9 +886,14 @@ impl(T) Client(T) {
         while true {
             var input = Input(T){ .plain = null, .tls = null, .buf = String.new(), .pos = 0, .eof = false }
             if url.scheme[..] == "https" {
-                let t = self.tls orelse return error.Unsupported
-                try t.connect(url.host[..], url.port, self.timeout_ms)
-                input.tls = t
+                if let t = self.tls {
+                    try t.connect(url.host[..], url.port, self.timeout_ms)
+                    input.tls = t
+                } else {
+                    if !net.tls_available() { return error.Unsupported }
+                    try self.system.connect(url.host[..], url.port, self.timeout_ms)
+                    input.system = &mut self.system
+                }
             } else {
                 try self.plain.connect(url.host[..], url.port, self.timeout_ms)
                 input.plain = &mut self.plain
@@ -876,10 +954,10 @@ impl(T) Client(T) {
     }
 }
 
-/// Perform a request with a plain `client()`, following redirects.
-/// `error.InvalidInput` for a URL that is not http or https,
-/// `error.Unsupported` for `https://`, which needs `client_with` and a TLS
-/// layer.
+/// Perform a request with a `client()`, following redirects: `https://`
+/// over the system's TLS. `error.InvalidInput` for a URL that is not http
+/// or https, `error.Unsupported` for `https://` on a system without a TLS
+/// library.
 pub fn request(method: []u8, url_text: []u8, headers: *List(Header), body: []u8) -> !Response {
     var c = client()
     return c.send(method, url_text, headers, body)
@@ -1294,8 +1372,36 @@ test "https:// goes through the TLS slot" {
     expect_eq((try c2.get("https://[::1]:8443/")).status, 204)
     expect(tls2.sent[0][..].starts_with("GET / HTTP/1.1\r\nHost: [::1]:8443\r\n"))
     var none = client()
-    expect_eq(client_error(&mut none, "https://example.com/"), "Unsupported")
     expect_eq(client_error(&mut none, "ftp://example.com/"), "InvalidInput")
+}
+
+test "https:// without a layer goes over the system's TLS" {
+    var c = client()
+    if !SystemTls.available() {
+        expect_eq(client_error(&mut c, "https://example.com/"), "Unsupported")
+        return
+    }
+    // a listener that never answers: the handshake waits for it, and gives up
+    var l = try net.TcpListener.bind("127.0.0.1", 0)
+    let url = format("https://127.0.0.1:{}/", .{try l.port()})
+    c.timeout_ms = 300
+    expect_eq(client_error(&mut c, url[..]), "Timeout")
+    expect(SystemTls.problem().len > 0)
+    l.close()
+}
+
+test "https:// to live servers, and certificates refused" {
+    // NX_ONLINE=1: a real server, and badssl.com's broken certificates
+    if os.env("NX_ONLINE") == null { return }
+    let r = try get("https://example.com/")
+    expect_eq(r.status, 200)
+    expect(r.body[..].find("Example Domain") != null)
+    for host in ["expired.badssl.com", "wrong.host.badssl.com", "self-signed.badssl.com"] {
+        var c = client()
+        let url = format("https://{}/", .{host})
+        expect_eq(client_error(&mut c, url[..]), "IoError")
+        expect(SystemTls.problem()[..].find("certificate") != null)
+    }
 }
 
 test "a body read as it arrives" {

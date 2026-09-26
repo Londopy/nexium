@@ -2996,6 +2996,758 @@ NX_INLINE nx_string nx_net_last_peer(nx_ctx* c) {
 }
 #endif
 
+/* ------------------------------------------------------------------ TLS */
+/* net.tls_*: TLS over a TCP connection by the platform's own library,
+   loaded when first used so no program links it: SChannel on Windows,
+   Security.framework on macOS, OpenSSL (libssl 3 or 1.1) elsewhere. The
+   server's certificate is checked against the system's roots and the host
+   name. Handles are 1 + a slot; the result codes are the socket calls'
+   (1 no such host, 2 refused, 3 timed out, 4 any other failure), and
+   net.tls_problem says in words what went wrong on this thread. */
+#if defined(_WIN32)
+#ifndef SECURITY_WIN32
+#define SECURITY_WIN32
+#endif
+#include <security.h>
+#include <schannel.h>
+#elif !defined(NX_WASM)
+#include <dlfcn.h>
+#endif
+#define NX_MAX_TLS 256
+typedef struct {
+    int state;               /* 0 free, 1 being set up or let go, 2 in use */
+    nx_sock sock;
+    char host[256];
+    bool ended;              /* the connection is over */
+    bool clean;              /* ... and ended with close_notify */
+    int64_t timeout_ms;      /* what a send may wait (0: no limit) */
+    uint8_t* plain;          /* decrypted and not yet taken */
+    size_t plain_len, plain_pos, plain_cap;
+#if defined(_WIN32)
+    CredHandle cred;
+    CtxtHandle ctx;
+    bool have_cred, have_ctx;
+    SecPkgContext_StreamSizes sizes;
+    uint8_t* raw;            /* received and not yet decrypted */
+    size_t raw_len, raw_cap;
+#else
+    void* ssl;               /* OpenSSL's SSL*, or an SSLContextRef */
+    int64_t deadline;        /* for Security.framework's callbacks (0: none) */
+#endif
+} nx_tls;
+NX_STATE nx_tls nx_tlss[NX_MAX_TLS];
+NX_STATE NX_THREAD_LOCAL char nx_tls_why[256];
+
+NX_INLINE void nx_tls_say(const char* what) { snprintf(nx_tls_why, sizeof nx_tls_why, "%s", what); }
+NX_INLINE nx_string nx_tls_problem(nx_ctx* c) {
+    nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;
+    nx_str_append(c, &s, (const uint8_t*)nx_tls_why, strlen(nx_tls_why));
+    return s;
+}
+NX_INLINE nx_tls* nx_tls_at(int64_t h) {
+    if (h < 1 || h > NX_MAX_TLS) return NULL;
+    nx_tls* t = &nx_tlss[h - 1];
+    return __atomic_load_n(&t->state, __ATOMIC_ACQUIRE) == 2 ? t : NULL;
+}
+/* a deadline `ms` from now (0: none), and what is left of one: 0 for no
+   deadline, -1 when it has passed */
+NX_INLINE int64_t nx_deadline(int64_t ms) { return ms > 0 ? nx_mono_ms() + ms : 0; }
+NX_INLINE int64_t nx_until(int64_t deadline) {
+    if (deadline == 0) return 0;
+    int64_t left = deadline - nx_mono_ms();
+    return left > 0 ? left : -1;
+}
+#if defined(NX_WASM)
+NX_INLINE bool nx_tls_available(void) { return false; }
+NX_INLINE int32_t nx_tls_connect(nx_sl_u8 host, uint16_t port, int64_t timeout_ms, int64_t* out) {
+    (void)host; (void)port; (void)timeout_ms; (void)out;
+    nx_tls_say("no TLS in WebAssembly");
+    return 4;
+}
+NX_INLINE int32_t nx_tls_send(int64_t h, nx_sl_u8 data) { (void)h; (void)data; return 4; }
+NX_INLINE int32_t nx_tls_recv(nx_ctx* c, int64_t h, size_t n, int64_t timeout_ms, nx_string* out) {
+    (void)c; (void)h; (void)n; (void)timeout_ms; (void)out;
+    return 4;
+}
+NX_INLINE bool nx_tls_truncated(int64_t h) { (void)h; return false; }
+NX_INLINE void nx_tls_close(int64_t h) { (void)h; }
+#else
+NX_INLINE void nx_tls_keep(nx_tls* t, const uint8_t* p, size_t n) {
+    if (t->plain_pos == t->plain_len) { t->plain_pos = 0; t->plain_len = 0; }
+    if (t->plain_len + n > t->plain_cap) {
+        size_t cap = t->plain_cap ? t->plain_cap : 16384;
+        while (cap < t->plain_len + n) cap *= 2;
+        uint8_t* q = (uint8_t*)realloc(t->plain, cap);
+        if (!q) nx_panic("out of memory keeping TLS data", "net.tls_recv");
+        t->plain = q;
+        t->plain_cap = cap;
+    }
+    memcpy(t->plain + t->plain_len, p, n);
+    t->plain_len += n;
+}
+/* a send that would have blocked, on a socket that does not */
+NX_INLINE bool nx_tls_again(void) {
+#if defined(_WIN32)
+    return WSAGetLastError() == WSAEWOULDBLOCK;
+#else
+    return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR;
+#endif
+}
+/* all of `n` bytes to the socket, waiting for room until the deadline */
+NX_INLINE int32_t nx_tls_put(nx_sock s, const uint8_t* p, size_t n, int64_t deadline) {
+    size_t sent = 0;
+    while (sent < n) {
+        int64_t left = nx_until(deadline);
+        if (left < 0) return 3;
+        if (!nx_net_wait(s, true, left)) return 3;
+        int k = (int)send(s, (const char*)p + sent, (int)(n - sent), NX_SEND_FLAGS);
+        if (k < 0 && !nx_tls_again()) return nx_net_code();
+        if (k > 0) sent += (size_t)k;
+    }
+    return 0;
+}
+NX_INLINE void nx_tls_reset(nx_tls* t) {
+    t->sock = NX_BAD_SOCK;
+    t->host[0] = 0;
+    t->ended = false;
+    t->clean = false;
+    t->timeout_ms = 0;
+    t->plain = NULL;
+    t->plain_len = 0; t->plain_pos = 0; t->plain_cap = 0;
+#if defined(_WIN32)
+    t->have_cred = false;
+    t->have_ctx = false;
+    memset(&t->sizes, 0, sizeof t->sizes);
+    t->raw = NULL;
+    t->raw_len = 0; t->raw_cap = 0;
+#else
+    t->ssl = NULL;
+    t->deadline = 0;
+#endif
+}
+NX_INLINE int nx_tls_claim(void) {
+    for (int i = 0; i < NX_MAX_TLS; i++) {
+        int expected = 0;
+        if (__atomic_compare_exchange_n(&nx_tlss[i].state, &expected, 1, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            nx_tls_reset(&nx_tlss[i]);
+            return i;
+        }
+    }
+    return -1;
+}
+
+#if defined(_WIN32)
+/* ----- SChannel, through the function table secur32.dll hands out */
+NX_STATE PSecurityFunctionTableA nx_sspi;
+NX_STATE int nx_sspi_state;
+NX_INLINE bool nx_tls_available(void) {
+    int st = __atomic_load_n(&nx_sspi_state, __ATOMIC_ACQUIRE);
+    if (st == 0) {
+        HMODULE m = LoadLibraryA("secur32.dll");
+        INIT_SECURITY_INTERFACE_A init = m ? (INIT_SECURITY_INTERFACE_A)GetProcAddress(m, "InitSecurityInterfaceA") : NULL;
+        nx_sspi = init ? init() : NULL;
+        st = nx_sspi ? 1 : 2;
+        __atomic_store_n(&nx_sspi_state, st, __ATOMIC_RELEASE);
+    }
+    return st == 1;
+}
+#define NX_ISC_FLAGS (ISC_REQ_SEQUENCE_DETECT | ISC_REQ_REPLAY_DETECT | ISC_REQ_CONFIDENTIALITY | ISC_REQ_EXTENDED_ERROR | ISC_REQ_ALLOCATE_MEMORY | ISC_REQ_STREAM)
+NX_INLINE void nx_tls_say_status(SECURITY_STATUS st) {
+    const char* what = "the TLS handshake failed";
+    if (st == SEC_E_UNTRUSTED_ROOT || st == CERT_E_UNTRUSTEDROOT || st == CERT_E_CHAINING) what = "the server's certificate is not signed by a root this system trusts";
+    else if (st == SEC_E_WRONG_PRINCIPAL || st == CERT_E_CN_NO_MATCH) what = "the server's certificate is for another name";
+    else if (st == SEC_E_CERT_EXPIRED || st == CERT_E_EXPIRED) what = "the server's certificate has expired";
+    else if (st == CRYPT_E_REVOKED) what = "the server's certificate is revoked";
+    else if (st == SEC_E_ILLEGAL_MESSAGE) what = "the server sent an alert, or something that is not TLS";
+    else if (st == SEC_E_ALGORITHM_MISMATCH) what = "the server and this system have no cipher in common";
+    else if (st == SEC_E_DECRYPT_FAILURE || st == SEC_E_MESSAGE_ALTERED) what = "a TLS record did not decrypt";
+    snprintf(nx_tls_why, sizeof nx_tls_why, "%s (SChannel 0x%08lX)", what, (unsigned long)st);
+}
+/* room for `more` bytes after what `raw` holds */
+NX_INLINE void nx_tls_room(nx_tls* t, size_t more) {
+    if (t->raw_len + more <= t->raw_cap) return;
+    size_t cap = t->raw_cap ? t->raw_cap : 32768;
+    while (cap < t->raw_len + more) cap *= 2;
+    uint8_t* q = (uint8_t*)realloc(t->raw, cap);
+    if (!q) nx_panic("out of memory in TLS", "net.tls");
+    t->raw = q;
+    t->raw_cap = cap;
+}
+/* more ciphertext: 0, 3 on timeout, 5 when the peer closed, else a socket code */
+NX_INLINE int32_t nx_tls_pull(nx_tls* t, int64_t deadline) {
+    int64_t left = nx_until(deadline);
+    if (left < 0) return 3;
+    if (!nx_net_wait(t->sock, false, left)) return 3;
+    nx_tls_room(t, 16384);
+    int k = (int)recv(t->sock, (char*)t->raw + t->raw_len, 16384, 0);
+    if (k == 0) return 5;
+    if (k < 0) return nx_net_code();
+    t->raw_len += (size_t)k;
+    return 0;
+}
+NX_INLINE int32_t nx_tls_token(nx_tls* t, SecBuffer* b, int64_t deadline) {
+    int32_t r = 0;
+    if (b->pvBuffer && b->cbBuffer > 0) r = nx_tls_put(t->sock, (const uint8_t*)b->pvBuffer, b->cbBuffer, deadline);
+    if (b->pvBuffer) nx_sspi->FreeContextBuffer(b->pvBuffer);
+    b->pvBuffer = NULL;
+    b->cbBuffer = 0;
+    return r;
+}
+NX_INLINE int32_t nx_tls_lost(int32_t r) {
+    if (r == 3) nx_tls_say("the TLS handshake took longer than allowed");
+    else nx_tls_say("the server closed the connection during the TLS handshake");
+    return r == 5 ? 4 : r;
+}
+/* Step the handshake over what `raw` holds until it completes: from the
+   start, or for a message after it (DecryptMessage's SEC_I_RENEGOTIATE). */
+NX_INLINE int32_t nx_tls_steps(nx_tls* t, int64_t deadline) {
+    SECURITY_STATUS st;
+    TimeStamp ts;
+    ULONG got = 0;
+    if (!t->have_ctx) {
+        SecBuffer out = { 0, SECBUFFER_TOKEN, NULL };
+        SecBufferDesc od = { SECBUFFER_VERSION, 1, &out };
+        st = nx_sspi->InitializeSecurityContextA(&t->cred, NULL, (SEC_CHAR*)t->host, NX_ISC_FLAGS, 0, 0, NULL, 0, &t->ctx, &od, &got, &ts);
+        if (st != SEC_I_CONTINUE_NEEDED) { nx_tls_say_status(st); return 4; }
+        t->have_ctx = true;
+        int32_t r = nx_tls_token(t, &out, deadline);
+        if (r) return nx_tls_lost(r);
+    }
+    for (;;) {
+        if (t->raw_len == 0) {
+            int32_t r = nx_tls_pull(t, deadline);
+            if (r) return nx_tls_lost(r);
+        }
+        SecBuffer in[2] = { { (ULONG)t->raw_len, SECBUFFER_TOKEN, t->raw }, { 0, SECBUFFER_EMPTY, NULL } };
+        SecBufferDesc id = { SECBUFFER_VERSION, 2, in };
+        SecBuffer out = { 0, SECBUFFER_TOKEN, NULL };
+        SecBufferDesc od = { SECBUFFER_VERSION, 1, &out };
+        st = nx_sspi->InitializeSecurityContextA(&t->cred, &t->ctx, (SEC_CHAR*)t->host, NX_ISC_FLAGS, 0, 0, &id, 0, NULL, &od, &got, &ts);
+        if (st == SEC_E_INCOMPLETE_MESSAGE) {
+            int32_t r = nx_tls_pull(t, deadline);
+            if (r) return nx_tls_lost(r);
+            continue;
+        }
+        /* a token to send even on failure: the alert that says why */
+        int32_t sent = nx_tls_token(t, &out, deadline);
+        if (st != SEC_E_OK && st != SEC_I_CONTINUE_NEEDED && st != SEC_I_INCOMPLETE_CREDENTIALS) {
+            nx_tls_say_status(st);
+            return 4;
+        }
+        /* keep what this step did not read */
+        if (in[1].BufferType == SECBUFFER_EXTRA && in[1].cbBuffer > 0) {
+            memmove(t->raw, t->raw + (t->raw_len - in[1].cbBuffer), in[1].cbBuffer);
+            t->raw_len = in[1].cbBuffer;
+        } else {
+            t->raw_len = 0;
+        }
+        if (sent) return nx_tls_lost(sent);
+        if (st == SEC_E_OK) return 0;
+    }
+}
+NX_INLINE int32_t nx_tls_open(nx_tls* t, int64_t deadline) {
+    SCHANNEL_CRED sc;
+    memset(&sc, 0, sizeof sc);
+    sc.dwVersion = SCHANNEL_CRED_VERSION;
+    sc.dwFlags = SCH_CRED_AUTO_CRED_VALIDATION | SCH_CRED_NO_DEFAULT_CREDS | SCH_USE_STRONG_CRYPTO;
+    TimeStamp ts;
+    SECURITY_STATUS st = nx_sspi->AcquireCredentialsHandleA(NULL, (SEC_CHAR*)UNISP_NAME_A, SECPKG_CRED_OUTBOUND, NULL, &sc, NULL, NULL, &t->cred, &ts);
+    if (st != SEC_E_OK) { nx_tls_say_status(st); return 4; }
+    t->have_cred = true;
+    int32_t r = nx_tls_steps(t, deadline);
+    if (r) return r;
+    st = nx_sspi->QueryContextAttributesA(&t->ctx, SECPKG_ATTR_STREAM_SIZES, &t->sizes);
+    if (st != SEC_E_OK) { nx_tls_say_status(st); return 4; }
+    return 0;
+}
+NX_INLINE int32_t nx_tls_write(nx_tls* t, const uint8_t* p, size_t n, int64_t deadline) {
+    size_t hdr = t->sizes.cbHeader, tail = t->sizes.cbTrailer, max = t->sizes.cbMaximumMessage;
+    uint8_t* buf = (uint8_t*)malloc(hdr + max + tail);
+    if (!buf) nx_panic("out of memory in TLS", "net.tls_send");
+    int32_t r = 0;
+    while (n > 0) {
+        size_t k = n < max ? n : max;
+        memcpy(buf + hdr, p, k);
+        SecBuffer b[4] = { { (ULONG)hdr, SECBUFFER_STREAM_HEADER, buf }, { (ULONG)k, SECBUFFER_DATA, buf + hdr }, { (ULONG)tail, SECBUFFER_STREAM_TRAILER, buf + hdr + k }, { 0, SECBUFFER_EMPTY, NULL } };
+        SecBufferDesc d = { SECBUFFER_VERSION, 4, b };
+        SECURITY_STATUS st = nx_sspi->EncryptMessage(&t->ctx, 0, &d, 0);
+        if (st != SEC_E_OK) { nx_tls_say_status(st); r = 4; break; }
+        r = nx_tls_put(t->sock, buf, b[0].cbBuffer + b[1].cbBuffer + b[2].cbBuffer, deadline);
+        if (r) { nx_tls_say(r == 3 ? "a TLS send took longer than allowed" : "the connection failed while sending"); break; }
+        p += k;
+        n -= k;
+    }
+    free(buf);
+    return r;
+}
+/* decrypt until there is something to read or the connection is over */
+NX_INLINE int32_t nx_tls_fill(nx_tls* t, int64_t deadline) {
+    while (t->plain_pos >= t->plain_len && !t->ended) {
+        if (t->raw_len > 0) {
+            SecBuffer b[4] = { { (ULONG)t->raw_len, SECBUFFER_DATA, t->raw }, { 0, SECBUFFER_EMPTY, NULL }, { 0, SECBUFFER_EMPTY, NULL }, { 0, SECBUFFER_EMPTY, NULL } };
+            SecBufferDesc d = { SECBUFFER_VERSION, 4, b };
+            SECURITY_STATUS st = nx_sspi->DecryptMessage(&t->ctx, &d, 0, NULL);
+            if (st == SEC_E_OK || st == SEC_I_RENEGOTIATE || st == SEC_I_CONTEXT_EXPIRED) {
+                SecBuffer* data = NULL;
+                SecBuffer* extra = NULL;
+                for (int i = 1; i < 4; i++) {
+                    if (b[i].BufferType == SECBUFFER_DATA) data = &b[i];
+                    if (b[i].BufferType == SECBUFFER_EXTRA) extra = &b[i];
+                }
+                /* the data sits in `raw`: taken before the rest moves over it */
+                if (data && data->cbBuffer > 0) nx_tls_keep(t, (const uint8_t*)data->pvBuffer, data->cbBuffer);
+                if (extra && extra->cbBuffer > 0) {
+                    memmove(t->raw, t->raw + (t->raw_len - extra->cbBuffer), extra->cbBuffer);
+                    t->raw_len = extra->cbBuffer;
+                } else {
+                    t->raw_len = 0;
+                }
+                if (st == SEC_I_CONTEXT_EXPIRED) {
+                    t->ended = true;
+                    t->clean = true;
+                } else if (st == SEC_I_RENEGOTIATE) {
+                    int32_t r = nx_tls_steps(t, deadline);
+                    if (r) return r;
+                }
+                continue;
+            }
+            if (st != SEC_E_INCOMPLETE_MESSAGE) { nx_tls_say_status(st); return 4; }
+        }
+        int32_t r = nx_tls_pull(t, deadline);
+        if (r == 5) { t->ended = true; break; }
+        if (r) return r;
+    }
+    return 0;
+}
+/* close_notify, when the connection still runs, and the handles let go */
+NX_INLINE void nx_tls_shut(nx_tls* t) {
+    if (t->have_ctx && !t->ended) {
+        DWORD kind = SCHANNEL_SHUTDOWN;
+        SecBuffer b = { sizeof kind, SECBUFFER_TOKEN, &kind };
+        SecBufferDesc d = { SECBUFFER_VERSION, 1, &b };
+        if (nx_sspi->ApplyControlToken(&t->ctx, &d) == SEC_E_OK) {
+            SecBuffer out = { 0, SECBUFFER_TOKEN, NULL };
+            SecBufferDesc od = { SECBUFFER_VERSION, 1, &out };
+            ULONG got = 0;
+            TimeStamp ts;
+            nx_sspi->InitializeSecurityContextA(&t->cred, &t->ctx, (SEC_CHAR*)t->host, NX_ISC_FLAGS, 0, 0, NULL, 0, NULL, &od, &got, &ts);
+            nx_tls_token(t, &out, nx_deadline(1000));
+        }
+    }
+    if (t->have_ctx) nx_sspi->DeleteSecurityContext(&t->ctx);
+    if (t->have_cred) nx_sspi->FreeCredentialsHandle(&t->cred);
+    free(t->raw);
+    t->raw = NULL;
+}
+#elif defined(__APPLE__)
+/* ----- Security.framework's Secure Transport, found with dlsym */
+typedef int32_t nx_osstatus;
+typedef nx_osstatus (*nx_st_readfn)(const void*, void*, size_t*);
+typedef nx_osstatus (*nx_st_writefn)(const void*, const void*, size_t*);
+typedef struct {
+    void* (*SSLCreateContext)(const void*, int, int);
+    nx_osstatus (*SSLSetIOFuncs)(void*, nx_st_readfn, nx_st_writefn);
+    nx_osstatus (*SSLSetConnection)(void*, const void*);
+    nx_osstatus (*SSLSetPeerDomainName)(void*, const char*, size_t);
+    nx_osstatus (*SSLHandshake)(void*);
+    nx_osstatus (*SSLWrite)(void*, const void*, size_t, size_t*);
+    nx_osstatus (*SSLRead)(void*, void*, size_t, size_t*);
+    nx_osstatus (*SSLClose)(void*);
+    void (*CFRelease)(const void*);
+} nx_sectrans;
+NX_STATE nx_sectrans nx_st;
+NX_STATE int nx_st_state;
+#define NX_ST_WOULD_BLOCK (-9803)
+#define NX_ST_CLOSED_GRACEFUL (-9805)
+#define NX_ST_CLOSED_ABORT (-9806)
+#define NX_ST_CLOSED_NO_NOTIFY (-9816)
+NX_INLINE bool nx_tls_available(void) {
+    int st = __atomic_load_n(&nx_st_state, __ATOMIC_ACQUIRE);
+    if (st == 0) {
+        void* sec = dlopen("/System/Library/Frameworks/Security.framework/Security", RTLD_LAZY);
+        void* cf = dlopen("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation", RTLD_LAZY);
+        bool ok = sec && cf;
+#define NX_ST_SYM(lib, f) if (ok) { *(void**)&nx_st.f = dlsym(lib, #f); ok = nx_st.f != NULL; }
+        NX_ST_SYM(sec, SSLCreateContext)
+        NX_ST_SYM(sec, SSLSetIOFuncs)
+        NX_ST_SYM(sec, SSLSetConnection)
+        NX_ST_SYM(sec, SSLSetPeerDomainName)
+        NX_ST_SYM(sec, SSLHandshake)
+        NX_ST_SYM(sec, SSLWrite)
+        NX_ST_SYM(sec, SSLRead)
+        NX_ST_SYM(sec, SSLClose)
+        NX_ST_SYM(cf, CFRelease)
+#undef NX_ST_SYM
+        st = ok ? 1 : 2;
+        __atomic_store_n(&nx_st_state, st, __ATOMIC_RELEASE);
+    }
+    return st == 1;
+}
+/* The socket is non-blocking: a read takes what has come and says
+   "would block" for the rest, so SSLRead gives what it decrypted without
+   waiting to fill its buffer; the callers wait for the socket. */
+static nx_osstatus nx_st_read(const void* conn, void* data, size_t* len) {
+    nx_tls* t = (nx_tls*)conn;
+    size_t want = *len, got = 0;
+    while (got < want) {
+        ssize_t k = recv(t->sock, (char*)data + got, want - got, 0);
+        if (k > 0) { got += (size_t)k; continue; }
+        if (k == 0) { *len = got; return NX_ST_CLOSED_NO_NOTIFY; }
+        if (errno == EINTR) continue;
+        *len = got;
+        return errno == EAGAIN || errno == EWOULDBLOCK ? NX_ST_WOULD_BLOCK : NX_ST_CLOSED_ABORT;
+    }
+    *len = got;
+    return 0;
+}
+static nx_osstatus nx_st_write(const void* conn, const void* data, size_t* len) {
+    nx_tls* t = (nx_tls*)conn;
+    int32_t r = nx_tls_put(t->sock, (const uint8_t*)data, *len, t->deadline);
+    if (r) { *len = 0; return NX_ST_CLOSED_ABORT; }
+    return 0;
+}
+NX_INLINE void nx_tls_say_status(nx_osstatus st) {
+    const char* what = "the TLS handshake failed";
+    if (st == -9807 || st == -9812 || st == -9813) what = "the server's certificate is not signed by a root this system trusts";
+    else if (st == -9843) what = "the server's certificate is for another name";
+    else if (st == -9814 || st == -9815) what = "the server's certificate has expired or is not valid yet";
+    else if (st == -9808) what = "the server's certificate is bad";
+    else if (st == -9824) what = "the server refused the handshake";
+    else if (st == NX_ST_CLOSED_ABORT || st == NX_ST_CLOSED_NO_NOTIFY) what = "the server closed the connection during the TLS handshake";
+    snprintf(nx_tls_why, sizeof nx_tls_why, "%s (Secure Transport %d)", what, (int)st);
+}
+/* wait for the socket to have something to read; false once the deadline passed */
+NX_INLINE bool nx_tls_await(nx_tls* t, int64_t deadline) {
+    int64_t left = nx_until(deadline);
+    return left >= 0 && nx_net_wait(t->sock, false, left);
+}
+NX_INLINE int32_t nx_tls_open(nx_tls* t, int64_t deadline) {
+    void* ctx = nx_st.SSLCreateContext(NULL, 1, 0);
+    if (!ctx) { nx_tls_say("Secure Transport would not make a context"); return 4; }
+    t->ssl = ctx;
+    nx_st.SSLSetIOFuncs(ctx, nx_st_read, nx_st_write);
+    nx_st.SSLSetConnection(ctx, t);
+    nx_st.SSLSetPeerDomainName(ctx, t->host, strlen(t->host));
+    nx_net_blocking(t->sock, false);
+    t->deadline = deadline;
+    for (;;) {
+        nx_osstatus st = nx_st.SSLHandshake(ctx);
+        if (st == 0) return 0;
+        if (st == NX_ST_WOULD_BLOCK) {
+            if (!nx_tls_await(t, deadline)) { nx_tls_say("the TLS handshake took longer than allowed"); return 3; }
+            continue;
+        }
+        nx_tls_say_status(st);
+        return 4;
+    }
+}
+NX_INLINE int32_t nx_tls_write(nx_tls* t, const uint8_t* p, size_t n, int64_t deadline) {
+    t->deadline = deadline;
+    while (n > 0) {
+        size_t done = 0;
+        nx_osstatus st = nx_st.SSLWrite(t->ssl, p, n, &done);
+        p += done;
+        n -= done;
+        if (st == 0) continue;
+        if (st == NX_ST_WOULD_BLOCK) {
+            if (!nx_tls_await(t, deadline)) { nx_tls_say("a TLS send took longer than allowed"); return 3; }
+            continue;
+        }
+        nx_tls_say("the connection failed while sending");
+        return 4;
+    }
+    return 0;
+}
+NX_INLINE int32_t nx_tls_fill(nx_tls* t, int64_t deadline) {
+    uint8_t buf[16384];
+    t->deadline = deadline;
+    while (t->plain_pos >= t->plain_len && !t->ended) {
+        size_t got = 0;
+        nx_osstatus st = nx_st.SSLRead(t->ssl, buf, sizeof buf, &got);
+        if (got > 0) nx_tls_keep(t, buf, got);
+        if (st == 0) continue;
+        if (st == NX_ST_WOULD_BLOCK) {
+            if (got > 0) continue;
+            if (!nx_tls_await(t, deadline)) return 3;
+            continue;
+        }
+        if (st == NX_ST_CLOSED_GRACEFUL) { t->ended = true; t->clean = true; break; }
+        if (st == NX_ST_CLOSED_NO_NOTIFY || st == NX_ST_CLOSED_ABORT) { t->ended = true; break; }
+        nx_tls_say_status(st);
+        return 4;
+    }
+    return 0;
+}
+NX_INLINE void nx_tls_shut(nx_tls* t) {
+    if (!t->ssl) return;
+    if (!t->ended) {
+        t->deadline = nx_deadline(1000);
+        nx_st.SSLClose(t->ssl);
+    }
+    nx_st.CFRelease(t->ssl);
+    t->ssl = NULL;
+}
+#else
+/* ----- OpenSSL's libssl, loaded with dlopen */
+typedef struct {
+    int (*OPENSSL_init_ssl)(uint64_t, const void*);
+    const void* (*TLS_client_method)(void);
+    void* (*SSL_CTX_new)(const void*);
+    int (*SSL_CTX_set_default_verify_paths)(void*);
+    void (*SSL_CTX_set_verify)(void*, int, void*);
+    void* (*SSL_new)(void*);
+    int (*SSL_set_fd)(void*, int);
+    long (*SSL_ctrl)(void*, int, long, void*);
+    int (*SSL_set1_host)(void*, const char*);
+    int (*SSL_connect)(void*);
+    int (*SSL_read)(void*, void*, int);
+    int (*SSL_write)(void*, const void*, int);
+    int (*SSL_shutdown)(void*);
+    int (*SSL_get_error)(const void*, int);
+    long (*SSL_get_verify_result)(const void*);
+    void (*SSL_free)(void*);
+    unsigned long (*ERR_get_error)(void);
+    void (*ERR_clear_error)(void);
+    void (*ERR_error_string_n)(unsigned long, char*, size_t);
+    const char* (*X509_verify_cert_error_string)(long);
+} nx_openssl;
+NX_STATE nx_openssl nx_ossl;
+NX_STATE void* nx_ossl_ctx;
+NX_STATE int nx_ossl_state;
+NX_STATE bool nx_ossl_3;
+#define NX_SSL_WANT_READ 2
+#define NX_SSL_WANT_WRITE 3
+#define NX_SSL_ERROR_SSL 1
+#define NX_SSL_ERROR_SYSCALL 5
+#define NX_SSL_ZERO_RETURN 6
+NX_INLINE bool nx_tls_available(void) {
+    int expected = 0;
+    if (__atomic_compare_exchange_n(&nx_ossl_state, &expected, 3, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        static const char* names[] = { "libssl.so.3", "libssl.so.1.1", "libssl.so" };
+        void* h = NULL;
+        for (int i = 0; i < 3 && !h; i++) {
+            h = dlopen(names[i], RTLD_NOW | RTLD_GLOBAL);
+            if (h && i == 0) nx_ossl_3 = true;
+        }
+        bool ok = h != NULL;
+#define NX_OSSL_SYM(f) if (ok) { *(void**)&nx_ossl.f = dlsym(h, #f); ok = nx_ossl.f != NULL; }
+        NX_OSSL_SYM(OPENSSL_init_ssl)
+        NX_OSSL_SYM(TLS_client_method)
+        NX_OSSL_SYM(SSL_CTX_new)
+        NX_OSSL_SYM(SSL_CTX_set_default_verify_paths)
+        NX_OSSL_SYM(SSL_CTX_set_verify)
+        NX_OSSL_SYM(SSL_new)
+        NX_OSSL_SYM(SSL_set_fd)
+        NX_OSSL_SYM(SSL_ctrl)
+        NX_OSSL_SYM(SSL_set1_host)
+        NX_OSSL_SYM(SSL_connect)
+        NX_OSSL_SYM(SSL_read)
+        NX_OSSL_SYM(SSL_write)
+        NX_OSSL_SYM(SSL_shutdown)
+        NX_OSSL_SYM(SSL_get_error)
+        NX_OSSL_SYM(SSL_get_verify_result)
+        NX_OSSL_SYM(SSL_free)
+        NX_OSSL_SYM(ERR_get_error)
+        NX_OSSL_SYM(ERR_clear_error)
+        NX_OSSL_SYM(ERR_error_string_n)
+        NX_OSSL_SYM(X509_verify_cert_error_string)
+#undef NX_OSSL_SYM
+        if (ok) {
+            nx_ossl.OPENSSL_init_ssl(0, NULL);
+            nx_ossl_ctx = nx_ossl.SSL_CTX_new(nx_ossl.TLS_client_method());
+            ok = nx_ossl_ctx != NULL && nx_ossl.SSL_CTX_set_default_verify_paths(nx_ossl_ctx) == 1;
+            /* SSL_VERIFY_PEER: a certificate that does not check out ends the handshake */
+            if (ok) nx_ossl.SSL_CTX_set_verify(nx_ossl_ctx, 1, NULL);
+        }
+        __atomic_store_n(&nx_ossl_state, ok ? 1 : 2, __ATOMIC_RELEASE);
+    }
+    int st;
+    while ((st = __atomic_load_n(&nx_ossl_state, __ATOMIC_ACQUIRE)) == 3) nx_sleep_ms(1);
+    return st == 1;
+}
+NX_INLINE void nx_tls_say_error(const char* what) {
+    unsigned long e = nx_ossl.ERR_get_error();
+    if (e == 0) { nx_tls_say(what); return; }
+    char buf[160];
+    nx_ossl.ERR_error_string_n(e, buf, sizeof buf);
+    snprintf(nx_tls_why, sizeof nx_tls_why, "%s (%s)", what, buf);
+}
+/* wait for what OpenSSL asked for; false once the deadline passed */
+NX_INLINE bool nx_tls_await(nx_tls* t, int want, int64_t deadline) {
+    int64_t left = nx_until(deadline);
+    return left >= 0 && nx_net_wait(t->sock, want == NX_SSL_WANT_WRITE, left);
+}
+NX_INLINE int32_t nx_tls_open(nx_tls* t, int64_t deadline) {
+    void* ssl = nx_ossl.SSL_new(nx_ossl_ctx);
+    if (!ssl) { nx_tls_say_error("OpenSSL would not make a connection"); return 4; }
+    t->ssl = ssl;
+    nx_ossl.SSL_set_fd(ssl, (int)t->sock);
+    /* SSL_set_tlsext_host_name: the name for the server to pick a certificate by */
+    nx_ossl.SSL_ctrl(ssl, 55, 0, t->host);
+    /* and the name the certificate must carry */
+    nx_ossl.SSL_set1_host(ssl, t->host);
+    nx_net_blocking(t->sock, false);
+    nx_ossl.ERR_clear_error();
+    for (;;) {
+        int r = nx_ossl.SSL_connect(ssl);
+        if (r == 1) return 0;
+        int e = nx_ossl.SSL_get_error(ssl, r);
+        if (e == NX_SSL_WANT_READ || e == NX_SSL_WANT_WRITE) {
+            if (!nx_tls_await(t, e, deadline)) { nx_tls_say("the TLS handshake took longer than allowed"); return 3; }
+            continue;
+        }
+        long v = nx_ossl.SSL_get_verify_result(ssl);
+        if (v != 0) {
+            snprintf(nx_tls_why, sizeof nx_tls_why, "the server's certificate does not check out: %s", nx_ossl.X509_verify_cert_error_string(v));
+        } else if (e == NX_SSL_ERROR_SYSCALL) {
+            nx_tls_say_error("the server closed the connection during the TLS handshake");
+        } else {
+            nx_tls_say_error("the TLS handshake failed");
+        }
+        return 4;
+    }
+}
+NX_INLINE int32_t nx_tls_write(nx_tls* t, const uint8_t* p, size_t n, int64_t deadline) {
+    sigset_t old;
+    nx_sigpipe_hold(&old);
+    int32_t code = 0;
+    while (n > 0) {
+        int k = n > (1u << 30) ? (1 << 30) : (int)n;
+        nx_ossl.ERR_clear_error();
+        int r = nx_ossl.SSL_write(t->ssl, p, k);
+        if (r > 0) { p += r; n -= (size_t)r; continue; }
+        int e = nx_ossl.SSL_get_error(t->ssl, r);
+        if (e == NX_SSL_WANT_READ || e == NX_SSL_WANT_WRITE) {
+            if (nx_tls_await(t, e, deadline)) continue;
+            nx_tls_say("a TLS send took longer than allowed");
+            code = 3;
+            break;
+        }
+        nx_tls_say_error("the connection failed while sending");
+        code = 4;
+        break;
+    }
+    nx_sigpipe_release(&old);
+    return code;
+}
+NX_INLINE int32_t nx_tls_fill(nx_tls* t, int64_t deadline) {
+    uint8_t buf[16384];
+    while (t->plain_pos >= t->plain_len && !t->ended) {
+        nx_ossl.ERR_clear_error();
+        int r = nx_ossl.SSL_read(t->ssl, buf, (int)sizeof buf);
+        if (r > 0) { nx_tls_keep(t, buf, (size_t)r); continue; }
+        int e = nx_ossl.SSL_get_error(t->ssl, r);
+        if (e == NX_SSL_ZERO_RETURN) { t->ended = true; t->clean = true; break; }
+        if (e == NX_SSL_WANT_READ || e == NX_SSL_WANT_WRITE) {
+            if (!nx_tls_await(t, e, deadline)) return 3;
+            continue;
+        }
+        /* the peer went away without close_notify: OpenSSL 1.1 says so
+           with an empty error queue, 3 with UNEXPECTED_EOF_WHILE_READING */
+        unsigned long err = nx_ossl.ERR_get_error();
+        if ((e == NX_SSL_ERROR_SYSCALL && err == 0) || (nx_ossl_3 && (err & 0x7FFFFF) == 294)) { t->ended = true; break; }
+        char text[160];
+        nx_ossl.ERR_error_string_n(err, text, sizeof text);
+        snprintf(nx_tls_why, sizeof nx_tls_why, "a TLS record did not decrypt (%s)", text);
+        return 4;
+    }
+    return 0;
+}
+NX_INLINE void nx_tls_shut(nx_tls* t) {
+    if (!t->ssl) return;
+    if (!t->ended) {
+        sigset_t old;
+        nx_sigpipe_hold(&old);
+        nx_ossl.SSL_shutdown(t->ssl);
+        nx_sigpipe_release(&old);
+    }
+    nx_ossl.SSL_free(t->ssl);
+    t->ssl = NULL;
+}
+#endif
+
+/* the slot let go: the platform's part first, then the socket */
+NX_INLINE void nx_tls_release(nx_tls* t) {
+    nx_tls_shut(t);
+    free(t->plain);
+    t->plain = NULL;
+    if (t->sock != NX_BAD_SOCK) nx_net_close((int64_t)t->sock);
+    t->sock = NX_BAD_SOCK;
+    __atomic_store_n(&t->state, 0, __ATOMIC_RELEASE);
+}
+NX_INLINE int32_t nx_tls_connect(nx_sl_u8 host, uint16_t port, int64_t timeout_ms, int64_t* out) {
+    nx_tls_why[0] = 0;
+    if (!nx_tls_available()) {
+        nx_tls_say("this system has no TLS library to load (OpenSSL's libssl)");
+        return 4;
+    }
+    if (host.len == 0 || host.len >= sizeof nx_tlss[0].host) { nx_tls_say("TLS needs a host name"); return 4; }
+    int64_t deadline = nx_deadline(timeout_ms);
+    int64_t sock = 0;
+    int32_t r = nx_tcp_connect(host, port, timeout_ms, &sock);
+    if (r) {
+        nx_tls_say(r == 1 ? "no such host" : r == 2 ? "the connection was refused" : r == 3 ? "the connection took longer than allowed" : "the connection failed");
+        return r;
+    }
+    int slot = nx_tls_claim();
+    if (slot < 0) {
+        nx_net_close(sock);
+        nx_tls_say("too many TLS connections are open");
+        return 4;
+    }
+    nx_tls* t = &nx_tlss[slot];
+    t->sock = (nx_sock)sock;
+    memcpy(t->host, host.ptr, host.len);
+    t->host[host.len] = 0;
+    t->timeout_ms = timeout_ms;
+    r = nx_tls_open(t, deadline);
+    if (r) {
+        /* no close_notify for a handshake that did not finish */
+        t->ended = true;
+        nx_tls_release(t);
+        return r;
+    }
+    __atomic_store_n(&t->state, 2, __ATOMIC_RELEASE);
+    *out = slot + 1;
+    return 0;
+}
+NX_INLINE int32_t nx_tls_send(int64_t h, nx_sl_u8 data) {
+    nx_tls* t = nx_tls_at(h);
+    if (!t) { nx_tls_say("not an open TLS connection"); return 4; }
+    if (t->ended) { nx_tls_say("the connection is over"); return 4; }
+    return nx_tls_write(t, data.ptr, data.len, nx_deadline(t->timeout_ms));
+}
+/* Up to `n` bytes of what the server sent, waiting at most `timeout_ms`
+   (0: no limit) for some; empty at the end of the connection. */
+NX_INLINE int32_t nx_tls_recv(nx_ctx* c, int64_t h, size_t n, int64_t timeout_ms, nx_string* out) {
+    nx_tls* t = nx_tls_at(h);
+    if (!t) { nx_tls_say("not an open TLS connection"); return 4; }
+    int32_t r = nx_tls_fill(t, nx_deadline(timeout_ms));
+    if (r) return r;
+    nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;
+    size_t have = t->plain_len - t->plain_pos;
+    if (have > n) have = n;
+    if (have > 0) {
+        nx_str_append(c, &s, t->plain + t->plain_pos, have);
+        t->plain_pos += have;
+    }
+    *out = s;
+    return 0;
+}
+/* Did the connection end without close_notify, so that what came may be cut short? */
+NX_INLINE bool nx_tls_truncated(int64_t h) {
+    nx_tls* t = nx_tls_at(h);
+    return t && t->ended && !t->clean;
+}
+NX_INLINE void nx_tls_close(int64_t h) {
+    nx_tls* t = nx_tls_at(h);
+    if (!t) return;
+    int expected = 2;
+    if (!__atomic_compare_exchange_n(&t->state, &expected, 1, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) return;
+    nx_tls_release(t);
+}
+#endif
+
 /* ------------------------------------------------------------- threads */
 /* A spawned thread runs a Nexium function value `fn(*mut X)` with its own
    context; a panic inside it is re-raised by the joiner. Handles are

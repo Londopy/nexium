@@ -276,6 +276,18 @@ brings it.
   `net.last_peer()` naming the sender. A timeout of 0 waits forever.
   Errors: `NotFound` (name lookup), `ConnectionRefused`, `Timeout`,
   `IoError`. Not available at the REPL.
+- TLS over TCP by the platform's own library, loaded when first used
+  (SChannel on Windows, Security.framework on macOS, OpenSSL's libssl 3 or
+  1.1 elsewhere; `std.http`'s `SystemTls` wraps these, and every call
+  `blocks`): `net.tls_available() -> bool`, `net.tls_connect(host, port,
+  timeout_ms) -> !i64` (the connection and the handshake within the
+  timeout; the server's certificate checked against the system's roots and
+  the host's name), `net.tls_send(h, bytes) -> !void`, `net.tls_recv(h, n,
+  timeout_ms) -> !String` (empty at the end), `net.tls_truncated(h) ->
+  bool` (the end came without close_notify), `net.tls_close(h)`, and
+  `net.tls_problem() -> String`, why the last TLS call on this thread
+  failed. Errors are the sockets'; a certificate that does not check out is
+  `IoError`. Not available at the REPL.
 - Threads (`std.thread` builds `Thread`, `Channel`, `Mutex`, `Atomic`,
   `select`, `each` and `both` on these): `thread.start(f: fn(*mut T) ->
   void, arg: *mut T) -> i64` runs `f(arg)` on a new thread with its own

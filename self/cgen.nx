@@ -4150,6 +4150,44 @@ impl Gen {
             return t
         }
         if name == "NetLastPeer" { return String.from("nx_net_last_peer(c)") }
+        if name == "TlsConnect" {
+            var a = List(String).new()
+            for x in args { a.append(self.simple(x)) }
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            let errs = self.net_errs()
+            self.line(format("{} {}; {{ int64_t _h = 0; int32_t _r = nx_tls_connect({}, &_h); if (_r == 0) {{ {}.err = 0; {}.val = _h; }} else {}.err = {}; }}", .{cn, t, join_strings(&a, ", "), t, t, t, errs})[..])
+            return t
+        }
+        if name == "TlsSend" {
+            let h = self.simple(args[0])
+            let d = self.simple(args[1])
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            let errs = self.net_errs()
+            self.line(format("{} {}; {{ int32_t _r = nx_tls_send({}, {}); {}.err = _r == 0 ? 0 : {}; }}", .{cn, t, h, d, t, errs})[..])
+            return t
+        }
+        if name == "TlsRecv" {
+            var a = List(String).new()
+            for x in args { a.append(self.simple(x)) }
+            let cn = self.cty(ety)
+            let t = self.tmp()
+            let errs = self.net_errs()
+            self.line(format("{} {}; {{ nx_string _s; int32_t _r = nx_tls_recv(c, {}, &_s); if (_r == 0) {{ {}.err = 0; {}.val = _s; }} else {}.err = {}; }}", .{cn, t, join_strings(&a, ", "), t, t, t, errs})[..])
+            return t
+        }
+        if name == "TlsTruncated" {
+            let h = self.simple(args[0])
+            return format("nx_tls_truncated({})", .{h})
+        }
+        if name == "TlsClose" {
+            let h = self.simple(args[0])
+            self.line(format("nx_tls_close({});", .{h})[..])
+            return String.from("0")
+        }
+        if name == "TlsAvailable" { return String.from("nx_tls_available()") }
+        if name == "TlsProblem" { return String.from("nx_tls_problem(c)") }
         if name == "ThreadStart" {
             let f = self.simple(args[0])
             let p = self.simple(args[1])

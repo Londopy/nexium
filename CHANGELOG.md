@@ -235,6 +235,19 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   its own (a failing list of ints comes out as `[0, 0]`, a bound as the
   bound itself). `search` and `replay` are the driver beneath, returning
   what they found; generators and properties may be closures.
+- HTTPS with no package: `http.get("https://...")` and every client without
+  a TLS layer of its own go over `http.SystemTls`, the platform's TLS,
+  loaded when first used so no program links it: SChannel on Windows,
+  Security.framework's Secure Transport on macOS, OpenSSL's libssl (3 or
+  1.1) on Linux and the BSDs. The server's certificate is checked against
+  the system's roots and the host's name, and `SystemTls.problem()` says in
+  words why a connection failed ("the server's certificate has expired").
+  Beneath it, `net.tls_connect`, `tls_send`, `tls_recv`, `tls_truncated`,
+  `tls_close`, `tls_available` and `tls_problem`. Checked on Windows and
+  Linux against example.com and Google, and against badssl.com's expired,
+  wrong-host and self-signed certificates, each refused with its reason;
+  `NX_ONLINE=1` runs those checks in std.http's tests. A TLS layer given to
+  `client_with` (nxtls) still takes precedence.
 
 ### Changed
 
@@ -288,6 +301,9 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   `is_wide` covering every script. Every code point Python 3.13 (Unicode
   15.1) knows maps as it does, but the two capitals Unicode 16 added (for
   ƛ and ɤ).
+- `http.client()` and `http.get` take `https://` over the system's TLS,
+  where they were `error.Unsupported`; `Unsupported` is left for a system
+  with no TLS library (Linux without libssl) and WebAssembly.
 - The fuzzer (`tests/fuzz.nx`) runs on std.testing's property driver:
   its cases come from a `testing.Rng` of the seed, and the first finding
   of each engine is shrunk (fewer edits, a shorter input) before it is

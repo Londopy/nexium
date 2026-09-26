@@ -216,9 +216,9 @@ Types: `Heap(T){`
 
 ## std.http
 
-std.http: an HTTP/1.1 client and a small server, written in Nexium over std.net and std.stream. `import std.http` then: let r = try http.get("http://example.com/") println("{} {}", .{r.status, r.body.len}) if let ct = r.header("content-type") { ... } var client = http.client_with(NxTls, &mut layer)   // a TLS layer, for https:// client.timeout_ms = 10000                   // and timeouts, redirects, limits var s = try client.open("GET", "https://example.com/big", &headers, "") while true {                                // the body as it arrives let piece = (try s.next()) orelse break ... } s.close() fn hello(req: *http.Request) -> http.Response { return http.text(200, "hello from Nexium") } var router = http.Router.new() router.get("/", hello) var server = try http.Server.bind("127.0.0.1", 8080) try server.serve(&router)                  // forever, one request at a time The client speaks HTTP/1.1 with `Connection: close` over a `Transport`: TCP for `http://`, and for `https://` the TLS layer a program hands its client, the slot of decision 120 (nxtls, the TLS 1.3 client written in Nexium, fills it; the platform's TLS will). It reads a body by Content-Length, chunked encoding, or until the connection ends (refused when a TLS connection was cut rather than closed, as nothing then shows the body is whole), whole or as it arrives, follows up to five redirects, and gives up on a connect or a wait after `timeout_ms`. The server handles one connection at a time, which is what a tool, a local dashboard or a test needs; threads come later in the roadmap.
+std.http: an HTTP/1.1 client and a small server, written in Nexium over std.net and std.stream. `import std.http` then: let r = try http.get("https://example.com/")  // TLS by the system's own library println("{} {}", .{r.status, r.body.len}) if let ct = r.header("content-type") { ... } var client = http.client_with(NxTls, &mut layer)   // or a TLS layer of a package's client.timeout_ms = 10000                   // and timeouts, redirects, limits var s = try client.open("GET", "https://example.com/big", &headers, "") while true {                                // the body as it arrives let piece = (try s.next()) orelse break ... } s.close() fn hello(req: *http.Request) -> http.Response { return http.text(200, "hello from Nexium") } var router = http.Router.new() router.get("/", hello) var server = try http.Server.bind("127.0.0.1", 8080) try server.serve(&router)                  // forever, one request at a time The client speaks HTTP/1.1 with `Connection: close` over a `Transport`: TCP for `http://`, and for `https://` the TLS layer a program hands its client (the slot of decision 120, which nxtls, the TLS 1.3 client written in Nexium, fills), or without one `SystemTls`, the platform's own: SChannel on Windows, Security.framework on macOS, OpenSSL on Linux and the BSDs, each checking the server's certificate against the system's roots and the host's name (`SystemTls.problem()` says why one failed). It reads a body by Content-Length, chunked encoding, or until the connection ends (refused when a TLS connection was cut rather than closed, as nothing then shows the body is whole), whole or as it arrives, follows up to five redirects, and gives up on a connect or a wait after `timeout_ms`. The server handles one connection at a time, which is what a tool, a local dashboard or a test needs; threads come later in the roadmap.
 
-Types: `Header`, `Url`, `Response`, `Plain`, `Streaming(T){`, `Client(T){`, `Request`, `Route`, `Router`, `Server`
+Types: `Header`, `Url`, `Response`, `Plain`, `SystemTls`, `Streaming(T){`, `Client(T){`, `Request`, `Route`, `Router`, `Server`
 
 | function | what it does |
 | --- | --- |
@@ -237,18 +237,21 @@ Types: `Header`, `Url`, `Response`, `Plain`, `Streaming(T){`, `Client(T){`, `Req
 | `read_response(r: *mut stream.Reader) -> !Response` | Read a full response from a reader over the connection. |
 | `send_request(w: *mut stream.Writer, method: []u8, url: *Url, headers: *List(Header), body: []u8) -> !void` | Write a request; `headers` may add or override the defaults. |
 | `(method) new() -> Plain` |  |
+| `(method) new() -> SystemTls` |  |
+| `(method) available() -> bool` | Does this system have a TLS library? Windows and macOS always do; Linux and the BSDs when OpenSSL's libssl (3 or 1.1) is installed. |
+| `(method) problem() -> String` | Why the last TLS connection or call on this thread failed, in words: "the server's certificate has expired", "no such host". |
 | `(method) header(self: *Self, name: []u8) -> ?[]u8` | A header value, case-insensitive; null when absent. |
 | `(method) ok(self: *Self) -> bool` |  |
 | `(method) next(self: *mut Self) -> !?String` | The next piece of the body; null once all of it has come. `error.Truncated` when the connection ends before the body does. |
 | `(method) read_all(self: *mut Self) -> !String` | The rest of the body at once. |
 | `(method) close(self: *mut Self)` | Closes the connection. |
-| `client() -> Client(Plain)` | A client for `http://`; `https://` is `error.Unsupported`. |
+| `client() -> Client(Plain)` | A client for `http://`, and for `https://` over the system's TLS (`SystemTls`). |
 | `client_with(comptime T: type where T: Transport, tls: *mut T) -> Client(T)` | A client whose `https://` goes over `tls`, a TLS layer: a `Transport`, such as nxtls's. |
 | `(method) open(self: *mut Self, method: []u8, url_text: []u8, headers: *List(Header), body: []u8) -> !Streaming(T)` | Sends a request and reads the response's status and headers, following redirects: a 303, and a 301 or 302 to a POST, turn into a GET without the body, and a redirect to another host goes without the Authorization and Cookie headers. The body is read from the `Streaming` as it arrives; close it when done. |
 | `(method) send(self: *mut Self, method: []u8, url: []u8, headers: *List(Header), body: []u8) -> !Response` | A request, its response read whole, following redirects. |
 | `(method) get(self: *mut Self, url: []u8) -> !Response` |  |
 | `(method) post(self: *mut Self, url: []u8, content_type: []u8, body: []u8) -> !Response` |  |
-| `request(method: []u8, url_text: []u8, headers: *List(Header), body: []u8) -> !Response` | Perform a request with a plain `client()`, following redirects. `error.InvalidInput` for a URL that is not http or https, `error.Unsupported` for `https://`, which needs `client_with` and a TLS layer. |
+| `request(method: []u8, url_text: []u8, headers: *List(Header), body: []u8) -> !Response` | Perform a request with a `client()`, following redirects: `https://` over the system's TLS. `error.InvalidInput` for a URL that is not http or https, `error.Unsupported` for `https://` on a system without a TLS library. |
 | `get(url: []u8) -> !Response` |  |
 | `post(url: []u8, content_type: []u8, body: []u8) -> !Response` |  |
 | `(method) header(self: *Self, name: []u8) -> ?[]u8` |  |
