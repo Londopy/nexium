@@ -21,6 +21,13 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ### Fixed
 
+- `nx fetch` resolves a dependency again when the manifest changes its
+  tag or its git source. It held the dependency to the commit the lock
+  had for the old tag, and with no lock kept a checkout of another tag
+  in `nexium_modules/`, so a tag bumped in `nexium.toml` built the old
+  code and wrote the new tag beside the old commit in `nexium.lock`;
+  `nx update` was the way out. Found bumping nexium-discord's nxtls from
+  v0.4.0 to v0.5.0; the packages suite now changes a tag both ways.
 - The Spanish, Japanese and Chinese translations of the language reference
   and of the tour of the compiler (`docs/i18n/*/language.md` and
   `architecture.md`) are translated again from the current English. They
