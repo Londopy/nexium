@@ -9,10 +9,10 @@ The spec's one sentence is the compass: *a language complete enough to build
 everything in, that is also the best thing to adopt for one piece of
 something else.* The second half is ahead of the first, on purpose.
 
-## Now: 1.3.2, and 1.4 under way
+## Now: 1.4.0, and 1.5 next
 
-What exists and is verified on Windows, Linux, and macOS (1.1, 1.2 and 1.3
-each have a section under *Past 1.0* saying what it added):
+What exists and is verified on Windows, Linux, and macOS (1.1, 1.2, 1.3 and
+1.4 each have a section under *Past 1.0* saying what it added):
 
 - The language: structs, records, enums, `ref class` with ARC and `weak`,
   distinct types, traits and `dyn Trait` with effect bounds, generics by
@@ -28,11 +28,12 @@ each have a section under *Past 1.0* saying what it added):
   `panics` discharged by proof, effects deciding the C ABI of exports.
 - Interop: `@cImport` of C headers, vendored C, `nx ship` to a C
   library, a Python wheel, a Rust crate, an npm package, an installer.
-- Standard library in Nexium, embedded in the compiler: sixteen modules in
-  1.3.2 (`strings`, `lists`, `bytes`, `num`, `json`, `args`, `fs`, `time`,
-  `regex`, `text`, `testing`, `stream`, `net`, `http`, `thread`,
-  `process`), and on `main` for 1.4 `sort`, `heap`, `set`, `deque` and
-  `hash`, with `random.secure`.
+- Standard library in Nexium, embedded in the compiler: twenty-nine
+  modules (`strings`, `lists`, `bytes`, `num`, `json`, `args`, `fs`,
+  `time`, `regex`, `text`, `testing`, `stream`, `net`, `http`, `websocket`,
+  `thread`, `process`, `sort`, `heap`, `set`, `deque`, `hash`, `path`,
+  `env`, `uuid`, `log`, `csv`, `toml`, `base64`), with `random.secure` and
+  HTTPS over the platform's own TLS.
 - Tools, all written in Nexium: `build run test bench debug check effects
   explain audit refcounts leaks size layout emit-c tir fmt fix doc ship
   version doctor upgrade install lsp repl completions man play topo`, the
@@ -54,10 +55,10 @@ each have a section under *Past 1.0* saying what it added):
   tutorial whose every program the tests run, with 41 exercises graded in
   the terminal (`nx topo`) and in the page, which runs the programs itself.
 
-Numbers, on `main`: 52.1k lines of Nexium (34.6k of them the compiler and
-its tools), 2.6k of C (the runtime and the GUI window layer), 357 std
-functions, 32 examples, 21 tutorial programs, 71 spec conformance cases
-and 96 compile-fail cases, 14 harness suites, verified on three platforms
+Numbers, at 1.4.0: 60.9k lines of Nexium (34.9k of them the compiler and
+its tools), 4.4k of C (the runtime and the GUI window layer), 579 std
+functions, 32 examples, 21 tutorial programs, 75 spec conformance cases
+and 101 compile-fail cases, 14 harness suites, verified on three platforms
 by CI and under the sanitizers.
 
 ## Phase 1: a language you can write your tools in (0.3)
@@ -249,12 +250,12 @@ roadmap answers each:
 | No performance numbers: it compiles through C, which is not the same as a table | the numbers page, pulled forward from 1.6 into 1.1 |
 | No ecosystem: sixteen std modules, no registry, no third-party packages, one maintainer | 1.4 (std), the registry and the second-maintainer items under *Ecosystem*; `async` is answered under *Not planned*, errors with payloads under *2.0 candidates* |
 
-Where the four stand at 1.3.2: memory safety shipped in 1.2 (the view
+Where the four stand at 1.4.0: memory safety shipped in 1.2 (the view
 rules, errors since 1.3); the numbers page is up, measured every week and
 at every release, and the README's Speed section carries its table;
 maturity is the hardening under *Always*, which goes on; the ecosystem has
-twenty-one std modules on `main` and four projects outside the tree, and
-still one maintainer and no registry.
+twenty-nine std modules and four projects outside the tree, and still one
+maintainer and no registry.
 
 After 1.0 the language changes only by addition, under the stability policy
 of phase 5. Each minor version has a theme; a bullet moves into a version
@@ -592,6 +593,16 @@ Exit: a one-line change rebuilds in well under a second on the compiler's
 own sources, and the language server answers from the checker.
 
 ### 1.4: a standard library people stop supplementing
+
+Status: shipped as 1.4.0 on 2026-09-25. Every item below is in; two are
+narrower than written, and their notes say how: the scoped threads are
+calls, `thread.each` and `thread.both`, where a block that joins when it
+ends would need a destructor the language does not have, and `text.chars`
+keeps its `u32`s as 1.x promises, with `text.scalars` giving the `char`s
+beside it. The exit criterion holds: `examples/tool.nx`, `service.nx` and
+the compiler use the library where they wrote their own (the compiler
+checks its downloads with `std.hash` and reads GitHub's answers with
+`std.json`, the tool counts in a `Map`).
 
 - Collections: `Set(T)`, `Deque(T)`, `std.sort` with comparators and
   stable sort, `std.heap` (priority queue), binary search on sorted slices.

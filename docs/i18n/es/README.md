@@ -451,22 +451,26 @@ con C `-I`, `--link`, `--link-path`, `--c-source`.
 
 ## Estado
 
-**1.3: lenguaje estable, la cadena de herramientas madura.** El lenguaje solo
-cambia por adición, bajo la [política de estabilidad](../../stability.md); el
-compilador está escrito en Nexium y se construye a sí mismo; cada ejemplo,
+**1.4: una biblioteca estándar que ya no hay que completar.** El lenguaje
+solo cambia por adición, bajo la [política de estabilidad](../../stability.md);
+el compilador está escrito en Nexium y se construye a sí mismo; cada ejemplo,
 cada caso de la especificación y cada programa del tutorial se ejecuta en CI
 en tres plataformas, bajo los sanitizadores y el fuzzer, y gdb y lldb también
 se manejan allí con `nx debug`. La seguridad de memoria son las reglas de
-vistas, errores desde 1.3. 1.4, una biblioteca estándar que ya no haya que
-completar, está en marcha: las colecciones (`std.sort`, `std.heap`,
-`std.set`, `std.deque`), `std.hash`, `random.secure`, rutas, el entorno y
-las carpetas de configuración, UUID, registros, CSV, TOML y base64 ya están,
-veintinueve módulos en total; `Map` está protegido contra la
-inundación de hashes y conserva el orden en que llegaron las claves; `std.time` lee
-las zonas horarias de la base de datos de la plataforma, y el cliente de
-`std.http` habla HTTPS a través de una capa TLS, que pone nxtls, como `std.websocket`, y
+vistas, errores desde 1.3. La biblioteca estándar tiene veintinueve módulos,
+entre ellos las colecciones (`std.sort`, `std.heap`, `std.set`, `std.deque`),
+`std.hash`, `random.secure`, rutas, el entorno y las carpetas de
+configuración, UUID, registros, CSV, TOML y base64; `Map` está protegido
+contra la inundación de hashes y conserva el orden en que llegaron las
+claves; `std.time` lee las zonas horarias de la base de datos de la
+plataforma; `std.http` habla HTTPS a través del TLS de la propia plataforma,
+o de una capa TLS como nxtls, como `std.websocket`, y
 [nexium-discord](https://github.com/Londopy/nexium-discord) construye sobre ambos un bot de Discord;
-después viene el TLS de la plataforma. Lo que Nexium todavía no es, y dónde
+`std.process` habla con los programas mientras se ejecutan, `std.thread`
+tiene select, operaciones atómicas e hilos que terminan antes que la llamada,
+`std.text` los grupos de grafemas y las mayúsculas y minúsculas de Unicode, y
+`std.testing` pruebas de propiedades que reducen lo que encuentran. Después
+viene 1.5, las plataformas. Lo que Nexium todavía no es, y dónde
 se responde cada punto, está en [una sección de la hoja de
 ruta](../../../ROADMAP.md#what-10-is-not-yet): las pruebas de rendimiento son cuatro
 programas ([Velocidad](#velocidad)), y el ecosistema es un solo mantenedor y

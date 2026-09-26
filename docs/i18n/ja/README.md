@@ -438,15 +438,15 @@ address,undefined`（C コンパイラのサニタイザ。`address` には gcc 
 
 ## 現状
 
-**1.3：言語は安定、ツールチェーンは成熟。** 言語は
+**1.4：補う必要のない標準ライブラリ。** 言語は
 [安定性ポリシー](../../stability.md)のもと追加によってのみ変わります。コンパイラは
 Nexium で書かれ、自分自身をビルドします。すべてのサンプル、仕様ケース、チュートリアルの
 プログラムが CI で 3 プラットフォーム上、サニタイザとファザーのもとで実行され、gdb と
 lldb も `nx debug` を通してそこで動かされます。メモリ安全性はビュー規則で、1.3 から
-エラーです。1.4、補う必要のない標準ライブラリは進行中で、コレクション（`std.sort`、
+エラーです。標準ライブラリは全部で 29 モジュールあり、コレクション（`std.sort`、
 `std.heap`、`std.set`、`std.deque`）、`std.hash`、`random.secure`、パス、環境変数と設定
-フォルダ、UUID、ログ、CSV、TOML、base64 が入り、全部で 29 モジュール。`Map` はハッシュ攻撃に強く、
-キーを入れた順を保ちます。`std.time` はプラットフォームのデータベースからタイムゾーンを読み、`std.http` のクライアントは nxtls が担う TLS 層を通して HTTPS を話し、`std.websocket` も同じ層を通り、[nexium-discord](https://github.com/Londopy/nexium-discord) はその上に Discord ボットを作ります。次はプラットフォームの TLS です。Nexium がまだ
+フォルダ、UUID、ログ、CSV、TOML、base64 などが入っています。`Map` はハッシュ攻撃に強く、
+キーを入れた順を保ちます。`std.time` はプラットフォームのデータベースからタイムゾーンを読みます。`std.http` はプラットフォーム自身の TLS、または nxtls のような TLS 層を通して HTTPS を話し、`std.websocket` も同じで、[nexium-discord](https://github.com/Londopy/nexium-discord) はその上に Discord ボットを作ります。`std.process` は実行中のプログラムとやり取りし、`std.thread` には select、アトミック操作、呼び出しより先に終わるスレッドがあり、`std.text` には書記素クラスタと Unicode の大文字小文字変換が、`std.testing` には見つけたものを縮小するプロパティテストがあります。次は 1.5、プラットフォームです。Nexium がまだ
 何でないか、そしてそれぞれがどこで答えられるかは[ロードマップの一節](../../../ROADMAP.md#what-10-is-not-yet)に
 あります。ベンチマークは 4 つのプログラム（[速度](#速度)）だけで、エコシステムは
 メンテナ一人とツリー外のプロジェクト四つです（[上](#実際の利用)）。

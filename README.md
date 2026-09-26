@@ -455,20 +455,24 @@ clang), and for C interop `-I`, `--link`, `--link-path`, `--c-source`.
 
 ## Status
 
-**1.3: language-stable, the toolchain grown up.** The language changes only
-by addition under the [stability policy](docs/stability.md); the compiler
-is written in Nexium and builds itself; every example, spec case and
-tutorial program runs in CI on three platforms, under the sanitizers and
-the fuzzer, and gdb and lldb are driven through `nx debug` there too.
-Memory safety is the view rules, errors since 1.3. 1.4, a standard library
-people stop supplementing, is under way: collections (`std.sort`,
-`std.heap`, `std.set`, `std.deque`), `std.hash`, `random.secure`, paths,
-the environment and config folders, UUIDs, logging, CSV, TOML and base64
-are in, twenty-nine modules in all; `Map` is hashed against flooding and
-keeps its keys in the order they were put; `std.time` reads time zones from
-the platform's database, and `std.http`'s client takes HTTPS through a TLS
-layer, which nxtls fills, as `std.websocket` does, and
-[nexium-discord](https://github.com/Londopy/nexium-discord) builds a Discord bot on both; next is the platform's TLS. What Nexium is not yet, and where each is answered, is
+**1.4: a standard library people stop supplementing.** The language changes
+only by addition under the [stability policy](docs/stability.md); the
+compiler is written in Nexium and builds itself; every example, spec case
+and tutorial program runs in CI on three platforms, under the sanitizers
+and the fuzzer, and gdb and lldb are driven through `nx debug` there too.
+Memory safety is the view rules, errors since 1.3. The standard library has
+twenty-nine modules: collections (`std.sort`, `std.heap`, `std.set`,
+`std.deque`), `std.hash`, `random.secure`, paths, the environment and
+config folders, UUIDs, logging, CSV, TOML and base64 among them; `Map` is
+hashed against flooding and keeps its keys in the order they were put;
+`std.time` reads time zones from the platform's database; `std.http` speaks
+HTTPS through the platform's own TLS, or a TLS layer such as nxtls, as
+`std.websocket` does, and
+[nexium-discord](https://github.com/Londopy/nexium-discord) builds a Discord bot on both; `std.process`
+talks to programs while they run, `std.thread` has select, atomics and
+threads that end before the call does, `std.text` grapheme clusters and
+Unicode's case mapping, and `std.testing` property tests that shrink what
+they find. Next is 1.5, platforms. What Nexium is not yet, and where each is answered, is
 [a section of the roadmap](ROADMAP.md#what-10-is-not-yet): the benchmarks are four
 programs ([Speed](#speed)), and the ecosystem is one maintainer and four
 projects outside the tree ([above](#in-the-wild)).

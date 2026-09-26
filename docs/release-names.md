@@ -117,6 +117,7 @@ ordering; the name carries the character.
 | 1.3.0 | Annapurna: North Face | the face of the first ascent, the original line followed through: the toolchain grown up; `nx fix`, `nx bench`, `nx debug` and `#line`, `--sanitize`, `if comptime`, the language server from the checker, incremental builds |
 | 1.3.1 | Annapurna: Couzy | patch (roster 5): the engineer; fixes the build, the toolchain and the C: a use-after-free in branch values, the runtime's null copies, syntax errors at their line, the glibc 2.17 floor |
 | 1.3.2 | Annapurna: Oudot | patch (roster 7): the doctor; a write to a connection or pipe the other side has closed no longer ends the program with SIGPIPE, and a connect that fails at once is an error |
+| 1.4.0 | Annapurna: the Sanctuary | the basin ringed by the peaks, where the first mountain ends: a standard library people stop supplementing; programs run alongside, HTTPS over the platform's TLS, grapheme clusters, property tests |
 
 ## The plan
 
@@ -126,7 +127,6 @@ fits and the pencilled one goes back in the pool.
 
 | version | name | why |
 | --- | --- | --- |
-| 1.4.0 | Annapurna: the Sanctuary | the basin ringed by the peaks, where the first mountain ends: a standard library people stop supplementing |
 | 1.5.0 | Everest: Base Camp | the climb to 2.0 is staged here: one source, many platforms |
 | 1.6.0 | Everest: Khumbu Icefall | the first dangerous crossing of the climb: the runtime release builds deserve |
 | 1.7.0 | Everest: Western Cwm | the long valley between two walls: the seam, both ways (Python, Rust and more languages, in and out) |
@@ -171,7 +171,7 @@ summiters lost fingers and toes on the descent.
 | North Face | the 1950 route, the face the camps are on | a release that completes the original line: finishes something begun in 0.x (used: 1.3.0) |
 | Dutch Rib | the 1977 route on the North Face, now the usual line because it is safer than the Sickle | the release that makes the everyday path easier and safer: ergonomics (1.1.0) |
 | South Face | Bonington's 1970 siege of the great wall; Whillans and Haston to the top; the first big-wall climb in the Himalaya | the biggest minor of a line, climbed the hard way: memory safety (1.2.0) |
-| the Sanctuary | the glacial basin ringed by the Annapurna peaks; the base of every south-side route | the release that supplies everything else: the standard library (planned: 1.4.0) |
+| the Sanctuary | the glacial basin ringed by the Annapurna peaks; the base of every south-side route | the release that supplies everything else: the standard library (used: 1.4.0) |
 | East Ridge | the long traverse route over the massif's summits (1984) | traverse: many platforms from one source |
 | North-West Face | Messner and Kammerlander, 1985, fast and light | performance: fewer instructions, less memory, the same programs |
 | Annapurna II | the massif's second summit, 7,937 m, joined to the main one by a ridge that runs the length of the range | the release that joins Nexium to other languages: interop, the seam |

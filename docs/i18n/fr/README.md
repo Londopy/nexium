@@ -449,23 +449,26 @@ erreurs), `--sanitize address,undefined` (les sanitizers du compilateur C ;
 
 ## État
 
-**1.3 : langage stable, la chaîne d'outils aboutie.** Le langage ne change
-que par ajout, sous la [politique de stabilité](../../stability.md) ; le
-compilateur est écrit en Nexium et se construit lui-même ; chaque exemple,
+**1.4 : une bibliothèque standard qu'on n'a plus besoin de compléter.** Le
+langage ne change que par ajout, sous la [politique de stabilité](../../stability.md) ;
+le compilateur est écrit en Nexium et se construit lui-même ; chaque exemple,
 chaque cas de la spécification et chaque programme du tutoriel s'exécute en
 CI sur trois plateformes, sous les sanitizers et le fuzzer, et gdb et lldb y
 sont aussi pilotés par `nx debug`. La sûreté mémoire, ce sont les règles de
-vues, des erreurs depuis 1.3. La 1.4, une bibliothèque standard qu'on n'a
-plus besoin de compléter, est en cours : les collections (`std.sort`,
-`std.heap`, `std.set`, `std.deque`), `std.hash`, `random.secure`, les
-chemins, l'environnement et les dossiers de configuration, les UUID, la
-journalisation, CSV, TOML et base64 sont là, vingt-neuf modules en tout ; `Map` est
-protégé contre l'inondation de hachages et garde l'ordre d'arrivée des clés ;
-`std.time` lit les fuseaux horaires dans la base de la plateforme, et le
-client de `std.http` parle HTTPS à travers une couche TLS, que fournit nxtls,
-comme `std.websocket`, et
-[nexium-discord](https://github.com/Londopy/nexium-discord) bâtit dessus un bot Discord ; vient ensuite le
-TLS de la plateforme. Ce que Nexium n'est pas
+vues, des erreurs depuis 1.3. La bibliothèque standard compte vingt-neuf
+modules, dont les collections (`std.sort`, `std.heap`, `std.set`,
+`std.deque`), `std.hash`, `random.secure`, les chemins, l'environnement et
+les dossiers de configuration, les UUID, la journalisation, CSV, TOML et
+base64 ; `Map` est protégé contre l'inondation de hachages et garde l'ordre
+d'arrivée des clés ; `std.time` lit les fuseaux horaires dans la base de la
+plateforme ; `std.http` parle HTTPS à travers le TLS de la plateforme, ou une
+couche TLS comme nxtls, comme `std.websocket`, et
+[nexium-discord](https://github.com/Londopy/nexium-discord) bâtit dessus un bot Discord ; `std.process`
+parle aux programmes pendant qu'ils tournent, `std.thread` a select, les
+opérations atomiques et des fils qui finissent avant l'appel, `std.text` les
+grappes de graphèmes et la casse d'Unicode, et `std.testing` des tests de
+propriétés qui réduisent ce qu'ils trouvent. Vient ensuite la 1.5, les
+plateformes. Ce que Nexium n'est pas
 encore, et où chaque point trouve sa réponse, est dans [une section de la
 feuille de route](../../../ROADMAP.md#what-10-is-not-yet) : les mesures de performance
 sont quatre programmes ([Vitesse](#vitesse)), et l'écosystème se résume à un

@@ -430,13 +430,13 @@ runner 上测量（2026-09-25；七次运行的中位数，超过五秒的取三
 
 ## 现状
 
-**1.3：语言已稳定，工具链已成熟。** 语言只按[稳定性策略](../../stability.md)以增添的
+**1.4：一个不必再补充的标准库。** 语言只按[稳定性策略](../../stability.md)以增添的
 方式变化；编译器用 Nexium 写成并能构建自身；每个示例、规范用例和教程程序都在 CI 中于
 三个平台上、在 sanitizer 和 fuzzer 之下运行，gdb 和 lldb 也在那里经由 `nx debug` 驱动。
-内存安全是视图规则，自 1.3 起是错误。1.4，一个不必再补充的标准库，正在进行：集合
+内存安全是视图规则，自 1.3 起是错误。标准库一共二十九个模块，其中有集合
 （`std.sort`、`std.heap`、`std.set`、`std.deque`）、`std.hash`、`random.secure`、路径、环境
-变量与配置目录、UUID、日志、CSV、TOML 和 base64 已经加入，一共二十九个模块；`Map` 能抵御哈希洪水
-攻击并保持键的插入顺序；`std.time` 从平台的数据库读取时区，`std.http` 的客户端通过 nxtls 提供的 TLS 层发起 HTTPS，`std.websocket` 也走同一层，[nexium-discord](https://github.com/Londopy/nexium-discord) 在其上构建 Discord 机器人；接下来是平台的 TLS。Nexium 还不是什么、每一点在哪里得到回答，见
+变量与配置目录、UUID、日志、CSV、TOML 和 base64；`Map` 能抵御哈希洪水
+攻击并保持键的插入顺序；`std.time` 从平台的数据库读取时区；`std.http` 通过平台自带的 TLS 或 nxtls 这样的 TLS 层发起 HTTPS，`std.websocket` 也是如此，[nexium-discord](https://github.com/Londopy/nexium-discord) 在其上构建 Discord 机器人；`std.process` 与运行中的程序交互，`std.thread` 提供 select、原子操作以及在调用返回前就结束的线程，`std.text` 提供字素簇和 Unicode 的大小写映射，`std.testing` 提供会缩小所找到反例的属性测试。接下来是 1.5：平台。Nexium 还不是什么、每一点在哪里得到回答，见
 [路线图的一节](../../../ROADMAP.md#what-10-is-not-yet)：基准只有四个程序（[速度](#速度)），
 生态只有一位维护者和四个树外的项目（[上文](#实际使用)）。
 [`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md) 列出每个未修复的缺陷及其修法；

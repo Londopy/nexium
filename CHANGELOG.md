@@ -10,6 +10,10 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-09-25
+
+*Annapurna: the Sanctuary* — the basin ringed by the peaks, where the first mountain ends: a standard library people stop supplementing. Collections (`std.sort`, `std.heap`, `std.set`, `std.deque`), `std.hash` and `random.secure`, paths, the environment and config folders, UUIDs, logging, CSV, TOML and base64; `Map` hashed with SipHash under a key per process and kept in the order its keys came; time zones and ISO 8601 in `std.time`; an HTTP client with redirects, timeouts and streaming bodies, HTTPS over the platform's own TLS or a TLS layer such as nxtls, and WebSockets, on which [nexium-discord](https://github.com/Londopy/nexium-discord) runs a Discord bot; programs run alongside and talked to while they run, with signals and exit codes by name; select over channels, atomics, and threads that end before the call does; grapheme clusters and Unicode's case mapping; property tests that shrink what they find, on the driver the fuzzer uses. The seed is regenerated from the final sources.
+
 ### Added
 
 - `xs.swap(i, j)` on a mutable slice (and a `List`): the two elements
@@ -2106,7 +2110,8 @@ First public release.
   Korean, French, and German; the language reference and architecture tour in
   Spanish, Chinese, and Japanese.
 
-[Unreleased]: https://github.com/Londopy/nexium/compare/v1.3.2...HEAD
+[Unreleased]: https://github.com/Londopy/nexium/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/Londopy/nexium/compare/v1.3.2...v1.4.0
 [1.3.2]: https://github.com/Londopy/nexium/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/Londopy/nexium/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/Londopy/nexium/compare/v1.2.1...v1.3.0

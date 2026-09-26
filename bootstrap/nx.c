@@ -4793,10 +4793,10 @@ typedef struct nx_env_1603 { char _e; } nx_env_1603;
 /* ---- data ---- */
 static const char* const nx_error_names[] = { "(ok)", "OutOfMemory", "Panic", "InvalidRecord", "Truncated", "Overflow", "InvalidUtf8", "NotFound", "IoError", "InvalidInput", "BufferTooSmall", "Timeout", "ConnectionRefused", "TooLarge", "TruncatedCoff", "Elf32", "MachO", "Unrecognized", "AlreadyExists" };
 NX_INLINE const char* nx_error_name(uint32_t e) { return e <= sizeof(nx_error_names)/sizeof(*nx_error_names) - 1 ? nx_error_names[e] : "(unknown error)"; }
-static const char nx_str_0[6] = "1.3.2";
+static const char nx_str_0[6] = "1.4.0";
 static const nx_sl_u8 nxc_VERSION_0 = { (uint8_t*)nx_str_0, 5 };
-static const char nx_str_1[17] = "Annapurna: Oudot";
-static const nx_sl_u8 nxc_RELEASE_NAME_1 = { (uint8_t*)nx_str_1, 16 };
+static const char nx_str_1[25] = "Annapurna: the Sanctuary";
+static const nx_sl_u8 nxc_RELEASE_NAME_1 = { (uint8_t*)nx_str_1, 24 };
 static const char nx_str_2[11] = "2026-09-25";
 static const nx_sl_u8 nxc_RELEASE_DATE_2 = { (uint8_t*)nx_str_2, 10 };
 static const size_t nxc_NONE_3 = ((size_t)18446744073709551615ULL);
@@ -22404,7 +22404,7 @@ static int32_t nx_cmd_version(nx_ctx* c) {
   NX_UNUSED(c);
   nx_sink _t1 = nx_sink_file(c, c->out);
   nx_sl_u8 _t2 = nx_lit(nx_str_0, 5);
-  nx_sl_u8 _t3 = nx_lit(nx_str_1, 16);
+  nx_sl_u8 _t3 = nx_lit(nx_str_1, 24);
   nx_w(&_t1, (const uint8_t*)nx_str_794, 3);
   nx_w_sl(&_t1, _t2);
   nx_w(&_t1, (const uint8_t*)nx_str_677, 2);
@@ -22420,7 +22420,7 @@ static int32_t nx_cmd_doctor(nx_ctx* c, nx_Opts* o_0) {
   NX_UNUSED(c);
   nx_sink _t1 = nx_sink_file(c, c->out);
   nx_sl_u8 _t2 = nx_lit(nx_str_0, 5);
-  nx_sl_u8 _t3 = nx_lit(nx_str_1, 16);
+  nx_sl_u8 _t3 = nx_lit(nx_str_1, 24);
   nx_w(&_t1, (const uint8_t*)nx_str_794, 3);
   nx_w_sl(&_t1, _t2);
   nx_w(&_t1, (const uint8_t*)nx_str_677, 2);
@@ -25592,7 +25592,7 @@ static uint8_t nx_main(nx_ctx* c) {
                                                                                                                 {
                                                                                                                   nx_sink _t213 = nx_sink_file(c, c->out);
                                                                                                                   nx_sl_u8 _t214 = nx_lit(nx_str_0, 5);
-                                                                                                                  nx_sl_u8 _t215 = nx_lit(nx_str_1, 16);
+                                                                                                                  nx_sl_u8 _t215 = nx_lit(nx_str_1, 24);
                                                                                                                   nx_sl_u8 _t216 = nx_lit(nx_str_2, 10);
                                                                                                                   nx_string _t217 = nx_m17_man(c, _t214, _t215, _t216);
                                                                                                                   nx_string _t218 = _t217;
