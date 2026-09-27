@@ -22,7 +22,10 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   `i686-windows-gnu`, `i686-linux-musl`) builds a 32-bit x86 program,
   `i686` read as zig's `x86` with SSE2; `armv7-linux-gnueabihf` (zig's
   `arm`), `armv6-linux-gnueabihf` (the Raspberry Pi 1's and Zero's CPU) and
-  `riscv32-linux-musl` build too. The checker computes `isize` and `usize`,
+  `riscv32-linux-musl` build too. CI runs the spec cases, the examples, the
+  standard library's tests and the Topo's programs for `i686` on its
+  runners and for `armv7` and `riscv32` under QEMU. The checker computes
+  `isize` and `usize`,
   their literals' ranges, `@sizeOf` and compile-time arithmetic at the
   target's width, while the C stays the same for every target (`usize`'s
   bounds are `SIZE_MAX` and its kin); `i128` is `_BitInt(128)` where C has

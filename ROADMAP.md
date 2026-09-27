@@ -737,8 +737,9 @@ nothing they had to write themselves.
 
 Status: under way on `main`. 32-bit x86 (`i686`) builds, runs every spec
 case, example, standard library test and Topo program in CI, and the
-compiler builds itself as a 32-bit program; 32-bit ARM and `riscv32` build
-(decision 122). The rest of the section is to do.
+compiler builds itself as a 32-bit program; `armv7` and `riscv32` run the
+same suites under QEMU in CI (decision 122). The rest of the section is to
+do.
 
 - WebAssembly: `--target wasm32-wasi` and `wasm32-freestanding`, the
   runtime's process, socket and thread code behind `@target()`, and an
