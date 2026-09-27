@@ -1051,6 +1051,11 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     zig. `i686` (and `i386` to `i586`) names 32-bit x86 as GCC, Clang and
     Rust do; zig calls it `x86`, and its baseline there is a Pentium 4 with
     SSE2, which keeps floating point the same as on x86-64, where `-mcpu=i686`
-    would fall back to the x87's extended precision. A 32-bit `nx` builds
-    32-bit programs unless told otherwise, as a 32-bit gcc does, and says so
-    to zig, whose own default is the machine, which can be 64-bit under it.
+    would fall back to the x87's extended precision. `armv7` is zig's `arm`
+    (ARMv7-A with NEON at its baseline) and `armv6` is `arm` on the ARM1176
+    of the Raspberry Pi 1 and Zero, as GCC, Rust and Debian name them. A
+    32-bit `nx` builds 32-bit programs unless told otherwise, as a 32-bit
+    gcc does: under a 64-bit kernel (WOW64 on Windows, `uname -m` on Linux)
+    it passes its own target to zig, whose default is the machine; on a
+    32-bit machine zig's default already is right, down to an ARMv6 Pi's CPU,
+    and is left alone.

@@ -20,13 +20,14 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   translations' index had promised this check; it runs now.
 - 32-bit targets (decision 122): `nx build --target i686-linux-gnu` (or
   `i686-windows-gnu`, `i686-linux-musl`) builds a 32-bit x86 program,
-  `i686` read as zig's `x86` with SSE2; `arm-linux-gnueabihf` and
+  `i686` read as zig's `x86` with SSE2; `armv7-linux-gnueabihf` (zig's
+  `arm`), `armv6-linux-gnueabihf` (the Raspberry Pi 1's and Zero's CPU) and
   `riscv32-linux-musl` build too. The checker computes `isize` and `usize`,
   their literals' ranges, `@sizeOf` and compile-time arithmetic at the
   target's width, while the C stays the same for every target (`usize`'s
   bounds are `SIZE_MAX` and its kin); `i128` is `_BitInt(128)` where C has
   no `__int128`. The compiler builds itself as a 32-bit program, and a
-  32-bit `nx` builds 32-bit programs by default.
+  32-bit `nx` on a 64-bit machine builds 32-bit programs by default.
 - `@sizeOf` is confirmed by the C compiler: each answer is a
   `_Static_assert` in the generated C, on every target.
 - The test harness takes `--target`: every case it builds, from the spec,

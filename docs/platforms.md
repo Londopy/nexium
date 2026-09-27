@@ -44,9 +44,11 @@ Anything else Zig can target: `nx build --target <triple>` cross-compiles a
 program, and `bootstrap/build.sh` builds the compiler on any host with a C
 compiler. Intel macOS is here because Zig 0.14 cannot link against the
 current SDK from another host and no Intel runner remains in CI; it builds
-from source with the system `cc`. So are 32-bit ARM (`arm-linux-gnueabihf`)
-and `riscv32-linux-musl`: they build, and the C compiler confirms every
-`@sizeOf` for them as it builds, but nothing runs them yet. Nothing is
+from source with the system `cc`. So are 32-bit ARM and `riscv32-linux-musl`:
+they build, and the C compiler confirms every `@sizeOf` for them as it
+builds, but nothing runs them yet. `armv7-linux-gnueabihf` is ARMv7-A with
+NEON (zig's `arm`); `armv6-linux-gnueabihf` is the CPU of the Raspberry Pi 1
+and Zero, whose programs every Pi runs in 32-bit mode. Nothing is
 promised, and reports are welcome.
 
 ## What the tiers cover

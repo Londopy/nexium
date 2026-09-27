@@ -577,17 +577,23 @@ fn c_argv(c: *check.Checker, o: *Opts, inputs: *List(String), out: []u8, kind: [
     }
     if o.target.len > 0 {
         argv.append(String.from("-target"))
-        // zig says `x86` where GCC, Clang and Rust say `i686`
+        // zig says `x86` where GCC, Clang and Rust say `i686`, and `arm` for `armv7`
         argv.append(if uses_zig(o) { cimport.zig_triple(o.target[..]) } else { o.target.clone() })
-    } else if uses_zig(o) and cimport.own_narrow_triple() != null {
-        // a 32-bit nx builds what it is, as its checker assumes: zig alone
-        // would build for the machine, which may be 64-bit under it
-        argv.append(String.from("-target"))
-        argv.append(cimport.own_narrow_triple().?)
-    } else if let m = march_flag(o) {
-        // zig cc compiles for the machine it runs on unless told otherwise, so a
-        // binary built on a machine with AVX-512 trapped on one without it
-        argv.append(m)
+        if uses_zig(o) {
+            if let cpu = cimport.zig_cpu(o.target[..]) { argv.append(cpu.clone()) }
+        }
+    } else {
+        // a 32-bit nx on a 64-bit machine builds what it is, as its checker
+        // assumes: zig alone would build for the machine
+        let own = if uses_zig(o) { cimport.own_narrow_triple() } else { null }
+        if let t = own {
+            argv.append(String.from("-target"))
+            argv.append(t.clone())
+        } else if let m = march_flag(o) {
+            // zig cc compiles for the machine it runs on unless told otherwise, so a
+            // binary built on a machine with AVX-512 trapped on one without it
+            argv.append(m)
+        }
     }
     if kind == "object" or kind == "sections" { argv.append(String.from("-c")) }
     if kind == "shared" {
