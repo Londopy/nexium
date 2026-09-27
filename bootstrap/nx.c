@@ -5833,7 +5833,7 @@ static const char nx_str_779[8] = "/shared";
 static const char nx_str_780[21] = "error: cannot place ";
 static const char nx_str_781[4] = "obj";
 static const char nx_str_782[2] = "o";
-static const char nx_str_783[20] = "x86_64-windows-msvc";
+static const char nx_str_783[6] = "-msvc";
 static const char nx_str_784[5] = ".lib";
 static const char nx_str_785[3] = ".a";
 static const char nx_str_786[3] = "ar";
@@ -22128,258 +22128,262 @@ static int32_t nx_cmd_ship(nx_ctx* c, nx_Opts* o_0) {
       }
         if (_t196)
         {
-          nx_string _t197 = nx_str_from(c, nx_lit(nx_str_783, 19));
-          nx_string _t198 = _t197;
+          nx_string _t197 = {0}; _t197.ar = c->arena;
+          nx_sink _t198 = nx_sink_str(c, &_t197);
+          nx_sl_u8 _t199 = nx_str_slice(target_17);
+          nx_w_sl(&_t198, _t199);
+          nx_w(&_t198, (const uint8_t*)nx_str_783, 5);
+          nx_string _t200 = _t197;
           nx_drop_string(c, &(lib_opts_43.target_7));
-          lib_opts_43.target_7 = _t198;
+          lib_opts_43.target_7 = _t200;
         }
-      nx_m2_Checker* _t199 = &(c_1);
-      nx_Opts* _t200 = &(lib_opts_43);
-      nx_slice_check(0, c_path_37.len, c_path_37.len, "self/nx.nx:1698");
-      nx_sl_u8 _t201 = ((nx_sl_u8){ nx_padd(c_path_37.ptr, 0), c_path_37.len - 0 });
-      nx_slice_check(0, obj_path_46.len, obj_path_46.len, "self/nx.nx:1698");
-      nx_sl_u8 _t202 = ((nx_sl_u8){ nx_padd(obj_path_46.ptr, 0), obj_path_46.len - 0 });
-      bool _t203 = nx_compile_c(c, _t199, _t200, _t201, _t202, nx_lit(nx_str_611, 6));
-        if (_t203)
+      nx_m2_Checker* _t201 = &(c_1);
+      nx_Opts* _t202 = &(lib_opts_43);
+      nx_slice_check(0, c_path_37.len, c_path_37.len, "self/nx.nx:1700");
+      nx_sl_u8 _t203 = ((nx_sl_u8){ nx_padd(c_path_37.ptr, 0), c_path_37.len - 0 });
+      nx_slice_check(0, obj_path_46.len, obj_path_46.len, "self/nx.nx:1700");
+      nx_sl_u8 _t204 = ((nx_sl_u8){ nx_padd(obj_path_46.ptr, 0), obj_path_46.len - 0 });
+      bool _t205 = nx_compile_c(c, _t201, _t202, _t203, _t204, nx_lit(nx_str_611, 6));
+        if (_t205)
         {
-          nx_string _t204 = {0}; _t204.ar = c->arena;
-          nx_sink _t205 = nx_sink_str(c, &_t204);
-          nx_sl_u8 _t206 = nx_str_slice(dir_36);
-          nx_string _t207;
+          nx_string _t206 = {0}; _t206.ar = c->arena;
+          nx_sink _t207 = nx_sink_str(c, &_t206);
+          nx_sl_u8 _t208 = nx_str_slice(dir_36);
+          nx_string _t209;
             if (windows_18)
             {
-              nx_string _t208 = {0}; _t208.ar = c->arena;
-              nx_sink _t209 = nx_sink_str(c, &_t208);
-              nx_sl_u8 _t210 = nx_str_slice(lib_name_21);
-              nx_w_sl(&_t209, _t210);
-              nx_w(&_t209, (const uint8_t*)nx_str_784, 4);
-              _t207 = _t208;
+              nx_string _t210 = {0}; _t210.ar = c->arena;
+              nx_sink _t211 = nx_sink_str(c, &_t210);
+              nx_sl_u8 _t212 = nx_str_slice(lib_name_21);
+              nx_w_sl(&_t211, _t212);
+              nx_w(&_t211, (const uint8_t*)nx_str_784, 4);
+              _t209 = _t210;
             }
             else
             {
-              nx_string _t211 = {0}; _t211.ar = c->arena;
-              nx_sink _t212 = nx_sink_str(c, &_t211);
-              nx_sl_u8 _t213 = nx_str_slice(lib_name_21);
-              nx_w(&_t212, (const uint8_t*)nx_str_768, 3);
-              nx_w_sl(&_t212, _t213);
-              nx_w(&_t212, (const uint8_t*)nx_str_785, 2);
-              _t207 = _t211;
+              nx_string _t213 = {0}; _t213.ar = c->arena;
+              nx_sink _t214 = nx_sink_str(c, &_t213);
+              nx_sl_u8 _t215 = nx_str_slice(lib_name_21);
+              nx_w(&_t214, (const uint8_t*)nx_str_768, 3);
+              nx_w_sl(&_t214, _t215);
+              nx_w(&_t214, (const uint8_t*)nx_str_785, 2);
+              _t209 = _t213;
             }
-          nx_string _t214 = _t207;
-          nx_sl_u8 _t215 = nx_str_slice(_t214);
-          nx_w_sl(&_t205, _t206);
-          nx_w(&_t205, (const uint8_t*)nx_str_499, 1);
-          nx_w_sl(&_t205, _t215);
-          nx_string ar_path_47 = _t204;
-          nx_slice_check(0, ar_path_47.len, ar_path_47.len, "self/nx.nx:1700");
-          nx_sl_u8 _t216 = ((nx_sl_u8){ nx_padd(ar_path_47.ptr, 0), ar_path_47.len - 0 });
-          nx_eu_void _t217; { int32_t _r = nx_fs_remove_file(_t216); _t217.err = _r == 0 ? 0 : _r == 1 ? 7u : 8u; }
-          nx_eu_void _t218 = _t217;
-          if (_t218.err) {
+          nx_string _t216 = _t209;
+          nx_sl_u8 _t217 = nx_str_slice(_t216);
+          nx_w_sl(&_t207, _t208);
+          nx_w(&_t207, (const uint8_t*)nx_str_499, 1);
+          nx_w_sl(&_t207, _t217);
+          nx_string ar_path_47 = _t206;
+          nx_slice_check(0, ar_path_47.len, ar_path_47.len, "self/nx.nx:1702");
+          nx_sl_u8 _t218 = ((nx_sl_u8){ nx_padd(ar_path_47.ptr, 0), ar_path_47.len - 0 });
+          nx_eu_void _t219; { int32_t _r = nx_fs_remove_file(_t218); _t219.err = _r == 0 ? 0 : _r == 1 ? 7u : 8u; }
+          nx_eu_void _t220 = _t219;
+          if (_t220.err) {
             {
             }
           }
           nx_list_sl_u8 argv_48 = ((nx_list_sl_u8){NULL, 0, 0, c->arena});
-          nx_string _t219 = (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1702")];
-          nx_sl_u8 _t220 = nx_str_slice(_t219);
-          bool _t221 = nx_sl_eq(_t220, nx_lit(nx_str_495, 3));
-          if (!_t221) {
-            nx_slice_check(0, (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1702")].len, (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1702")].len, "self/nx.nx:1702");
-            nx_sl_u8 _t222 = ((nx_sl_u8){ nx_padd((*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1702")].ptr, 0), (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1702")].len - 0 });
-            _t221 = nx_sl_ends_with(_t222, nx_lit(nx_str_495, 3));
-          }
-          bool _t223 = _t221;
+          nx_string _t221 = (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1704")];
+          nx_sl_u8 _t222 = nx_str_slice(_t221);
+          bool _t223 = nx_sl_eq(_t222, nx_lit(nx_str_495, 3));
           if (!_t223) {
-            nx_slice_check(0, (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1702")].len, (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1702")].len, "self/nx.nx:1702");
-            nx_sl_u8 _t224 = ((nx_sl_u8){ nx_padd((*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1702")].ptr, 0), (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1702")].len - 0 });
-            _t223 = nx_sl_ends_with(_t224, nx_lit(nx_str_562, 7));
+            nx_slice_check(0, (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1704")].len, (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1704")].len, "self/nx.nx:1704");
+            nx_sl_u8 _t224 = ((nx_sl_u8){ nx_padd((*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1704")].ptr, 0), (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1704")].len - 0 });
+            _t223 = nx_sl_ends_with(_t224, nx_lit(nx_str_495, 3));
           }
-          bool is_zig_49 = _t223;
+          bool _t225 = _t223;
+          if (!_t225) {
+            nx_slice_check(0, (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1704")].len, (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1704")].len, "self/nx.nx:1704");
+            nx_sl_u8 _t226 = ((nx_sl_u8){ nx_padd((*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1704")].ptr, 0), (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1704")].len - 0 });
+            _t225 = nx_sl_ends_with(_t226, nx_lit(nx_str_562, 7));
+          }
+          bool is_zig_49 = _t225;
             if (is_zig_49)
             {
-              nx_slice_check(0, (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1703")].len, (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1703")].len, "self/nx.nx:1703");
-              nx_sl_u8 _t225 = ((nx_sl_u8){ nx_padd((*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1703")].ptr, 0), (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1703")].len - 0 });
-              nx_list_sl_u8* _t226 = &(argv_48);
-              if (_t226->len == _t226->cap) nx_list_grow(c, (nx_rawlist*)_t226, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t226->len + 1);
-              _t226->ptr[_t226->len++] = _t225;
-              nx_sl_u8 _t227 = nx_lit(nx_str_786, 2);
+              nx_slice_check(0, (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1705")].len, (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1705")].len, "self/nx.nx:1705");
+              nx_sl_u8 _t227 = ((nx_sl_u8){ nx_padd((*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1705")].ptr, 0), (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1705")].len - 0 });
               nx_list_sl_u8* _t228 = &(argv_48);
               if (_t228->len == _t228->cap) nx_list_grow(c, (nx_rawlist*)_t228, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t228->len + 1);
               _t228->ptr[_t228->len++] = _t227;
-            }
-            else
-            {
               nx_sl_u8 _t229 = nx_lit(nx_str_786, 2);
               nx_list_sl_u8* _t230 = &(argv_48);
               if (_t230->len == _t230->cap) nx_list_grow(c, (nx_rawlist*)_t230, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t230->len + 1);
               _t230->ptr[_t230->len++] = _t229;
             }
-          nx_sl_u8 _t231 = nx_lit(nx_str_787, 3);
-          nx_list_sl_u8* _t232 = &(argv_48);
-          if (_t232->len == _t232->cap) nx_list_grow(c, (nx_rawlist*)_t232, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t232->len + 1);
-          _t232->ptr[_t232->len++] = _t231;
-          nx_slice_check(0, ar_path_47.len, ar_path_47.len, "self/nx.nx:1705");
-          nx_sl_u8 _t233 = ((nx_sl_u8){ nx_padd(ar_path_47.ptr, 0), ar_path_47.len - 0 });
+            else
+            {
+              nx_sl_u8 _t231 = nx_lit(nx_str_786, 2);
+              nx_list_sl_u8* _t232 = &(argv_48);
+              if (_t232->len == _t232->cap) nx_list_grow(c, (nx_rawlist*)_t232, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t232->len + 1);
+              _t232->ptr[_t232->len++] = _t231;
+            }
+          nx_sl_u8 _t233 = nx_lit(nx_str_787, 3);
           nx_list_sl_u8* _t234 = &(argv_48);
           if (_t234->len == _t234->cap) nx_list_grow(c, (nx_rawlist*)_t234, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t234->len + 1);
           _t234->ptr[_t234->len++] = _t233;
-          nx_slice_check(0, obj_path_46.len, obj_path_46.len, "self/nx.nx:1706");
-          nx_sl_u8 _t235 = ((nx_sl_u8){ nx_padd(obj_path_46.ptr, 0), obj_path_46.len - 0 });
+          nx_slice_check(0, ar_path_47.len, ar_path_47.len, "self/nx.nx:1707");
+          nx_sl_u8 _t235 = ((nx_sl_u8){ nx_padd(ar_path_47.ptr, 0), ar_path_47.len - 0 });
           nx_list_sl_u8* _t236 = &(argv_48);
           if (_t236->len == _t236->cap) nx_list_grow(c, (nx_rawlist*)_t236, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t236->len + 1);
           _t236->ptr[_t236->len++] = _t235;
-          nx_slice_check(0, argv_48.len, argv_48.len, "self/nx.nx:1707");
-          nx_sl_sl_u8 _t237 = ((nx_sl_sl_u8){ nx_padd(argv_48.ptr, 0), argv_48.len - 0 });
-          nx_eu_i32 _t238; { int _code = 0; if (nx_run(c, _t237.ptr, _t237.len, &_code)) { _t238.err = 0; _t238.val = _code; } else _t238.err = 8u; }
-          nx_eu_i32 _t239 = _t238;
-          int32_t _t240;
-          if (_t239.err) {
-            int32_t _t241;
+          nx_slice_check(0, obj_path_46.len, obj_path_46.len, "self/nx.nx:1708");
+          nx_sl_u8 _t237 = ((nx_sl_u8){ nx_padd(obj_path_46.ptr, 0), obj_path_46.len - 0 });
+          nx_list_sl_u8* _t238 = &(argv_48);
+          if (_t238->len == _t238->cap) nx_list_grow(c, (nx_rawlist*)_t238, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t238->len + 1);
+          _t238->ptr[_t238->len++] = _t237;
+          nx_slice_check(0, argv_48.len, argv_48.len, "self/nx.nx:1709");
+          nx_sl_sl_u8 _t239 = ((nx_sl_sl_u8){ nx_padd(argv_48.ptr, 0), argv_48.len - 0 });
+          nx_eu_i32 _t240; { int _code = 0; if (nx_run(c, _t239.ptr, _t239.len, &_code)) { _t240.err = 0; _t240.val = _code; } else _t240.err = 8u; }
+          nx_eu_i32 _t241 = _t240;
+          int32_t _t242;
+          if (_t241.err) {
+            int32_t _t243;
               {
-                _t241 = ((int32_t)-1LL);
+                _t243 = ((int32_t)-1LL);
               }
-            _t240 = _t241;
-          } else { _t240 = _t239.val; }
-          int32_t code_50 = _t240;
+            _t242 = _t243;
+          } else { _t242 = _t241.val; }
+          int32_t code_50 = _t242;
             if (((code_50) == (((int32_t)0LL))))
             {
-              nx_string _t242 = ar_path_47; memset(&ar_path_47, 0, sizeof ar_path_47);
-              nx_string _t243 = _t242;
-              nx_list_string* _t244 = &(produced_9);
-              if (_t244->len == _t244->cap) nx_list_grow(c, (nx_rawlist*)_t244, sizeof(nx_string), _Alignof(nx_string), _t244->len + 1);
-              _t244->ptr[_t244->len++] = _t243;
+              nx_string _t244 = ar_path_47; memset(&ar_path_47, 0, sizeof ar_path_47);
+              nx_string _t245 = _t244;
+              nx_list_string* _t246 = &(produced_9);
+              if (_t246->len == _t246->cap) nx_list_grow(c, (nx_rawlist*)_t246, sizeof(nx_string), _Alignof(nx_string), _t246->len + 1);
+              _t246->ptr[_t246->len++] = _t245;
             }
           nx_drop_list_sl_u8(c, &argv_48);
           nx_drop_string(c, &ar_path_47);
-          nx_drop_string(c, &_t214);
+          nx_drop_string(c, &_t216);
         }
-      nx_string _t245 = nx_clone_string(c, &h_path_40);
-      nx_list_string* _t246 = &(produced_9);
-      if (_t246->len == _t246->cap) nx_list_grow(c, (nx_rawlist*)_t246, sizeof(nx_string), _Alignof(nx_string), _t246->len + 1);
-      _t246->ptr[_t246->len++] = _t245;
+      nx_string _t247 = nx_clone_string(c, &h_path_40);
+      nx_list_string* _t248 = &(produced_9);
+      if (_t248->len == _t248->cap) nx_list_grow(c, (nx_rawlist*)_t248, sizeof(nx_string), _Alignof(nx_string), _t248->len + 1);
+      _t248->ptr[_t248->len++] = _t247;
         if (has_rust_25)
         {
-          nx_string _t247;
+          nx_string _t249;
             if (windows_18)
             {
-              nx_string _t248 = {0}; _t248.ar = c->arena;
-              nx_sink _t249 = nx_sink_str(c, &_t248);
-              nx_sl_u8 _t250 = nx_str_slice(lib_name_21);
-              nx_w_sl(&_t249, _t250);
-              nx_w(&_t249, (const uint8_t*)nx_str_784, 4);
-              _t247 = _t248;
+              nx_string _t250 = {0}; _t250.ar = c->arena;
+              nx_sink _t251 = nx_sink_str(c, &_t250);
+              nx_sl_u8 _t252 = nx_str_slice(lib_name_21);
+              nx_w_sl(&_t251, _t252);
+              nx_w(&_t251, (const uint8_t*)nx_str_784, 4);
+              _t249 = _t250;
             }
             else
             {
-              nx_string _t251 = {0}; _t251.ar = c->arena;
-              nx_sink _t252 = nx_sink_str(c, &_t251);
-              nx_sl_u8 _t253 = nx_str_slice(lib_name_21);
-              nx_w(&_t252, (const uint8_t*)nx_str_768, 3);
-              nx_w_sl(&_t252, _t253);
-              nx_w(&_t252, (const uint8_t*)nx_str_785, 2);
-              _t247 = _t251;
+              nx_string _t253 = {0}; _t253.ar = c->arena;
+              nx_sink _t254 = nx_sink_str(c, &_t253);
+              nx_sl_u8 _t255 = nx_str_slice(lib_name_21);
+              nx_w(&_t254, (const uint8_t*)nx_str_768, 3);
+              nx_w_sl(&_t254, _t255);
+              nx_w(&_t254, (const uint8_t*)nx_str_785, 2);
+              _t249 = _t253;
             }
-          nx_string ar_name_51 = _t247;
-          nx_string _t254 = {0}; _t254.ar = c->arena;
-          nx_sink _t255 = nx_sink_str(c, &_t254);
-          nx_sl_u8 _t256 = nx_str_slice(dir_36);
-          nx_w_sl(&_t255, _t256);
-          nx_w(&_t255, (const uint8_t*)nx_str_788, 5);
-          nx_string crate_dir_52 = _t254;
-          nx_string _t257 = {0}; _t257.ar = c->arena;
-          nx_sink _t258 = nx_sink_str(c, &_t257);
-          nx_sl_u8 _t259 = nx_str_slice(crate_dir_52);
-          nx_w_sl(&_t258, _t259);
-          nx_w(&_t258, (const uint8_t*)nx_str_789, 4);
-          nx_string _t260 = _t257;
-          nx_slice_check(0, _t260.len, _t260.len, "self/nx.nx:1714");
-          nx_sl_u8 _t261 = ((nx_sl_u8){ nx_padd(_t260.ptr, 0), _t260.len - 0 });
-          nx_eu_void _t262 = nx_m31_make_dirs(c, _t261);
-          nx_eu_void _t263 = _t262;
-          if (_t263.err) {
+          nx_string ar_name_51 = _t249;
+          nx_string _t256 = {0}; _t256.ar = c->arena;
+          nx_sink _t257 = nx_sink_str(c, &_t256);
+          nx_sl_u8 _t258 = nx_str_slice(dir_36);
+          nx_w_sl(&_t257, _t258);
+          nx_w(&_t257, (const uint8_t*)nx_str_788, 5);
+          nx_string crate_dir_52 = _t256;
+          nx_string _t259 = {0}; _t259.ar = c->arena;
+          nx_sink _t260 = nx_sink_str(c, &_t259);
+          nx_sl_u8 _t261 = nx_str_slice(crate_dir_52);
+          nx_w_sl(&_t260, _t261);
+          nx_w(&_t260, (const uint8_t*)nx_str_789, 4);
+          nx_string _t262 = _t259;
+          nx_slice_check(0, _t262.len, _t262.len, "self/nx.nx:1716");
+          nx_sl_u8 _t263 = ((nx_sl_u8){ nx_padd(_t262.ptr, 0), _t262.len - 0 });
+          nx_eu_void _t264 = nx_m31_make_dirs(c, _t263);
+          nx_eu_void _t265 = _t264;
+          if (_t265.err) {
             {
             }
           }
-          nx_string _t264 = {0}; _t264.ar = c->arena;
-          nx_sink _t265 = nx_sink_str(c, &_t264);
-          nx_sl_u8 _t266 = nx_str_slice(crate_dir_52);
-          nx_w_sl(&_t265, _t266);
-          nx_w(&_t265, (const uint8_t*)nx_str_790, 4);
-          nx_string _t267 = _t264;
-          nx_slice_check(0, _t267.len, _t267.len, "self/nx.nx:1715");
-          nx_sl_u8 _t268 = ((nx_sl_u8){ nx_padd(_t267.ptr, 0), _t267.len - 0 });
-          nx_eu_void _t269 = nx_m31_make_dirs(c, _t268);
-          nx_eu_void _t270 = _t269;
-          if (_t270.err) {
+          nx_string _t266 = {0}; _t266.ar = c->arena;
+          nx_sink _t267 = nx_sink_str(c, &_t266);
+          nx_sl_u8 _t268 = nx_str_slice(crate_dir_52);
+          nx_w_sl(&_t267, _t268);
+          nx_w(&_t267, (const uint8_t*)nx_str_790, 4);
+          nx_string _t269 = _t266;
+          nx_slice_check(0, _t269.len, _t269.len, "self/nx.nx:1717");
+          nx_sl_u8 _t270 = ((nx_sl_u8){ nx_padd(_t269.ptr, 0), _t269.len - 0 });
+          nx_eu_void _t271 = nx_m31_make_dirs(c, _t270);
+          nx_eu_void _t272 = _t271;
+          if (_t272.err) {
             {
             }
           }
-          nx_string _t271 = {0}; _t271.ar = c->arena;
-          nx_sink _t272 = nx_sink_str(c, &_t271);
-          nx_sl_u8 _t273 = nx_str_slice(dir_36);
-          nx_sl_u8 _t274 = nx_str_slice(ar_name_51);
-          nx_w_sl(&_t272, _t273);
-          nx_w(&_t272, (const uint8_t*)nx_str_499, 1);
-          nx_w_sl(&_t272, _t274);
-          nx_string _t275 = _t271;
-          nx_slice_check(0, _t275.len, _t275.len, "self/nx.nx:1716");
-          nx_sl_u8 _t276 = ((nx_sl_u8){ nx_padd(_t275.ptr, 0), _t275.len - 0 });
-          nx_string _t277 = {0}; _t277.ar = c->arena;
-          nx_sink _t278 = nx_sink_str(c, &_t277);
-          nx_sl_u8 _t279 = nx_str_slice(crate_dir_52);
-          nx_sl_u8 _t280 = nx_str_slice(ar_name_51);
-          nx_w_sl(&_t278, _t279);
-          nx_w(&_t278, (const uint8_t*)nx_str_791, 5);
-          nx_w_sl(&_t278, _t280);
-          nx_string _t281 = _t277;
-          nx_slice_check(0, _t281.len, _t281.len, "self/nx.nx:1716");
-          nx_sl_u8 _t282 = ((nx_sl_u8){ nx_padd(_t281.ptr, 0), _t281.len - 0 });
-          nx_eu_void _t283 = nx_m31_copy(c, _t276, _t282);
-          nx_eu_void _t284 = _t283;
-          if (_t284.err) {
+          nx_string _t273 = {0}; _t273.ar = c->arena;
+          nx_sink _t274 = nx_sink_str(c, &_t273);
+          nx_sl_u8 _t275 = nx_str_slice(dir_36);
+          nx_sl_u8 _t276 = nx_str_slice(ar_name_51);
+          nx_w_sl(&_t274, _t275);
+          nx_w(&_t274, (const uint8_t*)nx_str_499, 1);
+          nx_w_sl(&_t274, _t276);
+          nx_string _t277 = _t273;
+          nx_slice_check(0, _t277.len, _t277.len, "self/nx.nx:1718");
+          nx_sl_u8 _t278 = ((nx_sl_u8){ nx_padd(_t277.ptr, 0), _t277.len - 0 });
+          nx_string _t279 = {0}; _t279.ar = c->arena;
+          nx_sink _t280 = nx_sink_str(c, &_t279);
+          nx_sl_u8 _t281 = nx_str_slice(crate_dir_52);
+          nx_sl_u8 _t282 = nx_str_slice(ar_name_51);
+          nx_w_sl(&_t280, _t281);
+          nx_w(&_t280, (const uint8_t*)nx_str_791, 5);
+          nx_w_sl(&_t280, _t282);
+          nx_string _t283 = _t279;
+          nx_slice_check(0, _t283.len, _t283.len, "self/nx.nx:1718");
+          nx_sl_u8 _t284 = ((nx_sl_u8){ nx_padd(_t283.ptr, 0), _t283.len - 0 });
+          nx_eu_void _t285 = nx_m31_copy(c, _t278, _t284);
+          nx_eu_void _t286 = _t285;
+          if (_t286.err) {
             {
             }
           }
-          nx_slice_check(0, lib_name_21.len, lib_name_21.len, "self/nx.nx:1717");
-          nx_sl_u8 _t285 = ((nx_sl_u8){ nx_padd(lib_name_21.ptr, 0), lib_name_21.len - 0 });
-          nx_slice_check(0, version_22.len, version_22.len, "self/nx.nx:1717");
-          nx_sl_u8 _t286 = ((nx_sl_u8){ nx_padd(version_22.ptr, 0), version_22.len - 0 });
-          nx_list_m24_ExportInfo* _t287 = &(infos_34);
-          nx_slice_check(0, ar_name_51.len, ar_name_51.len, "self/nx.nx:1717");
-          nx_sl_u8 _t288 = ((nx_sl_u8){ nx_padd(ar_name_51.ptr, 0), ar_name_51.len - 0 });
-          nx_list_m26_CrateFile _t289 = nx_m26_rust_crate(c, _t285, _t286, _t287, _t288);
-          nx_list_m26_CrateFile _t290 = _t289;
-          nx_sl_m26_CrateFile _t291 = ((nx_sl_m26_CrateFile){ _t290.ptr, _t290.len });
-          for (size_t _t292 = 0; _t292 < _t291.len; _t292++) {
-            nx_m26_CrateFile f_53 = _t291.ptr[_t292];
-            nx_string _t293 = {0}; _t293.ar = c->arena;
-            nx_sink _t294 = nx_sink_str(c, &_t293);
-            nx_sl_u8 _t295 = nx_str_slice(crate_dir_52);
-            nx_sl_u8 _t296 = nx_str_slice((f_53).path_0);
-            nx_w_sl(&_t294, _t295);
-            nx_w(&_t294, (const uint8_t*)nx_str_499, 1);
-            nx_w_sl(&_t294, _t296);
-            nx_string p_55 = _t293;
-            nx_slice_check(0, p_55.len, p_55.len, "self/nx.nx:1719");
-            nx_sl_u8 _t297 = ((nx_sl_u8){ nx_padd(p_55.ptr, 0), p_55.len - 0 });
-            nx_slice_check(0, f_53.text_1.len, f_53.text_1.len, "self/nx.nx:1719");
-            nx_sl_u8 _t298 = ((nx_sl_u8){ nx_padd(f_53.text_1.ptr, 0), f_53.text_1.len - 0 });
-            nx_eu_void _t299 = ((nx_eu_void){ .err = nx_write_file(_t297, _t298) ? 0 : 8u });
-            if (_t299.err) {
+          nx_slice_check(0, lib_name_21.len, lib_name_21.len, "self/nx.nx:1719");
+          nx_sl_u8 _t287 = ((nx_sl_u8){ nx_padd(lib_name_21.ptr, 0), lib_name_21.len - 0 });
+          nx_slice_check(0, version_22.len, version_22.len, "self/nx.nx:1719");
+          nx_sl_u8 _t288 = ((nx_sl_u8){ nx_padd(version_22.ptr, 0), version_22.len - 0 });
+          nx_list_m24_ExportInfo* _t289 = &(infos_34);
+          nx_slice_check(0, ar_name_51.len, ar_name_51.len, "self/nx.nx:1719");
+          nx_sl_u8 _t290 = ((nx_sl_u8){ nx_padd(ar_name_51.ptr, 0), ar_name_51.len - 0 });
+          nx_list_m26_CrateFile _t291 = nx_m26_rust_crate(c, _t287, _t288, _t289, _t290);
+          nx_list_m26_CrateFile _t292 = _t291;
+          nx_sl_m26_CrateFile _t293 = ((nx_sl_m26_CrateFile){ _t292.ptr, _t292.len });
+          for (size_t _t294 = 0; _t294 < _t293.len; _t294++) {
+            nx_m26_CrateFile f_53 = _t293.ptr[_t294];
+            nx_string _t295 = {0}; _t295.ar = c->arena;
+            nx_sink _t296 = nx_sink_str(c, &_t295);
+            nx_sl_u8 _t297 = nx_str_slice(crate_dir_52);
+            nx_sl_u8 _t298 = nx_str_slice((f_53).path_0);
+            nx_w_sl(&_t296, _t297);
+            nx_w(&_t296, (const uint8_t*)nx_str_499, 1);
+            nx_w_sl(&_t296, _t298);
+            nx_string p_55 = _t295;
+            nx_slice_check(0, p_55.len, p_55.len, "self/nx.nx:1721");
+            nx_sl_u8 _t299 = ((nx_sl_u8){ nx_padd(p_55.ptr, 0), p_55.len - 0 });
+            nx_slice_check(0, f_53.text_1.len, f_53.text_1.len, "self/nx.nx:1721");
+            nx_sl_u8 _t300 = ((nx_sl_u8){ nx_padd(f_53.text_1.ptr, 0), f_53.text_1.len - 0 });
+            nx_eu_void _t301 = ((nx_eu_void){ .err = nx_write_file(_t299, _t300) ? 0 : 8u });
+            if (_t301.err) {
               {
-                nx_sink _t300 = nx_sink_file(c, c->err);
-                nx_sl_u8 _t301 = nx_str_slice(p_55);
-                nx_w(&_t300, (const uint8_t*)nx_str_580, 20);
-                nx_w_sl(&_t300, _t301);
-                nx_w(&_t300, (const uint8_t*)"\n", 1);
-                nx_sink_flush(&_t300);
-                int32_t _t302 = ((int32_t)1LL);
+                nx_sink _t302 = nx_sink_file(c, c->err);
+                nx_sl_u8 _t303 = nx_str_slice(p_55);
+                nx_w(&_t302, (const uint8_t*)nx_str_580, 20);
+                nx_w_sl(&_t302, _t303);
+                nx_w(&_t302, (const uint8_t*)"\n", 1);
+                nx_sink_flush(&_t302);
+                int32_t _t304 = ((int32_t)1LL);
                 nx_drop_string(c, &p_55);
-                nx_drop_list_m26_CrateFile(c, &_t290);
-                nx_drop_string(c, &_t281);
-                nx_drop_string(c, &_t275);
-                nx_drop_string(c, &_t267);
-                nx_drop_string(c, &_t260);
+                nx_drop_list_m26_CrateFile(c, &_t292);
+                nx_drop_string(c, &_t283);
+                nx_drop_string(c, &_t277);
+                nx_drop_string(c, &_t269);
+                nx_drop_string(c, &_t262);
                 nx_drop_string(c, &crate_dir_52);
                 nx_drop_string(c, &ar_name_51);
                 nx_drop_string(c, &obj_path_46);
@@ -22408,27 +22412,27 @@ static int32_t nx_cmd_ship(nx_ctx* c, nx_Opts* o_0) {
                 nx_drop_list_usize(c, &art_mods_3);
                 nx_drop_list_usize(c, &arts_2);
                 nx_drop_m2_Checker(c, &c_1);
-                return _t302;
+                return _t304;
               }
             }
             nx_drop_string(c, &p_55);
             nx_cont_5: ;
           }
           nx_brk_5: ;
-          nx_string _t303 = {0}; _t303.ar = c->arena;
-          nx_sink _t304 = nx_sink_str(c, &_t303);
-          nx_sl_u8 _t305 = nx_str_slice(crate_dir_52);
-          nx_w_sl(&_t304, _t305);
-          nx_w(&_t304, (const uint8_t*)nx_str_792, 11);
-          nx_string _t306 = _t303;
-          nx_list_string* _t307 = &(produced_9);
-          if (_t307->len == _t307->cap) nx_list_grow(c, (nx_rawlist*)_t307, sizeof(nx_string), _Alignof(nx_string), _t307->len + 1);
-          _t307->ptr[_t307->len++] = _t306;
-          nx_drop_list_m26_CrateFile(c, &_t290);
-          nx_drop_string(c, &_t281);
-          nx_drop_string(c, &_t275);
-          nx_drop_string(c, &_t267);
-          nx_drop_string(c, &_t260);
+          nx_string _t305 = {0}; _t305.ar = c->arena;
+          nx_sink _t306 = nx_sink_str(c, &_t305);
+          nx_sl_u8 _t307 = nx_str_slice(crate_dir_52);
+          nx_w_sl(&_t306, _t307);
+          nx_w(&_t306, (const uint8_t*)nx_str_792, 11);
+          nx_string _t308 = _t305;
+          nx_list_string* _t309 = &(produced_9);
+          if (_t309->len == _t309->cap) nx_list_grow(c, (nx_rawlist*)_t309, sizeof(nx_string), _Alignof(nx_string), _t309->len + 1);
+          _t309->ptr[_t309->len++] = _t308;
+          nx_drop_list_m26_CrateFile(c, &_t292);
+          nx_drop_string(c, &_t283);
+          nx_drop_string(c, &_t277);
+          nx_drop_string(c, &_t269);
+          nx_drop_string(c, &_t262);
           nx_drop_string(c, &crate_dir_52);
           nx_drop_string(c, &ar_name_51);
         }
@@ -22436,50 +22440,50 @@ static int32_t nx_cmd_ship(nx_ctx* c, nx_Opts* o_0) {
         {
             if (((((py_name_26).len)) == (((size_t)0ULL))))
             {
-              nx_string _t308 = nx_clone_string(c, &lib_name_21);
+              nx_string _t310 = nx_clone_string(c, &lib_name_21);
               nx_drop_string(c, &(py_name_26));
-              py_name_26 = _t308;
+              py_name_26 = _t310;
             }
-          nx_string _t309 = {0}; _t309.ar = c->arena;
-          nx_string pyn_56 = _t309;
-          nx_sl_u8 _t310 = nx_str_slice(py_name_26);
-          for (size_t _t311 = 0; _t311 < _t310.len; _t311++) {
-            uint8_t ch_57 = _t310.ptr[_t311];
-            uint8_t _t312;
+          nx_string _t311 = {0}; _t311.ar = c->arena;
+          nx_string pyn_56 = _t311;
+          nx_sl_u8 _t312 = nx_str_slice(py_name_26);
+          for (size_t _t313 = 0; _t313 < _t312.len; _t313++) {
+            uint8_t ch_57 = _t312.ptr[_t313];
+            uint8_t _t314;
               if (((ch_57) == (((uint8_t)45ULL))))
               {
-                _t312 = ((uint8_t)95ULL);
+                _t314 = ((uint8_t)95ULL);
               }
               else
               {
-                _t312 = ch_57;
+                _t314 = ch_57;
               }
-            uint8_t _t313 = _t312;
-            { uint8_t _b = (uint8_t)(_t313); nx_str_append(c, &(pyn_56), &_b, 1); }
+            uint8_t _t315 = _t314;
+            { uint8_t _b = (uint8_t)(_t315); nx_str_append(c, &(pyn_56), &_b, 1); }
             nx_cont_6: ;
           }
           nx_brk_6: ;
-          nx_string _t314 = {0}; _t314.ar = c->arena;
-          nx_sink _t315 = nx_sink_str(c, &_t314);
-          nx_sl_u8 _t316 = nx_str_slice(dir_36);
-          nx_sl_u8 _t317 = nx_str_slice(pyn_56);
-          nx_w_sl(&_t315, _t316);
-          nx_w(&_t315, (const uint8_t*)nx_str_793, 8);
-          nx_w_sl(&_t315, _t317);
-          nx_string pkg_dir_58 = _t314;
-          nx_slice_check(0, pkg_dir_58.len, pkg_dir_58.len, "self/nx.nx:1731");
-          nx_sl_u8 _t318 = ((nx_sl_u8){ nx_padd(pkg_dir_58.ptr, 0), pkg_dir_58.len - 0 });
-          nx_eu_void _t319 = nx_m31_make_dirs(c, _t318);
-          nx_eu_void _t320 = _t319;
-          if (_t320.err) {
+          nx_string _t316 = {0}; _t316.ar = c->arena;
+          nx_sink _t317 = nx_sink_str(c, &_t316);
+          nx_sl_u8 _t318 = nx_str_slice(dir_36);
+          nx_sl_u8 _t319 = nx_str_slice(pyn_56);
+          nx_w_sl(&_t317, _t318);
+          nx_w(&_t317, (const uint8_t*)nx_str_793, 8);
+          nx_w_sl(&_t317, _t319);
+          nx_string pkg_dir_58 = _t316;
+          nx_slice_check(0, pkg_dir_58.len, pkg_dir_58.len, "self/nx.nx:1733");
+          nx_sl_u8 _t320 = ((nx_sl_u8){ nx_padd(pkg_dir_58.ptr, 0), pkg_dir_58.len - 0 });
+          nx_eu_void _t321 = nx_m31_make_dirs(c, _t320);
+          nx_eu_void _t322 = _t321;
+          if (_t322.err) {
             {
-              nx_sink _t321 = nx_sink_file(c, c->err);
-              nx_sl_u8 _t322 = nx_str_slice(pkg_dir_58);
-              nx_w(&_t321, (const uint8_t*)nx_str_518, 21);
-              nx_w_sl(&_t321, _t322);
-              nx_w(&_t321, (const uint8_t*)"\n", 1);
-              nx_sink_flush(&_t321);
-              int32_t _t323 = ((int32_t)1LL);
+              nx_sink _t323 = nx_sink_file(c, c->err);
+              nx_sl_u8 _t324 = nx_str_slice(pkg_dir_58);
+              nx_w(&_t323, (const uint8_t*)nx_str_518, 21);
+              nx_w_sl(&_t323, _t324);
+              nx_w(&_t323, (const uint8_t*)"\n", 1);
+              nx_sink_flush(&_t323);
+              int32_t _t325 = ((int32_t)1LL);
               nx_drop_string(c, &pkg_dir_58);
               nx_drop_string(c, &pyn_56);
               nx_drop_string(c, &obj_path_46);
@@ -22508,234 +22512,234 @@ static int32_t nx_cmd_ship(nx_ctx* c, nx_Opts* o_0) {
               nx_drop_list_usize(c, &art_mods_3);
               nx_drop_list_usize(c, &arts_2);
               nx_drop_m2_Checker(c, &c_1);
-              return _t323;
+              return _t325;
             }
           }
-          nx_slice_check(0, lib_name_21.len, lib_name_21.len, "self/nx.nx:1735");
-          nx_sl_u8 _t324 = ((nx_sl_u8){ nx_padd(lib_name_21.ptr, 0), lib_name_21.len - 0 });
-          nx_slice_check(0, version_22.len, version_22.len, "self/nx.nx:1735");
-          nx_sl_u8 _t325 = ((nx_sl_u8){ nx_padd(version_22.ptr, 0), version_22.len - 0 });
-          nx_list_m24_ExportInfo* _t326 = &(infos_34);
-          nx_slice_check(0, shared_name_41.len, shared_name_41.len, "self/nx.nx:1735");
-          nx_sl_u8 _t327 = ((nx_sl_u8){ nx_padd(shared_name_41.ptr, 0), shared_name_41.len - 0 });
-          nx_string _t328 = nx_m26_python_module(c, _t324, _t325, _t326, _t327);
-          nx_string module_59 = _t328;
-          nx_string _t329 = {0}; _t329.ar = c->arena;
-          nx_sink _t330 = nx_sink_str(c, &_t329);
-          nx_sl_u8 _t331 = nx_str_slice(pkg_dir_58);
-          nx_w_sl(&_t330, _t331);
-          nx_w(&_t330, (const uint8_t*)nx_str_794, 12);
-          nx_string _t332 = _t329;
-          nx_slice_check(0, _t332.len, _t332.len, "self/nx.nx:1736");
-          nx_sl_u8 _t333 = ((nx_sl_u8){ nx_padd(_t332.ptr, 0), _t332.len - 0 });
-          nx_slice_check(0, module_59.len, module_59.len, "self/nx.nx:1736");
-          nx_sl_u8 _t334 = ((nx_sl_u8){ nx_padd(module_59.ptr, 0), module_59.len - 0 });
-          nx_eu_void _t335 = ((nx_eu_void){ .err = nx_write_file(_t333, _t334) ? 0 : 8u });
-          if (_t335.err) {
+          nx_slice_check(0, lib_name_21.len, lib_name_21.len, "self/nx.nx:1737");
+          nx_sl_u8 _t326 = ((nx_sl_u8){ nx_padd(lib_name_21.ptr, 0), lib_name_21.len - 0 });
+          nx_slice_check(0, version_22.len, version_22.len, "self/nx.nx:1737");
+          nx_sl_u8 _t327 = ((nx_sl_u8){ nx_padd(version_22.ptr, 0), version_22.len - 0 });
+          nx_list_m24_ExportInfo* _t328 = &(infos_34);
+          nx_slice_check(0, shared_name_41.len, shared_name_41.len, "self/nx.nx:1737");
+          nx_sl_u8 _t329 = ((nx_sl_u8){ nx_padd(shared_name_41.ptr, 0), shared_name_41.len - 0 });
+          nx_string _t330 = nx_m26_python_module(c, _t326, _t327, _t328, _t329);
+          nx_string module_59 = _t330;
+          nx_string _t331 = {0}; _t331.ar = c->arena;
+          nx_sink _t332 = nx_sink_str(c, &_t331);
+          nx_sl_u8 _t333 = nx_str_slice(pkg_dir_58);
+          nx_w_sl(&_t332, _t333);
+          nx_w(&_t332, (const uint8_t*)nx_str_794, 12);
+          nx_string _t334 = _t331;
+          nx_slice_check(0, _t334.len, _t334.len, "self/nx.nx:1738");
+          nx_sl_u8 _t335 = ((nx_sl_u8){ nx_padd(_t334.ptr, 0), _t334.len - 0 });
+          nx_slice_check(0, module_59.len, module_59.len, "self/nx.nx:1738");
+          nx_sl_u8 _t336 = ((nx_sl_u8){ nx_padd(module_59.ptr, 0), module_59.len - 0 });
+          nx_eu_void _t337 = ((nx_eu_void){ .err = nx_write_file(_t335, _t336) ? 0 : 8u });
+          if (_t337.err) {
             {
             }
           }
-          nx_list_m24_ExportInfo* _t336 = &(infos_34);
-          nx_string _t337 = nx_m26_python_stub(c, _t336);
-          nx_string stub_60 = _t337;
-          nx_string _t338 = {0}; _t338.ar = c->arena;
-          nx_sink _t339 = nx_sink_str(c, &_t338);
-          nx_sl_u8 _t340 = nx_str_slice(pkg_dir_58);
-          nx_w_sl(&_t339, _t340);
-          nx_w(&_t339, (const uint8_t*)nx_str_795, 13);
-          nx_string _t341 = _t338;
-          nx_slice_check(0, _t341.len, _t341.len, "self/nx.nx:1738");
-          nx_sl_u8 _t342 = ((nx_sl_u8){ nx_padd(_t341.ptr, 0), _t341.len - 0 });
-          nx_slice_check(0, stub_60.len, stub_60.len, "self/nx.nx:1738");
-          nx_sl_u8 _t343 = ((nx_sl_u8){ nx_padd(stub_60.ptr, 0), stub_60.len - 0 });
-          nx_eu_void _t344 = ((nx_eu_void){ .err = nx_write_file(_t342, _t343) ? 0 : 8u });
-          if (_t344.err) {
+          nx_list_m24_ExportInfo* _t338 = &(infos_34);
+          nx_string _t339 = nx_m26_python_stub(c, _t338);
+          nx_string stub_60 = _t339;
+          nx_string _t340 = {0}; _t340.ar = c->arena;
+          nx_sink _t341 = nx_sink_str(c, &_t340);
+          nx_sl_u8 _t342 = nx_str_slice(pkg_dir_58);
+          nx_w_sl(&_t341, _t342);
+          nx_w(&_t341, (const uint8_t*)nx_str_795, 13);
+          nx_string _t343 = _t340;
+          nx_slice_check(0, _t343.len, _t343.len, "self/nx.nx:1740");
+          nx_sl_u8 _t344 = ((nx_sl_u8){ nx_padd(_t343.ptr, 0), _t343.len - 0 });
+          nx_slice_check(0, stub_60.len, stub_60.len, "self/nx.nx:1740");
+          nx_sl_u8 _t345 = ((nx_sl_u8){ nx_padd(stub_60.ptr, 0), stub_60.len - 0 });
+          nx_eu_void _t346 = ((nx_eu_void){ .err = nx_write_file(_t344, _t345) ? 0 : 8u });
+          if (_t346.err) {
             {
             }
           }
-          nx_string _t345 = {0}; _t345.ar = c->arena;
-          nx_sink _t346 = nx_sink_str(c, &_t345);
-          nx_sl_u8 _t347 = nx_str_slice(pkg_dir_58);
-          nx_w_sl(&_t346, _t347);
-          nx_w(&_t346, (const uint8_t*)nx_str_796, 9);
-          nx_string _t348 = _t345;
-          nx_slice_check(0, _t348.len, _t348.len, "self/nx.nx:1739");
-          nx_sl_u8 _t349 = ((nx_sl_u8){ nx_padd(_t348.ptr, 0), _t348.len - 0 });
-          nx_eu_void _t350 = ((nx_eu_void){ .err = nx_write_file(_t349, nx_lit(nx_str_6, 0)) ? 0 : 8u });
-          if (_t350.err) {
+          nx_string _t347 = {0}; _t347.ar = c->arena;
+          nx_sink _t348 = nx_sink_str(c, &_t347);
+          nx_sl_u8 _t349 = nx_str_slice(pkg_dir_58);
+          nx_w_sl(&_t348, _t349);
+          nx_w(&_t348, (const uint8_t*)nx_str_796, 9);
+          nx_string _t350 = _t347;
+          nx_slice_check(0, _t350.len, _t350.len, "self/nx.nx:1741");
+          nx_sl_u8 _t351 = ((nx_sl_u8){ nx_padd(_t350.ptr, 0), _t350.len - 0 });
+          nx_eu_void _t352 = ((nx_eu_void){ .err = nx_write_file(_t351, nx_lit(nx_str_6, 0)) ? 0 : 8u });
+          if (_t352.err) {
             {
             }
           }
-          nx_slice_check(0, shared_path_42.len, shared_path_42.len, "self/nx.nx:1740");
-          nx_sl_u8 _t351 = ((nx_sl_u8){ nx_padd(shared_path_42.ptr, 0), shared_path_42.len - 0 });
-          nx_eu_string _t352; { nx_string _s; if (nx_read_file(c, _t351, &_s)) { _t352.err = 0; _t352.val = _s; } else _t352.err = 8u; }
-          nx_eu_string _t353 = _t352;
-          nx_string _t354;
-          if (_t353.err) {
-            nx_string _t355;
+          nx_slice_check(0, shared_path_42.len, shared_path_42.len, "self/nx.nx:1742");
+          nx_sl_u8 _t353 = ((nx_sl_u8){ nx_padd(shared_path_42.ptr, 0), shared_path_42.len - 0 });
+          nx_eu_string _t354; { nx_string _s; if (nx_read_file(c, _t353, &_s)) { _t354.err = 0; _t354.val = _s; } else _t354.err = 8u; }
+          nx_eu_string _t355 = _t354;
+          nx_string _t356;
+          if (_t355.err) {
+            nx_string _t357;
               {
-                nx_string _t356 = {0}; _t356.ar = c->arena;
-                _t355 = _t356;
+                nx_string _t358 = {0}; _t358.ar = c->arena;
+                _t357 = _t358;
               }
-            _t354 = _t355;
-          } else { _t354 = _t353.val; }
-          nx_string lib_bytes_61 = _t354;
-          nx_string _t357 = {0}; _t357.ar = c->arena;
-          nx_sink _t358 = nx_sink_str(c, &_t357);
-          nx_sl_u8 _t359 = nx_str_slice(pkg_dir_58);
-          nx_sl_u8 _t360 = nx_str_slice(shared_name_41);
-          nx_w_sl(&_t358, _t359);
-          nx_w(&_t358, (const uint8_t*)nx_str_499, 1);
-          nx_w_sl(&_t358, _t360);
-          nx_string _t361 = _t357;
-          nx_slice_check(0, _t361.len, _t361.len, "self/nx.nx:1741");
-          nx_sl_u8 _t362 = ((nx_sl_u8){ nx_padd(_t361.ptr, 0), _t361.len - 0 });
-          nx_slice_check(0, lib_bytes_61.len, lib_bytes_61.len, "self/nx.nx:1741");
-          nx_sl_u8 _t363 = ((nx_sl_u8){ nx_padd(lib_bytes_61.ptr, 0), lib_bytes_61.len - 0 });
-          nx_eu_void _t364 = ((nx_eu_void){ .err = nx_write_file(_t362, _t363) ? 0 : 8u });
-          if (_t364.err) {
+            _t356 = _t357;
+          } else { _t356 = _t355.val; }
+          nx_string lib_bytes_61 = _t356;
+          nx_string _t359 = {0}; _t359.ar = c->arena;
+          nx_sink _t360 = nx_sink_str(c, &_t359);
+          nx_sl_u8 _t361 = nx_str_slice(pkg_dir_58);
+          nx_sl_u8 _t362 = nx_str_slice(shared_name_41);
+          nx_w_sl(&_t360, _t361);
+          nx_w(&_t360, (const uint8_t*)nx_str_499, 1);
+          nx_w_sl(&_t360, _t362);
+          nx_string _t363 = _t359;
+          nx_slice_check(0, _t363.len, _t363.len, "self/nx.nx:1743");
+          nx_sl_u8 _t364 = ((nx_sl_u8){ nx_padd(_t363.ptr, 0), _t363.len - 0 });
+          nx_slice_check(0, lib_bytes_61.len, lib_bytes_61.len, "self/nx.nx:1743");
+          nx_sl_u8 _t365 = ((nx_sl_u8){ nx_padd(lib_bytes_61.ptr, 0), lib_bytes_61.len - 0 });
+          nx_eu_void _t366 = ((nx_eu_void){ .err = nx_write_file(_t364, _t365) ? 0 : 8u });
+          if (_t366.err) {
             {
             }
           }
-          nx_string _t365 = {0}; _t365.ar = c->arena;
-          nx_sink _t366 = nx_sink_str(c, &_t365);
-          nx_sl_u8 _t367 = nx_str_slice(dir_36);
-          nx_w_sl(&_t366, _t367);
-          nx_w(&_t366, (const uint8_t*)nx_str_797, 22);
-          nx_string _t368 = _t365;
-          nx_slice_check(0, _t368.len, _t368.len, "self/nx.nx:1742");
-          nx_sl_u8 _t369 = ((nx_sl_u8){ nx_padd(_t368.ptr, 0), _t368.len - 0 });
-          nx_string _t370 = {0}; _t370.ar = c->arena;
-          nx_sink _t371 = nx_sink_str(c, &_t370);
-          nx_sl_u8 _t372 = nx_str_slice(pyn_56);
-          nx_sl_u8 _t373 = nx_str_slice(version_22);
+          nx_string _t367 = {0}; _t367.ar = c->arena;
+          nx_sink _t368 = nx_sink_str(c, &_t367);
+          nx_sl_u8 _t369 = nx_str_slice(dir_36);
+          nx_w_sl(&_t368, _t369);
+          nx_w(&_t368, (const uint8_t*)nx_str_797, 22);
+          nx_string _t370 = _t367;
+          nx_slice_check(0, _t370.len, _t370.len, "self/nx.nx:1744");
+          nx_sl_u8 _t371 = ((nx_sl_u8){ nx_padd(_t370.ptr, 0), _t370.len - 0 });
+          nx_string _t372 = {0}; _t372.ar = c->arena;
+          nx_sink _t373 = nx_sink_str(c, &_t372);
           nx_sl_u8 _t374 = nx_str_slice(pyn_56);
-          nx_sl_u8 _t375 = nx_str_slice(pyn_56);
-          nx_w(&_t371, (const uint8_t*)nx_str_798, 18);
-          nx_w_sl(&_t371, _t372);
-          nx_w(&_t371, (const uint8_t*)nx_str_799, 13);
-          nx_w_sl(&_t371, _t373);
-          nx_w(&_t371, (const uint8_t*)nx_str_800, 142);
-          nx_w_sl(&_t371, _t374);
-          nx_w(&_t371, (const uint8_t*)nx_str_801, 36);
-          nx_w_sl(&_t371, _t375);
-          nx_w(&_t371, (const uint8_t*)nx_str_802, 54);
-          nx_string _t376 = _t370;
-          nx_slice_check(0, _t376.len, _t376.len, "self/nx.nx:1742");
-          nx_sl_u8 _t377 = ((nx_sl_u8){ nx_padd(_t376.ptr, 0), _t376.len - 0 });
-          nx_eu_void _t378 = ((nx_eu_void){ .err = nx_write_file(_t369, _t377) ? 0 : 8u });
-          if (_t378.err) {
+          nx_sl_u8 _t375 = nx_str_slice(version_22);
+          nx_sl_u8 _t376 = nx_str_slice(pyn_56);
+          nx_sl_u8 _t377 = nx_str_slice(pyn_56);
+          nx_w(&_t373, (const uint8_t*)nx_str_798, 18);
+          nx_w_sl(&_t373, _t374);
+          nx_w(&_t373, (const uint8_t*)nx_str_799, 13);
+          nx_w_sl(&_t373, _t375);
+          nx_w(&_t373, (const uint8_t*)nx_str_800, 142);
+          nx_w_sl(&_t373, _t376);
+          nx_w(&_t373, (const uint8_t*)nx_str_801, 36);
+          nx_w_sl(&_t373, _t377);
+          nx_w(&_t373, (const uint8_t*)nx_str_802, 54);
+          nx_string _t378 = _t372;
+          nx_slice_check(0, _t378.len, _t378.len, "self/nx.nx:1744");
+          nx_sl_u8 _t379 = ((nx_sl_u8){ nx_padd(_t378.ptr, 0), _t378.len - 0 });
+          nx_eu_void _t380 = ((nx_eu_void){ .err = nx_write_file(_t371, _t379) ? 0 : 8u });
+          if (_t380.err) {
             {
             }
           }
           nx_list_m26_ZipEntry files_62 = ((nx_list_m26_ZipEntry){NULL, 0, 0, c->arena});
-          nx_string _t379 = {0}; _t379.ar = c->arena;
-          nx_sink _t380 = nx_sink_str(c, &_t379);
-          nx_sl_u8 _t381 = nx_str_slice(pyn_56);
-          nx_w_sl(&_t380, _t381);
-          nx_w(&_t380, (const uint8_t*)nx_str_794, 12);
-          nx_string _t382 = _t379;
-          nx_string _t383 = module_59; memset(&module_59, 0, sizeof module_59);
-          nx_string _t384 = _t383;
-          nx_m26_ZipEntry _t385 = ((nx_m26_ZipEntry){ .name_0 = _t382, .data_1 = _t384 });
-          nx_list_m26_ZipEntry* _t386 = &(files_62);
-          if (_t386->len == _t386->cap) nx_list_grow(c, (nx_rawlist*)_t386, sizeof(nx_m26_ZipEntry), _Alignof(nx_m26_ZipEntry), _t386->len + 1);
-          _t386->ptr[_t386->len++] = _t385;
-          nx_string _t387 = {0}; _t387.ar = c->arena;
-          nx_sink _t388 = nx_sink_str(c, &_t387);
-          nx_sl_u8 _t389 = nx_str_slice(pyn_56);
-          nx_w_sl(&_t388, _t389);
-          nx_w(&_t388, (const uint8_t*)nx_str_795, 13);
-          nx_string _t390 = _t387;
-          nx_string _t391 = stub_60; memset(&stub_60, 0, sizeof stub_60);
-          nx_string _t392 = _t391;
-          nx_m26_ZipEntry _t393 = ((nx_m26_ZipEntry){ .name_0 = _t390, .data_1 = _t392 });
-          nx_list_m26_ZipEntry* _t394 = &(files_62);
-          if (_t394->len == _t394->cap) nx_list_grow(c, (nx_rawlist*)_t394, sizeof(nx_m26_ZipEntry), _Alignof(nx_m26_ZipEntry), _t394->len + 1);
-          _t394->ptr[_t394->len++] = _t393;
-          nx_string _t395 = {0}; _t395.ar = c->arena;
-          nx_sink _t396 = nx_sink_str(c, &_t395);
-          nx_sl_u8 _t397 = nx_str_slice(pyn_56);
-          nx_w_sl(&_t396, _t397);
-          nx_w(&_t396, (const uint8_t*)nx_str_796, 9);
-          nx_string _t398 = _t395;
-          nx_string _t399 = {0}; _t399.ar = c->arena;
-          nx_string _t400 = _t399;
-          nx_m26_ZipEntry _t401 = ((nx_m26_ZipEntry){ .name_0 = _t398, .data_1 = _t400 });
-          nx_list_m26_ZipEntry* _t402 = &(files_62);
-          if (_t402->len == _t402->cap) nx_list_grow(c, (nx_rawlist*)_t402, sizeof(nx_m26_ZipEntry), _Alignof(nx_m26_ZipEntry), _t402->len + 1);
-          _t402->ptr[_t402->len++] = _t401;
-          nx_string _t403 = {0}; _t403.ar = c->arena;
-          nx_sink _t404 = nx_sink_str(c, &_t403);
-          nx_sl_u8 _t405 = nx_str_slice(pyn_56);
-          nx_sl_u8 _t406 = nx_str_slice(shared_name_41);
-          nx_w_sl(&_t404, _t405);
-          nx_w(&_t404, (const uint8_t*)nx_str_499, 1);
-          nx_w_sl(&_t404, _t406);
-          nx_string _t407 = _t403;
-          nx_string _t408 = lib_bytes_61; memset(&lib_bytes_61, 0, sizeof lib_bytes_61);
-          nx_string _t409 = _t408;
-          nx_m26_ZipEntry _t410 = ((nx_m26_ZipEntry){ .name_0 = _t407, .data_1 = _t409 });
-          nx_list_m26_ZipEntry* _t411 = &(files_62);
-          if (_t411->len == _t411->cap) nx_list_grow(c, (nx_rawlist*)_t411, sizeof(nx_m26_ZipEntry), _Alignof(nx_m26_ZipEntry), _t411->len + 1);
-          _t411->ptr[_t411->len++] = _t410;
-          nx_string _t412 = {0}; _t412.ar = c->arena;
-          nx_string wheel_name_63 = _t412;
-          nx_slice_check(0, pyn_56.len, pyn_56.len, "self/nx.nx:1749");
-          nx_sl_u8 _t413 = ((nx_sl_u8){ nx_padd(pyn_56.ptr, 0), pyn_56.len - 0 });
-          nx_slice_check(0, version_22.len, version_22.len, "self/nx.nx:1749");
-          nx_sl_u8 _t414 = ((nx_sl_u8){ nx_padd(version_22.ptr, 0), version_22.len - 0 });
-          nx_slice_check(0, target_17.len, target_17.len, "self/nx.nx:1749");
-          nx_sl_u8 _t415 = ((nx_sl_u8){ nx_padd(target_17.ptr, 0), target_17.len - 0 });
-          nx_sl_u8 _t416 = nx_m26_platform_tag(c, _t415);
-          nx_sl_u8 _t417 = _t416;
-          nx_list_m26_ZipEntry* _t418 = &(files_62);
-          nx_string _t419 = {0}; _t419.ar = c->arena;
-          nx_sink _t420 = nx_sink_str(c, &_t419);
-          nx_sl_u8 _t421 = nx_str_slice(pyn_56);
-          nx_w_sl(&_t420, _t421);
-          nx_w(&_t420, (const uint8_t*)nx_str_803, 20);
-          nx_string _t422 = _t419;
-          nx_slice_check(0, _t422.len, _t422.len, "self/nx.nx:1749");
-          nx_sl_u8 _t423 = ((nx_sl_u8){ nx_padd(_t422.ptr, 0), _t422.len - 0 });
-          nx_string* _t424 = &(wheel_name_63);
-          nx_string _t425 = nx_m26_build_wheel(c, _t413, _t414, _t417, _t418, _t423, _t424);
-          nx_string wheel_64 = _t425;
-          nx_string _t426 = {0}; _t426.ar = c->arena;
-          nx_sink _t427 = nx_sink_str(c, &_t426);
-          nx_sl_u8 _t428 = nx_str_slice(dir_36);
-          nx_sl_u8 _t429 = nx_str_slice(wheel_name_63);
-          nx_w_sl(&_t427, _t428);
-          nx_w(&_t427, (const uint8_t*)nx_str_499, 1);
-          nx_w_sl(&_t427, _t429);
-          nx_string wheel_path_65 = _t426;
-          nx_slice_check(0, wheel_path_65.len, wheel_path_65.len, "self/nx.nx:1751");
-          nx_sl_u8 _t430 = ((nx_sl_u8){ nx_padd(wheel_path_65.ptr, 0), wheel_path_65.len - 0 });
-          nx_slice_check(0, wheel_64.len, wheel_64.len, "self/nx.nx:1751");
-          nx_sl_u8 _t431 = ((nx_sl_u8){ nx_padd(wheel_64.ptr, 0), wheel_64.len - 0 });
-          nx_eu_void _t432 = ((nx_eu_void){ .err = nx_write_file(_t430, _t431) ? 0 : 8u });
-          if (_t432.err) {
+          nx_string _t381 = {0}; _t381.ar = c->arena;
+          nx_sink _t382 = nx_sink_str(c, &_t381);
+          nx_sl_u8 _t383 = nx_str_slice(pyn_56);
+          nx_w_sl(&_t382, _t383);
+          nx_w(&_t382, (const uint8_t*)nx_str_794, 12);
+          nx_string _t384 = _t381;
+          nx_string _t385 = module_59; memset(&module_59, 0, sizeof module_59);
+          nx_string _t386 = _t385;
+          nx_m26_ZipEntry _t387 = ((nx_m26_ZipEntry){ .name_0 = _t384, .data_1 = _t386 });
+          nx_list_m26_ZipEntry* _t388 = &(files_62);
+          if (_t388->len == _t388->cap) nx_list_grow(c, (nx_rawlist*)_t388, sizeof(nx_m26_ZipEntry), _Alignof(nx_m26_ZipEntry), _t388->len + 1);
+          _t388->ptr[_t388->len++] = _t387;
+          nx_string _t389 = {0}; _t389.ar = c->arena;
+          nx_sink _t390 = nx_sink_str(c, &_t389);
+          nx_sl_u8 _t391 = nx_str_slice(pyn_56);
+          nx_w_sl(&_t390, _t391);
+          nx_w(&_t390, (const uint8_t*)nx_str_795, 13);
+          nx_string _t392 = _t389;
+          nx_string _t393 = stub_60; memset(&stub_60, 0, sizeof stub_60);
+          nx_string _t394 = _t393;
+          nx_m26_ZipEntry _t395 = ((nx_m26_ZipEntry){ .name_0 = _t392, .data_1 = _t394 });
+          nx_list_m26_ZipEntry* _t396 = &(files_62);
+          if (_t396->len == _t396->cap) nx_list_grow(c, (nx_rawlist*)_t396, sizeof(nx_m26_ZipEntry), _Alignof(nx_m26_ZipEntry), _t396->len + 1);
+          _t396->ptr[_t396->len++] = _t395;
+          nx_string _t397 = {0}; _t397.ar = c->arena;
+          nx_sink _t398 = nx_sink_str(c, &_t397);
+          nx_sl_u8 _t399 = nx_str_slice(pyn_56);
+          nx_w_sl(&_t398, _t399);
+          nx_w(&_t398, (const uint8_t*)nx_str_796, 9);
+          nx_string _t400 = _t397;
+          nx_string _t401 = {0}; _t401.ar = c->arena;
+          nx_string _t402 = _t401;
+          nx_m26_ZipEntry _t403 = ((nx_m26_ZipEntry){ .name_0 = _t400, .data_1 = _t402 });
+          nx_list_m26_ZipEntry* _t404 = &(files_62);
+          if (_t404->len == _t404->cap) nx_list_grow(c, (nx_rawlist*)_t404, sizeof(nx_m26_ZipEntry), _Alignof(nx_m26_ZipEntry), _t404->len + 1);
+          _t404->ptr[_t404->len++] = _t403;
+          nx_string _t405 = {0}; _t405.ar = c->arena;
+          nx_sink _t406 = nx_sink_str(c, &_t405);
+          nx_sl_u8 _t407 = nx_str_slice(pyn_56);
+          nx_sl_u8 _t408 = nx_str_slice(shared_name_41);
+          nx_w_sl(&_t406, _t407);
+          nx_w(&_t406, (const uint8_t*)nx_str_499, 1);
+          nx_w_sl(&_t406, _t408);
+          nx_string _t409 = _t405;
+          nx_string _t410 = lib_bytes_61; memset(&lib_bytes_61, 0, sizeof lib_bytes_61);
+          nx_string _t411 = _t410;
+          nx_m26_ZipEntry _t412 = ((nx_m26_ZipEntry){ .name_0 = _t409, .data_1 = _t411 });
+          nx_list_m26_ZipEntry* _t413 = &(files_62);
+          if (_t413->len == _t413->cap) nx_list_grow(c, (nx_rawlist*)_t413, sizeof(nx_m26_ZipEntry), _Alignof(nx_m26_ZipEntry), _t413->len + 1);
+          _t413->ptr[_t413->len++] = _t412;
+          nx_string _t414 = {0}; _t414.ar = c->arena;
+          nx_string wheel_name_63 = _t414;
+          nx_slice_check(0, pyn_56.len, pyn_56.len, "self/nx.nx:1751");
+          nx_sl_u8 _t415 = ((nx_sl_u8){ nx_padd(pyn_56.ptr, 0), pyn_56.len - 0 });
+          nx_slice_check(0, version_22.len, version_22.len, "self/nx.nx:1751");
+          nx_sl_u8 _t416 = ((nx_sl_u8){ nx_padd(version_22.ptr, 0), version_22.len - 0 });
+          nx_slice_check(0, target_17.len, target_17.len, "self/nx.nx:1751");
+          nx_sl_u8 _t417 = ((nx_sl_u8){ nx_padd(target_17.ptr, 0), target_17.len - 0 });
+          nx_sl_u8 _t418 = nx_m26_platform_tag(c, _t417);
+          nx_sl_u8 _t419 = _t418;
+          nx_list_m26_ZipEntry* _t420 = &(files_62);
+          nx_string _t421 = {0}; _t421.ar = c->arena;
+          nx_sink _t422 = nx_sink_str(c, &_t421);
+          nx_sl_u8 _t423 = nx_str_slice(pyn_56);
+          nx_w_sl(&_t422, _t423);
+          nx_w(&_t422, (const uint8_t*)nx_str_803, 20);
+          nx_string _t424 = _t421;
+          nx_slice_check(0, _t424.len, _t424.len, "self/nx.nx:1751");
+          nx_sl_u8 _t425 = ((nx_sl_u8){ nx_padd(_t424.ptr, 0), _t424.len - 0 });
+          nx_string* _t426 = &(wheel_name_63);
+          nx_string _t427 = nx_m26_build_wheel(c, _t415, _t416, _t419, _t420, _t425, _t426);
+          nx_string wheel_64 = _t427;
+          nx_string _t428 = {0}; _t428.ar = c->arena;
+          nx_sink _t429 = nx_sink_str(c, &_t428);
+          nx_sl_u8 _t430 = nx_str_slice(dir_36);
+          nx_sl_u8 _t431 = nx_str_slice(wheel_name_63);
+          nx_w_sl(&_t429, _t430);
+          nx_w(&_t429, (const uint8_t*)nx_str_499, 1);
+          nx_w_sl(&_t429, _t431);
+          nx_string wheel_path_65 = _t428;
+          nx_slice_check(0, wheel_path_65.len, wheel_path_65.len, "self/nx.nx:1753");
+          nx_sl_u8 _t432 = ((nx_sl_u8){ nx_padd(wheel_path_65.ptr, 0), wheel_path_65.len - 0 });
+          nx_slice_check(0, wheel_64.len, wheel_64.len, "self/nx.nx:1753");
+          nx_sl_u8 _t433 = ((nx_sl_u8){ nx_padd(wheel_64.ptr, 0), wheel_64.len - 0 });
+          nx_eu_void _t434 = ((nx_eu_void){ .err = nx_write_file(_t432, _t433) ? 0 : 8u });
+          if (_t434.err) {
             {
-              nx_sink _t433 = nx_sink_file(c, c->err);
-              nx_sl_u8 _t434 = nx_str_slice(wheel_path_65);
-              nx_w(&_t433, (const uint8_t*)nx_str_804, 27);
-              nx_w_sl(&_t433, _t434);
-              nx_w(&_t433, (const uint8_t*)"\n", 1);
-              nx_sink_flush(&_t433);
-              int32_t _t435 = ((int32_t)1LL);
+              nx_sink _t435 = nx_sink_file(c, c->err);
+              nx_sl_u8 _t436 = nx_str_slice(wheel_path_65);
+              nx_w(&_t435, (const uint8_t*)nx_str_804, 27);
+              nx_w_sl(&_t435, _t436);
+              nx_w(&_t435, (const uint8_t*)"\n", 1);
+              nx_sink_flush(&_t435);
+              int32_t _t437 = ((int32_t)1LL);
               nx_drop_string(c, &wheel_path_65);
               nx_drop_string(c, &wheel_64);
-              nx_drop_string(c, &_t422);
+              nx_drop_string(c, &_t424);
               nx_drop_string(c, &wheel_name_63);
               nx_drop_list_m26_ZipEntry(c, &files_62);
-              nx_drop_string(c, &_t376);
-              nx_drop_string(c, &_t368);
-              nx_drop_string(c, &_t361);
+              nx_drop_string(c, &_t378);
+              nx_drop_string(c, &_t370);
+              nx_drop_string(c, &_t363);
               nx_drop_string(c, &lib_bytes_61);
-              nx_drop_string(c, &_t348);
-              nx_drop_string(c, &_t341);
+              nx_drop_string(c, &_t350);
+              nx_drop_string(c, &_t343);
               nx_drop_string(c, &stub_60);
-              nx_drop_string(c, &_t332);
+              nx_drop_string(c, &_t334);
               nx_drop_string(c, &module_59);
               nx_drop_string(c, &pkg_dir_58);
               nx_drop_string(c, &pyn_56);
@@ -22765,27 +22769,27 @@ static int32_t nx_cmd_ship(nx_ctx* c, nx_Opts* o_0) {
               nx_drop_list_usize(c, &art_mods_3);
               nx_drop_list_usize(c, &arts_2);
               nx_drop_m2_Checker(c, &c_1);
-              return _t435;
+              return _t437;
             }
           }
-          nx_string _t436 = wheel_path_65; memset(&wheel_path_65, 0, sizeof wheel_path_65);
-          nx_string _t437 = _t436;
-          nx_list_string* _t438 = &(produced_9);
-          if (_t438->len == _t438->cap) nx_list_grow(c, (nx_rawlist*)_t438, sizeof(nx_string), _Alignof(nx_string), _t438->len + 1);
-          _t438->ptr[_t438->len++] = _t437;
+          nx_string _t438 = wheel_path_65; memset(&wheel_path_65, 0, sizeof wheel_path_65);
+          nx_string _t439 = _t438;
+          nx_list_string* _t440 = &(produced_9);
+          if (_t440->len == _t440->cap) nx_list_grow(c, (nx_rawlist*)_t440, sizeof(nx_string), _Alignof(nx_string), _t440->len + 1);
+          _t440->ptr[_t440->len++] = _t439;
           nx_drop_string(c, &wheel_path_65);
           nx_drop_string(c, &wheel_64);
-          nx_drop_string(c, &_t422);
+          nx_drop_string(c, &_t424);
           nx_drop_string(c, &wheel_name_63);
           nx_drop_list_m26_ZipEntry(c, &files_62);
-          nx_drop_string(c, &_t376);
-          nx_drop_string(c, &_t368);
-          nx_drop_string(c, &_t361);
+          nx_drop_string(c, &_t378);
+          nx_drop_string(c, &_t370);
+          nx_drop_string(c, &_t363);
           nx_drop_string(c, &lib_bytes_61);
-          nx_drop_string(c, &_t348);
-          nx_drop_string(c, &_t341);
+          nx_drop_string(c, &_t350);
+          nx_drop_string(c, &_t343);
           nx_drop_string(c, &stub_60);
-          nx_drop_string(c, &_t332);
+          nx_drop_string(c, &_t334);
           nx_drop_string(c, &module_59);
           nx_drop_string(c, &pkg_dir_58);
           nx_drop_string(c, &pyn_56);
@@ -22794,29 +22798,29 @@ static int32_t nx_cmd_ship(nx_ctx* c, nx_Opts* o_0) {
         {
             if (((((npm_name_27).len)) == (((size_t)0ULL))))
             {
-              nx_string _t439 = nx_clone_string(c, &lib_name_21);
+              nx_string _t441 = nx_clone_string(c, &lib_name_21);
               nx_drop_string(c, &(npm_name_27));
-              npm_name_27 = _t439;
+              npm_name_27 = _t441;
             }
-          nx_string _t440 = {0}; _t440.ar = c->arena;
-          nx_sink _t441 = nx_sink_str(c, &_t440);
-          nx_sl_u8 _t442 = nx_str_slice(dir_36);
-          nx_w_sl(&_t441, _t442);
-          nx_w(&_t441, (const uint8_t*)nx_str_805, 5);
-          nx_string pkg_dir_66 = _t440;
-          nx_slice_check(0, pkg_dir_66.len, pkg_dir_66.len, "self/nx.nx:1760");
-          nx_sl_u8 _t443 = ((nx_sl_u8){ nx_padd(pkg_dir_66.ptr, 0), pkg_dir_66.len - 0 });
-          nx_eu_void _t444 = nx_m31_make_dirs(c, _t443);
-          nx_eu_void _t445 = _t444;
-          if (_t445.err) {
+          nx_string _t442 = {0}; _t442.ar = c->arena;
+          nx_sink _t443 = nx_sink_str(c, &_t442);
+          nx_sl_u8 _t444 = nx_str_slice(dir_36);
+          nx_w_sl(&_t443, _t444);
+          nx_w(&_t443, (const uint8_t*)nx_str_805, 5);
+          nx_string pkg_dir_66 = _t442;
+          nx_slice_check(0, pkg_dir_66.len, pkg_dir_66.len, "self/nx.nx:1762");
+          nx_sl_u8 _t445 = ((nx_sl_u8){ nx_padd(pkg_dir_66.ptr, 0), pkg_dir_66.len - 0 });
+          nx_eu_void _t446 = nx_m31_make_dirs(c, _t445);
+          nx_eu_void _t447 = _t446;
+          if (_t447.err) {
             {
-              nx_sink _t446 = nx_sink_file(c, c->err);
-              nx_sl_u8 _t447 = nx_str_slice(pkg_dir_66);
-              nx_w(&_t446, (const uint8_t*)nx_str_518, 21);
-              nx_w_sl(&_t446, _t447);
-              nx_w(&_t446, (const uint8_t*)"\n", 1);
-              nx_sink_flush(&_t446);
-              int32_t _t448 = ((int32_t)1LL);
+              nx_sink _t448 = nx_sink_file(c, c->err);
+              nx_sl_u8 _t449 = nx_str_slice(pkg_dir_66);
+              nx_w(&_t448, (const uint8_t*)nx_str_518, 21);
+              nx_w_sl(&_t448, _t449);
+              nx_w(&_t448, (const uint8_t*)"\n", 1);
+              nx_sink_flush(&_t448);
+              int32_t _t450 = ((int32_t)1LL);
               nx_drop_string(c, &pkg_dir_66);
               nx_drop_string(c, &obj_path_46);
               nx_drop_string(c, &shared_build_45);
@@ -22844,159 +22848,159 @@ static int32_t nx_cmd_ship(nx_ctx* c, nx_Opts* o_0) {
               nx_drop_list_usize(c, &art_mods_3);
               nx_drop_list_usize(c, &arts_2);
               nx_drop_m2_Checker(c, &c_1);
-              return _t448;
+              return _t450;
             }
           }
-          nx_string _t449 = {0}; _t449.ar = c->arena;
-          nx_sink _t450 = nx_sink_str(c, &_t449);
-          nx_sl_u8 _t451 = nx_str_slice(pkg_dir_66);
-          nx_w_sl(&_t450, _t451);
-          nx_w(&_t450, (const uint8_t*)nx_str_806, 9);
-          nx_string _t452 = _t449;
-          nx_slice_check(0, _t452.len, _t452.len, "self/nx.nx:1764");
-          nx_sl_u8 _t453 = ((nx_sl_u8){ nx_padd(_t452.ptr, 0), _t452.len - 0 });
-          nx_slice_check(0, lib_name_21.len, lib_name_21.len, "self/nx.nx:1764");
-          nx_sl_u8 _t454 = ((nx_sl_u8){ nx_padd(lib_name_21.ptr, 0), lib_name_21.len - 0 });
-          nx_slice_check(0, version_22.len, version_22.len, "self/nx.nx:1764");
-          nx_sl_u8 _t455 = ((nx_sl_u8){ nx_padd(version_22.ptr, 0), version_22.len - 0 });
-          nx_list_m24_ExportInfo* _t456 = &(infos_34);
-          nx_slice_check(0, shared_name_41.len, shared_name_41.len, "self/nx.nx:1764");
-          nx_sl_u8 _t457 = ((nx_sl_u8){ nx_padd(shared_name_41.ptr, 0), shared_name_41.len - 0 });
-          nx_string _t458 = nx_m25_module(c, _t454, _t455, _t456, _t457);
-          nx_string _t459 = _t458;
-          nx_slice_check(0, _t459.len, _t459.len, "self/nx.nx:1764");
-          nx_sl_u8 _t460 = ((nx_sl_u8){ nx_padd(_t459.ptr, 0), _t459.len - 0 });
-          nx_eu_void _t461 = ((nx_eu_void){ .err = nx_write_file(_t453, _t460) ? 0 : 8u });
-          if (_t461.err) {
+          nx_string _t451 = {0}; _t451.ar = c->arena;
+          nx_sink _t452 = nx_sink_str(c, &_t451);
+          nx_sl_u8 _t453 = nx_str_slice(pkg_dir_66);
+          nx_w_sl(&_t452, _t453);
+          nx_w(&_t452, (const uint8_t*)nx_str_806, 9);
+          nx_string _t454 = _t451;
+          nx_slice_check(0, _t454.len, _t454.len, "self/nx.nx:1766");
+          nx_sl_u8 _t455 = ((nx_sl_u8){ nx_padd(_t454.ptr, 0), _t454.len - 0 });
+          nx_slice_check(0, lib_name_21.len, lib_name_21.len, "self/nx.nx:1766");
+          nx_sl_u8 _t456 = ((nx_sl_u8){ nx_padd(lib_name_21.ptr, 0), lib_name_21.len - 0 });
+          nx_slice_check(0, version_22.len, version_22.len, "self/nx.nx:1766");
+          nx_sl_u8 _t457 = ((nx_sl_u8){ nx_padd(version_22.ptr, 0), version_22.len - 0 });
+          nx_list_m24_ExportInfo* _t458 = &(infos_34);
+          nx_slice_check(0, shared_name_41.len, shared_name_41.len, "self/nx.nx:1766");
+          nx_sl_u8 _t459 = ((nx_sl_u8){ nx_padd(shared_name_41.ptr, 0), shared_name_41.len - 0 });
+          nx_string _t460 = nx_m25_module(c, _t456, _t457, _t458, _t459);
+          nx_string _t461 = _t460;
+          nx_slice_check(0, _t461.len, _t461.len, "self/nx.nx:1766");
+          nx_sl_u8 _t462 = ((nx_sl_u8){ nx_padd(_t461.ptr, 0), _t461.len - 0 });
+          nx_eu_void _t463 = ((nx_eu_void){ .err = nx_write_file(_t455, _t462) ? 0 : 8u });
+          if (_t463.err) {
             {
             }
           }
-          nx_string _t462 = {0}; _t462.ar = c->arena;
-          nx_sink _t463 = nx_sink_str(c, &_t462);
-          nx_sl_u8 _t464 = nx_str_slice(pkg_dir_66);
-          nx_w_sl(&_t463, _t464);
-          nx_w(&_t463, (const uint8_t*)nx_str_807, 11);
-          nx_string _t465 = _t462;
-          nx_slice_check(0, _t465.len, _t465.len, "self/nx.nx:1765");
-          nx_sl_u8 _t466 = ((nx_sl_u8){ nx_padd(_t465.ptr, 0), _t465.len - 0 });
-          nx_list_m24_ExportInfo* _t467 = &(infos_34);
-          nx_string _t468 = nx_m25_typings(c, _t467);
-          nx_string _t469 = _t468;
-          nx_slice_check(0, _t469.len, _t469.len, "self/nx.nx:1765");
-          nx_sl_u8 _t470 = ((nx_sl_u8){ nx_padd(_t469.ptr, 0), _t469.len - 0 });
-          nx_eu_void _t471 = ((nx_eu_void){ .err = nx_write_file(_t466, _t470) ? 0 : 8u });
-          if (_t471.err) {
+          nx_string _t464 = {0}; _t464.ar = c->arena;
+          nx_sink _t465 = nx_sink_str(c, &_t464);
+          nx_sl_u8 _t466 = nx_str_slice(pkg_dir_66);
+          nx_w_sl(&_t465, _t466);
+          nx_w(&_t465, (const uint8_t*)nx_str_807, 11);
+          nx_string _t467 = _t464;
+          nx_slice_check(0, _t467.len, _t467.len, "self/nx.nx:1767");
+          nx_sl_u8 _t468 = ((nx_sl_u8){ nx_padd(_t467.ptr, 0), _t467.len - 0 });
+          nx_list_m24_ExportInfo* _t469 = &(infos_34);
+          nx_string _t470 = nx_m25_typings(c, _t469);
+          nx_string _t471 = _t470;
+          nx_slice_check(0, _t471.len, _t471.len, "self/nx.nx:1767");
+          nx_sl_u8 _t472 = ((nx_sl_u8){ nx_padd(_t471.ptr, 0), _t471.len - 0 });
+          nx_eu_void _t473 = ((nx_eu_void){ .err = nx_write_file(_t468, _t472) ? 0 : 8u });
+          if (_t473.err) {
             {
             }
           }
-          nx_sl_u8 _t472;
+          nx_sl_u8 _t474;
             if (windows_18)
             {
-              _t472 = nx_lit(nx_str_808, 5);
+              _t474 = nx_lit(nx_str_808, 5);
             }
             else
             {
-              nx_sl_u8 _t473;
+              nx_sl_u8 _t475;
               if (macos_19)
               {
-                _t473 = nx_lit(nx_str_571, 6);
+                _t475 = nx_lit(nx_str_571, 6);
               }
               else
               {
-                _t473 = nx_lit(nx_str_742, 5);
+                _t475 = nx_lit(nx_str_742, 5);
               }
-              _t472 = _t473;
+              _t474 = _t475;
             }
-          nx_sl_u8 os_name_67 = _t472;
-          nx_slice_check(0, target_17.len, target_17.len, "self/nx.nx:1767");
-          nx_sl_u8 _t474 = ((nx_sl_u8){ nx_padd(target_17.ptr, 0), target_17.len - 0 });
-          nx_sl_u8 _t475;
-            if (nx_sl_starts_with(_t474, nx_lit(nx_str_746, 7)))
+          nx_sl_u8 os_name_67 = _t474;
+          nx_slice_check(0, target_17.len, target_17.len, "self/nx.nx:1769");
+          nx_sl_u8 _t476 = ((nx_sl_u8){ nx_padd(target_17.ptr, 0), target_17.len - 0 });
+          nx_sl_u8 _t477;
+            if (nx_sl_starts_with(_t476, nx_lit(nx_str_746, 7)))
             {
-              _t475 = nx_lit(nx_str_749, 5);
+              _t477 = nx_lit(nx_str_749, 5);
             }
             else
             {
-              _t475 = nx_lit(nx_str_809, 3);
+              _t477 = nx_lit(nx_str_809, 3);
             }
-          nx_sl_u8 cpu_68 = _t475;
-          nx_string _t476 = {0}; _t476.ar = c->arena;
-          nx_sink _t477 = nx_sink_str(c, &_t476);
-          nx_sl_u8 _t478 = nx_str_slice(pkg_dir_66);
-          nx_w_sl(&_t477, _t478);
-          nx_w(&_t477, (const uint8_t*)nx_str_761, 13);
-          nx_string _t479 = _t476;
-          nx_slice_check(0, _t479.len, _t479.len, "self/nx.nx:1768");
-          nx_sl_u8 _t480 = ((nx_sl_u8){ nx_padd(_t479.ptr, 0), _t479.len - 0 });
-          nx_slice_check(0, npm_name_27.len, npm_name_27.len, "self/nx.nx:1768");
-          nx_sl_u8 _t481 = ((nx_sl_u8){ nx_padd(npm_name_27.ptr, 0), npm_name_27.len - 0 });
-          nx_slice_check(0, version_22.len, version_22.len, "self/nx.nx:1768");
-          nx_sl_u8 _t482 = ((nx_sl_u8){ nx_padd(version_22.ptr, 0), version_22.len - 0 });
-          nx_slice_check(0, shared_name_41.len, shared_name_41.len, "self/nx.nx:1768");
-          nx_sl_u8 _t483 = ((nx_sl_u8){ nx_padd(shared_name_41.ptr, 0), shared_name_41.len - 0 });
-          nx_string _t484 = nx_m25_package_json(c, _t481, _t482, _t483, os_name_67, cpu_68);
-          nx_string _t485 = _t484;
-          nx_slice_check(0, _t485.len, _t485.len, "self/nx.nx:1768");
-          nx_sl_u8 _t486 = ((nx_sl_u8){ nx_padd(_t485.ptr, 0), _t485.len - 0 });
-          nx_eu_void _t487 = ((nx_eu_void){ .err = nx_write_file(_t480, _t486) ? 0 : 8u });
-          if (_t487.err) {
+          nx_sl_u8 cpu_68 = _t477;
+          nx_string _t478 = {0}; _t478.ar = c->arena;
+          nx_sink _t479 = nx_sink_str(c, &_t478);
+          nx_sl_u8 _t480 = nx_str_slice(pkg_dir_66);
+          nx_w_sl(&_t479, _t480);
+          nx_w(&_t479, (const uint8_t*)nx_str_761, 13);
+          nx_string _t481 = _t478;
+          nx_slice_check(0, _t481.len, _t481.len, "self/nx.nx:1770");
+          nx_sl_u8 _t482 = ((nx_sl_u8){ nx_padd(_t481.ptr, 0), _t481.len - 0 });
+          nx_slice_check(0, npm_name_27.len, npm_name_27.len, "self/nx.nx:1770");
+          nx_sl_u8 _t483 = ((nx_sl_u8){ nx_padd(npm_name_27.ptr, 0), npm_name_27.len - 0 });
+          nx_slice_check(0, version_22.len, version_22.len, "self/nx.nx:1770");
+          nx_sl_u8 _t484 = ((nx_sl_u8){ nx_padd(version_22.ptr, 0), version_22.len - 0 });
+          nx_slice_check(0, shared_name_41.len, shared_name_41.len, "self/nx.nx:1770");
+          nx_sl_u8 _t485 = ((nx_sl_u8){ nx_padd(shared_name_41.ptr, 0), shared_name_41.len - 0 });
+          nx_string _t486 = nx_m25_package_json(c, _t483, _t484, _t485, os_name_67, cpu_68);
+          nx_string _t487 = _t486;
+          nx_slice_check(0, _t487.len, _t487.len, "self/nx.nx:1770");
+          nx_sl_u8 _t488 = ((nx_sl_u8){ nx_padd(_t487.ptr, 0), _t487.len - 0 });
+          nx_eu_void _t489 = ((nx_eu_void){ .err = nx_write_file(_t482, _t488) ? 0 : 8u });
+          if (_t489.err) {
             {
             }
           }
-          nx_string _t488 = {0}; _t488.ar = c->arena;
-          nx_sink _t489 = nx_sink_str(c, &_t488);
-          nx_sl_u8 _t490 = nx_str_slice(pkg_dir_66);
-          nx_w_sl(&_t489, _t490);
-          nx_w(&_t489, (const uint8_t*)nx_str_762, 10);
-          nx_string _t491 = _t488;
-          nx_slice_check(0, _t491.len, _t491.len, "self/nx.nx:1769");
-          nx_sl_u8 _t492 = ((nx_sl_u8){ nx_padd(_t491.ptr, 0), _t491.len - 0 });
-          nx_string _t493 = {0}; _t493.ar = c->arena;
-          nx_sink _t494 = nx_sink_str(c, &_t493);
-          nx_sl_u8 _t495 = nx_str_slice(npm_name_27);
-          nx_w(&_t494, (const uint8_t*)nx_str_810, 2);
-          nx_w_sl(&_t494, _t495);
-          nx_w(&_t494, (const uint8_t*)nx_str_811, 282);
-          nx_string _t496 = _t493;
-          nx_slice_check(0, _t496.len, _t496.len, "self/nx.nx:1769");
-          nx_sl_u8 _t497 = ((nx_sl_u8){ nx_padd(_t496.ptr, 0), _t496.len - 0 });
-          nx_eu_void _t498 = ((nx_eu_void){ .err = nx_write_file(_t492, _t497) ? 0 : 8u });
-          if (_t498.err) {
+          nx_string _t490 = {0}; _t490.ar = c->arena;
+          nx_sink _t491 = nx_sink_str(c, &_t490);
+          nx_sl_u8 _t492 = nx_str_slice(pkg_dir_66);
+          nx_w_sl(&_t491, _t492);
+          nx_w(&_t491, (const uint8_t*)nx_str_762, 10);
+          nx_string _t493 = _t490;
+          nx_slice_check(0, _t493.len, _t493.len, "self/nx.nx:1771");
+          nx_sl_u8 _t494 = ((nx_sl_u8){ nx_padd(_t493.ptr, 0), _t493.len - 0 });
+          nx_string _t495 = {0}; _t495.ar = c->arena;
+          nx_sink _t496 = nx_sink_str(c, &_t495);
+          nx_sl_u8 _t497 = nx_str_slice(npm_name_27);
+          nx_w(&_t496, (const uint8_t*)nx_str_810, 2);
+          nx_w_sl(&_t496, _t497);
+          nx_w(&_t496, (const uint8_t*)nx_str_811, 282);
+          nx_string _t498 = _t495;
+          nx_slice_check(0, _t498.len, _t498.len, "self/nx.nx:1771");
+          nx_sl_u8 _t499 = ((nx_sl_u8){ nx_padd(_t498.ptr, 0), _t498.len - 0 });
+          nx_eu_void _t500 = ((nx_eu_void){ .err = nx_write_file(_t494, _t499) ? 0 : 8u });
+          if (_t500.err) {
             {
             }
           }
-          nx_slice_check(0, shared_path_42.len, shared_path_42.len, "self/nx.nx:1770");
-          nx_sl_u8 _t499 = ((nx_sl_u8){ nx_padd(shared_path_42.ptr, 0), shared_path_42.len - 0 });
-          nx_string _t500 = {0}; _t500.ar = c->arena;
-          nx_sink _t501 = nx_sink_str(c, &_t500);
-          nx_sl_u8 _t502 = nx_str_slice(pkg_dir_66);
-          nx_sl_u8 _t503 = nx_str_slice(shared_name_41);
-          nx_w_sl(&_t501, _t502);
-          nx_w(&_t501, (const uint8_t*)nx_str_499, 1);
-          nx_w_sl(&_t501, _t503);
-          nx_string _t504 = _t500;
-          nx_slice_check(0, _t504.len, _t504.len, "self/nx.nx:1770");
-          nx_sl_u8 _t505 = ((nx_sl_u8){ nx_padd(_t504.ptr, 0), _t504.len - 0 });
-          nx_eu_void _t506 = nx_m31_copy(c, _t499, _t505);
-          nx_eu_void _t507 = _t506;
-          if (_t507.err) {
+          nx_slice_check(0, shared_path_42.len, shared_path_42.len, "self/nx.nx:1772");
+          nx_sl_u8 _t501 = ((nx_sl_u8){ nx_padd(shared_path_42.ptr, 0), shared_path_42.len - 0 });
+          nx_string _t502 = {0}; _t502.ar = c->arena;
+          nx_sink _t503 = nx_sink_str(c, &_t502);
+          nx_sl_u8 _t504 = nx_str_slice(pkg_dir_66);
+          nx_sl_u8 _t505 = nx_str_slice(shared_name_41);
+          nx_w_sl(&_t503, _t504);
+          nx_w(&_t503, (const uint8_t*)nx_str_499, 1);
+          nx_w_sl(&_t503, _t505);
+          nx_string _t506 = _t502;
+          nx_slice_check(0, _t506.len, _t506.len, "self/nx.nx:1772");
+          nx_sl_u8 _t507 = ((nx_sl_u8){ nx_padd(_t506.ptr, 0), _t506.len - 0 });
+          nx_eu_void _t508 = nx_m31_copy(c, _t501, _t507);
+          nx_eu_void _t509 = _t508;
+          if (_t509.err) {
             {
-              nx_sink _t508 = nx_sink_file(c, c->err);
-              nx_sl_u8 _t509 = nx_str_slice(pkg_dir_66);
-              nx_w(&_t508, (const uint8_t*)nx_str_812, 35);
-              nx_w_sl(&_t508, _t509);
-              nx_w(&_t508, (const uint8_t*)"\n", 1);
-              nx_sink_flush(&_t508);
-              int32_t _t510 = ((int32_t)1LL);
-              nx_drop_string(c, &_t504);
-              nx_drop_string(c, &_t496);
-              nx_drop_string(c, &_t491);
-              nx_drop_string(c, &_t485);
-              nx_drop_string(c, &_t479);
-              nx_drop_string(c, &_t469);
-              nx_drop_string(c, &_t465);
-              nx_drop_string(c, &_t459);
-              nx_drop_string(c, &_t452);
+              nx_sink _t510 = nx_sink_file(c, c->err);
+              nx_sl_u8 _t511 = nx_str_slice(pkg_dir_66);
+              nx_w(&_t510, (const uint8_t*)nx_str_812, 35);
+              nx_w_sl(&_t510, _t511);
+              nx_w(&_t510, (const uint8_t*)"\n", 1);
+              nx_sink_flush(&_t510);
+              int32_t _t512 = ((int32_t)1LL);
+              nx_drop_string(c, &_t506);
+              nx_drop_string(c, &_t498);
+              nx_drop_string(c, &_t493);
+              nx_drop_string(c, &_t487);
+              nx_drop_string(c, &_t481);
+              nx_drop_string(c, &_t471);
+              nx_drop_string(c, &_t467);
+              nx_drop_string(c, &_t461);
+              nx_drop_string(c, &_t454);
               nx_drop_string(c, &pkg_dir_66);
               nx_drop_string(c, &obj_path_46);
               nx_drop_string(c, &shared_build_45);
@@ -23024,27 +23028,27 @@ static int32_t nx_cmd_ship(nx_ctx* c, nx_Opts* o_0) {
               nx_drop_list_usize(c, &art_mods_3);
               nx_drop_list_usize(c, &arts_2);
               nx_drop_m2_Checker(c, &c_1);
-              return _t510;
+              return _t512;
             }
           }
-          nx_string _t511 = {0}; _t511.ar = c->arena;
-          nx_sink _t512 = nx_sink_str(c, &_t511);
-          nx_sl_u8 _t513 = nx_str_slice(pkg_dir_66);
-          nx_w_sl(&_t512, _t513);
-          nx_w(&_t512, (const uint8_t*)nx_str_761, 13);
-          nx_string _t514 = _t511;
-          nx_list_string* _t515 = &(produced_9);
-          if (_t515->len == _t515->cap) nx_list_grow(c, (nx_rawlist*)_t515, sizeof(nx_string), _Alignof(nx_string), _t515->len + 1);
-          _t515->ptr[_t515->len++] = _t514;
-          nx_drop_string(c, &_t504);
-          nx_drop_string(c, &_t496);
-          nx_drop_string(c, &_t491);
-          nx_drop_string(c, &_t485);
-          nx_drop_string(c, &_t479);
-          nx_drop_string(c, &_t469);
-          nx_drop_string(c, &_t465);
-          nx_drop_string(c, &_t459);
-          nx_drop_string(c, &_t452);
+          nx_string _t513 = {0}; _t513.ar = c->arena;
+          nx_sink _t514 = nx_sink_str(c, &_t513);
+          nx_sl_u8 _t515 = nx_str_slice(pkg_dir_66);
+          nx_w_sl(&_t514, _t515);
+          nx_w(&_t514, (const uint8_t*)nx_str_761, 13);
+          nx_string _t516 = _t513;
+          nx_list_string* _t517 = &(produced_9);
+          if (_t517->len == _t517->cap) nx_list_grow(c, (nx_rawlist*)_t517, sizeof(nx_string), _Alignof(nx_string), _t517->len + 1);
+          _t517->ptr[_t517->len++] = _t516;
+          nx_drop_string(c, &_t506);
+          nx_drop_string(c, &_t498);
+          nx_drop_string(c, &_t493);
+          nx_drop_string(c, &_t487);
+          nx_drop_string(c, &_t481);
+          nx_drop_string(c, &_t471);
+          nx_drop_string(c, &_t467);
+          nx_drop_string(c, &_t461);
+          nx_drop_string(c, &_t454);
           nx_drop_string(c, &pkg_dir_66);
         }
       nx_drop_string(c, &obj_path_46);
@@ -23068,59 +23072,59 @@ static int32_t nx_cmd_ship(nx_ctx* c, nx_Opts* o_0) {
     }
     if (((((wasm_arts_13).len)) > (((size_t)0ULL))))
     {
-      nx_string _t516 = {0}; _t516.ar = c->arena;
-      nx_string wname_69 = _t516;
-      nx_string _t517 = {0}; _t517.ar = c->arena;
-      nx_string wversion_70 = _t517;
-      nx_sl_usize _t518 = ((nx_sl_usize){ wasm_arts_13.ptr, wasm_arts_13.len });
-      for (size_t _t519 = 0; _t519 < _t518.len; _t519++) {
-        size_t i_71 = _t518.ptr[_t519];
+      nx_string _t518 = {0}; _t518.ar = c->arena;
+      nx_string wname_69 = _t518;
+      nx_string _t519 = {0}; _t519.ar = c->arena;
+      nx_string wversion_70 = _t519;
+      nx_sl_usize _t520 = ((nx_sl_usize){ wasm_arts_13.ptr, wasm_arts_13.len });
+      for (size_t _t521 = 0; _t521 < _t520.len; _t521++) {
+        size_t i_71 = _t520.ptr[_t521];
           if (((((wname_69).len)) == (((size_t)0ULL))))
           {
-            nx_m2_Checker* _t520 = &(c_1);
-            size_t _t521 = art_mods_3.ptr[nx_idx(i_71, art_mods_3.len, "self/nx.nx:1781")];
-            size_t _t522 = arts_2.ptr[nx_idx(i_71, arts_2.len, "self/nx.nx:1781")];
-            nx_string _t523 = nx_artifact_str(c, _t520, _t521, _t522, nx_lit(nx_str_772, 4));
-            nx_string _t524 = _t523;
+            nx_m2_Checker* _t522 = &(c_1);
+            size_t _t523 = art_mods_3.ptr[nx_idx(i_71, art_mods_3.len, "self/nx.nx:1783")];
+            size_t _t524 = arts_2.ptr[nx_idx(i_71, arts_2.len, "self/nx.nx:1783")];
+            nx_string _t525 = nx_artifact_str(c, _t522, _t523, _t524, nx_lit(nx_str_772, 4));
+            nx_string _t526 = _t525;
             nx_drop_string(c, &(wname_69));
-            wname_69 = _t524;
+            wname_69 = _t526;
           }
           if (((((wversion_70).len)) == (((size_t)0ULL))))
           {
-            nx_m2_Checker* _t525 = &(c_1);
-            size_t _t526 = art_mods_3.ptr[nx_idx(i_71, art_mods_3.len, "self/nx.nx:1782")];
-            size_t _t527 = arts_2.ptr[nx_idx(i_71, arts_2.len, "self/nx.nx:1782")];
-            nx_string _t528 = nx_artifact_str(c, _t525, _t526, _t527, nx_lit(nx_str_455, 7));
-            nx_string _t529 = _t528;
+            nx_m2_Checker* _t527 = &(c_1);
+            size_t _t528 = art_mods_3.ptr[nx_idx(i_71, art_mods_3.len, "self/nx.nx:1784")];
+            size_t _t529 = arts_2.ptr[nx_idx(i_71, arts_2.len, "self/nx.nx:1784")];
+            nx_string _t530 = nx_artifact_str(c, _t527, _t528, _t529, nx_lit(nx_str_455, 7));
+            nx_string _t531 = _t530;
             nx_drop_string(c, &(wversion_70));
-            wversion_70 = _t529;
+            wversion_70 = _t531;
           }
         nx_cont_7: ;
       }
       nx_brk_7: ;
         if (((((wname_69).len)) == (((size_t)0ULL))))
         {
-          nx_string _t530 = nx_str_from(c, stem_8);
-          nx_string _t531 = _t530;
+          nx_string _t532 = nx_str_from(c, stem_8);
+          nx_string _t533 = _t532;
           nx_drop_string(c, &(wname_69));
-          wname_69 = _t531;
+          wname_69 = _t533;
         }
         if (((((wversion_70).len)) == (((size_t)0ULL))))
         {
-          nx_string _t532 = nx_str_from(c, nx_lit(nx_str_773, 5));
-          nx_string _t533 = _t532;
+          nx_string _t534 = nx_str_from(c, nx_lit(nx_str_773, 5));
+          nx_string _t535 = _t534;
           nx_drop_string(c, &(wversion_70));
-          wversion_70 = _t533;
+          wversion_70 = _t535;
         }
-      nx_slice_check(0, wname_69.len, wname_69.len, "self/nx.nx:1786");
-      nx_sl_u8 _t534 = ((nx_sl_u8){ nx_padd(wname_69.ptr, 0), wname_69.len - 0 });
-      nx_slice_check(0, wversion_70.len, wversion_70.len, "self/nx.nx:1786");
-      nx_sl_u8 _t535 = ((nx_sl_u8){ nx_padd(wversion_70.ptr, 0), wversion_70.len - 0 });
-      nx_list_string* _t536 = &(produced_9);
-      bool _t537 = nx_ship_wasm_lib(c, o_0, _t534, _t535, ship_mode_20, _t536);
-        if ((!(_t537)))
+      nx_slice_check(0, wname_69.len, wname_69.len, "self/nx.nx:1788");
+      nx_sl_u8 _t536 = ((nx_sl_u8){ nx_padd(wname_69.ptr, 0), wname_69.len - 0 });
+      nx_slice_check(0, wversion_70.len, wversion_70.len, "self/nx.nx:1788");
+      nx_sl_u8 _t537 = ((nx_sl_u8){ nx_padd(wversion_70.ptr, 0), wversion_70.len - 0 });
+      nx_list_string* _t538 = &(produced_9);
+      bool _t539 = nx_ship_wasm_lib(c, o_0, _t536, _t537, ship_mode_20, _t538);
+        if ((!(_t539)))
         {
-          int32_t _t538 = ((int32_t)1LL);
+          int32_t _t540 = ((int32_t)1LL);
           nx_drop_string(c, &wversion_70);
           nx_drop_string(c, &wname_69);
           nx_drop_string(c, &target_17);
@@ -23131,86 +23135,86 @@ static int32_t nx_cmd_ship(nx_ctx* c, nx_Opts* o_0) {
           nx_drop_list_usize(c, &art_mods_3);
           nx_drop_list_usize(c, &arts_2);
           nx_drop_m2_Checker(c, &c_1);
-          return _t538;
+          return _t540;
         }
       nx_drop_string(c, &wversion_70);
       nx_drop_string(c, &wname_69);
     }
     if (((((cli_arts_11).len)) > (((size_t)0ULL))))
     {
-      nx_string _t539 = {0}; _t539.ar = c->arena;
-      nx_string name_72 = _t539;
-      nx_sl_usize _t540 = ((nx_sl_usize){ cli_arts_11.ptr, cli_arts_11.len });
-      for (size_t _t541 = 0; _t541 < _t540.len; _t541++) {
-        size_t i_73 = _t540.ptr[_t541];
+      nx_string _t541 = {0}; _t541.ar = c->arena;
+      nx_string name_72 = _t541;
+      nx_sl_usize _t542 = ((nx_sl_usize){ cli_arts_11.ptr, cli_arts_11.len });
+      for (size_t _t543 = 0; _t543 < _t542.len; _t543++) {
+        size_t i_73 = _t542.ptr[_t543];
           if (((((name_72).len)) == (((size_t)0ULL))))
           {
-            nx_m2_Checker* _t542 = &(c_1);
-            size_t _t543 = art_mods_3.ptr[nx_idx(i_73, art_mods_3.len, "self/nx.nx:1790")];
-            size_t _t544 = arts_2.ptr[nx_idx(i_73, arts_2.len, "self/nx.nx:1790")];
-            nx_string _t545 = nx_artifact_str(c, _t542, _t543, _t544, nx_lit(nx_str_772, 4));
-            nx_string _t546 = _t545;
+            nx_m2_Checker* _t544 = &(c_1);
+            size_t _t545 = art_mods_3.ptr[nx_idx(i_73, art_mods_3.len, "self/nx.nx:1792")];
+            size_t _t546 = arts_2.ptr[nx_idx(i_73, arts_2.len, "self/nx.nx:1792")];
+            nx_string _t547 = nx_artifact_str(c, _t544, _t545, _t546, nx_lit(nx_str_772, 4));
+            nx_string _t548 = _t547;
             nx_drop_string(c, &(name_72));
-            name_72 = _t546;
+            name_72 = _t548;
           }
         nx_cont_8: ;
       }
       nx_brk_8: ;
         if (((((name_72).len)) == (((size_t)0ULL))))
         {
-          nx_string _t547 = nx_str_from(c, stem_8);
-          nx_string _t548 = _t547;
+          nx_string _t549 = nx_str_from(c, stem_8);
+          nx_string _t550 = _t549;
           nx_drop_string(c, &(name_72));
-          name_72 = _t548;
+          name_72 = _t550;
         }
-      nx_Opts _t549 = nx_clone_opts(c, o_0);
-      nx_Opts co_74 = _t549;
+      nx_Opts _t551 = nx_clone_opts(c, o_0);
+      nx_Opts co_74 = _t551;
       co_74.mode_4 = ship_mode_20;
-      nx_string _t550 = {0}; _t550.ar = c->arena;
-      nx_sink _t551 = nx_sink_str(c, &_t550);
-      nx_sl_u8 _t552 = nx_str_slice(((*o_0)).out_dir_3);
-      nx_sl_u8 _t553 = nx_str_slice(name_72);
-      nx_w_sl(&_t551, _t552);
-      nx_w(&_t551, (const uint8_t*)nx_str_499, 1);
-      nx_w_sl(&_t551, _t553);
-      nx_string _t554 = _t550;
+      nx_string _t552 = {0}; _t552.ar = c->arena;
+      nx_sink _t553 = nx_sink_str(c, &_t552);
+      nx_sl_u8 _t554 = nx_str_slice(((*o_0)).out_dir_3);
+      nx_sl_u8 _t555 = nx_str_slice(name_72);
+      nx_w_sl(&_t553, _t554);
+      nx_w(&_t553, (const uint8_t*)nx_str_499, 1);
+      nx_w_sl(&_t553, _t555);
+      nx_string _t556 = _t552;
       nx_drop_string(c, &(co_74.out_dir_3));
-      co_74.out_dir_3 = _t554;
-      nx_string _t555 = {0}; _t555.ar = c->arena;
-      nx_sink _t556 = nx_sink_str(c, &_t555);
-      nx_sl_u8 _t557 = nx_str_slice((co_74).out_dir_3);
-      nx_slice_check(0, name_72.len, name_72.len, "self/nx.nx:1795");
-      nx_sl_u8 _t558 = ((nx_sl_u8){ nx_padd(name_72.ptr, 0), name_72.len - 0 });
-      nx_slice_check(0, (*o_0).target_7.len, (*o_0).target_7.len, "self/nx.nx:1795");
-      nx_sl_u8 _t559 = ((nx_sl_u8){ nx_padd((*o_0).target_7.ptr, 0), (*o_0).target_7.len - 0 });
-      nx_string _t560 = nx_exe_name(c, _t558, _t559);
-      nx_string _t561 = _t560;
-      nx_sl_u8 _t562 = nx_str_slice(_t561);
-      nx_w_sl(&_t556, _t557);
-      nx_w(&_t556, (const uint8_t*)nx_str_499, 1);
-      nx_w_sl(&_t556, _t562);
-      nx_string _t563 = _t555;
+      co_74.out_dir_3 = _t556;
+      nx_string _t557 = {0}; _t557.ar = c->arena;
+      nx_sink _t558 = nx_sink_str(c, &_t557);
+      nx_sl_u8 _t559 = nx_str_slice((co_74).out_dir_3);
+      nx_slice_check(0, name_72.len, name_72.len, "self/nx.nx:1797");
+      nx_sl_u8 _t560 = ((nx_sl_u8){ nx_padd(name_72.ptr, 0), name_72.len - 0 });
+      nx_slice_check(0, (*o_0).target_7.len, (*o_0).target_7.len, "self/nx.nx:1797");
+      nx_sl_u8 _t561 = ((nx_sl_u8){ nx_padd((*o_0).target_7.ptr, 0), (*o_0).target_7.len - 0 });
+      nx_string _t562 = nx_exe_name(c, _t560, _t561);
+      nx_string _t563 = _t562;
+      nx_sl_u8 _t564 = nx_str_slice(_t563);
+      nx_w_sl(&_t558, _t559);
+      nx_w(&_t558, (const uint8_t*)nx_str_499, 1);
+      nx_w_sl(&_t558, _t564);
+      nx_string _t565 = _t557;
       nx_drop_string(c, &(co_74.out_2));
-      co_74.out_2 = _t563;
+      co_74.out_2 = _t565;
       co_74.keep_c_8 = false;
-      nx_slice_check(0, co_74.out_dir_3.len, co_74.out_dir_3.len, "self/nx.nx:1797");
-      nx_sl_u8 _t564 = ((nx_sl_u8){ nx_padd(co_74.out_dir_3.ptr, 0), co_74.out_dir_3.len - 0 });
-      nx_eu_void _t565 = nx_m31_make_dirs(c, _t564);
-      nx_eu_void _t566 = _t565;
-      if (_t566.err) {
+      nx_slice_check(0, co_74.out_dir_3.len, co_74.out_dir_3.len, "self/nx.nx:1799");
+      nx_sl_u8 _t566 = ((nx_sl_u8){ nx_padd(co_74.out_dir_3.ptr, 0), co_74.out_dir_3.len - 0 });
+      nx_eu_void _t567 = nx_m31_make_dirs(c, _t566);
+      nx_eu_void _t568 = _t567;
+      if (_t568.err) {
         {
         }
       }
-      nx_string _t567 = {0}; _t567.ar = c->arena;
-      nx_string exe_path_75 = _t567;
-      nx_Opts* _t568 = &(co_74);
-      nx_string* _t569 = &(exe_path_75);
-      bool _t570 = nx_cmd_build(c, _t568, false, _t569);
-        if ((!(_t570)))
+      nx_string _t569 = {0}; _t569.ar = c->arena;
+      nx_string exe_path_75 = _t569;
+      nx_Opts* _t570 = &(co_74);
+      nx_string* _t571 = &(exe_path_75);
+      bool _t572 = nx_cmd_build(c, _t570, false, _t571);
+        if ((!(_t572)))
         {
-          int32_t _t571 = ((int32_t)1LL);
+          int32_t _t573 = ((int32_t)1LL);
           nx_drop_string(c, &exe_path_75);
-          nx_drop_string(c, &_t561);
+          nx_drop_string(c, &_t563);
           nx_drop_Opts(c, &co_74);
           nx_drop_string(c, &name_72);
           nx_drop_string(c, &target_17);
@@ -23221,117 +23225,117 @@ static int32_t nx_cmd_ship(nx_ctx* c, nx_Opts* o_0) {
           nx_drop_list_usize(c, &art_mods_3);
           nx_drop_list_usize(c, &arts_2);
           nx_drop_m2_Checker(c, &c_1);
-          return _t571;
+          return _t573;
         }
-      nx_string _t572 = nx_clone_string(c, &exe_path_75);
-      nx_list_string* _t573 = &(produced_9);
-      if (_t573->len == _t573->cap) nx_list_grow(c, (nx_rawlist*)_t573, sizeof(nx_string), _Alignof(nx_string), _t573->len + 1);
-      _t573->ptr[_t573->len++] = _t572;
+      nx_string _t574 = nx_clone_string(c, &exe_path_75);
+      nx_list_string* _t575 = &(produced_9);
+      if (_t575->len == _t575->cap) nx_list_grow(c, (nx_rawlist*)_t575, sizeof(nx_string), _Alignof(nx_string), _t575->len + 1);
+      _t575->ptr[_t575->len++] = _t574;
         if (((installer_art_12) != (((size_t)18446744073709551615ULL))))
         {
-          size_t ia_76 = arts_2.ptr[nx_idx(installer_art_12, arts_2.len, "self/nx.nx:1802")];
-          size_t im_77 = art_mods_3.ptr[nx_idx(installer_art_12, art_mods_3.len, "self/nx.nx:1803")];
-          nx_slice_check(0, (*o_0).file_1.len, (*o_0).file_1.len, "self/nx.nx:1805");
-          nx_sl_u8 _t574 = ((nx_sl_u8){ nx_padd((*o_0).file_1.ptr, 0), (*o_0).file_1.len - 0 });
-          nx_sl_u8 _t575 = nx_dir_of(c, _t574);
-          nx_sl_u8 src_dir_78 = _t575;
-          nx_m2_Checker* _t576 = &(c_1);
-          nx_string _t577 = nx_artifact_str(c, _t576, im_77, ia_76, nx_lit(nx_str_772, 4));
-          nx_string iname_79 = _t577;
+          size_t ia_76 = arts_2.ptr[nx_idx(installer_art_12, arts_2.len, "self/nx.nx:1804")];
+          size_t im_77 = art_mods_3.ptr[nx_idx(installer_art_12, art_mods_3.len, "self/nx.nx:1805")];
+          nx_slice_check(0, (*o_0).file_1.len, (*o_0).file_1.len, "self/nx.nx:1807");
+          nx_sl_u8 _t576 = ((nx_sl_u8){ nx_padd((*o_0).file_1.ptr, 0), (*o_0).file_1.len - 0 });
+          nx_sl_u8 _t577 = nx_dir_of(c, _t576);
+          nx_sl_u8 src_dir_78 = _t577;
+          nx_m2_Checker* _t578 = &(c_1);
+          nx_string _t579 = nx_artifact_str(c, _t578, im_77, ia_76, nx_lit(nx_str_772, 4));
+          nx_string iname_79 = _t579;
             if (((((iname_79).len)) == (((size_t)0ULL))))
             {
-              nx_string _t578 = nx_clone_string(c, &name_72);
+              nx_string _t580 = nx_clone_string(c, &name_72);
               nx_drop_string(c, &(iname_79));
-              iname_79 = _t578;
+              iname_79 = _t580;
             }
-          nx_m2_Checker* _t579 = &(c_1);
-          nx_string _t580 = nx_artifact_str(c, _t579, im_77, ia_76, nx_lit(nx_str_455, 7));
-          nx_string iversion_80 = _t580;
+          nx_m2_Checker* _t581 = &(c_1);
+          nx_string _t582 = nx_artifact_str(c, _t581, im_77, ia_76, nx_lit(nx_str_455, 7));
+          nx_string iversion_80 = _t582;
             if (((((iversion_80).len)) == (((size_t)0ULL))))
             {
-              nx_string _t581 = nx_str_from(c, nx_lit(nx_str_773, 5));
-              nx_string _t582 = _t581;
+              nx_string _t583 = nx_str_from(c, nx_lit(nx_str_773, 5));
+              nx_string _t584 = _t583;
               nx_drop_string(c, &(iversion_80));
-              iversion_80 = _t582;
+              iversion_80 = _t584;
             }
-          nx_string _t583 = iname_79; memset(&iname_79, 0, sizeof iname_79);
-          nx_string _t584 = _t583;
-          nx_slice_check(0, name_72.len, name_72.len, "self/nx.nx:1811");
-          nx_sl_u8 _t585 = ((nx_sl_u8){ nx_padd(name_72.ptr, 0), name_72.len - 0 });
-          nx_slice_check(0, (*o_0).target_7.len, (*o_0).target_7.len, "self/nx.nx:1811");
-          nx_sl_u8 _t586 = ((nx_sl_u8){ nx_padd((*o_0).target_7.ptr, 0), (*o_0).target_7.len - 0 });
-          nx_string _t587 = nx_exe_name(c, _t585, _t586);
-          nx_string _t588 = _t587;
-          nx_string _t589 = iversion_80; memset(&iversion_80, 0, sizeof iversion_80);
+          nx_string _t585 = iname_79; memset(&iname_79, 0, sizeof iname_79);
+          nx_string _t586 = _t585;
+          nx_slice_check(0, name_72.len, name_72.len, "self/nx.nx:1813");
+          nx_sl_u8 _t587 = ((nx_sl_u8){ nx_padd(name_72.ptr, 0), name_72.len - 0 });
+          nx_slice_check(0, (*o_0).target_7.len, (*o_0).target_7.len, "self/nx.nx:1813");
+          nx_sl_u8 _t588 = ((nx_sl_u8){ nx_padd((*o_0).target_7.ptr, 0), (*o_0).target_7.len - 0 });
+          nx_string _t589 = nx_exe_name(c, _t587, _t588);
           nx_string _t590 = _t589;
-          nx_m2_Checker* _t591 = &(c_1);
-          nx_string _t592 = nx_artifact_str(c, _t591, im_77, ia_76, nx_lit(nx_str_813, 9));
-          nx_string _t593 = _t592;
-          nx_m2_Checker* _t594 = &(c_1);
-          nx_string _t595 = nx_artifact_str(c, _t594, im_77, ia_76, nx_lit(nx_str_814, 3));
-          nx_string _t596 = _t595;
-          nx_m2_Checker* _t597 = &(c_1);
-          nx_string _t598 = nx_artifact_str(c, _t597, im_77, ia_76, nx_lit(nx_str_815, 7));
-          nx_string _t599 = _t598;
-          nx_m2_Checker* _t600 = &(c_1);
-          nx_string _t601 = nx_artifact_str(c, _t600, im_77, ia_76, nx_lit(nx_str_816, 6));
-          nx_string _t602 = _t601;
-          nx_m2_Checker* _t603 = &(c_1);
-          nx_list_string _t604 = nx_artifact_list(c, _t603, im_77, ia_76, nx_lit(nx_str_817, 5));
-          nx_list_string _t605 = _t604;
-          nx_m2_Checker* _t606 = &(c_1);
-          bool _t607 = nx_artifact_bool(c, _t606, im_77, ia_76, nx_lit(nx_str_818, 11));
-          bool _t608 = _t607;
-          nx_m22_Spec spec_81 = ((nx_m22_Spec){ .name_0 = _t584, .exe_1 = _t588, .version_2 = _t590, .publisher_3 = _t593, .url_4 = _t596, .license_5 = _t599, .readme_6 = _t602, .files_7 = _t605, .add_to_path_8 = _t608 });
+          nx_string _t591 = iversion_80; memset(&iversion_80, 0, sizeof iversion_80);
+          nx_string _t592 = _t591;
+          nx_m2_Checker* _t593 = &(c_1);
+          nx_string _t594 = nx_artifact_str(c, _t593, im_77, ia_76, nx_lit(nx_str_813, 9));
+          nx_string _t595 = _t594;
+          nx_m2_Checker* _t596 = &(c_1);
+          nx_string _t597 = nx_artifact_str(c, _t596, im_77, ia_76, nx_lit(nx_str_814, 3));
+          nx_string _t598 = _t597;
+          nx_m2_Checker* _t599 = &(c_1);
+          nx_string _t600 = nx_artifact_str(c, _t599, im_77, ia_76, nx_lit(nx_str_815, 7));
+          nx_string _t601 = _t600;
+          nx_m2_Checker* _t602 = &(c_1);
+          nx_string _t603 = nx_artifact_str(c, _t602, im_77, ia_76, nx_lit(nx_str_816, 6));
+          nx_string _t604 = _t603;
+          nx_m2_Checker* _t605 = &(c_1);
+          nx_list_string _t606 = nx_artifact_list(c, _t605, im_77, ia_76, nx_lit(nx_str_817, 5));
+          nx_list_string _t607 = _t606;
+          nx_m2_Checker* _t608 = &(c_1);
+          bool _t609 = nx_artifact_bool(c, _t608, im_77, ia_76, nx_lit(nx_str_818, 11));
+          bool _t610 = _t609;
+          nx_m22_Spec spec_81 = ((nx_m22_Spec){ .name_0 = _t586, .exe_1 = _t590, .version_2 = _t592, .publisher_3 = _t595, .url_4 = _t598, .license_5 = _t601, .readme_6 = _t604, .files_7 = _t607, .add_to_path_8 = _t610 });
           nx_string out_dir_82 = nx_clone_string(c, &(co_74).out_dir_3);
           nx_list_string to_copy_83 = nx_clone_list_string(c, &(spec_81).files_7);
             if ((((((spec_81).readme_6).len)) > (((size_t)0ULL))))
             {
-              nx_string _t609 = nx_clone_string(c, &(spec_81).readme_6);
-              nx_list_string* _t610 = &(to_copy_83);
-              if (_t610->len == _t610->cap) nx_list_grow(c, (nx_rawlist*)_t610, sizeof(nx_string), _Alignof(nx_string), _t610->len + 1);
-              _t610->ptr[_t610->len++] = _t609;
-            }
-            if ((((((spec_81).license_5).len)) > (((size_t)0ULL))))
-            {
-              nx_string _t611 = nx_clone_string(c, &(spec_81).license_5);
+              nx_string _t611 = nx_clone_string(c, &(spec_81).readme_6);
               nx_list_string* _t612 = &(to_copy_83);
               if (_t612->len == _t612->cap) nx_list_grow(c, (nx_rawlist*)_t612, sizeof(nx_string), _Alignof(nx_string), _t612->len + 1);
               _t612->ptr[_t612->len++] = _t611;
             }
-          nx_sl_string _t613 = ((nx_sl_string){ to_copy_83.ptr, to_copy_83.len });
-          for (size_t _t614 = 0; _t614 < _t613.len; _t614++) {
-            nx_string f_84 = _t613.ptr[_t614];
-            nx_slice_check(0, f_84.len, f_84.len, "self/nx.nx:1821");
-            nx_sl_u8 _t615 = ((nx_sl_u8){ nx_padd(f_84.ptr, 0), f_84.len - 0 });
-            nx_string _t616 = nx_m31_join(c, src_dir_78, _t615);
-            nx_string from_85 = _t616;
-            nx_slice_check(0, out_dir_82.len, out_dir_82.len, "self/nx.nx:1822");
-            nx_sl_u8 _t617 = ((nx_sl_u8){ nx_padd(out_dir_82.ptr, 0), out_dir_82.len - 0 });
-            nx_slice_check(0, f_84.len, f_84.len, "self/nx.nx:1822");
-            nx_sl_u8 _t618 = ((nx_sl_u8){ nx_padd(f_84.ptr, 0), f_84.len - 0 });
-            nx_string _t619 = nx_m31_join(c, _t617, _t618);
-            nx_string to_86 = _t619;
-            nx_slice_check(0, from_85.len, from_85.len, "self/nx.nx:1823");
-            nx_sl_u8 _t620 = ((nx_sl_u8){ nx_padd(from_85.ptr, 0), from_85.len - 0 });
-            bool _t621 = nx_m31_is_dir(c, _t620);
-              if (_t621)
+            if ((((((spec_81).license_5).len)) > (((size_t)0ULL))))
+            {
+              nx_string _t613 = nx_clone_string(c, &(spec_81).license_5);
+              nx_list_string* _t614 = &(to_copy_83);
+              if (_t614->len == _t614->cap) nx_list_grow(c, (nx_rawlist*)_t614, sizeof(nx_string), _Alignof(nx_string), _t614->len + 1);
+              _t614->ptr[_t614->len++] = _t613;
+            }
+          nx_sl_string _t615 = ((nx_sl_string){ to_copy_83.ptr, to_copy_83.len });
+          for (size_t _t616 = 0; _t616 < _t615.len; _t616++) {
+            nx_string f_84 = _t615.ptr[_t616];
+            nx_slice_check(0, f_84.len, f_84.len, "self/nx.nx:1823");
+            nx_sl_u8 _t617 = ((nx_sl_u8){ nx_padd(f_84.ptr, 0), f_84.len - 0 });
+            nx_string _t618 = nx_m31_join(c, src_dir_78, _t617);
+            nx_string from_85 = _t618;
+            nx_slice_check(0, out_dir_82.len, out_dir_82.len, "self/nx.nx:1824");
+            nx_sl_u8 _t619 = ((nx_sl_u8){ nx_padd(out_dir_82.ptr, 0), out_dir_82.len - 0 });
+            nx_slice_check(0, f_84.len, f_84.len, "self/nx.nx:1824");
+            nx_sl_u8 _t620 = ((nx_sl_u8){ nx_padd(f_84.ptr, 0), f_84.len - 0 });
+            nx_string _t621 = nx_m31_join(c, _t619, _t620);
+            nx_string to_86 = _t621;
+            nx_slice_check(0, from_85.len, from_85.len, "self/nx.nx:1825");
+            nx_sl_u8 _t622 = ((nx_sl_u8){ nx_padd(from_85.ptr, 0), from_85.len - 0 });
+            bool _t623 = nx_m31_is_dir(c, _t622);
+              if (_t623)
               {
-                nx_slice_check(0, from_85.len, from_85.len, "self/nx.nx:1824");
-                nx_sl_u8 _t622 = ((nx_sl_u8){ nx_padd(from_85.ptr, 0), from_85.len - 0 });
-                nx_slice_check(0, to_86.len, to_86.len, "self/nx.nx:1824");
-                nx_sl_u8 _t623 = ((nx_sl_u8){ nx_padd(to_86.ptr, 0), to_86.len - 0 });
-                nx_eu_void _t624 = nx_copy_dir(c, _t622, _t623);
-                nx_eu_void _t625 = _t624;
-                if (_t625.err) {
+                nx_slice_check(0, from_85.len, from_85.len, "self/nx.nx:1826");
+                nx_sl_u8 _t624 = ((nx_sl_u8){ nx_padd(from_85.ptr, 0), from_85.len - 0 });
+                nx_slice_check(0, to_86.len, to_86.len, "self/nx.nx:1826");
+                nx_sl_u8 _t625 = ((nx_sl_u8){ nx_padd(to_86.ptr, 0), to_86.len - 0 });
+                nx_eu_void _t626 = nx_copy_dir(c, _t624, _t625);
+                nx_eu_void _t627 = _t626;
+                if (_t627.err) {
                   {
-                    nx_sink _t626 = nx_sink_file(c, c->err);
-                    nx_sl_u8 _t627 = nx_str_slice(from_85);
-                    nx_w(&_t626, (const uint8_t*)nx_str_524, 19);
-                    nx_w_sl(&_t626, _t627);
-                    nx_w(&_t626, (const uint8_t*)"\n", 1);
-                    nx_sink_flush(&_t626);
-                    int32_t _t628 = ((int32_t)1LL);
+                    nx_sink _t628 = nx_sink_file(c, c->err);
+                    nx_sl_u8 _t629 = nx_str_slice(from_85);
+                    nx_w(&_t628, (const uint8_t*)nx_str_524, 19);
+                    nx_w_sl(&_t628, _t629);
+                    nx_w(&_t628, (const uint8_t*)"\n", 1);
+                    nx_sink_flush(&_t628);
+                    int32_t _t630 = ((int32_t)1LL);
                     nx_drop_string(c, &to_86);
                     nx_drop_string(c, &from_85);
                     nx_drop_list_string(c, &to_copy_83);
@@ -23340,7 +23344,7 @@ static int32_t nx_cmd_ship(nx_ctx* c, nx_Opts* o_0) {
                     nx_drop_string(c, &iversion_80);
                     nx_drop_string(c, &iname_79);
                     nx_drop_string(c, &exe_path_75);
-                    nx_drop_string(c, &_t561);
+                    nx_drop_string(c, &_t563);
                     nx_drop_Opts(c, &co_74);
                     nx_drop_string(c, &name_72);
                     nx_drop_string(c, &target_17);
@@ -23351,42 +23355,42 @@ static int32_t nx_cmd_ship(nx_ctx* c, nx_Opts* o_0) {
                     nx_drop_list_usize(c, &art_mods_3);
                     nx_drop_list_usize(c, &arts_2);
                     nx_drop_m2_Checker(c, &c_1);
-                    return _t628;
+                    return _t630;
                   }
                 }
               }
               else
               {
-                nx_slice_check(0, from_85.len, from_85.len, "self/nx.nx:1828");
-                nx_sl_u8 _t629 = ((nx_sl_u8){ nx_padd(from_85.ptr, 0), from_85.len - 0 });
-                bool _t630 = nx_m31_exists(c, _t629);
-                  if (_t630)
+                nx_slice_check(0, from_85.len, from_85.len, "self/nx.nx:1830");
+                nx_sl_u8 _t631 = ((nx_sl_u8){ nx_padd(from_85.ptr, 0), from_85.len - 0 });
+                bool _t632 = nx_m31_exists(c, _t631);
+                  if (_t632)
                   {
-                    nx_slice_check(0, to_86.len, to_86.len, "self/nx.nx:1829");
-                    nx_sl_u8 _t631 = ((nx_sl_u8){ nx_padd(to_86.ptr, 0), to_86.len - 0 });
-                    nx_sl_u8 _t632 = nx_m31_parent(c, _t631);
-                    nx_sl_u8 _t633 = _t632;
-                    nx_eu_void _t634 = nx_m31_make_dirs(c, _t633);
-                    nx_eu_void _t635 = _t634;
-                    if (_t635.err) {
+                    nx_slice_check(0, to_86.len, to_86.len, "self/nx.nx:1831");
+                    nx_sl_u8 _t633 = ((nx_sl_u8){ nx_padd(to_86.ptr, 0), to_86.len - 0 });
+                    nx_sl_u8 _t634 = nx_m31_parent(c, _t633);
+                    nx_sl_u8 _t635 = _t634;
+                    nx_eu_void _t636 = nx_m31_make_dirs(c, _t635);
+                    nx_eu_void _t637 = _t636;
+                    if (_t637.err) {
                       {
                       }
                     }
-                    nx_slice_check(0, from_85.len, from_85.len, "self/nx.nx:1830");
-                    nx_sl_u8 _t636 = ((nx_sl_u8){ nx_padd(from_85.ptr, 0), from_85.len - 0 });
-                    nx_slice_check(0, to_86.len, to_86.len, "self/nx.nx:1830");
-                    nx_sl_u8 _t637 = ((nx_sl_u8){ nx_padd(to_86.ptr, 0), to_86.len - 0 });
-                    nx_eu_void _t638 = nx_m31_copy(c, _t636, _t637);
-                    nx_eu_void _t639 = _t638;
-                    if (_t639.err) {
+                    nx_slice_check(0, from_85.len, from_85.len, "self/nx.nx:1832");
+                    nx_sl_u8 _t638 = ((nx_sl_u8){ nx_padd(from_85.ptr, 0), from_85.len - 0 });
+                    nx_slice_check(0, to_86.len, to_86.len, "self/nx.nx:1832");
+                    nx_sl_u8 _t639 = ((nx_sl_u8){ nx_padd(to_86.ptr, 0), to_86.len - 0 });
+                    nx_eu_void _t640 = nx_m31_copy(c, _t638, _t639);
+                    nx_eu_void _t641 = _t640;
+                    if (_t641.err) {
                       {
-                        nx_sink _t640 = nx_sink_file(c, c->err);
-                        nx_sl_u8 _t641 = nx_str_slice(from_85);
-                        nx_w(&_t640, (const uint8_t*)nx_str_524, 19);
-                        nx_w_sl(&_t640, _t641);
-                        nx_w(&_t640, (const uint8_t*)"\n", 1);
-                        nx_sink_flush(&_t640);
-                        int32_t _t642 = ((int32_t)1LL);
+                        nx_sink _t642 = nx_sink_file(c, c->err);
+                        nx_sl_u8 _t643 = nx_str_slice(from_85);
+                        nx_w(&_t642, (const uint8_t*)nx_str_524, 19);
+                        nx_w_sl(&_t642, _t643);
+                        nx_w(&_t642, (const uint8_t*)"\n", 1);
+                        nx_sink_flush(&_t642);
+                        int32_t _t644 = ((int32_t)1LL);
                         nx_drop_string(c, &to_86);
                         nx_drop_string(c, &from_85);
                         nx_drop_list_string(c, &to_copy_83);
@@ -23395,7 +23399,7 @@ static int32_t nx_cmd_ship(nx_ctx* c, nx_Opts* o_0) {
                         nx_drop_string(c, &iversion_80);
                         nx_drop_string(c, &iname_79);
                         nx_drop_string(c, &exe_path_75);
-                        nx_drop_string(c, &_t561);
+                        nx_drop_string(c, &_t563);
                         nx_drop_Opts(c, &co_74);
                         nx_drop_string(c, &name_72);
                         nx_drop_string(c, &target_17);
@@ -23406,22 +23410,22 @@ static int32_t nx_cmd_ship(nx_ctx* c, nx_Opts* o_0) {
                         nx_drop_list_usize(c, &art_mods_3);
                         nx_drop_list_usize(c, &arts_2);
                         nx_drop_m2_Checker(c, &c_1);
-                        return _t642;
+                        return _t644;
                       }
                     }
                   }
                   else
                   {
-                    nx_sink _t643 = nx_sink_file(c, c->err);
-                    nx_sl_u8 _t644 = nx_str_slice(f_84);
-                    nx_sl_u8 _t645 = nx_str_slice(((*o_0)).file_1);
-                    nx_w(&_t643, (const uint8_t*)nx_str_819, 23);
-                    nx_w_sl(&_t643, _t644);
-                    nx_w(&_t643, (const uint8_t*)nx_str_820, 20);
-                    nx_w_sl(&_t643, _t645);
-                    nx_w(&_t643, (const uint8_t*)"\n", 1);
-                    nx_sink_flush(&_t643);
-                    int32_t _t646 = ((int32_t)1LL);
+                    nx_sink _t645 = nx_sink_file(c, c->err);
+                    nx_sl_u8 _t646 = nx_str_slice(f_84);
+                    nx_sl_u8 _t647 = nx_str_slice(((*o_0)).file_1);
+                    nx_w(&_t645, (const uint8_t*)nx_str_819, 23);
+                    nx_w_sl(&_t645, _t646);
+                    nx_w(&_t645, (const uint8_t*)nx_str_820, 20);
+                    nx_w_sl(&_t645, _t647);
+                    nx_w(&_t645, (const uint8_t*)"\n", 1);
+                    nx_sink_flush(&_t645);
+                    int32_t _t648 = ((int32_t)1LL);
                     nx_drop_string(c, &to_86);
                     nx_drop_string(c, &from_85);
                     nx_drop_list_string(c, &to_copy_83);
@@ -23430,7 +23434,7 @@ static int32_t nx_cmd_ship(nx_ctx* c, nx_Opts* o_0) {
                     nx_drop_string(c, &iversion_80);
                     nx_drop_string(c, &iname_79);
                     nx_drop_string(c, &exe_path_75);
-                    nx_drop_string(c, &_t561);
+                    nx_drop_string(c, &_t563);
                     nx_drop_Opts(c, &co_74);
                     nx_drop_string(c, &name_72);
                     nx_drop_string(c, &target_17);
@@ -23441,7 +23445,7 @@ static int32_t nx_cmd_ship(nx_ctx* c, nx_Opts* o_0) {
                     nx_drop_list_usize(c, &art_mods_3);
                     nx_drop_list_usize(c, &arts_2);
                     nx_drop_m2_Checker(c, &c_1);
-                    return _t646;
+                    return _t648;
                   }
               }
             nx_drop_string(c, &to_86);
@@ -23449,23 +23453,23 @@ static int32_t nx_cmd_ship(nx_ctx* c, nx_Opts* o_0) {
             nx_cont_9: ;
           }
           nx_brk_9: ;
-          nx_m22_Spec* _t647 = &(spec_81);
-          nx_slice_check(0, exe_path_75.len, exe_path_75.len, "self/nx.nx:1839");
-          nx_sl_u8 _t648 = ((nx_sl_u8){ nx_padd(exe_path_75.ptr, 0), exe_path_75.len - 0 });
-          nx_eu_list_string _t649 = nx_m22_produce(c, _t647, _t648, windows_18, macos_19);
-          nx_eu_list_string _t650 = _t649;
-          nx_list_string _t651;
-          if (_t650.err) {
-            nx_list_string _t652;
+          nx_m22_Spec* _t649 = &(spec_81);
+          nx_slice_check(0, exe_path_75.len, exe_path_75.len, "self/nx.nx:1841");
+          nx_sl_u8 _t650 = ((nx_sl_u8){ nx_padd(exe_path_75.ptr, 0), exe_path_75.len - 0 });
+          nx_eu_list_string _t651 = nx_m22_produce(c, _t649, _t650, windows_18, macos_19);
+          nx_eu_list_string _t652 = _t651;
+          nx_list_string _t653;
+          if (_t652.err) {
+            nx_list_string _t654;
               {
-                int32_t _t653 = ((int32_t)1LL);
+                int32_t _t655 = ((int32_t)1LL);
                 nx_drop_list_string(c, &to_copy_83);
                 nx_drop_string(c, &out_dir_82);
                 nx_drop_m22_Spec(c, &spec_81);
                 nx_drop_string(c, &iversion_80);
                 nx_drop_string(c, &iname_79);
                 nx_drop_string(c, &exe_path_75);
-                nx_drop_string(c, &_t561);
+                nx_drop_string(c, &_t563);
                 nx_drop_Opts(c, &co_74);
                 nx_drop_string(c, &name_72);
                 nx_drop_string(c, &target_17);
@@ -23476,17 +23480,17 @@ static int32_t nx_cmd_ship(nx_ctx* c, nx_Opts* o_0) {
                 nx_drop_list_usize(c, &art_mods_3);
                 nx_drop_list_usize(c, &arts_2);
                 nx_drop_m2_Checker(c, &c_1);
-                return _t653;
+                return _t655;
               }
-          } else { _t651 = _t650.val; }
-          nx_list_string files_87 = _t651;
-          nx_sl_string _t654 = ((nx_sl_string){ files_87.ptr, files_87.len });
-          for (size_t _t655 = 0; _t655 < _t654.len; _t655++) {
-            nx_string f_88 = _t654.ptr[_t655];
-            nx_string _t656 = nx_clone_string(c, &f_88);
-            nx_list_string* _t657 = &(produced_9);
-            if (_t657->len == _t657->cap) nx_list_grow(c, (nx_rawlist*)_t657, sizeof(nx_string), _Alignof(nx_string), _t657->len + 1);
-            _t657->ptr[_t657->len++] = _t656;
+          } else { _t653 = _t652.val; }
+          nx_list_string files_87 = _t653;
+          nx_sl_string _t656 = ((nx_sl_string){ files_87.ptr, files_87.len });
+          for (size_t _t657 = 0; _t657 < _t656.len; _t657++) {
+            nx_string f_88 = _t656.ptr[_t657];
+            nx_string _t658 = nx_clone_string(c, &f_88);
+            nx_list_string* _t659 = &(produced_9);
+            if (_t659->len == _t659->cap) nx_list_grow(c, (nx_rawlist*)_t659, sizeof(nx_string), _Alignof(nx_string), _t659->len + 1);
+            _t659->ptr[_t659->len++] = _t658;
             nx_cont_10: ;
           }
           nx_brk_10: ;
@@ -23498,33 +23502,33 @@ static int32_t nx_cmd_ship(nx_ctx* c, nx_Opts* o_0) {
           nx_drop_string(c, &iname_79);
         }
       nx_drop_string(c, &exe_path_75);
-      nx_drop_string(c, &_t561);
+      nx_drop_string(c, &_t563);
       nx_drop_Opts(c, &co_74);
       nx_drop_string(c, &name_72);
     }
-  nx_sink _t658 = nx_sink_file(c, c->out);
-  size_t _t659 = ((produced_9).len);
-  nx_sl_u8 _t660 = nx_str_slice(target_17);
-  nx_w(&_t658, (const uint8_t*)nx_str_821, 8);
-  nx_w_uint(&_t658, (nx_u128)(_t659), 10, 0, false);
-  nx_w(&_t658, (const uint8_t*)nx_str_822, 22);
-  nx_w_sl(&_t658, _t660);
-  nx_w(&_t658, (const uint8_t*)nx_str_498, 1);
-  nx_w(&_t658, (const uint8_t*)"\n", 1);
-  nx_sink_flush(&_t658);
-  nx_sl_string _t661 = ((nx_sl_string){ produced_9.ptr, produced_9.len });
-  for (size_t _t662 = 0; _t662 < _t661.len; _t662++) {
-    nx_string p_89 = _t661.ptr[_t662];
-    nx_sink _t663 = nx_sink_file(c, c->out);
-    nx_sl_u8 _t664 = nx_str_slice(p_89);
-    nx_w(&_t663, (const uint8_t*)nx_str_718, 2);
-    nx_w_sl(&_t663, _t664);
-    nx_w(&_t663, (const uint8_t*)"\n", 1);
-    nx_sink_flush(&_t663);
+  nx_sink _t660 = nx_sink_file(c, c->out);
+  size_t _t661 = ((produced_9).len);
+  nx_sl_u8 _t662 = nx_str_slice(target_17);
+  nx_w(&_t660, (const uint8_t*)nx_str_821, 8);
+  nx_w_uint(&_t660, (nx_u128)(_t661), 10, 0, false);
+  nx_w(&_t660, (const uint8_t*)nx_str_822, 22);
+  nx_w_sl(&_t660, _t662);
+  nx_w(&_t660, (const uint8_t*)nx_str_498, 1);
+  nx_w(&_t660, (const uint8_t*)"\n", 1);
+  nx_sink_flush(&_t660);
+  nx_sl_string _t663 = ((nx_sl_string){ produced_9.ptr, produced_9.len });
+  for (size_t _t664 = 0; _t664 < _t663.len; _t664++) {
+    nx_string p_89 = _t663.ptr[_t664];
+    nx_sink _t665 = nx_sink_file(c, c->out);
+    nx_sl_u8 _t666 = nx_str_slice(p_89);
+    nx_w(&_t665, (const uint8_t*)nx_str_718, 2);
+    nx_w_sl(&_t665, _t666);
+    nx_w(&_t665, (const uint8_t*)"\n", 1);
+    nx_sink_flush(&_t665);
     nx_cont_11: ;
   }
   nx_brk_11: ;
-  int32_t _t665 = ((int32_t)0LL);
+  int32_t _t667 = ((int32_t)0LL);
   nx_drop_string(c, &target_17);
   nx_drop_list_usize(c, &wasm_arts_13);
   nx_drop_list_usize(c, &cli_arts_11);
@@ -23533,7 +23537,7 @@ static int32_t nx_cmd_ship(nx_ctx* c, nx_Opts* o_0) {
   nx_drop_list_usize(c, &art_mods_3);
   nx_drop_list_usize(c, &arts_2);
   nx_drop_m2_Checker(c, &c_1);
-  return _t665;
+  return _t667;
   nx_drop_string(c, &target_17);
   nx_drop_list_usize(c, &wasm_arts_13);
   nx_drop_list_usize(c, &cli_arts_11);
@@ -23577,7 +23581,7 @@ static int32_t nx_cmd_doctor(nx_ctx* c, nx_Opts* o_0) {
     {
       nx_sl_sl_u8 _t4; { size_t _n; nx_sl_u8* _a = nx_args(c, &_n); _t4.ptr = _a; _t4.len = _n; }
       nx_sl_sl_u8 args_2 = _t4;
-      nx_sl_u8 _t5 = args_2.ptr[nx_idx(((size_t)0ULL), args_2.len, "self/nx.nx:1857")];
+      nx_sl_u8 _t5 = args_2.ptr[nx_idx(((size_t)0ULL), args_2.len, "self/nx.nx:1859")];
       nx_string _t6 = nx_absolute(c, _t5);
       nx_string _t7 = _t6;
       nx_drop_string(c, &(exe_1));
@@ -23610,7 +23614,7 @@ static int32_t nx_cmd_doctor(nx_ctx* c, nx_Opts* o_0) {
       {
         nx_str_append(c, &(shown_4), nx_lit(nx_str_492, 1).ptr, nx_lit(nx_str_492, 1).len);
       }
-    nx_slice_check(0, a_5.len, a_5.len, "self/nx.nx:1862");
+    nx_slice_check(0, a_5.len, a_5.len, "self/nx.nx:1864");
     nx_sl_u8 _t15 = ((nx_sl_u8){ nx_padd(a_5.ptr, 0), a_5.len - 0 });
     nx_str_append(c, &(shown_4), _t15.ptr, _t15.len);
     nx_cont_0: ;
@@ -23627,7 +23631,7 @@ static int32_t nx_cmd_doctor(nx_ctx* c, nx_Opts* o_0) {
   nx_w(&_t16, (const uint8_t*)nx_str_736, 1);
   nx_w(&_t16, (const uint8_t*)"\n", 1);
   nx_sink_flush(&_t16);
-  nx_slice_check(0, (*o_0).cpu_11.len, (*o_0).cpu_11.len, "self/nx.nx:1864");
+  nx_slice_check(0, (*o_0).cpu_11.len, (*o_0).cpu_11.len, "self/nx.nx:1866");
   nx_sl_u8 _t20 = ((nx_sl_u8){ nx_padd((*o_0).cpu_11.ptr, 0), (*o_0).cpu_11.len - 0 });
   nx_sl_u8 _t21;
     if (nx_sl_eq(_t20, nx_lit(nx_str_468, 8)))
@@ -23636,7 +23640,7 @@ static int32_t nx_cmd_doctor(nx_ctx* c, nx_Opts* o_0) {
     }
     else
     {
-      nx_slice_check(0, (*o_0).cpu_11.len, (*o_0).cpu_11.len, "self/nx.nx:1864");
+      nx_slice_check(0, (*o_0).cpu_11.len, (*o_0).cpu_11.len, "self/nx.nx:1866");
       nx_sl_u8 _t22 = ((nx_sl_u8){ nx_padd((*o_0).cpu_11.ptr, 0), (*o_0).cpu_11.len - 0 });
       nx_sl_u8 _t23;
       if (nx_sl_eq(_t22, nx_lit(nx_str_830, 6)))
@@ -23663,17 +23667,17 @@ static int32_t nx_cmd_doctor(nx_ctx* c, nx_Opts* o_0) {
   nx_w(&_t24, (const uint8_t*)"\n", 1);
   nx_sink_flush(&_t24);
   nx_list_sl_u8 probe_8 = ((nx_list_sl_u8){NULL, 0, 0, c->arena});
-  nx_slice_check(0, (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1867")].len, (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1867")].len, "self/nx.nx:1867");
-  nx_sl_u8 _t27 = ((nx_sl_u8){ nx_padd((*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1867")].ptr, 0), (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1867")].len - 0 });
+  nx_slice_check(0, (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1869")].len, (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1869")].len, "self/nx.nx:1869");
+  nx_sl_u8 _t27 = ((nx_sl_u8){ nx_padd((*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1869")].ptr, 0), (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1869")].len - 0 });
   nx_list_sl_u8* _t28 = &(probe_8);
   if (_t28->len == _t28->cap) nx_list_grow(c, (nx_rawlist*)_t28, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t28->len + 1);
   _t28->ptr[_t28->len++] = _t27;
-  nx_slice_check(0, (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1868")].len, (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1868")].len, "self/nx.nx:1868");
-  nx_sl_u8 _t29 = ((nx_sl_u8){ nx_padd((*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1868")].ptr, 0), (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1868")].len - 0 });
+  nx_slice_check(0, (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1870")].len, (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1870")].len, "self/nx.nx:1870");
+  nx_sl_u8 _t29 = ((nx_sl_u8){ nx_padd((*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1870")].ptr, 0), (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1870")].len - 0 });
   bool _t30 = nx_sl_ends_with(_t29, nx_lit(nx_str_495, 3));
   if (!_t30) {
-    nx_slice_check(0, (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1868")].len, (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1868")].len, "self/nx.nx:1868");
-    nx_sl_u8 _t31 = ((nx_sl_u8){ nx_padd((*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1868")].ptr, 0), (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1868")].len - 0 });
+    nx_slice_check(0, (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1870")].len, (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1870")].len, "self/nx.nx:1870");
+    nx_sl_u8 _t31 = ((nx_sl_u8){ nx_padd((*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1870")].ptr, 0), (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:1870")].len - 0 });
     _t30 = nx_sl_ends_with(_t31, nx_lit(nx_str_562, 7));
   }
   bool is_zig_9 = _t30;
@@ -23691,7 +23695,7 @@ static int32_t nx_cmd_doctor(nx_ctx* c, nx_Opts* o_0) {
   if (_t34->len == _t34->cap) nx_list_grow(c, (nx_rawlist*)_t34, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t34->len + 1);
   _t34->ptr[_t34->len++] = _t33;
   bool ok_10 = false;
-  nx_slice_check(0, probe_8.len, probe_8.len, "self/nx.nx:1871");
+  nx_slice_check(0, probe_8.len, probe_8.len, "self/nx.nx:1873");
   nx_sl_sl_u8 _t35 = ((nx_sl_sl_u8){ nx_padd(probe_8.ptr, 0), probe_8.len - 0 });
   nx_eu_i32 _t36; { int _code = 0; if (nx_run_capture(c, _t35.ptr, _t35.len, nx_lit(nx_str_6, 0), nx_lit(nx_str_6, 0), &_code)) { _t36.err = 0; _t36.val = _code; } else _t36.err = 8u; }
   nx_eu_i32 _t37 = _t36;
@@ -23709,7 +23713,7 @@ static int32_t nx_cmd_doctor(nx_ctx* c, nx_Opts* o_0) {
       nx_string out_12 = nx_last_stdout(c);
       nx_string _t40 = {0}; _t40.ar = c->arena;
       nx_string first_13 = _t40;
-      nx_slice_check(0, out_12.len, out_12.len, "self/nx.nx:1875");
+      nx_slice_check(0, out_12.len, out_12.len, "self/nx.nx:1877");
       nx_sl_u8 _t41 = ((nx_sl_u8){ nx_padd(out_12.ptr, 0), out_12.len - 0 });
       nx_list_sl_u8 _t42 = {0}; _t42.ar = c->arena;
       { size_t _s = 0; for (;;) { nx_sl_u8 _rest = { nx_padd(_t41.ptr, _s), _t41.len - _s }; size_t _i; bool _f = nx_lit("\n", 1).len && nx_sl_find(_rest, nx_lit("\n", 1), &_i); nx_sl_u8 _piece = { _rest.ptr, _f ? _i : _rest.len };
@@ -23757,7 +23761,7 @@ static int32_t nx_cmd_doctor(nx_ctx* c, nx_Opts* o_0) {
           nx_string err_15 = nx_last_stderr(c);
           nx_string _t52 = {0}; _t52.ar = c->arena;
           nx_string first_16 = _t52;
-          nx_slice_check(0, err_15.len, err_15.len, "self/nx.nx:1883");
+          nx_slice_check(0, err_15.len, err_15.len, "self/nx.nx:1885");
           nx_sl_u8 _t53 = ((nx_sl_u8){ nx_padd(err_15.ptr, 0), err_15.len - 0 });
           nx_list_sl_u8 _t54 = {0}; _t54.ar = c->arena;
           { size_t _s = 0; for (;;) { nx_sl_u8 _rest = { nx_padd(_t53.ptr, _s), _t53.len - _s }; size_t _i; bool _f = nx_lit("\n", 1).len && nx_sl_find(_rest, nx_lit("\n", 1), &_i); nx_sl_u8 _piece = { _rest.ptr, _f ? _i : _rest.len };
@@ -23797,7 +23801,7 @@ static int32_t nx_cmd_doctor(nx_ctx* c, nx_Opts* o_0) {
   nx_w_sl(&_t63, _t64);
   nx_w(&_t63, (const uint8_t*)"\n", 1);
   nx_sink_flush(&_t63);
-  nx_slice_check(0, exe_1.len, exe_1.len, "self/nx.nx:1887");
+  nx_slice_check(0, exe_1.len, exe_1.len, "self/nx.nx:1889");
   nx_sl_u8 _t65 = ((nx_sl_u8){ nx_padd(exe_1.ptr, 0), exe_1.len - 0 });
   nx_sl_u8 _t66 = nx_dir_of(c, _t65);
   nx_sl_u8 dir_18 = _t66;
@@ -23929,7 +23933,7 @@ static void nx_doctor_updates(nx_ctx* c) {
   nx_string* _t4 = &(auth_0);
   nx_list_sl_u8 _t5 = nx_github_api_argv(c, nx_lit(nx_str_850, 1), _t4);
   nx_list_sl_u8 argv_1 = _t5;
-  nx_slice_check(0, argv_1.len, argv_1.len, "self/nx.nx:1925");
+  nx_slice_check(0, argv_1.len, argv_1.len, "self/nx.nx:1927");
   nx_sl_sl_u8 _t6 = ((nx_sl_sl_u8){ nx_padd(argv_1.ptr, 0), argv_1.len - 0 });
   nx_eu_i32 _t7; { int _code = 0; if (nx_run_capture(c, _t6.ptr, _t6.len, nx_lit(nx_str_6, 0), nx_lit(nx_str_6, 0), &_code)) { _t7.err = 0; _t7.val = _code; } else _t7.err = 8u; }
   nx_eu_i32 _t8 = _t7;
@@ -23965,7 +23969,7 @@ static void nx_doctor_updates(nx_ctx* c) {
       return;
     }
   nx_string out_4 = nx_last_stdout(c);
-  nx_slice_check(0, out_4.len, out_4.len, "self/nx.nx:1932");
+  nx_slice_check(0, out_4.len, out_4.len, "self/nx.nx:1934");
   nx_sl_u8 _t13 = ((nx_sl_u8){ nx_padd(out_4.ptr, 0), out_4.len - 0 });
   nx_opt_string _t14 = nx_json_string(c, _t13, nx_lit(nx_str_855, 8));
   nx_opt_string _t15 = _t14;
@@ -23984,34 +23988,34 @@ static void nx_doctor_updates(nx_ctx* c) {
       }
   } else { _t16 = _t15.val; }
   nx_string tag_5 = _t16;
-  nx_slice_check(0, tag_5.len, tag_5.len, "self/nx.nx:1936");
+  nx_slice_check(0, tag_5.len, tag_5.len, "self/nx.nx:1938");
   nx_sl_u8 _t19 = ((nx_sl_u8){ nx_padd(tag_5.ptr, 0), tag_5.len - 0 });
   nx_sl_u8 _t20;
     if (nx_sl_starts_with(_t19, nx_lit(nx_str_857, 1)))
     {
-      nx_slice_check(((size_t)1ULL), tag_5.len, tag_5.len, "self/nx.nx:1936");
+      nx_slice_check(((size_t)1ULL), tag_5.len, tag_5.len, "self/nx.nx:1938");
       _t20 = ((nx_sl_u8){ nx_padd(tag_5.ptr, ((size_t)1ULL)), tag_5.len - ((size_t)1ULL) });
     }
     else
     {
-      nx_slice_check(0, tag_5.len, tag_5.len, "self/nx.nx:1936");
+      nx_slice_check(0, tag_5.len, tag_5.len, "self/nx.nx:1938");
       _t20 = ((nx_sl_u8){ nx_padd(tag_5.ptr, 0), tag_5.len - 0 });
     }
   nx_sl_u8 latest_6 = _t20;
   nx_string _t21 = nx_update_cache_path(c);
   nx_string _t22 = _t21;
-  nx_slice_check(0, _t22.len, _t22.len, "self/nx.nx:1937");
+  nx_slice_check(0, _t22.len, _t22.len, "self/nx.nx:1939");
   nx_sl_u8 _t23 = ((nx_sl_u8){ nx_padd(_t22.ptr, 0), _t22.len - 0 });
   nx_UpdateCache _t24 = nx_read_update_cache(c, _t23);
   nx_UpdateCache cache_7 = _t24;
-  cache_7.checked_0 = nx_div_i64(nx_time_now_ms(), ((int64_t)1000LL), "self/nx.nx:1938");
+  cache_7.checked_0 = nx_div_i64(nx_time_now_ms(), ((int64_t)1000LL), "self/nx.nx:1940");
   nx_string _t25 = nx_str_from(c, latest_6);
   nx_string _t26 = _t25;
   nx_drop_string(c, &(cache_7.latest_2));
   cache_7.latest_2 = _t26;
   nx_string _t27 = nx_update_cache_path(c);
   nx_string _t28 = _t27;
-  nx_slice_check(0, _t28.len, _t28.len, "self/nx.nx:1940");
+  nx_slice_check(0, _t28.len, _t28.len, "self/nx.nx:1942");
   nx_sl_u8 _t29 = ((nx_sl_u8){ nx_padd(_t28.ptr, 0), _t28.len - 0 });
   nx_UpdateCache* _t30 = &(cache_7);
   nx_write_update_cache(c, _t29, _t30);
@@ -24087,7 +24091,7 @@ static nx_string nx_topo_progress_path(nx_ctx* c) {
       nx_drop_string(c, &cache_1);
       return _t7;
     }
-  nx_slice_check(0, cache_1.len, cache_1.len, "self/nx.nx:1957");
+  nx_slice_check(0, cache_1.len, cache_1.len, "self/nx.nx:1959");
   nx_sl_u8 _t8 = ((nx_sl_u8){ nx_padd(cache_1.ptr, 0), cache_1.len - 0 });
   nx_sl_u8 _t9 = nx_m31_parent(c, _t8);
   nx_sl_u8 _t10 = _t9;
@@ -24198,7 +24202,7 @@ static nx_UpdateCache nx_read_update_cache(nx_ctx* c, nx_sl_u8 path_0) {
       }
   } else { _t9 = _t8.val; }
   nx_string text_2 = _t9;
-  nx_slice_check(0, text_2.len, text_2.len, "self/nx.nx:1986");
+  nx_slice_check(0, text_2.len, text_2.len, "self/nx.nx:1988");
   nx_sl_u8 _t13 = ((nx_sl_u8){ nx_padd(text_2.ptr, 0), text_2.len - 0 });
   nx_list_sl_u8 _t14 = {0}; _t14.ar = c->arena;
   { size_t _s = 0; for (;;) { nx_sl_u8 _rest = { nx_padd(_t13.ptr, _s), _t13.len - _s }; size_t _i; bool _f = nx_lit("\n", 1).len && nx_sl_find(_rest, nx_lit("\n", 1), &_i); nx_sl_u8 _piece = { _rest.ptr, _f ? _i : _rest.len };
@@ -24213,13 +24217,13 @@ static nx_UpdateCache nx_read_update_cache(nx_ctx* c, nx_sl_u8 path_0) {
     nx_sl_u8 t_4 = nx_sl_trim(line_3);
     bool _t18 = ((((t_4).len)) > (((size_t)8ULL)));
     if (_t18) {
-      nx_slice_check(0, ((size_t)8ULL), t_4.len, "self/nx.nx:1988");
+      nx_slice_check(0, ((size_t)8ULL), t_4.len, "self/nx.nx:1990");
       nx_sl_u8 _t19 = ((nx_sl_u8){ nx_padd(t_4.ptr, 0), ((size_t)8ULL) - 0 });
       _t18 = nx_sl_eq(_t19, nx_lit(nx_str_869, 8));
     }
       if (_t18)
       {
-        nx_slice_check(((size_t)8ULL), t_4.len, t_4.len, "self/nx.nx:1988");
+        nx_slice_check(((size_t)8ULL), t_4.len, t_4.len, "self/nx.nx:1990");
         nx_sl_u8 _t20 = ((nx_sl_u8){ nx_padd(t_4.ptr, ((size_t)8ULL)), t_4.len - ((size_t)8ULL) });
         nx_eu_i64 _t21; { nx_i128 _v = 0; int _r = nx_parse_int(_t20, ((nx_i128)INT64_MIN), ((nx_i128)9223372036854775807LL), &_v); _t21.err = _r == 0 ? 0 : (_r == 1 ? 9u : 5u); if (_r == 0) _t21.val = (int64_t)_v; }
         nx_eu_i64 _t22 = _t21;
@@ -24237,13 +24241,13 @@ static nx_UpdateCache nx_read_update_cache(nx_ctx* c, nx_sl_u8 path_0) {
       {
         bool _t25 = ((((t_4).len)) > (((size_t)8ULL)));
         if (_t25) {
-          nx_slice_check(0, ((size_t)8ULL), t_4.len, "self/nx.nx:1989");
+          nx_slice_check(0, ((size_t)8ULL), t_4.len, "self/nx.nx:1991");
           nx_sl_u8 _t26 = ((nx_sl_u8){ nx_padd(t_4.ptr, 0), ((size_t)8ULL) - 0 });
           _t25 = nx_sl_eq(_t26, nx_lit(nx_str_870, 8));
         }
           if (_t25)
           {
-            nx_slice_check(((size_t)8ULL), t_4.len, t_4.len, "self/nx.nx:1989");
+            nx_slice_check(((size_t)8ULL), t_4.len, t_4.len, "self/nx.nx:1991");
             nx_sl_u8 _t27 = ((nx_sl_u8){ nx_padd(t_4.ptr, ((size_t)8ULL)), t_4.len - ((size_t)8ULL) });
             nx_eu_i64 _t28; { nx_i128 _v = 0; int _r = nx_parse_int(_t27, ((nx_i128)INT64_MIN), ((nx_i128)9223372036854775807LL), &_v); _t28.err = _r == 0 ? 0 : (_r == 1 ? 9u : 5u); if (_r == 0) _t28.val = (int64_t)_v; }
             nx_eu_i64 _t29 = _t28;
@@ -24261,13 +24265,13 @@ static nx_UpdateCache nx_read_update_cache(nx_ctx* c, nx_sl_u8 path_0) {
           {
             bool _t32 = ((((t_4).len)) > (((size_t)7ULL)));
             if (_t32) {
-              nx_slice_check(0, ((size_t)7ULL), t_4.len, "self/nx.nx:1990");
+              nx_slice_check(0, ((size_t)7ULL), t_4.len, "self/nx.nx:1992");
               nx_sl_u8 _t33 = ((nx_sl_u8){ nx_padd(t_4.ptr, 0), ((size_t)7ULL) - 0 });
               _t32 = nx_sl_eq(_t33, nx_lit(nx_str_871, 7));
             }
               if (_t32)
               {
-                nx_slice_check(((size_t)7ULL), t_4.len, t_4.len, "self/nx.nx:1990");
+                nx_slice_check(((size_t)7ULL), t_4.len, t_4.len, "self/nx.nx:1992");
                 nx_sl_u8 _t34 = ((nx_sl_u8){ nx_padd(t_4.ptr, ((size_t)7ULL)), t_4.len - ((size_t)7ULL) });
                 nx_string _t35 = nx_str_from(c, _t34);
                 nx_string _t36 = _t35;
@@ -24298,7 +24302,7 @@ static void nx_write_update_cache(nx_ctx* c, nx_sl_u8 path_0, nx_UpdateCache* c_
     }
   nx_sl_u8 _t1 = nx_dir_of(c, path_0);
   nx_sl_u8 _t2 = _t1;
-  nx_slice_check(0, _t2.len, _t2.len, "self/nx.nx:1997");
+  nx_slice_check(0, _t2.len, _t2.len, "self/nx.nx:1999");
   nx_sl_u8 _t3 = ((nx_sl_u8){ nx_padd(_t2.ptr, 0), _t2.len - 0 });
   nx_eu_void _t4 = nx_m31_make_dirs(c, _t3);
   nx_eu_void _t5 = _t4;
@@ -24318,7 +24322,7 @@ static void nx_write_update_cache(nx_ctx* c, nx_sl_u8 path_0, nx_UpdateCache* c_
   nx_w_sl(&_t7, _t8);
   nx_w(&_t7, (const uint8_t*)nx_str_550, 1);
   nx_string _t9 = _t6;
-  nx_slice_check(0, _t9.len, _t9.len, "self/nx.nx:1998");
+  nx_slice_check(0, _t9.len, _t9.len, "self/nx.nx:2000");
   nx_sl_u8 _t10 = ((nx_sl_u8){ nx_padd(_t9.ptr, 0), _t9.len - 0 });
   nx_eu_void _t11 = ((nx_eu_void){ .err = nx_write_file(path_0, _t10) ? 0 : 8u });
   if (_t11.err) {
@@ -24335,7 +24339,7 @@ static nx_opt_string nx_latest_release(nx_ctx* c, nx_sl_u8 seconds_0) {
   nx_string* _t2 = &(auth_1);
   nx_list_sl_u8 _t3 = nx_github_api_argv(c, seconds_0, _t2);
   nx_list_sl_u8 argv_2 = _t3;
-  nx_slice_check(0, argv_2.len, argv_2.len, "self/nx.nx:2006");
+  nx_slice_check(0, argv_2.len, argv_2.len, "self/nx.nx:2008");
   nx_sl_sl_u8 _t4 = ((nx_sl_sl_u8){ nx_padd(argv_2.ptr, 0), argv_2.len - 0 });
   nx_eu_i32 _t5; { int _code = 0; if (nx_run_capture(c, _t4.ptr, _t4.len, nx_lit(nx_str_6, 0), nx_lit(nx_str_6, 0), &_code)) { _t5.err = 0; _t5.val = _code; } else _t5.err = 8u; }
   nx_eu_i32 _t6 = _t5;
@@ -24356,7 +24360,7 @@ static nx_opt_string nx_latest_release(nx_ctx* c, nx_sl_u8 seconds_0) {
       return _t9;
     }
   nx_string out_4 = nx_last_stdout(c);
-  nx_slice_check(0, out_4.len, out_4.len, "self/nx.nx:2009");
+  nx_slice_check(0, out_4.len, out_4.len, "self/nx.nx:2011");
   nx_sl_u8 _t10 = ((nx_sl_u8){ nx_padd(out_4.ptr, 0), out_4.len - 0 });
   nx_opt_string _t11 = nx_json_string(c, _t10, nx_lit(nx_str_855, 8));
   nx_opt_string _t12 = _t11;
@@ -24372,17 +24376,17 @@ static nx_opt_string nx_latest_release(nx_ctx* c, nx_sl_u8 seconds_0) {
       }
   } else { _t13 = _t12.val; }
   nx_string tag_5 = _t13;
-  nx_slice_check(0, tag_5.len, tag_5.len, "self/nx.nx:2010");
+  nx_slice_check(0, tag_5.len, tag_5.len, "self/nx.nx:2012");
   nx_sl_u8 _t16 = ((nx_sl_u8){ nx_padd(tag_5.ptr, 0), tag_5.len - 0 });
   nx_sl_u8 _t17;
     if (nx_sl_starts_with(_t16, nx_lit(nx_str_857, 1)))
     {
-      nx_slice_check(((size_t)1ULL), tag_5.len, tag_5.len, "self/nx.nx:2010");
+      nx_slice_check(((size_t)1ULL), tag_5.len, tag_5.len, "self/nx.nx:2012");
       _t17 = ((nx_sl_u8){ nx_padd(tag_5.ptr, ((size_t)1ULL)), tag_5.len - ((size_t)1ULL) });
     }
     else
     {
-      nx_slice_check(0, tag_5.len, tag_5.len, "self/nx.nx:2010");
+      nx_slice_check(0, tag_5.len, tag_5.len, "self/nx.nx:2012");
       _t17 = ((nx_sl_u8){ nx_padd(tag_5.ptr, 0), tag_5.len - 0 });
     }
   nx_sl_u8 _t18 = _t17;
@@ -24414,11 +24418,11 @@ static void nx_update_notice(nx_ctx* c) {
     }
   nx_string _t3 = nx_update_cache_path(c);
   nx_string path_1 = _t3;
-  nx_slice_check(0, path_1.len, path_1.len, "self/nx.nx:2022");
+  nx_slice_check(0, path_1.len, path_1.len, "self/nx.nx:2024");
   nx_sl_u8 _t4 = ((nx_sl_u8){ nx_padd(path_1.ptr, 0), path_1.len - 0 });
   nx_UpdateCache _t5 = nx_read_update_cache(c, _t4);
   nx_UpdateCache c_2 = _t5;
-  int64_t now_3 = nx_div_i64(nx_time_now_ms(), ((int64_t)1000LL), "self/nx.nx:2023");
+  int64_t now_3 = nx_div_i64(nx_time_now_ms(), ((int64_t)1000LL), "self/nx.nx:2025");
   int64_t day_4 = ((int64_t)86400LL);
   nx_opt_sl_u8 _t6; { char _nb[256]; size_t _l = nx_lit(nx_str_848, 10).len < 255 ? nx_lit(nx_str_848, 10).len : 255; nx_bytes_copy(_nb, nx_lit(nx_str_848, 10).ptr, _l); _nb[_l] = 0; const char* _v = getenv(_nb); _t6.has = _v != NULL; if (_v) { _t6.val.ptr = (uint8_t*)_v; _t6.val.len = strlen(_v); } }
   bool _t7 = ((_t6).has == (((nx_opt_sl_u8){ .has = false })).has);
@@ -24428,7 +24432,7 @@ static void nx_update_notice(nx_ctx* c) {
   }
   bool _t9 = _t7;
   if (_t9) {
-    _t9 = ((nx_sub_i64(now_3, (c_2).checked_0, "self/nx.nx:2025")) >= (day_4));
+    _t9 = ((nx_sub_i64(now_3, (c_2).checked_0, "self/nx.nx:2027")) >= (day_4));
   }
     if (_t9)
     {
@@ -24445,14 +24449,14 @@ static void nx_update_notice(nx_ctx* c) {
           }
           nx_drop_string(c, &v_5);
         }
-      nx_slice_check(0, path_1.len, path_1.len, "self/nx.nx:2028");
+      nx_slice_check(0, path_1.len, path_1.len, "self/nx.nx:2030");
       nx_sl_u8 _t14 = ((nx_sl_u8){ nx_padd(path_1.ptr, 0), path_1.len - 0 });
       nx_UpdateCache* _t15 = &(c_2);
       nx_write_update_cache(c, _t14, _t15);
     }
   bool _t16 = (((((c_2).latest_2).len)) > (((size_t)0ULL)));
   if (_t16) {
-    nx_slice_check(0, c_2.latest_2.len, c_2.latest_2.len, "self/nx.nx:2030");
+    nx_slice_check(0, c_2.latest_2.len, c_2.latest_2.len, "self/nx.nx:2032");
     nx_sl_u8 _t17 = ((nx_sl_u8){ nx_padd(c_2.latest_2.ptr, 0), c_2.latest_2.len - 0 });
     nx_sl_u8 _t18 = nx_lit(nx_str_0, 5);
     int32_t _t19 = nx_compare_versions(c, _t17, _t18);
@@ -24460,7 +24464,7 @@ static void nx_update_notice(nx_ctx* c) {
   }
   bool _t20 = _t16;
   if (_t20) {
-    _t20 = ((nx_sub_i64(now_3, (c_2).noticed_1, "self/nx.nx:2030")) >= (day_4));
+    _t20 = ((nx_sub_i64(now_3, (c_2).noticed_1, "self/nx.nx:2032")) >= (day_4));
   }
     if (_t20)
     {
@@ -24475,7 +24479,7 @@ static void nx_update_notice(nx_ctx* c) {
       nx_w(&_t21, (const uint8_t*)"\n", 1);
       nx_sink_flush(&_t21);
       c_2.noticed_1 = now_3;
-      nx_slice_check(0, path_1.len, path_1.len, "self/nx.nx:2033");
+      nx_slice_check(0, path_1.len, path_1.len, "self/nx.nx:2035");
       nx_sl_u8 _t24 = ((nx_sl_u8){ nx_padd(path_1.ptr, 0), path_1.len - 0 });
       nx_UpdateCache* _t25 = &(c_2);
       nx_write_update_cache(c, _t24, _t25);
@@ -24500,13 +24504,13 @@ static nx_opt_string nx_cached_newer_release(nx_ctx* c) {
     }
   nx_string _t4 = nx_update_cache_path(c);
   nx_string _t5 = _t4;
-  nx_slice_check(0, _t5.len, _t5.len, "self/nx.nx:2041");
+  nx_slice_check(0, _t5.len, _t5.len, "self/nx.nx:2043");
   nx_sl_u8 _t6 = ((nx_sl_u8){ nx_padd(_t5.ptr, 0), _t5.len - 0 });
   nx_UpdateCache _t7 = nx_read_update_cache(c, _t6);
   nx_UpdateCache c_1 = _t7;
   bool _t8 = (((((c_1).latest_2).len)) > (((size_t)0ULL)));
   if (_t8) {
-    nx_slice_check(0, c_1.latest_2.len, c_1.latest_2.len, "self/nx.nx:2042");
+    nx_slice_check(0, c_1.latest_2.len, c_1.latest_2.len, "self/nx.nx:2044");
     nx_sl_u8 _t9 = ((nx_sl_u8){ nx_padd(c_1.latest_2.ptr, 0), c_1.latest_2.len - 0 });
     nx_sl_u8 _t10 = nx_lit(nx_str_0, 5);
     int32_t _t11 = nx_compare_versions(c, _t9, _t10);
@@ -24546,12 +24550,12 @@ static int32_t nx_cmd_upgrade(nx_ctx* c, bool check_only_0) {
   nx_w_sl(&_t4, _t5);
   nx_w(&_t4, (const uint8_t*)nx_str_519, 4);
   nx_string old_2 = _t3;
-  nx_slice_check(0, old_2.len, old_2.len, "self/nx.nx:2062");
+  nx_slice_check(0, old_2.len, old_2.len, "self/nx.nx:2064");
   nx_sl_u8 _t6 = ((nx_sl_u8){ nx_padd(old_2.ptr, 0), old_2.len - 0 });
   bool _t7 = nx_m31_exists(c, _t6);
     if (_t7)
     {
-      nx_slice_check(0, old_2.len, old_2.len, "self/nx.nx:2062");
+      nx_slice_check(0, old_2.len, old_2.len, "self/nx.nx:2064");
       nx_sl_u8 _t8 = ((nx_sl_u8){ nx_padd(old_2.ptr, 0), old_2.len - 0 });
       nx_eu_void _t9 = nx_m31_remove(c, _t8);
       nx_eu_void _t10 = _t9;
@@ -24577,7 +24581,7 @@ static int32_t nx_cmd_upgrade(nx_ctx* c, bool check_only_0) {
   nx_string* _t15 = &(auth_3);
   nx_list_sl_u8 _t16 = nx_github_api_argv(c, nx_lit(nx_str_880, 2), _t15);
   nx_list_sl_u8 api_4 = _t16;
-  nx_slice_check(0, api_4.len, api_4.len, "self/nx.nx:2069");
+  nx_slice_check(0, api_4.len, api_4.len, "self/nx.nx:2071");
   nx_sl_sl_u8 _t17 = ((nx_sl_sl_u8){ nx_padd(api_4.ptr, 0), api_4.len - 0 });
   nx_eu_i32 _t18; { int _code = 0; if (nx_run_capture(c, _t17.ptr, _t17.len, nx_lit(nx_str_6, 0), nx_lit(nx_str_6, 0), &_code)) { _t18.err = 0; _t18.val = _code; } else _t18.err = 8u; }
   nx_eu_i32 _t19 = _t18;
@@ -24616,7 +24620,7 @@ static int32_t nx_cmd_upgrade(nx_ctx* c, bool check_only_0) {
       return _t24;
     }
   nx_string body_7 = nx_last_stdout(c);
-  nx_slice_check(0, body_7.len, body_7.len, "self/nx.nx:2076");
+  nx_slice_check(0, body_7.len, body_7.len, "self/nx.nx:2078");
   nx_sl_u8 _t25 = ((nx_sl_u8){ nx_padd(body_7.ptr, 0), body_7.len - 0 });
   nx_opt_string _t26 = nx_json_string(c, _t25, nx_lit(nx_str_855, 8));
   nx_opt_string _t27 = _t26;
@@ -24638,17 +24642,17 @@ static int32_t nx_cmd_upgrade(nx_ctx* c, bool check_only_0) {
       }
   } else { _t28 = _t27.val; }
   nx_string tag_8 = _t28;
-  nx_slice_check(0, tag_8.len, tag_8.len, "self/nx.nx:2080");
+  nx_slice_check(0, tag_8.len, tag_8.len, "self/nx.nx:2082");
   nx_sl_u8 _t32 = ((nx_sl_u8){ nx_padd(tag_8.ptr, 0), tag_8.len - 0 });
   nx_sl_u8 _t33;
     if (nx_sl_starts_with(_t32, nx_lit(nx_str_857, 1)))
     {
-      nx_slice_check(((size_t)1ULL), tag_8.len, tag_8.len, "self/nx.nx:2080");
+      nx_slice_check(((size_t)1ULL), tag_8.len, tag_8.len, "self/nx.nx:2082");
       _t33 = ((nx_sl_u8){ nx_padd(tag_8.ptr, ((size_t)1ULL)), tag_8.len - ((size_t)1ULL) });
     }
     else
     {
-      nx_slice_check(0, tag_8.len, tag_8.len, "self/nx.nx:2080");
+      nx_slice_check(0, tag_8.len, tag_8.len, "self/nx.nx:2082");
       _t33 = ((nx_sl_u8){ nx_padd(tag_8.ptr, 0), tag_8.len - 0 });
     }
   nx_sl_u8 latest_9 = _t33;
@@ -24773,7 +24777,7 @@ static int32_t nx_cmd_upgrade(nx_ctx* c, bool check_only_0) {
   nx_string base_16 = _t62;
   nx_string _t65 = nx_m31_temp_path(c, nx_lit(nx_str_893, 10));
   nx_string tmp_17 = _t65;
-  nx_slice_check(0, tmp_17.len, tmp_17.len, "self/nx.nx:2101");
+  nx_slice_check(0, tmp_17.len, tmp_17.len, "self/nx.nx:2103");
   nx_sl_u8 _t66 = ((nx_sl_u8){ nx_padd(tmp_17.ptr, 0), tmp_17.len - 0 });
   nx_eu_void _t67 = nx_m31_make_dirs(c, _t66);
   nx_eu_void _t68 = _t67;
@@ -24799,9 +24803,9 @@ static int32_t nx_cmd_upgrade(nx_ctx* c, bool check_only_0) {
       return _t71;
     }
   }
-  nx_slice_check(0, tmp_17.len, tmp_17.len, "self/nx.nx:2105");
+  nx_slice_check(0, tmp_17.len, tmp_17.len, "self/nx.nx:2107");
   nx_sl_u8 _t72 = ((nx_sl_u8){ nx_padd(tmp_17.ptr, 0), tmp_17.len - 0 });
-  nx_slice_check(0, asset_15.len, asset_15.len, "self/nx.nx:2105");
+  nx_slice_check(0, asset_15.len, asset_15.len, "self/nx.nx:2107");
   nx_sl_u8 _t73 = ((nx_sl_u8){ nx_padd(asset_15.ptr, 0), asset_15.len - 0 });
   nx_string _t74 = nx_m31_join(c, _t72, _t73);
   nx_string archive_18 = _t74;
@@ -24819,9 +24823,9 @@ static int32_t nx_cmd_upgrade(nx_ctx* c, bool check_only_0) {
   nx_w(&_t78, (const uint8_t*)nx_str_499, 1);
   nx_w_sl(&_t78, _t80);
   nx_string _t81 = _t77;
-  nx_slice_check(0, _t81.len, _t81.len, "self/nx.nx:2107");
+  nx_slice_check(0, _t81.len, _t81.len, "self/nx.nx:2109");
   nx_sl_u8 _t82 = ((nx_sl_u8){ nx_padd(_t81.ptr, 0), _t81.len - 0 });
-  nx_slice_check(0, archive_18.len, archive_18.len, "self/nx.nx:2107");
+  nx_slice_check(0, archive_18.len, archive_18.len, "self/nx.nx:2109");
   nx_sl_u8 _t83 = ((nx_sl_u8){ nx_padd(archive_18.ptr, 0), archive_18.len - 0 });
   bool _t84 = nx_curl_to(c, _t82, _t83);
     if ((!(_t84)))
@@ -24851,7 +24855,7 @@ static int32_t nx_cmd_upgrade(nx_ctx* c, bool check_only_0) {
       nx_drop_string(c, &exe_1);
       return _t88;
     }
-  nx_slice_check(0, tmp_17.len, tmp_17.len, "self/nx.nx:2111");
+  nx_slice_check(0, tmp_17.len, tmp_17.len, "self/nx.nx:2113");
   nx_sl_u8 _t89 = ((nx_sl_u8){ nx_padd(tmp_17.ptr, 0), tmp_17.len - 0 });
   nx_string _t90 = nx_m31_join(c, _t89, nx_lit(nx_str_897, 14));
   nx_string sums_19 = _t90;
@@ -24861,9 +24865,9 @@ static int32_t nx_cmd_upgrade(nx_ctx* c, bool check_only_0) {
   nx_w_sl(&_t92, _t93);
   nx_w(&_t92, (const uint8_t*)nx_str_898, 15);
   nx_string _t94 = _t91;
-  nx_slice_check(0, _t94.len, _t94.len, "self/nx.nx:2112");
+  nx_slice_check(0, _t94.len, _t94.len, "self/nx.nx:2114");
   nx_sl_u8 _t95 = ((nx_sl_u8){ nx_padd(_t94.ptr, 0), _t94.len - 0 });
-  nx_slice_check(0, sums_19.len, sums_19.len, "self/nx.nx:2112");
+  nx_slice_check(0, sums_19.len, sums_19.len, "self/nx.nx:2114");
   nx_sl_u8 _t96 = ((nx_sl_u8){ nx_padd(sums_19.ptr, 0), sums_19.len - 0 });
   bool _t97 = nx_curl_to(c, _t95, _t96);
     if ((!(_t97)))
@@ -24891,9 +24895,9 @@ static int32_t nx_cmd_upgrade(nx_ctx* c, bool check_only_0) {
       nx_drop_string(c, &exe_1);
       return _t100;
     }
-  nx_slice_check(0, sums_19.len, sums_19.len, "self/nx.nx:2116");
+  nx_slice_check(0, sums_19.len, sums_19.len, "self/nx.nx:2118");
   nx_sl_u8 _t101 = ((nx_sl_u8){ nx_padd(sums_19.ptr, 0), sums_19.len - 0 });
-  nx_slice_check(0, asset_15.len, asset_15.len, "self/nx.nx:2116");
+  nx_slice_check(0, asset_15.len, asset_15.len, "self/nx.nx:2118");
   nx_sl_u8 _t102 = ((nx_sl_u8){ nx_padd(asset_15.ptr, 0), asset_15.len - 0 });
   nx_opt_string _t103 = nx_checksum_listed(c, _t101, _t102);
   nx_opt_string _t104 = _t103;
@@ -24927,7 +24931,7 @@ static int32_t nx_cmd_upgrade(nx_ctx* c, bool check_only_0) {
       }
   } else { _t105 = _t104.val; }
   nx_string want_20 = _t105;
-  nx_slice_check(0, archive_18.len, archive_18.len, "self/nx.nx:2120");
+  nx_slice_check(0, archive_18.len, archive_18.len, "self/nx.nx:2122");
   nx_sl_u8 _t110 = ((nx_sl_u8){ nx_padd(archive_18.ptr, 0), archive_18.len - 0 });
   nx_opt_string _t111 = nx_sha256_of(c, _t110);
   nx_opt_string _t112 = _t111;
@@ -24962,9 +24966,9 @@ static int32_t nx_cmd_upgrade(nx_ctx* c, bool check_only_0) {
       }
   } else { _t113 = _t112.val; }
   nx_string got_21 = _t113;
-  nx_slice_check(0, want_20.len, want_20.len, "self/nx.nx:2124");
+  nx_slice_check(0, want_20.len, want_20.len, "self/nx.nx:2126");
   nx_sl_u8 _t118 = ((nx_sl_u8){ nx_padd(want_20.ptr, 0), want_20.len - 0 });
-  nx_slice_check(0, got_21.len, got_21.len, "self/nx.nx:2124");
+  nx_slice_check(0, got_21.len, got_21.len, "self/nx.nx:2126");
   nx_sl_u8 _t119 = ((nx_sl_u8){ nx_padd(got_21.ptr, 0), got_21.len - 0 });
     if ((!(nx_sl_eq(_t118, _t119))))
     {
@@ -25004,11 +25008,11 @@ static int32_t nx_cmd_upgrade(nx_ctx* c, bool check_only_0) {
   nx_w(&_t125, (const uint8_t*)nx_str_907, 11);
   nx_w(&_t125, (const uint8_t*)"\n", 1);
   nx_sink_flush(&_t125);
-  nx_slice_check(0, tmp_17.len, tmp_17.len, "self/nx.nx:2129");
+  nx_slice_check(0, tmp_17.len, tmp_17.len, "self/nx.nx:2131");
   nx_sl_u8 _t126 = ((nx_sl_u8){ nx_padd(tmp_17.ptr, 0), tmp_17.len - 0 });
   nx_string _t127 = nx_m31_join(c, _t126, nx_lit(nx_str_908, 8));
   nx_string unpack_22 = _t127;
-  nx_slice_check(0, unpack_22.len, unpack_22.len, "self/nx.nx:2130");
+  nx_slice_check(0, unpack_22.len, unpack_22.len, "self/nx.nx:2132");
   nx_sl_u8 _t128 = ((nx_sl_u8){ nx_padd(unpack_22.ptr, 0), unpack_22.len - 0 });
   nx_eu_void _t129 = nx_m31_make_dirs(c, _t128);
   nx_eu_void _t130 = _t129;
@@ -25016,11 +25020,11 @@ static int32_t nx_cmd_upgrade(nx_ctx* c, bool check_only_0) {
     {
     }
   }
-  nx_slice_check(0, archive_18.len, archive_18.len, "self/nx.nx:2131");
-  nx_slice_check(0, unpack_22.len, unpack_22.len, "self/nx.nx:2131");
+  nx_slice_check(0, archive_18.len, archive_18.len, "self/nx.nx:2133");
+  nx_slice_check(0, unpack_22.len, unpack_22.len, "self/nx.nx:2133");
   nx_arr5_sl_u8 _t131 = ((nx_arr5_sl_u8){ { nx_lit(nx_str_909, 3), nx_lit(nx_str_910, 3), ((nx_sl_u8){ nx_padd(archive_18.ptr, 0), archive_18.len - 0 }), nx_lit(nx_str_911, 2), ((nx_sl_u8){ nx_padd(unpack_22.ptr, 0), unpack_22.len - 0 }) } });
   nx_sl_sl_u8 untar_23 = ((nx_sl_sl_u8){ _t131.v, 5 });
-  nx_slice_check(0, untar_23.len, untar_23.len, "self/nx.nx:2132");
+  nx_slice_check(0, untar_23.len, untar_23.len, "self/nx.nx:2134");
   nx_sl_sl_u8 _t132 = ((nx_sl_sl_u8){ nx_padd(untar_23.ptr, 0), untar_23.len - 0 });
   nx_eu_i32 _t133; { int _code = 0; if (nx_run_capture(c, _t132.ptr, _t132.len, nx_lit(nx_str_6, 0), nx_lit(nx_str_6, 0), &_code)) { _t133.err = 0; _t133.val = _code; } else _t133.err = 8u; }
   nx_eu_i32 _t134 = _t133;
@@ -25061,11 +25065,11 @@ static int32_t nx_cmd_upgrade(nx_ctx* c, bool check_only_0) {
       nx_drop_string(c, &exe_1);
       return _t139;
     }
-  nx_slice_check(0, unpack_22.len, unpack_22.len, "self/nx.nx:2137");
+  nx_slice_check(0, unpack_22.len, unpack_22.len, "self/nx.nx:2139");
   nx_sl_u8 _t140 = ((nx_sl_u8){ nx_padd(unpack_22.ptr, 0), unpack_22.len - 0 });
   nx_string _t141 = nx_m31_join(c, _t140, name_13);
   nx_string fresh_25 = _t141;
-  nx_slice_check(0, fresh_25.len, fresh_25.len, "self/nx.nx:2138");
+  nx_slice_check(0, fresh_25.len, fresh_25.len, "self/nx.nx:2140");
   nx_sl_u8 _t142 = ((nx_sl_u8){ nx_padd(fresh_25.ptr, 0), fresh_25.len - 0 });
   bool _t143 = nx_m31_exists(c, _t142);
     if ((!(_t143)))
@@ -25099,9 +25103,9 @@ static int32_t nx_cmd_upgrade(nx_ctx* c, bool check_only_0) {
       nx_drop_string(c, &exe_1);
       return _t146;
     }
-  nx_slice_check(0, exe_1.len, exe_1.len, "self/nx.nx:2144");
+  nx_slice_check(0, exe_1.len, exe_1.len, "self/nx.nx:2146");
   nx_sl_u8 _t147 = ((nx_sl_u8){ nx_padd(exe_1.ptr, 0), exe_1.len - 0 });
-  nx_slice_check(0, old_2.len, old_2.len, "self/nx.nx:2144");
+  nx_slice_check(0, old_2.len, old_2.len, "self/nx.nx:2146");
   nx_sl_u8 _t148 = ((nx_sl_u8){ nx_padd(old_2.ptr, 0), old_2.len - 0 });
   nx_eu_void _t149 = nx_m31_rename(c, _t147, _t148);
   nx_eu_void _t150 = _t149;
@@ -25137,9 +25141,9 @@ static int32_t nx_cmd_upgrade(nx_ctx* c, bool check_only_0) {
     }
   }
   bool placed_26 = true;
-  nx_slice_check(0, fresh_25.len, fresh_25.len, "self/nx.nx:2149");
+  nx_slice_check(0, fresh_25.len, fresh_25.len, "self/nx.nx:2151");
   nx_sl_u8 _t154 = ((nx_sl_u8){ nx_padd(fresh_25.ptr, 0), fresh_25.len - 0 });
-  nx_slice_check(0, exe_1.len, exe_1.len, "self/nx.nx:2149");
+  nx_slice_check(0, exe_1.len, exe_1.len, "self/nx.nx:2151");
   nx_sl_u8 _t155 = ((nx_sl_u8){ nx_padd(exe_1.ptr, 0), exe_1.len - 0 });
   nx_eu_void _t156 = nx_m31_rename(c, _t154, _t155);
   nx_eu_void _t157 = _t156;
@@ -25152,17 +25156,17 @@ static int32_t nx_cmd_upgrade(nx_ctx* c, bool check_only_0) {
     {
         if (nx_sl_eq(host_11, nx_lit(nx_str_567, 7)))
         {
-          nx_slice_check(0, fresh_25.len, fresh_25.len, "self/nx.nx:2152");
+          nx_slice_check(0, fresh_25.len, fresh_25.len, "self/nx.nx:2154");
           nx_sl_u8 _t158 = ((nx_sl_u8){ nx_padd(fresh_25.ptr, 0), fresh_25.len - 0 });
-          nx_slice_check(0, exe_1.len, exe_1.len, "self/nx.nx:2152");
+          nx_slice_check(0, exe_1.len, exe_1.len, "self/nx.nx:2154");
           nx_sl_u8 _t159 = ((nx_sl_u8){ nx_padd(exe_1.ptr, 0), exe_1.len - 0 });
           nx_eu_void _t160 = nx_m31_copy(c, _t158, _t159);
           nx_eu_void _t161 = _t160;
           if (_t161.err) {
             {
-              nx_slice_check(0, old_2.len, old_2.len, "self/nx.nx:2153");
+              nx_slice_check(0, old_2.len, old_2.len, "self/nx.nx:2155");
               nx_sl_u8 _t162 = ((nx_sl_u8){ nx_padd(old_2.ptr, 0), old_2.len - 0 });
-              nx_slice_check(0, exe_1.len, exe_1.len, "self/nx.nx:2153");
+              nx_slice_check(0, exe_1.len, exe_1.len, "self/nx.nx:2155");
               nx_sl_u8 _t163 = ((nx_sl_u8){ nx_padd(exe_1.ptr, 0), exe_1.len - 0 });
               nx_eu_void _t164 = nx_m31_rename(c, _t162, _t163);
               nx_eu_void _t165 = _t164;
@@ -25201,11 +25205,11 @@ static int32_t nx_cmd_upgrade(nx_ctx* c, bool check_only_0) {
         }
         else
         {
-          nx_slice_check(0, fresh_25.len, fresh_25.len, "self/nx.nx:2158");
-          nx_slice_check(0, exe_1.len, exe_1.len, "self/nx.nx:2158");
+          nx_slice_check(0, fresh_25.len, fresh_25.len, "self/nx.nx:2160");
+          nx_slice_check(0, exe_1.len, exe_1.len, "self/nx.nx:2160");
           nx_arr4_sl_u8 _t169 = ((nx_arr4_sl_u8){ { nx_lit(nx_str_558, 2), nx_lit(nx_str_559, 2), ((nx_sl_u8){ nx_padd(fresh_25.ptr, 0), fresh_25.len - 0 }), ((nx_sl_u8){ nx_padd(exe_1.ptr, 0), exe_1.len - 0 }) } });
           nx_sl_sl_u8 cp_27 = ((nx_sl_sl_u8){ _t169.v, 4 });
-          nx_slice_check(0, cp_27.len, cp_27.len, "self/nx.nx:2159");
+          nx_slice_check(0, cp_27.len, cp_27.len, "self/nx.nx:2161");
           nx_sl_sl_u8 _t170 = ((nx_sl_sl_u8){ nx_padd(cp_27.ptr, 0), cp_27.len - 0 });
           nx_eu_i32 _t171; { int _code = 0; if (nx_run_capture(c, _t170.ptr, _t170.len, nx_lit(nx_str_6, 0), nx_lit(nx_str_6, 0), &_code)) { _t171.err = 0; _t171.val = _code; } else _t171.err = 8u; }
           nx_eu_i32 _t172 = _t171;
@@ -25220,9 +25224,9 @@ static int32_t nx_cmd_upgrade(nx_ctx* c, bool check_only_0) {
           int32_t ccode_28 = _t173;
             if (((ccode_28) != (((int32_t)0LL))))
             {
-              nx_slice_check(0, old_2.len, old_2.len, "self/nx.nx:2161");
+              nx_slice_check(0, old_2.len, old_2.len, "self/nx.nx:2163");
               nx_sl_u8 _t175 = ((nx_sl_u8){ nx_padd(old_2.ptr, 0), old_2.len - 0 });
-              nx_slice_check(0, exe_1.len, exe_1.len, "self/nx.nx:2161");
+              nx_slice_check(0, exe_1.len, exe_1.len, "self/nx.nx:2163");
               nx_sl_u8 _t176 = ((nx_sl_u8){ nx_padd(exe_1.ptr, 0), exe_1.len - 0 });
               nx_eu_void _t177 = nx_m31_rename(c, _t175, _t176);
               nx_eu_void _t178 = _t177;
@@ -25259,7 +25263,7 @@ static int32_t nx_cmd_upgrade(nx_ctx* c, bool check_only_0) {
             }
         }
     }
-  nx_slice_check(0, old_2.len, old_2.len, "self/nx.nx:2167");
+  nx_slice_check(0, old_2.len, old_2.len, "self/nx.nx:2169");
   nx_sl_u8 _t182 = ((nx_sl_u8){ nx_padd(old_2.ptr, 0), old_2.len - 0 });
   nx_eu_void _t183 = nx_m31_remove(c, _t182);
   nx_eu_void _t184 = _t183;
@@ -25267,7 +25271,7 @@ static int32_t nx_cmd_upgrade(nx_ctx* c, bool check_only_0) {
     {
     }
   }
-  nx_slice_check(0, tmp_17.len, tmp_17.len, "self/nx.nx:2168");
+  nx_slice_check(0, tmp_17.len, tmp_17.len, "self/nx.nx:2170");
   nx_sl_u8 _t185 = ((nx_sl_u8){ nx_padd(tmp_17.ptr, 0), tmp_17.len - 0 });
   nx_eu_void _t186 = nx_m31_remove_all(c, _t185);
   nx_eu_void _t187 = _t186;
@@ -25388,7 +25392,7 @@ static nx_list_sl_u8 nx_github_api_argv(nx_ctx* c, nx_sl_u8 seconds_0, nx_string
       nx_list_sl_u8* _t23 = &(argv_2);
       if (_t23->len == _t23->cap) nx_list_grow(c, (nx_rawlist*)_t23, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t23->len + 1);
       _t23->ptr[_t23->len++] = _t22;
-      nx_slice_check(0, (*auth_1).len, (*auth_1).len, "self/nx.nx:2190");
+      nx_slice_check(0, (*auth_1).len, (*auth_1).len, "self/nx.nx:2192");
       nx_sl_u8 _t24 = ((nx_sl_u8){ nx_padd((*auth_1).ptr, 0), (*auth_1).len - 0 });
       nx_list_sl_u8* _t25 = &(argv_2);
       if (_t25->len == _t25->cap) nx_list_grow(c, (nx_rawlist*)_t25, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t25->len + 1);
@@ -25409,7 +25413,7 @@ static bool nx_curl_to(nx_ctx* c, nx_sl_u8 url_0, nx_sl_u8 path_1) {
   NX_UNUSED(c);
   nx_arr7_sl_u8 _t1 = ((nx_arr7_sl_u8){ { nx_lit(nx_str_919, 4), nx_lit(nx_str_920, 5), nx_lit(nx_str_748, 2), nx_lit(nx_str_927, 3), nx_lit(nx_str_471, 2), path_1, url_0 } });
   nx_sl_sl_u8 argv_2 = ((nx_sl_sl_u8){ _t1.v, 7 });
-  nx_slice_check(0, argv_2.len, argv_2.len, "self/nx.nx:2199");
+  nx_slice_check(0, argv_2.len, argv_2.len, "self/nx.nx:2201");
   nx_sl_sl_u8 _t2 = ((nx_sl_sl_u8){ nx_padd(argv_2.ptr, 0), argv_2.len - 0 });
   nx_eu_i32 _t3; { int _code = 0; if (nx_run_capture(c, _t2.ptr, _t2.len, nx_lit(nx_str_6, 0), nx_lit(nx_str_6, 0), &_code)) { _t3.err = 0; _t3.val = _code; } else _t3.err = 8u; }
   nx_eu_i32 _t4 = _t3;
@@ -25439,7 +25443,7 @@ static nx_opt_string nx_checksum_listed(nx_ctx* c, nx_sl_u8 sums_path_0, nx_sl_u
       }
   } else { _t3 = _t2.val; }
   nx_string text_2 = _t3;
-  nx_slice_check(0, text_2.len, text_2.len, "self/nx.nx:2206");
+  nx_slice_check(0, text_2.len, text_2.len, "self/nx.nx:2208");
   nx_sl_u8 _t6 = ((nx_sl_u8){ nx_padd(text_2.ptr, 0), text_2.len - 0 });
   nx_list_sl_u8 _t7 = {0}; _t7.ar = c->arena;
   { size_t _s = 0; for (;;) { nx_sl_u8 _rest = { nx_padd(_t6.ptr, _s), _t6.len - _s }; size_t _i; bool _f = nx_lit("\n", 1).len && nx_sl_find(_rest, nx_lit("\n", 1), &_i); nx_sl_u8 _piece = { _rest.ptr, _f ? _i : _rest.len };
@@ -25460,14 +25464,14 @@ static nx_opt_string nx_checksum_listed(nx_ctx* c, nx_sl_u8 sums_path_0, nx_sl_u
       {
         goto nx_cont_0;
       }
-    nx_slice_check(((size_t)64ULL), t_4.len, t_4.len, "self/nx.nx:2209");
+    nx_slice_check(((size_t)64ULL), t_4.len, t_4.len, "self/nx.nx:2211");
     nx_sl_u8 _t12 = ((nx_sl_u8){ nx_padd(t_4.ptr, ((size_t)64ULL)), t_4.len - ((size_t)64ULL) });
     nx_sl_u8 rest_5 = nx_sl_trim(_t12);
       if ((!(nx_sl_eq(rest_5, asset_1))))
       {
         goto nx_cont_0;
       }
-    nx_slice_check(((size_t)0ULL), ((size_t)64ULL), t_4.len, "self/nx.nx:2211");
+    nx_slice_check(((size_t)0ULL), ((size_t)64ULL), t_4.len, "self/nx.nx:2213");
     nx_sl_u8 _t13 = ((nx_sl_u8){ nx_padd(t_4.ptr, ((size_t)0ULL)), ((size_t)64ULL) - ((size_t)0ULL) });
     nx_string _t14 = nx_m34_to_lower(c, _t13);
     nx_opt_string _t15 = ((nx_opt_string){ .has = true, .val = _t14 });
@@ -25498,7 +25502,7 @@ static nx_opt_string nx_sha256_of(nx_ctx* c, nx_sl_u8 path_0) {
       }
   } else { _t3 = _t2.val; }
   nx_string data_1 = _t3;
-  nx_slice_check(0, data_1.len, data_1.len, "self/nx.nx:2220");
+  nx_slice_check(0, data_1.len, data_1.len, "self/nx.nx:2222");
   nx_sl_u8 _t6 = ((nx_sl_u8){ nx_padd(data_1.ptr, 0), data_1.len - 0 });
   nx_string _t7 = nx_m32_sha256_hex(c, _t6);
   nx_opt_string _t8 = ((nx_opt_string){ .has = true, .val = _t7 });
@@ -25569,7 +25573,7 @@ static int32_t nx_compare_versions(nx_ctx* c, nx_sl_u8 a_0, nx_sl_u8 b_1) {
     uint64_t _t4;
       if (((k_4) < (((pa_2).len))))
       {
-        nx_sl_u8 _t5 = pa_2.ptr[nx_idx(k_4, pa_2.len, "self/nx.nx:2236")];
+        nx_sl_u8 _t5 = pa_2.ptr[nx_idx(k_4, pa_2.len, "self/nx.nx:2238")];
         nx_eu_u64 _t6; { nx_u128 _v = 0; int _r = nx_parse_uint(_t5, ((nx_u128)18446744073709551615ULL), &_v); _t6.err = _r == 0 ? 0 : (_r == 1 ? 9u : 5u); if (_r == 0) _t6.val = (uint64_t)_v; }
         nx_eu_u64 _t7 = _t6;
         uint64_t _t8;
@@ -25590,7 +25594,7 @@ static int32_t nx_compare_versions(nx_ctx* c, nx_sl_u8 a_0, nx_sl_u8 b_1) {
     uint64_t _t10;
       if (((k_4) < (((pb_3).len))))
       {
-        nx_sl_u8 _t11 = pb_3.ptr[nx_idx(k_4, pb_3.len, "self/nx.nx:2237")];
+        nx_sl_u8 _t11 = pb_3.ptr[nx_idx(k_4, pb_3.len, "self/nx.nx:2239")];
         nx_eu_u64 _t12; { nx_u128 _v = 0; int _r = nx_parse_uint(_t11, ((nx_u128)18446744073709551615ULL), &_v); _t12.err = _r == 0 ? 0 : (_r == 1 ? 9u : 5u); if (_r == 0) _t12.val = (uint64_t)_v; }
         nx_eu_u64 _t13 = _t12;
         uint64_t _t14;
@@ -25637,11 +25641,11 @@ static bool nx_doctor_smoke(nx_ctx* c, nx_Opts* o_0) {
   NX_UNUSED(c);
   nx_string _t1 = nx_m31_temp_dir(c);
   nx_string _t2 = _t1;
-  nx_slice_check(0, _t2.len, _t2.len, "self/nx.nx:2246");
+  nx_slice_check(0, _t2.len, _t2.len, "self/nx.nx:2248");
   nx_sl_u8 _t3 = ((nx_sl_u8){ nx_padd(_t2.ptr, 0), _t2.len - 0 });
   nx_string _t4 = nx_m31_join(c, _t3, nx_lit(nx_str_928, 9));
   nx_string dir_1 = _t4;
-  nx_slice_check(0, dir_1.len, dir_1.len, "self/nx.nx:2247");
+  nx_slice_check(0, dir_1.len, dir_1.len, "self/nx.nx:2249");
   nx_sl_u8 _t5 = ((nx_sl_u8){ nx_padd(dir_1.ptr, 0), dir_1.len - 0 });
   nx_eu_void _t6 = nx_m31_make_dirs(c, _t5);
   nx_eu_void _t7 = _t6;
@@ -25649,11 +25653,11 @@ static bool nx_doctor_smoke(nx_ctx* c, nx_Opts* o_0) {
     {
     }
   }
-  nx_slice_check(0, dir_1.len, dir_1.len, "self/nx.nx:2248");
+  nx_slice_check(0, dir_1.len, dir_1.len, "self/nx.nx:2250");
   nx_sl_u8 _t8 = ((nx_sl_u8){ nx_padd(dir_1.ptr, 0), dir_1.len - 0 });
   nx_string _t9 = nx_m31_join(c, _t8, nx_lit(nx_str_929, 8));
   nx_string src_2 = _t9;
-  nx_slice_check(0, src_2.len, src_2.len, "self/nx.nx:2249");
+  nx_slice_check(0, src_2.len, src_2.len, "self/nx.nx:2251");
   nx_sl_u8 _t10 = ((nx_sl_u8){ nx_padd(src_2.ptr, 0), src_2.len - 0 });
   nx_eu_void _t11 = ((nx_eu_void){ .err = nx_write_file(_t10, nx_lit(nx_str_930, 44)) ? 0 : 8u });
   if (_t11.err) {
@@ -25707,12 +25711,12 @@ static bool nx_doctor_smoke(nx_ctx* c, nx_Opts* o_0) {
       return _t27;
     }
   nx_list_sl_u8 argv_5 = ((nx_list_sl_u8){NULL, 0, 0, c->arena});
-  nx_slice_check(0, exe_4.len, exe_4.len, "self/nx.nx:2264");
+  nx_slice_check(0, exe_4.len, exe_4.len, "self/nx.nx:2266");
   nx_sl_u8 _t28 = ((nx_sl_u8){ nx_padd(exe_4.ptr, 0), exe_4.len - 0 });
   nx_list_sl_u8* _t29 = &(argv_5);
   if (_t29->len == _t29->cap) nx_list_grow(c, (nx_rawlist*)_t29, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t29->len + 1);
   _t29->ptr[_t29->len++] = _t28;
-  nx_slice_check(0, argv_5.len, argv_5.len, "self/nx.nx:2265");
+  nx_slice_check(0, argv_5.len, argv_5.len, "self/nx.nx:2267");
   nx_sl_sl_u8 _t30 = ((nx_sl_sl_u8){ nx_padd(argv_5.ptr, 0), argv_5.len - 0 });
   nx_eu_i32 _t31; { int _code = 0; if (nx_run_capture(c, _t30.ptr, _t30.len, nx_lit(nx_str_6, 0), nx_lit(nx_str_6, 0), &_code)) { _t31.err = 0; _t31.val = _code; } else _t31.err = 8u; }
   nx_eu_i32 _t32 = _t31;
@@ -25726,7 +25730,7 @@ static bool nx_doctor_smoke(nx_ctx* c, nx_Opts* o_0) {
   } else { _t33 = _t32.val; }
   int32_t code_6 = _t33;
   nx_string out_7 = nx_last_stdout(c);
-  nx_slice_check(0, exe_4.len, exe_4.len, "self/nx.nx:2267");
+  nx_slice_check(0, exe_4.len, exe_4.len, "self/nx.nx:2269");
   nx_sl_u8 _t35 = ((nx_sl_u8){ nx_padd(exe_4.ptr, 0), exe_4.len - 0 });
   nx_eu_void _t36; { int32_t _r = nx_fs_remove_file(_t35); _t36.err = _r == 0 ? 0 : _r == 1 ? 7u : 8u; }
   nx_eu_void _t37 = _t36;
@@ -25734,7 +25738,7 @@ static bool nx_doctor_smoke(nx_ctx* c, nx_Opts* o_0) {
     {
     }
   }
-  nx_slice_check(0, src_2.len, src_2.len, "self/nx.nx:2268");
+  nx_slice_check(0, src_2.len, src_2.len, "self/nx.nx:2270");
   nx_sl_u8 _t38 = ((nx_sl_u8){ nx_padd(src_2.ptr, 0), src_2.len - 0 });
   nx_eu_void _t39; { int32_t _r = nx_fs_remove_file(_t38); _t39.err = _r == 0 ? 0 : _r == 1 ? 7u : 8u; }
   nx_eu_void _t40 = _t39;
@@ -25744,7 +25748,7 @@ static bool nx_doctor_smoke(nx_ctx* c, nx_Opts* o_0) {
   }
   bool _t41 = ((code_6) == (((int32_t)0LL)));
   if (_t41) {
-    nx_slice_check(0, out_7.len, out_7.len, "self/nx.nx:2269");
+    nx_slice_check(0, out_7.len, out_7.len, "self/nx.nx:2271");
     nx_sl_u8 _t42 = ((nx_sl_u8){ nx_padd(out_7.ptr, 0), out_7.len - 0 });
     nx_opt_usize _t43; { size_t _i; _t43.has = nx_sl_find(_t42, nx_lit(nx_str_933, 13), &_i); _t43.val = _i; }
     _t41 = ((_t43).has != (((nx_opt_usize){ .has = false })).has);
@@ -25789,7 +25793,7 @@ static bool nx_doctor_smoke(nx_ctx* c, nx_Opts* o_0) {
     {
       nx_sink _t50 = nx_sink_file(c, c->out);
       nx_string _t51 = nx_last_stderr(c);
-      nx_slice_check(0, _t51.len, _t51.len, "self/nx.nx:2277");
+      nx_slice_check(0, _t51.len, _t51.len, "self/nx.nx:2279");
       nx_sl_u8 _t52 = ((nx_sl_u8){ nx_padd(_t51.ptr, 0), _t51.len - 0 });
       nx_sl_u8 _t53 = nx_sl_trim(_t52);
       nx_w(&_t50, (const uint8_t*)nx_str_835, 13);
@@ -25821,8 +25825,8 @@ static nx_string nx_compiler_summary(nx_ctx* c, nx_Opts* o_0) {
   nx_sl_u8 _t1;
     if (((((((*o_0)).cc_6).len)) > (((size_t)0ULL))))
     {
-      nx_slice_check(0, (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:2284")].len, (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:2284")].len, "self/nx.nx:2284");
-      _t1 = ((nx_sl_u8){ nx_padd((*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:2284")].ptr, 0), (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:2284")].len - 0 });
+      nx_slice_check(0, (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:2286")].len, (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:2286")].len, "self/nx.nx:2286");
+      _t1 = ((nx_sl_u8){ nx_padd((*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:2286")].ptr, 0), (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:2286")].len - 0 });
     }
     else
     {
@@ -25831,7 +25835,7 @@ static nx_string nx_compiler_summary(nx_ctx* c, nx_Opts* o_0) {
   nx_sl_u8 _t2 = _t1;
   nx_string _t3 = nx_str_from(c, _t2);
   nx_string base_1 = _t3;
-  nx_slice_check(0, base_1.len, base_1.len, "self/nx.nx:2285");
+  nx_slice_check(0, base_1.len, base_1.len, "self/nx.nx:2287");
   nx_sl_u8 _t4 = ((nx_sl_u8){ nx_padd(base_1.ptr, 0), base_1.len - 0 });
   nx_sl_u8 _t5 = nx_stem_of(c, _t4);
   nx_sl_u8 stem_2 = _t5;
@@ -25844,7 +25848,7 @@ static nx_string nx_compiler_summary(nx_ctx* c, nx_Opts* o_0) {
     }
   nx_sl_u8 _t8 = nx_cc_why(c, o_0);
   nx_sl_u8 why_3 = _t8;
-  nx_slice_check(0, base_1.len, base_1.len, "self/nx.nx:2288");
+  nx_slice_check(0, base_1.len, base_1.len, "self/nx.nx:2290");
   nx_sl_u8 _t9 = ((nx_sl_u8){ nx_padd(base_1.ptr, 0), base_1.len - 0 });
     if (nx_sl_starts_with(why_3, _t9))
     {
@@ -25867,7 +25871,7 @@ static nx_string nx_compiler_summary(nx_ctx* c, nx_Opts* o_0) {
 
 static nx_opt_string nx_march_flag(nx_ctx* c, nx_Opts* o_0) {
   NX_UNUSED(c);
-  nx_slice_check(0, (*o_0).cpu_11.len, (*o_0).cpu_11.len, "self/nx.nx:2299");
+  nx_slice_check(0, (*o_0).cpu_11.len, (*o_0).cpu_11.len, "self/nx.nx:2301");
   nx_sl_u8 _t1 = ((nx_sl_u8){ nx_padd((*o_0).cpu_11.ptr, 0), (*o_0).cpu_11.len - 0 });
     if (nx_sl_eq(_t1, nx_lit(nx_str_830, 6)))
     {
@@ -25885,7 +25889,7 @@ static nx_opt_string nx_march_flag(nx_ctx* c, nx_Opts* o_0) {
       nx_opt_string _t7 = ((nx_opt_string){ .has = true, .val = _t4 });
       return _t7;
     }
-  nx_slice_check(0, (*o_0).cpu_11.len, (*o_0).cpu_11.len, "self/nx.nx:2301");
+  nx_slice_check(0, (*o_0).cpu_11.len, (*o_0).cpu_11.len, "self/nx.nx:2303");
   nx_sl_u8 _t8 = ((nx_sl_u8){ nx_padd((*o_0).cpu_11.ptr, 0), (*o_0).cpu_11.len - 0 });
     if (nx_sl_eq(_t8, nx_lit(nx_str_468, 8)))
     {
@@ -25925,12 +25929,12 @@ static bool nx_uses_zig(nx_ctx* c, nx_Opts* o_0) {
     }
   bool _t4 = ((((((*o_0)).cc_6).len)) > (((size_t)0ULL)));
   if (_t4) {
-    nx_slice_check(0, (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:2312")].len, (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:2312")].len, "self/nx.nx:2312");
-    nx_sl_u8 _t5 = ((nx_sl_u8){ nx_padd((*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:2312")].ptr, 0), (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:2312")].len - 0 });
+    nx_slice_check(0, (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:2314")].len, (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:2314")].len, "self/nx.nx:2314");
+    nx_sl_u8 _t5 = ((nx_sl_u8){ nx_padd((*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:2314")].ptr, 0), (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:2314")].len - 0 });
     bool _t6 = nx_sl_ends_with(_t5, nx_lit(nx_str_495, 3));
     if (!_t6) {
-      nx_slice_check(0, (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:2312")].len, (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:2312")].len, "self/nx.nx:2312");
-      nx_sl_u8 _t7 = ((nx_sl_u8){ nx_padd((*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:2312")].ptr, 0), (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:2312")].len - 0 });
+      nx_slice_check(0, (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:2314")].len, (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:2314")].len, "self/nx.nx:2314");
+      nx_sl_u8 _t7 = ((nx_sl_u8){ nx_padd((*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:2314")].ptr, 0), (*o_0).cc_6.ptr[nx_idx(((size_t)0ULL), (*o_0).cc_6.len, "self/nx.nx:2314")].len - 0 });
       _t6 = nx_sl_ends_with(_t7, nx_lit(nx_str_562, 7));
     }
     _t4 = _t6;
@@ -26000,9 +26004,9 @@ static nx_sl_u8 nx_cc_why(nx_ctx* c, nx_Opts* o_0) {
 
 static int32_t nx_cmd_tir(nx_ctx* c, nx_Opts* o_0) {
   NX_UNUSED(c);
-  nx_slice_check(0, (*o_0).file_1.len, (*o_0).file_1.len, "self/nx.nx:2334");
+  nx_slice_check(0, (*o_0).file_1.len, (*o_0).file_1.len, "self/nx.nx:2336");
   nx_sl_u8 _t1 = ((nx_sl_u8){ nx_padd((*o_0).file_1.ptr, 0), (*o_0).file_1.len - 0 });
-  nx_slice_check(0, (*o_0).std_dir_5.len, (*o_0).std_dir_5.len, "self/nx.nx:2334");
+  nx_slice_check(0, (*o_0).std_dir_5.len, (*o_0).std_dir_5.len, "self/nx.nx:2336");
   nx_sl_u8 _t2 = ((nx_sl_u8){ nx_padd((*o_0).std_dir_5.ptr, 0), (*o_0).std_dir_5.len - 0 });
   nx_eu_list_m2_Mod _t3 = nx_m2_load(c, _t1, _t2);
   nx_eu_list_m2_Mod _t4 = _t3;
@@ -26090,19 +26094,19 @@ static uint8_t nx_main(nx_ctx* c) {
       nx_list_sl_u8* _t6 = &(padded_1);
       if (_t6->len == _t6->cap) nx_list_grow(c, (nx_rawlist*)_t6, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t6->len + 1);
       _t6->ptr[_t6->len++] = _t5;
-      nx_slice_check(0, padded_1.len, padded_1.len, "self/nx.nx:2363");
+      nx_slice_check(0, padded_1.len, padded_1.len, "self/nx.nx:2365");
       args_0 = ((nx_sl_sl_u8){ nx_padd(padded_1.ptr, 0), padded_1.len - 0 });
     }
   bool _t7 = ((((args_0).len)) == (((size_t)2ULL)));
   if (_t7) {
-    nx_sl_u8 _t8 = args_0.ptr[nx_idx(((size_t)1ULL), args_0.len, "self/nx.nx:2365")];
+    nx_sl_u8 _t8 = args_0.ptr[nx_idx(((size_t)1ULL), args_0.len, "self/nx.nx:2367")];
     _t7 = nx_sl_eq(_t8, nx_lit(nx_str_945, 7));
   }
   bool _t9 = _t7;
   if (!_t9) {
     bool _t10 = ((((args_0).len)) == (((size_t)3ULL)));
     if (_t10) {
-      nx_sl_u8 _t11 = args_0.ptr[nx_idx(((size_t)1ULL), args_0.len, "self/nx.nx:2365")];
+      nx_sl_u8 _t11 = args_0.ptr[nx_idx(((size_t)1ULL), args_0.len, "self/nx.nx:2367")];
       _t10 = nx_sl_eq(_t11, nx_lit(nx_str_945, 7));
     }
     _t9 = _t10;
@@ -26134,33 +26138,33 @@ static uint8_t nx_main(nx_ctx* c) {
         {
           _t16 = c_2;
         }
-      uint8_t _t17 = ((uint8_t)nx_cast_check((nx_i128)(_t16), ((nx_i128)0LL), ((nx_i128)255LL), "self/nx.nx:2367"));
+      uint8_t _t17 = ((uint8_t)nx_cast_check((nx_i128)(_t16), ((nx_i128)0LL), ((nx_i128)255LL), "self/nx.nx:2369"));
       nx_drop_list_sl_u8(c, &padded_1);
       return _t17;
     }
   bool _t18 = ((((args_0).len)) >= (((size_t)2ULL)));
   if (_t18) {
-    nx_sl_u8 _t19 = args_0.ptr[nx_idx(((size_t)1ULL), args_0.len, "self/nx.nx:2369")];
+    nx_sl_u8 _t19 = args_0.ptr[nx_idx(((size_t)1ULL), args_0.len, "self/nx.nx:2371")];
     bool _t20 = nx_sl_eq(_t19, nx_lit(nx_str_946, 4));
     if (!_t20) {
-      nx_sl_u8 _t21 = args_0.ptr[nx_idx(((size_t)1ULL), args_0.len, "self/nx.nx:2369")];
+      nx_sl_u8 _t21 = args_0.ptr[nx_idx(((size_t)1ULL), args_0.len, "self/nx.nx:2371")];
       _t20 = nx_sl_eq(_t21, nx_lit(nx_str_947, 3));
     }
     bool _t22 = _t20;
     if (!_t22) {
-      nx_sl_u8 _t23 = args_0.ptr[nx_idx(((size_t)1ULL), args_0.len, "self/nx.nx:2369")];
+      nx_sl_u8 _t23 = args_0.ptr[nx_idx(((size_t)1ULL), args_0.len, "self/nx.nx:2371")];
       _t22 = nx_sl_eq(_t23, nx_lit(nx_str_948, 5));
     }
     bool _t24 = _t22;
     if (!_t24) {
-      nx_sl_u8 _t25 = args_0.ptr[nx_idx(((size_t)1ULL), args_0.len, "self/nx.nx:2369")];
+      nx_sl_u8 _t25 = args_0.ptr[nx_idx(((size_t)1ULL), args_0.len, "self/nx.nx:2371")];
       _t24 = nx_sl_eq(_t25, nx_lit(nx_str_949, 6));
     }
     _t18 = _t24;
   }
     if (_t18)
     {
-      nx_slice_check(((size_t)2ULL), args_0.len, args_0.len, "self/nx.nx:2370");
+      nx_slice_check(((size_t)2ULL), args_0.len, args_0.len, "self/nx.nx:2372");
       nx_sl_sl_u8 rest_3 = ((nx_sl_sl_u8){ nx_padd(args_0.ptr, ((size_t)2ULL)), args_0.len - ((size_t)2ULL) });
       nx_list_sl_u8 none_4 = ((nx_list_sl_u8){NULL, 0, 0, c->arena});
       nx_sl_u8 _t26 = args_0.ptr[((size_t)1ULL)];
@@ -26191,7 +26195,7 @@ static uint8_t nx_main(nx_ctx* c) {
             }
             else
             {
-              nx_slice_check(0, none_4.len, none_4.len, "self/nx.nx:2372");
+              nx_slice_check(0, none_4.len, none_4.len, "self/nx.nx:2374");
               nx_sl_sl_u8 _t36 = ((nx_sl_sl_u8){ nx_padd(none_4.ptr, 0), none_4.len - 0 });
               int32_t _t37 = nx_cmd_fetch(c, _t36, false);
               _t33 = _t37;
@@ -26214,7 +26218,7 @@ static uint8_t nx_main(nx_ctx* c) {
         {
           _t39 = c_5;
         }
-      uint8_t _t40 = ((uint8_t)nx_cast_check((nx_i128)(_t39), ((nx_i128)0LL), ((nx_i128)255LL), "self/nx.nx:2373"));
+      uint8_t _t40 = ((uint8_t)nx_cast_check((nx_i128)(_t39), ((nx_i128)0LL), ((nx_i128)255LL), "self/nx.nx:2375"));
       nx_drop_list_sl_u8(c, &none_4);
       nx_drop_list_sl_u8(c, &padded_1);
       return _t40;
@@ -26521,10 +26525,10 @@ static uint8_t nx_main(nx_ctx* c) {
                                                                           } else { _t136 = _t135.val; }
                                                                           nx_m2_Checker c_13 = _t136;
                                                                           nx_m2_Checker* _t139 = &(c_13);
-                                                                          nx_slice_check(0, o_6.rest_15.ptr[nx_idx(((size_t)0ULL), o_6.rest_15.len, "self/nx.nx:2428")].len, o_6.rest_15.ptr[nx_idx(((size_t)0ULL), o_6.rest_15.len, "self/nx.nx:2428")].len, "self/nx.nx:2428");
-                                                                          nx_sl_u8 _t140 = ((nx_sl_u8){ nx_padd(o_6.rest_15.ptr[nx_idx(((size_t)0ULL), o_6.rest_15.len, "self/nx.nx:2428")].ptr, 0), o_6.rest_15.ptr[nx_idx(((size_t)0ULL), o_6.rest_15.len, "self/nx.nx:2428")].len - 0 });
-                                                                          nx_slice_check(0, o_6.rest_15.ptr[nx_idx(((size_t)1ULL), o_6.rest_15.len, "self/nx.nx:2428")].len, o_6.rest_15.ptr[nx_idx(((size_t)1ULL), o_6.rest_15.len, "self/nx.nx:2428")].len, "self/nx.nx:2428");
-                                                                          nx_sl_u8 _t141 = ((nx_sl_u8){ nx_padd(o_6.rest_15.ptr[nx_idx(((size_t)1ULL), o_6.rest_15.len, "self/nx.nx:2428")].ptr, 0), o_6.rest_15.ptr[nx_idx(((size_t)1ULL), o_6.rest_15.len, "self/nx.nx:2428")].len - 0 });
+                                                                          nx_slice_check(0, o_6.rest_15.ptr[nx_idx(((size_t)0ULL), o_6.rest_15.len, "self/nx.nx:2430")].len, o_6.rest_15.ptr[nx_idx(((size_t)0ULL), o_6.rest_15.len, "self/nx.nx:2430")].len, "self/nx.nx:2430");
+                                                                          nx_sl_u8 _t140 = ((nx_sl_u8){ nx_padd(o_6.rest_15.ptr[nx_idx(((size_t)0ULL), o_6.rest_15.len, "self/nx.nx:2430")].ptr, 0), o_6.rest_15.ptr[nx_idx(((size_t)0ULL), o_6.rest_15.len, "self/nx.nx:2430")].len - 0 });
+                                                                          nx_slice_check(0, o_6.rest_15.ptr[nx_idx(((size_t)1ULL), o_6.rest_15.len, "self/nx.nx:2430")].len, o_6.rest_15.ptr[nx_idx(((size_t)1ULL), o_6.rest_15.len, "self/nx.nx:2430")].len, "self/nx.nx:2430");
+                                                                          nx_sl_u8 _t141 = ((nx_sl_u8){ nx_padd(o_6.rest_15.ptr[nx_idx(((size_t)1ULL), o_6.rest_15.len, "self/nx.nx:2430")].ptr, 0), o_6.rest_15.ptr[nx_idx(((size_t)1ULL), o_6.rest_15.len, "self/nx.nx:2430")].len - 0 });
                                                                           bool _t142 = nx_m29_explain(c, _t139, _t140, _t141);
                                                                           int32_t _t143;
                                                                             if (_t142)
@@ -26617,7 +26621,7 @@ static uint8_t nx_main(nx_ctx* c) {
                                                                                         if (nx_sl_eq(_t166, nx_lit(nx_str_459, 3)))
                                                                                         {
                                                                                           nx_sl_u8 _t167 = nx_lit(nx_str_0, 5);
-                                                                                          nx_slice_check(0, o_6.std_dir_5.len, o_6.std_dir_5.len, "self/nx.nx:2446");
+                                                                                          nx_slice_check(0, o_6.std_dir_5.len, o_6.std_dir_5.len, "self/nx.nx:2448");
                                                                                           nx_sl_u8 _t168 = ((nx_sl_u8){ nx_padd(o_6.std_dir_5.ptr, 0), o_6.std_dir_5.len - 0 });
                                                                                           nx_list_string* _t169 = &(o_6.cc_6);
                                                                                           nx_m20_run(c, _t167, _t168, _t169);
@@ -26640,16 +26644,16 @@ static uint8_t nx_main(nx_ctx* c) {
                                                                                               nx_Opts* _t176 = &(o_6);
                                                                                               nx_string _t177 = nx_compiler_summary(c, _t176);
                                                                                               nx_string _t178 = _t177;
-                                                                                              nx_slice_check(0, _t178.len, _t178.len, "self/nx.nx:2450");
+                                                                                              nx_slice_check(0, _t178.len, _t178.len, "self/nx.nx:2452");
                                                                                               nx_sl_u8 _t179 = ((nx_sl_u8){ nx_padd(_t178.ptr, 0), _t178.len - 0 });
                                                                                               nx_sl_u8 _t180 = nx_host_os_fn(c);
                                                                                               nx_sl_u8 _t181 = _t180;
-                                                                                              nx_slice_check(0, _t181.len, _t181.len, "self/nx.nx:2450");
+                                                                                              nx_slice_check(0, _t181.len, _t181.len, "self/nx.nx:2452");
                                                                                               nx_sl_u8 _t182 = ((nx_sl_u8){ nx_padd(_t181.ptr, 0), _t181.len - 0 });
-                                                                                              nx_slice_check(0, o_6.std_dir_5.len, o_6.std_dir_5.len, "self/nx.nx:2450");
+                                                                                              nx_slice_check(0, o_6.std_dir_5.len, o_6.std_dir_5.len, "self/nx.nx:2452");
                                                                                               nx_sl_u8 _t183 = ((nx_sl_u8){ nx_padd(o_6.std_dir_5.ptr, 0), o_6.std_dir_5.len - 0 });
                                                                                               nx_list_string* _t184 = &(o_6.cc_6);
-                                                                                              nx_slice_check(0, newer_18.len, newer_18.len, "self/nx.nx:2450");
+                                                                                              nx_slice_check(0, newer_18.len, newer_18.len, "self/nx.nx:2452");
                                                                                               nx_sl_u8 _t185 = ((nx_sl_u8){ nx_padd(newer_18.ptr, 0), newer_18.len - 0 });
                                                                                               int32_t _t186 = nx_m19_run(c, _t175, _t179, _t182, _t183, _t184, _t185);
                                                                                               code_8 = _t186;
@@ -26666,11 +26670,11 @@ static uint8_t nx_main(nx_ctx* c) {
                                                                                               }
                                                                                                 if (_t188)
                                                                                                 {
-                                                                                                  nx_slice_check(0, o_6.file_1.len, o_6.file_1.len, "self/nx.nx:2452");
+                                                                                                  nx_slice_check(0, o_6.file_1.len, o_6.file_1.len, "self/nx.nx:2454");
                                                                                                   nx_sl_u8 _t190 = ((nx_sl_u8){ nx_padd(o_6.file_1.ptr, 0), o_6.file_1.len - 0 });
                                                                                                   nx_sl_u8 _t191 = nx_str_slice((o_6).command_0);
                                                                                                   bool _t192 = nx_sl_eq(_t191, nx_lit(nx_str_559, 2));
-                                                                                                  nx_slice_check(0, o_6.std_dir_5.len, o_6.std_dir_5.len, "self/nx.nx:2452");
+                                                                                                  nx_slice_check(0, o_6.std_dir_5.len, o_6.std_dir_5.len, "self/nx.nx:2454");
                                                                                                   nx_sl_u8 _t193 = ((nx_sl_u8){ nx_padd(o_6.std_dir_5.ptr, 0), o_6.std_dir_5.len - 0 });
                                                                                                   nx_list_string* _t194 = &(o_6.cc_6);
                                                                                                   int32_t _t195 = nx_m19_eval(c, _t190, _t192, _t193, _t194);
@@ -26681,9 +26685,9 @@ static uint8_t nx_main(nx_ctx* c) {
                                                                                                   nx_sl_u8 _t196 = nx_str_slice((o_6).command_0);
                                                                                                     if (nx_sl_eq(_t196, nx_lit(nx_str_461, 4)))
                                                                                                     {
-                                                                                                      nx_slice_check(0, o_6.file_1.len, o_6.file_1.len, "self/nx.nx:2454");
+                                                                                                      nx_slice_check(0, o_6.file_1.len, o_6.file_1.len, "self/nx.nx:2456");
                                                                                                       nx_sl_u8 _t197 = ((nx_sl_u8){ nx_padd(o_6.file_1.ptr, 0), o_6.file_1.len - 0 });
-                                                                                                      nx_slice_check(0, o_6.std_dir_5.len, o_6.std_dir_5.len, "self/nx.nx:2454");
+                                                                                                      nx_slice_check(0, o_6.std_dir_5.len, o_6.std_dir_5.len, "self/nx.nx:2456");
                                                                                                       nx_sl_u8 _t198 = ((nx_sl_u8){ nx_padd(o_6.std_dir_5.ptr, 0), o_6.std_dir_5.len - 0 });
                                                                                                       nx_list_string* _t199 = &(o_6.cc_6);
                                                                                                       int32_t _t200 = nx_m19_play(c, _t197, _t198, _t199, (o_6).strict_10);
@@ -26694,7 +26698,7 @@ static uint8_t nx_main(nx_ctx* c) {
                                                                                                       nx_sl_u8 _t201 = nx_str_slice((o_6).command_0);
                                                                                                         if (nx_sl_eq(_t201, nx_lit(nx_str_462, 7)))
                                                                                                         {
-                                                                                                          nx_slice_check(0, o_6.file_1.len, o_6.file_1.len, "self/nx.nx:2456");
+                                                                                                          nx_slice_check(0, o_6.file_1.len, o_6.file_1.len, "self/nx.nx:2458");
                                                                                                           nx_sl_u8 _t202 = ((nx_sl_u8){ nx_padd(o_6.file_1.ptr, 0), o_6.file_1.len - 0 });
                                                                                                           bool _t203 = nx_sl_eq(_t202, nx_lit(nx_str_686, 7));
                                                                                                           int32_t _t204 = nx_cmd_upgrade(c, _t203);
@@ -26705,7 +26709,7 @@ static uint8_t nx_main(nx_ctx* c) {
                                                                                                           nx_sl_u8 _t205 = nx_str_slice((o_6).command_0);
                                                                                                             if (nx_sl_eq(_t205, nx_lit(nx_str_951, 11)))
                                                                                                             {
-                                                                                                              nx_slice_check(0, o_6.file_1.len, o_6.file_1.len, "self/nx.nx:2458");
+                                                                                                              nx_slice_check(0, o_6.file_1.len, o_6.file_1.len, "self/nx.nx:2460");
                                                                                                               nx_sl_u8 _t206 = ((nx_sl_u8){ nx_padd(o_6.file_1.ptr, 0), o_6.file_1.len - 0 });
                                                                                                               nx_opt_string _t207 = nx_m17_script(c, _t206);
                                                                                                               nx_opt_string _t208 = _t207;
@@ -26754,7 +26758,7 @@ static uint8_t nx_main(nx_ctx* c) {
                                                                                                                       nx_list_sl_u8 words_20 = ((nx_list_sl_u8){NULL, 0, 0, c->arena});
                                                                                                                         if ((((((o_6).file_1).len)) > (((size_t)0ULL))))
                                                                                                                         {
-                                                                                                                          nx_slice_check(0, o_6.file_1.len, o_6.file_1.len, "self/nx.nx:2471");
+                                                                                                                          nx_slice_check(0, o_6.file_1.len, o_6.file_1.len, "self/nx.nx:2473");
                                                                                                                           nx_sl_u8 _t221 = ((nx_sl_u8){ nx_padd(o_6.file_1.ptr, 0), o_6.file_1.len - 0 });
                                                                                                                           nx_list_sl_u8* _t222 = &(words_20);
                                                                                                                           if (_t222->len == _t222->cap) nx_list_grow(c, (nx_rawlist*)_t222, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t222->len + 1);
@@ -26763,7 +26767,7 @@ static uint8_t nx_main(nx_ctx* c) {
                                                                                                                       nx_sl_string _t223 = ((nx_sl_string){ (o_6).rest_15.ptr, (o_6).rest_15.len });
                                                                                                                       for (size_t _t224 = 0; _t224 < _t223.len; _t224++) {
                                                                                                                         nx_string r_21 = _t223.ptr[_t224];
-                                                                                                                        nx_slice_check(0, r_21.len, r_21.len, "self/nx.nx:2472");
+                                                                                                                        nx_slice_check(0, r_21.len, r_21.len, "self/nx.nx:2474");
                                                                                                                         nx_sl_u8 _t225 = ((nx_sl_u8){ nx_padd(r_21.ptr, 0), r_21.len - 0 });
                                                                                                                         nx_list_sl_u8* _t226 = &(words_20);
                                                                                                                         if (_t226->len == _t226->cap) nx_list_grow(c, (nx_rawlist*)_t226, sizeof(nx_sl_u8), _Alignof(nx_sl_u8), _t226->len + 1);
@@ -26771,14 +26775,14 @@ static uint8_t nx_main(nx_ctx* c) {
                                                                                                                         nx_cont_2: ;
                                                                                                                       }
                                                                                                                       nx_brk_2: ;
-                                                                                                                      nx_slice_check(0, words_20.len, words_20.len, "self/nx.nx:2473");
+                                                                                                                      nx_slice_check(0, words_20.len, words_20.len, "self/nx.nx:2475");
                                                                                                                       nx_sl_sl_u8 _t227 = ((nx_sl_sl_u8){ nx_padd(words_20.ptr, 0), words_20.len - 0 });
                                                                                                                       nx_string _t228 = nx_exe_path(c);
-                                                                                                                      nx_slice_check(0, _t228.len, _t228.len, "self/nx.nx:2473");
+                                                                                                                      nx_slice_check(0, _t228.len, _t228.len, "self/nx.nx:2475");
                                                                                                                       nx_sl_u8 _t229 = ((nx_sl_u8){ nx_padd(_t228.ptr, 0), _t228.len - 0 });
                                                                                                                       nx_string _t230 = nx_topo_progress_path(c);
                                                                                                                       nx_string _t231 = _t230;
-                                                                                                                      nx_slice_check(0, _t231.len, _t231.len, "self/nx.nx:2473");
+                                                                                                                      nx_slice_check(0, _t231.len, _t231.len, "self/nx.nx:2475");
                                                                                                                       nx_sl_u8 _t232 = ((nx_sl_u8){ nx_padd(_t231.ptr, 0), _t231.len - 0 });
                                                                                                                       int32_t _t233 = nx_m18_run(c, _t227, _t229, _t232);
                                                                                                                       code_8 = _t233;
@@ -26839,7 +26843,7 @@ static uint8_t nx_main(nx_ctx* c) {
     {
       _t236 = code_8;
     }
-  uint8_t _t237 = ((uint8_t)nx_cast_check((nx_i128)(_t236), ((nx_i128)0LL), ((nx_i128)255LL), "self/nx.nx:2479"));
+  uint8_t _t237 = ((uint8_t)nx_cast_check((nx_i128)(_t236), ((nx_i128)0LL), ((nx_i128)255LL), "self/nx.nx:2481"));
   nx_drop_Opts(c, &o_6);
   nx_drop_list_sl_u8(c, &padded_1);
   return _t237;

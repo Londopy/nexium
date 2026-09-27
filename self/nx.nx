@@ -1692,9 +1692,11 @@ fn cmd_ship(o: *Opts) -> i32 {
             return 1
         }
         produced.append(shared_path.clone())
-        // static object; on Windows it targets the MSVC ABI so Rust and MSVC users can link it
+        // static object; on Windows it targets the MSVC ABI so Rust and MSVC
+        // users can link it, for the machine's own architecture (an x86-64
+        // archive does not link into an ARM64 crate)
         let obj_path = format("{}/{}.{}", .{dir, lib_name, if windows { "obj" } else { "o" }})
-        if windows and o.target.len == 0 and o.cc_source != 1 and o.cc_source != 2 { lib_opts.target = String.from("x86_64-windows-msvc") }
+        if windows and o.target.len == 0 and o.cc_source != 1 and o.cc_source != 2 { lib_opts.target = format("{}-msvc", .{target}) }
         if compile_c(&c, &lib_opts, c_path[..], obj_path[..], "object") {
             let ar_path = format("{}/{}", .{dir, if windows { format("{}.lib", .{lib_name}) } else { format("lib{}.a", .{lib_name}) }})
             io.remove_file(ar_path[..]) catch { }

@@ -44,7 +44,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # the three desktops, and Linux and Windows on ARM (GitHub's arm64
+        # runners)
+        os: [ubuntu-latest, windows-latest, macos-latest, ubuntu-24.04-arm, windows-11-arm]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -87,7 +89,7 @@ jobs:
           git checkout -- self/tools.nx
 
       - name: The compiler is built for the baseline instruction set
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && runner.arch == 'X64'
         run: |
           n=$(objdump -d nx-out/bootstrap/nx2 | grep -c -E '%[yz]mm' || true)
           echo "AVX instructions: $n"
@@ -120,8 +122,9 @@ jobs:
           printf 'fn main() { assert_eq!(ropesim::checksum(b"hello"), 1335831723); assert!(ropesim::divide(1, 0).is_err()); println!("rust ok"); }\n' > nx-out/rusttest/src/main.rs
           (cd nx-out/rusttest && cargo run -q)
 
+      # the release ships Windows on ARM as a zip, with no installer
       - name: Build the Windows installer (preview, no bundled Zig)
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && runner.arch == 'X64'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist-win | Out-Null
@@ -261,7 +264,8 @@ jobs:
           "$nx" run tests/run.nx -- --nx "$nx" --target wasm32-wasi spec examples std topo compile_fail
 
       # artifact wasm as a page uses it: served over HTTP, the module fetched
-      # from beside its loader, in the runner's Chrome
+      # from beside its loader, in the runner's Chrome (asked through its
+      # DevTools protocol once the page is done: tests/ship/browser_check.mjs)
       - name: A WebAssembly library in a browser
         run: |
           nx=nx-out/bootstrap/nx2
@@ -269,9 +273,8 @@ jobs:
           cp tests/ship/wasm_page.html nx-out/web/ropesim/index.html
           python3 -m http.server 8765 --bind 127.0.0.1 --directory nx-out/web/ropesim > /dev/null 2>&1 &
           sleep 2
-          google-chrome --headless=new --no-sandbox --disable-gpu --virtual-time-budget=10000 --dump-dom http://127.0.0.1:8765/index.html > nx-out/web/dom.html
-          grep -o 'RESULT [^<]*\|FAILED [^<]*' nx-out/web/dom.html
-          grep -q 'RESULT {"dot":32,"sum":1335831723,"moved":true,"r":true,"err":"InvalidInput","panic":"NexiumPanic","msg":true,"again":6,"div":"42"}' nx-out/web/dom.html
+          node tests/ship/browser_check.mjs "$(command -v google-chrome)" http://127.0.0.1:8765/index.html | tee nx-out/web/result.txt
+          grep -q 'RESULT {"dot":32,"sum":1335831723,"moved":true,"r":true,"err":"InvalidInput","panic":"NexiumPanic","msg":true,"again":6,"div":"42"}' nx-out/web/result.txt
 
   fuzz:
     name: fuzz
