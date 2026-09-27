@@ -3,7 +3,9 @@
 // @target(), the (os, arch, pointer_bits) of the build.
 fn main() {
     println("{} {} {} {}", .{@min(3, 9), @max(3, 9), @min(2.5, 1.25), @max(-1, -2)})
-    println("{} {} {}", .{@alignOf(u8), @alignOf(u64), @alignOf(f64)})
+    // an 8-byte scalar aligns to 8 on most targets and to 4 on 32-bit x86
+    // Linux: what holds everywhere is that u64 and f64 align alike
+    println("{} {} {}", .{@alignOf(u8), @alignOf(u32), @alignOf(u64) == @alignOf(f64)})
     let m: i32 = -1
     let bits: u32 = @bitCast(u32, m)
     println("{}", .{bits})

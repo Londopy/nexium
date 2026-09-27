@@ -1371,7 +1371,9 @@ fn main() -> u8 {
     var failures = List(String).new()
     let started = time.monotonic()
     if given_nx.len > 0 {
-        e.nx = given_nx
+        // a relative path is the repository's: some cases run the compiler
+        // from another directory, where Linux would look for it afresh
+        e.nx = if fs.is_absolute(given_nx[..]) { given_nx } else { fs.join(e.root[..], given_nx[..]) }
     } else if !bootstrap(&mut e, &mut failures, force) {
         for f in failures { eprintln("FAIL {}", .{f}) }
         return 1
