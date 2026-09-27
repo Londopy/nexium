@@ -1,5 +1,6 @@
 // std.process: run programs and capture what they print, or talk to them
 // while they run, written in Nexium over the `process.*` primitives.
+// NOT ON wasm32: WASI (preview 1) starts no programs.
 //
 // `import std.process` then:
 //

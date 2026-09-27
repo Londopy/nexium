@@ -2,6 +2,7 @@
 //!
 //!     nx run topo/code/service.nx          # a self-test on a free port
 //!     nx run topo/code/service.nx -- 8080  # serve until killed
+// NOT ON wasm32: WASI (preview 1), WebAssembly's system interface, opens no sockets.
 
 import std.http
 import std.net

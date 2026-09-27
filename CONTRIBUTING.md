@@ -44,6 +44,10 @@ newer than it, and skips the parts of the `ship` suite whose tools (`cargo`,
   specification makes gets a case in `tests/spec/` instead, picked up by name.
 - A program that must be rejected: add `tests/compile_fail/<name>.nx` with one
   or more `// EXPECT: <substring of the diagnostic>` lines at the top.
+- A case that cannot run on some target (a program that starts processes,
+  built for WebAssembly): a `// NOT ON <arch>: <why>` line, where `<arch>`
+  begins the target's triple (`wasm32`). A `--target` run of the harness
+  leaves the case out and prints a note naming it.
 
 ## Where the compiler is
 

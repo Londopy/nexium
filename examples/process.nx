@@ -1,5 +1,6 @@
 // process.run spawns a program, waits, and returns its exit code. The example
 // re-runs itself as the child so the output is the same on every platform.
+// NOT ON wasm32: WASI (preview 1) starts no programs.
 
 fn main() -> !void {
     let args = os.args()

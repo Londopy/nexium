@@ -8,6 +8,8 @@ import check_interp
 const NONE: usize = ~(0 as usize)
 
 const RUNTIME_H = @embedFile("../runtime/nx_rt.h")
+/// setjmp's helpers on WebAssembly, compiled beside a wasm32-wasi program
+const WASM_SJLJ_C = @embedFile("../runtime/nx_wasm_sjlj.c")
 
 // build modes
 const MODE_DEBUG: u8 = 0

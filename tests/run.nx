@@ -270,13 +270,34 @@ fn run_job(j: *mut Job) -> usize {
     return j.failures.len
 }
 
+/// A case marked `// NOT ON <arch>: <why>` is left out when the target's
+/// triple starts with that architecture: what it tests is not there.
+fn left_out(e: *Env, path: []u8) -> bool {
+    if e.target.len == 0 { return false }
+    let text = fs.read(path) catch { return false }
+    for l in text[..].lines() {
+        if let rest = strings.strip_prefix(l, "// NOT ON ") {
+            if let i = rest.find(":") { if e.target[..].starts_with(rest[0..i].trim()) { return true } }
+        }
+    }
+    return false
+}
+
 /// Run cases on `jobs` threads; the failures, in case order per thread.
 fn run_cases(e: *Env, cases: *List(Case), failures: *mut List(String)) {
     let n = if e.jobs < 1 { 1 } else { e.jobs }
     fs.make_dirs(fs.join(e.root[..], "nx-out/cases")[..]) catch { }
     var jobs = List(Job).new()
     for i in 0..n { jobs.append(Job{ .env = env_clone(e), .cases = List(Case).new(), .failures = List(String).new() }) }
-    for c, i in cases { jobs[i % n].cases.append(Case{ .kind = c.kind.clone(), .path = c.path.clone() }) }
+    var k: usize = 0
+    for c in cases {
+        if left_out(e, c.path[..]) {
+            println("note: {} is not run for {} (its NOT ON line says why)", .{c.path, e.target})
+            continue
+        }
+        jobs[k % n].cases.append(Case{ .kind = c.kind.clone(), .path = c.path.clone() })
+        k += 1
+    }
     var threads = List(thread.Thread(Job, usize)).new()
     while jobs.len > 0 {
         let j = jobs.pop().?

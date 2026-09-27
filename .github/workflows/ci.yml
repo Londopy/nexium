@@ -235,6 +235,31 @@ jobs:
             cmp nx-out/by32.c nx-out/by32b.c
           fi
 
+  wasm:
+    name: WebAssembly (wasm32-wasi)
+    # every program built as a .wasm module and run under Node.js's WASI,
+    # which lists directories on Linux (not on Windows); a panic unwinds by
+    # WebAssembly's exception handling (decision 123)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: Build nx from the seed
+        run: sh bootstrap/build.sh
+
+      - name: The spec, the examples, std's tests and the Topo as WebAssembly
+        run: |
+          nx=nx-out/bootstrap/nx2
+          "$nx" run tests/run.nx -- --nx "$nx" --target wasm32-wasi spec examples std topo compile_fail
+
   fuzz:
     name: fuzz
     # mutated sources through the front end (one accepted mutant in ten

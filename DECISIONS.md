@@ -1059,3 +1059,28 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     it passes its own target to zig, whose default is the machine; on a
     32-bit machine zig's default already is right, down to an ARMv6 Pi's CPU,
     and is left alone.
+123. **WebAssembly programs are `wasm32-wasi` modules, a panic unwinds by
+    WebAssembly's exception handling, and `nx run` runs a module under
+    Node.js in a sandbox.** WASI gives a program files, clocks, arguments
+    and an environment, which is what the runtime needs; the rest of the
+    machine (processes, sockets, threads, a terminal) fails as a system
+    that refuses it would, as it already did for the playground's compiler.
+    A panic is a `longjmp` to the nearest boundary (`main`, a test, a
+    thread, an export), and WASI has no `setjmp`: C compiled with
+    `-mexception-handling -mllvm -wasm-enable-sjlj` gets one from the
+    exception-handling proposal, which every major browser and Node.js run,
+    so a panic prints the same message and exit code as it does natively
+    and a test runner goes on to the next test. Zig 0.14's WASI libc leaves
+    out the three helpers that lowering calls; nx compiles them from
+    `runtime/nx_wasm_sjlj.c` beside the program, in a file of their own,
+    because LLVM 19 emits code no engine accepts when they share a
+    translation unit with the calls. C compiled without the flags still
+    builds (the playground's compiler is), and a panic there ends the
+    program where it happens. `nx run` and `nx test` run a module under
+    Node.js's WASI, which every CI runner has, rather than a WASI runtime
+    that may lack the proposal. The program sees the working directory and
+    a `/tmp` of its own beside the module, nothing else of the machine, so
+    a test's scratch files stay in the build's directory (the first version
+    opened the machine's root to it, and on Windows a test run made
+    `C:\tmp`). `wasm32-freestanding` waits for the embedded targets:
+    without WASI the runtime needs a C library of its own.

@@ -372,6 +372,11 @@ fn is_windows_target(target: []u8) -> bool {
     return target.find("windows") != null
 }
 
+/// WebAssembly: `wasm32-wasi`, whose programs are `.wasm` modules.
+fn is_wasm_target(target: []u8) -> bool {
+    return target.starts_with("wasm")
+}
+
 fn is_macos_target(target: []u8) -> bool {
     if target.len == 0 { return os.env("HOME") != null and io.file_kind("/System/Library/CoreServices") == 2 }
     return target.find("macos") != null or target.find("darwin") != null
@@ -465,6 +470,21 @@ fn write_c(o: *Opts, stem: []u8, text: []u8) -> ?String {
     let existing = io.read_file(rt[..]) catch { String.new() }
     current = existing[..] == cgen.RUNTIME_H
     if !current { io.write_file(rt[..], cgen.RUNTIME_H) catch { } }
+    return path
+}
+
+/// setjmp's helpers for a WebAssembly build, written beside its C: a file of
+/// their own, as LLVM needs them (runtime/nx_wasm_sjlj.c says why).
+fn wasm_sjlj_source(o: *Opts) -> ?String {
+    fs.make_dirs(o.out_dir[..]) catch { }
+    let path = format("{}/nx_wasm_sjlj.c", .{o.out_dir})
+    let existing = io.read_file(path[..]) catch { String.new() }
+    if existing[..] != cgen.WASM_SJLJ_C {
+        io.write_file(path[..], cgen.WASM_SJLJ_C) catch {
+            eprintln("error: cannot write {}", .{path})
+            return null
+        }
+    }
     return path
 }
 
@@ -574,6 +594,7 @@ fn c_argv(c: *check.Checker, o: *Opts, inputs: *List(String), out: []u8, kind: [
         for s in c_sources { argv.append(s.clone()) }
         for d in lib_paths { argv.append(format("-L{}", .{d})) }
         for l in libs { argv.append(format("-l{}", .{l})) }
+        if is_wasm_target(o.target[..]) { if let p = wasm_sjlj_source(o) { argv.append(p) } }
     }
     if o.target.len > 0 {
         argv.append(String.from("-target"))
@@ -581,6 +602,14 @@ fn c_argv(c: *check.Checker, o: *Opts, inputs: *List(String), out: []u8, kind: [
         argv.append(if uses_zig(o) { cimport.zig_triple(o.target[..]) } else { o.target.clone() })
         if uses_zig(o) {
             if let cpu = cimport.zig_cpu(o.target[..]) { argv.append(cpu.clone()) }
+        }
+        if is_wasm_target(o.target[..]) {
+            // a panic unwinds to its boundary by WebAssembly's exception
+            // handling, the setjmp the runtime needs (every browser and
+            // Node.js have it)
+            argv.append(String.from("-mexception-handling"))
+            argv.append(String.from("-mllvm"))
+            argv.append(String.from("-wasm-enable-sjlj"))
         }
     } else {
         // a 32-bit nx on a 64-bit machine builds what it is, as its checker
@@ -606,6 +635,8 @@ fn c_argv(c: *check.Checker, o: *Opts, inputs: *List(String), out: []u8, kind: [
     argv.append(String.from(out))
     let windows = is_windows_target(o.target[..])
     if windows and linking { argv.append(String.from("-lws2_32")) }
+    // the linker's stack for a module is 64 KiB: a program gets Linux's 8 MiB
+    if is_wasm_target(o.target[..]) and kind == "exe" { argv.append(String.from("-Wl,-z,stack-size=8388608")) }
     if !windows and linking {
         // libm is part of libSystem on macOS; a separate -lm there makes zig skip
         // its implicit libc link on machines without an SDK. Ask for libc explicitly.
@@ -812,6 +843,7 @@ fn release_zig_cache(dir: []u8) {
 
 fn exe_name(stem: []u8, target: []u8) -> String {
     if is_windows_target(target) { return format("{}.exe", .{stem}) }
+    if is_wasm_target(target) { return format("{}.wasm", .{stem}) }
     return String.from(stem)
 }
 
@@ -847,9 +879,30 @@ fn cmd_build(o: *Opts, run: bool, out_path: *mut String) -> bool {
     return true
 }
 
+/// How `nx run` runs a `wasm32-wasi` program: under Node.js's WASI, with the
+/// run's arguments and environment. It sees the working directory and a
+/// `/tmp` of its own beside the module (its `TMPDIR`), and nothing else of
+/// the machine.
+const WASI_RUN = "// written by nx: runs a wasm32-wasi program under Node.js's WASI; it sees\n// the working directory and a /tmp of its own beside the module\nimport { readFile } from 'node:fs/promises';\nimport { mkdirSync } from 'node:fs';\nimport { dirname, join } from 'node:path';\nimport { WASI } from 'node:wasi';\nimport process from 'node:process';\nconst [file, ...args] = process.argv.slice(2);\nconst tmp = join(dirname(file), 'wasi-tmp');\nmkdirSync(tmp, { recursive: true });\nconst wasi = new WASI({ version: 'preview1', args: [file, ...args], env: { ...process.env, TMPDIR: '/tmp' }, preopens: { '.': '.', '/tmp': tmp }, returnOnExit: true });\nconst module = await WebAssembly.compile(await readFile(file));\nconst instance = await WebAssembly.instantiate(module, wasi.getImportObject());\nprocess.exitCode = wasi.start(instance);\n"
+
 fn run_program(exe: []u8, rest: *List(String)) -> i32 {
     var argv = List([]u8).new()
     let abs = absolute(exe)
+    var launcher = String.new()
+    if exe.ends_with(".wasm") {
+        if !found_on_path("node") {
+            eprintln("error: running {} needs Node.js on the PATH, whose WASI runs WebAssembly programs", .{exe})
+            return 1
+        }
+        launcher = format("{}/nx-wasi-run.mjs", .{dir_of(abs[..])})
+        io.write_file(launcher[..], WASI_RUN) catch {
+            eprintln("error: cannot write {}", .{launcher})
+            return 1
+        }
+        argv.append("node")
+        argv.append("--no-warnings")
+        argv.append(launcher[..])
+    }
     argv.append(abs[..])
     for a in rest { argv.append(a[..]) }
     let code = os.run(argv[..]) catch {

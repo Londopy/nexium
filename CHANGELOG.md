@@ -35,10 +35,28 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   `_Static_assert` in the generated C, on every target.
 - The test harness takes `--target`: every case it builds, from the spec,
   the examples, the standard library's tests, the Topo and the
-  compile-fail cases, is built for that target and run.
+  compile-fail cases, is built for that target and run. A case marked
+  `// NOT ON <arch>: <why>` is left out for a target of that architecture,
+  with a note saying so.
+- WebAssembly (decision 123): `nx build --target wasm32-wasi` builds a
+  program as a `.wasm` module, and `nx run` and `nx test` run it under
+  Node.js's WASI, where it sees the working directory and a `/tmp` of its
+  own beside the module. A panic reaches its boundary as it does natively
+  (its message and line, exit code 101, a test runner going on to the next
+  test) through WebAssembly's exception handling; `runtime/nx_wasm_sjlj.c`
+  holds the three calls zig's WASI libc leaves out. `@target()` is
+  `("wasi", "wasm32", 32)` there. CI runs the spec cases, the examples, the
+  standard library's tests and the Topo's programs as modules, all but
+  those that start processes or open sockets, which WASI (preview 1) has
+  none of.
 
 ### Fixed
 
+- An empty path names nothing on every platform: `io.file_kind("")` is 0,
+  and `io.read_file("")`, `fs.list("")` and the rest fail as for a missing
+  file. Under WASI they found the directory the program runs in, and on
+  Windows `fs.list("")` listed the root of the drive.
+- `@target()` named the architecture of a `riscv32` build `unknown`.
 - `@sizeOf` of a `String` or a `List` was 24 on a 64-bit target where C
   lays them out in 32 bytes (their arena pointer was not counted), of a
   `Map` 40 where it is 112, of an error value 8 where it is 4, and a

@@ -1,5 +1,6 @@
 // std.http: an HTTP/1.1 client and a small server, written in Nexium over
 // std.net and std.stream.
+// NOT ON wasm32: WASI (preview 1) opens no sockets, which its tests serve on.
 //
 // `import std.http` then:
 //

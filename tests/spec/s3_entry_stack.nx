@@ -2,6 +2,7 @@
 // that much stack, so a recursion far deeper than the default stack allows
 // completes; and compile-time evaluation nests hundreds of calls (the
 // compiler declares a gigabyte for itself).
+// NOT ON wasm32: WebAssembly starts no thread, so `main` keeps the engine's stack
 artifact cli { name = "entry_stack", stack = "512M" }
 
 fn deep(n: u64, seen: *mut List(u64)) -> u64 {

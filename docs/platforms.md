@@ -44,6 +44,23 @@ targets; `armv7` is ARMv7-A with NEON (zig's `arm`), and
 `armv6-linux-gnueabihf` is the CPU of the Raspberry Pi 1 and Zero, whose
 programs every Pi runs in 32-bit mode.
 
+WebAssembly is tested the same way. `nx build --target wasm32-wasi` makes
+a `.wasm` module, and `nx run` and `nx test` run it under Node.js's WASI
+(Node.js on the PATH): the program sees its working directory and a `/tmp`
+of its own beside the module, and nothing else of the machine. CI runs the
+spec cases, the examples, the standard library's tests and the Topo's
+programs as modules under Node.js on Linux. WASI (preview 1) has no
+processes, sockets or threads: `std.process` and `std.net` fail as a system
+that refuses them would, `for parallel` and `std.thread` run their work in
+place, and a program's stack is the engine's (`artifact cli { stack }` has
+no thread to give it). A panic reaches its boundary through the legacy form
+of WebAssembly's exception-handling proposal, which every major browser and
+Node.js run; a WASI runtime without it refuses the module. On Windows,
+Node.js's WASI cannot list a directory (`fd_readdir` is not implemented
+there), so `fs.list` fails; on Linux and macOS it works.
+`wasm32-freestanding`, with no WASI at all, waits for the embedded targets:
+the runtime needs a C library.
+
 ## Tier 3: should work, unsupported
 
 Anything else Zig can target: `nx build --target <triple>` cross-compiles a

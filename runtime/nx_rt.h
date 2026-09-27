@@ -16,13 +16,18 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
-/* NX_WASM: built for wasm32-wasi, the playground. The platform has no
-   processes, sockets, terminal or setjmp; those parts fail with the error a
-   program would see when the operating system refuses. */
+/* NX_WASM: built for wasm32-wasi (a program, a library for the page, the
+   playground). The platform has no processes, sockets or terminal; those
+   parts fail with the error a program would see when the operating system
+   refuses. setjmp is WebAssembly's exception handling, which nx turns on
+   (-mexception-handling -mllvm -wasm-enable-sjlj) and whose three helpers it
+   compiles beside the program (nx_wasm_sjlj.c); C compiled without it has
+   none (NX_NO_SETJMP), and a panic ends the program wherever it is. */
 #if defined(__wasi__) && !defined(NX_WASM)
 #define NX_WASM 1
 #endif
-#if defined(NX_WASM)
+#if defined(NX_WASM) && !defined(__wasm_exception_handling__)
+#define NX_NO_SETJMP 1
 typedef int jmp_buf[1];
 #define setjmp(b) ((void)(b), 0)
 #define longjmp(b, v) ((void)(b), (void)(v), abort())
@@ -181,6 +186,13 @@ NX_STATE NX_THREAD_LOCAL nx_boundary* nx_tls_boundary NX_STATE_INIT(NULL);
 NX_STATE NX_THREAD_LOCAL char nx_tls_last_panic[256];
 
 NX_NORETURN NX_INLINE void nx_panic(const char* msg, const char* loc) {
+#if defined(NX_NO_SETJMP)
+    /* no boundary can catch it: the program ends as main's would end it */
+    fflush(stdout);
+    fprintf(stderr, "panic: %s\n  at %s\n", msg, loc ? loc : "?");
+    fflush(stderr);
+    exit(101);
+#endif
     if (nx_tls_boundary) {
         nx_boundary* b = nx_tls_boundary;
         snprintf(b->msg, sizeof b->msg, "%s", msg);
@@ -313,6 +325,10 @@ NX_INLINE nx_sl_u8 nx_host_arch(void) {
     return nx_lit("arm", 3);
 #elif defined(__riscv) && (__riscv_xlen == 64)
     return nx_lit("riscv64", 7);
+#elif defined(__riscv) && (__riscv_xlen == 32)
+    return nx_lit("riscv32", 7);
+#elif defined(__wasm32__)
+    return nx_lit("wasm32", 6);
 #else
     return nx_lit("unknown", 7);
 #endif
@@ -328,6 +344,8 @@ NX_INLINE nx_sl_u8 nx_host_os(void) {
     return nx_lit("linux", 5);
 #elif defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
     return nx_lit("bsd", 3);
+#elif defined(__wasi__)
+    return nx_lit("wasi", 4);
 #else
     return nx_lit("unknown", 7);
 #endif
@@ -1607,8 +1625,12 @@ NX_INLINE bool nx_run(nx_ctx* c, const nx_sl_u8* argv, size_t argc, int* code) {
 #endif
 }
 #endif
+/* A path as C takes it, in `buf`. An empty one names nothing, on every
+   platform (ENOENT, as POSIX answers; WASI would open the directory it runs
+   in), and one too long for `buf` fails with ENAMETOOLONG. */
 NX_INLINE bool nx_cpath(nx_sl_u8 path, char* buf, size_t cap) {
-    if (path.len >= cap) return false;
+    if (path.len == 0) { errno = ENOENT; return false; }
+    if (path.len >= cap) { errno = ENAMETOOLONG; return false; }
     nx_bytes_copy(buf, path.ptr, path.len); buf[path.len] = 0;
     return true;
 }
@@ -2387,8 +2409,7 @@ NX_INLINE int32_t nx_next_signal(int64_t timeout_ms) {
 
 NX_INLINE bool nx_read_file(nx_ctx* c, nx_sl_u8 path, nx_string* out) {
     char p[4096];
-    if (path.len >= sizeof p) return false;
-    nx_bytes_copy(p, path.ptr, path.len); p[path.len] = 0;
+    if (!nx_cpath(path, p, sizeof p)) return false;
     FILE* f = fopen(p, "rb");
     if (!f) return false;
     nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;
@@ -2401,8 +2422,7 @@ NX_INLINE bool nx_read_file(nx_ctx* c, nx_sl_u8 path, nx_string* out) {
 }
 NX_INLINE bool nx_write_file(nx_sl_u8 path, nx_sl_u8 data) {
     char p[4096];
-    if (path.len >= sizeof p) return false;
-    nx_bytes_copy(p, path.ptr, path.len); p[path.len] = 0;
+    if (!nx_cpath(path, p, sizeof p)) return false;
     FILE* f = fopen(p, "wb");
     if (!f) return false;
     size_t w = data.len ? fwrite(data.ptr, 1, data.len, f) : 0;
@@ -2411,8 +2431,7 @@ NX_INLINE bool nx_write_file(nx_sl_u8 path, nx_sl_u8 data) {
 }
 NX_INLINE bool nx_append_file(nx_sl_u8 path, nx_sl_u8 data) {
     char p[4096];
-    if (path.len >= sizeof p) return false;
-    nx_bytes_copy(p, path.ptr, path.len); p[path.len] = 0;
+    if (!nx_cpath(path, p, sizeof p)) return false;
     FILE* f = fopen(p, "ab");
     if (!f) return false;
     size_t w = data.len ? fwrite(data.ptr, 1, data.len, f) : 0;
@@ -2439,7 +2458,7 @@ NX_INLINE int32_t nx_fs_kind(nx_sl_u8 path) {
 }
 NX_INLINE int32_t nx_fs_stat(nx_sl_u8 path, int64_t* size, int64_t* mtime_ms) {
     char p[4096];
-    if (!nx_cpath(path, p, sizeof p)) return 2;
+    if (!nx_cpath(path, p, sizeof p)) return nx_fs_errcode();
 #if defined(_WIN32)
     struct _stat64 st;
     if (_stat64(p, &st) != 0) return nx_fs_errcode();
@@ -2453,7 +2472,7 @@ NX_INLINE int32_t nx_fs_stat(nx_sl_u8 path, int64_t* size, int64_t* mtime_ms) {
 }
 NX_INLINE int32_t nx_fs_mkdir(nx_sl_u8 path) {
     char p[4096];
-    if (!nx_cpath(path, p, sizeof p)) return 2;
+    if (!nx_cpath(path, p, sizeof p)) return nx_fs_errcode();
 #if defined(_WIN32)
     if (_mkdir(p) == 0 || errno == EEXIST) return 0;
 #else
@@ -2463,7 +2482,7 @@ NX_INLINE int32_t nx_fs_mkdir(nx_sl_u8 path) {
 }
 NX_INLINE int32_t nx_fs_remove_file(nx_sl_u8 path) {
     char p[4096];
-    if (!nx_cpath(path, p, sizeof p)) return 2;
+    if (!nx_cpath(path, p, sizeof p)) return nx_fs_errcode();
     if (remove(p) == 0) return 0;
 #if defined(_WIN32)
     /* a read-only file (every object in a git checkout) refuses `remove` on
@@ -2474,7 +2493,7 @@ NX_INLINE int32_t nx_fs_remove_file(nx_sl_u8 path) {
 }
 NX_INLINE int32_t nx_fs_remove_dir(nx_sl_u8 path) {
     char p[4096];
-    if (!nx_cpath(path, p, sizeof p)) return 2;
+    if (!nx_cpath(path, p, sizeof p)) return nx_fs_errcode();
 #if defined(_WIN32)
     return _rmdir(p) == 0 ? 0 : nx_fs_errcode();
 #else
@@ -2483,7 +2502,7 @@ NX_INLINE int32_t nx_fs_remove_dir(nx_sl_u8 path) {
 }
 NX_INLINE int32_t nx_fs_rename(nx_sl_u8 from, nx_sl_u8 to) {
     char p[4096], q[4096];
-    if (!nx_cpath(from, p, sizeof p) || !nx_cpath(to, q, sizeof q)) return 2;
+    if (!nx_cpath(from, p, sizeof p) || !nx_cpath(to, q, sizeof q)) return nx_fs_errcode();
 #if defined(_WIN32)
     if (MoveFileExA(p, q, MOVEFILE_REPLACE_EXISTING)) return 0;
     return GetLastError() == ERROR_FILE_NOT_FOUND || GetLastError() == ERROR_PATH_NOT_FOUND ? 1 : 2;
@@ -2501,7 +2520,7 @@ NX_INLINE void nx_fs_push_name(nx_ctx* c, nx_rawlist* l, const char* name) {
 /* the entries of a directory, unsorted, without `.` and `..` */
 NX_INLINE int32_t nx_fs_list_dir(nx_ctx* c, nx_sl_u8 path, nx_rawlist* out) {
     char p[4096];
-    if (!nx_cpath(path, p, sizeof p)) return 2;
+    if (!nx_cpath(path, p, sizeof p)) return nx_fs_errcode();
     nx_rawlist l; l.ptr = NULL; l.len = 0; l.cap = 0; l.ar = c->arena;
 #if defined(_WIN32)
     char pat[4200];
@@ -2594,7 +2613,8 @@ NX_INLINE FILE* nx_fh(int64_t h) {
 /* a handle, or -1 when the path does not exist, -2 on any other failure */
 NX_INLINE int64_t nx_file_open(nx_sl_u8 path, nx_sl_u8 mode) {
     char p[4096], m[8];
-    if (!nx_cpath(path, p, sizeof p) || mode.len == 0 || mode.len > 3) return -2;
+    if (mode.len == 0 || mode.len > 3) return -2;
+    if (!nx_cpath(path, p, sizeof p)) return errno == ENOENT ? -1 : -2;
     memcpy(m, mode.ptr, mode.len); m[mode.len] = 'b'; m[mode.len + 1] = 0;
     FILE* f = fopen(p, m);
     if (!f) return errno == ENOENT ? -1 : -2;

@@ -1281,12 +1281,13 @@ impl Checker {
         else if first == "aarch64" or first == "arm64" { arch = "aarch64" }
         else if first == "x86" or first == "i386" or first == "i486" or first == "i586" or first == "i686" { arch = "x86" }
         else if first.starts_with("arm") or first.starts_with("thumb") { arch = "arm" }
-        else if first == "riscv64" { arch = "riscv64" }
+        else if first == "riscv64" or first == "riscv32" or first == "wasm32" { arch = first }
         var os: []u8 = "unknown"
         if t.find("windows") != null { os = "windows" }
         else if t.find("macos") != null or t.find("darwin") != null or t.find("ios") != null { os = "macos" }
         else if t.find("linux") != null { os = "linux" }
         else if t.find("freebsd") != null or t.find("openbsd") != null or t.find("netbsd") != null { os = "bsd" }
+        else if t.find("wasi") != null { os = "wasi" }
         return (String.from(os), String.from(arch), triple_ptr_bits(t))
     }
 

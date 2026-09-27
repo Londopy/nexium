@@ -1,5 +1,6 @@
 // std.websocket: a WebSocket client (RFC 6455), written in Nexium over
 // std.http's transports.
+// NOT ON wasm32: WASI (preview 1) opens no sockets, which its tests serve on.
 //
 // `import std.websocket` then:
 //

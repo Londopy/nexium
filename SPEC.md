@@ -580,9 +580,10 @@ checks on literals, and `comptime test` blocks run here. Intrinsics:
 reinterprets the bytes of one scalar as another of the same size;
 `@min` and `@max` take two numbers of one type and carry the range of
 their operands; `@target()` is `(os, arch, pointer_bits)` (`"windows"`,
-`"macos"`, `"linux"`, `"bsd"`; `"x86_64"`, `"aarch64"`, ...; 64 or 32),
-the build's target (`--target`, else the machine compiling), a value of
-the compile-time interpreter as well as of the program.
+`"macos"`, `"linux"`, `"bsd"`, `"wasi"`; `"x86_64"`, `"aarch64"`, `"x86"`,
+`"arm"`, `"riscv64"`, `"riscv32"`, `"wasm32"`; 64 or 32; `"unknown"` for
+any other), the build's target (`--target`, else the machine compiling),
+a value of the compile-time interpreter as well as of the program.
 
 Conditional compilation: in `if comptime C { A } else { B }` the whole of
 `C` is evaluated while the program is checked, and must be a compile-time

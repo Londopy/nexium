@@ -1,5 +1,6 @@
 // std.net: TCP and UDP with addresses, written in Nexium over the `net.*`
 // primitives.
+// NOT ON wasm32: WASI (preview 1) opens no sockets.
 //
 // `import std.net` then:
 //
