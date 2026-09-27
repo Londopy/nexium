@@ -164,7 +164,7 @@ if torrents:
         out += [f"# {f}", magnet, ""]
     out += ["```", "", "</details>", ""]
 
-out += ["## Requirements", "", "- Windows 10 or later, x64. macOS on Apple Silicon. Linux x86_64 with glibc. Builds for aarch64 Linux and Windows on ARM are attached too; they are tier 2 (built, not tested in CI; see docs/platforms.md).",
+out += ["## Requirements", "", "- Windows 10 or later, x64. macOS on Apple Silicon. Linux x86_64 with glibc. Linux and Windows on ARM (aarch64) too, tested in CI like the others (docs/platforms.md).",
         "- A C compiler is needed to build programs: the Windows installer and the macOS/Linux script take care of it. Otherwise put [Zig](https://ziglang.org/download/) on your PATH, or set `NX_CC`.", ""]
 open(out_path, "w", encoding="utf-8", newline="\n").write("\n".join(out))
 print(f"wrote {out_path} and SHA256SUMS.txt for {len(sums)} assets, {len(torrents)} torrents" + ("" if segno else " (no segno: no QR codes)"))

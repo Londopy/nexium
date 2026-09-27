@@ -49,6 +49,9 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   standard library's tests and the Topo's programs as modules, all but
   those that start processes or open sockets, which WASI (preview 1) has
   none of.
+- Linux and Windows on ARM are tier 1: CI's test job runs the seed, the
+  fixed point and every suite on GitHub's arm64 runners
+  (`ubuntu-24.04-arm`, `windows-11-arm`), as on the three desktops.
 - `artifact wasm` (decision 124): `nx ship` builds the library for
   `wasm32-wasi` as a module with no `main`, exporting its `export(c)`
   functions, and writes `<name>.js`, an ES module whose `load()`
@@ -69,6 +72,8 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   file. Under WASI they found the directory the program runs in, and on
   Windows `fs.list("")` listed the root of the drive.
 - `@target()` named the architecture of a `riscv32` build `unknown`.
+- On Windows on ARM, `nx ship` compiled the Rust crate's static archive for
+  x86-64, which an ARM64 cargo cannot link; it follows the machine now.
 - `@sizeOf` of a `String` or a `List` was 24 on a 64-bit target where C
   lays them out in 32 bytes (their arena pointer was not counted), of a
   `Map` 40 where it is 112, of an error value 8 where it is 4, and a

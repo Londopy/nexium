@@ -742,7 +742,8 @@ same suites under QEMU in CI (decision 122). WebAssembly programs
 (`wasm32-wasi`) build and run the same suites under Node.js in CI, a panic
 unwinding as it does natively (decision 123), and `artifact wasm` ships a
 library as a module with a JavaScript loader for a page or Node.js
-(decision 124), which CI loads into a page in headless Chrome.
+(decision 124), which CI loads into a page in headless Chrome. Linux and
+Windows on ARM are tier 1, the test job running on GitHub's arm64 runners.
 `wasm32-freestanding` and the rest of the section are to do.
 
 - WebAssembly: `--target wasm32-wasi` and `wasm32-freestanding`, the
@@ -754,6 +755,8 @@ library as a module with a JavaScript loader for a page or Node.js
   on all three and in the browser through a canvas backend.
 - Static Linux binaries (musl), FreeBSD, and the tier list extended;
   Linux aarch64 and Windows arm64 promoted to tier 1 when CI runs them.
+  (Done: the test job runs every suite on `ubuntu-24.04-arm` and
+  `windows-11-arm`.)
 - 32-bit architectures: `i686` Windows and Linux, `armv7` Linux (the
   Raspberry Pi OS that is still 32-bit, routers, older phones), `riscv32`
   and `thumb` alongside the embedded targets below. Everything in the

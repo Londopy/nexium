@@ -92,8 +92,8 @@ jobs:
           for sh in bash zsh fish powershell; do build/nx completions $sh > "dist/completions/nx.$sh"; done
           tar -C dist -czf nx-${{ github.ref_name }}-${{ matrix.target }}.tar.gz .
 
-      # ---- tier 2: aarch64 Linux and Windows on ARM, cross-compiled from the
-      # same C with Zig; built for every release, not run in CI (docs/platforms.md)
+      # ---- aarch64 Linux and Windows on ARM, cross-compiled from the same C
+      # with Zig; tier 1, as CI runs the harness on arm64 runners (docs/platforms.md)
       - name: Cross-compile for aarch64 Linux and Windows on ARM
         if: runner.os == 'Linux'
         run: |
