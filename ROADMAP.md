@@ -742,8 +742,8 @@ same suites under QEMU in CI (decision 122). WebAssembly programs
 (`wasm32-wasi`) build and run the same suites under Node.js in CI, a panic
 unwinding as it does natively (decision 123), and `artifact wasm` ships a
 library as a module with a JavaScript loader for a page or Node.js
-(decision 124). `wasm32-freestanding` and the rest of the section are to
-do.
+(decision 124), which CI loads into a page in headless Chrome.
+`wasm32-freestanding` and the rest of the section are to do.
 
 - WebAssembly: `--target wasm32-wasi` and `wasm32-freestanding`, the
   runtime's process, socket and thread code behind `@target()`, and an

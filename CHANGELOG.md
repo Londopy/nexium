@@ -59,7 +59,8 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   on answering. The module is stripped of the C library's debug
   information, which was 95% of it: `examples/ropesim.nx`'s is 39 KB. The
   harness runs that package under Node.js and gets the native package's
-  answers.
+  answers, and CI loads it into a page in headless Chrome
+  (`tests/ship/wasm_page.html`) and gets them again.
 
 ### Fixed
 

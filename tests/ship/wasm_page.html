@@ -1,0 +1,26 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>ropesim as WebAssembly</title>
+<pre id="out">running</pre>
+<script type="module">
+// CI's browser check of `artifact wasm` (the WebAssembly job): the package
+// `nx ship` makes of examples/ropesim.nx, loaded as a page loads it (the
+// module fetched from beside its loader), answers as the native one does.
+import { load } from './wasm/ropesim.js';
+
+const out = document.getElementById('out');
+try {
+  const m = await load();
+  const pos = new Float64Array([0, 1, 2]);
+  const r = m.simulate(pos, 0.1, 3);
+  let err = '';
+  try { m.dot([1, 2], [1]); } catch (e) { err = e.errorName; }
+  let panic = '', msg = false;
+  try { m.divide(1n, 0n); } catch (e) { panic = e.name; msg = e.message.startsWith('division by zero'); }
+  const again = m.dot([2], [3]);
+  const result = { dot: m.dot([1, 2, 3], [4, 5, 6]), sum: m.checksum('hello'), moved: pos[1] !== 1, r: r > 0, err, panic, msg, again, div: String(m.divide(84n, 2n)) };
+  out.textContent = 'RESULT ' + JSON.stringify(result);
+} catch (e) {
+  out.textContent = 'FAILED ' + e;
+}
+</script>

@@ -260,6 +260,19 @@ jobs:
           nx=nx-out/bootstrap/nx2
           "$nx" run tests/run.nx -- --nx "$nx" --target wasm32-wasi spec examples std topo compile_fail
 
+      # artifact wasm as a page uses it: served over HTTP, the module fetched
+      # from beside its loader, in the runner's Chrome
+      - name: A WebAssembly library in a browser
+        run: |
+          nx=nx-out/bootstrap/nx2
+          "$nx" ship examples/ropesim.nx --out-dir nx-out/web
+          cp tests/ship/wasm_page.html nx-out/web/ropesim/index.html
+          python3 -m http.server 8765 --bind 127.0.0.1 --directory nx-out/web/ropesim > /dev/null 2>&1 &
+          sleep 2
+          google-chrome --headless=new --no-sandbox --disable-gpu --virtual-time-budget=10000 --dump-dom http://127.0.0.1:8765/index.html > nx-out/web/dom.html
+          grep -o 'RESULT [^<]*\|FAILED [^<]*' nx-out/web/dom.html
+          grep -q 'RESULT {"dot":32,"sum":1335831723,"moved":true,"r":true,"err":"InvalidInput","panic":"NexiumPanic","msg":true,"again":6,"div":"42"}' nx-out/web/dom.html
+
   fuzz:
     name: fuzz
     # mutated sources through the front end (one accepted mutant in ten

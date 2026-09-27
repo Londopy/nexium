@@ -49,7 +49,8 @@ a `.wasm` module, and `nx run` and `nx test` run it under Node.js's WASI
 (Node.js on the PATH): the program sees its working directory and a `/tmp`
 of its own beside the module, and nothing else of the machine. CI runs the
 spec cases, the examples, the standard library's tests and the Topo's
-programs as modules under Node.js on Linux. WASI (preview 1) has no
+programs as modules under Node.js on Linux, and loads a library built with
+`artifact wasm` into a page in headless Chrome. WASI (preview 1) has no
 processes, sockets or threads: `std.process` and `std.net` fail as a system
 that refuses them would, `for parallel` and `std.thread` run their work in
 place, and a program's stack is the engine's (`artifact cli { stack }` has
