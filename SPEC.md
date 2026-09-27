@@ -651,7 +651,12 @@ url, license, readme, files, add_to_path }` produces an Inno Setup script
 and setup program on Windows and an `install.sh` with a tarball elsewhere
 (see `docs/releasing-your-program.md`). `artifact node { name = "pkg" }`
 produces an npm package: `index.js` calling the shared library through
-`koffi`, `index.d.ts`, `package.json`.
+`koffi`, `index.d.ts`, `package.json`. `artifact wasm { name = "pkg" }`
+produces the library as WebAssembly for a page or Node.js: `pkg.wasm`,
+checked and built for `wasm32-wasi` as a module with no `main` whose exports
+are the exported functions; `pkg.js`, an ES module whose `load()`
+instantiates it with the WASI a library needs and returns its functions,
+with the same `NexiumError` and `NexiumPanic`; `pkg.d.ts`; `package.json`.
 
 `artifact cli { name = "tool" }` names the executable; `stack = "1G"` (K, M,
 G or a byte count) runs `main` on a thread reserving that much stack, so a
@@ -691,7 +696,7 @@ before it was deleted at 1.0. `nx run tests/run.nx` is the test harness.
 | `ref class`, `weak`, arenas, `for parallel` | implemented, tested |
 | comptime, `comptime test` | implemented, tested |
 | `@cImport`, vendored C, opaque structs | implemented, tested |
-| artifacts: cabi, python, rustlib, cli | implemented, tested |
+| artifacts: cabi, python, rustlib, node, wasm, cli, installer | implemented, tested |
 | std: strings, lists, bytes, num, json, args, fs, time, regex, text, testing, stream, net, http, process, thread | implemented, tested |
 | regions | R1, decided (88); the uncovered cases are listed in 5.6 |
 | layouts `packed`, `soa`; strategies `pool`, `stack` | not part of the language (88); `layout(c)` and `arena` are |

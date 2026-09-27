@@ -1,4 +1,4 @@
-// EXPECT: unknown artifact `binary`: the kinds are cli, cabi, python, node, rustlib, link and installer
+// EXPECT: unknown artifact `binary`: the kinds are cli, cabi, python, node, rustlib, wasm, link and installer
 artifact binary { name = "tool" }
 
 fn main() { }

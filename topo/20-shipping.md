@@ -77,7 +77,7 @@ library with `.pyi` stubs, so an editor completes it; a status code becomes
 an exception, a panic a `hasher.NexiumPanic` with the message; a `[]f64`
 parameter takes a list, an `array('d')` or a NumPy array without copying.
 
-## From C, Rust and Node
+## From C, Rust, Node and the browser
 
 C: include the header, link the static or shared library. Rust: `artifact
 rustlib { name = "hasher" }` adds a crate with a build script that links the
@@ -85,7 +85,11 @@ archive, `#[repr(C)]` structs and safe wrappers (`hasher::divide(1, 0)` is a
 `Result`). Node: `artifact node { name = "hasher" }` is an npm package over
 the shared library through `koffi`; a status becomes a thrown error with
 `errorName`, `Float64Array` and `BigInt` cross as you would hope. The
-[embedding guide](../docs/embedding.html) has each of these in full.
+browser: `artifact wasm { name = "hasher" }` builds the library as
+WebAssembly with a loader, `hasher.js`, whose `await load()` gives a page
+(or Node.js) the same functions with the same errors, and no native code
+at all. The [embedding guide](../docs/embedding.html) has each of these in
+full.
 
 ## Programs and installers
 

@@ -256,7 +256,7 @@ pub fn audit(c: *mut check.Checker, globals_flag: bool) {
     println("mutable globals: {}", .{globals.len})
     for g in globals { println("{}", .{g}) }
     if globals_flag and globals.len > 0 {
-        println("note: a project declaring a `cabi`, `python`, `node`, `rustlib`, or `shared` artifact rejects any function that reaches these (S2)", .{})
+        println("note: a project declaring a `cabi`, `python`, `node`, `rustlib`, `wasm`, or `shared` artifact rejects any function that reaches these (S2)", .{})
     }
 }
 

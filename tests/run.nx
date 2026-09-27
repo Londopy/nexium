@@ -874,7 +874,8 @@ fn program_found(e: *Env, name: []u8) -> bool {
 }
 
 /// `nx ship` on a library: the header, the Python package and wheel, the
-/// Rust crate (built when cargo is around), the npm package (run when node is).
+/// Rust crate (built when cargo is around), the npm package (run when node is),
+/// and the WebAssembly package (run when node is).
 fn suite_ship(e: *Env, failures: *mut List(String)) {
     // a struct reached only through `self` pointers of trait methods, in a
     // library with no `main`, is defined, not left an incomplete type
@@ -922,6 +923,27 @@ fn suite_ship(e: *Env, failures: *mut List(String)) {
     } else {
         println("ship: npm not found; the node package is not run", .{})
     }
+    // the WebAssembly package answers as the native one does, loaded from
+    // its file and from bytes, and goes on after a panic
+    let wasm_dir = fs.join(lib[..], "wasm")
+    for rel in ["ropesim.wasm", "ropesim.js", "ropesim.d.ts", "package.json"] {
+        if !fs.exists(fs.join(wasm_dir[..], rel)[..]) { failures.append(format("ship: wasm/{} was not produced", .{rel})) }
+    }
+    let wdts = fs.read(fs.join(wasm_dir[..], "ropesim.d.ts")[..]) catch { String.new() }
+    if wdts[..].find("  dot(a: Float64Array | ArrayLike<number>, b: Float64Array | ArrayLike<number>): number;") == null or wdts[..].find("export function load(") == null {
+        failures.append(format("ship: the WebAssembly typings:\n{}", .{wdts}))
+    }
+    if program_found(e, "node") {
+        let script = "import { load } from './ropesim.js'; import { readFile } from 'node:fs/promises'; const m = await load(); const pos = new Float64Array([0, 1, 2]); const r = m.simulate(pos, 0.1, 3); let err = ''; try { m.dot([1, 2], [1]); } catch (e) { err = e.errorName; } let panic = '', msg = false; try { m.divide(1n, 0n); } catch (e) { panic = e.name; msg = e.message.startsWith('division by zero'); } const again = m.dot([2], [3]); const m2 = await load(await readFile('ropesim.wasm')); console.log(JSON.stringify({ dot: m.dot([1, 2, 3], [4, 5, 6]), sum: m.checksum('hello'), moved: pos[1] !== 1, r: r > 0, err, panic, msg, again, div: String(m.divide(84n, 2n)), bytes: m2.dot([1], [5]) }));"
+        let wn = run_in(e, ["node", "--input-type=module", "-e", script][..], "", wasm_dir[..])
+        if wn.code != 0 {
+            failures.append(format("ship: the WebAssembly package failed:\n{}", .{wn.stderr}))
+        } else if wn.text() != "{\"dot\":32,\"sum\":1335831723,\"moved\":true,\"r\":true,\"err\":\"InvalidInput\",\"panic\":\"NexiumPanic\",\"msg\":true,\"again\":6,\"div\":\"42\",\"bytes\":5}" {
+            failures.append(format("ship: the WebAssembly package answered:\n{}", .{wn.stdout}))
+        }
+    } else {
+        println("ship: node not found; the WebAssembly package is not run", .{})
+    }
     // a panic caught at the export boundary releases what the call acquired:
     // 200 calls that open a file and panic, then an open that must succeed
     // (the runtime has 64 file slots; before the tracker they were all leaked)
@@ -940,7 +962,7 @@ fn suite_ship(e: *Env, failures: *mut List(String)) {
         failures.append(format("ship: after 200 panicking calls the boundary answered `{}` (want `200 0 true`: every panic reported, the file slots released)", .{bhost.text()}))
     }
     fs.remove_all(out_dir[..]) catch { }
-    println("ship: the library artifacts, and the export boundary releasing what a panic left", .{})
+    println("ship: the library artifacts, the WebAssembly package, and the export boundary releasing what a panic left", .{})
 }
 
 /// The GUI's headless tests and the offscreen demo; then a build from

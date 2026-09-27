@@ -146,3 +146,33 @@ Slices become `&[T]` / `&mut [T]`, status-returning exports become
 `Result<T, NexiumError>` with `Error { code, name }` and `Panic { message }`
 variants, and `!panics` exports are plain functions. On Windows the archive is
 compiled for the MSVC ABI so it links into the default Rust toolchain.
+
+## 6. From JavaScript, as WebAssembly
+
+Declare `artifact wasm { name = "ropesim" }` and `nx ship` also builds the
+library for `wasm32-wasi` and writes a package to `nx-out/ropesim/wasm/`:
+`ropesim.wasm`, `ropesim.js` (an ES module), `ropesim.d.ts` and a
+`package.json`. The same files run in a page and in Node.js 20 or later,
+with no native code and no dependencies:
+
+```js
+import { load } from './ropesim.js';
+
+const ropesim = await load();                    // fetches ropesim.wasm beside ropesim.js
+const pos = new Float64Array([0.1, 0.2, 0.3]);
+ropesim.simulate(pos, 0.01, 100);                // []mut f64: copied in, and back
+ropesim.dot([1, 2], [3, 4]);                     // 11; a failure throws NexiumError
+ropesim.checksum('hello');                       // []u8 from a string, as UTF-8
+ropesim.divide(1n, 0n);                          // throws NexiumPanic: division by zero (at ...)
+```
+
+`load()` fetches the module from beside `ropesim.js` in a page and reads it
+from disk in Node.js; it also takes a URL, the bytes, or a compiled
+`WebAssembly.Module`. Arguments cross as wasm32's C ABI has them: a slice
+is copied into the module's memory (and back, for `[]mut`), `i64` and `u64`
+are BigInts, and a `layout(c)` struct is an object with its fields. A panic
+is caught at the boundary as in the native library, and the module goes on
+answering after it. The library sees no files, arguments or environment,
+and what it prints goes to the console. The runtime's panics need
+WebAssembly's exception handling, which every major browser and Node.js
+have (decision 123).

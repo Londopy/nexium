@@ -35,3 +35,4 @@ artifact cabi { name = "ropesim", exports = [simulate, dot, checksum, divide] }
 artifact python { name = "ropesim", version = "0.1.0" }
 artifact rustlib { name = "ropesim" }
 artifact node { name = "ropesim" }
+artifact wasm { name = "ropesim" }

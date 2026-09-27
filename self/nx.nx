@@ -23,6 +23,7 @@ import doc
 import manifest
 import ship
 import ship_node
+import ship_wasm
 import installer
 import lsp
 import repl
@@ -73,6 +74,8 @@ pub struct Opts {
     /// how the C compiler was chosen: 1 --cc, 2 NX_CC, 3 NX_ZIG, 4 the system compiler on macOS,
     /// 5 a zig bundled with nx, 6 cc/gcc/clang on the PATH when there is no zig, 0 zig on PATH
     cc_source: u8
+    /// the functions a WebAssembly library (`artifact wasm`) exports
+    wasm_exports: List(String)
 }
 
 fn usage() {
@@ -115,6 +118,7 @@ fn parse_opts(args: [][]u8) -> ?Opts {
         .command = String.from(args[1]), .file = String.from(args[2]), .out = String.new(), .out_dir = String.from("nx-out"), .mode = cgen.MODE_DEBUG,
         .std_dir = String.from("std"), .cc = List(String).new(), .target = String.new(), .keep_c = false, .watch = false, .strict = os.env("NX_STRICT") != null, .cpu = String.from("baseline"), .sanitize = String.new(),
         .defines = List(String).new(), .include_dirs = List(String).new(), .rest = List(String).new(), .sigs = false, .cc_source = 0,
+        .wasm_exports = List(String).new(),
     }
     if let v = os.env("NX_CPU") { o.cpu = String.from(v) }
     var cc_text = String.new()
@@ -552,8 +556,9 @@ fn compile_c(c: *check.Checker, o: *Opts, c_path: []u8, out: []u8, kind: []u8) -
 }
 
 /// The C compiler's command line for `inputs` (C files, or objects to link)
-/// to `out`: an executable, an `object`, a `shared` library, or `sections`
-/// (an object with a section per function, for `nx size`).
+/// to `out`: an executable, an `object`, a `shared` library, `sections`
+/// (an object with a section per function, for `nx size`), or a `reactor`
+/// (a WebAssembly library, exporting `o.wasm_exports`).
 fn c_argv(c: *check.Checker, o: *Opts, inputs: *List(String), out: []u8, kind: []u8) -> List(String) {
     var argv = List(String).new()
     for x in o.cc { argv.append(x.clone()) }
@@ -625,6 +630,12 @@ fn c_argv(c: *check.Checker, o: *Opts, inputs: *List(String), out: []u8, kind: [
         }
     }
     if kind == "object" or kind == "sections" { argv.append(String.from("-c")) }
+    if kind == "reactor" {
+        // no `main`: `_initialize` sets the library up, and the named
+        // functions are the module's exports
+        argv.append(String.from("-mexec-model=reactor"))
+        for e in o.wasm_exports { argv.append(format("-Wl,--export={}", .{e})) }
+    }
     if kind == "shared" {
         argv.append(String.from("-shared"))
         argv.append(String.from("-DNX_BUILD_SHARED"))
@@ -636,7 +647,7 @@ fn c_argv(c: *check.Checker, o: *Opts, inputs: *List(String), out: []u8, kind: [
     let windows = is_windows_target(o.target[..])
     if windows and linking { argv.append(String.from("-lws2_32")) }
     // the linker's stack for a module is 64 KiB: a program gets Linux's 8 MiB
-    if is_wasm_target(o.target[..]) and kind == "exe" { argv.append(String.from("-Wl,-z,stack-size=8388608")) }
+    if is_wasm_target(o.target[..]) and (kind == "exe" or kind == "reactor") { argv.append(String.from("-Wl,-z,stack-size=8388608")) }
     if !windows and linking {
         // libm is part of libSystem on macOS; a separate -lm there makes zig skip
         // its implicit libc link on machines without an SDK. Ask for libc explicitly.
@@ -1230,6 +1241,7 @@ fn clone_opts(o: *Opts) -> Opts {
         .command = o.command.clone(), .file = o.file.clone(), .out = o.out.clone(), .out_dir = o.out_dir.clone(), .mode = o.mode,
         .std_dir = o.std_dir.clone(), .cc = o.cc.clone(), .target = o.target.clone(), .keep_c = o.keep_c, .watch = o.watch, .strict = o.strict, .cpu = o.cpu.clone(), .sanitize = o.sanitize.clone(),
         .defines = o.defines.clone(), .include_dirs = o.include_dirs.clone(), .rest = o.rest.clone(), .sigs = o.sigs, .cc_source = o.cc_source,
+        .wasm_exports = o.wasm_exports.clone(),
     }
 }
 
@@ -1494,6 +1506,64 @@ fn copy_dir(from: []u8, to: []u8) -> !void {
     }
 }
 
+/// Write a file, or say why not.
+fn write_or_say(path: []u8, text: []u8) -> bool {
+    io.write_file(path, text) catch {
+        eprintln("error: cannot write {}", .{path})
+        return false
+    }
+    return true
+}
+
+/// `artifact wasm`: the library for wasm32-wasi as a reactor module in
+/// `<out>/<name>/wasm/`, with its JavaScript loader, typings and
+/// package.json (ship_wasm.nx). It is checked again for that target, whose
+/// sizes the C asserts, and its C is built in `<out>/<name>/wasm-build/`.
+fn ship_wasm_lib(o: *Opts, name: []u8, version: []u8, mode: u8, produced: *mut List(String)) -> bool {
+    var wo = clone_opts(o)
+    wo.target = String.from("wasm32-wasi")
+    wo.mode = mode
+    var c = check_program(&wo) orelse return false
+    var infos = List(cgen.ExportInfo).new()
+    let text = emit_with(&mut c, &wo, cgen.ENTRY_LIBRARY, name, mode, &mut infos)
+    if text.len == 0 { return false }
+    if infos.len == 0 {
+        eprintln("error: `artifact wasm` needs at least one `export(c)` function", .{})
+        return false
+    }
+    let why = ship_wasm.unsupported(&infos)
+    if why.len > 0 {
+        eprintln("error: artifact wasm: {}", .{why})
+        return false
+    }
+    let dir = format("{}/{}/wasm", .{o.out_dir, name})
+    wo.out_dir = format("{}/{}/wasm-build", .{o.out_dir, name})
+    fs.make_dirs(dir[..]) catch {
+        eprintln("error: cannot create {}", .{dir})
+        return false
+    }
+    fs.make_dirs(wo.out_dir[..]) catch { }
+    let c_path = format("{}/{}.c", .{wo.out_dir, name})
+    io.write_file(c_path[..], cgen.resolve_line_resets(text[..], c_path[..])[..]) catch {
+        eprintln("error: cannot write {}", .{c_path})
+        return false
+    }
+    for info in infos { wo.wasm_exports.append(info.name.clone()) }
+    wo.wasm_exports.append(format("{}_error_name", .{name}))
+    wo.wasm_exports.append(format("{}_last_panic", .{name}))
+    // the loader copies slices and structs into memory it takes from these
+    wo.wasm_exports.append(String.from("malloc"))
+    wo.wasm_exports.append(String.from("free"))
+    if !compile_c(&c, &wo, c_path[..], format("{}/{}.wasm", .{dir, name})[..], "reactor") { return false }
+    if !write_or_say(format("{}/{}.js", .{dir, name})[..], ship_wasm.module(name, version, &infos)[..]) { return false }
+    if !write_or_say(format("{}/{}.d.ts", .{dir, name})[..], ship_wasm.typings(name, &infos)[..]) { return false }
+    if !write_or_say(format("{}/package.json", .{dir})[..], ship_wasm.package_json(name, version, name)[..]) { return false }
+    if !write_or_say(format("{}/README.md", .{dir})[..], ship_wasm.readme(name, name)[..]) { return false }
+    produced.append(format("{}/{}.wasm", .{dir, name}))
+    produced.append(format("{}/package.json", .{dir}))
+    return true
+}
+
 /// `nx ship`: every artifact the program declares (specification 15).
 fn cmd_ship(o: *Opts) -> i32 {
     var c = check_program(o) orelse return 1
@@ -1516,13 +1586,15 @@ fn cmd_ship(o: *Opts) -> i32 {
     var lib_arts = List(usize).new()
     var cli_arts = List(usize).new()
     var installer_art = NONE
+    var wasm_arts = List(usize).new()
     for a, i in arts {
         let kind = c.node(art_mods[i], a).name.clone()
         if kind == "cabi" or kind == "python" or kind == "shared" or kind == "rustlib" or kind == "node" { lib_arts.append(i) }
+        else if kind == "wasm" { wasm_arts.append(i) }
         else if kind == "cli" or kind == "app" { cli_arts.append(i) }
         else if kind == "installer" { installer_art = i }
         else if kind != "lib" and kind != "link" {
-            eprintln("note: artifact `{}` is not produced by this version of nx (supported: cabi, python, node, rustlib, shared, cli, installer); skipped", .{kind})
+            eprintln("note: artifact `{}` is not produced by this version of nx (supported: cabi, python, node, rustlib, wasm, shared, cli, installer); skipped", .{kind})
         }
     }
     if installer_art != NONE and cli_arts.len == 0 {
@@ -1676,6 +1748,17 @@ fn cmd_ship(o: *Opts) -> i32 {
             }
             produced.append(format("{}/package.json", .{pkg_dir}))
         }
+    }
+    if wasm_arts.len > 0 {
+        var wname = String.new()
+        var wversion = String.new()
+        for i in wasm_arts {
+            if wname.len == 0 { wname = artifact_str(&c, art_mods[i], arts[i], "name") }
+            if wversion.len == 0 { wversion = artifact_str(&c, art_mods[i], arts[i], "version") }
+        }
+        if wname.len == 0 { wname = String.from(stem) }
+        if wversion.len == 0 { wversion = String.from("0.1.0") }
+        if !ship_wasm_lib(o, wname[..], wversion[..], ship_mode, &mut produced) { return 1 }
     }
     if cli_arts.len > 0 {
         var name = String.new()

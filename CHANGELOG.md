@@ -49,6 +49,15 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   standard library's tests and the Topo's programs as modules, all but
   those that start processes or open sockets, which WASI (preview 1) has
   none of.
+- `artifact wasm` (decision 124): `nx ship` builds the library for
+  `wasm32-wasi` as a module with no `main`, exporting its `export(c)`
+  functions, and writes `<name>.js`, an ES module whose `load()`
+  instantiates it and returns its functions, with `<name>.d.ts` and a
+  `package.json`. It runs in a page and in Node.js 20 or later; slices are
+  copied in (and back for `[]mut`), a failure throws `NexiumError`, and a
+  panic throws `NexiumPanic` with its message, after which the module goes
+  on answering. The harness runs `examples/ropesim.nx`'s package under
+  Node.js and gets the native package's answers.
 
 ### Fixed
 

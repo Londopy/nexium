@@ -1084,3 +1084,20 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     opened the machine's root to it, and on Windows a test run made
     `C:\tmp`). `wasm32-freestanding` waits for the embedded targets:
     without WASI the runtime needs a C library of its own.
+124. **`artifact wasm` is a WASI reactor with a loader that brings its own
+    WASI.** A library for the page cannot count on a WASI runtime, and a
+    freestanding module would need a C library of its own (decision 123):
+    so the module is built for `wasm32-wasi` with no `main`
+    (`-mexec-model=reactor`, its exports named at the link), and the
+    generated `<name>.js` answers the few calls the runtime makes (a clock,
+    randomness, the console; ENOSYS for the rest) in a part that is the
+    same for every library (`runtime/nx_wasm_lib.js`). The
+    loader crosses the boundary as wasm32's C ABI does rather than through
+    wrappers in the C: a slice as a copy in the module's memory (taken with
+    its exported `malloc`), a struct of one field as that field, a larger
+    one by pointer, a struct result through a pointer passed first. The
+    program is checked a second time for `wasm32-wasi`, since its C asserts
+    each `@sizeOf` for the target it is compiled for. The package is an ES
+    module with no dependencies and no build step, for Node.js 20 or later
+    and every browser with exception handling; 128-bit integers at the
+    boundary are refused until something needs them.

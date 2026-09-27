@@ -1,0 +1,346 @@
+// `artifact wasm`: the library as a WebAssembly module with a JavaScript
+// loader, for a page or Node.js.
+//
+// `nx ship` builds the library for wasm32-wasi as a reactor, a module with
+// no `main` whose exports are the `export(c)` functions, and writes beside it
+// <name>.js, an ES module whose `load()` instantiates it with the little WASI
+// a library needs (runtime/nx_wasm_lib.js) and returns its functions, with
+// <name>.d.ts and a package.json. Arguments cross as wasm32's C ABI has them:
+// a slice is copied into the module's memory (and back, for `[]mut`), a
+// `layout(c)` struct of one field travels as that field and a larger one by
+// pointer, a struct result comes back through a pointer passed first, and a
+// function that can fail returns a status with its value through a pointer
+// passed last. Errors arrive as `NexiumError` and a panic caught at the
+// boundary as `NexiumPanic`, as in the Node.js package.
+
+import cgen
+
+const LIB_JS = @embedFile("../runtime/nx_wasm_lib.js")
+
+/// The bytes of a scalar in wasm32's C ABI, which is also its alignment.
+fn wasm_size(k: *cgen.Scalar) -> u32 {
+    if k.kind == 1 or k.kind == 4 { return 4 }
+    if k.kind == 2 { return 8 }
+    if k.kind == 3 { return 1 }
+    let n = k.int_name[..]
+    if n == "i8" or n == "u8" { return 1 }
+    if n == "i16" or n == "u16" { return 2 }
+    if n == "i64" or n == "u64" { return 8 }
+    if n == "i128" or n == "u128" { return 16 }
+    return 4
+}
+
+/// Whether JavaScript holds the scalar as a BigInt.
+fn wide(k: *cgen.Scalar) -> bool {
+    return k.kind == 0 and (k.int_name == "i64" or k.int_name == "u64")
+}
+
+/// The typed array a slice of this element crosses as.
+fn typed_array(k: *cgen.Scalar) -> []u8 {
+    if k.kind == 1 { return "Float32Array" }
+    if k.kind == 2 { return "Float64Array" }
+    if k.kind == 3 { return "Uint8Array" }
+    if k.kind == 4 { return "Uint32Array" }
+    let n = k.int_name[..]
+    if n == "i8" { return "Int8Array" }
+    if n == "u8" { return "Uint8Array" }
+    if n == "i16" { return "Int16Array" }
+    if n == "u16" { return "Uint16Array" }
+    if n == "i32" or n == "isize" { return "Int32Array" }
+    if n == "i64" { return "BigInt64Array" }
+    if n == "u64" { return "BigUint64Array" }
+    return "Uint32Array"
+}
+
+/// The `DataView` accessor of a scalar: `Float64`, `Uint8`, ...
+fn accessor(k: *cgen.Scalar) -> []u8 {
+    if k.kind == 1 { return "Float32" }
+    if k.kind == 2 { return "Float64" }
+    if k.kind == 3 { return "Uint8" }
+    if k.kind == 4 { return "Uint32" }
+    let n = k.int_name[..]
+    if n == "i8" { return "Int8" }
+    if n == "u8" { return "Uint8" }
+    if n == "i16" { return "Int16" }
+    if n == "u16" { return "Uint16" }
+    if n == "i32" or n == "isize" { return "Int32" }
+    if n == "i64" { return "BigInt64" }
+    if n == "u64" { return "BigUint64" }
+    return "Uint32"
+}
+
+/// A JavaScript value as the module's argument.
+fn arg_in(k: *cgen.Scalar, v: []u8) -> String {
+    if k.kind == 3 { return format("({} ? 1 : 0)", .{v}) }
+    if wide(k) { return format("BigInt({})", .{v}) }
+    return String.from(v)
+}
+
+/// The module's result as the JavaScript value: an unsigned 32-bit one
+/// comes back through a signed `i32`, a `u64` through a signed BigInt.
+fn result_out(k: *cgen.Scalar, r: []u8) -> String {
+    if k.kind == 3 { return format("{} !== 0", .{r}) }
+    if k.kind == 4 { return format("{} >>> 0", .{r}) }
+    if k.kind == 0 {
+        let n = k.int_name[..]
+        if n == "u32" or n == "usize" { return format("{} >>> 0", .{r}) }
+        if n == "u8" { return format("{} & 0xff", .{r}) }
+        if n == "u16" { return format("{} & 0xffff", .{r}) }
+        if n == "u64" { return format("BigInt.asUintN(64, {})", .{r}) }
+    }
+    return String.from(r)
+}
+
+/// A scalar read from the module's memory.
+fn mem_read(k: *cgen.Scalar, at: []u8) -> String {
+    let le = if wasm_size(k) == 1 { "" } else { ", true" }
+    let v = format("h.view().get{}({}{})", .{accessor(k), at, le})
+    if k.kind == 3 { return format("({} !== 0)", .{v}) }
+    return v
+}
+
+/// A statement writing a scalar into the module's memory.
+fn mem_write(k: *cgen.Scalar, at: []u8, v: []u8) -> String {
+    let le = if wasm_size(k) == 1 { "" } else { ", true" }
+    return format("h.view().set{}({}, {}{});", .{accessor(k), at, arg_in(k, v), le})
+}
+
+fn round_up(n: u32, a: u32) -> u32 {
+    return (n + a - 1) / a * a
+}
+
+/// The offsets of a struct's fields and its size, laid out as wasm32's C
+/// lays it out.
+fn layout(fields: *List(cgen.ExportField), offsets: *mut List(u32)) -> u32 {
+    var at: u32 = 0
+    var align: u32 = 1
+    for f in fields {
+        let s = wasm_size(&f.scalar)
+        at = round_up(at, s)
+        offsets.append(at)
+        at += s
+        if s > align { align = s }
+    }
+    return round_up(at, align)
+}
+
+/// A struct read from the module's memory, as an object literal.
+fn read_struct(fields: *List(cgen.ExportField), offsets: *List(u32), base: []u8) -> String {
+    var parts = List(String).new()
+    for f, j in fields { parts.append(format("{}: {}", .{f.name, mem_read(&f.scalar, format("{} + {}", .{base, offsets[j]})[..])})) }
+    return format("{{ {} }}", .{join(&parts, ", ")})
+}
+
+fn struct_name(c_name: []u8) -> []u8 {
+    if c_name.starts_with("nx_") { return c_name[3..] }
+    return c_name
+}
+
+fn join(parts: *List(String), sep: []u8) -> String {
+    var out = String.new()
+    for p, i in parts {
+        if i > 0 { out.append(sep) }
+        out.append(p[..])
+    }
+    return out
+}
+
+fn quoted(s: []u8) -> String {
+    var out = String.from("\"")
+    for c in s {
+        if c == '"' or c == '\\' { out.push_byte('\\') }
+        out.push_byte(c)
+    }
+    out.append("\"")
+    return out
+}
+
+fn has(xs: *List(String), s: []u8) -> bool {
+    for x in xs { if x == s { return true } }
+    return false
+}
+
+fn structs_of(infos: *List(cgen.ExportInfo)) -> List(*cgen.ExportParam) {
+    var seen = List(String).new()
+    var out = List(*cgen.ExportParam).new()
+    for info in infos {
+        for p, i in info.params {
+            if p.kind == 2 and !has(&seen, p.c_name[..]) { seen.append(p.c_name.clone()); out.append(&info.params[i]) }
+        }
+        if info.has_ret and info.ret.kind == 2 and !has(&seen, info.ret.c_name[..]) { seen.append(info.ret.c_name.clone()); out.append(&info.ret) }
+    }
+    return out
+}
+
+/// Whether a parameter or result holds a 128-bit integer anywhere.
+fn has_128(p: *cgen.ExportParam) -> bool {
+    if p.kind == 2 {
+        for f in p.fields { if wasm_size(&f.scalar) == 16 { return true } }
+        return false
+    }
+    return wasm_size(&p.scalar) == 16
+}
+
+/// What the artifact cannot carry yet, as the reason; "" when it carries
+/// every export.
+pub fn unsupported(infos: *List(cgen.ExportInfo)) -> String {
+    for info in infos {
+        var wide128 = info.has_ret and has_128(&info.ret)
+        for p in info.params { if has_128(&p) { wide128 = true } }
+        if wide128 { return format("`{}` has a 128-bit integer at its boundary, which the WebAssembly artifact does not carry yet", .{info.name}) }
+    }
+    return String.new()
+}
+
+/// One export as a method of the object `load` returns.
+fn function(info: *cgen.ExportInfo, js: *mut String) {
+    var params = List(String).new()
+    var body = List(String).new()
+    var args = List(String).new()
+    var after = List(String).new()
+    var temps = false
+    var ret_offsets = List(u32).new()
+    var ret_size: u32 = 0
+    if info.has_ret and info.ret.kind == 2 { ret_size = layout(&info.ret.fields, &mut ret_offsets) }
+    // a struct result of more than one field comes back through a pointer
+    // passed first, unless a status carries it
+    let sret = info.has_ret and !info.status and info.ret.kind == 2 and info.ret.fields.len != 1
+    if sret {
+        temps = true
+        body.append(format("const ret = t.alloc({});", .{ret_size}))
+        args.append(String.from("ret"))
+    }
+    for p, i in info.params {
+        let v = format("_{}", .{p.name})
+        params.append(v.clone())
+        if p.kind == 0 {
+            args.append(arg_in(&p.scalar, v[..]))
+        } else if p.kind == 1 {
+            temps = true
+            let ta = typed_array(&p.scalar)
+            if p.mutable { body.append(format("const [p{}, n{}, a{}] = t.slice({}, {});", .{i, i, i, v, ta})) } else { body.append(format("const [p{}, n{}] = t.slice({}, {});", .{i, i, v, ta})) }
+            args.append(format("p{}", .{i}))
+            args.append(format("n{}", .{i}))
+            if p.mutable { after.append(format("h.back({}, p{}, a{}, {});", .{v, i, i, ta})) }
+        } else if p.fields.len == 1 {
+            args.append(arg_in(&p.fields[0].scalar, format("{}.{}", .{v, p.fields[0].name})[..]))
+        } else {
+            temps = true
+            var offsets = List(u32).new()
+            let size = layout(&p.fields, &mut offsets)
+            body.append(format("const s{} = t.alloc({});", .{i, size}))
+            for f, j in p.fields { body.append(mem_write(&f.scalar, format("s{} + {}", .{i, offsets[j]})[..], format("{}.{}", .{v, f.name})[..])) }
+            args.append(format("s{}", .{i}))
+        }
+    }
+    var calls = List(String).new()
+    var result = String.new()
+    if info.status {
+        if info.has_ret {
+            temps = true
+            let size = if info.ret.kind == 2 { ret_size } else { wasm_size(&info.ret.scalar) }
+            body.append(format("const out = t.alloc({});", .{size}))
+            args.append(String.from("out"))
+            result = if info.ret.kind == 2 { read_struct(&info.ret.fields, &ret_offsets, "out") } else { mem_read(&info.ret.scalar, "out") }
+        }
+        calls.append(format("const code = x.{}({});", .{info.name, join(&args, ", ")}))
+        calls.append(String.from("if (code !== 0) h.raise(code);"))
+    } else if sret {
+        calls.append(format("x.{}({});", .{info.name, join(&args, ", ")}))
+        result = read_struct(&info.ret.fields, &ret_offsets, "ret")
+    } else if info.has_ret {
+        calls.append(format("const r = x.{}({});", .{info.name, join(&args, ", ")}))
+        if info.ret.kind == 2 {
+            // a struct of one field comes back as that field
+            let f = &info.ret.fields[0]
+            result = format("{{ {}: {} }}", .{f.name, result_out(&f.scalar, "r")})
+        } else {
+            result = result_out(&info.ret.scalar, "r")
+        }
+    } else {
+        calls.append(format("x.{}({});", .{info.name, join(&args, ", ")}))
+    }
+    let effects = if info.effects.len == 0 { String.from("none") } else { info.effects.clone() }
+    js.append(format("    /** effects: {}{} */\n", .{effects, if info.status { "" } else { " (cannot panic)" }})[..])
+    js.append(format("    {}({}) {{\n", .{info.name, join(&params, ", ")})[..])
+    let ind = if temps { "        " } else { "      " }
+    if temps { js.append("      const t = h.temps();\n      try {\n") }
+    for b in body { js.append(format("{}{}\n", .{ind, b})[..]) }
+    for c in calls { js.append(format("{}{}\n", .{ind, c})[..]) }
+    for a in after { js.append(format("{}{}\n", .{ind, a})[..]) }
+    if result.len > 0 { js.append(format("{}return {};\n", .{ind, result})[..]) }
+    if temps { js.append("      } finally {\n        t.free();\n      }\n") }
+    js.append("    },\n")
+}
+
+/// The `<lib>.js` of the package: the fixed part, then `load`.
+pub fn module(lib: []u8, version: []u8, infos: *List(cgen.ExportInfo)) -> String {
+    var js = String.new()
+    js.append(format("// {} {} - generated by nx from a Nexium source tree.\n//\n", .{lib, version})[..])
+    js.append("// The library as WebAssembly, for a page or Node.js 20 and later:\n//\n")
+    js.append(format("//     import {{ load }} from './{}.js';\n//     const lib = await load();\n//\n", .{lib})[..])
+    js.append(format("// load() instantiates {}.wasm, fetched from beside this file in a page and\n", .{lib})[..])
+    js.append("// read from disk in Node.js; it also takes another URL, the bytes or a\n")
+    js.append("// WebAssembly.Module. Errors raised by the Nexium code arrive as\n")
+    js.append("// NexiumError; a panic is caught at the boundary and raised as NexiumPanic.\n\n")
+    js.append(LIB_JS)
+    js.append("\nexport async function load(source) {\n  const state = {};\n")
+    js.append(format("  const module = await nxModule(source, new URL('{}.wasm', import.meta.url));\n", .{lib})[..])
+    js.append("  const instance = await WebAssembly.instantiate(module, { wasi_snapshot_preview1: nxWasi(state) });\n")
+    js.append("  const x = instance.exports;\n  state.memory = x.memory;\n  if (x._initialize) x._initialize();\n")
+    js.append(format("  const h = nxBind(x, x['{}_error_name'], x['{}_last_panic']);\n  return {{\n", .{lib, lib})[..])
+    for info in infos { function(&info, &mut js) }
+    js.append("  };\n}\n")
+    return js
+}
+
+fn ts_type(k: *cgen.Scalar, param: bool) -> []u8 {
+    if k.kind == 3 { return "boolean" }
+    if wide(k) { return if param { "bigint | number" } else { "bigint" } }
+    return "number"
+}
+
+/// The `<lib>.d.ts` of the package.
+pub fn typings(lib: []u8, infos: *List(cgen.ExportInfo)) -> String {
+    var ts = String.from("// generated by nx\nexport class NexiumError extends Error {\n  code: number;\n  errorName: string;\n}\nexport class NexiumPanic extends NexiumError {}\n\n")
+    for st in structs_of(infos) {
+        ts.append(format("export interface {} {{\n", .{struct_name(st.c_name[..])})[..])
+        for f in st.fields { ts.append(format("  {}: {};\n", .{f.name, ts_type(&f.scalar, false)})[..]) }
+        ts.append("}\n\n")
+    }
+    ts.append("export interface Library {\n")
+    for info in infos {
+        var params = List(String).new()
+        for p in info.params {
+            if p.kind == 0 { params.append(format("{}: {}", .{p.name, ts_type(&p.scalar, true)})) }
+            else if p.kind == 1 {
+                let is_u8 = p.scalar.kind == 0 and p.scalar.int_name == "u8"
+                params.append(format("{}: {} | ArrayLike<{}>{}", .{p.name, typed_array(&p.scalar), ts_type(&p.scalar, true), if is_u8 { " | string" } else { "" }}))
+            } else { params.append(format("{}: {}", .{p.name, struct_name(p.c_name[..])})) }
+        }
+        var ret = String.from("void")
+        if info.has_ret {
+            if info.ret.kind == 0 { ret = String.from(ts_type(&info.ret.scalar, false)) }
+            else if info.ret.kind == 2 { ret = String.from(struct_name(info.ret.c_name[..])) }
+        }
+        for d in info.doc { ts.append(format("  /** {} */\n", .{d})[..]) }
+        ts.append(format("  {}({}): {};\n", .{info.name, join(&params, ", "), ret})[..])
+    }
+    ts.append("}\n\n")
+    ts.append(format("/** Instantiates {}.wasm, from beside this file unless `source` names or holds another module. */\n", .{lib})[..])
+    ts.append("export function load(source?: string | URL | ArrayBuffer | ArrayBufferView | WebAssembly.Module): Promise<Library>;\n")
+    return ts
+}
+
+/// The `package.json` of the package.
+pub fn package_json(name: []u8, version: []u8, lib: []u8) -> String {
+    let js = format("{}.js", .{lib})
+    let dts = format("{}.d.ts", .{lib})
+    let wasm = format("{}.wasm", .{lib})
+    return format("{{\n  \"name\": {},\n  \"version\": {},\n  \"description\": \"{} (built with Nexium), as WebAssembly\",\n  \"type\": \"module\",\n  \"main\": {},\n  \"types\": {},\n  \"exports\": {{\n    \".\": {{ \"types\": \"./{}\", \"default\": \"./{}\" }},\n    \"./{}\": \"./{}\"\n  }},\n  \"files\": [{}, {}, {}],\n  \"engines\": {{ \"node\": \">=20\" }}\n}}\n", .{quoted(name), quoted(version), name, quoted(js[..]), quoted(dts[..]), dts, js, wasm, wasm, quoted(js[..]), quoted(dts[..]), quoted(wasm[..])})
+}
+
+/// The `README.md` of the package.
+pub fn readme(name: []u8, lib: []u8) -> String {
+    return format("# {}\n\nA library built with Nexium, as WebAssembly: one module that runs in a page\nand in Node.js 20 or later, with no native code and no dependencies.\n\n```js\nimport {{ load }} from '{}';\n\nconst lib = await load();\n```\n\nIn a page, serve this directory and import `./{}.js`; `load()` fetches\n`{}.wasm` from beside it. The module sees no files, arguments or\nenvironment, and what it prints goes to the console.\n", .{name, name, lib, lib})
+}

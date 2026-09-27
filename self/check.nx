@@ -1216,7 +1216,7 @@ pub fn item_key(module: usize, name: []u8) -> String {
 pub fn artifact_keys(kind: []u8) -> []u8 {
     if kind == "cli" { return "name, stack" }
     if kind == "cabi" { return "name, version, exports" }
-    if kind == "python" or kind == "node" or kind == "rustlib" { return "name, version" }
+    if kind == "python" or kind == "node" or kind == "rustlib" or kind == "wasm" { return "name, version" }
     if kind == "link" { return "c_sources, libs, include, lib_paths, libs_windows, libs_linux, libs_macos" }
     if kind == "installer" { return "name, publisher, version, url, license, readme, files, add_to_path" }
     return ""
@@ -1706,7 +1706,7 @@ impl Checker {
         let keys = artifact_keys(kind[..])
         if keys.len == 0 {
             let at = self.node(m, it).start
-            self.fail(m, at, format("unknown artifact `{}`: the kinds are cli, cabi, python, node, rustlib, link and installer", .{kind})[..])
+            self.fail(m, at, format("unknown artifact `{}`: the kinds are cli, cabi, python, node, rustlib, wasm, link and installer", .{kind})[..])
             return
         }
         for f in self.node(m, it).kids.clone() {
@@ -3053,7 +3053,7 @@ impl Checker {
     fn check_embedded_constraints(self: *mut Self) {
         var embedded = false
         for k in self.artifact_kinds {
-            if k == "cabi" or k == "python" or k == "rustlib" or k == "node" or k == "shared" { embedded = true }
+            if k == "cabi" or k == "python" or k == "rustlib" or k == "node" or k == "wasm" or k == "shared" { embedded = true }
         }
         if !embedded { return }
         var reported = List(usize).new()
