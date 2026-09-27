@@ -167,9 +167,10 @@ jobs:
           print("ok")
           EOF
 
-  # 32-bit x86 (decision 122): every case the harness builds, built and run
-  # as a 32-bit program (the 64-bit runners run one), and the compiler built
-  # as a 32-bit program that builds itself, all three emitting the same C
+  # 32-bit targets (decision 122): every case the harness builds, built and
+  # run as a 32-bit program (the 64-bit runners run x86 ones; QEMU's user
+  # mode runs ARM and RISC-V ones, a static binary each), and the compiler
+  # built as a 32-bit program, emitting the same C as the 64-bit one
   thirty-two:
     name: 32-bit (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
@@ -182,6 +183,13 @@ jobs:
             target: i686-linux-musl
           - os: windows-latest
             target: i686-windows-gnu
+          # the Raspberry Pi's class of CPU, and RISC-V's 32-bit one
+          - os: ubuntu-latest
+            target: armv7-linux-musleabihf
+            qemu: true
+          - os: ubuntu-latest
+            target: riscv32-linux-musl
+            qemu: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -192,6 +200,15 @@ jobs:
       - name: Build nx from the seed
         shell: bash
         run: sh bootstrap/build.sh
+
+      # binfmt then hands every ARM or RISC-V binary to QEMU, so the harness
+      # runs them as it runs the runner's own
+      - name: QEMU for the foreign architecture
+        if: matrix.qemu
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q qemu-user-static
+          ls /proc/sys/fs/binfmt_misc/ | grep -i qemu
 
       - name: The spec, the examples, std's tests and the Topo as 32-bit programs
         shell: bash
@@ -207,12 +224,16 @@ jobs:
           t=${{ matrix.target }}
           "$nx" build self/nx.nx --mode safe --target $t -o "nx-out/nx32$ext" --out-dir nx-out/stage32
           "nx-out/nx32$ext" --version
-          "nx-out/nx32$ext" build self/nx.nx --mode safe --target $t -o "nx-out/nx32b$ext" --out-dir nx-out/stage32b
           "$nx" emit-c self/nx.nx --mode safe --target $t > nx-out/by64.c
           "nx-out/nx32$ext" emit-c self/nx.nx --mode safe --target $t > nx-out/by32.c
-          "nx-out/nx32b$ext" emit-c self/nx.nx --mode safe --target $t > nx-out/by32b.c
           cmp nx-out/by64.c nx-out/by32.c
-          cmp nx-out/by32.c nx-out/by32b.c
+          # natively, the 32-bit compiler also builds itself and that one
+          # emits the same C (under QEMU, one emulated run is enough)
+          if [ "${{ matrix.qemu }}" != "true" ]; then
+            "nx-out/nx32$ext" build self/nx.nx --mode safe --target $t -o "nx-out/nx32b$ext" --out-dir nx-out/stage32b
+            "nx-out/nx32b$ext" emit-c self/nx.nx --mode safe --target $t > nx-out/by32b.c
+            cmp nx-out/by32.c nx-out/by32b.c
+          fi
 
   fuzz:
     name: fuzz
