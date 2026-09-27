@@ -56,8 +56,10 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   `package.json`. It runs in a page and in Node.js 20 or later; slices are
   copied in (and back for `[]mut`), a failure throws `NexiumError`, and a
   panic throws `NexiumPanic` with its message, after which the module goes
-  on answering. The harness runs `examples/ropesim.nx`'s package under
-  Node.js and gets the native package's answers.
+  on answering. The module is stripped of the C library's debug
+  information, which was 95% of it: `examples/ropesim.nx`'s is 39 KB. The
+  harness runs that package under Node.js and gets the native package's
+  answers.
 
 ### Fixed
 

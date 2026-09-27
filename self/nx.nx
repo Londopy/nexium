@@ -632,9 +632,11 @@ fn c_argv(c: *check.Checker, o: *Opts, inputs: *List(String), out: []u8, kind: [
     if kind == "object" or kind == "sections" { argv.append(String.from("-c")) }
     if kind == "reactor" {
         // no `main`: `_initialize` sets the library up, and the named
-        // functions are the module's exports
+        // functions are the module's exports; stripped, since the C
+        // library's debug information is 95% of an unstripped module
         argv.append(String.from("-mexec-model=reactor"))
         for e in o.wasm_exports { argv.append(format("-Wl,--export={}", .{e})) }
+        argv.append(String.from("-s"))
     }
     if kind == "shared" {
         argv.append(String.from("-shared"))
@@ -1523,6 +1525,14 @@ fn ship_wasm_lib(o: *Opts, name: []u8, version: []u8, mode: u8, produced: *mut L
     var wo = clone_opts(o)
     wo.target = String.from("wasm32-wasi")
     wo.mode = mode
+    // the system compiler macOS builds its own libraries with has no
+    // WebAssembly; zig has it, and the C library for it
+    if o.cc_source == 4 {
+        wo.cc = List(String).new()
+        wo.cc.append(String.from("zig"))
+        wo.cc.append(String.from("cc"))
+        wo.cc_source = 0
+    }
     var c = check_program(&wo) orelse return false
     var infos = List(cgen.ExportInfo).new()
     let text = emit_with(&mut c, &wo, cgen.ENTRY_LIBRARY, name, mode, &mut infos)

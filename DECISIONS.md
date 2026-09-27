@@ -1100,4 +1100,6 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     each `@sizeOf` for the target it is compiled for. The package is an ES
     module with no dependencies and no build step, for Node.js 20 or later
     and every browser with exception handling; 128-bit integers at the
-    boundary are refused until something needs them.
+    boundary are refused until something needs them. Zig builds it on every
+    platform, macOS too, whose own compiler (which links its native
+    libraries) has no WebAssembly.
