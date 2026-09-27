@@ -60,7 +60,7 @@ pub enum NodeKind {
     PSlice, PRest, PAt,
 }
 
-pub const NONE: usize = 0xFFFFFFFFFFFFFFFF
+pub const NONE: usize = ~(0 as usize)
 
 pub struct Tree {
     nodes: List(Node)

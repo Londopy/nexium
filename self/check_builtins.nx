@@ -37,7 +37,9 @@ impl Checker {
                 return r
             }
             let u = self.tys.usize_ty()
-            return self.int_node(self.size_of(t) as i128, u, start, end)
+            let bytes = self.size_of(t)
+            self.size_claims.append(check.SizeClaim{ .ty = t, .bytes = bytes })
+            return self.int_node(bytes as i128, u, start, end)
         }
         if name == "alignOf" {
             if !self.args_n(args[..], 1, "@alignOf", start) { return self.error_expr(start, end) }
@@ -330,18 +332,22 @@ impl Checker {
         return null
     }
 
-    /// Sizes and alignments of types, as the C backend lays them out.
+    /// Sizes and alignments of types, as the C backend lays them out for
+    /// the build's target: a word (a pointer, a `size_t`) is 4 bytes on a
+    /// 32-bit target and 8 on a 64-bit one.
     fn size_of(self: *mut Self, t0: usize) -> u64 {
         let t = self.tys.shallow(t0)
         let k = self.tys.kind(t)
-        if k == TK.Int { return (check.int_bits(self.tys.list[t].name[..]) / 8) as u64 }
+        let w = (self.ptr_bits() / 8) as u64
+        if k == TK.Int { return (self.target_bits(self.tys.list[t].name[..]) / 8) as u64 }
         if k == TK.Float { return if self.tys.list[t].name == "f32" { 4 } else { 8 } }
         if k == TK.Bool { return 1 }
-        if k == TK.Char { return 4 }
+        if k == TK.Char or k == TK.ErrorSet { return 4 }
         if k == TK.Void or k == TK.Never { return 0 }
         if k == TK.Array { return self.tys.list[t].n * self.size_of(self.tys.list[t].args[0]) }
-        if k == TK.Slice or k == TK.Fn { return 16 }
-        if k == TK.Ptr or k == TK.Weak { return 8 }
+        // a pointer and a length; a function and its environment; the data and its vtable
+        if k == TK.Slice or k == TK.Fn or k == TK.Dyn { return 2 * w }
+        if k == TK.Ptr or k == TK.Weak { return w }
         if k == TK.Opt {
             let e = self.tys.list[t].args[0]
             return check.round_up(self.size_of(e) + 1, self.align_of(e))
@@ -352,10 +358,12 @@ impl Checker {
             return check.round_up(check.round_up(4, self.align_of(e)) + self.size_of(e), a)
         }
         if k == TK.Distinct { return self.size_of(self.distinct_underlying(self.tys.list[t].def)) }
-        if k == TK.List or k == TK.Str { return 24 }
-        if k == TK.Map { return 40 }
+        // nx_string and a list: the buffer, its length, its capacity, its arena
+        if k == TK.List or k == TK.Str { return 4 * w }
+        // nx_map: five pointers and seven sizes, the key's kind (an int), the arena
+        if k == TK.Map { return check.round_up(12 * w + 4, w) + w }
         if k == TK.Struct or k == TK.Tuple {
-            if k == TK.Struct and self.is_ref_class(t) { return 8 }
+            if k == TK.Struct and self.is_ref_class(t) { return w }
             let fts = if k == TK.Struct { self.struct_field_types(t) } else { self.tys.list[t].args.clone() }
             var off: u64 = 0
             var maxa: u64 = 1
@@ -381,22 +389,35 @@ impl Checker {
             }
             return check.round_up(check.round_up(4, maxa) + maxs, maxa)
         }
-        return 8
+        return w
+    }
+
+    /// The alignment a scalar of `size` bytes has in a C struct on the
+    /// build's target: its size, up to 16 on a 64-bit target and 8 on a
+    /// 32-bit one, and up to 4 on 32-bit x86 outside Windows, whose System V
+    /// ABI puts an `int64_t` or a `double` at any multiple of 4.
+    fn scalar_align(self: *mut Self, size: u64) -> u64 {
+        let (os, arch, bits) = self.build_target()
+        if bits == 32 {
+            if arch == "x86" and os != "windows" { return check.min64(size, 4) }
+            return check.min64(size, 8)
+        }
+        return check.min64(size, 16)
     }
 
     fn align_of(self: *mut Self, t0: usize) -> u64 {
         let t = self.tys.shallow(t0)
         let k = self.tys.kind(t)
-        if k == TK.Int { return check.min64((check.int_bits(self.tys.list[t].name[..]) / 8) as u64, 16) }
-        if k == TK.Float { return if self.tys.list[t].name == "f32" { 4 } else { 8 } }
+        let w = (self.ptr_bits() / 8) as u64
+        if k == TK.Int or k == TK.Float { return self.scalar_align(self.size_of(t)) }
         if k == TK.Bool { return 1 }
-        if k == TK.Char { return 4 }
+        if k == TK.Char or k == TK.ErrorSet { return 4 }
         if k == TK.Void or k == TK.Never { return 1 }
         if k == TK.Array or k == TK.Opt { return self.align_of(self.tys.list[t].args[0]) }
         if k == TK.ErrUnion { return check.max64(self.align_of(self.tys.list[t].args[0]), 4) }
         if k == TK.Distinct { return self.align_of(self.distinct_underlying(self.tys.list[t].def)) }
         if k == TK.Struct or k == TK.Tuple {
-            if k == TK.Struct and self.is_ref_class(t) { return 8 }
+            if k == TK.Struct and self.is_ref_class(t) { return w }
             let fts = if k == TK.Struct { self.struct_field_types(t) } else { self.tys.list[t].args.clone() }
             var maxa: u64 = 1
             for f in fts { maxa = check.max64(maxa, self.align_of(f)) }
@@ -408,6 +429,6 @@ impl Checker {
             for v in vtys { for f in v { maxa = check.max64(maxa, self.align_of(f)) } }
             return check.max64(maxa, 4)
         }
-        return 8
+        return w
     }
 }

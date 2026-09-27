@@ -29,6 +29,8 @@ struct Env {
     windows: bool
     macos: bool
     jobs: usize
+    /// `--target`: every case builds for this target (and runs what it built)
+    target: String = String.new()
 }
 
 /// One case of a suite: what to run and what to expect.
@@ -46,7 +48,7 @@ struct Job {
 }
 
 fn env_clone(e: *Env) -> Env {
-    return Env{ .root = e.root.clone(), .nx = e.nx.clone(), .windows = e.windows, .macos = e.macos, .jobs = e.jobs }
+    return Env{ .root = e.root.clone(), .nx = e.nx.clone(), .windows = e.windows, .macos = e.macos, .jobs = e.jobs, .target = e.target.clone() }
 }
 
 // ----- running programs -------------------------------------------------------
@@ -60,6 +62,19 @@ fn run_in(e: *Env, argv: [][]u8, stdin: []u8, cwd: []u8) -> process.Output {
     return process.run_with(argv, process.Options{ .stdin = stdin, .cwd = cwd }) catch {
         return process.Output{ .code = -1, .stdout = String.new(), .stderr = format("cannot run {}", .{argv[0]}) }
     }
+}
+
+/// `nx` for a case: with the harness's `--target`, the case builds for that
+/// target, and a program it runs is the target's (a 32-bit build runs on
+/// the 64-bit machine of the same family).
+fn nx_case(e: *Env, args: [][]u8) -> process.Output {
+    var argv = List([]u8).new()
+    for a in args { argv.append(a) }
+    if e.target.len > 0 {
+        argv.append("--target")
+        argv.append(e.target[..])
+    }
+    return nx(e, argv[..])
 }
 
 fn nx(e: *Env, args: [][]u8) -> process.Output {
@@ -202,7 +217,7 @@ fn run_case(e: *Env, c: *Case) -> ?String {
     let out_dir = format("{}/nx-out/cases/{}", .{e.root, fs.stem(path)})
     if kind == "example" or kind == "test" or kind == "spec" {
         let sub = if kind == "test" { "test" } else { "run" }
-        let out = nx(e, [sub, path, "--out-dir", out_dir[..]][..])
+        let out = nx_case(e, [sub, path, "--out-dir", out_dir[..]][..])
         var got = normalize(out.stdout[..])
         got.append(normalize(out.stderr[..])[..])
         let expected = normalize((fs.read(fs.with_extension(path, "expected")[..]) catch { String.new() })[..])
@@ -218,7 +233,7 @@ fn run_case(e: *Env, c: *Case) -> ?String {
     }
     if kind == "topo_fails" {
         // a program the tutorial shows failing: the diagnostic is recorded
-        let out = nx(e, ["check", path][..])
+        let out = nx_case(e, ["check", path][..])
         if out.code == 0 { return format("{} was accepted but the Topo shows it failing", .{path}) }
         let expected = normalize((fs.read(fs.with_extension(path, "expected")[..]) catch { String.new() })[..])
         if let d = same_text(expected[..].trim(), normalize(out.stderr[..])[..].trim(), format("diagnostic of {} differs", .{path})[..]) { return d }
@@ -232,7 +247,7 @@ fn run_case(e: *Env, c: *Case) -> ?String {
         // `// STRICT`: the case fails only because warnings are errors under
         // --strict (none since 1.3 made the view rules errors; a deprecation would)
         let strict = text[..].find("// STRICT") != null
-        let out = if strict { nx(e, ["check", path, "--strict"][..]) } else { nx(e, ["check", path][..]) }
+        let out = if strict { nx_case(e, ["check", path, "--strict"][..]) } else { nx_case(e, ["check", path][..]) }
         if out.code == 0 { return format("{} was accepted but should fail", .{path}) }
         let diag = normalize(out.stderr[..])
         for x in expects {
@@ -241,7 +256,7 @@ fn run_case(e: *Env, c: *Case) -> ?String {
         return null
     }
     if kind == "std" {
-        let out = nx(e, ["test", path][..])
+        let out = nx_case(e, ["test", path][..])
         if out.code != 0 { return format("std tests failed for {}:\n{}{}", .{path, out.stdout, out.stderr}) }
         return null
     }
@@ -580,7 +595,17 @@ fn suite_compile_fail(e: *Env, failures: *mut List(String)) {
     if o.code == 0 or strings.count(d[..], "newline in string literal") != 1 or d[..].find("syntax_once.nx:2:13") == null or d[..].find("2 error(s)") == null or d[..].find("error at ") != null {
         failures.append(format("compile_fail: a lexical error was not reported once with its location (exit {}):\n{}", .{o.code, d}))
     }
-    println("compile_fail: {} cases, and a lexical error", .{cases.len})
+    // `usize` is as wide as the target's pointers: a literal past 32 bits is
+    // refused for a 32-bit target and fine for a 64-bit one
+    let wide = fs.join(e.root[..], "nx-out/cases/usize_width.nx")
+    fs.write(wide[..], "fn main() {\n    let n: usize = 5000000000\n    println(\"{}\", .{n})\n}\n") catch { }
+    let w32 = nx(e, ["check", wide[..], "--target", "i686-linux-gnu"][..])
+    if w32.code == 0 or w32.stderr[..].find("does not fit in `usize` (range 0 to 4294967295)") == null {
+        failures.append(format("compile_fail: a 33-bit `usize` literal was not refused for a 32-bit target (exit {}):\n{}", .{w32.code, w32.stderr}))
+    }
+    let w64 = nx(e, ["check", wide[..], "--target", "x86_64-linux-gnu"][..])
+    if w64.code != 0 { failures.append(format("compile_fail: a 33-bit `usize` literal was refused for a 64-bit target:\n{}", .{w64.stderr})) }
+    println("compile_fail: {} cases, a lexical error, and `usize` per target", .{cases.len})
 }
 
 /// The Topo's programs reproduce their recorded output (the site shows
@@ -698,6 +723,14 @@ fn suite_fmt(e: *Env, failures: *mut List(String)) {
     let mf = nx(e, ["fmt", minus[..]][..])
     let mgot = normalize((fs.read(minus[..]) catch { String.new() })[..])
     if mf.code != 0 or mgot[..] != mwant { failures.append(format("fmt: unary `-(` spacing (exit {}):\n{}{}", .{mf.code, mgot, mf.stderr})) }
+    // `~` is only ever unary: tight before a parenthesis as before a word
+    let tilde = fs.join(e.root[..], "nx-out/cases/tilde.nx")
+    let ttext = "const NONE: usize = ~ (0 as usize)\nfn f(a: u32) -> u32 { return ~ (a | 1) & ~a }\n"
+    let twant = "const NONE: usize = ~(0 as usize)\nfn f(a: u32) -> u32 { return ~(a | 1) & ~a }\n"
+    fs.write(tilde[..], ttext) catch { }
+    let tf = nx(e, ["fmt", tilde[..]][..])
+    let tgot = normalize((fs.read(tilde[..]) catch { String.new() })[..])
+    if tf.code != 0 or tgot[..] != twant { failures.append(format("fmt: unary `~(` spacing (exit {}):\n{}{}", .{tf.code, tgot, tf.stderr})) }
     // a `*` after a type's `[]` or `[N]` is a pointer's; after an index it multiplies
     let ptrs = fs.join(e.root[..], "nx-out/cases/slice_of_pointers.nx")
     let stext = "fn f(xs: [] * mut Point, ys: [4]* u8, zs: []i64, m: [][]i64, i: usize) -> [] *Point {\n    let a = zs[i]*2 - zs[0]&3\n    let b = m[i][0]-1\n    let c: []*mut Point = xs\n    let d = [1, 2][i]*3 - [7][..].len\n    return c\n}\n"
@@ -1303,7 +1336,7 @@ fn suite_lsp(e: *Env, failures: *mut List(String)) {
 // ----- main -------------------------------------------------------------------
 
 fn usage() {
-    eprintln("usage: nx run tests/run.nx -- [suite ...] [--jobs N] [--nx PATH] [--rebuild]", .{})
+    eprintln("usage: nx run tests/run.nx -- [suite ...] [--jobs N] [--nx PATH] [--rebuild] [--target TRIPLE]", .{})
     eprintln("suites: bootstrap examples spec compile_fail fmt std gui packages ship installer repl lsp topo", .{})
 }
 
@@ -1322,6 +1355,7 @@ fn main() -> u8 {
         if a == "--jobs" and i + 1 < args.len { e.jobs = args[i + 1].parse_int(usize) catch { 1 }; i += 2; continue }
         if a == "--nx" and i + 1 < args.len { given_nx = String.from(args[i + 1]); i += 2; continue }
         if a == "--rebuild" { force = true; i += 1; continue }
+        if a == "--target" and i + 1 < args.len { e.target = String.from(args[i + 1]); i += 2; continue }
         if a.starts_with("-") { usage(); return 2 }
         wanted.append(String.from(a))
         i += 1

@@ -13,7 +13,7 @@
 
 import parser
 
-const NONE: usize = 0xFFFFFFFFFFFFFFFF
+const NONE: usize = ~(0 as usize)
 
 // token kinds
 const CT_IDENT: u8 = 0
@@ -64,6 +64,39 @@ fn ends_with(s: []u8, suffix: []u8) -> bool {
     return s[s.len - suffix.len..] == suffix
 }
 
+/// A target triple as zig spells it. GCC, Clang and Rust name 32-bit x86
+/// `i686` (or `i386` to `i586`), zig names it `x86`, whose baseline there
+/// is a Pentium 4: SSE2 included, so floating point is the same SSE2 as on
+/// x86-64, as in Rust's `i686` targets. Any other triple is zig's already.
+pub fn zig_triple(t: []u8) -> String {
+    for old in ["i386-", "i486-", "i586-", "i686-"] {
+        if t.starts_with(old) { return format("x86-{}", .{t[old.len..]}) }
+    }
+    return String.from(t)
+}
+
+/// The target of a 32-bit `nx` itself, as zig spells it (`x86-windows-gnu`,
+/// `x86-linux-gnu`, `arm-linux-gnueabihf`), or none for a 64-bit one. A
+/// 32-bit `nx` builds 32-bit programs, as its checker assumes; zig on its
+/// own builds for the machine, which can be 64-bit under a 32-bit `nx`.
+pub fn own_narrow_triple() -> ?String {
+    let (os, arch, bits) = @target()
+    if bits != 32 { return null }
+    if arch == "x86" and os == "windows" { return String.from("x86-windows-gnu") }
+    if arch == "x86" and os == "linux" { return String.from("x86-linux-gnu") }
+    if arch == "arm" and os == "linux" { return String.from("arm-linux-gnueabihf") }
+    return null
+}
+
+/// Whether a C compiler command is zig's (`zig`, `zig.exe`, a path to one).
+fn is_zig(cc: []String) -> bool {
+    if cc.len == 0 { return false }
+    let path = cc[0][..]
+    var start: usize = 0
+    for ch, i in path { if ch == '/' or ch == '\\' { start = i + 1 } }
+    return path[start..].starts_with("zig")
+}
+
 fn starts_with(s: []u8, prefix: []u8) -> bool {
     if prefix.len > s.len { return false }
     return s[0..prefix.len] == prefix
@@ -75,14 +108,18 @@ fn run_pp(opts: *ImportOptions, source: []u8, extra: []u8) -> !String {
     io.make_dir(dir[..]) catch { }
     let path = format("{}/probe.c", .{dir})
     try io.write_file(path[..], source)
+    var triple = if is_zig(opts.cc[..]) { zig_triple(opts.target[..]) } else { opts.target.clone() }
+    if triple.len == 0 and is_zig(opts.cc[..]) {
+        if let own = own_narrow_triple() { triple = own }
+    }
     var argv = List([]u8).new()
     for c in opts.cc { argv.append(c[..]) }
     argv.append("-E")
     argv.append("-w")
     argv.append(extra)
-    if opts.target.len > 0 {
+    if triple.len > 0 {
         argv.append("-target")
-        argv.append(opts.target[..])
+        argv.append(triple[..])
     }
     var inc_flags = List(String).new()
     for d in opts.include_dirs { inc_flags.append(format("-I{}", .{d})) }

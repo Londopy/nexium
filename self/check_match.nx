@@ -717,7 +717,7 @@ impl Checker {
                 // a u128 past i128's maximum is its bit pattern
                 if big and (negative or name != "u128") {
                     self.fail_here(start, format("literal `{}{}` does not fit in `{}`", .{if negative { "-" } else { "" }, text, name})[..])
-                } else if !big and (v < check.int_min(name[..]) or v > check.int_max(name[..])) {
+                } else if !big and (v < self.target_min(name[..]) or v > self.target_max(name[..])) {
                     self.fail_here(start, format("literal `{}` does not fit in `{}`", .{v, name})[..])
                 }
                 let p = self.pat_node(TKind.PInt, start, end)
@@ -776,7 +776,7 @@ impl Checker {
             }
             if uk == TK.Int {
                 let name = self.tys.list[under].name.clone()
-                if c > check.int_max(name[..]) { self.fail_here(start, format("character does not fit in `{}`", .{name})[..]) }
+                if c > self.target_max(name[..]) { self.fail_here(start, format("character does not fit in `{}`", .{name})[..]) }
                 let p = self.pat_node(TKind.PInt, start, end)
                 self.tir.nodes[p].ival = c
                 return p

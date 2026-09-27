@@ -30,14 +30,24 @@ treated like one on tier 1, but it may take a release to be noticed.
 A tier-2 target moves to tier 1 when GitHub offers a runner for it and the
 harness passes there.
 
+32-bit x86 is tested more than it is released: CI builds and runs the spec
+cases, the examples, the standard library's tests and the Topo's programs
+for `i686-windows-gnu` and `i686-linux-musl` (a 32-bit program runs on the
+64-bit runners), and the compiler builds itself as a 32-bit program, but no
+release carries a 32-bit binary yet. `nx build --target i686-linux-gnu`
+(or `i686-windows-gnu`, `i686-linux-musl`) makes one. `i686` is x86 with
+SSE2, a Pentium 4 or later, as in Rust's `i686` targets.
+
 ## Tier 3: should work, unsupported
 
 Anything else Zig can target: `nx build --target <triple>` cross-compiles a
 program, and `bootstrap/build.sh` builds the compiler on any host with a C
 compiler. Intel macOS is here because Zig 0.14 cannot link against the
 current SDK from another host and no Intel runner remains in CI; it builds
-from source with the system `cc`. Nothing is promised, and reports are
-welcome.
+from source with the system `cc`. So are 32-bit ARM (`arm-linux-gnueabihf`)
+and `riscv32-linux-musl`: they build, and the C compiler confirms every
+`@sizeOf` for them as it builds, but nothing runs them yet. Nothing is
+promised, and reports are welcome.
 
 ## What the tiers cover
 

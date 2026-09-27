@@ -1028,3 +1028,29 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     compile-time evaluation) already had, so a program prints the same
     thing compiled and interpreted. It costs nothing measurable: the words
     benchmark, all maps and strings, runs in the time it did.
+
+122. **32-bit targets: `isize` and `usize` are the target's word, the C is
+    the same for every target, and `i128` is C23's `_BitInt(128)` where C
+    has no `__int128`.** The checker computes widths and sizes for the
+    build's target, read from `--target` or else the machine: a `usize`
+    literal past 32 bits is an error for `i686`, and `@sizeOf` counts a
+    word as 4 bytes there, with each ABI's alignment (an `i64` in a struct
+    sits at a multiple of 4 on 32-bit x86 Linux, of 8 on 32-bit Windows and
+    ARM). The C does not change with the target: `isize` and `usize` bounds
+    are `INTPTR_MIN`, `INTPTR_MAX` and `SIZE_MAX`, so the seed, emitted on
+    a 64-bit machine, still builds a correct 32-bit compiler. Every
+    `@sizeOf` answer becomes a `_Static_assert` in the C, so the C compiler
+    confirms the checker's layout on every target it builds for, whether
+    anything runs there or not (it found the 64-bit sizes of `String`,
+    `List` and `Map` wrong). `i128` stays a type on every target, since the
+    compiler itself computes in it: 32-bit targets have no `__int128`, and
+    clang's `_BitInt(128)` does all the runtime does with one, arithmetic,
+    division, the overflow builtins and float conversions, checked byte for
+    byte against `__int128` on 32-bit x86 Windows and Linux; a C compiler
+    with neither (gcc for a 32-bit target) is refused with a message naming
+    zig. `i686` (and `i386` to `i586`) names 32-bit x86 as GCC, Clang and
+    Rust do; zig calls it `x86`, and its baseline there is a Pentium 4 with
+    SSE2, which keeps floating point the same as on x86-64, where `-mcpu=i686`
+    would fall back to the x87's extended precision. A 32-bit `nx` builds
+    32-bit programs unless told otherwise, as a 32-bit gcc does, and says so
+    to zig, whose own default is the machine, which can be 64-bit under it.

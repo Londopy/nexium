@@ -40,7 +40,7 @@ import check_closures
 import check_print
 import check_interp
 
-pub const NONE: usize = 0xFFFFFFFFFFFFFFFF
+pub const NONE: usize = ~(0 as usize)
 pub const NONE_NAME: []u8 = ""
 
 const BUILTIN_NAMESPACES = ["math", "io", "os", "time", "random", "fmt", "utf8", "ascii", "mem", "slice", "process", "test", "alloc", "net", "thread", "sync"]
@@ -266,6 +266,18 @@ pub fn int_bits(name: []u8) -> u32 {
     return 64
 }
 pub fn int_signed(name: []u8) -> bool { return name[0] == 'i' }
+
+/// The pointer width of a target triple, in bits: 32 for x86 (`i686`, zig's
+/// `x86`), 32-bit ARM and Thumb, `riscv32` and `wasm32`, 64 for the rest.
+/// `isize`, `usize` and pointers are this wide on the target.
+pub fn triple_ptr_bits(t: []u8) -> u32 {
+    var first = t
+    if let i = t.find("-") { first = t[0..i] }
+    if first == "arm64" or first.starts_with("aarch64") { return 64 }
+    if first == "x86" or first == "i386" or first == "i486" or first == "i586" or first == "i686" { return 32 }
+    if first.starts_with("arm") or first.starts_with("thumb") or first.starts_with("wasm32") or first == "riscv32" { return 32 }
+    return 64
+}
 pub fn int_min(name: []u8) -> i128 {
     if !int_signed(name) { return 0 }
     if name == "i128" { return -170141183460469231731687303715884105727 - 1 }
@@ -838,11 +850,11 @@ pub fn fields_meet(a: usize, b: usize) -> bool {
 }
 
 /// The caller's storage (a parameter's), a global's or a literal's, a temporary's.
-pub const ORIGIN_PARAM: usize = 0xFFFFFFFFFFFFFFFE
-pub const ORIGIN_STATIC: usize = 0xFFFFFFFFFFFFFFFD
+pub const ORIGIN_PARAM: usize = ~(0 as usize) - 1
+pub const ORIGIN_STATIC: usize = ~(0 as usize) - 2
 // the value's own heap storage (see `Origin.heap`), which travels with it
-pub const ORIGIN_SELF: usize = 0xFFFFFFFFFFFFFFFC
-pub const ORIGIN_TEMP: usize = 0xFFFFFFFFFFFFFFFB
+pub const ORIGIN_SELF: usize = ~(0 as usize) - 3
+pub const ORIGIN_TEMP: usize = ~(0 as usize) - 4
 
 pub struct LabelInfo {
     name: String
@@ -869,6 +881,14 @@ pub struct Fix derive(Clone) {
     text: String
     // what the edit does, for nx fix's report
     what: String
+}
+
+/// What `@sizeOf` answered for a type: the C generator has the C compiler
+/// confirm it (`_Static_assert`), so the checker's layout and C's cannot
+/// drift apart on any target.
+pub struct SizeClaim {
+    ty: usize
+    bytes: u64
 }
 
 /// A diagnostic as data: where, what, and whether it is a note on the
@@ -1022,6 +1042,8 @@ pub struct Checker {
     warnings: List(String)
     // the edits offered for errors, for `nx fix`
     fixes: List(Fix)
+    /// every `@sizeOf` answer, for the C generator to assert
+    size_claims: List(SizeClaim)
     // inside the block of an `if` with no `else` whose value is wanted: the
     // missing `else` is the mistake there, and `_ =` would only hide it
     no_discard_fix: bool = false
@@ -1265,8 +1287,35 @@ impl Checker {
         else if t.find("macos") != null or t.find("darwin") != null or t.find("ios") != null { os = "macos" }
         else if t.find("linux") != null { os = "linux" }
         else if t.find("freebsd") != null or t.find("openbsd") != null or t.find("netbsd") != null { os = "bsd" }
-        let narrow = arch == "x86" or arch == "arm" or first.starts_with("wasm32") or first == "riscv32"
-        return (String.from(os), String.from(arch), if narrow { 32 } else { 64 })
+        return (String.from(os), String.from(arch), triple_ptr_bits(t))
+    }
+
+    /// The build's pointer width in bits: the target's, or that of the
+    /// machine the compiler runs on.
+    pub fn ptr_bits(self: *Self) -> u32 {
+        if self.target.len == 0 {
+            let (_, _, bits) = @target()
+            return bits
+        }
+        return triple_ptr_bits(self.target[..])
+    }
+
+    /// `int_bits`, `int_min` and `int_max` for the build: `isize` and
+    /// `usize` are as wide as its pointers, 32 bits on a 32-bit target.
+    pub fn target_bits(self: *Self, name: []u8) -> u32 {
+        if name == "isize" or name == "usize" { return self.ptr_bits() }
+        return int_bits(name)
+    }
+
+    pub fn target_min(self: *Self, name: []u8) -> i128 {
+        if name == "isize" { return -((1 as i128) << (self.ptr_bits() - 1)) }
+        return int_min(name)
+    }
+
+    pub fn target_max(self: *Self, name: []u8) -> i128 {
+        if name == "isize" { return ((1 as i128) << (self.ptr_bits() - 1)) - 1 }
+        if name == "usize" { return ((1 as i128) << self.ptr_bits()) - 1 }
+        return int_max(name)
     }
 
     /// A note attached to the warning just reported.
@@ -2840,8 +2889,8 @@ impl Checker {
             // a literal past i128's maximum is its u128 bit pattern
             let big = self.tir.nodes[r].flag
             if big and name == "u128" { continue }
-            if !big and v >= int_min(name[..]) and v <= int_max(name[..]) { continue }
-            let range = if name == "u128" { String.from("range 0 to 340282366920938463463374607431768211455") } else { format("range {} to {}", .{int_min(name[..]), int_max(name[..])}) }
+            if !big and v >= self.target_min(name[..]) and v <= self.target_max(name[..]) { continue }
+            let range = if name == "u128" { String.from("range 0 to 340282366920938463463374607431768211455") } else { format("range {} to {}", .{self.target_min(name[..]), self.target_max(name[..])}) }
             let shown = if big { format("{}", .{@truncate(u128, v)}) } else { format("{}", .{v}) }
             let hint = if name == "i64" { "; an integer literal is `i64` unless its context gives it a type, as in `let x: u64 = ...`" } else { "" }
             self.fail(self.open_lit_mods[i], self.tir.nodes[r].start, format("literal `{}` does not fit in `{}` ({}){}", .{shown, name, range, hint})[..])
@@ -3614,7 +3663,7 @@ impl Checker {
         let k = self.tys.kind(t)
         if k == TK.Int {
             let name = self.tys.list[t].name.clone()
-            return Range{ .lo = int_min(name[..]), .hi = int_max(name[..]) }
+            return Range{ .lo = self.target_min(name[..]), .hi = self.target_max(name[..]) }
         }
         if k == TK.Bool { return Range{ .lo = 0, .hi = 1 } }
         if k == TK.Char { return Range{ .lo = 0, .hi = 0x10FFFF } }
@@ -3886,7 +3935,7 @@ pub fn new_checker(own mods: List(Mod)) -> Checker {
         .structs = List(StructDef).new(), .enums = List(EnumDef).new(), .traits = List(TraitDef).new(),
         .impls = List(ImplDef).new(), .fns = List(FnDef).new(), .consts = List(ConstDef).new(),
         .globals = List(GlobalDef).new(), .aliases = List(AliasDef).new(), .error_sets = List(ErrorSetDef).new(),
-        .errors = List(String).new(), .warnings = List(String).new(), .fixes = List(Fix).new(), .open_lits = List(usize).new(), .open_lit_mods = List(usize).new(), .view_cache = Map(usize, u8).new(), .closure_caps = Map(usize, List(usize)).new(), .diags = List(Diag).new(), .error_names = List(String).new(), .error_ids = Map(String, usize).new(),
+        .errors = List(String).new(), .warnings = List(String).new(), .fixes = List(Fix).new(), .size_claims = List(SizeClaim).new(), .open_lits = List(usize).new(), .open_lit_mods = List(usize).new(), .view_cache = Map(usize, u8).new(), .closure_caps = Map(usize, List(usize)).new(), .diags = List(Diag).new(), .error_names = List(String).new(), .error_ids = Map(String, usize).new(),
         .insts = List(Inst).new(), .inst_map = Map(String, usize).new(), .queue = List(usize).new(), .tir = Tir{ .nodes = List(T).new() },
         .ctxs = List(FnCtx).new(), .main_inst = NONE, .tests = List(usize).new(), .benches = List(usize).new(),
         .env_names = List(String).new(), .env_tys = List(usize).new(),

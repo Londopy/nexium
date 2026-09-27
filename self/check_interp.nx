@@ -477,7 +477,7 @@ impl Checker {
                 if inner.kind != 0 and inner.kind != 3 { return null }
                 if self.tys.kind(tt) == TK.Int {
                     let nm = self.tys.list[tt].name.clone()
-                    if inner.ival < check.int_min(nm[..]) or inner.ival > check.int_max(nm[..]) { return null }
+                    if inner.ival < self.target_min(nm[..]) or inner.ival > self.target_max(nm[..]) { return null }
                 }
                 return cv_int(inner.ival)
             }
@@ -2343,8 +2343,8 @@ impl Checker {
         let k = self.tys.kind(t)
         if k == TK.Int {
             let nm = self.tys.list[t].name.clone()
-            lo.* = check.int_min(nm[..])
-            hi.* = check.int_max(nm[..])
+            lo.* = self.target_min(nm[..])
+            hi.* = self.target_max(nm[..])
             return true
         }
         if k == TK.Distinct { return self.it_int_range(self.distinct_underlying(self.tys.list[t].def), lo, hi) }
@@ -2356,7 +2356,7 @@ impl Checker {
         let k = self.tys.kind(t)
         if k == TK.Int {
             let nm = self.tys.list[t].name.clone()
-            bits.* = check.int_bits(nm[..])
+            bits.* = self.target_bits(nm[..])
             signed.* = check.int_signed(nm[..])
             return true
         }

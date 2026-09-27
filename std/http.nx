@@ -252,21 +252,30 @@ fn read_headers(comptime R: type where R: Source, r: *mut R) -> !List(Header) {
     return headers
 }
 
-fn hex_value(s: []u8) -> ?usize {
-    var v: usize = 0
+fn hex_value(s: []u8) -> ?u64 {
+    var v: u64 = 0
     var any = false
     for c in s {
-        var d: usize = 0
-        if c >= '0' and c <= '9' { d = (c - '0') as usize }
-        else if c >= 'a' and c <= 'f' { d = (c - 'a' + 10) as usize }
-        else if c >= 'A' and c <= 'F' { d = (c - 'A' + 10) as usize }
+        var d: u64 = 0
+        if c >= '0' and c <= '9' { d = (c - '0') as u64 }
+        else if c >= 'a' and c <= 'f' { d = (c - 'a' + 10) as u64 }
+        else if c >= 'A' and c <= 'F' { d = (c - 'A' + 10) as u64 }
         else if c == ';' or c == ' ' { break }
         else { return null }
-        // a size past usize is not one a body can have
+        // past u64 the size is not a number anyone meant
         v = (v.checked_mul(16) orelse return null).checked_add(d) orelse return null
         any = true
     }
     return if any { v } else { null }
+}
+
+/// A size a peer announced (a Content-Length, a chunk's), as the `usize` a
+/// body can have: past `max` (0: no limit), or past what this machine can
+/// hold at all (4 GB on a 32-bit one), it is `error.TooLarge`.
+fn announced_size(n: u64, max: usize) -> !usize {
+    if max > 0 and n > max as u64 { return error.TooLarge }
+    if n > (~(0 as usize)) as u64 { return error.TooLarge }
+    return n as usize
 }
 
 /// Whether a Transfer-Encoding ends in chunked (`chunked`, `gzip, chunked`):
@@ -296,7 +305,7 @@ fn read_body(comptime R: type where R: Source, r: *mut R, headers: *List(Header)
             var body = String.new()
             while true {
                 let size_line = (try r.line(MAX_LINE)) orelse return error.Truncated
-                let size = hex_value(size_line) orelse return error.InvalidInput
+                let size = try announced_size(hex_value(size_line) orelse return error.InvalidInput, 0)
                 if max > 0 and size > max - body.len { return error.TooLarge }
                 if size == 0 {
                     // trailers, then the blank line
@@ -313,8 +322,7 @@ fn read_body(comptime R: type where R: Source, r: *mut R, headers: *List(Header)
         }
     }
     if let cl = header_value(headers, "content-length") {
-        let n = cl.parse_int(usize) catch return error.InvalidInput
-        if max > 0 and n > max { return error.TooLarge }
+        let n = try announced_size(cl.parse_int(u64) catch return error.InvalidInput, max)
         return read_exact(r, n)
     }
     if allow_until_close { return r.rest() }
@@ -696,7 +704,7 @@ impl(T) Streaming(T) {
                     self.chunk_end = false
                 }
                 let size_line = (try self.input.line(MAX_LINE)) orelse return error.Truncated
-                let size = hex_value(size_line) orelse return error.InvalidInput
+                let size = try announced_size(hex_value(size_line) orelse return error.InvalidInput, 0)
                 if size == 0 {
                     // trailers, then the blank line
                     while true {
@@ -774,8 +782,7 @@ fn begin(comptime T: type, input: *mut Input(T), own req: String, is_head: bool,
     }
     if head.frame == FRAME_CLOSE {
         if let cl = header_value(&head.headers, "content-length") {
-            let n = cl.parse_int(usize) catch return error.InvalidInput
-            if max > 0 and n > max { return error.TooLarge }
+            let n = try announced_size(cl.parse_int(u64) catch return error.InvalidInput, max)
             head.frame = FRAME_LENGTH
             head.left = n
         }
@@ -1191,6 +1198,12 @@ test "urls" {
     expect_eq(parse_url("https://h/").?.port, 443)
     expect_eq(content_type_for("a/b.css"), "text/css")
     expect_eq(hex_value("1A;ext").?, 26)
+    expect_eq(hex_value("FFFFFFFFFFFFFFFF").?, 18446744073709551615)
+    expect(hex_value("10000000000000000") == null)
+    expect_eq(announced_size(10, 0) catch { 0 }, 10)
+    expect((announced_size(11, 10) catch |e| { if e == error.TooLarge { 1 } else { 2 } }) == 1)
+    let past_this_machine = (~(0 as usize)) as u64 < 18446744073709551615
+    if past_this_machine { expect((announced_size(18446744073709551615, 0) catch |e| { if e == error.TooLarge { 1 } else { 2 } }) == 1) }
 }
 
 test "request and response over loopback" {

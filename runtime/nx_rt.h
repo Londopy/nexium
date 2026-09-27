@@ -92,8 +92,19 @@ extern char** environ;
 #endif
 #define NX_UNUSED(x) (void)(x)
 
+/* i128 and u128: the C compiler's __int128 on 64-bit targets, and C23's
+   _BitInt(128) on 32-bit ones (x86, ARM, RISC-V), which have no __int128;
+   clang carries _BitInt through the same operators, overflow builtins and
+   float conversions, inline where a 32-bit target has no library routine */
+#if defined(__SIZEOF_INT128__)
 typedef __int128 nx_i128;
 typedef unsigned __int128 nx_u128;
+#elif defined(__BITINT_MAXWIDTH__) && __BITINT_MAXWIDTH__ >= 128
+typedef _BitInt(128) nx_i128;
+typedef unsigned _BitInt(128) nx_u128;
+#else
+#error "Nexium's i128 needs __int128 or _BitInt(128): on a 32-bit target build with zig cc (the default) or clang 16 or later"
+#endif
 #define NX_I128_MAX ((nx_i128)((((nx_u128)1) << 127) - 1))
 #define NX_I128_MIN ((nx_i128)(-NX_I128_MAX - 1))
 

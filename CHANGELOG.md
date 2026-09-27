@@ -18,8 +18,34 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   file that exists, spelled with its case, and every `#anchor` a heading of
   that page as GitHub makes its anchors, translations included. The
   translations' index had promised this check; it runs now.
+- 32-bit targets (decision 122): `nx build --target i686-linux-gnu` (or
+  `i686-windows-gnu`, `i686-linux-musl`) builds a 32-bit x86 program,
+  `i686` read as zig's `x86` with SSE2; `arm-linux-gnueabihf` and
+  `riscv32-linux-musl` build too. The checker computes `isize` and `usize`,
+  their literals' ranges, `@sizeOf` and compile-time arithmetic at the
+  target's width, while the C stays the same for every target (`usize`'s
+  bounds are `SIZE_MAX` and its kin); `i128` is `_BitInt(128)` where C has
+  no `__int128`. The compiler builds itself as a 32-bit program, and a
+  32-bit `nx` builds 32-bit programs by default.
+- `@sizeOf` is confirmed by the C compiler: each answer is a
+  `_Static_assert` in the generated C, on every target.
+- The test harness takes `--target`: every case it builds, from the spec,
+  the examples, the standard library's tests, the Topo and the
+  compile-fail cases, is built for that target and run.
 
 ### Fixed
+
+- `@sizeOf` of a `String` or a `List` was 24 on a 64-bit target where C
+  lays them out in 32 bytes (their arena pointer was not counted), of a
+  `Map` 40 where it is 112, of an error value 8 where it is 4, and a
+  pointer, slice or collection field aligned to 8 whatever the target;
+  `nx layout`'s offsets after such fields were off by as much.
+- `std.http` refused a `Content-Length` or chunk size past what the
+  machine can hold (4 GB on a 32-bit one) as `InvalidInput`; it is
+  `TooLarge`, as any size past the limit is.
+- `nx fmt` wrote a complement before a parenthesis with a space,
+  `~ (0 as usize)`; `~` is tight before `(` now, as `!` and a unary `-`
+  are.
 
 - The Spanish, Japanese and Chinese translations of the language reference
   and of the tour of the compiler (`docs/i18n/*/language.md` and

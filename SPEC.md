@@ -126,6 +126,11 @@ panic prints its location and exits with 101; a `u8` is the exit code.
 | `weak T` | weak reference to a `ref class` |
 | `distinct T` | a new type with `T`'s representation and no implicit conversion |
 
+**Widths.** `isize` and `usize` are as wide as the target's pointers: 64
+bits on a 64-bit target, 32 on `i686`, 32-bit ARM, `riscv32` and `wasm32`.
+A literal's range, `@sizeOf` and compile-time arithmetic are the target's.
+`i128` and `u128` exist on every target (decision 122).
+
 **Type identity.** Types are structural for the built-in constructors and
 nominal for structs, enums, records, classes, error sets, and distinct
 types. Generic instantiations with equal arguments are the same type.

@@ -215,9 +215,9 @@ impl Checker {
                 if ek == TK.Int {
                     let name = self.tys.list[exp].name.clone()
                     if big and name != "u128" {
-                        self.fail_here(start, format("literal `{}` does not fit in `{}` (range {} to {})", .{text, name, check.int_min(name[..]), check.int_max(name[..])})[..])
-                    } else if !big and (v < check.int_min(name[..]) or v > check.int_max(name[..])) {
-                        self.fail_here(start, format("literal `{}` does not fit in `{}` (range {} to {})", .{v, name, check.int_min(name[..]), check.int_max(name[..])})[..])
+                        self.fail_here(start, format("literal `{}` does not fit in `{}` (range {} to {})", .{text, name, self.target_min(name[..]), self.target_max(name[..])})[..])
+                    } else if !big and (v < self.target_min(name[..]) or v > self.target_max(name[..])) {
+                        self.fail_here(start, format("literal `{}` does not fit in `{}` (range {} to {})", .{v, name, self.target_min(name[..]), self.target_max(name[..])})[..])
                     }
                     let r = self.int_node(v, exp, start, end)
                     self.tir.nodes[r].flag = big
@@ -280,7 +280,7 @@ impl Checker {
             let c = text[..].parse_int(i128) catch { 0 }
             if exp != NONE and self.tys.kind(exp) == TK.Int {
                 let name = self.tys.list[exp].name.clone()
-                if c <= check.int_max(name[..]) { return self.int_node(c, exp, start, end) }
+                if c <= self.target_max(name[..]) { return self.int_node(c, exp, start, end) }
                 self.fail_here(start, format("character literal does not fit in `{}`", .{name})[..])
             }
             let t = self.tys.char_ty()
@@ -479,12 +479,12 @@ impl Checker {
             if ln.k == parser.NodeKind.Lit and ln.text == "int" and expected != NONE {
                 let et = self.tys.shallow(expected)
                 if self.tys.kind(et) == TK.Int and check.int_signed(self.tys.list[et].name[..]) {
-                    let mx = check.int_max(self.tys.list[et].name[..])
+                    let mx = self.target_max(self.tys.list[et].name[..])
                     let v = ln.name[..].parse_int(i128) catch { -1 }
                     if v >= 0 and v <= mx +| 1 { return self.int_node(-v, et, start, end) }
                     // the one literal past i128's maximum is its minimum, negated
                     if v < 0 and ln.name == "170141183460469231731687303715884105728" and self.tys.list[et].name == "i128" {
-                        return self.int_node(check.int_min("i128"), et, start, end)
+                        return self.int_node(self.target_min("i128"), et, start, end)
                     }
                 }
             }
@@ -574,7 +574,7 @@ impl Checker {
             var bits: i128 = 64
             var have_bits = false
             if self.tys.kind(lt) == TK.Int {
-                bits = check.int_bits(self.tys.list[lt].name[..]) as i128
+                bits = self.target_bits(self.tys.list[lt].name[..]) as i128
                 have_bits = true
             }
             var proven = false
@@ -1878,10 +1878,10 @@ impl Checker {
         } else if kuf == TK.Int and kut == TK.Int {
             let an = self.tys.list[uf].name.clone()
             let bn = self.tys.list[ut].name.clone()
-            let fits = check.int_min(an[..]) >= check.int_min(bn[..]) and check.int_max(an[..]) <= check.int_max(bn[..])
+            let fits = self.target_min(an[..]) >= self.target_min(bn[..]) and self.target_max(an[..]) <= self.target_max(bn[..])
             var proven = fits
             if !proven {
-                if let r = self.expr_range(inner) { proven = r.lo >= check.int_min(bn[..]) and r.hi <= check.int_max(bn[..]) }
+                if let r = self.expr_range(inner) { proven = r.lo >= self.target_min(bn[..]) and r.hi <= self.target_max(bn[..]) }
             }
             if !proven { self.add_effect(EFF_PANICS, start, "narrowing cast panics when the value does not fit (use `@truncate` to wrap)") }
             kind = format("int_to_int checked={}", .{!proven})
@@ -1895,7 +1895,7 @@ impl Checker {
         } else if kuf == TK.Bool and kut == TK.Int {
             kind = String.from("bits")
         } else if kuf == TK.Char and kut == TK.Int {
-            if check.int_max(self.tys.list[ut].name[..]) < 0x10FFFF {
+            if self.target_max(self.tys.list[ut].name[..]) < 0x10FFFF {
                 self.add_effect(EFF_PANICS, start, "char to narrow integer cast panics when out of range")
                 kind = String.from("int_to_int checked=true")
             } else {

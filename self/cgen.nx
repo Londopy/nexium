@@ -5,7 +5,7 @@ import parser
 import check
 import check_interp
 
-const NONE: usize = 0xFFFFFFFFFFFFFFFF
+const NONE: usize = ~(0 as usize)
 
 const RUNTIME_H = @embedFile("../runtime/nx_rt.h")
 
@@ -290,12 +290,12 @@ fn int_c_name(name: []u8) -> []u8 {
     if name == "i16" { return "int16_t" }
     if name == "i32" { return "int32_t" }
     if name == "i64" { return "int64_t" }
-    if name == "i128" { return "__int128" }
+    if name == "i128" { return "nx_i128" }
     if name == "u8" { return "uint8_t" }
     if name == "u16" { return "uint16_t" }
     if name == "u32" { return "uint32_t" }
     if name == "u64" { return "uint64_t" }
-    if name == "u128" { return "unsigned __int128" }
+    if name == "u128" { return "nx_u128" }
     if name == "isize" { return "intptr_t" }
     return "size_t"
 }
@@ -303,6 +303,16 @@ fn int_c_name(name: []u8) -> []u8 {
 const I64_MIN: i128 = -9223372036854775808
 const I64_MAX: i128 = 9223372036854775807
 const U64_MAX: i128 = 18446744073709551615
+
+/// An integer type's bound as a C expression of `nx_i128`: a number for the
+/// fixed widths, and C's own macros for `isize` and `usize`, whose width is
+/// the target's, so that the same C is right on a 32-bit target and a
+/// 64-bit one.
+fn int_bound_c(nm: []u8, hi: bool) -> String {
+    if nm == "usize" { return String.from(if hi { "((nx_i128)SIZE_MAX)" } else { "((nx_i128)0LL)" }) }
+    if nm == "isize" { return String.from(if hi { "((nx_i128)INTPTR_MAX)" } else { "((nx_i128)INTPTR_MIN)" }) }
+    return int_literal(if hi { check.int_max(nm) } else { check.int_min(nm) }, "i128")
+}
 
 fn int_literal(v: i128, name: []u8) -> String {
     if name == "i128" {
@@ -2931,8 +2941,8 @@ impl Gen {
         let k = self.c.tys.kind(t)
         if k == check.TK.Int {
             let nm = self.c.tys.list[t].name.clone()
-            lo.* = int_literal(check.int_min(nm[..]), "i128")
-            hi.* = int_literal(check.int_max(nm[..]), "i128")
+            lo.* = int_bound_c(nm[..], false)
+            hi.* = int_bound_c(nm[..], true)
             return
         }
         if k == check.TK.Char {
@@ -3943,8 +3953,9 @@ impl Gen {
             let rt = self.res(ety)
             var ut: []u8 = "uint64_t"
             if self.c.tys.kind(rt) == check.TK.Int {
-                let bits = check.int_bits(self.c.tys.list[rt].name[..])
-                ut = if bits == 8 { "uint8_t" } else if bits == 16 { "uint16_t" } else if bits == 32 { "uint32_t" } else if bits == 64 { "uint64_t" } else { "nx_u128" }
+                let rn = self.c.tys.list[rt].name[..]
+                let bits = check.int_bits(rn)
+                ut = if rn == "isize" or rn == "usize" { "uintptr_t" } else if bits == 8 { "uint8_t" } else if bits == 16 { "uint16_t" } else if bits == 32 { "uint32_t" } else if bits == 64 { "uint64_t" } else { "nx_u128" }
             }
             return format("(({})({})({}))", .{cn, ut, v})
         }
@@ -4424,6 +4435,7 @@ impl Gen {
         let nm = self.c.tys.list[t].name.clone()
         if check.int_signed(nm[..]) { return String.new() }
         if nm == "u128" { return String.from("(~(nx_u128)0)") }
+        if nm == "usize" { return String.from("((nx_u128)SIZE_MAX)") }
         return int_literal(check.int_max(nm[..]), "u128")
     }
 
@@ -4432,8 +4444,8 @@ impl Gen {
         let k = self.c.tys.kind(t)
         if k == check.TK.Int {
             let nm = self.c.tys.list[t].name.clone()
-            lo.* = int_literal(check.int_min(nm[..]), "i128")
-            hi.* = int_literal(check.int_max(nm[..]), "i128")
+            lo.* = int_bound_c(nm[..], false)
+            hi.* = int_bound_c(nm[..], true)
             return
         }
         if k == check.TK.Distinct {
@@ -4596,7 +4608,14 @@ impl Gen {
     fn scalar_c(self: *mut Self, t0: usize) -> String {
         let t = self.res(t0)
         let k = self.c.tys.kind(t)
-        if k == check.TK.Int { return String.from(int_c_name(self.c.tys.list[t].name[..])) }
+        if k == check.TK.Int {
+            // the header is read by other compilers: C's own spelling of the
+            // 128-bit types, where the program's C says the runtime's
+            let n = self.c.tys.list[t].name[..]
+            if n == "i128" { return String.from("__int128") }
+            if n == "u128" { return String.from("unsigned __int128") }
+            return String.from(int_c_name(n))
+        }
         if k == check.TK.Float { return String.from(if self.c.tys.list[t].name == "f32" { "float" } else { "double" }) }
         if k == check.TK.Bool { return String.from("bool") }
         if k == check.TK.Char { return String.from("uint32_t") }
@@ -5472,6 +5491,21 @@ impl Gen {
         for h, i in self.c.cimport_headers {
             if self.c.cimport_system[i] { out.append(format("#include <{}>\n", .{h})[..]) } else { out.append(format("#include \"{}\"\n", .{h})[..]) }
         }
+        // what `@sizeOf` answered, the C compiler confirms for the target it
+        // builds for: the checker computes a layout, C lays it out
+        var claims = String.new()
+        var asked = List((usize, u64)).new()
+        for sc in self.c.size_claims { asked.append((sc.ty, sc.bytes)) }
+        var claimed = Map(String, bool).new()
+        for a in asked {
+            let k = self.c.tys.kind(self.res(a.0))
+            if a.1 == 0 or k == check.TK.Void or k == check.TK.Never or k == check.TK.Type or k == check.TK.Infer { continue }
+            let cn = self.cty(a.0)
+            let line = format("_Static_assert(sizeof({}) == {}, \"@sizeOf({}) is {} bytes\");\n", .{cn, a.1, self.c.ty_name(a.0), a.1})
+            if claimed.contains(line[..]) { continue }
+            claimed.put(line.clone(), true)
+            claims.append(line[..])
+        }
         // defining what was only declared can declare more, so it comes first
         self.define_forwarded()
         out.append("\n/* ---- forward declarations ---- */\n")
@@ -5486,6 +5520,10 @@ impl Gen {
             seen.put(String.from(line), true)
             out.append(line[..])
             out.append("\n")
+        }
+        if claims.len > 0 {
+            out.append("\n/* ---- @sizeOf, as C lays the types out ---- */\n")
+            out.append(claims[..])
         }
         out.append("\n/* ---- data ---- */\n")
         out.append(self.data_out[..])

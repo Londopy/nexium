@@ -408,8 +408,9 @@ fn needs_space(toks: *List(lexer.Token), ctx: *Line, i: usize) -> bool {
     if b == lexer.Kind.LParen {
         if is_kw(ta, "impl") or is_kw(ta, "fn") or is_kw(ta, "export") or is_kw(ta, "derive") or is_kw(ta, "layout") { return false }
         if a == lexer.Kind.RParen and closes_control_head(toks, ctx, i - 1) { return true }
-        // `!` is tight before a parenthesis as before a word: `!(a or b)`
-        if a == lexer.Kind.Bang { return false }
+        // `!` is tight before a parenthesis as before a word: `!(a or b)`,
+        // and so is `~`, which is only ever unary: `~(0 as usize)`
+        if a == lexer.Kind.Bang or a == lexer.Kind.Tilde { return false }
         // so is a unary minus, `x = -(a + b)`; after an operand it subtracts:
         // `a - (b)`
         if a == lexer.Kind.Minus and !(i >= 2 and ends_operand(toks, ctx.toks[i - 2]) and !is_kw(&toks[ctx.toks[i - 2]], "step")) { return false }

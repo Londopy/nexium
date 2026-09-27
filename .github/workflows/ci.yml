@@ -167,6 +167,53 @@ jobs:
           print("ok")
           EOF
 
+  # 32-bit x86 (decision 122): every case the harness builds, built and run
+  # as a 32-bit program (the 64-bit runners run one), and the compiler built
+  # as a 32-bit program that builds itself, all three emitting the same C
+  thirty-two:
+    name: 32-bit (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # static, so no 32-bit libc is needed on the runner
+          - os: ubuntu-latest
+            target: i686-linux-musl
+          - os: windows-latest
+            target: i686-windows-gnu
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Build nx from the seed
+        shell: bash
+        run: sh bootstrap/build.sh
+
+      - name: The spec, the examples, std's tests and the Topo as 32-bit programs
+        shell: bash
+        run: |
+          nx=nx-out/bootstrap/nx2; [ -f "$nx.exe" ] && nx="$nx.exe"
+          "$nx" run tests/run.nx -- --nx "$nx" --target ${{ matrix.target }} spec examples std topo compile_fail
+
+      - name: The compiler as a 32-bit program, building itself
+        shell: bash
+        run: |
+          nx=nx-out/bootstrap/nx2; [ -f "$nx.exe" ] && nx="$nx.exe"
+          ext=""; [ "$RUNNER_OS" = Windows ] && ext=".exe"
+          t=${{ matrix.target }}
+          "$nx" build self/nx.nx --mode safe --target $t -o "nx-out/nx32$ext" --out-dir nx-out/stage32
+          "nx-out/nx32$ext" --version
+          "nx-out/nx32$ext" build self/nx.nx --mode safe --target $t -o "nx-out/nx32b$ext" --out-dir nx-out/stage32b
+          "$nx" emit-c self/nx.nx --mode safe --target $t > nx-out/by64.c
+          "nx-out/nx32$ext" emit-c self/nx.nx --mode safe --target $t > nx-out/by32.c
+          "nx-out/nx32b$ext" emit-c self/nx.nx --mode safe --target $t > nx-out/by32b.c
+          cmp nx-out/by64.c nx-out/by32.c
+          cmp nx-out/by32.c nx-out/by32b.c
+
   fuzz:
     name: fuzz
     # mutated sources through the front end (one accepted mutant in ten
