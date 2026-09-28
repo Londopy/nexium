@@ -3,8 +3,8 @@
   "machine": {
     "os": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
     "cpu": "x86_64",
-    "date": "2026-09-26",
-    "runner": "GitHub Actions 1000009957"
+    "date": "2026-09-28",
+    "runner": "GitHub Actions 1000010261"
   },
   "tools": {
     "nexium": "nx 1.4.1 (Annapurna: Ang Tharkay)",
@@ -16,36 +16,36 @@
   "runs": 7,
   "results": {
     "fib": {
-      "nexium-safe": 1.5231,
-      "nexium-fast": 0.8984,
-      "c": 0.5149,
-      "rust": 0.898,
-      "go": 1.5601,
-      "python": 39.3648
+      "nexium-safe": 1.5244,
+      "nexium-fast": 0.8987,
+      "c": 0.5153,
+      "rust": 0.8976,
+      "go": 1.5619,
+      "python": 39.5769
     },
     "nbody": {
       "nexium-safe": 0.7538,
-      "nexium-fast": 0.7538,
-      "c": 0.6823,
-      "rust": 0.7752,
-      "go": 0.8625,
-      "python": 63.3844
+      "nexium-fast": 0.7547,
+      "c": 0.6809,
+      "rust": 0.7758,
+      "go": 0.8635,
+      "python": 62.0555
     },
     "sieve": {
-      "nexium-safe": 0.6766,
-      "nexium-fast": 0.6434,
-      "c": 0.4829,
-      "rust": 0.5103,
-      "go": 0.5155,
-      "python": 5.5943
+      "nexium-safe": 0.6734,
+      "nexium-fast": 0.6269,
+      "c": 0.4636,
+      "rust": 0.5091,
+      "go": 0.496,
+      "python": 5.5188
     },
     "words": {
-      "nexium-safe": 1.4604,
-      "nexium-fast": 1.4816,
-      "c": 0.7642,
-      "rust": 1.2252,
-      "go": 1.515,
-      "python": 4.8545
+      "nexium-safe": 1.4599,
+      "nexium-fast": 1.4482,
+      "c": 0.7292,
+      "rust": 1.1905,
+      "go": 1.4939,
+      "python": 4.5716
     }
   }
 }
