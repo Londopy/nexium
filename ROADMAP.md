@@ -1352,6 +1352,56 @@ share URL.
 - `nx gui gallery`: every widget with its source beside it, clickable
   documentation.
 
+**nexium-web: a web front end, native** (1.8). Today a Nexium program
+gets a web front end two ways. One is a Tauri app whose commands are thin
+wrappers over `artifact rustlib` exports: the export seam is stateless on
+purpose (no mutable globals behind an export, and no objects or slices
+handed back across it yet), so rich data crosses as JSON in a caller's
+`[]mut u8` and the state lives in Rust, or the program runs as a Tauri
+sidecar speaking JSON lines. The other is a localhost server on
+`std.http`'s router with the page embedded by `@embedFile`, which owns no
+window and needs an Origin check and a per-launch token, since any page
+can reach localhost. This is the third way, Tauri's idea done in Nexium:
+
+- A `nexium-web` library built like nexium-gui: a small C layer over the
+  system's webview (WebView2 on Windows, WKWebView on macOS, WebKitGTK on
+  Linux, the engines Tauri's wry wraps) that queues the page's calls the
+  way `gui/platform.c` queues input (decision 51). The C cannot be avoided:
+  every webview's IPC hook is a callback, `@cImport` does not translate
+  function-pointer typedefs, and C cannot be handed a Nexium function, so
+  the shim owns the callback and the queue.
+- The shim pumps the system's event loop without blocking
+  (`PeekMessage`, `g_main_context_iteration`, `nextEventMatchingMask`)
+  rather than calling a `run()` that never returns, so `pump()` works like
+  `begin_frame()`: no threads, and macOS keeps its UI on the main thread. A
+  program keeps the shape of `gui/counter.nx`, and the page's side is
+  `await invoke("count")`:
+
+  ```nexium
+  var app = nexium_web.App.open(@cstr("notes"), 900, 600).?
+  app.set_html(@embedFile("ui/index.html"))
+  var notes = List(String).new()
+  while app.pump() {              // like begin_frame(): false once closed
+      for call in app.calls() {   // each JS invoke() since the last pump
+          match call.name[..] {
+              "add" => { notes.append(String.from(call.arg(0))); call.ok("null") },
+              "count" => call.ok(format("{}", .{notes.len})),
+              _ => call.fail("unknown command"),
+          }
+      }
+  }
+  ```
+
+- Where it can beat Tauri rather than copy it: Tauri limits what the page
+  may reach with capability files it checks at run time. Here each handler
+  the page can call carries effect bounds in its signature (`!blocks
+  !nondeterministic !ffi`), checked at compile time, and `nx audit --check`
+  fails CI the day a handler picks up I/O.
+- To prove first: the shim vendoring `webview/webview`, which is C++
+  inside. `artifact link` hands its `c_sources` to `zig cc` as they are, so
+  a `.cc` file with `libs = ["c++"]` should build; that is the first thing
+  to test, on all three platforms.
+
 **Apps** (1.8).
 
 - The Hut, a small native IDE in nexium-gui: an editor with the language
