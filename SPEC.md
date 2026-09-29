@@ -29,6 +29,15 @@ below:
    executable, a C library, a Python wheel, or a Rust crate from one file,
    and a panic never crosses the boundary into a host.
 
+Beside them is a softer goal, a direction rather than a rule: an
+intermediate programmer should be able to understand and fix any problem
+in their own Nexium code without ever reading the compiler or standard
+library source. It guides how diagnostics, panics and the standard
+library's documentation are written (the roadmap's
+[errors you can fix alone](ROADMAP.md#errors-you-can-fix-alone)); it does
+not decide the design, and it gives way to the commitments and
+constraints.
+
 The hard constraints inherited from the design (spec section 3) and kept:
 no runtime initialization for a shipped library (S1), no mutable globals in
 an embeddable artifact (S2), panics converted at the export boundary (S3),
