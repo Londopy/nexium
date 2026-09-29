@@ -916,6 +916,79 @@ copy and raises `ropesim.InvalidInput`; the Rust crate's error enums come
 from the Nexium error sets; an example calls a Rust crate and a Python
 library from Nexium; `--abi-check` fails on a removed export.
 
+### Errors you can fix alone
+
+An intermediate programmer should be able to understand and fix any
+problem in their own Nexium code without ever reading the compiler or
+standard library source. Every diagnostic, including warnings and runtime
+panics, gets a permanent NX code and a page, and `nx explain` fills that
+page in with the programmer's own code instead of a generic example.
+Messages point at the actual mistake, not just where it was caught, and
+only suggest fixes the compiler has checked will compile. The standard
+library documents what every function returns, how it fails, and whether
+it allocates, and a written reference covers the exact rules of the
+language. None of this relies on discipline. The compiler can't emit an
+uncoded diagnostic, every documented example is tested in CI, and every
+feature's errors are written before the feature is built, so a feature
+that can't produce a clear error gets simplified. We prove it by breaking
+known-good programs to confirm that one mistake gives one clear error in
+the right place, and by timing intermediate programmers as they fix each
+error with nothing but the message and the page.
+
+Where it starts: a message today names the problem and the line where it
+was caught, with no code and nothing to open. Assigning to a `let` says
+"`count` is immutable; declare it with `var`" at the assignment and never
+shows the declaration, which is the line to change; a `var` that never
+changes and a binding never used are not warned about at all. What there
+is to build on: `nx fix` keeps an edit only when a check of the edited
+program agrees (decision 113), `nx explain` already answers why a
+function has an effect, the compile-fail cases pin each diagnostic with
+`// EXPECT:` lines, the fuzzer compiles mutants of real programs, and
+`SPEC.md` is the written reference. Pencilled from 1.6, with every
+diagnostic coded by 2.0:
+
+- The registry: one file of codes, `NX` and four digits, assigned in
+  order and never reused or renumbered; a retired code keeps its page.
+  Errors, warnings and runtime panics draw from it alike. The checker's
+  `fail` takes a registered code rather than a string, so the compiler's
+  own types make an uncoded diagnostic impossible, and every message ends
+  by pointing to `nx explain NX####`.
+- `nx explain NX0042` prints the code's page: what happened, why it is an
+  error (the rule, with its spec section), the smallest program that
+  triggers it, the fixes and when to choose each, the related codes, and
+  the terms used, each with a concept page. After a failed build it fills
+  the page in with that build's names, lines and types; run cold, it
+  shows the minimal example. (`nx explain` takes a file, a function and an
+  effect today; given a code, or the message's own words, it opens the
+  page.) The language server links each squiggle to its page. This
+  replaces the error index of "The docs, more".
+- Messages point at the mistake: when the line to change is not where the
+  problem was caught, the message shows both and the chain between them
+  ("`count` can't change because line 2 declares it with `let`, and line
+  3 assigns to it"). Plain words for an intermediate programmer, the
+  programmer's own names first, no compiler internals. One mistake, one
+  error: no cascades.
+- A fix appears only after the compiler has re-checked that the patched
+  program compiles, as `nx fix` does for its edits, for a message's help
+  lines too.
+- The standard library says of every function what it returns, how it
+  fails (its error set, and what each error means) and whether it
+  allocates, the last read from the inferred effects so it cannot drift
+  from the code.
+- Every documented example is tested in CI: the docs' code, std's doc
+  examples, and each page's minimal example.
+- Every feature's errors are written before the feature is built, from the
+  per-feature template ([docs/diagnostics-template.md](docs/diagnostics-template.md)):
+  a clarity gate, the likely mistakes with their codes, where each is
+  caught and where it was made, the exact message, the explain page, the
+  tests. A mistake that cannot be explained in plain words blocks the
+  feature until its design changes.
+- The proof: mutation tests that break known-good programs one token at a
+  time and require one clear error in the right place for each, and timed
+  sessions in which intermediate programmers fix each error with nothing
+  but the message and the page, against a bar set before the test; below
+  the bar, the message or the page is rewritten and tested again.
+
 ### Tools only this language can have
 
 The REPL was the first of these: a feature no systems language is
@@ -1299,10 +1372,9 @@ share URL.
 - A reference page per std module generated by `nx doc` from the doc
   comments, with every function's signature, effects and an example that
   the harness runs, replacing the one long `docs/std.md`.
-- The error index: every diagnostic the compiler can emit has a page with
-  a wrong program, the message, why, and the fix; `nx explain E0042` (or
-  the message's own words) opens it, and the language server links to
-  it from the squiggle.
+- The error index: now a line of its own,
+  [errors you can fix alone](#errors-you-can-fix-alone), with `NX` codes
+  and pages filled in from the reader's own code.
 - A cookbook: "how do I..." recipes (read a file line by line, parse
   JSON, talk to a socket, call a C library, ship to Python), each a
   complete program the tests run; a page of Nexium next to Python, Rust,
@@ -1484,6 +1556,10 @@ decision entry first, an implementation second, and none is promised.
   reader never discovers a known bug the hard way.
 - Every language change names the spec constraint it serves and lands with
   an example or a compile-fail case.
+- Every feature's errors are written before the feature, from the
+  per-feature template ([docs/diagnostics-template.md](docs/diagnostics-template.md));
+  a feature that cannot produce a clear error is simplified, not its
+  message.
 - Every open design call goes in `DECISIONS.md` the day it is made.
 - The Nexium share of the repository rises every phase and is never
   padded.
