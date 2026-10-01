@@ -169,6 +169,19 @@ struct Mutant {
     run: bool
 }
 
+/// Whether a program declares `artifact cli { stack = ... }`: it recurses
+/// deeper than a default stack allows (tests/spec/s3_entry_stack.nx), so a
+/// mutant that loses the declaration (a newline deleted into the comment
+/// above it, say) overflows the stack, a crash no memory error caused. Its
+/// mutants are checked, and not run.
+fn declares_stack(text: []u8) -> bool {
+    for l in text.lines() {
+        let t = l.trim()
+        if t.starts_with("artifact cli") and t.find("stack") != null { return true }
+    }
+    return false
+}
+
 /// Mutated corpus files through the front end.
 fn fuzz_sources(e: *mut Env, iterations: usize, seed: u64) {
     var corpus = List(String).new()
@@ -194,7 +207,7 @@ fn fuzz_sources(e: *mut Env, iterations: usize, seed: u64) {
         let src = &texts[r.pick(texts.len)]
         let other = &texts[r.pick(texts.len)]
         let text = mutate(r, src[..], other[..])
-        let run = run_every > 0 and r.pick(run_every) == 0
+        let run = run_every > 0 and r.pick(run_every) == 0 and !declares_stack(src[..])
         return Mutant{ .text = text, .run = run }
     }
     let holds = |[e, &case_path, &mut cases, &mut accepted, &mut rejected, &mut ran, &mut found, &mut what, &mut last] m: *Mutant| -> bool {
