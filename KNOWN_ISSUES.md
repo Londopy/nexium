@@ -65,6 +65,17 @@ goal of SPEC 1; the roadmap's "Errors you can fix alone").
   the generic with that type, so its body is not checked, and the first
   error carries the hint; a compile-fail case expecting the hint and one
   error.
+- **A stack overflow is a bare crash.** A recursion deeper than the stack
+  ends the program with the system's fault (a segmentation fault, exit 139,
+  on Linux; `0xC00000FD` on Windows) and no message naming the overflow or
+  the function that recursed. The fuzzer took one for a memory error: a
+  mutant of `tests/spec/s3_entry_stack.nx` that lost its `artifact cli {
+  stack }` overflowed (its mutants are no longer run). Fix: the runtime
+  catches the overflow on an alternate stack (`sigaltstack` with a
+  `SIGSEGV` handler on Linux and macOS, a vectored handler for
+  `EXCEPTION_STACK_OVERFLOW` on Windows) and reports `panic: stack
+  overflow` with the function, as a panic does; a spec case that
+  overflows on purpose.
 
 ## Self-hosting
 
