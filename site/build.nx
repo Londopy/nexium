@@ -1008,10 +1008,10 @@ fn api_latest(version: []u8, name: []u8, date: []u8) -> json.Json {
     let base = format("{}/releases/download/{}", .{REPO, tag})
     var downloads = json.object()
     json.set(&mut downloads, "windows-x64-installer", js(format("{}/nexium-{}-setup-x64.exe", .{base, version})[..]))
-    for t in ["x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"] {
+    for t in ["x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc", "i686-pc-windows-msvc"] {
         json.set(&mut downloads, t, js(format("{}/nx-{}-{}.zip", .{base, tag, t})[..]))
     }
-    for t in ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "aarch64-apple-darwin"] {
+    for t in ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "aarch64-apple-darwin", "i686-unknown-linux-musl", "armv7-unknown-linux-musleabihf"] {
         json.set(&mut downloads, t, js(format("{}/nx-{}-{}.tar.gz", .{base, tag, t})[..]))
     }
     json.set(&mut downloads, "one-c-file", js(format("https://raw.githubusercontent.com/Londopy/nexium/{}/bootstrap/nx.c", .{tag})[..]))

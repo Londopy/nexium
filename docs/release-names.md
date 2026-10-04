@@ -119,6 +119,7 @@ ordering; the name carries the character.
 | 1.3.2 | Annapurna: Oudot | patch (roster 7): the doctor; a write to a connection or pipe the other side has closed no longer ends the program with SIGPIPE, and a connect that fails at once is an error |
 | 1.4.0 | Annapurna: the Sanctuary | the basin ringed by the peaks, where the first mountain ends: a standard library people stop supplementing; programs run alongside, HTTPS over the platform's TLS, grapheme clusters, property tests |
 | 1.4.1 | Annapurna: Ang Tharkay | patch (roster 10): the sirdar, who kept the camps supplied; `nx fetch` follows a dependency's tag when the manifest changes it, where it went on building the old one |
+| 1.5.0 | Everest: Base Camp | where the climb to 2.0 is staged: one source, many platforms; WebAssembly programs and `artifact wasm`, the 32-bit targets with a download each, Linux and Windows on ARM at tier 1 |
 
 ## The plan
 
@@ -128,7 +129,6 @@ fits and the pencilled one goes back in the pool.
 
 | version | name | why |
 | --- | --- | --- |
-| 1.5.0 | Everest: Base Camp | the climb to 2.0 is staged here: one source, many platforms |
 | 1.6.0 | Everest: Khumbu Icefall | the first dangerous crossing of the climb: the runtime release builds deserve |
 | 1.7.0 | Everest: Western Cwm | the long valley between two walls: the seam, both ways (Python, Rust and more languages, in and out) |
 | 1.8.0 | Everest: Lhotse Face | the face of the neighbouring peak the route climbs: a side theme (the GUI, the registry) |
@@ -205,7 +205,7 @@ expedition led by John Hunt, by the South Col route.
 
 | place | what it was | use it for |
 | --- | --- | --- |
-| Base Camp | 5,364 m, on the Khumbu glacier | where the climb to the major is staged: the first release on the way up (planned: 1.5.0) |
+| Base Camp | 5,364 m, on the Khumbu glacier | where the climb to the major is staged: the first release on the way up (used: 1.5.0) |
 | Khumbu Icefall | the moving icefall every south-side climb crosses first; dangerous and unglamorous | the first dangerous crossing of the climb (planned: 1.6.0) |
 | Western Cwm | the silent glacier valley above the icefall, between the walls of Nuptse and Lhotse | a long quiet stretch: consolidation, or a release that joins two sides (planned: 1.7.0) |
 | Camp I to Camp IV | the camps of the standard route | ordinary progress |

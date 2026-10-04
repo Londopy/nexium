@@ -10,6 +10,10 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-10-04
+
+*Everest: Base Camp* — 5,364 metres on the Khumbu glacier, where the climb to the next summit is staged: one source, many platforms. Programs build for WebAssembly (`wasm32-wasi`) and run under Node.js's WASI, a panic unwinding as it does natively, and `artifact wasm` ships a library as a module with a JavaScript loader for a page or Node.js; programs build for 32-bit x86, ARMv7 and RISC-V 32, which CI runs on its machines and under QEMU, the compiler builds itself as a 32-bit program, and every release carries `nx` for 32-bit Windows and Linux and for ARMv7 Linux, a Raspberry Pi's 32-bit OS among them; Linux and Windows on ARM are tier 1, every suite run on GitHub's arm64 machines. `@sizeOf` is confirmed by the C compiler on every target, and the test harness takes `--target`. The seed is regenerated from the final sources.
+
 ### Added
 
 - CI checks the links between the repository's Markdown files
@@ -2225,7 +2229,8 @@ First public release.
   Korean, French, and German; the language reference and architecture tour in
   Spanish, Chinese, and Japanese.
 
-[Unreleased]: https://github.com/Londopy/nexium/compare/v1.4.1...HEAD
+[Unreleased]: https://github.com/Londopy/nexium/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/Londopy/nexium/compare/v1.4.1...v1.5.0
 [1.4.1]: https://github.com/Londopy/nexium/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/Londopy/nexium/compare/v1.3.2...v1.4.0
 [1.3.2]: https://github.com/Londopy/nexium/compare/v1.3.1...v1.3.2

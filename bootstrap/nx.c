@@ -4831,11 +4831,11 @@ typedef struct nx_env_1644 { char _e; } nx_env_1644;
 /* ---- data ---- */
 static const char* const nx_error_names[] = { "(ok)", "OutOfMemory", "Panic", "InvalidRecord", "Truncated", "Overflow", "InvalidUtf8", "NotFound", "IoError", "InvalidInput", "BufferTooSmall", "Timeout", "ConnectionRefused", "TooLarge", "TruncatedCoff", "Elf32", "MachO", "Unrecognized", "AlreadyExists" };
 NX_INLINE const char* nx_error_name(uint32_t e) { return e <= sizeof(nx_error_names)/sizeof(*nx_error_names) - 1 ? nx_error_names[e] : "(unknown error)"; }
-static const char nx_str_0[6] = "1.4.1";
+static const char nx_str_0[6] = "1.5.0";
 static const nx_sl_u8 nxc_VERSION_0 = { (uint8_t*)nx_str_0, 5 };
-static const char nx_str_1[23] = "Annapurna: Ang Tharkay";
-static const nx_sl_u8 nxc_RELEASE_NAME_1 = { (uint8_t*)nx_str_1, 22 };
-static const char nx_str_2[11] = "2026-09-26";
+static const char nx_str_1[19] = "Everest: Base Camp";
+static const nx_sl_u8 nxc_RELEASE_NAME_1 = { (uint8_t*)nx_str_1, 18 };
+static const char nx_str_2[11] = "2026-10-04";
 static const nx_sl_u8 nxc_RELEASE_DATE_2 = { (uint8_t*)nx_str_2, 10 };
 static const size_t nxc_NONE_3 = ((size_t)18446744073709551615ULL);
 static const char nx_str_3[819] = "// written by nx: runs a wasm32-wasi program under Node.js's WASI; it sees\n// the working directory and a /tmp of its own beside the module\nimport { readFile } from 'node:fs/promises';\nimport { mkdirSync } from 'node:fs';\nimport { dirname, join } from 'node:path';\nimport { WASI } from 'node:wasi';\nimport process from 'node:process';\nconst [file, ...args] = process.argv.slice(2);\nconst tmp = join(dirname(file), 'wasi-tmp');\nmkdirSync(tmp, { recursive: true });\nconst wasi = new WASI({ version: 'preview1', args: [file, ...args], env: { ...process.env, TMPDIR: '/tmp' }, preopens: { '.': '.', '/tmp': tmp }, returnOnExit: true });\nconst module = await WebAssembly.compile(await readFile(file));\nconst instance = await WebAssembly.instantiate(module, wasi.getImportObject());\nprocess.exitCode = wasi.start(instance);\n";
@@ -23552,7 +23552,7 @@ static int32_t nx_cmd_version(nx_ctx* c) {
   NX_UNUSED(c);
   nx_sink _t1 = nx_sink_file(c, c->out);
   nx_sl_u8 _t2 = nx_lit(nx_str_0, 5);
-  nx_sl_u8 _t3 = nx_lit(nx_str_1, 22);
+  nx_sl_u8 _t3 = nx_lit(nx_str_1, 18);
   nx_w(&_t1, (const uint8_t*)nx_str_823, 3);
   nx_w_sl(&_t1, _t2);
   nx_w(&_t1, (const uint8_t*)nx_str_696, 2);
@@ -23568,7 +23568,7 @@ static int32_t nx_cmd_doctor(nx_ctx* c, nx_Opts* o_0) {
   NX_UNUSED(c);
   nx_sink _t1 = nx_sink_file(c, c->out);
   nx_sl_u8 _t2 = nx_lit(nx_str_0, 5);
-  nx_sl_u8 _t3 = nx_lit(nx_str_1, 22);
+  nx_sl_u8 _t3 = nx_lit(nx_str_1, 18);
   nx_w(&_t1, (const uint8_t*)nx_str_823, 3);
   nx_w_sl(&_t1, _t2);
   nx_w(&_t1, (const uint8_t*)nx_str_696, 2);
@@ -26740,7 +26740,7 @@ static uint8_t nx_main(nx_ctx* c) {
                                                                                                                 {
                                                                                                                   nx_sink _t213 = nx_sink_file(c, c->out);
                                                                                                                   nx_sl_u8 _t214 = nx_lit(nx_str_0, 5);
-                                                                                                                  nx_sl_u8 _t215 = nx_lit(nx_str_1, 22);
+                                                                                                                  nx_sl_u8 _t215 = nx_lit(nx_str_1, 18);
                                                                                                                   nx_sl_u8 _t216 = nx_lit(nx_str_2, 10);
                                                                                                                   nx_string _t217 = nx_m17_man(c, _t214, _t215, _t216);
                                                                                                                   nx_string _t218 = _t217;

@@ -40,9 +40,9 @@ import std.thread
 // recurses on it, and each nested call costs about 165 KiB of frame
 artifact cli { name = "nx", stack = "1G" }
 
-const VERSION = "1.4.1"
-const RELEASE_NAME = "Annapurna: Ang Tharkay"
-const RELEASE_DATE = "2026-09-26"
+const VERSION = "1.5.0"
+const RELEASE_NAME = "Everest: Base Camp"
+const RELEASE_DATE = "2026-10-04"
 
 const NONE: usize = ~(0 as usize)
 

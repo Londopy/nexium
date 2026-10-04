@@ -9,10 +9,10 @@ The spec's one sentence is the compass: *a language complete enough to build
 everything in, that is also the best thing to adopt for one piece of
 something else.* The second half is ahead of the first, on purpose.
 
-## Now: 1.4.0, and 1.5 next
+## Now: 1.5.0, and 1.6 next
 
-What exists and is verified on Windows, Linux, and macOS (1.1, 1.2, 1.3 and
-1.4 each have a section under *Past 1.0* saying what it added):
+What exists and is verified on Windows, Linux, and macOS (1.1 to 1.5 each
+have a section under *Past 1.0* saying what it added):
 
 - The language: structs, records, enums, `ref class` with ARC and `weak`,
   distinct types, traits and `dyn Trait` with effect bounds, generics by
@@ -27,7 +27,8 @@ What exists and is verified on Windows, Linux, and macOS (1.1, 1.2, 1.3 and
 - Effects: inferred for every function, checked against negative bounds,
   `panics` discharged by proof, effects deciding the C ABI of exports.
 - Interop: `@cImport` of C headers, vendored C, `nx ship` to a C
-  library, a Python wheel, a Rust crate, an npm package, an installer.
+  library, a Python wheel, a Rust crate, an npm package, a WebAssembly
+  module with a JavaScript loader, an installer.
 - Standard library in Nexium, embedded in the compiler: twenty-nine
   modules (`strings`, `lists`, `bytes`, `num`, `json`, `args`, `fs`,
   `time`, `regex`, `text`, `testing`, `stream`, `net`, `http`, `websocket`,
@@ -40,6 +41,11 @@ What exists and is verified on Windows, Linux, and macOS (1.1, 1.2, 1.3 and
   packages' `init add fetch update`, and `-e` and `-p` for one line. The
   language server answers from the checker, and a large program's debug
   build compiles a C file per module, only the ones that changed.
+- Platforms: Windows, Linux and macOS, and Linux and Windows on ARM, at
+  tier 1 (every suite in CI, a download each); 32-bit x86 Windows and
+  Linux and ARMv7 Linux at tier 2 (their programs run in CI, a download
+  each); RISC-V 32 tested under QEMU; WebAssembly programs under
+  Node.js's WASI and libraries in a page (`docs/platforms.md`).
 - Distribution: a Windows installer with bundled Zig, a macOS/Linux install
   script with checksum verification, `pip` and `npm` packages
   (`nexium-lang`), Homebrew, Scoop and Chocolatey (winget awaits its first
@@ -55,11 +61,13 @@ What exists and is verified on Windows, Linux, and macOS (1.1, 1.2, 1.3 and
   tutorial whose every program the tests run, with 41 exercises graded in
   the terminal (`nx topo`) and in the page, which runs the programs itself.
 
-Numbers, at 1.4.0: 60.9k lines of Nexium (34.9k of them the compiler and
-its tools), 4.4k of C (the runtime and the GUI window layer), 579 std
+Numbers, at 1.5.0: 61.8k lines of Nexium (35.6k of them the compiler and
+its tools), 4.5k of C (the runtime and the GUI window layer), 579 std
 functions, 32 examples, 21 tutorial programs, 75 spec conformance cases
-and 101 compile-fail cases, 14 harness suites, verified on three platforms
-by CI and under the sanitizers.
+and 101 compile-fail cases, 14 harness suites, verified by CI on five
+machines (the three desktops, Linux and Windows on ARM), for four more
+targets (32-bit x86, ARMv7, RISC-V 32, WebAssembly), and under the
+sanitizers.
 
 ## Phase 1: a language you can write your tools in (0.3)
 
@@ -250,7 +258,7 @@ roadmap answers each:
 | No performance numbers: it compiles through C, which is not the same as a table | the numbers page, pulled forward from 1.6 into 1.1 |
 | No ecosystem: sixteen std modules, no registry, no third-party packages, one maintainer | 1.4 (std), the registry and the second-maintainer items under *Ecosystem*; `async` is answered under *Not planned*, errors with payloads under *2.0 candidates* |
 
-Where the four stand at 1.4.0: memory safety shipped in 1.2 (the view
+Where the four stand at 1.5.0: memory safety shipped in 1.2 (the view
 rules, errors since 1.3); the numbers page is up, measured every week and
 at every release, and the README's Speed section carries its table;
 maturity is the hardening under *Always*, which goes on; the ecosystem has
@@ -400,9 +408,9 @@ queue in front of them.
 
 Everything longer, in the order of the themes: memory safety (1.2),
 incremental builds and the semantic language server (1.3), `std.tui`
-and `nx topo` (1.4), the wasm playground (1.5), hot reload, profiling by
-effect, the visual tools (1.6), the seam (1.7), nexium-gui grown up and
-the Hut (1.8).
+and `nx topo` (1.4), WebAssembly and the 32-bit targets (1.5), hot
+reload, profiling by effect, the visual tools (1.6), the seam (1.7),
+nexium-gui grown up and the Hut (1.8).
 
 ### 1.1: the language the compiler wanted
 
@@ -538,8 +546,8 @@ luck.
 Status: shipped as 1.3.0 on 2026-09-24. Every item below is in; three are
 narrower than written, and their notes say how: `nx fix` makes only the
 edits that keep what a program does (decision 113), std's platform code
-leaves the runtime's `#ifdef`s with 1.5, and the rebuild of "well under a
-second" everywhere waits for checking by module.
+leaves the runtime's `#ifdef`s with 1.6 (moved on from 1.5), and the
+rebuild of "well under a second" everywhere waits for checking by module.
 
 - First, `self/check.nx` split by responsibility (declarations, types,
   ownership and moves, effects, patterns, generics, the compile-time
@@ -586,8 +594,9 @@ second" everywhere waits for checking by module.
 - Conditional compilation: `if comptime @target().os == "windows" { }` in
   std replaces the runtime's `#ifdef`s one by one. (Done for the language,
   decision 114: `if comptime @target().0 == "windows" { }` builds one
-  branch. Moving the runtime's `#ifdef`s into std goes with 1.5's
-  platforms, whose process, socket and thread code is where they are.)
+  branch. Moving the runtime's `#ifdef`s into std goes with 1.6's runtime
+  work, moved there from 1.5's platforms; the process, socket and thread
+  code is where they are.)
 
 Exit: a one-line change rebuilds in well under a second on the compiler's
 own sources, and the language server answers from the checker.
@@ -735,28 +744,41 @@ nothing they had to write themselves.
 
 ### 1.5: platforms
 
-Status: under way on `main`. 32-bit x86 (`i686`) builds, runs every spec
-case, example, standard library test and Topo program in CI, and the
-compiler builds itself as a 32-bit program; `armv7` and `riscv32` run the
-same suites under QEMU in CI (decision 122). WebAssembly programs
-(`wasm32-wasi`) build and run the same suites under Node.js in CI, a panic
-unwinding as it does natively (decision 123), and `artifact wasm` ships a
-library as a module with a JavaScript loader for a page or Node.js
-(decision 124), which CI loads into a page in headless Chrome. Linux and
-Windows on ARM are tier 1, the test job running on GitHub's arm64 runners.
-`wasm32-freestanding` and the rest of the section are to do.
+Status: shipped as 1.5.0 on 2026-10-04, and the exit criterion holds: one
+source runs in a browser, on a Raspberry Pi (ARMv7 and ARM64) and on the
+three desktops, and `docs/platforms.md` says which combinations CI proves.
+In: WebAssembly programs (`wasm32-wasi`), which run every spec case,
+example, standard library test and Topo program under Node.js in CI, a
+panic unwinding as it does natively (decision 123); `artifact wasm`, a
+library as a module with a JavaScript loader, which CI loads into a page
+in headless Chrome (decision 124); the 32-bit targets (decision 122), the
+same suites run for `i686` on CI's machines and for `armv7` and `riscv32`
+under QEMU, the compiler building itself as a 32-bit program, and every
+release carrying `nx` for 32-bit Windows and Linux and ARMv7 Linux (tier
+2); Linux and Windows on ARM at tier 1, the test job running on GitHub's
+arm64 machines. The rest moved to the themes it belongs with: the
+runtime's platform code into std, the runtime split, the embedded targets
+and `wasm32-freestanding`, static 64-bit Linux builds and FreeBSD to 1.6;
+the cross-compilation matrix of `nx ship` to 1.7; nexium-gui's X11,
+Wayland, Cocoa and canvas backends, and the playground's C backend and
+share URL, to 1.8.
 
 - WebAssembly: `--target wasm32-wasi` and `wasm32-freestanding`, the
   runtime's process, socket and thread code behind `@target()`, and an
   `artifact wasm` producing a `.wasm` with a JavaScript loader. The
   self-hosted compiler compiled to wasm is the playground: `nx` running in
-  a browser, no server.
+  a browser, no server. (Done: `wasm32-wasi` and `artifact wasm`. Moved:
+  `wasm32-freestanding` and the runtime's code behind `@target()` to 1.6,
+  the playground's C backend to 1.8; the compiler already runs in the
+  page, through the interpreter, since 1.4.)
 - nexium-gui: X11 and Wayland, Cocoa backends beside Win32; the demo runs
-  on all three and in the browser through a canvas backend.
+  on all three and in the browser through a canvas backend. (Moved to 1.8,
+  with nexium-gui grown up.)
 - Static Linux binaries (musl), FreeBSD, and the tier list extended;
   Linux aarch64 and Windows arm64 promoted to tier 1 when CI runs them.
   (Done: the test job runs every suite on `ubuntu-24.04-arm` and
-  `windows-11-arm`.)
+  `windows-11-arm`, and the 32-bit Linux downloads are static. Moved:
+  static 64-bit Linux builds and FreeBSD to 1.6.)
 - 32-bit architectures: `i686` Windows and Linux, `armv7` Linux (the
   Raspberry Pi OS that is still 32-bit, routers, older phones), `riscv32`
   and `thumb` alongside the embedded targets below. Everything in the
@@ -774,12 +796,15 @@ Windows on ARM are tier 1, the test job running on GitHub's arm64 runners.
   every tutorial program in CI (32-bit executables run on the 64-bit
   runners), the compiler itself built and self-hosted as 32-bit, and
   the tiers extended: tier 2 for `i686` and `armv7`, tier 1 when a runner
-  runs them.
+  runs them. (Done: `i686` Windows and Linux and `armv7` Linux are tier 2,
+  a download each; `riscv32` is tested and not released; `thumb` waits
+  for the embedded targets.)
 - Cross-compilation matrix in `nx ship`: every target the C toolchain
-  supports, from one machine, tested in CI for the tier-1 set.
+  supports, from one machine, tested in CI for the tier-1 set. (Moved to
+  1.7, with the rest of `nx ship`.)
 - Embedded targets: `-Os` builds without the runtime's file, socket and
   thread parts (`@target().os == "none"`), the first program on a
-  microcontroller.
+  microcontroller. (Moved to 1.6, after the runtime split.)
 
 Exit: a Nexium program runs in the browser, on a Raspberry Pi and on the
 three desktops from one source, and the docs say which combinations CI
@@ -804,6 +829,19 @@ proves.
 
 Exit: every example in release mode is within a documented factor of its
 C counterpart, and the factor does not grow between releases.
+
+**Platforms, continued** (from 1.5).
+
+- The runtime's process, socket and thread code moved into std behind
+  `if comptime @target()`, and the runtime split so its allocation, file,
+  socket and thread parts are separable, which the embedded targets and
+  1.7's `#![no_std]` crates need.
+- Embedded targets: `-Os` builds without the runtime's file, socket and
+  thread parts (`@target().os == "none"`), the first program on a
+  microcontroller, `thumb` among the targets; `wasm32-freestanding`, a
+  module with no WASI, on the same split.
+- Static 64-bit Linux builds (musl) beside the glibc ones, for Alpine, and
+  FreeBSD in the tier list.
 
 ### 1.7: the seam, both ways
 
@@ -862,7 +900,7 @@ symbol means the same thing from every language.
   absence of `shared_mutable` on every method.
 - `#![no_std]` crates when no export allocates (the runtime split so the
   archive's allocation, file, socket and thread parts are separable, which
-  1.5's embedded targets need too), so a Nexium library can sit inside a
+  1.6's embedded targets need too), so a Nexium library can sit inside a
   Rust firmware.
 - Source crates: the crate's `build.rs` rebuilds the archive from the
   `.nx` sources when `nx` is on the `PATH`, so `cargo build` after a
@@ -890,8 +928,10 @@ from it, and a chapter in the embedding guide:
 - Ruby through `fiddle`, Lua as a C module, Swift through a module map
   over the header; Zig through `@cImport` of the header, which works today
   and needs a page.
-- The browser: the `wasm` artifact of 1.5, with a TypeScript declaration
-  file generated from the exports.
+- The browser: the `wasm` artifact, with a TypeScript declaration file
+  generated from the exports. (Done in 1.5, decision 124: CI calls
+  `ropesim` from a page in headless Chrome, and the embedding guide has
+  the chapter.)
 
 **The ABI itself.**
 
@@ -909,6 +949,10 @@ from it, and a chapter in the embedding guide:
   function-like macros as inline functions, bitfields, variadic
   declarations, and a `[c]` section of `nexium.toml` that vendors and
   builds a C library (`nx add --c sqlite`) so `@cImport` finds it.
+- Every platform from one machine (from 1.5): `nx ship` builds each
+  artifact for every target the C toolchain supports, the wheels and npm
+  packages of every platform from one runner, tested in CI for the tier-1
+  set.
 
 Exit: `ropesim` shipped to C++, Go, Java, C#, Ruby, Lua and the browser
 and called from each in CI; the Python wheel takes a NumPy array without a
@@ -1069,8 +1113,10 @@ changes the language.
 - A Jupyter kernel (ecosystem): the REPL behind the notebook protocol, so
   a Nexium cell runs beside Python ones; the effect chips as cell
   badges.
-- The playground (1.5): the compiler compiled to WebAssembly puts a "run"
+- The playground: the compiler compiled to WebAssembly puts a "run"
   button on every code block of the documentation site and the Topo.
+  (In since 1.4 through the interpreter, decision 108; the C backend in
+  the page is 1.8's.)
 
 ### The clickable line: windows, wizards and the REPL
 
@@ -1112,7 +1158,7 @@ repository supports, the same way:
 - The installer's editor page (below) installs the build systems with
   the syntaxes.
 
-**The first five minutes** (1.3, 1.5).
+**The first five minutes** (1.3, 1.8).
 
 - The installer's editor page: a checkbox per editor found on the
   machine (VS Code, Sublime Text, Vim and Neovim, Notepad++, Emacs, Kate,
@@ -1127,7 +1173,8 @@ repository supports, the same way:
   `~/.vim`, `~/.config/nvim`, `~/.emacs.d`), asking first.
 - `nx upgrade`: fetches the new release, verifies the checksum, swaps
   itself; `nx doctor` says when one is available.
-- A macOS `.pkg` and a Linux `.deb`/`.rpm` with the same pages (1.5), and
+- A macOS `.pkg` and a Linux `.deb`/`.rpm` with the same pages (the
+  `.deb` and `.rpm` are in; the `.pkg` moved from 1.5 to 1.8), and
   manifests for `winget`, Homebrew and Scoop, so the install is one line
   where people already type them.
 
@@ -1174,7 +1221,7 @@ for, in every situation it can find itself in:
   (packages, REPL history) or remove everything; a repair that reinstalls
   only the files whose checksum differs.
 
-**Every road in** (1.3 to 1.5). Today `nx` arrives by the Windows setup,
+**Every road in** (1.3 to 1.6). Today `nx` arrives by the Windows setup,
 the install script, the portable archives, source, and the GitHub
 Action. People install software the way their platform taught them, so
 each road below is a manifest or a package built by the release
@@ -1190,10 +1237,11 @@ that easy: stable URLs, checksums, and no post-install step.
   MacPorts, the signed and notarized `.pkg`, and a universal binary.
 - Linux: `.deb` and `.rpm` with an apt and a dnf repository so upgrades
   come with the system's; a PPA, a Fedora COPR and an openSUSE OBS
-  project; the AUR; Alpine (`apk`, musl builds of 1.5); Nix (a
+  project; the AUR; Alpine (`apk`, musl builds of 1.6); Nix (a
   `flake.nix` in the repository, then nixpkgs) and Guix; Snap; Gentoo
   and Void templates. Flatpak and AppImage for the Hut, not the compiler.
-- BSD: FreeBSD and OpenBSD ports once 1.5's tiers include them.
+- BSD: FreeBSD and OpenBSD ports once the tiers include them (FreeBSD's
+  place in them is 1.6's).
 - Containers: `ghcr.io/londopy/nexium` (the compiler on Alpine and on
   Debian, with Zig), a dev container feature, so Codespaces and Gitpod
   have `nx` in one line, and a `setup-nexium`-style step for GitLab CI.
@@ -1269,17 +1317,18 @@ chapter list. Forty-one exercises of five kinds cover chapters 2 to 23
 (decision 107), eleven quizzes grade their questions against the
 compiler where a question asks it (decision 109, `nx topo verify`), and
 the exercises run and grade in the page (decision 108). Left: the more
-chapters listed below, and the playground's share URL (1.5).
+chapters listed below, and the playground's share URL (1.8).
 
 - An interactive tutorial runner: opens a chapter, shows its program, lets
   you edit and run it, checks the output against the recorded one, gives
   exercises with hints and keeps your progress. In the terminal first,
-  and on the site once the playground (1.5) runs code in the page. The
+  and on the site once the playground (1.4) runs code in the page. The
   book becomes a course.
 
-**The Topo as a course** (1.4 for the content, 1.5 for the page). The
-chapters teach by showing; a course asks the reader to do. Every exercise
-is a file in the repository the harness runs, so the course cannot rot:
+**The Topo as a course** (1.4 for the content and the page, 1.8 for the
+share URL). The chapters teach by showing; a course asks the reader to
+do. Every exercise is a file in the repository the harness runs, so the
+course cannot rot:
 
 - Exercises at the end of every chapter, three kinds, all checked by the
   compiler rather than by an answer key: *fill in the blank* (a program
@@ -1350,9 +1399,9 @@ client side, no server. The pieces:
   page with the same verdict `nx topo check` gives, checked by a headless
   browser in CI against the wasm build of that commit.
 
-What 1.5 adds on top is the real thing: `--target wasm32-wasi` for
-programs, the C backend in the browser through a wasm C compiler, and the
-share URL.
+1.5 added the real target, `--target wasm32-wasi` for programs; the C
+backend in the browser through a wasm C compiler, and the share URL, moved
+to 1.8's apps.
 - Progress: the route map of the Topo with each pitch ticked as its
   exercises pass, kept in the browser (nothing to sign into) and by
   `nx topo` in `~/.nexium`; a chapter shows what the next one needs.
@@ -1367,7 +1416,7 @@ share URL.
   "profile and speed up" once the numbers page exists. Each chapter ends
   with *common mistakes*, the diagnostics a newcomer meets first.
 
-**The docs, more** (1.3 to 1.5).
+**The docs, more** (from 1.3).
 
 - A reference page per std module generated by `nx doc` from the doc
   comments, with every function's signature, effects and an example that
@@ -1419,8 +1468,9 @@ share URL.
 
 - Anti-aliased TrueType text from a rasterizer in Nexium, Unicode,
   clipping and scrolling containers, tree, table, tabs and menus, multiple
-  windows, the platform's text input (IME), high-DPI; the X11, Wayland
-  and Cocoa backends of 1.5 underneath.
+  windows, the platform's text input (IME), high-DPI; X11, Wayland and
+  Cocoa backends beside Win32, and a canvas one in the browser (moved
+  from 1.5), the demo running on all of them.
 - `nx gui gallery`: every widget with its source beside it, clickable
   documentation.
 
@@ -1482,7 +1532,9 @@ can reach localhost. This is the third way, Tauri's idea done in Nexium:
   building the thing that builds with it.
 - The notebook: the GUI REPL with cells, results and charts, saved as an
   `.nx` script with the outputs as comments, so a notebook is a program.
-- The playground with share links (1.5): a snippet is a URL.
+- The playground, whole (moved from 1.5): the C backend in the browser
+  through a wasm C compiler, so the page runs what the interpreter
+  cannot, and share links: a snippet is a URL.
 
 ### 2.0 candidates: questions the spec review should settle
 
