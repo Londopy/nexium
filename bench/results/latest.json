@@ -3,49 +3,49 @@
   "machine": {
     "os": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
     "cpu": "x86_64",
-    "date": "2026-09-26",
-    "runner": "GitHub Actions 1000009957"
+    "date": "2026-10-04",
+    "runner": "GitHub Actions 1000010811"
   },
   "tools": {
-    "nexium": "nx 1.4.1 (Annapurna: Ang Tharkay)",
+    "nexium": "nx 1.5.0 (Everest: Base Camp)",
     "c": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
-    "rust": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "rust": "rustc 1.99.0 (b940084d7 2026-09-28)",
     "go": "go version go1.23.12 linux/amd64",
     "python": "Python 3.12.3"
   },
   "runs": 7,
   "results": {
     "fib": {
-      "nexium-safe": 1.5231,
-      "nexium-fast": 0.8984,
-      "c": 0.5149,
-      "rust": 0.898,
-      "go": 1.5601,
-      "python": 39.3648
+      "nexium-safe": 1.5237,
+      "nexium-fast": 0.8985,
+      "c": 0.5145,
+      "rust": 0.8464,
+      "go": 1.5618,
+      "python": 39.5085
     },
     "nbody": {
-      "nexium-safe": 0.7538,
-      "nexium-fast": 0.7538,
-      "c": 0.6823,
-      "rust": 0.7752,
-      "go": 0.8625,
-      "python": 63.3844
+      "nexium-safe": 0.7539,
+      "nexium-fast": 0.7533,
+      "c": 0.6806,
+      "rust": 0.7665,
+      "go": 0.8622,
+      "python": 61.477
     },
     "sieve": {
-      "nexium-safe": 0.6766,
-      "nexium-fast": 0.6434,
-      "c": 0.4829,
-      "rust": 0.5103,
-      "go": 0.5155,
-      "python": 5.5943
+      "nexium-safe": 0.6439,
+      "nexium-fast": 0.5986,
+      "c": 0.4357,
+      "rust": 0.4353,
+      "go": 0.4768,
+      "python": 5.529
     },
     "words": {
-      "nexium-safe": 1.4604,
-      "nexium-fast": 1.4816,
-      "c": 0.7642,
-      "rust": 1.2252,
-      "go": 1.515,
-      "python": 4.8545
+      "nexium-safe": 1.48,
+      "nexium-fast": 1.4385,
+      "c": 0.7203,
+      "rust": 1.1614,
+      "go": 1.4454,
+      "python": 4.4776
     }
   }
 }
