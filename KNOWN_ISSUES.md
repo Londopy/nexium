@@ -30,6 +30,21 @@ Fixed bugs are not listed here; `CHANGELOG.md` and `git log` have them.
   to say it is no package's (a flag, or a `nexium.toml` for the
   repository); a case in the bootstrap suite.
 
+- **A WebAssembly build stops inside clang with Zig 0.16.** `nx build
+  --target wasm32-wasi` and `artifact wasm` turn on WebAssembly's
+  exception handling for the panics' `setjmp` (decision 123), and with it
+  on, Zig 0.16 compiles wasi-libc's own `setjmp` runtime
+  (`libc-top-half/musl/src/setjmp/wasm32/rt.c`), on which its clang 21
+  fails with "error in backend: undefined tag symbol cannot be weak", and
+  `nx` reports "C compilation failed". Native builds work with Zig 0.16,
+  and every build works with the pinned 0.14.1, which the installer and
+  the install script bring. Reproduce: Zig 0.16 first on the PATH and
+  `nx build examples/hello.nx --target wasm32-wasi`, or the harness's
+  `ship` suite. Fix: find what Zig 0.16 needs to build that runtime
+  (`runtime/nx_wasm_sjlj.c` supplies it for 0.14, which leaves it out, and
+  gives way to a libc that has it), and a CI job that builds for
+  `wasm32-wasi` with the newest Zig beside the pinned one.
+
 ## Diagnostics
 
 Places where a mistake in a program's own code is reported inside the
