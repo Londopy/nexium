@@ -35,9 +35,26 @@ arch="$(uname -m)"
 # the release built for this machine, or nothing: then the one C file below
 case "$os" in
   Darwin) case "$arch" in arm64|aarch64) target="aarch64-apple-darwin" ;; *) target="" ;; esac ;;
-  Linux)  case "$arch" in x86_64|amd64) target="x86_64-unknown-linux-gnu" ;; aarch64|arm64) target="aarch64-unknown-linux-gnu" ;; *) target="" ;; esac ;;
+  # a 64-bit kernel can run a 32-bit system (32-bit Raspberry Pi OS on a Pi
+  # 4 or 5 does): the userland's width decides, and the 32-bit builds are
+  # static, so they need nothing from it
+  Linux)  bits="$(getconf LONG_BIT 2>/dev/null || echo 64)"
+          case "$arch" in
+            x86_64|amd64) if [ "$bits" = 32 ]; then target="i686-unknown-linux-musl"; else target="x86_64-unknown-linux-gnu"; fi ;;
+            aarch64|arm64) if [ "$bits" = 32 ]; then target="armv7-unknown-linux-musleabihf"; else target="aarch64-unknown-linux-gnu"; fi ;;
+            i386|i486|i586|i686) target="i686-unknown-linux-musl" ;;
+            armv7*|armv8l) target="armv7-unknown-linux-musleabihf" ;;
+            *) target="" ;;
+          esac ;;
   MINGW*|MSYS*|CYGWIN*) die "on Windows, use the installer from the Releases page" ;;
   *) target="" ;;
+esac
+# the 32-bit builds assume SSE2 (a Pentium 4 or later) and NEON (every
+# Raspberry Pi from the 2 on; a 64-bit ARM CPU always has it): a CPU
+# without them builds from source
+case "$target:$arch" in
+  i686-*) [ ! -r /proc/cpuinfo ] || grep -qw sse2 /proc/cpuinfo || target="" ;;
+  armv7-*:armv7*) [ ! -r /proc/cpuinfo ] || grep -qw neon /proc/cpuinfo || target="" ;;
 esac
 [ -z "${NEXIUM_FROM_SOURCE:-}" ] || target=""
 
@@ -129,13 +146,15 @@ if [ -z "$compiler" ] && [ "${NEXIUM_NO_ZIG:-}" != "1" ]; then
     x86_64-unknown-linux-gnu) zig_name="zig-x86_64-linux-$ZIG_VERSION"; zsum="24aeeec8af16c381934a6cd7d95c807a8cb2cf7df9fa40d359aa884195c4716c" ;;
     aarch64-unknown-linux-gnu) zig_name="zig-aarch64-linux-$ZIG_VERSION"; zsum="f7a654acc967864f7a050ddacfaa778c7504a0eca8d2b678839c21eea47c992b" ;;
     aarch64-apple-darwin) zig_name="zig-aarch64-macos-$ZIG_VERSION"; zsum="39f3dc5e79c22088ce878edc821dedb4ca5a1cd9f5ef915e9b3cc3053e8faefa" ;;
+    i686-unknown-linux-musl) zig_name="zig-x86-linux-$ZIG_VERSION"; zsum="4bce6347fa112247443cb0952c19e560d1f90b910506cf895fd07a7b8d1c4a76" ;;
+    armv7-unknown-linux-musleabihf) zig_name="zig-armv7a-linux-$ZIG_VERSION"; zsum="1b34d9ecfaeb3b360e86c0bc233e1a8a2bbed2d40f2d4f20c12bde2128714324" ;;
   esac
   [ "$ZIG_VERSION" = "0.14.1" ] || zsum=""
   say "no C compiler found; downloading Zig $ZIG_VERSION into $HOME_DIR/zig"
   curl -fsSL "https://ziglang.org/download/$ZIG_VERSION/$zig_name.tar.xz" -o "$tmp/zig.tar.xz"
   if [ -z "$zsum" ] && have python3; then
     # another version: the index is the only source of its checksum
-    zsum="$(curl -fsSL https://ziglang.org/download/index.json | python3 -c 'import json,sys; d=json.load(sys.stdin)["'"$ZIG_VERSION"'"]; want={"x86_64-unknown-linux-gnu":"x86_64-linux","aarch64-unknown-linux-gnu":"aarch64-linux","aarch64-apple-darwin":"aarch64-macos"}["'"$target"'"]; print(d[want]["shasum"])' 2>/dev/null || true)"
+    zsum="$(curl -fsSL https://ziglang.org/download/index.json | python3 -c 'import json,sys; d=json.load(sys.stdin)["'"$ZIG_VERSION"'"]; want={"x86_64-unknown-linux-gnu":"x86_64-linux","aarch64-unknown-linux-gnu":"aarch64-linux","aarch64-apple-darwin":"aarch64-macos","i686-unknown-linux-musl":"x86-linux","armv7-unknown-linux-musleabihf":"armv7a-linux"}["'"$target"'"]; print(d[want]["shasum"])' 2>/dev/null || true)"
   fi
   if [ -n "$zsum" ]; then
     if have sha256sum; then zact="$(sha256sum "$tmp/zig.tar.xz" | awk '{print $1}')"; else zact="$(shasum -a 256 "$tmp/zig.tar.xz" | awk '{print $1}')"; fi

@@ -24,10 +24,15 @@ $dest = if ($env:NEXIUM_HOME) { $env:NEXIUM_HOME } else { Join-Path $env:LOCALAP
 
 function Say($text) { Write-Host $text }
 
-$arch = switch ($env:PROCESSOR_ARCHITECTURE) {
-    'AMD64' { 'x86_64' }
-    'ARM64' { 'aarch64' }
-    default { throw "install.ps1: no release is built for $($env:PROCESSOR_ARCHITECTURE); see docs/install.md for the one C file" }
+# the machine, not this PowerShell: a 32-bit PowerShell on 64-bit Windows
+# reports x86 and keeps the machine's own in PROCESSOR_ARCHITEW6432
+$machine = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
+# the release's name for it, and Zig's
+$arch, $zigArch = switch ($machine) {
+    'AMD64' { 'x86_64', 'x86_64' }
+    'ARM64' { 'aarch64', 'aarch64' }
+    'x86' { 'i686', 'x86' }
+    default { throw "install.ps1: no release is built for $machine; see docs/install.md for the one C file" }
 }
 
 # the release
@@ -70,12 +75,12 @@ try {
     if (Test-Path (Join-Path $dest 'zig\zig.exe')) { $compiler = 'bundled zig' }
     elseif (Get-Command zig -ErrorAction SilentlyContinue) { $compiler = 'zig on the PATH' }
     if (-not $compiler -and $env:NEXIUM_NO_ZIG -ne '1') {
-        $name = "zig-$arch-windows-$zigVersion"
+        $name = "zig-$zigArch-windows-$zigVersion"
         Say "no C compiler found; downloading Zig $zigVersion into $dest\zig"
         $zigZip = Join-Path $tmp 'zig.zip'
         Invoke-WebRequest "https://ziglang.org/download/$zigVersion/$name.zip" -OutFile $zigZip -UseBasicParsing
         $index = Invoke-RestMethod 'https://ziglang.org/download/index.json'
-        $want = $index.$zigVersion."$arch-windows".shasum
+        $want = $index.$zigVersion."$zigArch-windows".shasum
         if ($want) {
             $got = (Get-FileHash $zigZip -Algorithm SHA256).Hash.ToLower()
             if ($got -ne $want.ToLower()) { throw 'checksum mismatch for the Zig download' }

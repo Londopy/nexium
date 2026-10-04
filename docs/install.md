@@ -70,11 +70,11 @@ Silent install for scripts: `nexium-<version>-setup-x64.exe /VERYSILENT /TASKS=a
 irm https://raw.githubusercontent.com/Londopy/nexium/main/installers/install.ps1 | iex
 ```
 
-It downloads the portable build for the machine (x64 or ARM64), verifies
-it against the release's `SHA256SUMS.txt`, installs `nx.exe`, the standard
-library, the examples and the docs to `%LocalAppData%\Programs\Nexium`,
-adds that directory to the user's PATH, and downloads Zig beside it when
-no C compiler is found. No wizard, no administrator rights, nothing
+It downloads the portable build for the machine (x64, ARM64 or 32-bit
+x86), verifies it against the release's `SHA256SUMS.txt`, installs
+`nx.exe`, the standard library, the examples and the docs to
+`%LocalAppData%\Programs\Nexium`, adds that directory to the user's PATH,
+and downloads Zig beside it when no C compiler is found. No wizard, no administrator rights, nothing
 registered. Variables, set before the line: `NEXIUM_VERSION=v1.4.1` pins a
 release, `NEXIUM_HOME` changes the directory, `NEXIUM_NO_MODIFY_PATH=1`
 leaves the PATH alone, `NEXIUM_NO_ZIG=1` never downloads Zig. Remove it by
@@ -112,7 +112,8 @@ the log is kept as `install.log` next to `nx.exe`; the uninstaller takes
 
 A portable `nx-<version>-x86_64-pc-windows-msvc.zip` has the same files
 without the installer or Zig; put its folder on the PATH and have Zig on the
-PATH yourself.
+PATH yourself. ARM64 and 32-bit Windows have only the zip
+(`aarch64-pc-windows-msvc`, `i686-pc-windows-msvc`).
 
 ## macOS and Linux: the install script
 
@@ -128,10 +129,15 @@ adds the bin directory to your PATH in `~/.profile`, `~/.bashrc`, and
 used (`xcode-select --install` if missing). On Linux, when no compiler is
 found, it downloads Zig into `~/.nexium/zig`.
 
+Linux releases are built for x86-64 and ARM64 (glibc) and for 32-bit x86
+and ARMv7 (static, so they run on any distribution). The script picks by
+the system rather than the CPU: a 32-bit Raspberry Pi OS on a Pi 4 or 5
+gets the ARMv7 build.
+
 When no release is built for the machine (an x86-64 Mac, a BSD, a RISC-V
-board), or the download fails, the script builds `nx` from the one C file
-below with the C compiler it finds (`cc`, `gcc`, `clang` or `zig`) and
-installs that instead.
+board, a Raspberry Pi 1 or Zero), or the download fails, the script builds
+`nx` from the one C file below with the C compiler it finds (`cc`, `gcc`,
+`clang` or `zig`) and installs that instead.
 
 Variables: `NEXIUM_VERSION=v1.4.1` pins a release, `NEXIUM_HOME` changes the
 directory, `NEXIUM_NO_MODIFY_PATH=1` leaves shell files alone,

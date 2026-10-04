@@ -121,7 +121,10 @@ def find(sub):
     return next((f for f, _, _ in sums if sub in f), None)
 
 win_setup = find("setup-x64.exe")
-win_zip = find("windows-msvc.zip")
+win_zip = find("x86_64-pc-windows-msvc.zip")
+win32_zip = find("i686-pc-windows-msvc.zip")
+linux32 = find("i686-unknown-linux-musl.tar.gz")
+armv7 = find("armv7-unknown-linux-musleabihf.tar.gz")
 mac = find("apple-darwin.tar.gz")
 linux = find("x86_64-unknown-linux-gnu.tar.gz")
 vsix = find(".vsix")
@@ -141,6 +144,7 @@ if win_setup:
     out += [f"**Windows**: run [`{win_setup}`]({download}/{win_setup}). It installs `nx`, a bundled Zig toolchain (the C compiler `nx` uses), the standard library, examples, docs, and the VS Code extension, and can add `nx` to your PATH. No other install is needed. A portable zip without the installer is `{win_zip}`.", ""]
 out += ["**macOS and Linux**:", "", "```sh", "curl -fsSL https://raw.githubusercontent.com/Londopy/nexium/main/installers/install.sh | sh", "```", "",
         f"This downloads `{mac}` or `{linux}`, verifies it against `SHA256SUMS.txt`, installs to `~/.nexium/bin`, downloads Zig on Linux when no C compiler is present (macOS uses the Xcode command line tools), and adds the directory to your PATH. Set `NEXIUM_VERSION={tag}` to pin this release.", "",
+        (f"**32-bit Windows and Linux, and the Raspberry Pi**: `{win32_zip}` is the portable zip for 32-bit Windows; on Linux the script above picks `{linux32}` on a 32-bit x86 system and `{armv7}` on a Raspberry Pi running a 32-bit OS. Both are static, so they run on any distribution." if win32_zip and linux32 and armv7 else ""), "",
         "**From source**: `sh bootstrap/build.sh` with a C compiler (Zig, or `cc` on macOS) builds the compiler from its C seed; no Rust is needed.", "",
         f"**VS Code**: install `{vsix}` with *Extensions: Install from VSIX...*, or let the Windows installer do it." if vsix else "", ""]
 out += ["Then, in a new console:", "", "```", "nx doctor", "nx run examples/hello.nx", "```", ""]
@@ -164,7 +168,7 @@ if torrents:
         out += [f"# {f}", magnet, ""]
     out += ["```", "", "</details>", ""]
 
-out += ["## Requirements", "", "- Windows 10 or later, x64. macOS on Apple Silicon. Linux x86_64 with glibc. Linux and Windows on ARM (aarch64) too, tested in CI like the others (docs/platforms.md).",
+out += ["## Requirements", "", "- Windows 10 or later, x64. macOS on Apple Silicon. Linux x86_64 with glibc. Linux and Windows on ARM (aarch64) too, tested in CI like the others. 32-bit x86 Windows and Linux, and ARMv7 Linux (a Raspberry Pi's 32-bit OS), are built for every release, and CI runs their programs (docs/platforms.md).",
         "- A C compiler is needed to build programs: the Windows installer and the macOS/Linux script take care of it. Otherwise put [Zig](https://ziglang.org/download/) on your PATH, or set `NX_CC`.", ""]
 open(out_path, "w", encoding="utf-8", newline="\n").write("\n".join(out))
 print(f"wrote {out_path} and SHA256SUMS.txt for {len(sums)} assets, {len(torrents)} torrents" + ("" if segno else " (no segno: no QR codes)"))

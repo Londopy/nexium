@@ -2,7 +2,8 @@
 
 Where `nx` runs, where the programs it builds run, and how much each is
 tested. Tiers are promises about testing, not about code: the compiler
-emits the same C for every target and Zig links it for any target Zig
+emits C that differs between targets only where the program asks about
+the target (`@target()`, `@sizeOf`), and Zig links it for any target Zig
 knows.
 
 ## Tier 1: built, tested, released
@@ -22,27 +23,37 @@ The release builds the two ARM binaries on its Linux runner, from the same
 C with Zig (`aarch64-linux-gnu`, `aarch64-windows-gnu`); CI runs the harness
 on ARM machines. They were tier 2 until GitHub's arm64 runners (1.5).
 
-## Tier 2: built, released, not tested
+## Tier 2: built, released, tested in part
 
-None at present. A tier-2 target is cross-compiled for every release and
-attached, and nothing runs it in CI; it moves to tier 1 when GitHub offers
-a runner for it and the harness passes there.
+Every release ships a binary, and CI runs, for every commit, what the
+compiler builds for the target: the spec cases, the examples, the standard
+library's tests, the Topo's programs and the compile-fail cases. It also
+builds the compiler for the target, which must emit the same C as the
+64-bit one and, natively, build itself. The rest of the harness, the
+tools' suites, runs on tier 1 only; a tier-2 target moves up when a runner
+runs the whole of it.
+
+| target | runs in CI as | notes |
+| --- | --- | --- |
+| `i686-pc-windows-msvc` | 32-bit programs on `windows-latest` | a zip, no installer; Scoop's `32bit`, and the PowerShell one-liner picks it on 32-bit Windows |
+| `i686-unknown-linux-musl` | 32-bit programs on `ubuntu-latest` | static, so any distribution; the install script picks it on a 32-bit x86 system |
+| `armv7-unknown-linux-musleabihf` | QEMU's user mode on `ubuntu-latest` | static; a Raspberry Pi 2 or later (or a Zero 2) on a 32-bit OS, which the install script picks it for |
+
+`i686` is x86 with SSE2, a Pentium 4 or later, as in Rust's `i686`
+targets; `armv7` is ARMv7-A with NEON (zig's `arm`). The install script
+builds from source on a CPU without them. The release builds the three on
+its Linux runner, from C emitted for each target (the C asserts every
+`@sizeOf` at the target's width), with Zig; the Linux ones link musl
+statically.
 
 ## Tested, not yet released
 
-32-bit targets are tested more than they are released. CI builds and runs
-the spec cases, the examples, the standard library's tests and the Topo's
-programs for `i686-windows-gnu` and `i686-linux-musl` (a 32-bit program runs
-on the 64-bit runners) and for `armv7-linux-musleabihf` and
-`riscv32-linux-musl` (under QEMU's user-mode emulation on the Linux runner).
-The compiler builds itself as a 32-bit x86 program, and built for ARMv7 and
-RISC-V it runs under the emulator and emits the same C as on 64 bits. No
-release carries a 32-bit binary yet: `nx build --target i686-linux-gnu` (or
-`i686-windows-gnu`, `armv7-linux-gnueabihf`, `riscv32-linux-musl`) makes
-one. `i686` is x86 with SSE2, a Pentium 4 or later, as in Rust's `i686`
-targets; `armv7` is ARMv7-A with NEON (zig's `arm`), and
-`armv6-linux-gnueabihf` is the CPU of the Raspberry Pi 1 and Zero, whose
-programs every Pi runs in 32-bit mode.
+`riscv32-linux-musl` is tested as tier 2 is, under QEMU on the Linux
+runner, and no release carries a binary for it: `nx build --target
+riscv32-linux-musl` makes one. Programs also build for the 32-bit targets
+with glibc (`i686-linux-gnu`, `armv7-linux-gnueabihf`) and for the CPU of
+the Raspberry Pi 1 and Zero (`armv6-linux-gnueabihf`, whose programs every
+Pi runs in 32-bit mode), which CI does not run.
 
 WebAssembly is tested the same way. `nx build --target wasm32-wasi` makes
 a `.wasm` module, and `nx run` and `nx test` run it under Node.js's WASI

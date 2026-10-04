@@ -64,6 +64,15 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   harness runs that package under Node.js and gets the native package's
   answers, and CI loads it into a page in headless Chrome
   (`tests/ship/wasm_page.html`) and gets them again.
+- Every release carries three 32-bit downloads, tier 2 in
+  `docs/platforms.md`: a zip for 32-bit Windows
+  (`i686-pc-windows-msvc`), and archives for 32-bit x86 Linux
+  (`i686-unknown-linux-musl`) and ARMv7 Linux
+  (`armv7-unknown-linux-musleabihf`, a Raspberry Pi 2 or later on a 32-bit
+  OS), both static, so they run on any distribution. The install scripts
+  pick them by the system rather than the CPU, so a 32-bit Raspberry Pi OS
+  on a Pi 4 gets the ARMv7 build, and build from source on a CPU without
+  SSE2 or NEON; Scoop's manifest and the AUR package list them.
 
 ### Fixed
 
@@ -85,6 +94,9 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 - `nx fmt` wrote a complement before a parenthesis with a space,
   `~ (0 as usize)`; `~` is tight before `(` now, as `!` and a unary `-`
   are.
+- The release notes named the ARM64 zip as the portable Windows build
+  (1.4.1's did: it was the first name ending in `windows-msvc.zip`); they
+  name the x64 one.
 
 - The Spanish, Japanese and Chinese translations of the language reference
   and of the tour of the compiler (`docs/i18n/*/language.md` and

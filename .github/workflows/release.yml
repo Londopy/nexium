@@ -121,6 +121,37 @@ jobs:
             fi
           done
 
+      # ---- 32-bit Windows and Linux, and ARMv7 Linux (a Raspberry Pi's
+      # 32-bit OS): each from C emitted for its own target, since the C
+      # asserts every @sizeOf at the width it is compiled for; static on Linux
+      # (musl), so one binary runs on every distribution; tier 2
+      # (docs/platforms.md). The 32-bit x86 Linux one runs here once.
+      - name: Cross-compile for 32-bit Windows and Linux, and ARMv7 Linux
+        if: runner.os == 'Linux'
+        run: |
+          flags="-std=gnu11 -O2 -s -w -fno-strict-aliasing"
+          for spec in i686-windows-gnu:x86-windows-gnu:i686-pc-windows-msvc \
+                      i686-linux-musl:x86-linux-musl:i686-unknown-linux-musl \
+                      armv7-linux-musleabihf:arm-linux-musleabihf:armv7-unknown-linux-musleabihf; do
+            nxt="${spec%%:*}"; rest="${spec#*:}"; zt="${rest%%:*}"; asset="${rest#*:}"
+            nx-out/bootstrap/nx2 emit-c self/nx.nx --mode safe --target "$nxt" > "nx-out/$nxt.c"
+            rm -rf dist-cross && mkdir -p dist-cross
+            case "$zt" in
+              *windows*) zig cc $flags -target "$zt" -o dist-cross/nx.exe "nx-out/$nxt.c" -lws2_32 ;;
+              *) zig cc $flags -target "$zt" -o dist-cross/nx "nx-out/$nxt.c" -lm -lc ;;
+            esac
+            [ "$nxt" != i686-linux-musl ] || dist-cross/nx --version
+            cp README.md LICENSE CHANGELOG.md dist-cross/
+            cp -r examples std docs dist-cross/
+            cp dist/nx.1 dist-cross/
+            cp -r dist/completions dist-cross/
+            case "$zt" in
+              *windows*) (cd dist-cross && zip -qr ../nx-${{ github.ref_name }}-$asset.zip .) ;;
+              *) tar -C dist-cross -czf nx-${{ github.ref_name }}-$asset.tar.gz . ;;
+            esac
+          done
+          ls -l nx-${{ github.ref_name }}-i686-* nx-${{ github.ref_name }}-armv7-*
+
       # ---- Windows: a portable zip and a full installer with a bundled Zig
 
       - name: Install Node (for the VS Code extension)

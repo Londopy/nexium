@@ -51,6 +51,9 @@ linux_x64 = f"nx-{tag}-x86_64-unknown-linux-gnu.tar.gz"
 linux_arm = f"nx-{tag}-aarch64-unknown-linux-gnu.tar.gz"
 win_x64 = f"nx-{tag}-x86_64-pc-windows-msvc.zip"
 win_arm = f"nx-{tag}-aarch64-pc-windows-msvc.zip"
+win_x86 = f"nx-{tag}-i686-pc-windows-msvc.zip"
+linux_x86 = f"nx-{tag}-i686-unknown-linux-musl.tar.gz"
+linux_armv7 = f"nx-{tag}-armv7-unknown-linux-musleabihf.tar.gz"
 setup = f"nexium-{version}-setup-x64.exe"
 
 source_url = f"https://github.com/{REPO}/archive/refs/tags/{tag}.tar.gz"
@@ -223,6 +226,7 @@ scoop = {
     ],
     "architecture": {
         "64bit": {"url": f"{download}/{win_x64}", "hash": sha(win_x64)},
+        "32bit": {"url": f"{download}/{win_x86}", "hash": sha(win_x86)},
         "arm64": {"url": f"{download}/{win_arm}", "hash": sha(win_arm)},
     },
     "bin": "nx.exe",
@@ -231,6 +235,7 @@ scoop = {
     "autoupdate": {
         "architecture": {
             "64bit": {"url": f"https://github.com/{REPO}/releases/download/v$version/nx-v$version-x86_64-pc-windows-msvc.zip"},
+            "32bit": {"url": f"https://github.com/{REPO}/releases/download/v$version/nx-v$version-i686-pc-windows-msvc.zip"},
             "arm64": {"url": f"https://github.com/{REPO}/releases/download/v$version/nx-v$version-aarch64-pc-windows-msvc.zip"},
         },
         "hash": {"url": f"https://github.com/{REPO}/releases/download/v$version/SHA256SUMS.txt"},
@@ -313,7 +318,7 @@ pkgname=nexium-bin
 pkgver={version}
 pkgrel=1
 pkgdesc="The Nexium language: a compiler that emits C and ships libraries, packages and tools"
-arch=('x86_64' 'aarch64')
+arch=('x86_64' 'aarch64' 'i686' 'armv7h')
 url="https://londopy.github.io/nexium/"
 license=('MIT')
 depends=('glibc')
@@ -323,8 +328,12 @@ provides=('nexium')
 conflicts=('nexium')
 source_x86_64=("{linux_x64}::{download}/{linux_x64}")
 source_aarch64=("{linux_arm}::{download}/{linux_arm}")
+source_i686=("{linux_x86}::{download}/{linux_x86}")
+source_armv7h=("{linux_armv7}::{download}/{linux_armv7}")
 sha256sums_x86_64=('{sha(linux_x64)}')
 sha256sums_aarch64=('{sha(linux_arm)}')
+sha256sums_i686=('{sha(linux_x86)}')
+sha256sums_armv7h=('{sha(linux_armv7)}')
 
 package() {{
   install -Dm755 nx "$pkgdir/usr/bin/nx"
@@ -352,6 +361,8 @@ write("installers/aur/.SRCINFO", f'''pkgbase = nexium-bin
 \turl = https://londopy.github.io/nexium/
 \tarch = x86_64
 \tarch = aarch64
+\tarch = i686
+\tarch = armv7h
 \tlicense = MIT
 \tdepends = glibc
 \toptdepends = zig: the C compiler nx uses by default
@@ -362,6 +373,10 @@ write("installers/aur/.SRCINFO", f'''pkgbase = nexium-bin
 \tsha256sums_x86_64 = {sha(linux_x64)}
 \tsource_aarch64 = {linux_arm}::{download}/{linux_arm}
 \tsha256sums_aarch64 = {sha(linux_arm)}
+\tsource_i686 = {linux_x86}::{download}/{linux_x86}
+\tsha256sums_i686 = {sha(linux_x86)}
+\tsource_armv7h = {linux_armv7}::{download}/{linux_armv7}
+\tsha256sums_armv7h = {sha(linux_armv7)}
 
 pkgname = nexium-bin
 ''')
