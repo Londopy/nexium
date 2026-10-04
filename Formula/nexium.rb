@@ -10,25 +10,25 @@
 class Nexium < Formula
   desc "Nexium language: a compiler that emits C and ships libraries, packages and tools"
   homepage "https://londopy.github.io/nexium/"
-  url "https://github.com/Londopy/nexium/archive/refs/tags/v1.4.1.tar.gz"
-  sha256 "95d5af2023f42da8b9269914003f9643eafebe24a3ce3423b55c290a4cbbd1a6"
+  url "https://github.com/Londopy/nexium/archive/refs/tags/v1.5.0.tar.gz"
+  sha256 "c0f1e63cdc83c33ce112fca23c926eb6058daa62688bcf74f9f7d0d9a5c3faeb"
   license "MIT"
 
   on_macos do
     on_arm do
-      url "https://github.com/Londopy/nexium/releases/download/v1.4.1/nx-v1.4.1-aarch64-apple-darwin.tar.gz"
-      sha256 "e30bdb440a1ea1c1b7013dd09519fbdf251c0a7dd359748937bbb6bcb172e5b2"
+      url "https://github.com/Londopy/nexium/releases/download/v1.5.0/nx-v1.5.0-aarch64-apple-darwin.tar.gz"
+      sha256 "a4f7ae2cbc2043a94599f376d8e20394112cd2aa613f60ac948d75ab351a6501"
     end
   end
 
   on_linux do
     on_intel do
-      url "https://github.com/Londopy/nexium/releases/download/v1.4.1/nx-v1.4.1-x86_64-unknown-linux-gnu.tar.gz"
-      sha256 "30cede4f75a67d8cc948aed0b7ac4b6fe6ecbccae669465aa2d66df653e4f4e9"
+      url "https://github.com/Londopy/nexium/releases/download/v1.5.0/nx-v1.5.0-x86_64-unknown-linux-gnu.tar.gz"
+      sha256 "1aee1466924583575912246151f32b2750fd16eb6c2ba8e7807b4d808170e99a"
     end
     on_arm do
-      url "https://github.com/Londopy/nexium/releases/download/v1.4.1/nx-v1.4.1-aarch64-unknown-linux-gnu.tar.gz"
-      sha256 "41d1a15d8e8565969f8763e72f5d6d6990dd8d88faabe9ec0d2a0abfa8d8fdaf"
+      url "https://github.com/Londopy/nexium/releases/download/v1.5.0/nx-v1.5.0-aarch64-unknown-linux-gnu.tar.gz"
+      sha256 "3ccfdebe2c177555a546712007e20da2476e03bfdc4dc19fe7a36a2c43ed8d4d"
     end
   end
 
