@@ -62,13 +62,13 @@ For a bot, the second package outside this repository is
 (messages, reactions, slash commands and their answers, and any other
 call with Discord's rate limits waited out), and the events as an enum to
 `match` on. It speaks through `std.websocket` and `std.http`, with TLS
-from [nxtls](https://github.com/Londopy/nxtls) in the TLS slot, so it
-needs Nexium 1.4 and, until nxtls moves to `random.secure`, Linux, macOS
-or a BSD.
+from [nxtls](https://github.com/Londopy/nxtls) in the TLS slot, or the
+platform's own TLS where there is no certificate bundle (Windows), so it
+needs Nexium 1.4 or later and runs on Linux, macOS, the BSDs and Windows.
 
 ```toml
 [dependencies]
-discord = { git = "https://github.com/Londopy/nexium-discord", tag = "v0.1.0" }
+discord = { git = "https://github.com/Londopy/nexium-discord", tag = "v0.2.0" }
 ```
 
 Its [pingbot](https://github.com/Londopy/nexium-discord/tree/main/examples/pingbot)

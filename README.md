@@ -104,7 +104,8 @@ boundary rather than aborting the host process.
 | 🔬 **Binary patterns** | `<<version:4, ihl:4, len:16/big, rest:bytes>>` matches and builds packets with checked sizes. |
 | 🧵 **Parallel loops, arenas, trait objects** | `for parallel`, `using arena { }`, `dyn Trait !allocates`. |
 | 🔌 **C without bindings** | `@cImport("header.h")` reads the header directly; `artifact link` compiles vendored C into the program; `if comptime @target().0 == "windows"` builds only the branch the platform takes. |
-| 📦 **Ship from one source** | `nx ship` produces C headers and libraries, Python wheels, and Rust crates with safe wrappers. |
+| 📦 **Ship from one source** | `nx ship` produces C headers and libraries, Python wheels, Rust crates with safe wrappers, npm packages, and a WebAssembly module with a JavaScript loader for the page. |
+| 🌍 **One source, many platforms** | Windows, Linux and macOS, Linux and Windows on ARM, 32-bit Windows and Linux, and a Raspberry Pi's 32-bit OS, each with a download of `nx` and tested in CI; `--target wasm32-wasi` builds a program to run under Node.js ([platforms](docs/platforms.md)). |
 | 🐞 **Debug it, measure it** | `nx debug` stops gdb or lldb at `.nx` lines and shows strings, lists, maps and optionals as values; `bench "name" { }` blocks sit beside the tests; `--sanitize address,undefined` puts AddressSanitizer and UBSan under any build. |
 | 🧭 **Learn it in the browser** | [The Topo](https://londopy.github.io/nexium/topo/01-base-camp.html), the tutorial, runs its programs in the page, the compiler compiled to WebAssembly, and grades its exercises as `nx topo` does in the terminal. `nx repl` is a prompt. |
 | 🪞 **Written in itself** | The compiler is Nexium, built from one C file by any C compiler; a large program's debug build recompiles only the modules that changed. |
@@ -456,12 +457,17 @@ clang), and for C interop `-I`, `--link`, `--link-path`, `--c-source`.
 
 ## Status
 
-**1.4: a standard library people stop supplementing.** The language changes
+**1.5: platforms.** The language changes
 only by addition under the [stability policy](docs/stability.md); the
 compiler is written in Nexium and builds itself; every example, spec case
-and tutorial program runs in CI on three platforms, under the sanitizers
-and the fuzzer, and gdb and lldb are driven through `nx debug` there too.
-Memory safety is the view rules, errors since 1.3. The standard library has
+and tutorial program runs in CI on Windows, Linux and macOS and on Linux
+and Windows on ARM, under the sanitizers and the fuzzer, and gdb and lldb
+are driven through `nx debug` there too. The same programs run built for
+32-bit x86, ARMv7 and RISC-V 32 (the last two under QEMU) and as
+WebAssembly modules under Node.js; `artifact wasm` ships a library to the
+browser with a JavaScript loader, and every release carries `nx` for 32-bit
+Windows and Linux and for a Raspberry Pi's 32-bit OS. Memory safety is the
+view rules, errors since 1.3. The standard library has
 twenty-nine modules: collections (`std.sort`, `std.heap`, `std.set`,
 `std.deque`), `std.hash`, `random.secure`, paths, the environment and
 config folders, UUIDs, logging, CSV, TOML and base64 among them; `Map` is
@@ -473,7 +479,7 @@ HTTPS through the platform's own TLS, or a TLS layer such as nxtls, as
 talks to programs while they run, `std.thread` has select, atomics and
 threads that end before the call does, `std.text` grapheme clusters and
 Unicode's case mapping, and `std.testing` property tests that shrink what
-they find. Next is 1.5, platforms. What Nexium is not yet, and where each is answered, is
+they find. Next is 1.6, the runtime that release builds deserve. What Nexium is not yet, and where each is answered, is
 [a section of the roadmap](ROADMAP.md#what-10-is-not-yet): the benchmarks are four
 programs ([Speed](#speed)), and the ecosystem is one maintainer and five
 projects outside the tree ([above](#in-the-wild)).
@@ -519,8 +525,8 @@ sh bootstrap/build.sh     # nx.c -> nx0; nx0 builds self/nx.nx -> nx1; nx1 rebui
 
 Every example, every spec case and every compile-fail case runs through the
 bootstrapped compiler, driven by a test harness that is itself a Nexium
-program (`nx run tests/run.nx`), in CI on three platforms with no Rust
-toolchain at all. The first compiler, in Rust, drove the port and was
+program (`nx run tests/run.nx`), in CI on five machines (Windows, Linux
+and macOS, and Linux and Windows on ARM) with no Rust toolchain at all. The first compiler, in Rust, drove the port and was
 deleted at 1.0 (decision 90).
 
 ## Languages in the repository
@@ -531,12 +537,12 @@ of `std/text.nx`, `gui/font.bin`, lock files):
 
 | language | lines | share | what it is |
 | --- | --- | --- | --- |
-| Nexium | 56,627 | 85.5% | the compiler and its tools (33,500 lines under `self/`), the standard library (29 modules), the test harness and the fuzzer, the examples, the tutorial's programs, the GUI, the site generator, four benchmarks |
-| C | 4,517 | 6.8% | the runtime `nx_rt.h`, the GUI window layer, vendored test C, a benchmark |
-| Python | 1,906 | 2.9% | the release scripts (notes, package manifests, wheels and npm packages, the std docs), the Unicode tables' generator, the link checker, the gdb and lldb formatters, the benchmark runner and four benchmarks |
-| editor files | 1,103 | 1.7% | tree-sitter queries, Emacs Lisp, Vim script, Lua for Neovim, a Pygments lexer, and the 25 lines of Rust that Zed requires of an extension |
-| JavaScript, TypeScript | 974 | 1.5% | the VS Code extension, the tree-sitter grammar, and the playground's WASI layer |
-| Inno Setup, shell, PowerShell | 855 | 1.3% | the Windows installer script, `install.sh`, `install.ps1`, the Chocolatey scripts, the bootstrap scripts |
+| Nexium | 58,331 | 85.5% | the compiler and its tools (34,300 lines under `self/`), the standard library (29 modules), the test harness and the fuzzer, the examples, the tutorial's programs, the GUI, the site generator, four benchmarks |
+| C | 4,601 | 6.7% | the runtime (`nx_rt.h`, and `setjmp` for WebAssembly), the GUI window layer, vendored test C, the four C benchmarks |
+| Python | 1,925 | 2.8% | the release scripts (notes, package manifests, wheels and npm packages, the std docs), the Unicode tables' generator, the link checker, the gdb and lldb formatters, the benchmark runner and four benchmarks |
+| JavaScript, TypeScript | 1,189 | 1.7% | the VS Code extension, the tree-sitter grammar, the playground's WASI layer, and the loader `artifact wasm` ships, with its check in a browser |
+| editor files | 1,103 | 1.6% | tree-sitter queries, Emacs Lisp, Vim script, Lua for Neovim, a Pygments lexer, and the 25 lines of Rust that Zed requires of an extension |
+| Inno Setup, shell, PowerShell | 879 | 1.3% | the Windows installer script, `install.sh`, `install.ps1`, the Chocolatey scripts, the bootstrap scripts |
 | Rust, Go, Ruby | 213 | 0.3% | four benchmarks each in Rust and Go, and the Homebrew formula |
 
 There is no Rust in the compiler: the first compiler drove the port and
@@ -578,8 +584,8 @@ KNOWN_ISSUES.md open bugs and limitations; fixes move to the changelog
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md). Bugs and proposals go through GitHub
 issues; a language change must name the hard constraint in section 3 of the
-specification that it serves. Pull requests pass the tests on three
-platforms, the formatters, a changelog check and the [Contributor License
+specification that it serves. Pull requests pass the tests on five
+machines, the formatters, a changelog check and the [Contributor License
 Agreement](CLA.md) before they merge; you keep your copyright.
 
 ## License

@@ -93,7 +93,8 @@ shipped 4 artifact file(s) for x86_64-windows:
 | 🔬 **바이너리 패턴** | `<<version:4, ihl:4, len:16/big, rest:bytes>>`로 패킷을 매칭하고 만들며, 크기는 검사됩니다. |
 | 🧵 **병렬 루프, 아레나, 트레이트 객체** | `for parallel`, `using arena { }`, `dyn Trait !allocates`. |
 | 🔌 **바인딩 없는 C** | `@cImport("header.h")`가 헤더를 직접 읽고, `artifact link`가 동봉한 C를 프로그램에 컴파일하며, `if comptime @target().0 == "windows"`는 플랫폼이 택하는 분기만 빌드합니다. |
-| 📦 **하나의 소스에서 배포** | `nx ship`이 C 헤더와 라이브러리, Python wheel, 안전한 래퍼를 갖춘 Rust crate를 만듭니다. |
+| 📦 **하나의 소스에서 배포** | `nx ship`이 C 헤더와 라이브러리, Python wheel, 안전한 래퍼를 갖춘 Rust crate, npm 패키지, 그리고 페이지용 JavaScript 로더가 딸린 WebAssembly 모듈을 만듭니다. |
+| 🌍 **하나의 소스, 여러 플랫폼** | Windows, Linux, macOS, ARM 위의 Linux와 Windows, 32비트 Windows와 Linux, 그리고 Raspberry Pi의 32비트 OS. 모두 `nx` 다운로드가 있고 CI에서 테스트됩니다. `--target wasm32-wasi`는 Node.js에서 실행되는 프로그램을 빌드합니다([플랫폼](../../platforms.md), 영어). |
 | 🐞 **디버그하고 측정하기** | `nx debug`는 gdb나 lldb를 `.nx` 줄에서 멈추고 문자열, 리스트, 맵, 옵셔널을 값으로 보여 줍니다. `bench "name" { }` 블록은 테스트 옆에 둡니다. `--sanitize address,undefined`는 어떤 빌드에든 AddressSanitizer와 UBSan을 겁니다. |
 | 🧭 **브라우저에서 배우기** | 튜토리얼 [Topo](https://londopy.github.io/nexium/topo/01-base-camp.html)는 WebAssembly로 컴파일한 컴파일러로 프로그램을 페이지에서 실행하고, 터미널의 `nx topo`처럼 연습 문제를 채점합니다. `nx repl`은 프롬프트입니다. |
 | 🪞 **자기 자신으로 작성됨** | 컴파일러는 Nexium이며, 어떤 C 컴파일러로든 C 파일 하나에서 빌드됩니다. 큰 프로그램의 디버그 빌드는 바뀐 모듈만 다시 컴파일합니다. |
@@ -437,14 +438,17 @@ gcc나 clang이 필요), C 연동용 `-I`, `--link`,
 
 ## 현황
 
-**1.4: 보탤 필요가 없는 표준 라이브러리.** 언어는 [안정성 정책](../../stability.md)에 따라
+**1.5: 플랫폼.** 언어는 [안정성 정책](../../stability.md)에 따라
 추가로만 바뀝니다. 컴파일러는 Nexium으로 쓰였고 스스로를 빌드합니다. 모든 예제, 명세
-케이스, 튜토리얼 프로그램이 CI에서 세 플랫폼 위에서, 새니타이저와 퍼저 아래에서
-실행되며, gdb와 lldb도 거기서 `nx debug`로 구동됩니다. 메모리 안전성은 뷰 규칙이며
+케이스, 튜토리얼 프로그램이 CI에서 Windows, Linux, macOS와 ARM 위의 Linux, Windows에서, 새니타이저와 퍼저 아래에서
+실행되며, gdb와 lldb도 거기서 `nx debug`로 구동됩니다. 같은 프로그램이 32비트 x86, ARMv7,
+RISC-V 32용으로도(뒤의 둘은 QEMU 아래에서), Node.js 위의 WebAssembly 모듈로도 실행됩니다.
+`artifact wasm`은 라이브러리를 JavaScript 로더와 함께 브라우저로 보내고, 모든 릴리스에는
+32비트 Windows와 Linux, 그리고 Raspberry Pi의 32비트 OS용 `nx`가 들어 있습니다. 메모리 안전성은 뷰 규칙이며
 1.3부터 오류입니다. 표준 라이브러리는 모두 스물아홉 모듈로, 컬렉션
 (`std.sort`, `std.heap`, `std.set`, `std.deque`), `std.hash`, `random.secure`, 경로, 환경
 변수와 설정 폴더, UUID, 로깅, CSV, TOML, base64 등이 있고, `Map`은 해시
-공격에 강하고 키를 넣은 순서를 지킵니다. `std.time`은 플랫폼의 데이터베이스에서 시간대를 읽고, `std.http`는 플랫폼 자체의 TLS나 nxtls 같은 TLS 계층을 거쳐 HTTPS를 쓰며, `std.websocket`도 마찬가지이고, [nexium-discord](https://github.com/Londopy/nexium-discord)가 그 위에 Discord 봇을 만듭니다. `std.process`는 실행 중인 프로그램과 주고받고, `std.thread`에는 select, 원자적 연산, 호출보다 먼저 끝나는 스레드가, `std.text`에는 자소 클러스터와 Unicode의 대소문자 변환이, `std.testing`에는 찾은 것을 줄여 주는 속성 테스트가 있습니다. 다음은 1.5, 플랫폼입니다. Nexium이 아직 아닌 것과 각각이
+공격에 강하고 키를 넣은 순서를 지킵니다. `std.time`은 플랫폼의 데이터베이스에서 시간대를 읽고, `std.http`는 플랫폼 자체의 TLS나 nxtls 같은 TLS 계층을 거쳐 HTTPS를 쓰며, `std.websocket`도 마찬가지이고, [nexium-discord](https://github.com/Londopy/nexium-discord)가 그 위에 Discord 봇을 만듭니다. `std.process`는 실행 중인 프로그램과 주고받고, `std.thread`에는 select, 원자적 연산, 호출보다 먼저 끝나는 스레드가, `std.text`에는 자소 클러스터와 Unicode의 대소문자 변환이, `std.testing`에는 찾은 것을 줄여 주는 속성 테스트가 있습니다. 다음은 1.6, 릴리스 빌드에 걸맞은 런타임입니다. Nexium이 아직 아닌 것과 각각이
 어디서 답을 얻는지는 [로드맵의 한 절](../../../ROADMAP.md#what-10-is-not-yet)에 있습니다.
 벤치마크는 네 프로그램([속도](#속도))뿐이며, 생태계는 메인테이너 한 명과 트리 밖의
 프로젝트 다섯입니다([위](#실제-사용)).
@@ -486,8 +490,8 @@ sh bootstrap/build.sh     # nx.c -> nx0; nx0가 self/nx.nx를 빌드 -> nx1; nx1
 | 도구 | [`self/fmt.nx`](../../../self/fmt.nx), [`self/doc.nx`](../../../self/doc.nx), [`self/tools.nx`](../../../self/tools.nx), [`self/size.nx`](../../../self/size.nx), [`self/manifest.nx`](../../../self/manifest.nx), [`self/ship.nx`](../../../self/ship.nx), [`self/lsp.nx`](../../../self/lsp.nx), [`self/lsp_index.nx`](../../../self/lsp_index.nx), [`self/fix.nx`](../../../self/fix.nx), [`self/repl.nx`](../../../self/repl.nx) | 포매터, 문서 생성기, 각종 보고서, 패키지, `ship`, 언어 서버와 검사된 프로그램의 색인, `nx fix`, REPL |
 
 모든 예제, 명세 케이스, 컴파일 실패 케이스가 그 자체로 Nexium 프로그램인 테스트
-하네스(`nx run tests/run.nx`)의 구동으로 부트스트랩된 컴파일러를 거쳐, CI에서 세
-플랫폼 위에서 Rust 툴체인 없이 실행됩니다. Rust로 쓰인 첫 컴파일러는 이식을 이끌었고
+하네스(`nx run tests/run.nx`)의 구동으로 부트스트랩된 컴파일러를 거쳐, CI에서 다섯
+대의 머신(Windows, Linux, macOS와 ARM 위의 Linux, Windows) 위에서 Rust 툴체인 없이 실행됩니다. Rust로 쓰인 첫 컴파일러는 이식을 이끌었고
 1.0에서 삭제되었습니다(결정 90).
 
 ## 저장소의 언어
@@ -497,12 +501,12 @@ sh bootstrap/build.sh     # nx.c -> nx0; nx0가 self/nx.nx를 빌드 -> nx1; nx1
 
 | 언어 | 줄 수 | 비율 | 무엇인가 |
 | --- | --- | --- | --- |
-| Nexium | 56,627 | 85.5% | 컴파일러와 그 도구(`self/` 아래 33,500줄), 표준 라이브러리(모듈 29개), 테스트 하네스와 퍼저, 예제, 튜토리얼의 프로그램, nexium-gui, 사이트 생성기, 벤치마크 넷 |
-| C | 4,517 | 6.8% | 런타임 `nx_rt.h`, GUI 창 계층, 동봉된 테스트용 C, 벤치마크 하나 |
-| Python | 1,906 | 2.9% | 릴리스 스크립트(노트, 패키지 매니페스트, wheel과 npm 패키지, std 문서), Unicode 표 생성기, 링크 검사기, gdb와 lldb 포매터, 벤치마크 러너와 벤치마크 넷 |
-| 에디터 파일 | 1,103 | 1.7% | tree-sitter 쿼리, Emacs Lisp, Vim script, Neovim용 Lua, Pygments 렉서, 그리고 Zed가 확장에 요구하는 Rust 25줄 |
-| JavaScript, TypeScript | 974 | 1.5% | VS Code 확장, tree-sitter 문법, 플레이그라운드의 WASI 계층 |
-| Inno Setup, 셸, PowerShell | 855 | 1.3% | Windows 설치 프로그램 스크립트, `install.sh`, `install.ps1`, Chocolatey 스크립트, 부트스트랩 스크립트 |
+| Nexium | 58,331 | 85.5% | 컴파일러와 그 도구(`self/` 아래 34,300줄), 표준 라이브러리(모듈 29개), 테스트 하네스와 퍼저, 예제, 튜토리얼의 프로그램, nexium-gui, 사이트 생성기, 벤치마크 넷 |
+| C | 4,601 | 6.7% | 런타임(`nx_rt.h`와 WebAssembly용 `setjmp`), GUI 창 계층, 동봉된 테스트용 C, C 벤치마크 넷 |
+| Python | 1,925 | 2.8% | 릴리스 스크립트(노트, 패키지 매니페스트, wheel과 npm 패키지, std 문서), Unicode 표 생성기, 링크 검사기, gdb와 lldb 포매터, 벤치마크 러너와 벤치마크 넷 |
+| JavaScript, TypeScript | 1,189 | 1.7% | VS Code 확장, tree-sitter 문법, 플레이그라운드의 WASI 계층, 그리고 `artifact wasm`이 함께 내보내는 로더와 그 브라우저 검사 |
+| 에디터 파일 | 1,103 | 1.6% | tree-sitter 쿼리, Emacs Lisp, Vim script, Neovim용 Lua, Pygments 렉서, 그리고 Zed가 확장에 요구하는 Rust 25줄 |
+| Inno Setup, 셸, PowerShell | 879 | 1.3% | Windows 설치 프로그램 스크립트, `install.sh`, `install.ps1`, Chocolatey 스크립트, 부트스트랩 스크립트 |
 | Rust, Go, Ruby | 213 | 0.3% | Rust와 Go에 벤치마크 넷씩, 그리고 Homebrew 포뮬러 |
 
 컴파일러에는 Rust가 없습니다. 첫 컴파일러는 이식을 이끌고 1.0에서 삭제되었으며(결정
@@ -543,7 +547,7 @@ KNOWN_ISSUES.md 미해결 버그와 제한. 수정은 changelog로 옮겨감
 
 [`CONTRIBUTING.md`](../../../CONTRIBUTING.md)를 보세요. 버그와 제안은 GitHub 이슈로
 다룹니다. 언어 변경은 명세 3절의 어떤 엄격한 제약을 위한 것인지 밝혀야 합니다. 풀
-리퀘스트는 병합 전에 세 플랫폼의 테스트, 포매터, changelog 검사,
+리퀘스트는 병합 전에 다섯 대 머신의 테스트, 포매터, changelog 검사,
 [기여자 라이선스 동의서](../../../CLA.md)를 통과합니다. 저작권은 당신에게 남습니다.
 
 ## 라이선스

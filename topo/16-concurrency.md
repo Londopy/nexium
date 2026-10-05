@@ -108,8 +108,10 @@ Data races are not memory-safety violations in Nexium's promise (the
 specification says so, in section 13), and the type system does not prevent
 them: it makes them visible. A function that touches shared state has
 `shared_mutable`; one that starts a thread has `nondeterministic`; a `for
-parallel` body cannot have the first at all. The roadmap's 1.4 adds scoped
-threads (joined when their block ends, so a thread cannot outlive the data
-it was given) and `select` over channels.
+parallel` body cannot have the first at all. `std.thread` also has threads
+that end before the call does, `thread.each` and `thread.both`, so a thread
+may point into the caller's locals and cannot outlive them, and `select`
+over channels (`thread.select2` for two of different types,
+`thread.select` for any number of one), both since 1.4.
 
 Next: [a network service](17-networking.html).

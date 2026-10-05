@@ -94,7 +94,8 @@ sein est convertie à la frontière au lieu d'interrompre le processus hôte.
 | 🔬 **Motifs binaires** | `<<version:4, ihl:4, len:16/big, rest:bytes>>` reconnaît et construit des paquets aux tailles vérifiées. |
 | 🧵 **Boucles parallèles, arènes, objets de trait** | `for parallel`, `using arena { }`, `dyn Trait !allocates`. |
 | 🔌 **Du C sans bindings** | `@cImport("header.h")` lit l'en-tête directement ; `artifact link` compile du C embarqué dans le programme ; `if comptime @target().0 == "windows"` ne construit que la branche que prend la plateforme. |
-| 📦 **Livrer depuis une seule source** | `nx ship` produit des en-têtes et bibliothèques C, des wheels Python et des crates Rust avec des enveloppes sûres. |
+| 📦 **Livrer depuis une seule source** | `nx ship` produit des en-têtes et bibliothèques C, des wheels Python, des crates Rust avec des enveloppes sûres, des paquets npm et un module WebAssembly avec un chargeur JavaScript pour la page. |
+| 🌍 **Une source, de nombreuses plateformes** | Windows, Linux et macOS, Linux et Windows sur ARM, Windows et Linux 32 bits et le système 32 bits d'un Raspberry Pi, chacun avec un téléchargement de `nx` et testé en CI ; `--target wasm32-wasi` construit un programme qui tourne sous Node.js ([plateformes](../../platforms.md), en anglais). |
 | 🐞 **Le déboguer, le mesurer** | `nx debug` arrête gdb ou lldb sur des lignes `.nx` et montre chaînes, listes, maps et optionnels comme des valeurs ; les blocs `bench "name" { }` côtoient les tests ; `--sanitize address,undefined` place AddressSanitizer et UBSan sous n'importe quelle compilation. |
 | 🧭 **L'apprendre dans le navigateur** | [Le Topo](https://londopy.github.io/nexium/topo/01-base-camp.html), le tutoriel, exécute ses programmes dans la page, avec le compilateur compilé en WebAssembly, et note ses exercices comme `nx topo` le fait dans le terminal. `nx repl` est une invite. |
 | 🪞 **Écrit en lui-même** | Le compilateur est en Nexium, construit à partir d'un seul fichier C par n'importe quel compilateur C ; la compilation de débogage d'un gros programme ne recompile que les modules modifiés. |
@@ -450,13 +451,18 @@ erreurs), `--sanitize address,undefined` (les sanitizers du compilateur C ;
 
 ## État
 
-**1.4 : une bibliothèque standard qu'on n'a plus besoin de compléter.** Le
+**1.5 : les plateformes.** Le
 langage ne change que par ajout, sous la [politique de stabilité](../../stability.md) ;
 le compilateur est écrit en Nexium et se construit lui-même ; chaque exemple,
 chaque cas de la spécification et chaque programme du tutoriel s'exécute en
-CI sur trois plateformes, sous les sanitizers et le fuzzer, et gdb et lldb y
-sont aussi pilotés par `nx debug`. La sûreté mémoire, ce sont les règles de
-vues, des erreurs depuis 1.3. La bibliothèque standard compte vingt-neuf
+CI sur Windows, Linux et macOS et sur Linux et Windows sur ARM, sous les
+sanitizers et le fuzzer, et gdb et lldb y sont aussi pilotés par
+`nx debug`. Les mêmes programmes tournent compilés pour x86 32 bits, ARMv7
+et RISC-V 32 (les deux derniers sous QEMU) et comme modules WebAssembly sous
+Node.js ; `artifact wasm` livre une bibliothèque au navigateur avec un
+chargeur JavaScript, et chaque version contient `nx` pour Windows et Linux
+32 bits et pour le système 32 bits d'un Raspberry Pi. La sûreté mémoire, ce
+sont les règles de vues, des erreurs depuis 1.3. La bibliothèque standard compte vingt-neuf
 modules, dont les collections (`std.sort`, `std.heap`, `std.set`,
 `std.deque`), `std.hash`, `random.secure`, les chemins, l'environnement et
 les dossiers de configuration, les UUID, la journalisation, CSV, TOML et
@@ -468,8 +474,8 @@ couche TLS comme nxtls, comme `std.websocket`, et
 parle aux programmes pendant qu'ils tournent, `std.thread` a select, les
 opérations atomiques et des fils qui finissent avant l'appel, `std.text` les
 grappes de graphèmes et la casse d'Unicode, et `std.testing` des tests de
-propriétés qui réduisent ce qu'ils trouvent. Vient ensuite la 1.5, les
-plateformes. Ce que Nexium n'est pas
+propriétés qui réduisent ce qu'ils trouvent. Vient ensuite la 1.6, le
+runtime que méritent les builds de release. Ce que Nexium n'est pas
 encore, et où chaque point trouve sa réponse, est dans [une section de la
 feuille de route](../../../ROADMAP.md#what-10-is-not-yet) : les mesures de performance
 sont quatre programmes ([Vitesse](#vitesse)), et l'écosystème se résume à un
@@ -517,8 +523,9 @@ sh bootstrap/build.sh     # nx.c -> nx0 ; nx0 construit self/nx.nx -> nx1 ; nx1 
 
 Chaque exemple, chaque cas de la spécification et chaque cas de compile-fail
 passe par le compilateur amorcé, piloté par un harnais de tests qui est
-lui-même un programme Nexium (`nx run tests/run.nx`), en CI sur trois
-plateformes sans aucune chaîne d'outils Rust. Le premier compilateur, en
+lui-même un programme Nexium (`nx run tests/run.nx`), en CI sur cinq
+machines (Windows, Linux et macOS, et Linux et Windows sur ARM) sans aucune
+chaîne d'outils Rust. Le premier compilateur, en
 Rust, a servi au portage et a été supprimé en 1.0 (décision 90).
 
 ## Langages du dépôt
@@ -529,12 +536,12 @@ de `std/text.nx`, `gui/font.bin`, fichiers de verrouillage) :
 
 | langage | lignes | part | ce que c'est |
 | --- | --- | --- | --- |
-| Nexium | 56 627 | 85,5 % | le compilateur et ses outils (33 500 lignes sous `self/`), la bibliothèque standard (29 modules), le harnais de tests et le fuzzer, les exemples, les programmes du tutoriel, nexium-gui, le générateur du site, quatre benchmarks |
-| C | 4 517 | 6,8 % | le runtime `nx_rt.h`, la couche fenêtre de la GUI, du C de test embarqué, un benchmark |
-| Python | 1 906 | 2,9 % | les scripts de release (notes, manifestes de paquets, wheels et paquets npm, la documentation de std), le générateur des tables Unicode, le vérificateur de liens, les formateurs gdb et lldb, le lanceur de benchmarks et quatre benchmarks |
-| fichiers d'éditeurs | 1 103 | 1,7 % | requêtes tree-sitter, Emacs Lisp, Vim script, Lua pour Neovim, un lexer Pygments, et les 25 lignes de Rust que Zed exige d'une extension |
-| JavaScript, TypeScript | 974 | 1,5 % | l'extension VS Code, la grammaire tree-sitter et la couche WASI du playground |
-| Inno Setup, shell, PowerShell | 855 | 1,3 % | le script de l'installateur Windows, `install.sh`, `install.ps1`, les scripts Chocolatey, les scripts de bootstrap |
+| Nexium | 58 331 | 85,5 % | le compilateur et ses outils (34 300 lignes sous `self/`), la bibliothèque standard (29 modules), le harnais de tests et le fuzzer, les exemples, les programmes du tutoriel, nexium-gui, le générateur du site, quatre benchmarks |
+| C | 4 601 | 6,7 % | le runtime (`nx_rt.h`, et `setjmp` pour WebAssembly), la couche fenêtre de la GUI, du C de test embarqué, les quatre benchmarks en C |
+| Python | 1 925 | 2,8 % | les scripts de release (notes, manifestes de paquets, wheels et paquets npm, la documentation de std), le générateur des tables Unicode, le vérificateur de liens, les formateurs gdb et lldb, le lanceur de benchmarks et quatre benchmarks |
+| JavaScript, TypeScript | 1 189 | 1,7 % | l'extension VS Code, la grammaire tree-sitter, la couche WASI du playground et le chargeur que livre `artifact wasm`, avec sa vérification dans un navigateur |
+| fichiers d'éditeurs | 1 103 | 1,6 % | requêtes tree-sitter, Emacs Lisp, Vim script, Lua pour Neovim, un lexer Pygments, et les 25 lignes de Rust que Zed exige d'une extension |
+| Inno Setup, shell, PowerShell | 879 | 1,3 % | le script de l'installateur Windows, `install.sh`, `install.ps1`, les scripts Chocolatey, les scripts de bootstrap |
 | Rust, Go, Ruby | 213 | 0,3 % | quatre benchmarks en Rust et quatre en Go, et la formule Homebrew |
 
 Il n'y a pas de Rust dans le compilateur : le premier compilateur a servi au
@@ -578,7 +585,7 @@ KNOWN_ISSUES.md bogues ouverts et limites ; les correctifs passent dans le chang
 Voir [`CONTRIBUTING.md`](../../../CONTRIBUTING.md). Les bogues et les
 propositions passent par les issues GitHub ; un changement du langage doit
 nommer la contrainte dure de la section 3 de la spécification qu'il sert. Les
-pull requests passent les tests sur trois plateformes, les formateurs, une
+pull requests passent les tests sur cinq machines, les formateurs, une
 vérification du changelog et l'[accord de licence de
 contribution](../../../CLA.md) avant d'être fusionnées ; vous gardez votre
 droit d'auteur.

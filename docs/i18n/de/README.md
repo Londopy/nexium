@@ -95,7 +95,8 @@ abzubrechen.
 | 🔬 **Binärmuster** | `<<version:4, ihl:4, len:16/big, rest:bytes>>` gleicht Pakete ab und baut sie, mit geprüften Größen. |
 | 🧵 **Parallele Schleifen, Arenen, Trait-Objekte** | `for parallel`, `using arena { }`, `dyn Trait !allocates`. |
 | 🔌 **C ohne Bindings** | `@cImport("header.h")` liest den Header direkt; `artifact link` kompiliert mitgeliefertes C ins Programm; `if comptime @target().0 == "windows"` baut nur den Zweig, den die Plattform nimmt. |
-| 📦 **Aus einer Quelle ausliefern** | `nx ship` erzeugt C-Header und -Bibliotheken, Python-Wheels und Rust-Crates mit sicheren Wrappern. |
+| 📦 **Aus einer Quelle ausliefern** | `nx ship` erzeugt C-Header und -Bibliotheken, Python-Wheels, Rust-Crates mit sicheren Wrappern, npm-Pakete und ein WebAssembly-Modul mit einem JavaScript-Loader für die Seite. |
+| 🌍 **Eine Quelle, viele Plattformen** | Windows, Linux und macOS, Linux und Windows auf ARM, 32-Bit-Windows und -Linux und das 32-Bit-System eines Raspberry Pi, jedes mit einem Download von `nx` und in CI getestet; `--target wasm32-wasi` baut ein Programm, das unter Node.js läuft ([Plattformen](../../platforms.md), Englisch). |
 | 🐞 **Debuggen und messen** | `nx debug` hält gdb oder lldb an `.nx`-Zeilen an und zeigt Strings, Listen, Maps und Optionals als Werte; `bench "name" { }`-Blöcke stehen neben den Tests; `--sanitize address,undefined` legt AddressSanitizer und UBSan unter jeden Build. |
 | 🧭 **Im Browser lernen** | [Der Topo](https://londopy.github.io/nexium/topo/01-base-camp.html), das Tutorial, führt seine Programme auf der Seite aus, mit dem zu WebAssembly kompilierten Compiler, und bewertet seine Übungen wie `nx topo` im Terminal. `nx repl` ist eine Eingabeaufforderung. |
 | 🪞 **In sich selbst geschrieben** | Der Compiler ist Nexium und wird aus einer C-Datei von jedem C-Compiler gebaut; der Debug-Build eines großen Programms kompiliert nur die geänderten Module neu. |
@@ -453,14 +454,19 @@ Fehler), `--sanitize address,undefined` (die Sanitizer des C-Compilers;
 
 ## Stand
 
-**1.4: eine Standardbibliothek, die niemand mehr ergänzen muss.** Die
+**1.5: Plattformen.** Die
 Sprache ändert sich nur durch Ergänzung, unter der
 [Stabilitätsrichtlinie](../../stability.md); der Compiler ist in Nexium
 geschrieben und baut sich selbst; jedes Beispiel, jeder Spezifikationsfall
-und jedes Tutorial-Programm läuft in CI auf drei Plattformen, unter den
-Sanitizern und dem Fuzzer, und auch gdb und lldb werden dort durch
-`nx debug` gesteuert. Speichersicherheit sind die Sichtregeln, seit 1.3
-Fehler. Die Standardbibliothek hat neunundzwanzig Module, darunter
+und jedes Tutorial-Programm läuft in CI auf Windows, Linux und macOS und
+auf Linux und Windows auf ARM, unter den Sanitizern und dem Fuzzer, und
+auch gdb und lldb werden dort durch `nx debug` gesteuert. Dieselben
+Programme laufen für 32-Bit-x86, ARMv7 und RISC-V 32 gebaut (die letzten
+beiden unter QEMU) und als WebAssembly-Module unter Node.js;
+`artifact wasm` bringt eine Bibliothek mit einem JavaScript-Loader in den
+Browser, und jedes Release enthält `nx` für 32-Bit-Windows und -Linux und
+für das 32-Bit-System eines Raspberry Pi. Speichersicherheit sind die
+Sichtregeln, seit 1.3 Fehler. Die Standardbibliothek hat neunundzwanzig Module, darunter
 Collections (`std.sort`, `std.heap`, `std.set`, `std.deque`), `std.hash`,
 `random.secure`, Pfade, Umgebung und Konfigurationsordner, UUIDs, Logging,
 CSV, TOML und Base64; `Map` ist gegen Hash-Flooding geschützt und behält die
@@ -472,7 +478,7 @@ spricht mit Programmen, während sie laufen, `std.thread` hat select, Atomics
 und Threads, die enden, bevor der Aufruf zurückkehrt, `std.text`
 Graphem-Cluster und die Groß- und Kleinschreibung von Unicode, und
 `std.testing` Eigenschaftstests, die verkleinern, was sie finden. Als
-Nächstes kommt 1.5, die Plattformen. Was Nexium noch nicht ist, und wo jeder Punkt beantwortet wird,
+Nächstes kommt 1.6, die Laufzeit, die Release-Builds verdienen. Was Nexium noch nicht ist, und wo jeder Punkt beantwortet wird,
 steht in [einem Abschnitt der Roadmap](../../../ROADMAP.md#what-10-is-not-yet): die
 Benchmarks sind vier Programme ([Geschwindigkeit](#geschwindigkeit)), und das
 Ökosystem besteht aus einem Maintainer und fünf Projekten außerhalb des
@@ -520,8 +526,9 @@ sh bootstrap/build.sh     # nx.c -> nx0; nx0 baut self/nx.nx -> nx1; nx1 baut si
 
 Jedes Beispiel, jeder Spezifikationsfall und jeder Compile-Fail-Fall läuft
 durch den gebootstrappten Compiler, gesteuert von einem Test-Harness, der
-selbst ein Nexium-Programm ist (`nx run tests/run.nx`), in CI auf drei
-Plattformen ganz ohne Rust-Toolchain. Der erste Compiler, in Rust, trieb die
+selbst ein Nexium-Programm ist (`nx run tests/run.nx`), in CI auf fünf
+Maschinen (Windows, Linux und macOS, Linux und Windows auf ARM) ganz ohne
+Rust-Toolchain. Der erste Compiler, in Rust, trieb die
 Portierung voran und wurde in 1.0 gelöscht (Entscheidung 90).
 
 ## Sprachen im Repository
@@ -532,12 +539,12 @@ Ende von `std/text.nx`, `gui/font.bin`, Lock-Dateien):
 
 | Sprache | Zeilen | Anteil | was es ist |
 | --- | --- | --- | --- |
-| Nexium | 56.627 | 85,5 % | der Compiler und seine Werkzeuge (33.500 Zeilen unter `self/`), die Standardbibliothek (29 Module), der Test-Harness und der Fuzzer, Beispiele, die Programme des Tutorials, nexium-gui, der Site-Generator, vier Benchmarks |
-| C | 4.517 | 6,8 % | die Laufzeit `nx_rt.h`, die GUI-Fensterschicht, mitgeliefertes Test-C, ein Benchmark |
-| Python | 1.906 | 2,9 % | die Release-Skripte (Notes, Paketmanifeste, Wheels und npm-Pakete, die std-Dokumentation), der Generator der Unicode-Tabellen, der Link-Checker, die gdb- und lldb-Formatierer, der Benchmark-Runner und vier Benchmarks |
-| Editor-Dateien | 1.103 | 1,7 % | tree-sitter-Queries, Emacs Lisp, Vim-Script, Lua für Neovim, ein Pygments-Lexer und die 25 Zeilen Rust, die Zed von einer Erweiterung verlangt |
-| JavaScript, TypeScript | 974 | 1,5 % | die VS-Code-Erweiterung, die tree-sitter-Grammatik und die WASI-Schicht des Playgrounds |
-| Inno Setup, Shell, PowerShell | 855 | 1,3 % | das Skript des Windows-Installers, `install.sh`, `install.ps1`, die Chocolatey-Skripte, die Bootstrap-Skripte |
+| Nexium | 58.331 | 85,5 % | der Compiler und seine Werkzeuge (34.300 Zeilen unter `self/`), die Standardbibliothek (29 Module), der Test-Harness und der Fuzzer, Beispiele, die Programme des Tutorials, nexium-gui, der Site-Generator, vier Benchmarks |
+| C | 4.601 | 6,7 % | die Laufzeit (`nx_rt.h`, und `setjmp` für WebAssembly), die GUI-Fensterschicht, mitgeliefertes Test-C, die vier C-Benchmarks |
+| Python | 1.925 | 2,8 % | die Release-Skripte (Notes, Paketmanifeste, Wheels und npm-Pakete, die std-Dokumentation), der Generator der Unicode-Tabellen, der Link-Checker, die gdb- und lldb-Formatierer, der Benchmark-Runner und vier Benchmarks |
+| JavaScript, TypeScript | 1.189 | 1,7 % | die VS-Code-Erweiterung, die tree-sitter-Grammatik, die WASI-Schicht des Playgrounds und der Loader, den `artifact wasm` mitliefert, samt seiner Prüfung im Browser |
+| Editor-Dateien | 1.103 | 1,6 % | tree-sitter-Queries, Emacs Lisp, Vim-Script, Lua für Neovim, ein Pygments-Lexer und die 25 Zeilen Rust, die Zed von einer Erweiterung verlangt |
+| Inno Setup, Shell, PowerShell | 879 | 1,3 % | das Skript des Windows-Installers, `install.sh`, `install.ps1`, die Chocolatey-Skripte, die Bootstrap-Skripte |
 | Rust, Go, Ruby | 213 | 0,3 % | je vier Benchmarks in Rust und Go, und die Homebrew-Formel |
 
 Im Compiler steckt kein Rust: der erste Compiler trieb die Portierung voran
@@ -582,7 +589,7 @@ KNOWN_ISSUES.md offene Fehler und Grenzen; Lösungen wandern in den Changelog
 Siehe [`CONTRIBUTING.md`](../../../CONTRIBUTING.md). Fehler und Vorschläge
 laufen über GitHub-Issues; eine Sprachänderung muss die harte Einschränkung
 aus Abschnitt 3 der Spezifikation nennen, der sie dient. Pull Requests
-bestehen vor dem Merge die Tests auf drei Plattformen, die Formatierer, eine
+bestehen vor dem Merge die Tests auf fünf Maschinen, die Formatierer, eine
 Changelog-Prüfung und das [Contributor License Agreement](../../../CLA.md);
 das Urheberrecht bleibt bei dir.
 

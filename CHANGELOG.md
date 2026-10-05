@@ -44,6 +44,14 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   its value was made, so a change its own initializer made first, as in
   `let v = { xs.append(2); xs[..] }`, was reported as made after the view
   (rule V3).
+- The README and its translations, the Topo and the package pages still
+  described 1.4. The README's status and highlights are 1.5's (WebAssembly,
+  the 32-bit downloads, ARM, CI on five machines) and its line counts are
+  counted again; chapter 15 of the Topo showed `dot` carrying `panics`,
+  which the compiler has proved away since 1.1; chapters 16, 18 and 23
+  promised as coming what 1.4 and 1.5 shipped or moved; `docs/discord.md`
+  and `docs/packages.md` named nexium-discord 0.1.0 and nxtls 0.1.0, where
+  0.2.0 runs on Windows and 0.5.0 speaks TLS 1.3.
 
 ## [1.5.0] - 2026-10-04
 

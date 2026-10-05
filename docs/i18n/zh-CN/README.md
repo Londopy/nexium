@@ -92,7 +92,8 @@ Nexium panic 会在边界处被转换，而不是让宿主进程中止。
 | 🔬 **二进制模式** | `<<version:4, ihl:4, len:16/big, rest:bytes>>` 匹配并构造数据包，大小都经过检查。 |
 | 🧵 **并行循环、arena、trait 对象** | `for parallel`、`using arena { }`、`dyn Trait !allocates`。 |
 | 🔌 **无需绑定的 C** | `@cImport("header.h")` 直接读取头文件；`artifact link` 把随附的 C 编译进程序；`if comptime @target().0 == "windows"` 只构建平台所走的分支。 |
-| 📦 **一份源码，处处交付** | `nx ship` 生成 C 头文件与库、Python wheel，以及带安全封装的 Rust crate。 |
+| 📦 **一份源码，处处交付** | `nx ship` 生成 C 头文件与库、Python wheel、带安全封装的 Rust crate、npm 包，以及带页面用 JavaScript 加载器的 WebAssembly 模块。 |
+| 🌍 **一份源码，多个平台** | Windows、Linux 和 macOS，ARM 上的 Linux 与 Windows，32 位 Windows 与 Linux，以及 Raspberry Pi 的 32 位系统，每个都有 `nx` 的下载并在 CI 中测试；`--target wasm32-wasi` 构建在 Node.js 上运行的程序（[平台](../../platforms.md)，英文）。 |
 | 🐞 **调试与测量** | `nx debug` 让 gdb 或 lldb 停在 `.nx` 行上，把字符串、列表、映射和可选值显示为值；`bench "name" { }` 块与测试并列；`--sanitize address,undefined` 为任意构建加上 AddressSanitizer 与 UBSan。 |
 | 🧭 **在浏览器里学** | 教程 [Topo](https://londopy.github.io/nexium/topo/01-base-camp.html) 用编译成 WebAssembly 的编译器在页面中运行它的程序，并像终端里的 `nx topo` 一样给练习评分。`nx repl` 是一个提示符。 |
 | 🪞 **用自己写成** | 编译器用 Nexium 写成，任何 C 编译器都能从一个 C 文件构建它；大型程序的调试构建只重新编译改动过的模块。 |
@@ -431,13 +432,16 @@ runner 上测量（2026-09-25；七次运行的中位数，超过五秒的取三
 
 ## 现状
 
-**1.4：一个不必再补充的标准库。** 语言只按[稳定性策略](../../stability.md)以增添的
+**1.5：平台。** 语言只按[稳定性策略](../../stability.md)以增添的
 方式变化；编译器用 Nexium 写成并能构建自身；每个示例、规范用例和教程程序都在 CI 中于
-三个平台上、在 sanitizer 和 fuzzer 之下运行，gdb 和 lldb 也在那里经由 `nx debug` 驱动。
+Windows、Linux、macOS 以及 ARM 上的 Linux 与 Windows 上、在 sanitizer 和 fuzzer 之下运行，gdb 和 lldb 也在那里经由 `nx debug` 驱动。
+同样的程序也为 32 位 x86、ARMv7 和 RISC-V 32（后两者在 QEMU 之下）构建并运行，也作为
+WebAssembly 模块在 Node.js 上运行；`artifact wasm` 把库连同 JavaScript 加载器送进浏览器，每个
+版本都带有面向 32 位 Windows 与 Linux 以及 Raspberry Pi 32 位系统的 `nx`。
 内存安全是视图规则，自 1.3 起是错误。标准库一共二十九个模块，其中有集合
 （`std.sort`、`std.heap`、`std.set`、`std.deque`）、`std.hash`、`random.secure`、路径、环境
 变量与配置目录、UUID、日志、CSV、TOML 和 base64；`Map` 能抵御哈希洪水
-攻击并保持键的插入顺序；`std.time` 从平台的数据库读取时区；`std.http` 通过平台自带的 TLS 或 nxtls 这样的 TLS 层发起 HTTPS，`std.websocket` 也是如此，[nexium-discord](https://github.com/Londopy/nexium-discord) 在其上构建 Discord 机器人；`std.process` 与运行中的程序交互，`std.thread` 提供 select、原子操作以及在调用返回前就结束的线程，`std.text` 提供字素簇和 Unicode 的大小写映射，`std.testing` 提供会缩小所找到反例的属性测试。接下来是 1.5：平台。Nexium 还不是什么、每一点在哪里得到回答，见
+攻击并保持键的插入顺序；`std.time` 从平台的数据库读取时区；`std.http` 通过平台自带的 TLS 或 nxtls 这样的 TLS 层发起 HTTPS，`std.websocket` 也是如此，[nexium-discord](https://github.com/Londopy/nexium-discord) 在其上构建 Discord 机器人；`std.process` 与运行中的程序交互，`std.thread` 提供 select、原子操作以及在调用返回前就结束的线程，`std.text` 提供字素簇和 Unicode 的大小写映射，`std.testing` 提供会缩小所找到反例的属性测试。接下来是 1.6：配得上发布构建的运行时。Nexium 还不是什么、每一点在哪里得到回答，见
 [路线图的一节](../../../ROADMAP.md#what-10-is-not-yet)：基准只有四个程序（[速度](#速度)），
 生态只有一位维护者和五个树外的项目（[上文](#实际使用)）。
 [`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md) 列出每个未修复的缺陷及其修法；
@@ -474,7 +478,7 @@ sh bootstrap/build.sh     # nx.c -> nx0；nx0 构建 self/nx.nx -> nx1；nx1 把
 | 工具 | [`self/fmt.nx`](../../../self/fmt.nx)、[`self/doc.nx`](../../../self/doc.nx)、[`self/tools.nx`](../../../self/tools.nx)、[`self/size.nx`](../../../self/size.nx)、[`self/manifest.nx`](../../../self/manifest.nx)、[`self/ship.nx`](../../../self/ship.nx)、[`self/lsp.nx`](../../../self/lsp.nx)、[`self/lsp_index.nx`](../../../self/lsp_index.nx)、[`self/fix.nx`](../../../self/fix.nx)、[`self/repl.nx`](../../../self/repl.nx) | 格式化器、文档生成器、各类报告、包管理、`ship`、语言服务器及其对已检查程序的索引、`nx fix`、REPL |
 
 每个示例、每个规范用例和每个编译失败用例都经由自举出的编译器运行，由本身就是
-Nexium 程序的测试框架（`nx run tests/run.nx`）驱动，在 CI 中于三个平台上运行，完全
+Nexium 程序的测试框架（`nx run tests/run.nx`）驱动，在 CI 中于五台机器（Windows、Linux、macOS 以及 ARM 上的 Linux 与 Windows）上运行，完全
 不用 Rust 工具链。用 Rust 写的第一个编译器推动了移植，并在 1.0 时被删除（决策 90）。
 
 ## 仓库中的语言
@@ -484,12 +488,12 @@ Nexium 程序的测试框架（`nx run tests/run.nx`）驱动，在 CI 中于三
 
 | 语言 | 行数 | 占比 | 是什么 |
 | --- | --- | --- | --- |
-| Nexium | 56,627 | 85.5% | 编译器及其工具（`self/` 下 33,500 行）、标准库（29 个模块）、测试框架与 fuzzer、示例、教程程序、nexium-gui、站点生成器、四个基准程序 |
-| C | 4,517 | 6.8% | 运行时 `nx_rt.h`、GUI 窗口层、随附的测试用 C、一个基准程序 |
-| Python | 1,906 | 2.9% | 发布脚本（说明、包清单、wheel 与 npm 包、std 文档）、Unicode 表的生成器、链接检查器、gdb 与 lldb 格式化器、基准运行器和四个基准程序 |
-| 编辑器文件 | 1,103 | 1.7% | tree-sitter 查询、Emacs Lisp、Vim script、Neovim 用的 Lua、一个 Pygments 词法分析器，以及 Zed 对扩展要求的 25 行 Rust |
-| JavaScript、TypeScript | 974 | 1.5% | VS Code 扩展、tree-sitter 语法，以及 playground 的 WASI 层 |
-| Inno Setup、shell、PowerShell | 855 | 1.3% | Windows 安装程序脚本、`install.sh`、`install.ps1`、Chocolatey 脚本、自举脚本 |
+| Nexium | 58,331 | 85.5% | 编译器及其工具（`self/` 下 34,300 行）、标准库（29 个模块）、测试框架与 fuzzer、示例、教程程序、nexium-gui、站点生成器、四个基准程序 |
+| C | 4,601 | 6.7% | 运行时（`nx_rt.h`，以及 WebAssembly 用的 `setjmp`）、GUI 窗口层、随附的测试用 C、四个 C 基准程序 |
+| Python | 1,925 | 2.8% | 发布脚本（说明、包清单、wheel 与 npm 包、std 文档）、Unicode 表的生成器、链接检查器、gdb 与 lldb 格式化器、基准运行器和四个基准程序 |
+| JavaScript、TypeScript | 1,189 | 1.7% | VS Code 扩展、tree-sitter 语法、playground 的 WASI 层，以及 `artifact wasm` 附带的加载器和它在浏览器中的检查 |
+| 编辑器文件 | 1,103 | 1.6% | tree-sitter 查询、Emacs Lisp、Vim script、Neovim 用的 Lua、一个 Pygments 词法分析器，以及 Zed 对扩展要求的 25 行 Rust |
+| Inno Setup、shell、PowerShell | 879 | 1.3% | Windows 安装程序脚本、`install.sh`、`install.ps1`、Chocolatey 脚本、自举脚本 |
 | Rust、Go、Ruby | 213 | 0.3% | Rust 与 Go 各四个基准程序，以及 Homebrew 公式 |
 
 编译器里没有 Rust：第一个编译器推动了移植并在 1.0 时被删除（决策 90）。剩下的 Rust
@@ -528,8 +532,8 @@ KNOWN_ISSUES.md 未修复的缺陷与限制；修复后移入 changelog
 ## 贡献
 
 见 [`CONTRIBUTING.md`](../../../CONTRIBUTING.md)。缺陷与提案走 GitHub issue；对语言的
-改动必须说明它服务于规范第 3 节中的哪一条硬性约束。Pull request 在合并前要通过三个
-平台的测试、格式化器、changelog 检查以及[贡献者许可协议](../../../CLA.md)；版权仍归
+改动必须说明它服务于规范第 3 节中的哪一条硬性约束。Pull request 在合并前要通过五台
+机器上的测试、格式化器、changelog 检查以及[贡献者许可协议](../../../CLA.md)；版权仍归
 你所有。
 
 ## 许可证

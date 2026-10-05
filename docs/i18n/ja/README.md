@@ -94,7 +94,8 @@ shipped 4 artifact file(s) for x86_64-windows:
 | 🔬 **バイナリパターン** | `<<version:4, ihl:4, len:16/big, rest:bytes>>` でパケットを照合・構築し、サイズは検査されます。 |
 | 🧵 **並列ループ、アリーナ、トレイトオブジェクト** | `for parallel`、`using arena { }`、`dyn Trait !allocates`。 |
 | 🔌 **バインディング不要の C** | `@cImport("header.h")` がヘッダを直接読み、`artifact link` が同梱の C をプログラムにコンパイルし、`if comptime @target().0 == "windows"` はプラットフォームが通る分岐だけをビルドします。 |
-| 📦 **一つのソースから出荷** | `nx ship` が C のヘッダとライブラリ、Python の wheel、安全なラッパー付きの Rust crate を生成します。 |
+| 📦 **一つのソースから出荷** | `nx ship` が C のヘッダとライブラリ、Python の wheel、安全なラッパー付きの Rust crate、npm パッケージ、そしてページ用の JavaScript ローダ付きの WebAssembly モジュールを生成します。 |
+| 🌍 **一つのソース、多くのプラットフォーム** | Windows、Linux、macOS、ARM 上の Linux と Windows、32 ビットの Windows と Linux、そして Raspberry Pi の 32 ビット OS。どれにも `nx` のダウンロードがあり、CI でテストされています。`--target wasm32-wasi` は Node.js で動くプログラムをビルドします（[プラットフォーム](../../platforms.md)、英語）。 |
 | 🐞 **デバッグと計測** | `nx debug` は gdb か lldb を `.nx` の行で止め、文字列、リスト、マップ、オプショナルを値として表示します。`bench "name" { }` ブロックはテストの隣に置けます。`--sanitize address,undefined` はどのビルドにも AddressSanitizer と UBSan をかけます。 |
 | 🧭 **ブラウザで学ぶ** | チュートリアル [Topo](https://londopy.github.io/nexium/topo/01-base-camp.html) は WebAssembly にコンパイルしたコンパイラでプログラムをページ上で実行し、ターミナルの `nx topo` と同じように演習を採点します。`nx repl` はプロンプトです。 |
 | 🪞 **自分自身で書かれている** | コンパイラは Nexium で、どの C コンパイラでも一つの C ファイルからビルドできます。大きなプログラムのデバッグビルドは変わったモジュールだけを再コンパイルします。 |
@@ -439,15 +440,19 @@ address,undefined`（C コンパイラのサニタイザ。`address` には gcc 
 
 ## 現状
 
-**1.4：補う必要のない標準ライブラリ。** 言語は
+**1.5：プラットフォーム。** 言語は
 [安定性ポリシー](../../stability.md)のもと追加によってのみ変わります。コンパイラは
 Nexium で書かれ、自分自身をビルドします。すべてのサンプル、仕様ケース、チュートリアルの
-プログラムが CI で 3 プラットフォーム上、サニタイザとファザーのもとで実行され、gdb と
-lldb も `nx debug` を通してそこで動かされます。メモリ安全性はビュー規則で、1.3 から
+プログラムが CI で Windows、Linux、macOS と ARM 上の Linux、Windows の上、サニタイザとファザーのもとで実行され、gdb と
+lldb も `nx debug` を通してそこで動かされます。同じプログラムは 32 ビットの x86、ARMv7、
+RISC-V 32（後の二つは QEMU のもと）向けにも、Node.js 上の WebAssembly モジュールとしても
+実行されます。`artifact wasm` はライブラリを JavaScript ローダ付きでブラウザに届け、どの
+リリースにも 32 ビットの Windows と Linux、そして Raspberry Pi の 32 ビット OS 向けの `nx`
+が入っています。メモリ安全性はビュー規則で、1.3 から
 エラーです。標準ライブラリは全部で 29 モジュールあり、コレクション（`std.sort`、
 `std.heap`、`std.set`、`std.deque`）、`std.hash`、`random.secure`、パス、環境変数と設定
 フォルダ、UUID、ログ、CSV、TOML、base64 などが入っています。`Map` はハッシュ攻撃に強く、
-キーを入れた順を保ちます。`std.time` はプラットフォームのデータベースからタイムゾーンを読みます。`std.http` はプラットフォーム自身の TLS、または nxtls のような TLS 層を通して HTTPS を話し、`std.websocket` も同じで、[nexium-discord](https://github.com/Londopy/nexium-discord) はその上に Discord ボットを作ります。`std.process` は実行中のプログラムとやり取りし、`std.thread` には select、アトミック操作、呼び出しより先に終わるスレッドがあり、`std.text` には書記素クラスタと Unicode の大文字小文字変換が、`std.testing` には見つけたものを縮小するプロパティテストがあります。次は 1.5、プラットフォームです。Nexium がまだ
+キーを入れた順を保ちます。`std.time` はプラットフォームのデータベースからタイムゾーンを読みます。`std.http` はプラットフォーム自身の TLS、または nxtls のような TLS 層を通して HTTPS を話し、`std.websocket` も同じで、[nexium-discord](https://github.com/Londopy/nexium-discord) はその上に Discord ボットを作ります。`std.process` は実行中のプログラムとやり取りし、`std.thread` には select、アトミック操作、呼び出しより先に終わるスレッドがあり、`std.text` には書記素クラスタと Unicode の大文字小文字変換が、`std.testing` には見つけたものを縮小するプロパティテストがあります。次は 1.6、リリースビルドにふさわしいランタイムです。Nexium がまだ
 何でないか、そしてそれぞれがどこで答えられるかは[ロードマップの一節](../../../ROADMAP.md#what-10-is-not-yet)に
 あります。ベンチマークは 4 つのプログラム（[速度](#速度)）だけで、エコシステムは
 メンテナ一人とツリー外のプロジェクト五つです（[上](#実際の利用)）。
@@ -489,7 +494,7 @@ sh bootstrap/build.sh     # nx.c -> nx0; nx0 が self/nx.nx をビルド -> nx1;
 
 すべてのサンプル、仕様ケース、コンパイル失敗ケースが、それ自体 Nexium プログラムである
 テストハーネス（`nx run tests/run.nx`）に駆動されて、ブートストラップされたコンパイラを
-通り、CI で 3 プラットフォーム上、Rust ツールチェーンをいっさい使わずに実行されます。
+通り、CI で 5 台のマシン（Windows、Linux、macOS と ARM 上の Linux、Windows）の上、Rust ツールチェーンをいっさい使わずに実行されます。
 Rust で書かれた最初のコンパイラは移植を牽引し、1.0 で削除されました（決定 90）。
 
 ## リポジトリ内の言語
@@ -499,12 +504,12 @@ Rust で書かれた最初のコンパイラは移植を牽引し、1.0 で削�
 
 | 言語 | 行数 | 割合 | 何か |
 | --- | --- | --- | --- |
-| Nexium | 56,627 | 85.5% | コンパイラとそのツール（`self/` 配下に 33,500 行）、標準ライブラリ（29 モジュール）、テストハーネスとファザー、サンプル、チュートリアルのプログラム、nexium-gui、サイト生成器、ベンチマーク 4 つ |
-| C | 4,517 | 6.8% | ランタイム `nx_rt.h`、GUI のウィンドウ層、同梱のテスト用 C、ベンチマーク一つ |
-| Python | 1,906 | 2.9% | リリース用スクリプト（ノート、パッケージのマニフェスト、wheel と npm パッケージ、std ドキュメント）、Unicode テーブルの生成器、リンクチェッカー、gdb と lldb のフォーマッタ、ベンチマークランナーとベンチマーク 4 つ |
-| エディタ用ファイル | 1,103 | 1.7% | tree-sitter クエリ、Emacs Lisp、Vim script、Neovim 用 Lua、Pygments のレキサ、そして Zed が拡張に要求する 25 行の Rust |
-| JavaScript、TypeScript | 974 | 1.5% | VS Code 拡張、tree-sitter 文法、プレイグラウンドの WASI 層 |
-| Inno Setup、シェル、PowerShell | 855 | 1.3% | Windows インストーラのスクリプト、`install.sh`、`install.ps1`、Chocolatey のスクリプト、ブートストラップのスクリプト |
+| Nexium | 58,331 | 85.5% | コンパイラとそのツール（`self/` 配下に 34,300 行）、標準ライブラリ（29 モジュール）、テストハーネスとファザー、サンプル、チュートリアルのプログラム、nexium-gui、サイト生成器、ベンチマーク 4 つ |
+| C | 4,601 | 6.7% | ランタイム（`nx_rt.h` と WebAssembly 用の `setjmp`）、GUI のウィンドウ層、同梱のテスト用 C、C のベンチマーク 4 つ |
+| Python | 1,925 | 2.8% | リリース用スクリプト（ノート、パッケージのマニフェスト、wheel と npm パッケージ、std ドキュメント）、Unicode テーブルの生成器、リンクチェッカー、gdb と lldb のフォーマッタ、ベンチマークランナーとベンチマーク 4 つ |
+| JavaScript、TypeScript | 1,189 | 1.7% | VS Code 拡張、tree-sitter 文法、プレイグラウンドの WASI 層、そして `artifact wasm` が同梱するローダとそのブラウザでの検査 |
+| エディタ用ファイル | 1,103 | 1.6% | tree-sitter クエリ、Emacs Lisp、Vim script、Neovim 用 Lua、Pygments のレキサ、そして Zed が拡張に要求する 25 行の Rust |
+| Inno Setup、シェル、PowerShell | 879 | 1.3% | Windows インストーラのスクリプト、`install.sh`、`install.ps1`、Chocolatey のスクリプト、ブートストラップのスクリプト |
 | Rust、Go、Ruby | 213 | 0.3% | Rust と Go にベンチマークが 4 つずつ、そして Homebrew の formula |
 
 コンパイラに Rust はありません。最初のコンパイラは移植を牽引して 1.0 で削除され
@@ -545,7 +550,7 @@ KNOWN_ISSUES.md 未修正のバグと制限。修正は changelog へ移る
 
 [`CONTRIBUTING.md`](../../../CONTRIBUTING.md) を参照してください。バグと提案は GitHub の
 issue で扱います。言語の変更は、仕様第 3 節のどの厳格な制約に資するかを示さなければ
-なりません。プルリクエストはマージ前に、3 プラットフォームでのテスト、整形器、changelog
+なりません。プルリクエストはマージ前に、5 台のマシンでのテスト、整形器、changelog
 の検査、[コントリビュータ・ライセンス契約](../../../CLA.md)を通ります。著作権はあなたの
 ものです。
 

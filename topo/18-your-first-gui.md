@@ -54,7 +54,7 @@ and the harness renders this counter's frame on every run.
 
 `Ui.open(title, w, h)` returns `null` on a platform with no backend; the
 program above falls back to a message. The Win32 backend is in `gui/`
-today; X11, Wayland and Cocoa are on the roadmap (1.5).
+today; X11, Wayland and Cocoa are on the roadmap (1.8, with nexium-gui grown up).
 
 ## What is there
 

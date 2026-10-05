@@ -96,7 +96,8 @@ anfitrión.
 | 🔬 **Patrones binarios** | `<<version:4, ihl:4, len:16/big, rest:bytes>>` reconoce y construye paquetes con tamaños verificados. |
 | 🧵 **Bucles paralelos, arenas, objetos de trait** | `for parallel`, `using arena { }`, `dyn Trait !allocates`. |
 | 🔌 **C sin bindings** | `@cImport("header.h")` lee la cabecera directamente; `artifact link` compila C incluido dentro del programa; `if comptime @target().0 == "windows"` construye solo la rama que toma la plataforma. |
-| 📦 **Distribuir desde una sola fuente** | `nx ship` produce cabeceras y bibliotecas de C, wheels de Python y crates de Rust con envoltorios seguros. |
+| 📦 **Distribuir desde una sola fuente** | `nx ship` produce cabeceras y bibliotecas de C, wheels de Python, crates de Rust con envoltorios seguros, paquetes npm y un módulo WebAssembly con un cargador JavaScript para la página. |
+| 🌍 **Una fuente, muchas plataformas** | Windows, Linux y macOS, Linux y Windows en ARM, Windows y Linux de 32 bits y el sistema de 32 bits de una Raspberry Pi, cada uno con una descarga de `nx` y probado en CI; `--target wasm32-wasi` construye un programa que se ejecuta en Node.js ([plataformas](../../platforms.md), en inglés). |
 | 🐞 **Depurarlo, medirlo** | `nx debug` detiene gdb o lldb en líneas de `.nx` y muestra cadenas, listas, mapas y opcionales como valores; los bloques `bench "name" { }` están junto a las pruebas; `--sanitize address,undefined` pone AddressSanitizer y UBSan debajo de cualquier compilación. |
 | 🧭 **Aprenderlo en el navegador** | [El Topo](https://londopy.github.io/nexium/topo/01-base-camp.html), el tutorial, ejecuta sus programas en la página, con el compilador compilado a WebAssembly, y califica sus ejercicios como lo hace `nx topo` en la terminal. `nx repl` es un prompt. |
 | 🪞 **Escrito en sí mismo** | El compilador es Nexium, construido desde un solo archivo C por cualquier compilador de C; la compilación de depuración de un programa grande recompila solo los módulos que cambiaron. |
@@ -452,13 +453,18 @@ con C `-I`, `--link`, `--link-path`, `--c-source`.
 
 ## Estado
 
-**1.4: una biblioteca estándar que ya no hay que completar.** El lenguaje
+**1.5: plataformas.** El lenguaje
 solo cambia por adición, bajo la [política de estabilidad](../../stability.md);
 el compilador está escrito en Nexium y se construye a sí mismo; cada ejemplo,
 cada caso de la especificación y cada programa del tutorial se ejecuta en CI
-en tres plataformas, bajo los sanitizadores y el fuzzer, y gdb y lldb también
-se manejan allí con `nx debug`. La seguridad de memoria son las reglas de
-vistas, errores desde 1.3. La biblioteca estándar tiene veintinueve módulos,
+en Windows, Linux y macOS y en Linux y Windows en ARM, bajo los
+sanitizadores y el fuzzer, y gdb y lldb también se manejan allí con
+`nx debug`. Los mismos programas se ejecutan compilados para x86 de 32 bits,
+ARMv7 y RISC-V 32 (los dos últimos bajo QEMU) y como módulos WebAssembly en
+Node.js; `artifact wasm` lleva una biblioteca al navegador con un cargador
+JavaScript, y cada versión incluye `nx` para Windows y Linux de 32 bits y
+para el sistema de 32 bits de una Raspberry Pi. La seguridad de memoria son
+las reglas de vistas, errores desde 1.3. La biblioteca estándar tiene veintinueve módulos,
 entre ellos las colecciones (`std.sort`, `std.heap`, `std.set`, `std.deque`),
 `std.hash`, `random.secure`, rutas, el entorno y las carpetas de
 configuración, UUID, registros, CSV, TOML y base64; `Map` está protegido
@@ -471,7 +477,7 @@ o de una capa TLS como nxtls, como `std.websocket`, y
 tiene select, operaciones atómicas e hilos que terminan antes que la llamada,
 `std.text` los grupos de grafemas y las mayúsculas y minúsculas de Unicode, y
 `std.testing` pruebas de propiedades que reducen lo que encuentran. Después
-viene 1.5, las plataformas. Lo que Nexium todavía no es, y dónde
+viene 1.6, el runtime que merecen las compilaciones de release. Lo que Nexium todavía no es, y dónde
 se responde cada punto, está en [una sección de la hoja de
 ruta](../../../ROADMAP.md#what-10-is-not-yet): las pruebas de rendimiento son cuatro
 programas ([Velocidad](#velocidad)), y el ecosistema es un solo mantenedor y
@@ -520,8 +526,9 @@ sh bootstrap/build.sh     # nx.c -> nx0; nx0 construye self/nx.nx -> nx1; nx1 se
 
 Cada ejemplo, cada caso de la especificación y cada caso de compile-fail pasa
 por el compilador arrancado, dirigido por un arnés de pruebas que es a su vez
-un programa Nexium (`nx run tests/run.nx`), en CI en tres plataformas sin
-ninguna cadena de herramientas de Rust. El primer compilador, en Rust,
+un programa Nexium (`nx run tests/run.nx`), en CI en cinco máquinas
+(Windows, Linux y macOS, y Linux y Windows en ARM) sin ninguna cadena de
+herramientas de Rust. El primer compilador, en Rust,
 impulsó el port y se eliminó en 1.0 (decisión 90).
 
 ## Lenguajes del repositorio
@@ -533,12 +540,12 @@ los archivos de bloqueo):
 
 | lenguaje | líneas | proporción | qué es |
 | --- | --- | --- | --- |
-| Nexium | 56 627 | 85,5 % | el compilador y sus herramientas (33 500 líneas bajo `self/`), la biblioteca estándar (29 módulos), el arnés de pruebas y el fuzzer, los ejemplos, los programas del tutorial, nexium-gui, el generador del sitio, cuatro benchmarks |
-| C | 4 517 | 6,8 % | el runtime `nx_rt.h`, la capa de ventana de la GUI, C de prueba incluido, un benchmark |
-| Python | 1 906 | 2,9 % | los scripts de release (notas, manifiestos de paquetes, wheels y paquetes npm, la documentación de std), el generador de las tablas Unicode, el comprobador de enlaces, los formateadores de gdb y lldb, el ejecutor de benchmarks y cuatro benchmarks |
-| archivos de editores | 1 103 | 1,7 % | consultas de tree-sitter, Emacs Lisp, Vim script, Lua para Neovim, un lexer de Pygments, y las 25 líneas de Rust que Zed exige a una extensión |
-| JavaScript, TypeScript | 974 | 1,5 % | la extensión de VS Code, la gramática de tree-sitter y la capa WASI del playground |
-| Inno Setup, shell, PowerShell | 855 | 1,3 % | el script del instalador de Windows, `install.sh`, `install.ps1`, los scripts de Chocolatey, los scripts de bootstrap |
+| Nexium | 58 331 | 85,5 % | el compilador y sus herramientas (34 300 líneas bajo `self/`), la biblioteca estándar (29 módulos), el arnés de pruebas y el fuzzer, los ejemplos, los programas del tutorial, nexium-gui, el generador del sitio, cuatro benchmarks |
+| C | 4 601 | 6,7 % | el runtime (`nx_rt.h`, y `setjmp` para WebAssembly), la capa de ventana de la GUI, C de prueba incluido, los cuatro benchmarks en C |
+| Python | 1 925 | 2,8 % | los scripts de release (notas, manifiestos de paquetes, wheels y paquetes npm, la documentación de std), el generador de las tablas Unicode, el comprobador de enlaces, los formateadores de gdb y lldb, el ejecutor de benchmarks y cuatro benchmarks |
+| JavaScript, TypeScript | 1 189 | 1,7 % | la extensión de VS Code, la gramática de tree-sitter, la capa WASI del playground y el cargador que acompaña a `artifact wasm`, con su prueba en un navegador |
+| archivos de editores | 1 103 | 1,6 % | consultas de tree-sitter, Emacs Lisp, Vim script, Lua para Neovim, un lexer de Pygments, y las 25 líneas de Rust que Zed exige a una extensión |
+| Inno Setup, shell, PowerShell | 879 | 1,3 % | el script del instalador de Windows, `install.sh`, `install.ps1`, los scripts de Chocolatey, los scripts de bootstrap |
 | Rust, Go, Ruby | 213 | 0,3 % | cuatro benchmarks en Rust y cuatro en Go, y la fórmula de Homebrew |
 
 No hay Rust en el compilador: el primer compilador impulsó el port y se
@@ -581,7 +588,7 @@ KNOWN_ISSUES.md errores abiertos y limitaciones; los arreglos pasan al changelog
 Consulta [`CONTRIBUTING.md`](../../../CONTRIBUTING.md). Los errores y las
 propuestas pasan por los issues de GitHub; un cambio en el lenguaje debe
 nombrar la restricción dura de la sección 3 de la especificación a la que
-sirve. Los pull requests pasan las pruebas en tres plataformas, los
+sirve. Los pull requests pasan las pruebas en cinco máquinas, los
 formateadores, una comprobación del changelog y el [Acuerdo de Licencia de
 Contribuidor](../../../CLA.md) antes de fusionarse; conservas tus derechos de
 autor.

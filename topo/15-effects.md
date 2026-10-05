@@ -32,21 +32,29 @@ $ nx effects topo/code/effects.nx
 inferred effects (7 functions)
 
 fn mean(xs: []f64) -> f64  (pure)
-fn dot(a: []f64, b: []f64) -> f64  panics
+    at topo/code/effects.nx:3:1
+fn dot(a: []f64, b: []f64) -> f64  (pure)
+    at topo/code/effects.nx:11:1
 fn describe(xs: []f64) -> String  allocates
+    at topo/code/effects.nx:18:1
 fn apply(xs: []mut f64, f: fn(f64) -> f64 !allocates !panics) -> void  refcounts blocks shared_mutable nondeterministic ffi unbounded_stack
+    at topo/code/effects.nx:23:1
 fn halve(x: f64) -> f64  (pure)
+    at topo/code/effects.nx:27:1
 fn hash(data: []u8) -> u32  (pure)
-fn main() -> void  allocates refcounts blocks shared_mutable nondeterministic panics ffi unbounded_stack
+    at topo/code/effects.nx:30:1
+fn main() -> void  allocates refcounts blocks shared_mutable nondeterministic ffi unbounded_stack
+    at topo/code/effects.nx:39:1
 ```
 
 A function's effects are its own, plus the effects of everything it calls,
 computed as a fixpoint over the whole program. `describe` allocates because
-`format` does. `main` has everything because `apply` does, and `apply` does
-because it calls through a function value: the value's type promises
-`!allocates !panics` and nothing else, so the call is assumed to do
-anything else it could. A call into foreign code is assumed to do
-everything.
+`format` does. `main` has everything but `panics`: `describe` brings
+`allocates`, and `apply` the rest, because it calls through a function
+value: the value's type promises `!allocates !panics` and nothing else, so
+the call is assumed to do anything else it could. Nothing in the program
+can panic (the section on proofs below says why), so neither can `main`. A
+call into foreign code is assumed to do everything.
 
 ## Promises
 
@@ -84,10 +92,12 @@ The `panics` effect is *discharged by proof* where the compiler can see
 that an operation cannot fail: indexing with the loop variable of a `for`
 over the same slice, an index the compiler knows is in range, arithmetic
 whose operands have known ranges, a division whose divisor was compared
-against zero on the way in. `dot` still carries `panics`: it indexes `b[i]`
-with an index drawn from `a`, and the guard `i < b.len` is a fact the 1.0
-compiler does not yet carry into the expression (the roadmap's 1.1 lists it).
-That is what the effect is for. It told you.
+against zero on the way in, an index a comparison with the length guards.
+`dot` indexes `b[i]` with an index drawn from `a`, which proves nothing
+about `b`; the guard `i < b.len` around it does, so `dot` is pure. Delete
+the guard and `dot` carries `panics`, and
+`nx explain topo/code/effects.nx dot panics` answers "index may be out of
+bounds" at `b[i]`. That is what the effect is for: it tells you.
 
 ## Why this matters
 

@@ -26,25 +26,24 @@ that the rest of us were keeping from you.
 
 ## What is coming
 
-The [roadmap](../docs/roadmap.html) is public and specific. The next few
-themes:
+The [roadmap](../docs/roadmap.html) is public and specific. Since 1.0 the
+language has grown the ergonomics its compiler wanted while being written
+in itself (1.1), memory safety without a garbage collector, the view rules
+(1.2), a toolchain grown up: incremental builds, a semantic language
+server, `nx bench`, sanitizers (1.3), a standard library people stop
+supplementing (1.4), and its platforms: WebAssembly, 32-bit and ARM (1.5).
+The next themes:
 
-- **1.1**, the ergonomics the compiler wanted while it was being written in
-  itself: `a?.b`, tuple destructuring, `derive(Clone)`, iterators, slice
-  patterns, more proofs so fewer functions carry `panics`.
-- **1.2**, memory safety without a garbage collector: the view rules, so that
-  a slice or pointer cannot outlive its storage and `unsafe` marks
-  everything the compiler cannot prove, without a borrow checker's
-  annotations. Chapter 8 said where the 1.0 compiler stops; 1.2 is where it
-  stops stopping.
-- **1.3**, the toolchain grown up: incremental builds, a semantic language
-  server, `nx bench`, sanitizers.
-- **1.4**, the standard library people stop supplementing; **1.5**,
-  platforms (WebAssembly, more GUI backends); **1.6**, the runtime that
-  release builds deserve; **1.7**, the seam both ways: what chapter 20
-  shipped to Python and Rust grows to NumPy, exceptions and handles, error
-  enums and `no_std`, more languages out, and Python and Rust called from
-  Nexium.
+- **1.6**, the runtime that release builds deserve: fewer reference-count
+  updates and bounds checks, faster maps, strings and parallel loops, each
+  change measured against C on the [numbers page](../docs/numbers.html).
+- **1.7**, the seam both ways: what chapter 20 shipped to Python and Rust
+  grows to NumPy, exceptions and handles, error enums and `no_std`, more
+  languages out, and Python and Rust called from Nexium.
+- **1.8**, nexium-gui grown up on Linux and macOS as well, a web front end
+  made in Nexium, and the apps built on them.
+- **2.0**, the first breaking changes since 1.0, announced by a release
+  that deprecates them two minors ahead.
 
 Each release has a name from the mountain the project has been climbing,
 and the [names document](../docs/release-names.html) explains the scheme;
