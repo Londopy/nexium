@@ -1,0 +1,17 @@
+// SPEC 6: the target of a compound assignment is evaluated once, as a place
+// read and then written: a call in it runs once, compiled and interpreted.
+fn slot(xs: *mut List(i64), i: usize, calls: *mut i64) -> *mut i64 {
+    calls.* += 1
+    return &mut xs[i]
+}
+
+fn main() {
+    var xs = List(i64).new()
+    xs.append(10)
+    xs.append(20)
+    var calls: i64 = 0
+    slot(&mut xs, 1, &mut calls).* += 5
+    slot(&mut xs, 0, &mut calls).* *= 3
+    slot(&mut xs, 1, &mut calls).* -%= 1
+    println("{} {} calls {}", .{xs[0], xs[1], calls})
+}

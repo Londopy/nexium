@@ -234,8 +234,12 @@ brings it.
   `bytes`, `len`, plus `[]u8` methods.
 - `Map(K, V)` (keys: integers, bool, char, `[]u8`, `String`; iterated in the
   order the keys were first put, however they hash): `new`, `put`,
-  `get`, `contains`, `remove`, `clear`, `clone`, `keys`, `values`, `len`,
-  `m[key]`; `for k in m` iterates keys.
+  `get`, `get_or_put`, `contains`, `remove`, `clear`, `clone`, `keys`,
+  `values`, `len`, `m[key]`; `for k in m` iterates keys.
+  `m.get_or_put(key, default)` returns a `*mut V` to the value of `key`,
+  putting `default` in first when the key is new, in one lookup:
+  `counts.get_or_put(word, 0).* += 1`. The pointer is a view into the map
+  (rule V3: stale once the map changes).
 - Slices: `len`, `fill`, `reverse`, `sort`, `swap(i, j)`, `contains`, `index_of`,
   `copy_from`, `to_owned`, `is_empty`; `[]u8` also `starts_with`,
   `ends_with`, `find`, `trim`, `split`, `lines`, `to_string`, `parse_int(T)`,

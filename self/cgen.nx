@@ -3685,6 +3685,31 @@ impl Gen {
             self.line("}")
             return String.from("0")
         }
+        if name == "MapGetOrPut" {
+            let kv = self.expr_owned(args[1])
+            let kt = self.bind_tmp(kv[..], tys[0])
+            let vv = self.expr_owned(args[2])
+            let vt = self.bind_tmp(vv[..], tys[1])
+            let m = self.place(args[0])
+            let pn = self.cty(ety)
+            let found = self.tmp()
+            let p = self.tmp()
+            self.line(format("bool {}; {} {} = ({})nx_map_get_or_put(c, &({}), &{}, &{}, &{});", .{found, pn, p, pn, m, kt, vt, found})[..])
+            // the key was there: the entry kept its own, so the two passed in go
+            if self.needs_drop(tys[0]) or self.needs_drop(tys[1]) {
+                self.line(format("if ({}) {{", .{found})[..])
+                if self.needs_drop(tys[0]) {
+                    let d = self.drop_fn(tys[0])
+                    self.line(format("  {}(c, &{});", .{d, kt})[..])
+                }
+                if self.needs_drop(tys[1]) {
+                    let d = self.drop_fn(tys[1])
+                    self.line(format("  {}(c, &{});", .{d, vt})[..])
+                }
+                self.line("}")
+            }
+            return p
+        }
         if name == "MapGet" {
             let vn = self.cty(tys[1])
             let m = self.simple(args[0])

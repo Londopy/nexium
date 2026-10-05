@@ -1103,3 +1103,23 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     boundary are refused until something needs them. Zig builds it on every
     platform, macOS too, whose own compiler (which links its native
     libraries) has no WebAssembly.
+
+125. **`m.get_or_put(key, default)` is a map's one-lookup update: a pointer
+    to the value, a view into the map.** Counting with `get` and then `put`
+    hashes the key twice, and when the key is there, `put` swaps the
+    entry's key for the one passed and drops the old. `get_or_put` hashes
+    once and returns `*mut V`, the value of `key`, put in with `default`
+    when the key is new; when it was there, the entry keeps its own key and
+    value and the two passed in are dropped. A pointer rather than a
+    callback, because the language already checks one: the pointer is a
+    view into the map's storage, which the next put may move, so rule V3
+    reports a use after the map changes, as it does for `&mut xs[i]` into a
+    list, and the put it makes itself comes before the view. For
+    `m.get_or_put(word, 0).* += 1` to look the key up once and move `word`
+    once, a compound assignment now checks and evaluates its target once,
+    as a place read and then written (the checker typed it twice, and the
+    interpreter ran its calls twice). Rust's `entry(k).or_insert(d)` and
+    Python's `setdefault` are the same operation; the name keeps the two
+    calls it replaces. The words benchmark, written this way, runs in two
+    thirds of the time on Windows, where the allocator made each swapped key
+    dear, and in the same time on Linux with gcc.

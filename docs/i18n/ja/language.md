@@ -140,7 +140,7 @@ let written = try <<4:4, 5:4, 0:8, 1500:16/big, "ab">> into buf[..]
 - `expect(cond)`、`expect_eq(a, b)`、`panic(msg)`。
 - `List(T)`：`new`、`with_capacity`、`from`、`append`、`pop`、`clear`、`clone`、`last`、`first`、`insert`、`remove`、`swap_remove`、`extend`、`reserve`、`items`、`is_empty`、`len`、およびスライスのメソッド。
 - `String`：`new`、`from`、`with_capacity`、`append`、`append_char`（コードポイント一つを UTF-8 で符号化）、`push_byte`（生のバイト一つ）、`clone`、`clear`、`pop`、`bytes`、`len`、および `[]u8` のメソッド。
-- `Map(K, V)`（キー：整数、bool、char、`[]u8`、`String`。ハッシュ値に関係なく、キーが最初に入れられた順に走査されます）：`new`、`put`、`get`、`contains`、`remove`、`clear`、`clone`、`keys`、`values`、`len`、`m[key]`。`for k in m` はキーを走査します。
+- `Map(K, V)`（キー：整数、bool、char、`[]u8`、`String`。ハッシュ値に関係なく、キーが最初に入れられた順に走査されます）：`new`、`put`、`get`、`get_or_put`、`contains`、`remove`、`clear`、`clone`、`keys`、`values`、`len`、`m[key]`。`for k in m` はキーを走査します。`m.get_or_put(key, default)` は `key` の値への `*mut V` を返し、キーが新しいときは先に `default` を入れます。探索は一度だけです：`counts.get_or_put(word, 0).* += 1`。このポインタはマップへのビューです（規則 V3：マップが変わると無効になります）。
 - スライス：`len`、`fill`、`reverse`、`sort`、`swap(i, j)`、`contains`、`index_of`、`copy_from`、`to_owned`、`is_empty`。`[]u8` はさらに `starts_with`、`ends_with`、`find`、`trim`、`split`、`lines`、`to_string`、`parse_int(T)`、`parse_float`、`eq_ignore_case`。
 - 整数：`abs`、`min`、`max`、`checked_add/sub/mul`（`?T` を返す）、`to_string`。浮動小数点数：`abs`、`sqrt`、`floor`、`ceil`、`round`、`min`、`max`、`pow`、`to_string`。文字：`is_digit`、`is_alpha`、`is_space`、`to_lower`、`to_upper`、`to_digit`。
 - `math`：`PI E TAU INF NAN`、`sqrt abs floor ceil round sin cos tan exp log log2 min max pow atan2 clamp`。

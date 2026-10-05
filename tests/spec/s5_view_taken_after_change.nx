@@ -1,0 +1,16 @@
+// SPEC 5.6: a view bound with `let` is taken where its value is made: a
+// change its own initializer makes before viewing the container (a block
+// that appends and then slices, `m.get_or_put(k, d)`) comes before the view.
+fn main() {
+    var xs = List(i64).new()
+    xs.append(1)
+    let v = {
+        xs.append(2)
+        xs[..]
+    }
+    println("{}", .{v.len})
+    var m = Map([]u8, i64).new()
+    let p = m.get_or_put("a", 41)
+    p.* += 1
+    println("{}", .{m["a"] orelse 0})
+}

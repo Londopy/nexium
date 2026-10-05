@@ -1,0 +1,8 @@
+// the pointer get_or_put returns is a view into the map: stale after a put
+// EXPECT: `p` is a view into `m`, which changed on line 6 after the view was taken; its storage may have moved (rule V3)
+fn main() {
+    var m = Map(String, i64).new()
+    let p = m.get_or_put(String.from("a"), 0)
+    m.put(String.from("b"), 1)
+    p.* += 1
+}

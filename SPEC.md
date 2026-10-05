@@ -258,7 +258,8 @@ view rules replace them.
   with `s` a local of an inner block, or a temporary of that statement.
 - **V3.** A view into a `List`, `String` or `Map` is stale once the
   container grows, is cleared or is reassigned (`append`, `insert`, `put`,
-  `extend`, `reserve`, `clear`, `=`). A use of the view after the change is
+  `get_or_put`, `extend`, `reserve`, `clear`, `=`); the pointer
+  `m.get_or_put(k, d)` returns is a view into `m`, taken after its own put. A use of the view after the change is
   reported, and so is a change inside a loop of a container a view taken
   before the loop reads in it.
 - **V4.** A view into a value is stale once the value moves away; a use
@@ -311,6 +312,8 @@ unit enums, and types that `derive(Eq)` / `derive(Ord)`. Logical `and`,
 `or`, `!`, short-circuiting. `x |> f(a)` is `f(x, a)`.
 
 Compound assignment: `= += -= *= /= %= &= |= ^= <<= >>= +%= -%= *%=`.
+The target of `x op= v` is evaluated once, as a place that is read and then
+written: `slot(&mut xs, i).* += 1` calls `slot` once.
 
 ### 6.2 Control flow
 

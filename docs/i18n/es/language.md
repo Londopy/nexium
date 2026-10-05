@@ -247,8 +247,12 @@ traen, hasta la primitiva que lo origina.
   `clear`, `pop`, `bytes`, `len`, más los métodos de `[]u8`.
 - `Map(K, V)` (claves: enteros, bool, char, `[]u8`, `String`; se recorre en el
   orden en que cada clave se insertó por primera vez, sea cual sea su hash):
-  `new`, `put`, `get`, `contains`, `remove`, `clear`, `clone`, `keys`,
-  `values`, `len`, `m[key]`; `for k in m` recorre las claves.
+  `new`, `put`, `get`, `get_or_put`, `contains`, `remove`, `clear`, `clone`,
+  `keys`, `values`, `len`, `m[key]`; `for k in m` recorre las claves.
+  `m.get_or_put(key, default)` devuelve un `*mut V` al valor de `key`, e
+  inserta antes `default` si la clave es nueva, con una sola búsqueda:
+  `counts.get_or_put(word, 0).* += 1`. El puntero es una vista del mapa
+  (regla V3: caduca en cuanto el mapa cambia).
 - Slices: `len`, `fill`, `reverse`, `sort`, `swap(i, j)`, `contains`,
   `index_of`, `copy_from`, `to_owned`, `is_empty`; `[]u8` además
   `starts_with`, `ends_with`, `find`, `trim`, `split`, `lines`, `to_string`,

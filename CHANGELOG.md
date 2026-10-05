@@ -10,6 +10,17 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ## [Unreleased]
 
+### Added
+
+- `m.get_or_put(key, default)`: the value of `key` as a `*mut V`, put in
+  with `default` when the key is new, in one lookup (decision 125), so
+  `counts.get_or_put(word, 0).* += 1` counts a word. When the key is there
+  the entry keeps its own key and value, and the two passed in are
+  dropped. The pointer is a view into the map, stale once the map changes
+  (rule V3). The `words` benchmark, written this way, takes two thirds of
+  the time it took with `get` and then `put` on Windows (2.0 times C's,
+  from 3.0), and the same on Linux with gcc.
+
 ### Changed
 
 - Building a short string costs less. An integer that fits in 64 bits is
@@ -17,9 +28,22 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   digit was a 128-bit division (a library call); and a string's first
   block holds 16 bytes, where it held 4 and the next append grew it at
   once, so `format("w{}", .{k})` allocates once instead of twice. The
-  `words` benchmark (a `format` and two map lookups per word) runs in 1.39
+  `words` benchmark (a `format` and a count in a map per word) runs in 1.39
   seconds where it took 2.26 on Windows with zig cc, and in 0.73 where it
   took 0.91 on Linux with gcc; C takes 0.48 on both.
+
+### Fixed
+
+- A compound assignment's target was checked twice, and the interpreter
+  evaluated it twice: `slot(&mut xs, i).* += 1` called `slot` twice under
+  `nx play` and at compile time (compiled code called it once), and a
+  target that moves an owned value in, `m.get_or_put(word, 0).* += 1`,
+  failed with "use of `word` after it was moved". The target is evaluated
+  once, as a place read and then written (SPEC 6.1).
+- A view bound with `let` counted as taken at the `let` rather than where
+  its value was made, so a change its own initializer made first, as in
+  `let v = { xs.append(2); xs[..] }`, was reported as made after the view
+  (rule V3).
 
 ## [1.5.0] - 2026-10-04
 

@@ -1159,7 +1159,7 @@ impl Checker {
             self.fail_here(at, format("`{}` mutates its receiver, but {} is immutable", .{method, what})[..])
         }
         // the methods that may move or release the storage a view points into (V3)
-        if method == "append" or method == "append_char" or method == "push_byte" or method == "extend" or method == "insert" or method == "put" or method == "reserve" or method == "clear" {
+        if method == "append" or method == "append_char" or method == "push_byte" or method == "extend" or method == "insert" or method == "put" or method == "get_or_put" or method == "reserve" or method == "clear" {
             self.note_change_f(self.place_root(recv), at, self.first_field(recv))
         }
     }
@@ -1360,6 +1360,30 @@ impl Checker {
                 self.check_store(recv, vv, start)
                 self.add_effect(EFF_ALLOCATES, start, "inserting into a Map may grow it")
                 let b = self.bnode("MapPut", recv, v, kt, start, end)
+                self.tir.nodes[b].kids2.append(vt)
+                self.tir.nodes[b].kids.append(kk)
+                self.tir.nodes[b].kids.append(vv)
+                return b
+            }
+            // a pointer to the value of `key`, put in with `default` when the
+            // key is new: one lookup where `get` and then `put` take two. The
+            // pointer views the map's storage, which a later change may move
+            // (rule V3, check_views.nx).
+            if method == "get_or_put" {
+                if !self.args_n(args, 2, "get_or_put", start) { return self.error_expr(start, end) }
+                if self.tys.kind(self.tys.shallow(vt)) == TK.Void {
+                    self.fail_here(start, "`get_or_put` returns a pointer to the value, and this map's values are `void`; use `put`")
+                    return self.error_expr(start, end)
+                }
+                self.require_mut_recv(recv, "get_or_put", start)
+                var kk = self.arg(args[0], kt, "key")
+                kk = self.take_ownership(kk)
+                var vv = self.arg(args[1], vt, "default")
+                vv = self.take_ownership(vv)
+                self.check_store(recv, kk, start)
+                self.check_store(recv, vv, start)
+                self.add_effect(EFF_ALLOCATES, start, "inserting into a Map may grow it")
+                let b = self.bnode("MapGetOrPut", recv, self.tys.wrap(TK.Ptr, vt, true), kt, start, end)
                 self.tir.nodes[b].kids2.append(vt)
                 self.tir.nodes[b].kids.append(kk)
                 self.tir.nodes[b].kids.append(vv)

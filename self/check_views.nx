@@ -178,6 +178,12 @@ impl Checker {
             }
             return out
         }
+        if k == TKind.Builtin and self.tir.nodes[e].name == "MapGetOrPut" {
+            // into the map's buffer, as `&mut xs[i]` is into a list's: the key
+            // and the default are moved in, so nothing points into them
+            for o in self.storage_of(kids[0], at) { check.add_origin_f(&mut out, o.local, o.taken_at, o.local < ORIGIN_TEMP, o.field) }
+            return out
+        }
         if k == TKind.Call or k == TKind.CallPtr or k == TKind.DynCall or k == TKind.Builtin {
             // the result may point into any argument: a view's storage, a place, a temporary
             var any = false
@@ -547,7 +553,11 @@ impl Checker {
                 self.fail_here(at, format("`{}` keeps a view into a temporary that is released at the end of this statement (rule V2); bind the temporary with `let` first, or keep an owned value (a `String`, a `List`) instead of the view", .{self.ctx().locals[l].name})[..])
                 continue
             }
-            check.add_origin_f(&mut kept, o.local, at, o.heap, o.field)
+            // taken where its value was made, when that is later than the
+            // binding: `m.get_or_put(k, d)` changes `m` and then views it, and
+            // its own change is not one made after the view
+            let taken = if o.taken_at != NONE and o.taken_at > at { o.taken_at } else { at }
+            check.add_origin_f(&mut kept, o.local, taken, o.heap, o.field)
         }
         self.ctx().locals[l].origins = kept
     }

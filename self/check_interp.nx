@@ -1606,8 +1606,19 @@ impl Checker {
                     else if c == '=' and !seen_eq { seen_eq = true }
                     else { sym.push_byte(c) }
                 }
-                let cur = self.it_eval(target) orelse return FL_FAIL
+                // the target's place, found once, read and then written: a
+                // call in it (`slot(&mut xs, i).* += 1`) runs once, as compiled
+                var fi = NONE
+                var l = NONE
+                var path = List(usize).new()
+                if !self.it_place_path(target, &mut fi, &mut l, &mut path) { return FL_FAIL }
+                let cur = self.it_read_place(fi, l, &path) orelse return FL_FAIL
                 v = self.it_binop(sym[..], mode[..], cur, v, self.tir.nodes[target].ty, self.tir.nodes[s].start) orelse return FL_FAIL
+                // an f32 result rounds to f32 precision, as each compiled
+                // operation's does (`it_eval` rounds an expression's)
+                if v.kind == VK_FLOAT and !v.flag and self.it_is_f32(self.tir.nodes[target].ty) { v = cv_f32(v.fval) }
+                if !self.it_assign_place(fi, l, &path, v) { return FL_FAIL }
+                return FL_NEXT
             } else if self.tir.nodes[target].k == TKind.Local {
                 v = self.it_bind_slice(kids[1], v)
             }
@@ -1804,7 +1815,8 @@ impl Checker {
                 cur = &mut self.it_heap[hi]
             }
             let k = cur.kind
-            if k == VK_ARRAY or k == VK_LIST or k == VK_STRUCT or k == VK_TUPLE or k == VK_ENUM {
+            // a map's items: a key, its value, the next key (`get_or_put`'s pointer)
+            if k == VK_ARRAY or k == VK_LIST or k == VK_STRUCT or k == VK_TUPLE or k == VK_ENUM or k == VK_MAP {
                 if step >= cur.items.len { return &mut self.cv_bad }
                 cur = &mut cur.items[step]
             } else if (k == VK_SOME or k == VK_OK) and step == 0 {
@@ -1826,7 +1838,7 @@ impl Checker {
                 cur = &self.it_heap[cur.ival as usize]
             }
             let k = cur.kind
-            if k == VK_ARRAY or k == VK_LIST or k == VK_STRUCT or k == VK_TUPLE or k == VK_ENUM {
+            if k == VK_ARRAY or k == VK_LIST or k == VK_STRUCT or k == VK_TUPLE or k == VK_ENUM or k == VK_MAP {
                 if step >= cur.items.len { return null }
                 cur = &cur.items[step]
             } else if (k == VK_SOME or k == VK_OK) and step == 0 {
@@ -1846,6 +1858,20 @@ impl Checker {
         var l = NONE
         var path = List(usize).new()
         if !self.it_place_path(target, &mut fi, &mut l, &mut path) { return false }
+        return self.it_assign_place(fi, l, &path, v)
+    }
+
+    /// The value at a place found already (`it_place_path`).
+    fn it_read_place(self: *mut Self, fi: usize, l: usize, path: *List(usize)) -> ?CV {
+        if fi >= self.frames.len or l >= self.frames[fi].vals.len { return null }
+        let root = self.frames[fi].vals[l].clone()
+        if root.kind == VK_NONE { return null }
+        if path.len == 0 { return root }
+        return self.it_read_path(&root, path[..])
+    }
+
+    /// Store `v` at a place found already (`it_place_path`).
+    fn it_assign_place(self: *mut Self, fi: usize, l: usize, path: *List(usize), own v: CV) -> bool {
         if path.len == 0 {
             if fi >= self.frames.len { return false }
             while self.frames[fi].vals.len <= l { self.frames[fi].vals.append(cv(VK_NONE)) }
@@ -1864,7 +1890,8 @@ impl Checker {
             parent.text[last] = b as u8
             return true
         }
-        if pk == VK_ARRAY or pk == VK_LIST or pk == VK_STRUCT or pk == VK_TUPLE or pk == VK_ENUM {
+        // a map's value through `get_or_put`'s pointer: its items alternate key, value
+        if pk == VK_ARRAY or pk == VK_LIST or pk == VK_STRUCT or pk == VK_TUPLE or pk == VK_ENUM or pk == VK_MAP {
             if last >= parent.items.len { return false }
             parent.items[last] = v
             return true
@@ -2745,6 +2772,30 @@ impl Checker {
             let cur = self.it_walk(fi, l, &path)
             if cur.kind == VK_NONE { return null }
             return self.it_mutating_builtin(name[..], cur, &vs, at)
+        }
+        // a pointer to the value of the key, which goes in with the default
+        // when it is new: the map's items are keys and values in turn
+        if name == "MapGetOrPut" {
+            var fi = NONE
+            var l = NONE
+            var path = List(usize).new()
+            if !self.it_recv_place(args[0], &mut fi, &mut l, &mut path) { return null }
+            let cur = self.it_walk(fi, l, &path)
+            if cur.kind == VK_UNDEFINED { cur.* = cv_seq(VK_MAP, List(CV).new()) }
+            if cur.kind != VK_MAP { return null }
+            var at_value = NONE
+            var i: usize = 0
+            while i + 1 < cur.items.len {
+                if cv_key_eq(&cur.items[i], &vs[1]) { at_value = i + 1; break }
+                i += 2
+            }
+            if at_value == NONE {
+                cur.items.append(vs[1].clone())
+                cur.items.append(vs[2].clone())
+                at_value = cur.items.len - 1
+            }
+            path.append(at_value)
+            return cv_ptr(fi, l, path)
         }
         if name == "ListReserve" { return cv(VK_VOID) }
         if name == "MapNew" { return cv_seq(VK_MAP, List(CV).new()) }

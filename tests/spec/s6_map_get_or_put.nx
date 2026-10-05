@@ -1,0 +1,25 @@
+// SPEC 6: `m.get_or_put(key, default)` is the value of `key`, put in with
+// `default` when the key is new, in one lookup: a pointer, written through
+// at once or kept in a local until the map changes. A new key goes to the
+// end of the map's order, a key already there keeps its place, and the key
+// and default passed for it are dropped.
+fn main() {
+    var counts = Map(String, i64).new()
+    for w in ["b", "a", "b", "c", "a", "b"] {
+        counts.get_or_put(String.from(w), 0).* += 1
+    }
+    for k in counts { println("{} {}", .{k, counts[k[..]] orelse 0}) }
+    let p = counts.get_or_put(String.from("z"), 10)
+    p.* += 5
+    println("z {} of {}", .{counts["z"] orelse 0, counts.len})
+    var names = Map(i64, String).new()
+    let s = names.get_or_put(1, String.from("one"))
+    s.append(" more")
+    let t = names.get_or_put(1, String.from("uno"))
+    t.append("!")
+    println("{} ({} entry)", .{t.*, names.len})
+    var seen = Map([]u8, bool).new()
+    let first = seen.get_or_put("x", false).*
+    seen.get_or_put("x", true).* = true
+    println("{} {}", .{first, seen["x"] orelse false})
+}

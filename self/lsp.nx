@@ -48,7 +48,7 @@ const NAMESPACE_MEMBERS = [
     "copy",
 ]
 const PRIMITIVES = ["i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize", "f32", "f64", "bool", "char", "void", "never", "type", "error", "String", "List", "Map"]
-const COMMON_METHODS = "append append_char push_byte pop clear clone len is_empty last first insert remove swap_remove extend reserve items contains index_of sort reverse fill get put keys values starts_with ends_with find trim split lines to_string parse_int parse_float eq_ignore_case bytes to_owned copy_from abs min max to_lower to_upper is_digit is_alpha is_space"
+const COMMON_METHODS = "append append_char push_byte pop clear clone len is_empty last first insert remove swap_remove extend reserve items contains index_of sort reverse fill get put get_or_put keys values starts_with ends_with find trim split lines to_string parse_int parse_float eq_ignore_case bytes to_owned copy_from abs min max to_lower to_upper is_digit is_alpha is_space"
 const BUILTIN_ERRORS = ["OutOfMemory", "Panic", "NotFound", "IoError", "InvalidInput", "Timeout", "ConnectionRefused", "Truncated", "Overflow", "InvalidUtf8", "BufferTooSmall", "InvalidRecord"]
 const BUILTIN_FNS = ["println", "print", "eprintln", "format", "expect", "expect_eq", "panic", "assert"]
 

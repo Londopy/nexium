@@ -11,8 +11,7 @@ fn main() {
         seed = seed *% 6364136223846793005 +% 1442695040888963407
         let k = (seed >> 33) % 50000
         let word = format("w{}", .{k})
-        let n = counts.get(word[..]) orelse 0
-        counts.put(word, n + 1)
+        counts.get_or_put(word, 0).* += 1
         total += 1
         i += 1
     }

@@ -563,9 +563,17 @@ impl Checker {
             return self.check_comparison(op, lhs, rhs, start, end)
         }
         let is_arith = op == "+" or op == "-" or op == "*" or op == "/" or op == "%" or op == "+%" or op == "-%" or op == "*%" or op == "+|" or op == "-|" or op == "*|"
-        let is_bitwise = op == "&" or op == "|" or op == "^" or op == "<<" or op == ">>"
         let hint = if is_arith { expected } else { NONE }
         let l = self.check_expr(lhs, hint)
+        return self.check_binary_rest(op, l, rhs, start, end)
+    }
+
+    /// An arithmetic, bitwise or shift operation whose left operand is
+    /// checked already: a compound assignment's target, checked once as the
+    /// place it writes (its calls run once, what it moves moves once).
+    fn check_binary_rest(self: *mut Self, op: []u8, l: usize, rhs: usize, start: usize, end: usize) -> usize {
+        let is_arith = op == "+" or op == "-" or op == "*" or op == "/" or op == "%" or op == "+%" or op == "-%" or op == "*%" or op == "+|" or op == "-|" or op == "*|"
+        let is_bitwise = op == "&" or op == "|" or op == "^" or op == "<<" or op == ">>"
         let lt = self.tys.shallow(self.tir.nodes[l].ty)
         if op == "<<" or op == ">>" {
             let r = self.check_expr(rhs, NONE)

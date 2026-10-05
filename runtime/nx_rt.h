@@ -980,6 +980,18 @@ NX_INLINE bool nx_map_put(nx_ctx* c, nx_map* m, const void* key, const void* val
     nx_map_append(c, m, key, val, kb, h);
     return false;
 }
+/* `m.get_or_put(key, val)`: the value slot of `key`, hashed once, holding
+   `val` when the key is new. When it was there, the entry keeps its own key
+   and value and *found says so: the caller drops the two it passed. */
+NX_INLINE void* nx_map_get_or_put(nx_ctx* c, nx_map* m, const void* key, const void* val, bool* found) {
+    nx_sl_u8 kb = nx_map_key_bytes(m, key);
+    uint64_t h = nx_map_hash(kb);
+    size_t slot, e;
+    if (nx_map_find(m, kb, h, &slot, &e)) { *found = true; return m->vals + e * m->vsize; }
+    *found = false;
+    nx_map_append(c, m, key, val, kb, h);
+    return m->vals + (m->used - 1) * m->vsize;
+}
 NX_INLINE bool nx_map_remove(nx_map* m, const void* key, void* old_key, void* old_val) {
     if (m->len == 0) return false;
     nx_sl_u8 kb = nx_map_key_bytes(m, key);

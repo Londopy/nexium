@@ -1,0 +1,5 @@
+// EXPECT: `get_or_put` mutates its receiver, but `m` is immutable
+fn main() {
+    let m = Map(String, i64).new()
+    m.get_or_put(String.from("a"), 0).* += 1
+}
