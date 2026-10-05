@@ -10,6 +10,17 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 
 ## [Unreleased]
 
+### Changed
+
+- Building a short string costs less. An integer that fits in 64 bits is
+  written with 64-bit arithmetic and a constant base of 10, where every
+  digit was a 128-bit division (a library call); and a string's first
+  block holds 16 bytes, where it held 4 and the next append grew it at
+  once, so `format("w{}", .{k})` allocates once instead of twice. The
+  `words` benchmark (a `format` and two map lookups per word) runs in 1.39
+  seconds where it took 2.26 on Windows with zig cc, and in 0.73 where it
+  took 0.91 on Linux with gcc; C takes 0.48 on both.
+
 ## [1.5.0] - 2026-10-04
 
 *Everest: Base Camp* — 5,364 metres on the Khumbu glacier, where the climb to the next summit is staged: one source, many platforms. Programs build for WebAssembly (`wasm32-wasi`) and run under Node.js's WASI, a panic unwinding as it does natively, and `artifact wasm` ships a library as a module with a JavaScript loader for a page or Node.js; programs build for 32-bit x86, ARMv7 and RISC-V 32, which CI runs on its machines and under QEMU, the compiler builds itself as a 32-bit program, and every release carries `nx` for 32-bit Windows and Linux and for ARMv7 Linux, a Raspberry Pi's 32-bit OS among them; Linux and Windows on ARM are tier 1, every suite run on GitHub's arm64 machines. `@sizeOf` is confirmed by the C compiler on every target, and the test harness takes `--target`. The seed is regenerated from the final sources.

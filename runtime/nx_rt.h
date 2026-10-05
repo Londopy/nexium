@@ -561,8 +561,10 @@ NX_INLINE void nx_parallel_for(nx_ctx* c, size_t n, nx_par_fn f, void* env, cons
 }
 
 /* --------------------------------------------------------------- lists */
+/* The first block holds 16 bytes at least: a string's first append took 4,
+ * and the next one grew it at once (no allocator hands out less anyway). */
 NX_INLINE void nx_list_grow(nx_ctx* c, nx_rawlist* l, size_t elem, size_t align, size_t min_cap) {
-    size_t cap = l->cap ? l->cap * 2 : 4;
+    size_t cap = l->cap ? l->cap * 2 : (elem && elem < 4 ? 16 / elem : 4);
     if (cap < min_cap) cap = min_cap;
     l->ptr = nx_cont_realloc(c, l->ar, l->ptr, l->cap * elem, cap * elem, align);
     l->cap = cap;
@@ -730,13 +732,23 @@ NX_INLINE void nx_w_pad(nx_sink* s, const char* txt, size_t len, int width, bool
     nx_w(s, (const uint8_t*)txt, len);
     if (width > 0 && (size_t)width > len && left) { for (size_t i = len; i < (size_t)width; i++) nx_w(s, (const uint8_t*)" ", 1); }
 }
+/* The digits of a value that fits in 64 bits, written backwards from `end`;
+ * how many. In 64 bits, and base 10 by a constant: a 128-bit division is a
+ * library call per digit, which made formatting an integer the slow part
+ * of building a short string. */
+NX_INLINE size_t nx_digits_u64(char* end, uint64_t v, int b, const char* digits) {
+    char* p = end;
+    if (b == 10) { do { *--p = (char)('0' + v % 10); v /= 10; } while (v); }
+    else { do { *--p = digits[v % (unsigned)b]; v /= (unsigned)b; } while (v); }
+    return (size_t)(end - p);
+}
 /* base: 10, 16 (lower), 17 (upper), 2, 8; an unsigned value, u128's whole range */
 NX_INLINE void nx_w_uint(nx_sink* s, nx_u128 u, int base, int width, bool left) {
     char buf[140]; size_t i = sizeof buf;
     int b = base == 17 ? 16 : base;
     const char* digits = base == 17 ? "0123456789ABCDEF" : "0123456789abcdef";
-    if (u == 0) buf[--i] = '0';
-    while (u) { buf[--i] = digits[u % b]; u /= b; }
+    if ((u >> 64) == 0) i -= nx_digits_u64(buf + i, (uint64_t)u, b, digits);
+    else while (u) { buf[--i] = digits[u % b]; u /= b; }
     nx_w_pad(s, buf + i, sizeof buf - i, width, left);
 }
 /* base: 10, 16 (lower), 17 (upper), 2, 8 */
@@ -745,8 +757,8 @@ NX_INLINE void nx_w_int(nx_sink* s, nx_i128 v, int base, int width, bool left) {
     nx_u128 u = neg ? (nx_u128)(-(v + 1)) + 1 : (nx_u128)v;
     int b = base == 17 ? 16 : base;
     const char* digits = base == 17 ? "0123456789ABCDEF" : "0123456789abcdef";
-    if (u == 0) buf[--i] = '0';
-    while (u) { buf[--i] = digits[u % b]; u /= b; }
+    if ((u >> 64) == 0) i -= nx_digits_u64(buf + i, (uint64_t)u, b, digits);
+    else while (u) { buf[--i] = digits[u % b]; u /= b; }
     if (neg) buf[--i] = '-';
     nx_w_pad(s, buf + i, sizeof buf - i, width, left);
 }

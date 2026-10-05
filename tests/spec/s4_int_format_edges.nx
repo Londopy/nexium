@@ -1,0 +1,25 @@
+// SPEC 4: an integer is written the same on either side of 64 bits: the
+// largest u64 and the smallest i64 by the 64-bit path, 2^64 and past it by
+// the 128-bit one, in every base, signed and unsigned, padded or not.
+
+fn main() {
+    let zero: u64 = 0
+    println("{} {x} {b}", .{zero, zero, zero})
+    let nine: u8 = 9
+    let ten: u16 = 10
+    println("{} {} {>4}|{<4}|", .{nine, ten, ten, ten})
+    let top: u64 = 18446744073709551615
+    println("{} {x} {X} {b}", .{top, top, top, top})
+    let wide = top as u128
+    println("{} {}", .{wide, wide + 1})
+    println("{x} {b}", .{wide + 1, wide + 1})
+    let low: i64 = -9223372036854775808
+    let high: i64 = 9223372036854775807
+    println("{} {} {x}", .{low, high, low})
+    let past: i128 = -18446744073709551616
+    println("{} {}", .{past, past + 1})
+    let lowest: i128 = -170141183460469231731687303715884105728
+    println("{}", .{lowest})
+    println("{}", .{format("{}|{}", .{top, low})})
+    println("{} {}", .{top.to_string(), low.to_string()})
+}
