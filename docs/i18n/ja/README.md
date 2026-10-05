@@ -392,8 +392,7 @@ C のおよそ 2 倍の時間です。Python は Nexium `fast` の 3〜74 倍の
 | --- | --- |
 | [statusmith](https://github.com/Londopy/statusmith)、タスクトレイからの Discord Rich Presence | その SDK は Nexium のパッケージ：`nx add discord_rpc --git https://github.com/Londopy/statusmith --tag sdk-v0.1.0 --dir nexium` でどの Nexium プログラムからもプレゼンスを設定できる（[解説](../../discord.md)） |
 | [Point of Origin](https://github.com/Londopy/point-of-origin)、地面そのものがパズルのプラットフォーマー | ビルド全体が Nexium：`build.nx` が Odin のシミュレーションの DLL を動かし、`tools/bindgen.nx` が Odin のエクスポートを読んで Unity が呼ぶ C# バインディングを書き、`tools/levels.nx` がレベルのマップをゲームが読む JSON にコンパイルし（どのレベルも同じシミュレーションで育つので解ける）、`tools/chapters.nx` がそこからドキュメントを書く |
-| [QNI](https://github.com/Londopy/qni)、Cal Poly アマチュア無線クラブ（W6BHZ）の Discord のためのネットのリマインダー、チェックインの手助け、ネットコントロールのチュートリアル | プログラム全体が Nexium：スラッシュコマンドとボタンを Webhook で応答し、ボットユーザーも権限もなし。すべてのリクエストは何かを読む前に Discord の Ed25519 署名を検査（nxtls 経由）。ネットのカード、ネットコントロールの練習モード、役員のシート形式のネットログ。偽の Discord を相手にエンドツーエンドでテスト |
-| [nxtls](https://github.com/Londopy/nxtls)、純粋な Nexium の暗号と TLS 1.3 | SHA-2、HMAC、HKDF、X25519、ChaCha20-Poly1305、署名検証（Ed25519、ECDSA、RSA）、X.509 チェーンと、その上の TLS 1.3 クライアント。C も `unsafe` もなく、規格のベクタ、Python の `cryptography`、OpenSSL でテスト。QNI と nexium-discord はこれを通して Discord と通信。パッケージ：`nx add nxtls --git https://github.com/Londopy/nxtls --tag v0.5.0` |
+| [nxtls](https://github.com/Londopy/nxtls)、純粋な Nexium の暗号と TLS 1.3 | SHA-2、HMAC、HKDF、X25519、ChaCha20-Poly1305、署名検証（Ed25519、ECDSA、RSA）、X.509 チェーンと、その上の TLS 1.3 クライアント。C も `unsafe` もなく、規格のベクタ、Python の `cryptography`、OpenSSL でテスト。nexium-discord はこれを通して Discord と通信。パッケージ：`nx add nxtls --git https://github.com/Londopy/nxtls --tag v0.5.0` |
 | [nexium-discord](https://github.com/Londopy/nexium-discord)、Discord ボットのライブラリ | ゲートウェイのセッションの維持（ハートビート、再開、再接続）、Discord のレート制限を待つ REST 呼び出し、`match` で受けるイベント、返答に使うメッセージ、スラッシュコマンド、ボタン、メニュー、フォームを `std.http` と `std.websocket` の上に。TLS は nxtls、Windows ではプラットフォーム自身のもの。パッケージ：`nx add discord --git https://github.com/Londopy/nexium-discord --tag v0.2.0` |
 
 どこかで Nexium を使っていますか？ issue か pull request を開けばここに載ります。
@@ -455,7 +454,7 @@ RISC-V 32（後の二つは QEMU のもと）向けにも、Node.js 上の WebAs
 キーを入れた順を保ちます。`std.time` はプラットフォームのデータベースからタイムゾーンを読みます。`std.http` はプラットフォーム自身の TLS、または nxtls のような TLS 層を通して HTTPS を話し、`std.websocket` も同じで、[nexium-discord](https://github.com/Londopy/nexium-discord) はその上に Discord ボットを作ります。`std.process` は実行中のプログラムとやり取りし、`std.thread` には select、アトミック操作、呼び出しより先に終わるスレッドがあり、`std.text` には書記素クラスタと Unicode の大文字小文字変換が、`std.testing` には見つけたものを縮小するプロパティテストがあります。次は 1.6、リリースビルドにふさわしいランタイムです。Nexium がまだ
 何でないか、そしてそれぞれがどこで答えられるかは[ロードマップの一節](../../../ROADMAP.md#what-10-is-not-yet)に
 あります。ベンチマークは 4 つのプログラム（[速度](#速度)）だけで、エコシステムは
-メンテナ一人とツリー外のプロジェクト五つです（[上](#実際の利用)）。
+メンテナ一人とツリー外のプロジェクト四つです（[上](#実際の利用)）。
 [`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md) は未修正のバグをその修正案とともに、
 [`DECISIONS.md`](../../../DECISIONS.md) は仕様が開いていた箇所でのすべての判断を
 列挙します。

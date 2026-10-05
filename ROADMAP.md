@@ -1584,9 +1584,9 @@ decision entry first, an implementation second, and none is promised.
   outside the tree, four today (statusmith's SDK; Point of Origin, where
   Nexium is the build language of an Odin and Unity game: the native
   build, the bindings generated from the Odin exports, the levels
-  compiled to JSON; QNI, a ham radio club's Discord helper; and nxtls,
-  the cryptography package and TLS 1.3 client QNI checks Discord's
-  signatures with and talks to Discord through). A second kind of user, the one who writes their
+  compiled to JSON; nxtls, the cryptography package and TLS 1.3 client;
+  and nexium-discord, a Discord bot library on nxtls). A second kind of
+  user, the one who writes their
   tooling in Nexium and their product in something else, is the one the
   `@cImport`, `nx ship` and `std.process` work serves, and the one to
   ask what is missing.

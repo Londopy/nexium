@@ -402,8 +402,7 @@ Programmes et paquets écrits en Nexium hors de ce dépôt :
 | --- | --- |
 | [statusmith](https://github.com/Londopy/statusmith), la Rich Presence de Discord depuis la barre des tâches | son SDK est un paquet Nexium : `nx add discord_rpc --git https://github.com/Londopy/statusmith --tag sdk-v0.1.0 --dir nexium` règle une présence depuis n'importe quel programme Nexium ([la page](../../discord.md)) |
 | [Point of Origin](https://github.com/Londopy/point-of-origin), un jeu de plateforme où l'énigme est le sol | toute la construction est en Nexium : `build.nx` pilote la DLL de la simulation en Odin, `tools/bindgen.nx` lit les exports Odin et écrit les bindings C# qu'appelle Unity, `tools/levels.nx` compile les cartes des niveaux en JSON chargé par le jeu (chaque niveau poussé par la même simulation, donc soluble), `tools/chapters.nx` en tire la documentation |
-| [QNI](https://github.com/Londopy/qni), rappels de réseaux, aide au check-in et un tutoriel de contrôle de réseau pour le Discord du club de radioamateurs de Cal Poly (W6BHZ) | tout le programme est en Nexium : commandes slash et boutons servis par webhooks, sans utilisateur bot ni permissions ; chaque requête vérifiée contre la signature Ed25519 de Discord avant toute lecture (grâce à nxtls) ; fiches de réseau, un mode d'entraînement au contrôle de réseau et des journaux au format de tableur des responsables ; testé de bout en bout contre un faux Discord |
-| [nxtls](https://github.com/Londopy/nxtls), de la cryptographie et TLS 1.3 en Nexium pur | SHA-2, HMAC, HKDF, X25519, ChaCha20-Poly1305, vérification de signatures (Ed25519, ECDSA, RSA) et chaînes X.509, et par-dessus un client TLS 1.3, sans C et sans `unsafe`, testés contre les vecteurs des normes, le `cryptography` de Python et OpenSSL ; QNI et nexium-discord parlent à Discord à travers lui ; un paquet : `nx add nxtls --git https://github.com/Londopy/nxtls --tag v0.5.0` |
+| [nxtls](https://github.com/Londopy/nxtls), de la cryptographie et TLS 1.3 en Nexium pur | SHA-2, HMAC, HKDF, X25519, ChaCha20-Poly1305, vérification de signatures (Ed25519, ECDSA, RSA) et chaînes X.509, et par-dessus un client TLS 1.3, sans C et sans `unsafe`, testés contre les vecteurs des normes, le `cryptography` de Python et OpenSSL ; nexium-discord parle à Discord à travers lui ; un paquet : `nx add nxtls --git https://github.com/Londopy/nxtls --tag v0.5.0` |
 | [nexium-discord](https://github.com/Londopy/nexium-discord), une bibliothèque de bots Discord | la session du gateway maintenue en vie (battements, reprises, reconnexions), les appels REST qui attendent ce que demandent les limites de débit de Discord, des événements sur lesquels faire `match`, et des messages, commandes slash, boutons, menus et formulaires pour répondre, sur `std.http` et `std.websocket` ; TLS par nxtls, ou celui de la plateforme sous Windows ; un paquet : `nx add discord --git https://github.com/Londopy/nexium-discord --tag v0.2.0` |
 
 Vous utilisez Nexium quelque part ? Ouvrez une issue ou une pull request et il apparaîtra ici.
@@ -479,7 +478,7 @@ runtime que méritent les builds de release. Ce que Nexium n'est pas
 encore, et où chaque point trouve sa réponse, est dans [une section de la
 feuille de route](../../../ROADMAP.md#what-10-is-not-yet) : les mesures de performance
 sont quatre programmes ([Vitesse](#vitesse)), et l'écosystème se résume à un
-seul mainteneur et cinq projets hors de l'arbre ([plus haut](#dans-la-nature)).
+seul mainteneur et quatre projets hors de l'arbre ([plus haut](#dans-la-nature)).
 [`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md) liste chaque bogue ouvert avec
 son correctif ; [`DECISIONS.md`](../../../DECISIONS.md), chaque choix fait
 là où la spécification était ouverte.

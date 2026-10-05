@@ -390,8 +390,7 @@ C 대비 배수가 이전 측정보다 4분의 1 늘면 실패합니다.
 | --- | --- |
 | [statusmith](https://github.com/Londopy/statusmith), 트레이에서 켜는 Discord Rich Presence | 그 SDK는 Nexium 패키지: `nx add discord_rpc --git https://github.com/Londopy/statusmith --tag sdk-v0.1.0 --dir nexium`으로 어떤 Nexium 프로그램에서든 프레즌스를 설정([설명](../../discord.md)) |
 | [Point of Origin](https://github.com/Londopy/point-of-origin), 땅 자체가 퍼즐인 플랫포머 | 빌드 전체가 Nexium: `build.nx`가 Odin 시뮬레이션의 DLL을 구동하고, `tools/bindgen.nx`가 Odin 익스포트를 읽어 Unity가 부르는 C# 바인딩을 쓰며, `tools/levels.nx`가 레벨 맵을 게임이 읽는 JSON으로 컴파일하고(모든 레벨이 같은 시뮬레이션으로 자라므로 풀 수 있음), `tools/chapters.nx`가 그로부터 문서를 씀 |
-| [QNI](https://github.com/Londopy/qni), Cal Poly 아마추어 무선 클럽(W6BHZ) Discord를 위한 네트 알림, 체크인 도우미, 네트 컨트롤 튜토리얼 | 프로그램 전체가 Nexium: 슬래시 명령과 버튼을 웹훅으로 응답하며 봇 사용자도 권한도 없음. 모든 요청은 무엇이든 읽기 전에 Discord의 Ed25519 서명을 검사(nxtls로). 네트 카드, 네트 컨트롤 연습 모드, 임원진 시트 형식의 네트 로그. 가짜 Discord를 상대로 처음부터 끝까지 테스트 |
-| [nxtls](https://github.com/Londopy/nxtls), 순수 Nexium 암호와 TLS 1.3 | SHA-2, HMAC, HKDF, X25519, ChaCha20-Poly1305, 서명 검증(Ed25519, ECDSA, RSA), X.509 체인과 그 위의 TLS 1.3 클라이언트. C도 `unsafe`도 없이, 표준의 벡터, Python의 `cryptography`, OpenSSL로 테스트. QNI와 nexium-discord가 이것으로 Discord와 통신. 패키지: `nx add nxtls --git https://github.com/Londopy/nxtls --tag v0.5.0` |
+| [nxtls](https://github.com/Londopy/nxtls), 순수 Nexium 암호와 TLS 1.3 | SHA-2, HMAC, HKDF, X25519, ChaCha20-Poly1305, 서명 검증(Ed25519, ECDSA, RSA), X.509 체인과 그 위의 TLS 1.3 클라이언트. C도 `unsafe`도 없이, 표준의 벡터, Python의 `cryptography`, OpenSSL로 테스트. nexium-discord가 이것으로 Discord와 통신. 패키지: `nx add nxtls --git https://github.com/Londopy/nxtls --tag v0.5.0` |
 | [nexium-discord](https://github.com/Londopy/nexium-discord), Discord 봇 라이브러리 | `std.http`와 `std.websocket` 위에서 게이트웨이 세션 유지(하트비트, 재개, 재연결), Discord의 속도 제한을 기다리는 REST 호출, `match`로 받는 이벤트, 답에 쓰는 메시지, 슬래시 명령, 버튼, 메뉴, 폼. TLS는 nxtls, Windows에서는 플랫폼 자체의 것. 패키지: `nx add discord --git https://github.com/Londopy/nexium-discord --tag v0.2.0` |
 
 어딘가에서 Nexium을 쓰고 있나요? issue나 pull request를 열면 여기에 실립니다.
@@ -451,7 +450,7 @@ RISC-V 32용으로도(뒤의 둘은 QEMU 아래에서), Node.js 위의 WebAssemb
 공격에 강하고 키를 넣은 순서를 지킵니다. `std.time`은 플랫폼의 데이터베이스에서 시간대를 읽고, `std.http`는 플랫폼 자체의 TLS나 nxtls 같은 TLS 계층을 거쳐 HTTPS를 쓰며, `std.websocket`도 마찬가지이고, [nexium-discord](https://github.com/Londopy/nexium-discord)가 그 위에 Discord 봇을 만듭니다. `std.process`는 실행 중인 프로그램과 주고받고, `std.thread`에는 select, 원자적 연산, 호출보다 먼저 끝나는 스레드가, `std.text`에는 자소 클러스터와 Unicode의 대소문자 변환이, `std.testing`에는 찾은 것을 줄여 주는 속성 테스트가 있습니다. 다음은 1.6, 릴리스 빌드에 걸맞은 런타임입니다. Nexium이 아직 아닌 것과 각각이
 어디서 답을 얻는지는 [로드맵의 한 절](../../../ROADMAP.md#what-10-is-not-yet)에 있습니다.
 벤치마크는 네 프로그램([속도](#속도))뿐이며, 생태계는 메인테이너 한 명과 트리 밖의
-프로젝트 다섯입니다([위](#실제-사용)).
+프로젝트 넷입니다([위](#실제-사용)).
 [`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md)는 미해결 버그를 수정 방안과 함께,
 [`DECISIONS.md`](../../../DECISIONS.md)는 명세가 열려 있던 곳에서 내린 모든 결정을
 나열합니다.
