@@ -965,8 +965,8 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     did not run releases nothing, and released with the block the
     expression is in, as a plain expression's are. A statement inside a
     branch keeps its own temporaries, released at the branch's end as
-    before, so a loop in a branch does not pile them up. Found by QNI's
-    tests against glibc (#15).
+    before, so a loop in a branch does not pile them up. Found by a
+    Discord app's tests against glibc (#15).
 119. **`random.secure(buf)` fills a mutable byte slice from the operating
     system's generator, and returns `!void`.** Keys, tokens, UUIDs and a
     `Map` hashed against flooding need bytes an attacker cannot predict;

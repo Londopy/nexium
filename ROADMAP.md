@@ -639,8 +639,8 @@ checks its downloads with `std.hash` and reads GitHub's answers with
   GitHub; nxtls ships that adapter itself once 1.4.0 is out, with its
   randomness from `random.secure`):
   - **First, nxtls**: the TLS 1.3 client written in Nexium
-    ([Londopy/nxtls](https://github.com/Londopy/nxtls)), the one QNI talks
-    to Discord through. No C, the same on every platform, every byte
+    ([Londopy/nxtls](https://github.com/Londopy/nxtls)), the one
+    nexium-discord talks to Discord through. No C, the same on every platform, every byte
     tested against Python's `cryptography` and OpenSSL's server, and
     reviewed and fixed on 2026-09-25 (0.4.0: a bounded chain search, a
     cut connection told from a closed one, one deadline for the whole
@@ -656,7 +656,7 @@ checks its downloads with `std.hash` and reads GitHub's answers with
     nxtls cannot. www.echolink.org, probed on 2026-09-25, answers every
     TLS 1.3 ClientHello with a handshake_failure alert, and on TLS 1.2
     takes only ECDHE-ECDSA-AES256-GCM-SHA384 over P-256; none of that is
-    in nxtls, and QNI reaches it through stunnel. (Done: `http.SystemTls`
+    in nxtls, and stunnel was the way there. (Done: `http.SystemTls`
     over `net.tls_*`, each platform's library loaded when first used, so
     no program links one; `http.get("https://...")` needs nothing else.
     Certificates are checked against the system's roots and the host's
@@ -676,11 +676,11 @@ checks its downloads with `std.hash` and reads GitHub's answers with
   commands, embeds, reactions), the events as an enum to `match` on, and
   the token from the environment. The Topo's Discord bot chapter (below)
   is its test, and statusmith's SDK grows the same way as it needs to.
-  (Done: `std.websocket`, QNI's handshake, frames and decoder over
+  (Done: `std.websocket`, a Discord app's handshake, frames and decoder over
   std.http's transports, `ws://` and `wss://`, checked against Discord's
   gateway over nxtls; and the `discord` package,
   [Londopy/nexium-discord](https://github.com/Londopy/nexium-discord):
-  QNI's gateway state machine behind a `Bot` whose `next` returns events
+  a Discord app's gateway state machine behind a `Bot` whose `next` returns events
   to `match` on, the REST calls with rate limits waited out, messages,
   interactions and slash commands, nxtls in the slot. The Topo chapter is
   still to write.)

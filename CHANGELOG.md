@@ -311,7 +311,7 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   the closing handshake. The first protocol mistake by the server ends the
   connection with 1002 and the reason in `problem`. Keys and masks come
   from `random.secure`. The pure parts (the handshake's text and check,
-  frames, the decoder) are QNI's, tested byte by byte against RFC 6455's
+  frames, the decoder) come from a Discord app, tested byte by byte against RFC 6455's
   examples; checked against Discord's gateway over nxtls (its HELLO, a
   ping's pong, a clean close) and an echo server on loopback.
 - A Discord bot library, the second package outside this repository:
@@ -605,7 +605,7 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   handed to the runtime as a path (`io.read_file`, `io.file_kind`, the
   other file calls), an environment variable's name or value, a process
   argument or a network host. The runtime copies a slice's bytes through
-  `nx_bytes_copy`, which skips an empty copy. Found by QNI and nxtls; a
+  `nx_bytes_copy`, which skips an empty copy. Found by nxtls and a Discord app; a
   spec case exercises each and runs under CI's sanitizers.
 - A view of a String made in a branch no longer outlives it. `show(if c {
   format(...) } else { ... })` with `fn show(s: []u8)` read freed memory,
@@ -615,7 +615,7 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   value, an `if let` capture and an arm's binding. The storage a branch's
   value is made of now belongs to the whole expression and is released with
   the block the expression is in, as a plain expression's temporaries are
-  (decision 118). Found by QNI's tests against glibc; a spec case runs each
+  (decision 118). Found by a Discord app's tests against glibc; a spec case runs each
   form under CI's sanitizers.
 - The x86_64 Linux build runs on every glibc from 2.17, as its wheel's
   `manylinux_2_17` tag and the `.deb` promise. 1.3.0's needed 2.34, the
@@ -669,9 +669,8 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 ### Added
 
 - The package catalogue (`docs/packages.md`) lists nxtls, cryptography
-  in pure Nexium, and "In the wild" (the README, the site) lists it and
-  QNI, the Discord helper built on it. Both pass their tests with the
-  compiler on main.
+  in pure Nexium, and "In the wild" (the README, the site) lists it. It
+  passes its tests with the compiler on main.
 - `nx fix` makes the edits the checker offers for its errors (decision
   111): rule V4's `.clone()` where a value moves out from under a view of
   it, rule V5's `@escape(...)` around a value kept past its `using arena`
@@ -804,7 +803,7 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   `serve_one`; request, header and chunk-size lines past 64 KiB are too
   (`stream.Reader.read_line_max`); a chunk size past `usize` is
   `error.InvalidInput`; and a body buffer grows as its bytes arrive. Found
-  reviewing QNI, a server built on `std.http`.
+  reviewing a server built on `std.http`.
 - `docs/std.md` showed only the last line of a multi-line doc comment
   (`join`: "replaces `dir`."); `scripts/std_docs.py` takes the whole one.
 - `nx play` wrote a float in exponent form as Rust does (`1e-7`, `1e21`)
@@ -831,7 +830,7 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   compile-fail `view_into_loop_copy`, `view_into_binding_array`,
   `view_through_local_list`, `view_through_own_param`,
   `view_of_map_entry`, `view_in_match_arm`, `view_in_else_branch`).
-  Found while writing QNI.
+  Found while writing a Discord app.
 - `nx fmt` took a function's body brace after a return type that is a
   slice, an array or a `*mut` of a named type (`-> []T {`, `-> *mut Json
   {`) for a struct literal and wrote `-> []T{`; `std.lists`, `std.json`,
@@ -851,7 +850,7 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   `parse_int` now fails as the compiled one does (`Overflow` past the
   target's range, where it returned `300` for `u8`). Spec `s4_u128`,
   `s11_parse_int_ranges`, compile-fail `literal_past_i128` and
-  `literal_pattern_past_u64`. Found while writing QNI.
+  `literal_pattern_past_u64`. Found while writing a Discord app.
 - An integer literal under `as` was typed `i64` first and then cast:
   `0xffffffffffffffff as i128` gave -1, `(0xffffffffffffffff as u128) *
   (0xffffffffffffffff as u128)` panicked with an overflow, and
@@ -865,7 +864,7 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   given is one literal, where it panicked at run time (spec
   `s4_literal_types`, compile-fail `literal_default_i64`,
   `literal_cast_out_of_range`, `literal_cast_wider_than_target`). Found
-  while writing QNI.
+  while writing a Discord app.
 - A function over `dyn Trait` did not build when nothing in the program
   coerced a value to that trait (`fn g(d: dyn Area) -> i64 { return
   d.area() }`): the vtable type took its slots' types from a vtable
@@ -877,7 +876,7 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   implementing type; an impl returning `i32` for a trait's `i64` was
   accepted and called through the trait with the wrong type. The errors
   name the method, what it has and what the trait declares (compile-fail
-  `trait_impl_signature`). Found while writing QNI.
+  `trait_impl_signature`). Found while writing a Discord app.
 - A call through `dyn Trait` ignored `own` parameters: `d.put(s)` and
   `d.put(String.from("x"))` handed the value to the callee and still
   dropped it in the caller, a double free (0xC0000374 on Windows, no
@@ -886,7 +885,7 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   takes ownership as a direct call does (moves a local or a `.?`
   payload, passes a temporary without dropping it, retains a reference),
   and reading `s` afterwards is "use of `s` after it was moved" (spec
-  `s8_dyn_own`, compile-fail `dyn_own_moves`). Found while writing QNI.
+  `s8_dyn_own`, compile-fail `dyn_own_moves`). Found while writing a Discord app.
 - Moving an owning payload out of an optional or error union straight
   into an `own` parameter (`take(x.?)`, `take(x orelse d)`, `take(try r)`,
   a method's or a generic function's `own` parameter too) handed the
@@ -895,7 +894,7 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   corruption and no message. A call now moves those forms as it moves a
   bare local, zeroing the source, as `let s = x.?` already did
   (`examples/optional_move.nx` gains the call forms; `nx leaks` finds
-  nothing). Found while writing QNI.
+  nothing). Found while writing a Discord app.
 - `panic(..)` standing for a value whose C type is a struct (a struct, an
   enum, a slice, `String`, `List`, `?T`, `!T`, a tuple), as a tail, in
   `return`, in a typed `let` or as a `match` arm, passed `nx check` and
@@ -905,7 +904,7 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   expression's type after the call, as `unreachable` already did, and a
   call through a `fn(..) -> never` value does the same (spec
   `s10_panic_as_value`, and `s10_never_call_panics`, which takes the
-  panicking path). Found while writing QNI.
+  panicking path). Found while writing a Discord app.
 - A `while` condition that made an owned temporary (`while
   short(format("n{}", .{k}))`, `while format(...).len < 4`, a `List`
   returned by a call) passed `nx check` and failed in the C compiler: the
@@ -913,7 +912,7 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   condition now has a scope of its own on every pass, released before the
   test, so a `continue`, a `break` and the last pass each free it once
   (spec `s6_while_condition_temporaries`, also run under `nx leaks`).
-  Found while writing QNI.
+  Found while writing a Discord app.
 - A method defined twice for one type, in two `impl` blocks of a module or
   in two modules, was accepted, and every call reached the first; it is an
   error at the second definition (compile-fail cases `duplicate_method`,
