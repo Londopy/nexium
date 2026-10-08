@@ -18,9 +18,13 @@ Invoke-CC @("-std=gnu11", "-O2", "-w", "-fno-strict-aliasing", $march, "-o", "$o
 Write-Host "stage 1: nx0 builds self\nx.nx"
 & "$out\nx0.exe" build self/nx.nx --mode safe -o "$out\nx1.exe" --out-dir $out; if ($LASTEXITCODE -ne 0) { throw "nx0 could not build self/nx.nx" }
 Write-Host "stage 2: nx1 emits itself, $cc builds nx2, nx2 emits itself"
-& "$out\nx1.exe" emit-c self/nx.nx --mode safe | Set-Content -NoNewline -Encoding utf8 "$out\nx1.c"
+# the emitted C goes to a file through cmd, which writes the bytes as they are:
+# a PowerShell pipeline splits the output into lines and rewrites them (joined
+# with nothing under -NoNewline, as UTF-16 or with a byte order mark otherwise)
+function Emit-C { param([string]$nx, [string]$dest) cmd /c "$nx emit-c self/nx.nx --mode safe > $dest"; if ($LASTEXITCODE -ne 0) { throw "$nx could not emit self/nx.nx" } }
+Emit-C "$out\nx1.exe" "$out\nx1.c"
 Invoke-CC @("-std=gnu11", "-O2", "-w", "-fno-strict-aliasing", $march, "-o", "$out\nx2.exe", "$out\nx1.c", "-lws2_32")
-& "$out\nx2.exe" emit-c self/nx.nx --mode safe | Set-Content -NoNewline -Encoding utf8 "$out\nx2.c"
+Emit-C "$out\nx2.exe" "$out\nx2.c"
 if ((Get-FileHash "$out\nx1.c").Hash -ne (Get-FileHash "$out\nx2.c").Hash) { throw "nx1 and nx2 emit different C" }
 Write-Host "fixed point: nx1 and nx2 emit the same C"
 if ((Get-FileHash "bootstrap\nx.c").Hash -ne (Get-FileHash "$out\nx1.c").Hash) { Write-Host "note: bootstrap\nx.c is behind self\; at the release: copy $out\nx1.c bootstrap\nx.c" }

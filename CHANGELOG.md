@@ -61,6 +61,12 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   promised as coming what 1.4 and 1.5 shipped or moved; `docs/discord.md`
   and `docs/packages.md` named nexium-discord 0.1.0 and nxtls 0.1.0, where
   0.2.0 runs on Windows and 0.5.0 speaks TLS 1.3.
+- `bootstrap\build.ps1` failed at stage 2 since it was written: the
+  compiler's emitted C went through a PowerShell pipeline, which splits the
+  output into lines and joined them with nothing, so the file had no
+  newlines and no `main` to link. The C is written through `cmd` now, which
+  keeps the bytes as they are. `build.sh`, which CI runs on Windows too, was
+  never affected.
 
 ## [1.5.0] - 2026-10-04
 
