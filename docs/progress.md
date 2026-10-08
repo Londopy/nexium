@@ -17,9 +17,9 @@ maps and strings: 2.0× C on Windows and 1.5× on Linux, from 3.0× and 1.9×
 at 1.5.0. `safe` mode costs 1.5× on `fib`, the overflow checks on every
 call; nothing measurable on the other three.
 
-**Next.** A cache of small freed blocks in the allocator (measured, see
-below), then a benchmark that uses `ref class`, so the ARC elision has a
-number to move.
+**Next.** A cache of small freed blocks in the allocator (decided,
+measured, not started; see below), then a benchmark that uses `ref class`,
+so the ARC elision has a number to move.
 
 ### 2026-10-04, `Map.get_or_put` (61ce3be)
 
@@ -39,7 +39,8 @@ number to move.
   and shared, and wrong once they live inside the copy. A cache of small
   freed blocks in the allocator was measured instead: `words` 0.78 s →
   0.59 s on Windows (2.0× C → 1.5×), nothing on Linux, whose C library
-  already caches them. Awaiting a decision on which to do.
+  already caches them. Decided 2026-10-08: the cache, as the roadmap's
+  next item; small-string optimization is dropped. Not started.
 
 ### 2026-10-04, faster short strings (694b36c)
 

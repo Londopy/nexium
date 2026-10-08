@@ -834,11 +834,12 @@ calls, 1.5 times C on `fib`.
   block. (Done: `Map.get_or_put`, an update in one lookup, decision 125;
   an integer written with 64-bit arithmetic where each digit was a
   128-bit division; a string's first block 16 bytes, one allocation for a
-  short string instead of two. Open: small-string optimization does not
-  fit how a `String` is passed, by copy, with slices into it allowed to
-  outlive the call; a cache of small freed blocks in the allocator gives
-  most of the gain on Windows, where the C library's allocator has none,
-  and is measured at 24% on `words`.)
+  short string instead of two. Small-string optimization is dropped: it
+  does not fit how a `String` is passed, by copy, with slices into it
+  allowed to outlive the call. In its place, next: the runtime keeps small
+  freed blocks for reuse, per thread, which is what the short strings cost
+  on Windows, whose C library caches nothing small; measured at 24% on
+  `words` there, nothing on Linux.)
 - `for parallel`: work stealing, a chunk size heuristic, and nested
   parallel loops that share one pool.
 - Compile time: the checker's monomorphization cache, and preprocessed
