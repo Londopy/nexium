@@ -222,12 +222,13 @@ direct writes to a sink, one per placeholder, with the argument's type known.
 
 One header, embedded into the compiler with `@embedFile` and pasted at the
 top of every generated file. Its sections: slices, the allocator interface,
-panics, the default (malloc) allocator with optional leak tracking, arenas,
-the parallel-for thread pool, lists, strings, formatting, hash maps,
-reference counting, binary pattern helpers, checked arithmetic, and the
-platform bits for Windows and POSIX: the file system and file handles, time,
-starting programs and child processes, sockets, TLS through the system's own
-library, threads, and raw terminal input.
+panics, the default (malloc) allocator with its cache of small freed blocks
+and optional leak tracking, arenas, the parallel-for thread pool, lists,
+strings, formatting, hash maps, reference counting, binary pattern helpers,
+checked arithmetic, and the platform bits for Windows and POSIX: the file
+system and file handles, time, starting programs and child processes,
+sockets, TLS through the system's own library, threads, and raw terminal
+input.
 
 Reference counting is a two-word header (`rc`, `weak`) in front of every
 `ref class` object. `nx_retain` is an inlined increment in the runtime; the

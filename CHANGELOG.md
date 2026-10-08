@@ -40,6 +40,19 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   `words` benchmark (a `format` and a count in a map per word) runs in 1.39
   seconds where it took 2.26 on Windows with zig cc, and in 0.73 where it
   took 0.91 on Linux with gcc; C takes 0.48 on both.
+- The runtime keeps small freed blocks for reuse: up to 64 bytes and a
+  little over, in four classes 16 bytes apart, up to 64 per class, on a
+  list of the thread's own, handed out before `malloc` is asked (decision
+  126). A block is allocated at its class's size, so a cached one fits any
+  request of its class, and a `realloc` into or out of the classes makes a
+  whole block; the classes end where the C library's own steps do, so a
+  cached block costs no more than its request would; a thread the runtime
+  started, and an exported call, return their blocks when they end. Under
+  AddressSanitizer the cache is off, and `nx leaks` counts what it counted.
+  The `words` benchmark runs in 0.66 seconds where it took 0.87 on Windows
+  with zig cc (1.6 times C's, from 2.1), and the compiler emits its own C
+  in 0.58 seconds where it took 0.70; on Linux with gcc, whose C library
+  caches small blocks itself, nothing measurable changes.
 
 ### Fixed
 

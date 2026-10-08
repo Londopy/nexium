@@ -377,6 +377,14 @@ fn suite_examples(e: *Env, failures: *mut List(String)) {
     if while_lk.code != 0 or while_lk.stderr[..].find("still live at exit") != null {
         failures.append(format("examples: nx leaks on s6_while_condition_temporaries (exit {}):\n{}{}", .{while_lk.code, while_lk.stdout, while_lk.stderr}))
     }
+    // small freed blocks kept for reuse (decision 126) count as freed:
+    // nothing is still live at exit with the cache on, the counters
+    // balancing on the main thread and across the `for parallel` workers (a
+    // thread's own counters are not merged back: KNOWN_ISSUES.md)
+    let small_lk = nx(e, ["leaks", "tests/spec/s5_small_blocks.nx", "--out-dir", "nx-out/harness/leaks-small"][..])
+    if small_lk.code != 0 or small_lk.stderr[..].find("still live at exit") != null {
+        failures.append(format("examples: nx leaks on s5_small_blocks (exit {}):\n{}{}", .{small_lk.code, small_lk.stdout, small_lk.stderr}))
+    }
     // --watch: the program runs again after a file changes (a thread rewrites
     // it two seconds in; NX_WATCH_ROUNDS=1 stops after that rerun)
     let wsrc = fs.join(e.root[..], "nx-out/cases/watch.nx")

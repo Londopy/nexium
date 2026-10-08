@@ -818,9 +818,10 @@ proves.
 Status: under way on `main`. The first measurement, with the same C
 compiler on both sides, found three of the four benchmarks (`fib`,
 `nbody`, `sieve`) already at C's speed in `fast` mode; the gap is `words`,
-maps and strings, which has gone from 3.0 times C to 2.0 on Windows and
-1.5 on Linux (`get_or_put`, integers formatted in 64 bits, a string's
-first block of 16 bytes). Safe mode's cost is the overflow checks on
+maps and strings, which has gone from 3.0 times C to 1.6 on Windows and
+1.6 to 1.8 on Linux, where the figure moves with the run (`get_or_put`,
+integers formatted in 64 bits, a string's first block of 16 bytes, small
+freed blocks kept for reuse). Safe mode's cost is the overflow checks on
 calls, 1.5 times C on `fib`.
 
 - ARC elision: retain/release pairs the checker proves redundant (a `ref
@@ -836,10 +837,11 @@ calls, 1.5 times C on `fib`.
   128-bit division; a string's first block 16 bytes, one allocation for a
   short string instead of two. Small-string optimization is dropped: it
   does not fit how a `String` is passed, by copy, with slices into it
-  allowed to outlive the call. In its place, next: the runtime keeps small
-  freed blocks for reuse, per thread, which is what the short strings cost
-  on Windows, whose C library caches nothing small; measured at 24% on
-  `words` there, nothing on Linux.)
+  allowed to outlive the call. In its place the runtime keeps small freed
+  blocks for reuse, per thread (decision 126), which is what the short
+  strings cost on Windows, whose C library caches nothing small: `words`
+  in three quarters of the time there, 2.1 times C to 1.6; nothing on
+  Linux.)
 - `for parallel`: work stealing, a chunk size heuristic, and nested
   parallel loops that share one pool.
 - Compile time: the checker's monomorphization cache, and preprocessed

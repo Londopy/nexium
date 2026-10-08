@@ -2,8 +2,12 @@
  *
  * Design constraints (specification section 4.1):
  *   S1  no initialization: every function here works from any thread with no setup.
- *   S2  no process-global state: the only static is a thread-local panic boundary,
- *       which is per-thread and per-translation-unit.
+ *   S2  no process-global state a program can reach: the compiler rejects a
+ *       mutable global in an embeddable artifact, and what the runtime keeps
+ *       for itself (thread-locals such as the panic boundary and the cache of
+ *       small freed blocks, and tables filled on first use such as the map
+ *       hash key and the file table) is per translation unit, so two
+ *       libraries in one process each carry their own copy.
  *   S3  panics do not cross an export boundary: nx_panic longjmps to the nearest
  *       boundary when one is installed, and aborts the process otherwise.
  */
@@ -250,30 +254,143 @@ NX_INLINE void nx_track(void* st, ptrdiff_t allocs, ptrdiff_t bytes) {
     if (c->live_bytes > c->peak_bytes) c->peak_bytes = c->live_bytes;
 }
 #endif
+/* Small blocks (up to 64 bytes and a little over, in four classes 16 bytes
+ * apart) are kept when freed, up to 64 per class, on a list of the thread's
+ * own, and handed out again before malloc is asked: a program that makes and
+ * drops short strings (`format("w{}", .{k})` ten million times) spent much
+ * of its time in the C library's allocator on Windows, whose malloc caches
+ * nothing small. A block is always allocated at its class's size, so a
+ * cached one fits any request of its class, and a realloc into or out of
+ * the classes makes a whole block rather than shrinking one. The classes
+ * end where the C library's own steps do: on 64-bit Windows and under
+ * 64-bit glibc a block carries an 8-byte header and is rounded up to 16, so
+ * a request of 24, 40, 56 or 72 bytes costs what one of 16, 32, 48 or 64
+ * does (measured), the classes end at those, and a cached block costs the C
+ * library no more than its request would; elsewhere they end at the
+ * multiples of 16.
+ * The leak checker counts what malloc alone would count: a block from the
+ * list is an allocation, one put on it a free, and a realloc a realloc
+ * whichever way it went. Under AddressSanitizer the cache is off and every
+ * request has its exact size, so a use after free or an overflow stays what
+ * it is (-DNX_SMALL_CACHE=1 forces it on, for a sanitizer run of the cache
+ * itself). The lists are thread-local and per translation unit, like the
+ * panic boundary: no lock, no setup, and every thread the runtime starts,
+ * and every exported call, returns what it holds when it ends
+ * (nx_small_drain). */
+#ifndef NX_SMALL_CACHE
+#if defined(__SANITIZE_ADDRESS__)
+#define NX_SMALL_CACHE 0
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define NX_SMALL_CACHE 0
+#else
+#define NX_SMALL_CACHE 1
+#endif
+#else
+#define NX_SMALL_CACHE 1
+#endif
+#endif
+#if NX_SMALL_CACHE
+#if defined(_WIN64) || (defined(__GLIBC__) && defined(__LP64__))
+#define NX_SMALL_SLACK 8
+#else
+#define NX_SMALL_SLACK 0
+#endif
+#define NX_SMALL_CLASSES 4
+#define NX_SMALL_MAX (16 * NX_SMALL_CLASSES + NX_SMALL_SLACK)
+#define NX_SMALL_KEEP 64
+typedef struct nx_small_block { struct nx_small_block* next; } nx_small_block;
+NX_STATE NX_THREAD_LOCAL nx_small_block* nx_small_lists[NX_SMALL_CLASSES];
+NX_STATE NX_THREAD_LOCAL unsigned nx_small_counts[NX_SMALL_CLASSES];
+/* the class of a size: 0 to 3 up to NX_SMALL_MAX bytes, -1 past that */
+NX_INLINE int nx_small_class(size_t size) {
+    if (size > NX_SMALL_MAX) return -1;
+    return size <= 16 + NX_SMALL_SLACK ? 0 : (int)((size - NX_SMALL_SLACK - 1) >> 4);
+}
+/* the size every block of class k is allocated at */
+NX_INLINE size_t nx_small_size(int k) { return (size_t)16 * (size_t)(k + 1) + NX_SMALL_SLACK; }
+/* a block for a request of class k, from the list or from malloc, at the class's size */
+NX_INLINE void* nx_small_take(int k) {
+    nx_small_block* b = nx_small_lists[k];
+    if (b) { nx_small_lists[k] = b->next; nx_small_counts[k]--; return b; }
+    return malloc(nx_small_size(k));
+}
+/* a block of class k back on its list, or to free when the list is full */
+NX_INLINE void nx_small_put(int k, void* p) {
+    if (nx_small_counts[k] < NX_SMALL_KEEP) {
+        nx_small_block* b = (nx_small_block*)p;
+        b->next = nx_small_lists[k];
+        nx_small_lists[k] = b;
+        nx_small_counts[k]++;
+    } else {
+        free(p);
+    }
+}
+/* every block this thread holds goes back to malloc: the last act of a
+   thread the runtime started, and of an exported call */
+NX_INLINE void nx_small_drain(void) {
+    for (int k = 0; k < NX_SMALL_CLASSES; k++) {
+        nx_small_block* b = nx_small_lists[k];
+        while (b) { nx_small_block* n = b->next; free(b); b = n; }
+        nx_small_lists[k] = NULL; nx_small_counts[k] = 0;
+    }
+}
+#else
+NX_INLINE void nx_small_drain(void) {}
+#endif
 NX_INLINE void* nx_malloc_alloc(void* st, size_t size, size_t align) {
     NX_UNUSED(st); NX_UNUSED(align);
+#if NX_SMALL_CACHE
+    int k = nx_small_class(size);
+    void* p = k >= 0 ? nx_small_take(k) : malloc(size);
+#else
     void* p = malloc(size ? size : 1);
+#endif
     if (!p) nx_panic("out of memory", "allocator");
 #ifdef NX_LEAK_CHECK
     nx_track(st, 1, (ptrdiff_t)size);
 #endif
     return p;
 }
-NX_INLINE void* nx_malloc_realloc(void* st, void* p, size_t old_size, size_t new_size, size_t align) {
-    NX_UNUSED(st); NX_UNUSED(old_size); NX_UNUSED(align);
-    void* q = realloc(p, new_size ? new_size : 1);
-    if (!q) nx_panic("out of memory", "allocator");
-#ifdef NX_LEAK_CHECK
-    nx_track(st, p ? 0 : 1, (ptrdiff_t)new_size - (ptrdiff_t)old_size);
-#endif
-    return q;
-}
 NX_INLINE void nx_malloc_free(void* st, void* p, size_t size) {
     NX_UNUSED(st); NX_UNUSED(size);
 #ifdef NX_LEAK_CHECK
     if (p) nx_track(st, -1, -(ptrdiff_t)size);
 #endif
+#if NX_SMALL_CACHE
+    /* a size of 0 names a block of unknown size (an export's panic path
+       releases what it tracked that way): back to malloc, not to a list */
+    int k = size ? nx_small_class(size) : -1;
+    if (p && k >= 0) { nx_small_put(k, p); return; }
+#endif
     free(p);
+}
+NX_INLINE void* nx_malloc_realloc(void* st, void* p, size_t old_size, size_t new_size, size_t align) {
+    NX_UNUSED(st); NX_UNUSED(old_size); NX_UNUSED(align);
+    void* q;
+#if NX_SMALL_CACHE
+    int ko = p ? nx_small_class(old_size) : -1, kn = nx_small_class(new_size);
+    if (p && ko >= 0 && ko == kn) {
+        q = p;  /* allocated at its class's size: it fits */
+    } else if (ko >= 0 || kn >= 0) {
+        /* into or out of the classes, or from one to another: a whole block
+           of the new size, so what reaches a list was made at its class's size */
+        q = kn >= 0 ? nx_small_take(kn) : malloc(new_size);
+        if (q && p) {
+            memcpy(q, p, old_size < new_size ? old_size : new_size);
+            if (ko >= 0) nx_small_put(ko, p); else free(p);
+        }
+    } else {
+        q = realloc(p, new_size ? new_size : 1);
+    }
+#else
+    q = realloc(p, new_size ? new_size : 1);
+#endif
+    if (!q) nx_panic("out of memory", "allocator");
+#ifdef NX_LEAK_CHECK
+    nx_track(st, p ? 0 : 1, (ptrdiff_t)new_size - (ptrdiff_t)old_size);
+#endif
+    return q;
 }
 NX_INLINE void nx_leak_report(struct nx_ctx* c) {
 #ifdef NX_LEAK_CHECK
@@ -483,7 +600,7 @@ NX_INLINE void nx_par_run(nx_par_task* t) {
     nx_tls_boundary = prev;
 }
 #if defined(_WIN32)
-static DWORD WINAPI nx_par_thread(LPVOID p) { nx_par_run((nx_par_task*)p); return 0; }
+static DWORD WINAPI nx_par_thread(LPVOID p) { nx_par_run((nx_par_task*)p); nx_small_drain(); return 0; }
 NX_INLINE size_t nx_hw_threads(void) { SYSTEM_INFO si; GetSystemInfo(&si); return si.dwNumberOfProcessors ? si.dwNumberOfProcessors : 1; }
 #else
 #include <pthread.h>
@@ -506,7 +623,7 @@ NX_INLINE size_t nx_hw_threads(void) { SYSTEM_INFO si; GetSystemInfo(&si); retur
 #define pthread_cond_signal(v) ((void)(v), 0)
 #define pthread_cond_broadcast(v) ((void)(v), 0)
 #endif
-static void* nx_par_thread(void* p) { nx_par_run((nx_par_task*)p); return NULL; }
+static void* nx_par_thread(void* p) { nx_par_run((nx_par_task*)p); nx_small_drain(); return NULL; }
 NX_INLINE size_t nx_hw_threads(void) { long n = sysconf(_SC_NPROCESSORS_ONLN); return n > 0 ? (size_t)n : 1; }
 #endif
 
@@ -1688,6 +1805,7 @@ typedef struct { nx_ctx* c; HANDLE h; nx_string* out; } nx_win_drain_job;
 static DWORD WINAPI nx_win_drain_thread(LPVOID p) {
     nx_win_drain_job* j = (nx_win_drain_job*)p;
     nx_win_drain(j->c, j->h, j->out);
+    nx_small_drain();
     return 0;
 }
 /* the child's input, written on a helper thread while the output is
@@ -3837,9 +3955,9 @@ static void nx_thread_run(nx_thread_task* t) {
     nx_tls_boundary = prev;
 }
 #if defined(_WIN32)
-static DWORD WINAPI nx_thread_entry(LPVOID p) { nx_thread_run((nx_thread_task*)p); return 0; }
+static DWORD WINAPI nx_thread_entry(LPVOID p) { nx_thread_run((nx_thread_task*)p); nx_small_drain(); return 0; }
 #else
-static void* nx_thread_entry(void* p) { nx_thread_run((nx_thread_task*)p); return NULL; }
+static void* nx_thread_entry(void* p) { nx_thread_run((nx_thread_task*)p); nx_small_drain(); return NULL; }
 #endif
 NX_INLINE int64_t nx_thread_start(nx_ctx* c, void* fnp, void* env, void* arg) {
     nx_thread_task* t = (nx_thread_task*)malloc(sizeof *t);
@@ -4124,9 +4242,9 @@ typedef struct nx_stack_call { void (*f)(void*); void* arg; } nx_stack_call;
 #ifndef STACK_SIZE_PARAM_IS_A_RESERVATION
 #define STACK_SIZE_PARAM_IS_A_RESERVATION 0x00010000
 #endif
-static DWORD WINAPI nx_stack_entry(LPVOID p) { nx_stack_call* c = (nx_stack_call*)p; c->f(c->arg); return 0; }
+static DWORD WINAPI nx_stack_entry(LPVOID p) { nx_stack_call* c = (nx_stack_call*)p; c->f(c->arg); nx_small_drain(); return 0; }
 #else
-static void* nx_stack_entry(void* p) { nx_stack_call* c = (nx_stack_call*)p; c->f(c->arg); return NULL; }
+static void* nx_stack_entry(void* p) { nx_stack_call* c = (nx_stack_call*)p; c->f(c->arg); nx_small_drain(); return NULL; }
 #endif
 NX_INLINE void nx_run_on_stack(uint64_t bytes, void (*f)(void*), void* arg) {
     nx_stack_call c; c.f = f; c.arg = arg;
@@ -4254,4 +4372,7 @@ NX_INLINE void nx_export_leave(nx_ctx* c, nx_boundary* b, nx_tracker* t, bool pa
     nx_mutex_free(t->mutex);
     c->alloc = t->parent;
     c->base = t->parent;
+    /* the small blocks the call cached go back too: nothing of the call
+       stays on the host's thread */
+    nx_small_drain();
 }

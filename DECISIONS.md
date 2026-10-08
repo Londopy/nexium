@@ -21,7 +21,9 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
    would need an executor in this context and is not implemented yet.
 4. **Thread-local panic boundary.** The only static in the runtime is a
    `_Thread_local` pointer to the current panic boundary. Two Nexium
-   libraries in one process each carry their own copy (S2).
+   libraries in one process each carry their own copy (S2). The runtime
+   has since gained state of its own, all of it per translation unit and
+   out of a program's reach (116, 126); 126 rewords the constraint.
 
 ## Syntax choices where the two documents were silent
 
@@ -1123,3 +1125,48 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     calls it replaces. The words benchmark, written this way, runs in two
     thirds of the time on Windows, where the allocator made each swapped key
     dear, and in the same time on Linux with gcc.
+126. **Small freed blocks are kept for reuse, per thread, instead of a
+    small-string optimization.** The roadmap's plan for short strings was
+    to store them inside the `String` value, as C++ and Rust's small-string
+    types do, so a short string needs no block from the allocator. It does
+    not fit the language: a `String` is passed by copy, and a function may
+    return a slice into the one it was given, which the view rules allow
+    because the bytes live on the heap, shared by the original and the
+    copy. With the bytes inside the value, the slice would point into the
+    copy, released when the call returns; making that safe would change how
+    every string, and every struct holding one, is passed and returned.
+    What the short strings cost was the allocator: on Windows, whose C
+    library caches nothing small, `words` took and returned a 16-byte block
+    ten million times, and that was nearly half of its distance from C. So
+    the runtime keeps freed blocks of up to 64 bytes and a little over, in
+    four classes 16 bytes apart, up to 64 per class, on a list of the
+    thread's own, and hands them out before asking `malloc`; a block is
+    always allocated at its class's size, so any cached block fits any
+    request of its class, and a `realloc` into or out of the classes makes
+    a whole block rather than shrinking one. The classes end where the C
+    library's own steps do, measured on 64-bit Windows and 64-bit glibc:
+    there a block carries an 8-byte header and is rounded up to 16, so a
+    request of 24, 40, 56 or 72 bytes costs what one of 16, 32, 48 or 64
+    does, the classes end at those, and a cached block costs the C library
+    no more than its request would have; elsewhere they end at the
+    multiples of 16. The lists are thread-local
+    and per translation unit,
+    like the panic boundary, rather than fields of the context: a context
+    is copied by value for an arena, a parallel worker and a thread, and a
+    copied list head would be two owners of the same blocks, so lists in
+    the context would need clearing at every copy, a drain wherever a copy
+    dies, and the context's address in the allocator's state in every
+    build; a thread-local list has one owner, needs no lock, and is
+    returned to `malloc` by the thread that ends, and by an exported call
+    before it returns, so a library leaves nothing on a host's thread. The
+    header's S2 comment,
+    which said the only static was the boundary, now says what is true. A
+    free with a size of 0 (an export's panic path releases what it tracked
+    that way) goes to `malloc`, not to a list. Under AddressSanitizer the
+    cache is off and every request has its exact size, so a use after free
+    or an overflow stays detectable; the leak checker counts a block from
+    the list as an allocation, one put on it as a free, and a realloc as a
+    realloc whichever way it went, so its numbers are what they were. The
+    cache is on everywhere but under AddressSanitizer: on Linux, whose C
+    library caches small blocks itself, it changes nothing measurable, and
+    on Windows `words` runs in three quarters of the time.

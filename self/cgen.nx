@@ -4808,10 +4808,12 @@ impl Gen {
             let rc = if has_ret { ret_c.clone() } else { String.from("void") }
             out.append(format("NX_EXPORT {} {}({}) {{\n", .{rc, fname, joined})[..])
             out.append("  nx_ctx _nx_ctx = nx_default_ctx(0, NULL);\n")
+            // the small blocks the call cached go back before it returns, as
+            // nx_export_leave does for a call with a status
             if has_ret {
-                out.append(format("  return ({}){}({});\n", .{rc, target, join_strings(&args, ", ")})[..])
+                out.append(format("  {} _nx_r = ({}){}({});\n  nx_small_drain();\n  return _nx_r;\n", .{rc, rc, target, join_strings(&args, ", ")})[..])
             } else {
-                out.append(format("  {}({});\n", .{target, join_strings(&args, ", ")})[..])
+                out.append(format("  {}({});\n  nx_small_drain();\n", .{target, join_strings(&args, ", ")})[..])
             }
             out.append("}\n")
         } else {

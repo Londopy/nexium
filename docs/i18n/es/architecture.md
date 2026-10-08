@@ -245,8 +245,9 @@ del argumento conocido.
 
 Una sola cabecera, incrustada en el compilador con `@embedFile` y pegada al
 principio de cada archivo generado. Sus secciones: slices, la interfaz del
-asignador, pánicos, el asignador por defecto (malloc) con seguimiento de
-fugas opcional, arenas, el grupo de hilos de parallel-for, listas, cadenas,
+asignador, pánicos, el asignador por defecto (malloc) con su caché de
+bloques pequeños liberados y seguimiento de fugas opcional, arenas, el grupo
+de hilos de parallel-for, listas, cadenas,
 formato, tablas hash, conteo de referencias, auxiliares de patrones binarios,
 aritmética comprobada y las partes de la plataforma para Windows y POSIX: el
 sistema de archivos y los manejadores de archivo, el tiempo, el lanzamiento de

@@ -1,0 +1,10 @@
+kept 200 dropped 3112 bytes
+kept again 100
+grown 100 10906 list 100 10906
+after clear 1
+mid 92 7579 wide 49 102
+edges 3753
+words 20 last 19
+nodes 44850
+parallel 36760 threads 1890 2000
+arena 200 690

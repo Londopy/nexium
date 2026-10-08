@@ -83,7 +83,9 @@ const char* ropesim_last_panic(void);
 - No initialization is required (S1); each call builds its context on the
   stack. No process-global state is created (S2): the compiler rejects an
   export that reaches a mutable global when an embeddable artifact is
-  declared.
+  declared, and the small freed blocks the runtime keeps for reuse during a
+  call go back to the C library before the call returns, so a call leaves
+  nothing on the host's thread.
 - Symbols are not mangled (S4). `[]T` becomes `(const T*, size_t)`;
   `[]mut T` becomes `(T*, size_t)`.
 

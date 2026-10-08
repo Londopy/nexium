@@ -1,0 +1,116 @@
+// SPEC 5.2 and 5.7: a released value's storage is the allocator's to hand
+// out again. The runtime keeps small freed blocks for reuse, per thread
+// (decision 126), so this makes and drops more short strings than it keeps
+// per class, grows a string and a list byte by byte from 16 bytes to 32, 64
+// and past the classes, fills and grows a string and a list made 44 and 48
+// bytes wide and a list of every width up to 80, so every class edge is
+// crossed and read back, makes and drops `ref class` objects, does the same on
+// the workers of a `for parallel` loop and on two threads, which return
+// their blocks when they end, and churns inside `using arena`, which the
+// cache never sees. The harness runs this file under `nx leaks` as well.
+import std.thread
+
+ref class Node { n: i64 }
+
+struct Job { from: i64, to: i64, total: i64 }
+
+fn churn(j: *mut Job) {
+    for i in j.from..j.to {
+        let s = format("t{}", .{i})
+        j.total += s.len as i64
+    }
+}
+
+fn main() {
+    // more live at once than the cache keeps per class, dropped in two batches
+    var kept = List(String).new()
+    var dropped: i64 = 0
+    for i in 0..1000 {
+        let s = format("w{}", .{i})
+        if i % 5 == 0 { kept.append(s) } else { dropped += s.len as i64 }
+    }
+    println("kept {} dropped {} bytes", .{kept.len, dropped})
+    kept.clear()
+    for i in 0..100 { kept.append(format("again {}", .{i})) }
+    println("kept again {}", .{kept.len})
+    // a string and a list of bytes grown one byte at a time: 16, 32, 64, then past
+    var grown = String.new()
+    var bytes = List(u8).new()
+    for i in 0..100 {
+        let b = (97 + i % 26) as u8
+        grown.push_byte(b)
+        bytes.append(b)
+    }
+    var sum: i64 = 0
+    for b in grown[..] { sum += b as i64 }
+    var sum2: i64 = 0
+    for b in bytes[..] { sum2 += b as i64 }
+    println("grown {} {} list {} {}", .{grown.len, sum, bytes.len, sum2})
+    grown.clear()
+    grown.append("after clear")
+    bytes.clear()
+    bytes.append(1)
+    println("{} {}", .{grown, bytes.len})
+    // a string and a byte list made 44 and 48 bytes wide, filled, and grown past
+    var mid = String.with_capacity(44)
+    for i in 0..44 { mid.push_byte((65 + i % 26) as u8) }
+    mid.append("...and then some more, past what it was made for")
+    var mid_sum: i64 = 0
+    for b in mid[..] { mid_sum += b as i64 }
+    var wide = List(u8).with_capacity(48)
+    for i in 0..48 { wide.append((i % 7) as u8) }
+    wide.clear()
+    for i in 0..48 { wide.append((i % 5) as u8) }
+    wide.append(9)
+    var wide_sum: i64 = 0
+    for b in wide[..] { wide_sum += b as i64 }
+    println("mid {} {} wide {} {}", .{mid.len, mid_sum, wide.len, wide_sum})
+    // every width from 0 to 80 bytes: made, filled, grown by one, summed after
+    var edges: i64 = 0
+    for n in 0..81 {
+        var l = List(u8).with_capacity(n)
+        for i in 0..n { l.append((i % 3) as u8) }
+        l.append(7)
+        for b in l[..] { edges += b as i64 }
+    }
+    println("edges {}", .{edges})
+    // a list of words grown from 4 to 8 to 16 elements, then dropped
+    var words = List(i64).new()
+    for i in 0..20 { words.append(i as i64) }
+    println("words {} last {}", .{words.len, words[19]})
+    // `ref class` objects made and dropped
+    var seen: i64 = 0
+    for i in 0..300 {
+        let node = Node{ .n = i as i64 }
+        seen += node.n
+    }
+    println("nodes {}", .{seen})
+    // the same on the workers of a parallel loop and on a thread
+    var idx: [64]i64 = undefined
+    for i in 0..64 { idx[i] = i as i64 }
+    var lens: [64]i64 = undefined
+    let out = lens[..]
+    for parallel v, i in idx[..] {
+        var n: i64 = 0
+        for k in 0..100 {
+            let s = format("p{}-{}", .{v, k})
+            n += s.len as i64
+        }
+        out[i] = n
+    }
+    var par: i64 = 0
+    for n in lens { par += n }
+    var jobs: [2]Job = [Job{ .from = 0, .to = 500, .total = 0 }, Job{ .from = 500, .to = 1000, .total = 0 }]
+    thread.each(Job, jobs[..], churn)
+    println("parallel {} threads {} {}", .{par, jobs[0].total, jobs[1].total})
+    // inside an arena nothing reaches the cache; an outer list grows on the heap
+    var outer = List(i64).new()
+    using arena {
+        var inner = List(String).new()
+        for i in 0..200 { inner.append(format("a{}", .{i})) }
+        for s in inner { outer.append(s.len as i64) }
+    }
+    var arena_total: i64 = 0
+    for n in outer { arena_total += n }
+    println("arena {} {}", .{outer.len, arena_total})
+}

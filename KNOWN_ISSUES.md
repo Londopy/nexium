@@ -45,6 +45,40 @@ Fixed bugs are not listed here; `CHANGELOG.md` and `git log` have them.
   gives way to a libc that has it), and a CI job that builds for
   `wasm32-wasi` with the newest Zig beside the pinned one.
 
+## Runtime
+
+- **A debug build does not fill a released `String`, `List` or `Map` buffer
+  with `0xDD`.** SPEC 5.6 says a debug build fills freed storage with a
+  fixed byte, so a view that outlived its storage reads garbage instead of
+  the old contents by luck, and `nx_free_bytes` in `runtime/nx_rt.h` does
+  that for what goes through it: `ref class` objects, arena chunks, the
+  arguments cache. A container's buffer is released through `nx_cont_free`,
+  which hands it to the root allocator as it is, and those buffers are what
+  views point into. Reproduce: in `--mode debug`, take `s[..].ptr` of a
+  `String` inside `unsafe`, let the `String` go out of scope, and read
+  through the pointer: the old bytes are still there (with the cache of
+  small freed blocks, decision 126, the first eight bytes of a small buffer
+  hold the list's link instead). Fix: the fill in `nx_cont_free` as in
+  `nx_free_bytes`, and a spec case that reads a released buffer through an
+  `unsafe` pointer and sees `0xDD`.
+- **`nx leaks` miscounts storage a thread allocated and the joiner
+  releases, or the reverse.** A spawned thread gets a copy of the context
+  with counters of its own (`nx_thread_start` in `runtime/nx_rt.h`), and
+  `nx_thread_wait` frees the record without adding the thread's counts to
+  the joiner's, where a `for parallel` worker's counts are added back after
+  the join. A buffer the thread's function grew and the joining thread
+  releases is then a free with no allocation on the joiner's side:
+  `std.thread`'s `spawn` appends the result on the thread
+  (`task.result.append(r)`) and `join` releases that list, and a channel's
+  queue grows on the sender's thread and is released by `ch.free()` on the
+  owner's. Reproduce: `nx leaks tests/spec/s13_concurrency.nx` reports
+  `18446744073709551613 allocation(s) still live at exit`, three frees more
+  than allocations (two `spawn` results and the channel's queue). Fix:
+  `thread.join` and `thread.join_all` take the context and add the thread's
+  `live_allocs`, `live_bytes` and `total_allocs` to it as `nx_parallel_for`
+  does, with the seed regenerated for the new signature, and a spec case
+  joined under `nx leaks`.
+
 ## Diagnostics
 
 Places where a mistake in a program's own code is reported inside the
@@ -122,6 +156,18 @@ goal of SPEC 1; the roadmap's "Errors you can fix alone").
   `f(|x| x)`, `Task(T, R)|`.
 
 ## Tests and CI
+
+- **The Windows portable zip's manual and completion scripts are written
+  as one line.** The release workflow writes `nx man` and the four
+  completion scripts through a PowerShell pipeline with `Set-Content
+  -NoNewline` (`.github/workflows/release.yml`, the portable-zip step),
+  which splits a program's output into lines and joins them with nothing,
+  the mistake `bootstrap\build.ps1` had until it was fixed. A shell
+  completion script on one line does not load, and `nx.1` is unreadable.
+  Reproduce: unzip the `windows-msvc.zip` of a release and count the lines
+  of `completions/nx.bash`. Fix: write those files through `cmd /c "... >
+  file"`, as `build.ps1` does, and a check in the release workflow that the
+  files have more than one line.
 
 - **Suites that build files must pass `--out-dir`.** Two cases compiling
   the same source into `nx-out/` at once fail on Windows (the second write

@@ -4,8 +4,12 @@
  *
  * Design constraints (specification section 4.1):
  *   S1  no initialization: every function here works from any thread with no setup.
- *   S2  no process-global state: the only static is a thread-local panic boundary,
- *       which is per-thread and per-translation-unit.
+ *   S2  no process-global state a program can reach: the compiler rejects a
+ *       mutable global in an embeddable artifact, and what the runtime keeps
+ *       for itself (thread-locals such as the panic boundary and the cache of
+ *       small freed blocks, and tables filled on first use such as the map
+ *       hash key and the file table) is per translation unit, so two
+ *       libraries in one process each carry their own copy.
  *   S3  panics do not cross an export boundary: nx_panic longjmps to the nearest
  *       boundary when one is installed, and aborts the process otherwise.
  */
@@ -252,30 +256,143 @@ NX_INLINE void nx_track(void* st, ptrdiff_t allocs, ptrdiff_t bytes) {
     if (c->live_bytes > c->peak_bytes) c->peak_bytes = c->live_bytes;
 }
 #endif
+/* Small blocks (up to 64 bytes and a little over, in four classes 16 bytes
+ * apart) are kept when freed, up to 64 per class, on a list of the thread's
+ * own, and handed out again before malloc is asked: a program that makes and
+ * drops short strings (`format("w{}", .{k})` ten million times) spent much
+ * of its time in the C library's allocator on Windows, whose malloc caches
+ * nothing small. A block is always allocated at its class's size, so a
+ * cached one fits any request of its class, and a realloc into or out of
+ * the classes makes a whole block rather than shrinking one. The classes
+ * end where the C library's own steps do: on 64-bit Windows and under
+ * 64-bit glibc a block carries an 8-byte header and is rounded up to 16, so
+ * a request of 24, 40, 56 or 72 bytes costs what one of 16, 32, 48 or 64
+ * does (measured), the classes end at those, and a cached block costs the C
+ * library no more than its request would; elsewhere they end at the
+ * multiples of 16.
+ * The leak checker counts what malloc alone would count: a block from the
+ * list is an allocation, one put on it a free, and a realloc a realloc
+ * whichever way it went. Under AddressSanitizer the cache is off and every
+ * request has its exact size, so a use after free or an overflow stays what
+ * it is (-DNX_SMALL_CACHE=1 forces it on, for a sanitizer run of the cache
+ * itself). The lists are thread-local and per translation unit, like the
+ * panic boundary: no lock, no setup, and every thread the runtime starts,
+ * and every exported call, returns what it holds when it ends
+ * (nx_small_drain). */
+#ifndef NX_SMALL_CACHE
+#if defined(__SANITIZE_ADDRESS__)
+#define NX_SMALL_CACHE 0
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define NX_SMALL_CACHE 0
+#else
+#define NX_SMALL_CACHE 1
+#endif
+#else
+#define NX_SMALL_CACHE 1
+#endif
+#endif
+#if NX_SMALL_CACHE
+#if defined(_WIN64) || (defined(__GLIBC__) && defined(__LP64__))
+#define NX_SMALL_SLACK 8
+#else
+#define NX_SMALL_SLACK 0
+#endif
+#define NX_SMALL_CLASSES 4
+#define NX_SMALL_MAX (16 * NX_SMALL_CLASSES + NX_SMALL_SLACK)
+#define NX_SMALL_KEEP 64
+typedef struct nx_small_block { struct nx_small_block* next; } nx_small_block;
+NX_STATE NX_THREAD_LOCAL nx_small_block* nx_small_lists[NX_SMALL_CLASSES];
+NX_STATE NX_THREAD_LOCAL unsigned nx_small_counts[NX_SMALL_CLASSES];
+/* the class of a size: 0 to 3 up to NX_SMALL_MAX bytes, -1 past that */
+NX_INLINE int nx_small_class(size_t size) {
+    if (size > NX_SMALL_MAX) return -1;
+    return size <= 16 + NX_SMALL_SLACK ? 0 : (int)((size - NX_SMALL_SLACK - 1) >> 4);
+}
+/* the size every block of class k is allocated at */
+NX_INLINE size_t nx_small_size(int k) { return (size_t)16 * (size_t)(k + 1) + NX_SMALL_SLACK; }
+/* a block for a request of class k, from the list or from malloc, at the class's size */
+NX_INLINE void* nx_small_take(int k) {
+    nx_small_block* b = nx_small_lists[k];
+    if (b) { nx_small_lists[k] = b->next; nx_small_counts[k]--; return b; }
+    return malloc(nx_small_size(k));
+}
+/* a block of class k back on its list, or to free when the list is full */
+NX_INLINE void nx_small_put(int k, void* p) {
+    if (nx_small_counts[k] < NX_SMALL_KEEP) {
+        nx_small_block* b = (nx_small_block*)p;
+        b->next = nx_small_lists[k];
+        nx_small_lists[k] = b;
+        nx_small_counts[k]++;
+    } else {
+        free(p);
+    }
+}
+/* every block this thread holds goes back to malloc: the last act of a
+   thread the runtime started, and of an exported call */
+NX_INLINE void nx_small_drain(void) {
+    for (int k = 0; k < NX_SMALL_CLASSES; k++) {
+        nx_small_block* b = nx_small_lists[k];
+        while (b) { nx_small_block* n = b->next; free(b); b = n; }
+        nx_small_lists[k] = NULL; nx_small_counts[k] = 0;
+    }
+}
+#else
+NX_INLINE void nx_small_drain(void) {}
+#endif
 NX_INLINE void* nx_malloc_alloc(void* st, size_t size, size_t align) {
     NX_UNUSED(st); NX_UNUSED(align);
+#if NX_SMALL_CACHE
+    int k = nx_small_class(size);
+    void* p = k >= 0 ? nx_small_take(k) : malloc(size);
+#else
     void* p = malloc(size ? size : 1);
+#endif
     if (!p) nx_panic("out of memory", "allocator");
 #ifdef NX_LEAK_CHECK
     nx_track(st, 1, (ptrdiff_t)size);
 #endif
     return p;
 }
-NX_INLINE void* nx_malloc_realloc(void* st, void* p, size_t old_size, size_t new_size, size_t align) {
-    NX_UNUSED(st); NX_UNUSED(old_size); NX_UNUSED(align);
-    void* q = realloc(p, new_size ? new_size : 1);
-    if (!q) nx_panic("out of memory", "allocator");
-#ifdef NX_LEAK_CHECK
-    nx_track(st, p ? 0 : 1, (ptrdiff_t)new_size - (ptrdiff_t)old_size);
-#endif
-    return q;
-}
 NX_INLINE void nx_malloc_free(void* st, void* p, size_t size) {
     NX_UNUSED(st); NX_UNUSED(size);
 #ifdef NX_LEAK_CHECK
     if (p) nx_track(st, -1, -(ptrdiff_t)size);
 #endif
+#if NX_SMALL_CACHE
+    /* a size of 0 names a block of unknown size (an export's panic path
+       releases what it tracked that way): back to malloc, not to a list */
+    int k = size ? nx_small_class(size) : -1;
+    if (p && k >= 0) { nx_small_put(k, p); return; }
+#endif
     free(p);
+}
+NX_INLINE void* nx_malloc_realloc(void* st, void* p, size_t old_size, size_t new_size, size_t align) {
+    NX_UNUSED(st); NX_UNUSED(old_size); NX_UNUSED(align);
+    void* q;
+#if NX_SMALL_CACHE
+    int ko = p ? nx_small_class(old_size) : -1, kn = nx_small_class(new_size);
+    if (p && ko >= 0 && ko == kn) {
+        q = p;  /* allocated at its class's size: it fits */
+    } else if (ko >= 0 || kn >= 0) {
+        /* into or out of the classes, or from one to another: a whole block
+           of the new size, so what reaches a list was made at its class's size */
+        q = kn >= 0 ? nx_small_take(kn) : malloc(new_size);
+        if (q && p) {
+            memcpy(q, p, old_size < new_size ? old_size : new_size);
+            if (ko >= 0) nx_small_put(ko, p); else free(p);
+        }
+    } else {
+        q = realloc(p, new_size ? new_size : 1);
+    }
+#else
+    q = realloc(p, new_size ? new_size : 1);
+#endif
+    if (!q) nx_panic("out of memory", "allocator");
+#ifdef NX_LEAK_CHECK
+    nx_track(st, p ? 0 : 1, (ptrdiff_t)new_size - (ptrdiff_t)old_size);
+#endif
+    return q;
 }
 NX_INLINE void nx_leak_report(struct nx_ctx* c) {
 #ifdef NX_LEAK_CHECK
@@ -485,7 +602,7 @@ NX_INLINE void nx_par_run(nx_par_task* t) {
     nx_tls_boundary = prev;
 }
 #if defined(_WIN32)
-static DWORD WINAPI nx_par_thread(LPVOID p) { nx_par_run((nx_par_task*)p); return 0; }
+static DWORD WINAPI nx_par_thread(LPVOID p) { nx_par_run((nx_par_task*)p); nx_small_drain(); return 0; }
 NX_INLINE size_t nx_hw_threads(void) { SYSTEM_INFO si; GetSystemInfo(&si); return si.dwNumberOfProcessors ? si.dwNumberOfProcessors : 1; }
 #else
 #include <pthread.h>
@@ -508,7 +625,7 @@ NX_INLINE size_t nx_hw_threads(void) { SYSTEM_INFO si; GetSystemInfo(&si); retur
 #define pthread_cond_signal(v) ((void)(v), 0)
 #define pthread_cond_broadcast(v) ((void)(v), 0)
 #endif
-static void* nx_par_thread(void* p) { nx_par_run((nx_par_task*)p); return NULL; }
+static void* nx_par_thread(void* p) { nx_par_run((nx_par_task*)p); nx_small_drain(); return NULL; }
 NX_INLINE size_t nx_hw_threads(void) { long n = sysconf(_SC_NPROCESSORS_ONLN); return n > 0 ? (size_t)n : 1; }
 #endif
 
@@ -1690,6 +1807,7 @@ typedef struct { nx_ctx* c; HANDLE h; nx_string* out; } nx_win_drain_job;
 static DWORD WINAPI nx_win_drain_thread(LPVOID p) {
     nx_win_drain_job* j = (nx_win_drain_job*)p;
     nx_win_drain(j->c, j->h, j->out);
+    nx_small_drain();
     return 0;
 }
 /* the child's input, written on a helper thread while the output is
@@ -3839,9 +3957,9 @@ static void nx_thread_run(nx_thread_task* t) {
     nx_tls_boundary = prev;
 }
 #if defined(_WIN32)
-static DWORD WINAPI nx_thread_entry(LPVOID p) { nx_thread_run((nx_thread_task*)p); return 0; }
+static DWORD WINAPI nx_thread_entry(LPVOID p) { nx_thread_run((nx_thread_task*)p); nx_small_drain(); return 0; }
 #else
-static void* nx_thread_entry(void* p) { nx_thread_run((nx_thread_task*)p); return NULL; }
+static void* nx_thread_entry(void* p) { nx_thread_run((nx_thread_task*)p); nx_small_drain(); return NULL; }
 #endif
 NX_INLINE int64_t nx_thread_start(nx_ctx* c, void* fnp, void* env, void* arg) {
     nx_thread_task* t = (nx_thread_task*)malloc(sizeof *t);
@@ -4126,9 +4244,9 @@ typedef struct nx_stack_call { void (*f)(void*); void* arg; } nx_stack_call;
 #ifndef STACK_SIZE_PARAM_IS_A_RESERVATION
 #define STACK_SIZE_PARAM_IS_A_RESERVATION 0x00010000
 #endif
-static DWORD WINAPI nx_stack_entry(LPVOID p) { nx_stack_call* c = (nx_stack_call*)p; c->f(c->arg); return 0; }
+static DWORD WINAPI nx_stack_entry(LPVOID p) { nx_stack_call* c = (nx_stack_call*)p; c->f(c->arg); nx_small_drain(); return 0; }
 #else
-static void* nx_stack_entry(void* p) { nx_stack_call* c = (nx_stack_call*)p; c->f(c->arg); return NULL; }
+static void* nx_stack_entry(void* p) { nx_stack_call* c = (nx_stack_call*)p; c->f(c->arg); nx_small_drain(); return NULL; }
 #endif
 NX_INLINE void nx_run_on_stack(uint64_t bytes, void (*f)(void*), void* arg) {
     nx_stack_call c; c.f = f; c.arg = arg;
@@ -4256,6 +4374,9 @@ NX_INLINE void nx_export_leave(nx_ctx* c, nx_boundary* b, nx_tracker* t, bool pa
     nx_mutex_free(t->mutex);
     c->alloc = t->parent;
     c->base = t->parent;
+    /* the small blocks the call cached go back too: nothing of the call
+       stays on the host's thread */
+    nx_small_drain();
 }
 
 /* ---- imported C headers ---- */
@@ -5405,8 +5526,8 @@ static const nx_sl_u8 nxc_PATH_FUNCS_150 = { (uint8_t*)nx_str_395, 1105 };
 static const char nx_str_396[6872] = "// The fixed part of every `artifact wasm` loader: the error classes, the WASI\n// a library needs (a clock, randomness and the console; no files, arguments\n// or environment), and the copying between JavaScript values and the\n// module's memory. `nx ship` puts it at the top of <name>.js, followed by the\n// library's own `load`.\n\nexport class NexiumError extends Error {\n  constructor(errorName, code) {\n    super(errorName);\n    this.name = 'NexiumError';\n    this.code = code;\n    this.errorName = errorName;\n  }\n}\n\nexport class NexiumPanic extends NexiumError {\n  constructor(errorName, code, message) {\n    super(errorName, code);\n    this.name = 'NexiumPanic';\n    this.message = message;\n  }\n}\n\nconst nodeFs = typeof process === 'object' && process.versions && process.versions.node;\n\n// the module's bytes: the file beside this one unless `source` names or holds another\nasync function nxModule(source, beside) {\n  if (source instanceof WebAssembly.Module) return source;\n  if (source instanceof ArrayBuffer || ArrayBuffer.isView(source)) return WebAssembly.compile(source);\n  const url = new URL(source ?? beside, beside);\n  if (nodeFs && url.protocol === 'file:') {\n    const { readFile } = await import('node:fs/promises');\n    return WebAssembly.compile(await readFile(url));\n  }\n  const r = await fetch(url);\n  if (!r.ok) throw new Error(`cannot fetch ${url}: ${r.status}`);\n  return WebAssembly.compile(await r.arrayBuffer());\n}\n\n// WASI preview 1 for a library: what it prints goes to the console a line at\n// a time, and every call it has no use for answers ENOSYS\nfunction nxWasi(state) {\n  const SUCCESS = 0, EBADF = 8, ESPIPE = 70, ENOSYS = 52;\n  const view = () => new DataView(state.memory.buffer);\n  const decoders = [new TextDecoder(), new TextDecoder()];\n  const pending = ['', ''];\n  const print = [(s) => console.log(s), (s) => console.error(s)];\n  const none = (count, size) => { const v = view(); v.setUint32(count, 0, true); v.setUint32(size, 0, true); return SUCCESS; };\n  const calls = {\n    args_get: () => SUCCESS,\n    args_sizes_get: none,\n    environ_get: () => SUCCESS,\n    environ_sizes_get: none,\n    clock_res_get: (_id, out) => { view().setBigUint64(out, 1000n, true); return SUCCESS; },\n    clock_time_get: (id, _precision, out) => {\n      const ms = id === 0 ? Date.now() : performance.now();\n      view().setBigUint64(out, BigInt(Math.round(ms * 1e6)), true);\n      return SUCCESS;\n    },\n    fd_write: (fd, iovs, n, written) => {\n      if (fd !== 1 && fd !== 2) return EBADF;\n      const v = view();\n      let total = 0;\n      for (let i = 0; i < n; i++) {\n        const ptr = v.getUint32(iovs + i * 8, true), len = v.getUint32(iovs + i * 8 + 4, true);\n        pending[fd - 1] += decoders[fd - 1].decode(new Uint8Array(state.memory.buffer, ptr, len), { stream: true });\n        total += len;\n      }\n      const lines = pending[fd - 1].split('\\n');\n      pending[fd - 1] = lines.pop();\n      for (const line of lines) print[fd - 1](line);\n      v.setUint32(written, total, true);\n      return SUCCESS;\n    },\n    // stdout and stderr are terminals, so the C library flushes them a line at a time\n    fd_fdstat_get: (fd, ptr) => {\n      if (fd > 2) return EBADF;\n      const v = view();\n      v.setUint8(ptr, 2);\n      v.setUint16(ptr + 2, 0, true);\n      v.setBigUint64(ptr + 8, 0xFFFFFFFFFFFFFFFFn & ~0x24n, true);\n      v.setBigUint64(ptr + 16, 0n, true);\n      return SUCCESS;\n    },\n    fd_close: () => SUCCESS,\n    fd_seek: () => ESPIPE,\n    fd_prestat_get: () => EBADF,\n    fd_prestat_dir_name: () => EBADF,\n    proc_exit: (code) => { throw new Error(`the WebAssembly library exited with code ${code}`); },\n    random_get: (ptr, len) => {\n      for (let at = 0; at < len; at += 65536) {\n        crypto.getRandomValues(new Uint8Array(state.memory.buffer, ptr + at, Math.min(65536, len - at)));\n      }\n      return SUCCESS;\n    },\n    sched_yield: () => SUCCESS,\n    // time.sleep: the wait is spun, as a page cannot block\n    poll_oneoff: (inPtr, outPtr, nsubs, neventsPtr) => {\n      const v = view();\n      let longest = 0n;\n      for (let i = 0; i < nsubs; i++) {\n        const sub = inPtr + i * 48;\n        if (v.getUint8(sub + 8) === 0) { const t = v.getBigUint64(sub + 24, true); if (t > longest) longest = t; }\n        const ev = outPtr + i * 32;\n        v.setBigUint64(ev, v.getBigUint64(sub, true), true);\n        v.setUint16(ev + 8, 0, true);\n        v.setUint8(ev + 10, v.getUint8(sub + 8));\n      }\n      const until = performance.now() + Number(longest) / 1e6;\n      while (performance.now() < until) { /* spin */ }\n      v.setUint32(neventsPtr, nsubs, true);\n      return SUCCESS;\n    },\n  };\n  return new Proxy(calls, { get: (t, k) => (k in t ? t[k] : () => ENOSYS) });\n}\n\n// The helpers a library's functions call with, over the instance's exports.\nfunction nxBind(x, errorName, lastPanic) {\n  const bytes = () => new Uint8Array(x.memory.buffer);\n  const view = () => new DataView(x.memory.buffer);\n  const utf8 = new TextEncoder();\n  const text = new TextDecoder();\n  const cstr = (ptr) => { const b = bytes(); let end = ptr; while (b[end] !== 0) end++; return text.decode(b.subarray(ptr, end)); };\n  const alloc = (size) => {\n    const ptr = x.malloc(Math.max(size, 1));\n    if (!ptr) throw new RangeError('the WebAssembly library is out of memory');\n    return ptr;\n  };\n  const wide = (Ctor) => Ctor === BigInt64Array || Ctor === BigUint64Array;\n  // a slice argument, copied into the module's memory: [pointer, length, the array copied]\n  const slice = (value, Ctor) => {\n    let a;\n    if (value instanceof Ctor) a = value;\n    else if (typeof value === 'string' && Ctor === Uint8Array) a = utf8.encode(value);\n    else a = wide(Ctor) ? Ctor.from(value, (e) => BigInt(e)) : Ctor.from(value);\n    const ptr = alloc(a.byteLength);\n    bytes().set(new Uint8Array(a.buffer, a.byteOffset, a.byteLength), ptr);\n    return [ptr, a.length, a];\n  };\n  return {\n    view,\n    raise(code) {\n      const name = cstr(errorName(code));\n      if (name === 'Panic') throw new NexiumPanic(name, code, cstr(lastPanic()));\n      throw new NexiumError(name, code);\n    },\n    // the memory one call takes, freed together when the call is over\n    temps() {\n      const held = [];\n      return {\n        alloc: (size) => { const ptr = alloc(size); held.push(ptr); return ptr; },\n        slice: (value, Ctor) => { const s = slice(value, Ctor); held.push(s[0]); return s; },\n        free: () => { for (const ptr of held) x.free(ptr); },\n      };\n    },\n    // a `[]mut` argument after the call: what the function wrote goes back\n    back(value, ptr, a, Ctor) {\n      const got = new Ctor(bytes().slice(ptr, ptr + a.byteLength).buffer);\n      if (value instanceof Ctor) value.set(got);\n      else if (Array.isArray(value)) for (let i = 0; i < got.length; i++) value[i] = wide(Ctor) ? got[i] : Number(got[i]);\n    },\n  };\n}\n";
 static const nx_sl_u8 nxc_LIB_JS_151 = { (uint8_t*)nx_str_396, 6871 };
 static const size_t nxc_NONE_152 = ((size_t)18446744073709551615ULL);
-static const char nx_str_397[186747] = "/* Nexium runtime. Embedded into every generated translation unit.\n *\n * Design constraints (specification section 4.1):\n *   S1  no initialization: every function here works from any thread with no setup.\n *   S2  no process-global state: the only static is a thread-local panic boundary,\n *       which is per-thread and per-translation-unit.\n *   S3  panics do not cross an export boundary: nx_panic longjmps to the nearest\n *       boundary when one is installed, and aborts the process otherwise.\n */\n#ifndef NX_RT_H\n#define NX_RT_H\n\n#include <stdint.h>\n#include <stddef.h>\n#include <stdbool.h>\n#include <string.h>\n#include <stdio.h>\n#include <stdlib.h>\n/* NX_WASM: built for wasm32-wasi (a program, a library for the page, the\n   playground). The platform has no processes, sockets or terminal; those\n   parts fail with the error a program would see when the operating system\n   refuses. setjmp is WebAssembly's exception handling, which nx turns on\n   (-mexception-handling -mllvm -wasm-enable-sjlj) and whose three helpers it\n   compiles beside the program (nx_wasm_sjlj.c); C compiled without it has\n   none (NX_NO_SETJMP), and a panic ends the program wherever it is. */\n#if defined(__wasi__) && !defined(NX_WASM)\n#define NX_WASM 1\n#endif\n#if defined(NX_WASM) && !defined(__wasm_exception_handling__)\n#define NX_NO_SETJMP 1\ntypedef int jmp_buf[1];\n#define setjmp(b) ((void)(b), 0)\n#define longjmp(b, v) ((void)(b), (void)(v), abort())\n#else\n#include <setjmp.h>\n#endif\n#include <errno.h>\n#include <sys/stat.h>\n#include <math.h>\n#include <time.h>\n\n#if defined(_WIN32)\n#ifndef WIN32_LEAN_AND_MEAN\n#define WIN32_LEAN_AND_MEAN\n#endif\n#include <winsock2.h>\n#include <ws2tcpip.h>\n#include <windows.h>\n#include <io.h>\n#include <fcntl.h>\n#include <direct.h>\n#elif defined(NX_WASM)\n#include <sys/time.h>\n#include <unistd.h>\n#include <dirent.h>\n#include <fcntl.h>\nextern char** environ;\n#else\n#include <sys/time.h>\n#include <unistd.h>\n#include <termios.h>\n#include <poll.h>\n#include <signal.h>\n#include <spawn.h>\n#include <sys/wait.h>\n#include <dirent.h>\n#include <fcntl.h>\n#include <sys/socket.h>\n#include <sys/select.h>\n#include <netinet/in.h>\n#include <netinet/tcp.h>\n#include <arpa/inet.h>\n#include <netdb.h>\nextern char** environ;\n#if defined(__APPLE__)\n#include <mach-o/dyld.h>\n#endif\n#if defined(__linux__)\n#include <sys/syscall.h>\n#endif\n#endif\n\n#if defined(_MSC_VER) && !defined(__clang__)\n#define NX_THREAD_LOCAL __declspec(thread)\n#define NX_NORETURN __declspec(noreturn)\n#else\n#define NX_THREAD_LOCAL _Thread_local\n#define NX_NORETURN _Noreturn\n#endif\n#define NX_INLINE static inline\n#if defined(_WIN32) && defined(NX_BUILD_SHARED)\n#define NX_EXPORT __declspec(dllexport)\n#elif defined(NX_BUILD_SHARED)\n#define NX_EXPORT __attribute__((visibility(\"default\")))\n#else\n#define NX_EXPORT\n#endif\n#define NX_UNUSED(x) (void)(x)\n\n/* i128 and u128: the C compiler's __int128 on 64-bit targets, and C23's\n   _BitInt(128) on 32-bit ones (x86, ARM, RISC-V), which have no __int128;\n   clang carries _BitInt through the same operators, overflow builtins and\n   float conversions, inline where a 32-bit target has no library routine */\n#if defined(__SIZEOF_INT128__)\ntypedef __int128 nx_i128;\ntypedef unsigned __int128 nx_u128;\n#elif defined(__BITINT_MAXWIDTH__) && __BITINT_MAXWIDTH__ >= 128\ntypedef _BitInt(128) nx_i128;\ntypedef unsigned _BitInt(128) nx_u128;\n#else\n#error \"Nexium's i128 needs __int128 or _BitInt(128): on a 32-bit target build with zig cc (the default) or clang 16 or later\"\n#endif\n#define NX_I128_MAX ((nx_i128)((((nx_u128)1) << 127) - 1))\n#define NX_I128_MIN ((nx_i128)(-NX_I128_MAX - 1))\n\n/* ------------------------------------------------------------------ slices */\ntypedef struct nx_sl_u8 { uint8_t* ptr; size_t len; } nx_sl_u8;\nstruct nx_arena;\n/* Growable containers remember the arena they were created in (NULL = the\n * root allocator), so a container created outside a `using arena` block keeps\n * its storage on the heap even when it grows inside the block. */\ntypedef struct nx_string { uint8_t* ptr; size_t len; size_t cap; struct nx_arena* ar; } nx_string;\ntypedef struct nx_rawlist { void* ptr; size_t len; size_t cap; struct nx_arena* ar; } nx_rawlist;\n\nNX_INLINE nx_sl_u8 nx_lit(const char* s, size_t n) { nx_sl_u8 r; r.ptr = (uint8_t*)s; r.len = n; return r; }\n\n/* --------------------------------------------------------------- allocator */\ntypedef struct nx_alloc {\n    void* (*alloc)(void* state, size_t size, size_t align);\n    void* (*realloc)(void* state, void* p, size_t old_size, size_t new_size, size_t align);\n    void (*free)(void* state, void* p, size_t size);\n    void* state;\n} nx_alloc;\n\ntypedef struct nx_ctx {\n    nx_alloc alloc;\n    /* the root (non-arena) allocator, and the innermost arena in scope */\n    nx_alloc base;\n    struct nx_arena* arena;\n    uint64_t rng;\n    bool rng_seeded;\n    int argc;\n    char** argv;\n    FILE* out;\n    FILE* err;\n    /* leak tracking (only maintained when built with -DNX_LEAK_CHECK) */\n    size_t live_allocs;\n    size_t live_bytes;\n    size_t total_allocs;\n    size_t peak_bytes;\n    /* os.args(): built once, owned by the context */\n    nx_sl_u8* args_cache;\n    size_t args_len;\n} nx_ctx;\n\n/* ------------------------------------------------------------------ panics */\nstruct nx_tracker;\ntypedef struct nx_boundary {\n    jmp_buf jb;\n    char msg[256];\n    char loc[128];\n    /* the resources of the export call this boundary belongs to, or NULL */\n    struct nx_tracker* track;\n} nx_boundary;\n/* files (kind 0), sockets (1) and held locks (2) register with the boundary's\n   tracker as they are acquired and released; defined with the tracker below */\nstatic void nx_track_handle(int kind, int64_t h, bool acquire);\nstatic void nx_ctx_untrack(nx_ctx* c);\n\n/* The runtime's state. In one C file (the default) each variable is static;\n   a program compiled as several (`nx build` of a debug build, one C file per\n   module: NX_RT_SHARED) shares one copy, which the unit with NX_RT_OWNER\n   defines and the others declare. */\n#if defined(NX_RT_SHARED) && !defined(NX_RT_OWNER)\n#define NX_STATE extern\n#define NX_STATE_INIT(v)\n#elif defined(NX_RT_SHARED)\n#define NX_STATE\n#define NX_STATE_INIT(v) = v\n#else\n#define NX_STATE static\n#define NX_STATE_INIT(v) = v\n#endif\n\nNX_STATE NX_THREAD_LOCAL nx_boundary* nx_tls_boundary NX_STATE_INIT(NULL);\nNX_STATE NX_THREAD_LOCAL char nx_tls_last_panic[256];\n\nNX_NORETURN NX_INLINE void nx_panic(const char* msg, const char* loc) {\n#if defined(NX_NO_SETJMP)\n    /* no boundary can catch it: the program ends as main's would end it */\n    fflush(stdout);\n    fprintf(stderr, \"panic: %s\\n  at %s\\n\", msg, loc ? loc : \"?\");\n    fflush(stderr);\n    exit(101);\n#endif\n    if (nx_tls_boundary) {\n        nx_boundary* b = nx_tls_boundary;\n        snprintf(b->msg, sizeof b->msg, \"%s\", msg);\n        snprintf(b->loc, sizeof b->loc, \"%s\", loc ? loc : \"\");\n        snprintf(nx_tls_last_panic, sizeof nx_tls_last_panic, \"%s (at %s)\", msg, loc ? loc : \"?\");\n        longjmp(b->jb, 1);\n    }\n    fprintf(stderr, \"panic: %s\\n  at %s\\n\", msg, loc ? loc : \"?\");\n    fflush(stderr);\n    abort();\n}\n\nNX_NORETURN NX_INLINE void nx_panic_bounds(size_t i, size_t len, const char* loc) {\n    char buf[128];\n    snprintf(buf, sizeof buf, \"index %zu out of bounds for length %zu\", i, len);\n    nx_panic(buf, loc);\n}\n\n/* pointer + offset that is defined for a null pointer: an empty slice has no\n * storage, and `NULL + 0` is undefined in C (UBSan traps it) */\n#define nx_padd(p, n) ((n) ? (p) + (n) : (p))\n\nNX_INLINE size_t nx_idx(size_t i, size_t len, const char* loc) {\n    if (i >= len) nx_panic_bounds(i, len, loc);\n    return i;\n}\n\nNX_INLINE void nx_slice_check(size_t start, size_t end, size_t len, const char* loc) {\n    if (start > end || end > len) {\n        char buf[128];\n        snprintf(buf, sizeof buf, \"slice %zu..%zu out of range for length %zu\", start, end, len);\n        nx_panic(buf, loc);\n    }\n}\n\nNX_INLINE nx_i128 nx_cast_check(nx_i128 v, nx_i128 lo, nx_i128 hi, const char* loc) {\n    if (v < lo || v > hi) nx_panic(\"value does not fit the target type\", loc);\n    return v;\n}\n\nNX_INLINE int64_t nx_f2i(double f, nx_i128 lo, nx_i128 hi, const char* loc) {\n    if (!(f == f) || f < (double)lo || f > (double)hi) nx_panic(\"float to integer cast out of range\", loc);\n    return (int64_t)f;\n}\n\n/* ------------------------------------------------------- default allocator */\n#ifdef NX_LEAK_CHECK\n/* the tracking allocator keeps its counters in the context (no globals) */\nNX_INLINE void nx_track(void* st, ptrdiff_t allocs, ptrdiff_t bytes) {\n    struct nx_ctx* c = (struct nx_ctx*)st;\n    if (!c) return;\n    c->live_allocs = (size_t)((ptrdiff_t)c->live_allocs + allocs);\n    c->live_bytes = (size_t)((ptrdiff_t)c->live_bytes + bytes);\n    if (allocs > 0) c->total_allocs++;\n    if (c->live_bytes > c->peak_bytes) c->peak_bytes = c->live_bytes;\n}\n#endif\nNX_INLINE void* nx_malloc_alloc(void* st, size_t size, size_t align) {\n    NX_UNUSED(st); NX_UNUSED(align);\n    void* p = malloc(size ? size : 1);\n    if (!p) nx_panic(\"out of memory\", \"allocator\");\n#ifdef NX_LEAK_CHECK\n    nx_track(st, 1, (ptrdiff_t)size);\n#endif\n    return p;\n}\nNX_INLINE void* nx_malloc_realloc(void* st, void* p, size_t old_size, size_t new_size, size_t align) {\n    NX_UNUSED(st); NX_UNUSED(old_size); NX_UNUSED(align);\n    void* q = realloc(p, new_size ? new_size : 1);\n    if (!q) nx_panic(\"out of memory\", \"allocator\");\n#ifdef NX_LEAK_CHECK\n    nx_track(st, p ? 0 : 1, (ptrdiff_t)new_size - (ptrdiff_t)old_size);\n#endif\n    return q;\n}\nNX_INLINE void nx_malloc_free(void* st, void* p, size_t size) {\n    NX_UNUSED(st); NX_UNUSED(size);\n#ifdef NX_LEAK_CHECK\n    if (p) nx_track(st, -1, -(ptrdiff_t)size);\n#endif\n    free(p);\n}\nNX_INLINE void nx_leak_report(struct nx_ctx* c) {\n#ifdef NX_LEAK_CHECK\n    fflush(stdout);\n    if (c->live_allocs == 0) {\n        fprintf(stderr, \"leaks: none (%zu allocation(s), peak %zu bytes)\\n\", c->total_allocs, c->peak_bytes);\n    } else {\n        fprintf(stderr, \"leaks: %zu allocation(s) still live at exit, %zu bytes (of %zu total, peak %zu bytes)\\n\", c->live_allocs, c->live_bytes, c->total_allocs, c->peak_bytes);\n        fprintf(stderr, \"       a live `ref class` cycle or a value moved into a container that was never released is the usual cause (spec 5.4: use `weak` at back edges)\\n\");\n    }\n#else\n    NX_UNUSED(c);\n#endif\n}\n\nNX_INLINE nx_ctx nx_default_ctx(int argc, char** argv) {\n    nx_ctx c;\n    c.alloc.alloc = nx_malloc_alloc;\n    c.alloc.realloc = nx_malloc_realloc;\n    c.alloc.free = nx_malloc_free;\n    c.alloc.state = NULL;\n    c.base = c.alloc;\n    c.arena = NULL;\n    c.rng = 0x9E3779B97F4A7C15ULL;\n    c.rng_seeded = false;\n    c.argc = argc;\n    c.argv = argv;\n    c.out = stdout;\n    c.err = stderr;\n    c.live_allocs = 0; c.live_bytes = 0; c.total_allocs = 0; c.peak_bytes = 0;\n    c.args_cache = NULL; c.args_len = 0;\n#if defined(_WIN32)\n    /* byte-exact output on every platform: no CRLF translation */\n    _setmode(_fileno(stdin), _O_BINARY);\n    _setmode(_fileno(stdout), _O_BINARY);\n    _setmode(_fileno(stderr), _O_BINARY);\n#endif\n    return c;\n}\n/* the architecture this program runs on; the driver chooses a CPU baseline by it */\nNX_INLINE nx_sl_u8 nx_host_arch(void) {\n#if defined(__x86_64__) || defined(_M_X64)\n    return nx_lit(\"x86_64\", 6);\n#elif defined(__aarch64__) || defined(_M_ARM64)\n    return nx_lit(\"aarch64\", 7);\n#elif defined(__i386__) || defined(_M_IX86)\n    return nx_lit(\"x86\", 3);\n#elif defined(__arm__) || defined(_M_ARM)\n    return nx_lit(\"arm\", 3);\n#elif defined(__riscv) && (__riscv_xlen == 64)\n    return nx_lit(\"riscv64\", 7);\n#elif defined(__riscv) && (__riscv_xlen == 32)\n    return nx_lit(\"riscv32\", 7);\n#elif defined(__wasm32__)\n    return nx_lit(\"wasm32\", 6);\n#else\n    return nx_lit(\"unknown\", 7);\n#endif\n}\n/* the operating system this program runs on, and the pointer width in bits:\n   `@target()` is (os, arch, bits), a constant of the C build */\nNX_INLINE nx_sl_u8 nx_host_os(void) {\n#if defined(_WIN32)\n    return nx_lit(\"windows\", 7);\n#elif defined(__APPLE__)\n    return nx_lit(\"macos\", 5);\n#elif defined(__linux__)\n    return nx_lit(\"linux\", 5);\n#elif defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)\n    return nx_lit(\"bsd\", 3);\n#elif defined(__wasi__)\n    return nx_lit(\"wasi\", 4);\n#else\n    return nx_lit(\"unknown\", 7);\n#endif\n}\n#define NX_PTR_BITS ((uint32_t)(sizeof(void*) * 8))\n/* UTF-8 on the Windows console for the program's life (the console's own code\n   page shows `\303\251` as two symbols); the previous page comes back at exit */\n#if defined(_WIN32)\nNX_STATE UINT nx_prev_console_cp NX_STATE_INIT(0);\nstatic void nx_console_restore(void) { if (nx_prev_console_cp) SetConsoleOutputCP(nx_prev_console_cp); }\n#endif\nNX_INLINE void nx_console_utf8(void) {\n#if defined(_WIN32)\n    UINT cur = GetConsoleOutputCP();\n    if (cur != 0 && cur != 65001) { nx_prev_console_cp = cur; SetConsoleOutputCP(65001); atexit(nx_console_restore); }\n#endif\n}\n/* the tracking allocator needs the context as its state; installed by entry points */\nNX_INLINE void nx_ctx_track_self(nx_ctx* c) {\n#ifdef NX_LEAK_CHECK\n    if (c->alloc.alloc == nx_malloc_alloc) c->alloc.state = c;\n    if (c->base.alloc == nx_malloc_alloc) c->base.state = c;\n#else\n    NX_UNUSED(c);\n#endif\n}\n\nNX_INLINE void* nx_alloc_bytes(nx_ctx* c, size_t size, size_t align) { return c->alloc.alloc(c->alloc.state, size, align); }\n/* A debug build fills storage with a fixed byte before freeing it, so a\n * view that outlived its storage (specification 5.6) reads garbage or\n * panics on its length instead of yielding the old contents by luck. */\nNX_INLINE void nx_free_bytes(nx_ctx* c, void* p, size_t size) {\n    if (!p) return;\n#ifdef NX_MODE_DEBUG\n    memset(p, 0xDD, size);\n#endif\n    c->alloc.free(c->alloc.state, p, size);\n}\nNX_INLINE void nx_ctx_release(nx_ctx* c) {\n    if (c->args_cache) { nx_free_bytes(c, c->args_cache, (c->args_len ? c->args_len : 1) * sizeof(nx_sl_u8)); c->args_cache = NULL; }\n}\nNX_INLINE nx_sl_u8* nx_args(nx_ctx* c, size_t* n) {\n    if (!c->args_cache) {\n        size_t k = c->argc > 0 ? (size_t)c->argc : 0;\n        c->args_cache = (nx_sl_u8*)nx_alloc_bytes(c, (k ? k : 1) * sizeof(nx_sl_u8), 8);\n        for (size_t i = 0; i < k; i++) { c->args_cache[i].ptr = (uint8_t*)c->argv[i]; c->args_cache[i].len = strlen(c->argv[i]); }\n        c->args_len = k;\n    }\n    *n = c->args_len;\n    return c->args_cache;\n}\n\n/* ----------------------------------------------------------------- arena */\n/* A bump allocator over chunks taken from the parent context. `free` is a\n * no-op; everything is released when the `using arena { }` block ends. */\ntypedef struct nx_arena_chunk { struct nx_arena_chunk* next; size_t cap; size_t used; } nx_arena_chunk;\ntypedef struct nx_arena { nx_ctx* parent; nx_arena_chunk* head; void* last; size_t last_size; } nx_arena;\n\nNX_INLINE void* nx_arena_alloc(void* st, size_t size, size_t align) {\n    nx_arena* a = (nx_arena*)st;\n    if (align < 16) align = 16;\n    size_t need = (size + align - 1) / align * align;\n    nx_arena_chunk* ch = a->head;\n    if (!ch || ch->used + need > ch->cap) {\n        size_t cap = need > 65536 - sizeof(nx_arena_chunk) ? need + sizeof(nx_arena_chunk) : 65536;\n        nx_arena_chunk* n = (nx_arena_chunk*)nx_alloc_bytes(a->parent, cap, 16);\n        n->next = ch; n->cap = cap; n->used = (sizeof(nx_arena_chunk) + 15) / 16 * 16;\n        a->head = ch = n;\n    }\n    void* p = (uint8_t*)ch + ch->used;\n    ch->used += need;\n    a->last = p; a->last_size = need;\n    return p;\n}\nNX_INLINE bool nx_arena_owns(const nx_arena* a, const void* p) {\n    for (const nx_arena_chunk* ch = a->head; ch; ch = ch->next)\n        if ((const uint8_t*)p >= (const uint8_t*)ch && (const uint8_t*)p < (const uint8_t*)ch + ch->cap) return true;\n    return false;\n}\nNX_INLINE void* nx_arena_realloc(void* st, void* p, size_t old_size, size_t new_size, size_t align) {\n    nx_arena* a = (nx_arena*)st;\n    if (p && !nx_arena_owns(a, p)) return a->parent->alloc.realloc(a->parent->alloc.state, p, old_size, new_size, align);\n    if (p && p == a->last) {\n        nx_arena_chunk* ch = a->head;\n        size_t need = (new_size + 15) / 16 * 16;\n        if (ch->used - a->last_size + need <= ch->cap) { ch->used = ch->used - a->last_size + need; a->last_size = need; return p; }\n    }\n    void* q = nx_arena_alloc(st, new_size, align);\n    if (p && old_size) memcpy(q, p, old_size < new_size ? old_size : new_size);\n    return q;\n}\nNX_INLINE void nx_arena_free(void* st, void* p, size_t size) {\n    nx_arena* a = (nx_arena*)st;\n    if (p && !nx_arena_owns(a, p)) a->parent->alloc.free(a->parent->alloc.state, p, size);\n}\nNX_INLINE nx_ctx nx_arena_begin(nx_ctx* parent, nx_arena* a) {\n    a->parent = parent; a->head = NULL; a->last = NULL; a->last_size = 0;\n    nx_ctx sub = *parent;\n    sub.alloc.alloc = nx_arena_alloc; sub.alloc.realloc = nx_arena_realloc; sub.alloc.free = nx_arena_free; sub.alloc.state = a;\n    sub.arena = a;\n    return sub;\n}\n/* Container storage goes to the container's own arena, or to the root allocator. */\nNX_INLINE void* nx_cont_alloc(nx_ctx* c, nx_arena* ar, size_t size, size_t align) {\n    return ar ? nx_arena_alloc(ar, size, align) : c->base.alloc(c->base.state, size, align);\n}\nNX_INLINE void* nx_cont_realloc(nx_ctx* c, nx_arena* ar, void* p, size_t old_size, size_t new_size, size_t align) {\n    return ar ? nx_arena_realloc(ar, p, old_size, new_size, align) : c->base.realloc(c->base.state, p, old_size, new_size, align);\n}\nNX_INLINE void nx_cont_free(nx_ctx* c, nx_arena* ar, void* p, size_t size) {\n    if (p && !ar) c->base.free(c->base.state, p, size);\n}\nNX_INLINE void nx_arena_end(nx_arena* a) {\n    nx_arena_chunk* ch = a->head;\n    while (ch) { nx_arena_chunk* n = ch->next; nx_free_bytes(a->parent, ch, ch->cap); ch = n; }\n    a->head = NULL;\n}\n\n/* ------------------------------------------------------------ parallel for */\ntypedef void (*nx_par_fn)(nx_ctx*, void*, size_t, size_t);\ntypedef struct nx_par_task { nx_ctx ctx; nx_par_fn f; void* env; size_t begin; size_t end; bool panicked; char msg[256]; char loc[128]; } nx_par_task;\n\nNX_INLINE void nx_par_run(nx_par_task* t) {\n    nx_boundary b;\n    b.track = NULL;\n    nx_boundary* prev = nx_tls_boundary;\n    nx_tls_boundary = &b;\n    if (setjmp(b.jb)) {\n        t->panicked = true;\n        snprintf(t->msg, sizeof t->msg, \"%s\", b.msg);\n        snprintf(t->loc, sizeof t->loc, \"%s\", b.loc);\n    } else {\n        t->f(&t->ctx, t->env, t->begin, t->end);\n    }\n    nx_tls_boundary = prev;\n}\n#if defined(_WIN32)\nstatic DWORD WINAPI nx_par_thread(LPVOID p) { nx_par_run((nx_par_task*)p); return 0; }\nNX_INLINE size_t nx_hw_threads(void) { SYSTEM_INFO si; GetSystemInfo(&si); return si.dwNumberOfProcessors ? si.dwNumberOfProcessors : 1; }\n#else\n#include <pthread.h>\n#if defined(NX_WASM)\n/* wasm32-wasi has no threads: wasi-libc declares pthreads and defines none.\n   Starting a thread fails, so the work runs in place where the parallel\n   loop and `thread.spawn` already fall back to, and a lock has no one else\n   to wait for. (The playground's compiler links against these: its driver\n   compiles C on threads, which in the page it never does.) */\n#define pthread_create(t, attr, f, arg) ((void)(t), (void)(attr), (void)(f), (void)(arg), EAGAIN)\n#define pthread_join(t, r) ((void)(t), (void)(r), 0)\n#define pthread_mutex_init(m, a) ((void)(m), (void)(a), 0)\n#define pthread_mutex_destroy(m) ((void)(m), 0)\n#define pthread_mutex_lock(m) ((void)(m), 0)\n#define pthread_mutex_unlock(m) ((void)(m), 0)\n#define pthread_cond_init(v, a) ((void)(v), (void)(a), 0)\n#define pthread_cond_destroy(v) ((void)(v), 0)\n#define pthread_cond_wait(v, m) ((void)(v), (void)(m), 0)\n#define pthread_cond_timedwait(v, m, t) ((void)(v), (void)(m), (void)(t), ETIMEDOUT)\n#define pthread_cond_signal(v) ((void)(v), 0)\n#define pthread_cond_broadcast(v) ((void)(v), 0)\n#endif\nstatic void* nx_par_thread(void* p) { nx_par_run((nx_par_task*)p); return NULL; }\nNX_INLINE size_t nx_hw_threads(void) { long n = sysconf(_SC_NPROCESSORS_ONLN); return n > 0 ? (size_t)n : 1; }\n#endif\n\n/* Runs f over [0, n) split across worker threads. Each worker gets its own\n * context (no shared allocator state); a panic in any worker is re-raised in\n * the calling thread after every worker has finished. */\nNX_INLINE void nx_parallel_for(nx_ctx* c, size_t n, nx_par_fn f, void* env, const char* loc) {\n    if (n == 0) return;\n    size_t workers = nx_hw_threads();\n    if (workers > 64) workers = 64;\n    if (workers > n) workers = n;\n    if (workers <= 1) { f(c, env, 0, n); return; }\n    nx_par_task tasks[64];\n    size_t chunk = (n + workers - 1) / workers;\n#if defined(_WIN32)\n    HANDLE handles[64];\n#else\n    pthread_t handles[64];\n#endif\n    for (size_t w = 0; w < workers; w++) {\n        tasks[w].ctx = *c;\n        tasks[w].ctx.live_allocs = 0; tasks[w].ctx.live_bytes = 0; tasks[w].ctx.total_allocs = 0; tasks[w].ctx.peak_bytes = 0;\n        nx_ctx_track_self(&tasks[w].ctx);\n        tasks[w].ctx.rng ^= (uint64_t)(w + 1) * 0x9E3779B97F4A7C15ULL;\n        tasks[w].f = f; tasks[w].env = env; tasks[w].panicked = false;\n        tasks[w].begin = w * chunk;\n        tasks[w].end = (w + 1) * chunk < n ? (w + 1) * chunk : n;\n#if defined(_WIN32)\n        handles[w] = CreateThread(NULL, 0, nx_par_thread, &tasks[w], 0, NULL);\n        if (!handles[w]) nx_par_run(&tasks[w]);\n#else\n        if (pthread_create(&handles[w], NULL, nx_par_thread, &tasks[w]) != 0) { nx_par_run(&tasks[w]); handles[w] = 0; }\n#endif\n    }\n    for (size_t w = 0; w < workers; w++) {\n#if defined(_WIN32)\n        if (handles[w]) { WaitForSingleObject(handles[w], INFINITE); CloseHandle(handles[w]); }\n#else\n        if (handles[w]) pthread_join(handles[w], NULL);\n#endif\n        c->live_allocs += tasks[w].ctx.live_allocs;\n        c->live_bytes += tasks[w].ctx.live_bytes;\n        c->total_allocs += tasks[w].ctx.total_allocs;\n    }\n    for (size_t w = 0; w < workers; w++) {\n        if (tasks[w].panicked) {\n            char buf[400];\n            snprintf(buf, sizeof buf, \"%s (in a parallel worker at %s)\", tasks[w].msg, tasks[w].loc);\n            nx_panic(buf, loc);\n        }\n    }\n}\n\n/* --------------------------------------------------------------- lists */\n/* The first block holds 16 bytes at least: a string's first append took 4,\n * and the next one grew it at once (no allocator hands out less anyway). */\nNX_INLINE void nx_list_grow(nx_ctx* c, nx_rawlist* l, size_t elem, size_t align, size_t min_cap) {\n    size_t cap = l->cap ? l->cap * 2 : (elem && elem < 4 ? 16 / elem : 4);\n    if (cap < min_cap) cap = min_cap;\n    l->ptr = nx_cont_realloc(c, l->ar, l->ptr, l->cap * elem, cap * elem, align);\n    l->cap = cap;\n}\nNX_INLINE void nx_list_free(nx_ctx* c, nx_rawlist* l, size_t elem) {\n    nx_cont_free(c, l->ar, l->ptr, l->cap * elem);\n    l->ptr = NULL; l->len = 0; l->cap = 0;\n}\nNX_INLINE void nx_list_reserve(nx_ctx* c, nx_rawlist* l, size_t elem, size_t align, size_t extra) {\n    if (l->len + extra > l->cap) nx_list_grow(c, l, elem, align, l->len + extra);\n}\nNX_INLINE nx_rawlist nx_list_clone_raw(nx_ctx* c, const nx_rawlist* l, size_t elem, size_t align) {\n    nx_rawlist r; r.ptr = NULL; r.len = 0; r.cap = 0; r.ar = c->arena;\n    if (l->len) {\n        r.ptr = nx_cont_alloc(c, r.ar, l->len * elem, align);\n        memcpy(r.ptr, l->ptr, l->len * elem);\n        r.len = l->len; r.cap = l->len;\n    }\n    return r;\n}\n\n/* -------------------------------------------------------------- strings */\nNX_INLINE void nx_str_reserve(nx_ctx* c, nx_string* s, size_t extra) {\n    if (s->len + extra > s->cap) nx_list_grow(c, (nx_rawlist*)s, 1, 1, s->len + extra);\n}\nNX_INLINE void nx_str_append(nx_ctx* c, nx_string* s, const uint8_t* p, size_t n) {\n    nx_str_reserve(c, s, n);\n    if (n) memcpy(s->ptr + s->len, p, n);\n    s->len += n;\n}\nNX_INLINE nx_string nx_str_from(nx_ctx* c, nx_sl_u8 src) {\n    nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;\n    nx_str_append(c, &s, src.ptr, src.len);\n    return s;\n}\nNX_INLINE void nx_str_free(nx_ctx* c, nx_string* s) { nx_list_free(c, (nx_rawlist*)s, 1); }\nNX_INLINE nx_sl_u8 nx_str_slice(nx_string s) { nx_sl_u8 r; r.ptr = s.ptr; r.len = s.len; return r; }\nNX_INLINE size_t nx_utf8_encode(uint32_t cp, uint8_t* out) {\n    if (cp < 0x80) { out[0] = (uint8_t)cp; return 1; }\n    if (cp < 0x800) { out[0] = (uint8_t)(0xC0 | (cp >> 6)); out[1] = (uint8_t)(0x80 | (cp & 0x3F)); return 2; }\n    if (cp < 0x10000) { out[0] = (uint8_t)(0xE0 | (cp >> 12)); out[1] = (uint8_t)(0x80 | ((cp >> 6) & 0x3F)); out[2] = (uint8_t)(0x80 | (cp & 0x3F)); return 3; }\n    out[0] = (uint8_t)(0xF0 | (cp >> 18)); out[1] = (uint8_t)(0x80 | ((cp >> 12) & 0x3F)); out[2] = (uint8_t)(0x80 | ((cp >> 6) & 0x3F)); out[3] = (uint8_t)(0x80 | (cp & 0x3F)); return 4;\n}\nNX_INLINE void nx_str_append_char(nx_ctx* c, nx_string* s, uint32_t cp) {\n    uint8_t buf[4];\n    size_t n = nx_utf8_encode(cp, buf);\n    nx_str_append(c, s, buf, n);\n}\n\n/* Copy a slice's bytes. An empty slice may have a null pointer (an empty\n   String has no storage), and memcpy may not be given one even to copy\n   nothing (C11 7.24.1; glibc declares the arguments nonnull), so every copy\n   out of a slice goes through here or checks the length itself. */\nNX_INLINE void nx_bytes_copy(void* d, const void* s, size_t n) { if (n) memcpy(d, s, n); }\nNX_INLINE bool nx_sl_eq(nx_sl_u8 a, nx_sl_u8 b) { return a.len == b.len && (a.len == 0 || memcmp(a.ptr, b.ptr, a.len) == 0); }\nNX_INLINE int nx_sl_cmp(nx_sl_u8 a, nx_sl_u8 b) {\n    size_t n = a.len < b.len ? a.len : b.len;\n    int r = n ? memcmp(a.ptr, b.ptr, n) : 0;\n    if (r) return r;\n    return a.len < b.len ? -1 : (a.len > b.len ? 1 : 0);\n}\nNX_INLINE bool nx_sl_starts_with(nx_sl_u8 a, nx_sl_u8 p) { return a.len >= p.len && (p.len == 0 || memcmp(a.ptr, p.ptr, p.len) == 0); }\nNX_INLINE bool nx_sl_ends_with(nx_sl_u8 a, nx_sl_u8 p) { return a.len >= p.len && (p.len == 0 || memcmp(a.ptr + a.len - p.len, p.ptr, p.len) == 0); }\nNX_INLINE bool nx_sl_find(nx_sl_u8 a, nx_sl_u8 n, size_t* out) {\n    if (n.len == 0) { *out = 0; return true; }\n    if (a.len < n.len) return false;\n    for (size_t i = 0; i + n.len <= a.len; i++) {\n        if (a.ptr[i] == n.ptr[0] && memcmp(a.ptr + i, n.ptr, n.len) == 0) { *out = i; return true; }\n    }\n    return false;\n}\nNX_INLINE nx_sl_u8 nx_sl_trim(nx_sl_u8 a) {\n    size_t s = 0, e = a.len;\n    while (s < e && (a.ptr[s] == ' ' || a.ptr[s] == '\\t' || a.ptr[s] == '\\n' || a.ptr[s] == '\\r')) s++;\n    while (e > s && (a.ptr[e - 1] == ' ' || a.ptr[e - 1] == '\\t' || a.ptr[e - 1] == '\\n' || a.ptr[e - 1] == '\\r')) e--;\n    nx_sl_u8 r; r.ptr = nx_padd(a.ptr, s); r.len = e - s; return r;\n}\nNX_INLINE bool nx_sl_eq_ignore_case(nx_sl_u8 a, nx_sl_u8 b) {\n    if (a.len != b.len) return false;\n    for (size_t i = 0; i < a.len; i++) {\n        uint8_t x = a.ptr[i], y = b.ptr[i];\n        if (x >= 'A' && x <= 'Z') x += 32;\n        if (y >= 'A' && y <= 'Z') y += 32;\n        if (x != y) return false;\n    }\n    return true;\n}\n/* parse a decimal/hex integer; returns 0 ok, 1 invalid, 2 overflow */\nNX_INLINE int nx_parse_int(nx_sl_u8 s, nx_i128 lo, nx_i128 hi, nx_i128* out) {\n    size_t i = 0; bool neg = false;\n    s = nx_sl_trim(s);\n    if (s.len == 0) return 1;\n    if (s.ptr[0] == '-') { neg = true; i = 1; } else if (s.ptr[0] == '+') { i = 1; }\n    if (i >= s.len) return 1;\n    nx_i128 v = 0; int base = 10;\n    if (i + 1 < s.len && s.ptr[i] == '0' && (s.ptr[i + 1] == 'x' || s.ptr[i + 1] == 'X')) { base = 16; i += 2; }\n    for (; i < s.len; i++) {\n        uint8_t ch = s.ptr[i]; int d;\n        if (ch == '_') continue;\n        if (ch >= '0' && ch <= '9') d = ch - '0';\n        else if (base == 16 && ch >= 'a' && ch <= 'f') d = ch - 'a' + 10;\n        else if (base == 16 && ch >= 'A' && ch <= 'F') d = ch - 'A' + 10;\n        else return 1;\n        /* overflow of the accumulator itself: the range check below cannot see it */\n        if (v > (NX_I128_MAX - d) / base) return 2;\n        v = v * base + d;\n    }\n    if (neg) v = -v;\n    if (v < lo || v > hi) return 2;\n    *out = v;\n    return 0;\n}\n/* nx_parse_int for an unsigned type, whose range can pass nx_i128's:\n * the same text is read, a minus sign only in range on zero */\nNX_INLINE int nx_parse_uint(nx_sl_u8 s, nx_u128 hi, nx_u128* out) {\n    size_t i = 0; bool neg = false;\n    s = nx_sl_trim(s);\n    if (s.len == 0) return 1;\n    if (s.ptr[0] == '-') { neg = true; i = 1; } else if (s.ptr[0] == '+') { i = 1; }\n    if (i >= s.len) return 1;\n    nx_u128 v = 0; unsigned base = 10;\n    if (i + 1 < s.len && s.ptr[i] == '0' && (s.ptr[i + 1] == 'x' || s.ptr[i + 1] == 'X')) { base = 16; i += 2; }\n    for (; i < s.len; i++) {\n        uint8_t ch = s.ptr[i]; unsigned d;\n        if (ch == '_') continue;\n        if (ch >= '0' && ch <= '9') d = ch - '0';\n        else if (base == 16 && ch >= 'a' && ch <= 'f') d = ch - 'a' + 10;\n        else if (base == 16 && ch >= 'A' && ch <= 'F') d = ch - 'A' + 10;\n        else return 1;\n        if (v > (~(nx_u128)0 - d) / base) return 2;\n        v = v * base + d;\n    }\n    if ((neg && v != 0) || v > hi) return 2;\n    *out = v;\n    return 0;\n}\nNX_INLINE bool nx_parse_float(nx_sl_u8 s, double* out) {\n    char buf[64];\n    s = nx_sl_trim(s);\n    if (s.len == 0 || s.len >= sizeof buf) return false;\n    memcpy(buf, s.ptr, s.len); buf[s.len] = 0;\n    char* end = NULL;\n    double v = strtod(buf, &end);\n    if (end != buf + s.len) return false;\n    *out = v;\n    return true;\n}\n\n/* -------------------------------------------------------------- formatting */\ntypedef struct nx_sink { nx_ctx* ctx; nx_string* str; FILE* f; char buf[512]; size_t n; } nx_sink;\nNX_INLINE nx_sink nx_sink_file(nx_ctx* c, FILE* f) { nx_sink s; s.ctx = c; s.str = NULL; s.f = f; s.n = 0; return s; }\nNX_INLINE nx_sink nx_sink_str(nx_ctx* c, nx_string* str) { nx_sink s; s.ctx = c; s.str = str; s.f = NULL; s.n = 0; return s; }\nNX_INLINE void nx_sink_flush(nx_sink* s) { if (s->f && s->n) { fwrite(s->buf, 1, s->n, s->f); s->n = 0; } if (s->f) fflush(s->f); }\nNX_INLINE void nx_w(nx_sink* s, const uint8_t* p, size_t n) {\n    if (n == 0) return;\n    if (s->str) { nx_str_append(s->ctx, s->str, p, n); return; }\n    if (n > sizeof s->buf) { nx_sink_flush(s); fwrite(p, 1, n, s->f); return; }\n    if (s->n + n > sizeof s->buf) { fwrite(s->buf, 1, s->n, s->f); s->n = 0; }\n    memcpy(s->buf + s->n, p, n); s->n += n;\n}\nNX_INLINE void nx_w_cstr(nx_sink* s, const char* p) { nx_w(s, (const uint8_t*)p, strlen(p)); }\nNX_INLINE void nx_w_sl(nx_sink* s, nx_sl_u8 v) { nx_w(s, v.ptr, v.len); }\nNX_INLINE void nx_w_pad(nx_sink* s, const char* txt, size_t len, int width, bool left) {\n    if (width > 0 && (size_t)width > len && !left) { for (size_t i = len; i < (size_t)width; i++) nx_w(s, (const uint8_t*)\" \", 1); }\n    nx_w(s, (const uint8_t*)txt, len);\n    if (width > 0 && (size_t)width > len && left) { for (size_t i = len; i < (size_t)width; i++) nx_w(s, (const uint8_t*)\" \", 1); }\n}\n/* The digits of a value that fits in 64 bits, written backwards from `end`;\n * how many. In 64 bits, and base 10 by a constant: a 128-bit division is a\n * library call per digit, which made formatting an integer the slow part\n * of building a short string. */\nNX_INLINE size_t nx_digits_u64(char* end, uint64_t v, int b, const char* digits) {\n    char* p = end;\n    if (b == 10) { do { *--p = (char)('0' + v % 10); v /= 10; } while (v); }\n    else { do { *--p = digits[v % (unsigned)b]; v /= (unsigned)b; } while (v); }\n    return (size_t)(end - p);\n}\n/* base: 10, 16 (lower), 17 (upper), 2, 8; an unsigned value, u128's whole range */\nNX_INLINE void nx_w_uint(nx_sink* s, nx_u128 u, int base, int width, bool left) {\n    char buf[140]; size_t i = sizeof buf;\n    int b = base == 17 ? 16 : base;\n    const char* digits = base == 17 ? \"0123456789ABCDEF\" : \"0123456789abcdef\";\n    if ((u >> 64) == 0) i -= nx_digits_u64(buf + i, (uint64_t)u, b, digits);\n    else while (u) { buf[--i] = digits[u % b]; u /= b; }\n    nx_w_pad(s, buf + i, sizeof buf - i, width, left);\n}\n/* base: 10, 16 (lower), 17 (upper), 2, 8 */\nNX_INLINE void nx_w_int(nx_sink* s, nx_i128 v, int base, int width, bool left) {\n    char buf[140]; size_t i = sizeof buf; bool neg = v < 0;\n    nx_u128 u = neg ? (nx_u128)(-(v + 1)) + 1 : (nx_u128)v;\n    int b = base == 17 ? 16 : base;\n    const char* digits = base == 17 ? \"0123456789ABCDEF\" : \"0123456789abcdef\";\n    if ((u >> 64) == 0) i -= nx_digits_u64(buf + i, (uint64_t)u, b, digits);\n    else while (u) { buf[--i] = digits[u % b]; u /= b; }\n    if (neg) buf[--i] = '-';\n    nx_w_pad(s, buf + i, sizeof buf - i, width, left);\n}\n/* an f32 (`f32` set) is written as the shortest text that reads back as that f32 */\nNX_INLINE void nx_w_float(nx_sink* s, double v, int prec, bool exp, int width, bool left, bool f32) {\n    char buf[64];\n    if (v != v) { snprintf(buf, sizeof buf, \"nan\"); }\n    else if (isinf(v)) { snprintf(buf, sizeof buf, v > 0 ? \"inf\" : \"-inf\"); }\n    else if (exp) { snprintf(buf, sizeof buf, \"%.*e\", prec < 0 ? 6 : prec, v); }\n    else if (prec >= 0) { snprintf(buf, sizeof buf, \"%.*f\", prec, v); }\n    else if (v == floor(v) && fabs(v) < 1e16) { snprintf(buf, sizeof buf, \"%.1f\", v); }\n    else { /* the shortest text that reads back as the same value */\n        int p = 1;\n        for (; p <= 17; p++) {\n            snprintf(buf, sizeof buf, \"%.*g\", p, v);\n            if (f32 ? (float)strtod(buf, NULL) == (float)v : strtod(buf, NULL) == v) break;\n        }\n    }\n    nx_w_pad(s, buf, strlen(buf), width, left);\n}\nNX_INLINE void nx_w_bool(nx_sink* s, bool b) { nx_w_cstr(s, b ? \"true\" : \"false\"); }\nNX_INLINE void nx_w_char(nx_sink* s, uint32_t cp) { uint8_t buf[4]; size_t n = nx_utf8_encode(cp, buf); nx_w(s, buf, n); }\n\n/* --------------------------------------------------------------- maps */\n/* A map keeps its entries in the order their keys were first put: iterating\n * gives them in that order (putting a key again keeps its place; removing\n * one closes the gap), whatever the keys hash to, as the interpreter's maps\n * do. An index of entry numbers, open addressing with linear probing over a\n * power-of-two table, finds a key. Keys are hashed with SipHash-1-3 under a\n * key drawn once per process from the operating system's generator, so\n * someone who chooses a program's keys cannot choose ones that collide.\n * Keys and values are stored as raw bytes.\n * key_kind: 0 = inline bytes, 1 = nx_sl_u8 (content hashed, storage borrowed),\n *           2 = nx_string (content hashed, owned by the map). */\ntypedef struct nx_map {\n    /* the entries, `used` of them written, room for `ecap`; `live` 0 for a\n       removed one */\n    uint8_t* keys; uint8_t* vals; uint8_t* live; uint64_t* hashes;\n    /* the index: per slot 0 (empty), NX_MAP_GONE (a removed entry's), or\n       an entry's number + 1; `filled` slots are not empty */\n    size_t* index; size_t icap; size_t filled;\n    size_t used; size_t ecap; size_t len; size_t ksize; size_t vsize; int key_kind;\n    nx_arena* ar;\n} nx_map;\n#define NX_MAP_GONE ((size_t)-1)\n\nNX_INLINE bool nx_os_random(uint8_t* p, size_t n);\nNX_STATE uint64_t nx_map_seed[2];\nNX_STATE int nx_map_seeded;\n/* the process's hash key, drawn at the first use of a map: 0 not drawn,\n   1 being drawn (another thread waits), 2 ready */\nNX_INLINE void nx_map_seed_init(void) {\n    if (__atomic_load_n(&nx_map_seeded, __ATOMIC_ACQUIRE) == 2) return;\n    int expected = 0;\n    if (__atomic_compare_exchange_n(&nx_map_seeded, &expected, 1, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {\n        uint64_t k[2] = { 0, 0 };\n        if (!nx_os_random((uint8_t*)k, sizeof k)) {\n            /* no generator: something no one outside can predict well (the\n               time and two addresses; not clock(), which wasm32-wasi lacks) */\n            k[0] = (uint64_t)time(NULL) * 0x9E3779B97F4A7C15ULL;\n            k[1] = (uint64_t)(uintptr_t)&k ^ ((uint64_t)(uintptr_t)&nx_map_seeded << 16);\n        }\n        nx_map_seed[0] = k[0];\n        nx_map_seed[1] = k[1];\n        __atomic_store_n(&nx_map_seeded, 2, __ATOMIC_RELEASE);\n        return;\n    }\n    while (__atomic_load_n(&nx_map_seeded, __ATOMIC_ACQUIRE) != 2) { }\n}\n#define NX_ROTL64(x, b) (uint64_t)(((x) << (b)) | ((x) >> (64 - (b))))\n#define NX_SIPROUND do { \\\n    v0 += v1; v1 = NX_ROTL64(v1, 13); v1 ^= v0; v0 = NX_ROTL64(v0, 32); \\\n    v2 += v3; v3 = NX_ROTL64(v3, 16); v3 ^= v2; \\\n    v0 += v3; v3 = NX_ROTL64(v3, 21); v3 ^= v0; \\\n    v2 += v1; v1 = NX_ROTL64(v1, 17); v1 ^= v2; v2 = NX_ROTL64(v2, 32); } while (0)\n/* SipHash-1-3 (one round per 8 bytes, three to finish), as Rust's HashMap */\nNX_INLINE uint64_t nx_siphash13(uint64_t k0, uint64_t k1, const uint8_t* p, size_t n) {\n    uint64_t v0 = 0x736f6d6570736575ULL ^ k0, v1 = 0x646f72616e646f6dULL ^ k1;\n    uint64_t v2 = 0x6c7967656e657261ULL ^ k0, v3 = 0x7465646279746573ULL ^ k1;\n    size_t end = n & ~(size_t)7;\n    for (size_t i = 0; i < end; i += 8) {\n        uint64_t m = 0;\n        for (int b = 0; b < 8; b++) m |= (uint64_t)p[i + b] << (8 * b);\n        v3 ^= m; NX_SIPROUND; v0 ^= m;\n    }\n    uint64_t last = (uint64_t)n << 56;\n    for (size_t b = 0; b < (n & 7); b++) last |= (uint64_t)p[end + b] << (8 * b);\n    v3 ^= last; NX_SIPROUND; v0 ^= last;\n    v2 ^= 0xff; NX_SIPROUND; NX_SIPROUND; NX_SIPROUND;\n    return v0 ^ v1 ^ v2 ^ v3;\n}\nNX_INLINE nx_sl_u8 nx_map_key_bytes(const nx_map* m, const void* key) {\n    nx_sl_u8 r;\n    if (m->key_kind == 0) { r.ptr = (uint8_t*)key; r.len = m->ksize; }\n    else { const nx_sl_u8* s = (const nx_sl_u8*)key; r.ptr = s->ptr; r.len = s->len; }\n    return r;\n}\nNX_INLINE uint64_t nx_map_hash(nx_sl_u8 kb) {\n    nx_map_seed_init();\n    return nx_siphash13(nx_map_seed[0], nx_map_seed[1], kb.ptr, kb.len);\n}\nNX_INLINE nx_map nx_map_new(nx_ctx* c, size_t ksize, size_t vsize, int key_kind) {\n    nx_map m; memset(&m, 0, sizeof m); m.ksize = ksize; m.vsize = vsize; m.key_kind = key_kind; m.ar = c->arena; return m;\n}\n/* the slot of the entry holding `kb` (true, and its number in *entry), or\n   where it would go: the first removed entry's slot on its way, else the\n   empty slot that ends it. The index always has an empty slot. */\nNX_INLINE bool nx_map_find(const nx_map* m, nx_sl_u8 kb, uint64_t h, size_t* slot, size_t* entry) {\n    if (m->icap == 0) { *slot = 0; return false; }\n    size_t mask = m->icap - 1, i = (size_t)h & mask, gone = NX_MAP_GONE;\n    for (;;) {\n        size_t v = m->index[i];\n        if (v == 0) { *slot = gone != NX_MAP_GONE ? gone : i; return false; }\n        if (v == NX_MAP_GONE) {\n            if (gone == NX_MAP_GONE) gone = i;\n        } else if (m->hashes[v - 1] == h && nx_sl_eq(nx_map_key_bytes(m, m->keys + (v - 1) * m->ksize), kb)) {\n            *slot = i; *entry = v - 1; return true;\n        }\n        i = (i + 1) & mask;\n    }\n}\n/* an index of `icap` slots over the live entries */\nNX_INLINE void nx_map_reindex(nx_ctx* c, nx_map* m, size_t icap) {\n    if (m->icap) nx_cont_free(c, m->ar, m->index, m->icap * sizeof(size_t));\n    m->index = (size_t*)nx_cont_alloc(c, m->ar, icap * sizeof(size_t), _Alignof(size_t));\n    memset(m->index, 0, icap * sizeof(size_t));\n    m->icap = icap;\n    m->filled = 0;\n    size_t mask = icap - 1;\n    for (size_t e = 0; e < m->used; e++) {\n        if (!m->live[e]) continue;\n        size_t i = (size_t)m->hashes[e] & mask;\n        while (m->index[i] != 0) i = (i + 1) & mask;\n        m->index[i] = e + 1;\n        m->filled++;\n    }\n}\n/* room for one more entry: the removed ones packed out, in order, when they\n   are half of what is written, else twice the room */\nNX_INLINE void nx_map_make_room(nx_ctx* c, nx_map* m) {\n    size_t dead = m->used - m->len;\n    if (dead > 0 && dead * 2 >= m->used) {\n        size_t w = 0;\n        for (size_t r = 0; r < m->used; r++) {\n            if (!m->live[r]) continue;\n            if (w != r) {\n                memmove(m->keys + w * m->ksize, m->keys + r * m->ksize, m->ksize);\n                if (m->vsize) memmove(m->vals + w * m->vsize, m->vals + r * m->vsize, m->vsize);\n                m->hashes[w] = m->hashes[r];\n                m->live[w] = 1;\n            }\n            w++;\n        }\n        for (size_t r = w; r < m->used; r++) m->live[r] = 0;\n        m->used = w;\n        nx_map_reindex(c, m, m->icap);\n        return;\n    }\n    size_t ncap = m->ecap ? m->ecap * 2 : 8;\n    size_t vs = m->vsize ? m->vsize : 1;\n    uint8_t* keys = (uint8_t*)nx_cont_alloc(c, m->ar, ncap * m->ksize, 16);\n    uint8_t* vals = (uint8_t*)nx_cont_alloc(c, m->ar, ncap * vs, 16);\n    uint8_t* live = (uint8_t*)nx_cont_alloc(c, m->ar, ncap, 1);\n    uint64_t* hashes = (uint64_t*)nx_cont_alloc(c, m->ar, ncap * sizeof(uint64_t), _Alignof(uint64_t));\n    memset(live, 0, ncap);\n    if (m->used) {\n        memcpy(keys, m->keys, m->used * m->ksize);\n        memcpy(vals, m->vals, m->used * vs);\n        memcpy(live, m->live, m->used);\n        memcpy(hashes, m->hashes, m->used * sizeof(uint64_t));\n    }\n    if (m->ecap) {\n        nx_cont_free(c, m->ar, m->keys, m->ecap * m->ksize);\n        nx_cont_free(c, m->ar, m->vals, m->ecap * vs);\n        nx_cont_free(c, m->ar, m->live, m->ecap);\n        nx_cont_free(c, m->ar, m->hashes, m->ecap * sizeof(uint64_t));\n    }\n    m->keys = keys; m->vals = vals; m->live = live; m->hashes = hashes; m->ecap = ncap;\n}\n/* a new entry at the end, for a key that is not in the map */\nNX_INLINE void nx_map_append(nx_ctx* c, nx_map* m, const void* key, const void* val, nx_sl_u8 kb, uint64_t h) {\n    if (m->used == m->ecap) nx_map_make_room(c, m);\n    if ((m->filled + 1) * 4 > m->icap * 3) {\n        size_t icap = m->icap ? m->icap : 8;\n        while ((m->len + 1) * 2 > icap) icap *= 2;\n        nx_map_reindex(c, m, icap);\n    }\n    size_t slot = 0, unused = 0;\n    (void)nx_map_find(m, kb, h, &slot, &unused);\n    size_t e = m->used++;\n    memcpy(m->keys + e * m->ksize, key, m->ksize);\n    if (m->vsize) memcpy(m->vals + e * m->vsize, val, m->vsize);\n    m->hashes[e] = h;\n    m->live[e] = 1;\n    if (m->index[slot] == 0) m->filled++;\n    m->index[slot] = e + 1;\n    m->len++;\n}\n/* returns pointer to the existing value slot, or NULL */\nNX_INLINE void* nx_map_get(const nx_map* m, const void* key) {\n    if (m->len == 0) return NULL;\n    nx_sl_u8 kb = nx_map_key_bytes(m, key);\n    size_t slot, e;\n    if (nx_map_find(m, kb, nx_map_hash(kb), &slot, &e)) return m->vals + e * m->vsize;\n    return NULL;\n}\n/* returns true if an existing entry was replaced (the old key/value are returned in old_key/old_val for dropping) */\nNX_INLINE bool nx_map_put(nx_ctx* c, nx_map* m, const void* key, const void* val, void* old_key, void* old_val) {\n    nx_sl_u8 kb = nx_map_key_bytes(m, key);\n    uint64_t h = nx_map_hash(kb);\n    size_t slot, e;\n    if (nx_map_find(m, kb, h, &slot, &e)) {\n        if (old_key) memcpy(old_key, m->keys + e * m->ksize, m->ksize);\n        if (old_val) memcpy(old_val, m->vals + e * m->vsize, m->vsize);\n        memcpy(m->keys + e * m->ksize, key, m->ksize);\n        if (m->vsize) memcpy(m->vals + e * m->vsize, val, m->vsize);\n        return true;\n    }\n    nx_map_append(c, m, key, val, kb, h);\n    return false;\n}\n/* `m.get_or_put(key, val)`: the value slot of `key`, hashed once, holding\n   `val` when the key is new. When it was there, the entry keeps its own key\n   and value and *found says so: the caller drops the two it passed. */\nNX_INLINE void* nx_map_get_or_put(nx_ctx* c, nx_map* m, const void* key, const void* val, bool* found) {\n    nx_sl_u8 kb = nx_map_key_bytes(m, key);\n    uint64_t h = nx_map_hash(kb);\n    size_t slot, e;\n    if (nx_map_find(m, kb, h, &slot, &e)) { *found = true; return m->vals + e * m->vsize; }\n    *found = false;\n    nx_map_append(c, m, key, val, kb, h);\n    return m->vals + (m->used - 1) * m->vsize;\n}\nNX_INLINE bool nx_map_remove(nx_map* m, const void* key, void* old_key, void* old_val) {\n    if (m->len == 0) return false;\n    nx_sl_u8 kb = nx_map_key_bytes(m, key);\n    size_t slot, e;\n    if (!nx_map_find(m, kb, nx_map_hash(kb), &slot, &e)) return false;\n    if (old_key) memcpy(old_key, m->keys + e * m->ksize, m->ksize);\n    if (old_val) memcpy(old_val, m->vals + e * m->vsize, m->vsize);\n    m->live[e] = 0;\n    m->index[slot] = NX_MAP_GONE;\n    m->len--;\n    if (m->len == 0) {\n        /* the last one gone: start over in the same room */\n        memset(m->live, 0, m->used);\n        m->used = 0;\n        memset(m->index, 0, m->icap * sizeof(size_t));\n        m->filled = 0;\n    }\n    return true;\n}\nNX_INLINE void nx_map_free_storage(nx_ctx* c, nx_map* m) {\n    if (m->ecap) {\n        size_t vs = m->vsize ? m->vsize : 1;\n        nx_cont_free(c, m->ar, m->keys, m->ecap * m->ksize);\n        nx_cont_free(c, m->ar, m->vals, m->ecap * vs);\n        nx_cont_free(c, m->ar, m->live, m->ecap);\n        nx_cont_free(c, m->ar, m->hashes, m->ecap * sizeof(uint64_t));\n    }\n    if (m->icap) nx_cont_free(c, m->ar, m->index, m->icap * sizeof(size_t));\n    m->keys = NULL; m->vals = NULL; m->live = NULL; m->hashes = NULL; m->index = NULL;\n    m->ecap = 0; m->icap = 0; m->filled = 0; m->used = 0; m->len = 0;\n}\n/* iterate in insertion order: start with i = 0; returns false when done */\nNX_INLINE bool nx_map_next(const nx_map* m, size_t* i, void** key, void** val) {\n    while (*i < m->used) {\n        size_t k = (*i)++;\n        if (m->live[k]) { *key = m->keys + k * m->ksize; *val = m->vals + k * m->vsize; return true; }\n    }\n    return false;\n}\nNX_INLINE nx_map nx_map_clone_raw(nx_ctx* c, const nx_map* m) {\n    nx_map n = nx_map_new(c, m->ksize, m->vsize, m->key_kind);\n    if (m->ecap) {\n        size_t vs = m->vsize ? m->vsize : 1;\n        n.keys = (uint8_t*)nx_cont_alloc(c, n.ar, m->ecap * m->ksize, 16);\n        n.vals = (uint8_t*)nx_cont_alloc(c, n.ar, m->ecap * vs, 16);\n        n.live = (uint8_t*)nx_cont_alloc(c, n.ar, m->ecap, 1);\n        n.hashes = (uint64_t*)nx_cont_alloc(c, n.ar, m->ecap * sizeof(uint64_t), _Alignof(uint64_t));\n        memset(n.live, 0, m->ecap);\n        if (m->used) {\n            memcpy(n.keys, m->keys, m->used * m->ksize);\n            memcpy(n.vals, m->vals, m->used * vs);\n            memcpy(n.live, m->live, m->used);\n            memcpy(n.hashes, m->hashes, m->used * sizeof(uint64_t));\n        }\n        n.ecap = m->ecap; n.used = m->used; n.len = m->len;\n    }\n    if (m->icap) {\n        n.index = (size_t*)nx_cont_alloc(c, n.ar, m->icap * sizeof(size_t), _Alignof(size_t));\n        memcpy(n.index, m->index, m->icap * sizeof(size_t));\n        n.icap = m->icap; n.filled = m->filled;\n    }\n    return n;\n}\n\n/* ------------------------------------------------------ reference counting */\ntypedef struct nx_obj_header { size_t rc; size_t weak; } nx_obj_header;\nNX_INLINE void* nx_retain(void* p) { if (p) ((nx_obj_header*)p)->rc++; return p; }\nNX_INLINE void* nx_weak_new(void* p) { if (p) ((nx_obj_header*)p)->weak++; return p; }\n/* returns true when the object is alive (and retains it) */\nNX_INLINE bool nx_weak_upgrade(void* p) { if (p && ((nx_obj_header*)p)->rc > 0) { ((nx_obj_header*)p)->rc++; return true; } return false; }\n\n/* --------------------------------------------------------------- binary */\nNX_INLINE uint64_t nx_bits_read(const uint8_t* p, size_t bit, size_t n) {\n    uint64_t v = 0;\n    /* fast path: byte aligned */\n    if ((bit & 7) == 0 && (n & 7) == 0) {\n        const uint8_t* q = p + bit / 8;\n        for (size_t i = 0; i < n / 8; i++) v = (v << 8) | q[i];\n        return v;\n    }\n    for (size_t i = 0; i < n; i++) {\n        size_t b = bit + i;\n        v = (v << 1) | ((p[b >> 3] >> (7 - (b & 7))) & 1);\n    }\n    return v;\n}\nNX_INLINE void nx_bits_write(uint8_t* p, size_t bit, size_t n, uint64_t v) {\n    if ((bit & 7) == 0 && (n & 7) == 0) {\n        uint8_t* q = p + bit / 8;\n        for (size_t i = 0; i < n / 8; i++) q[i] = (uint8_t)(v >> ((n / 8 - 1 - i) * 8));\n        return;\n    }\n    for (size_t i = 0; i < n; i++) {\n        size_t b = bit + i;\n        uint8_t bitv = (uint8_t)((v >> (n - 1 - i)) & 1);\n        if (bitv) p[b >> 3] |= (uint8_t)(0x80 >> (b & 7));\n        else p[b >> 3] &= (uint8_t)~(0x80 >> (b & 7));\n    }\n}\nNX_INLINE uint64_t nx_bswap(uint64_t v, size_t nbytes) {\n    uint64_t r = 0;\n    for (size_t i = 0; i < nbytes; i++) r |= ((v >> (i * 8)) & 0xff) << ((nbytes - 1 - i) * 8);\n    return r;\n}\nNX_INLINE bool nx_is_little_endian(void) { uint16_t x = 1; return *(uint8_t*)&x == 1; }\nNX_INLINE int64_t nx_sign_extend(uint64_t v, size_t n) {\n    if (n >= 64) return (int64_t)v;\n    uint64_t m = 1ULL << (n - 1);\n    return (int64_t)((v ^ m) - m);\n}\n\n/* ------------------------------------------------------------------ misc */\nNX_INLINE int64_t nx_time_now_ms(void) {\n#if defined(_WIN32)\n    FILETIME ft; GetSystemTimeAsFileTime(&ft);\n    uint64_t t = ((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime;\n    return (int64_t)(t / 10000) - 11644473600000LL;\n#else\n    struct timeval tv; gettimeofday(&tv, NULL);\n    return (int64_t)tv.tv_sec * 1000 + tv.tv_usec / 1000;\n#endif\n}\n/* minutes east of UTC of local time at the given instant (0 when unknown) */\nNX_INLINE int64_t nx_time_utc_offset_min(int64_t epoch_ms) {\n    time_t t = (time_t)(epoch_ms / 1000);\n    struct tm loc, utc;\n#if defined(_WIN32)\n    if (localtime_s(&loc, &t) != 0 || gmtime_s(&utc, &t) != 0) return 0;\n#else\n    if (!localtime_r(&t, &loc) || !gmtime_r(&t, &utc)) return 0;\n#endif\n    int64_t lmin = ((int64_t)loc.tm_yday * 1440) + loc.tm_hour * 60 + loc.tm_min;\n    int64_t umin = ((int64_t)utc.tm_yday * 1440) + utc.tm_hour * 60 + utc.tm_min;\n    int64_t diff = lmin - umin;\n    if (loc.tm_year != utc.tm_year) diff += loc.tm_year > utc.tm_year ? 365 * 1440 : -365 * 1440;\n    return diff;\n}\n/* time.zone_rules: a zone of the IANA database as text, for std.time. The\n   first line is the zone's name; each further line is a period, `start\n   offset dst abbrev`: start in ms since the epoch (`-` for the first\n   period), the offset in seconds east of UTC, 1 for daylight time.\n   Windows has no zoneinfo files; its ICU (icu.dll, Windows 10 1903 and\n   later) has the database, loaded at the first call so no program links\n   it. An empty name is the system's zone. Changes are listed to 2200;\n   after that the zone keeps its standard offset. Elsewhere std.time reads\n   the zoneinfo files itself and this is NotFound. 0, or 1 for a zone ICU\n   does not know or no ICU. */\n#if defined(_WIN32)\ntypedef void* (*nx_ucal_open_fn)(const uint16_t*, int32_t, const char*, int32_t, int32_t*);\ntypedef void (*nx_ucal_close_fn)(void*);\ntypedef void (*nx_ucal_set_millis_fn)(void*, double, int32_t*);\ntypedef int32_t (*nx_ucal_get_fn)(const void*, int32_t, int32_t*);\ntypedef int8_t (*nx_ucal_transition_fn)(const void*, int32_t, double*, int32_t*);\ntypedef int32_t (*nx_ucal_display_fn)(const void*, int32_t, const char*, uint16_t*, int32_t, int32_t*);\ntypedef int32_t (*nx_ucal_default_fn)(uint16_t*, int32_t, int32_t*);\ntypedef int32_t (*nx_ucal_canonical_fn)(const uint16_t*, int32_t, uint16_t*, int32_t, int8_t*, int32_t*);\ntypedef struct nx_icu_fns {\n    nx_ucal_open_fn open; nx_ucal_close_fn close; nx_ucal_set_millis_fn set_millis; nx_ucal_get_fn get;\n    nx_ucal_transition_fn transition; nx_ucal_display_fn display; nx_ucal_default_fn default_zone;\n    nx_ucal_canonical_fn canonical;\n} nx_icu_fns;\nNX_STATE nx_icu_fns nx_icu;\nNX_STATE int nx_icu_state; /* 0 not loaded yet, 1 loaded, 2 missing */\nNX_INLINE bool nx_icu_load(void) {\n    int st = __atomic_load_n(&nx_icu_state, __ATOMIC_ACQUIRE);\n    if (st != 0) return st == 1;\n    nx_icu_fns f;\n    memset(&f, 0, sizeof f);\n    HMODULE m = LoadLibraryA(\"icu.dll\");\n    if (!m) m = LoadLibraryA(\"icuin.dll\");\n    if (m) {\n        f.open = (nx_ucal_open_fn)(void*)GetProcAddress(m, \"ucal_open\");\n        f.close = (nx_ucal_close_fn)(void*)GetProcAddress(m, \"ucal_close\");\n        f.set_millis = (nx_ucal_set_millis_fn)(void*)GetProcAddress(m, \"ucal_setMillis\");\n        f.get = (nx_ucal_get_fn)(void*)GetProcAddress(m, \"ucal_get\");\n        f.transition = (nx_ucal_transition_fn)(void*)GetProcAddress(m, \"ucal_getTimeZoneTransitionDate\");\n        f.display = (nx_ucal_display_fn)(void*)GetProcAddress(m, \"ucal_getTimeZoneDisplayName\");\n        f.default_zone = (nx_ucal_default_fn)(void*)GetProcAddress(m, \"ucal_getDefaultTimeZone\");\n        f.canonical = (nx_ucal_canonical_fn)(void*)GetProcAddress(m, \"ucal_getCanonicalTimeZoneID\");\n    }\n    bool ok = f.open && f.close && f.set_millis && f.get && f.transition && f.display && f.default_zone && f.canonical;\n    /* threads that race here store the same pointers */\n    if (ok) nx_icu = f;\n    __atomic_store_n(&nx_icu_state, ok ? 1 : 2, __ATOMIC_RELEASE);\n    return ok;\n}\n/* one period's line. The abbreviation is ICU's short English name where\n   one of these Englishes has it (CET is British, IST Indian, AEST\n   Australian); else the zoneinfo files' style, `+0530`, or `LMT` for the\n   local mean time a place kept before it took a standard offset */\nNX_INLINE void nx_icu_period(nx_ctx* c, nx_string* s, void* cal, bool first, double at, int32_t offset_ms, bool dst) {\n    static const char* const locales[] = { \"en_US\", \"en_GB\", \"en_IN\", \"en_AU\" };\n    uint16_t w[48];\n    char line[128], abbr[48];\n    size_t k = 0;\n    for (size_t l = 0; l < sizeof locales / sizeof locales[0]; l++) {\n        int32_t st = 0;\n        /* 1 UCAL_SHORT_STANDARD, 3 UCAL_SHORT_DST */\n        int32_t n = nx_icu.display(cal, dst ? 3 : 1, locales[l], w, 47, &st);\n        k = 0;\n        if (st > 0) continue;\n        for (int32_t i = 0; i < n && k < sizeof abbr - 1; i++) abbr[k++] = w[i] > 32 && w[i] < 127 ? (char)w[i] : '_';\n        /* `GMT+1` is no name, only an offset */\n        if (k > 3 && memcmp(abbr, \"GMT\", 3) == 0 && (abbr[3] == '+' || abbr[3] == '-')) { k = 0; continue; }\n        if (k > 0) break;\n    }\n    if (k == 0) {\n        int32_t sec = offset_ms / 1000;\n        if (sec % 60 != 0) {\n            memcpy(abbr, \"LMT\", 3);\n            k = 3;\n        } else {\n            int32_t a = sec < 0 ? -sec : sec;\n            k = (size_t)snprintf(abbr, sizeof abbr, \"%c%02d\", sec < 0 ? '-' : '+', (int)(a / 3600));\n            if (a % 3600 != 0) k += (size_t)snprintf(abbr + k, sizeof abbr - k, \"%02d\", (int)(a % 3600 / 60));\n        }\n    }\n    abbr[k] = 0;\n    int len = first\n        ? snprintf(line, sizeof line, \"- %ld %d %s\\n\", (long)(offset_ms / 1000), dst ? 1 : 0, abbr)\n        : snprintf(line, sizeof line, \"%lld %ld %d %s\\n\", (long long)at, (long)(offset_ms / 1000), dst ? 1 : 0, abbr);\n    if (len > 0) nx_str_append(c, s, (const uint8_t*)line, (size_t)len);\n}\n#endif\nNX_INLINE int32_t nx_time_zone_rules(nx_ctx* c, nx_sl_u8 name, nx_string* out) {\n    nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;\n#if defined(_WIN32)\n    if (!nx_icu_load()) return 1;\n    uint16_t id[128];\n    int32_t idlen = 0, st = 0;\n    if (name.len == 0) {\n        idlen = nx_icu.default_zone(id, 127, &st);\n        if (st > 0 || idlen <= 0 || idlen >= 127) return 1;\n    } else {\n        if (name.len >= 127) return 1;\n        for (size_t i = 0; i < name.len; i++) {\n            if (name.ptr[i] < 33 || name.ptr[i] > 126) return 1;\n            id[i] = name.ptr[i];\n        }\n        idlen = (int32_t)name.len;\n        /* an unknown id would open as GMT: ask whether the database has it */\n        uint16_t canon[128];\n        int8_t system = 0;\n        nx_icu.canonical(id, idlen, canon, 127, &system, &st);\n        if (st > 0 || !system) return 1;\n    }\n    for (int32_t i = 0; i < idlen; i++) {\n        uint8_t b = id[i] < 127 ? (uint8_t)id[i] : '?';\n        nx_str_append(c, &s, &b, 1);\n    }\n    nx_str_append(c, &s, (const uint8_t*)\"\\n\", 1);\n    st = 0;\n    /* 1 UCAL_GREGORIAN */\n    void* cal = nx_icu.open(id, idlen, \"en_US\", 1, &st);\n    if (st > 0 || !cal) { nx_str_free(c, &s); return 1; }\n    /* from 1684, before every zone's first change, to 2200 */\n    double at = -9.0e12;\n    const double end = 7258118400000.0;\n    bool first = true;\n    for (int guard = 0; guard < 5000; guard++) {\n        st = 0;\n        nx_icu.set_millis(cal, at, &st);\n        /* 15 UCAL_ZONE_OFFSET, 16 UCAL_DST_OFFSET, in ms */\n        int32_t raw = nx_icu.get(cal, 15, &st);\n        int32_t dst = nx_icu.get(cal, 16, &st);\n        if (st > 0) break;\n        nx_icu_period(c, &s, cal, first, at, raw + dst, dst != 0);\n        first = false;\n        double next = 0;\n        st = 0;\n        /* 0 UCAL_TZ_TRANSITION_NEXT */\n        if (!nx_icu.transition(cal, 0, &next, &st) || st > 0 || next <= at) break;\n        if (next >= end) {\n            if (dst != 0) {\n                nx_icu.set_millis(cal, next, &st);\n                nx_icu_period(c, &s, cal, false, next, raw, false);\n            }\n            break;\n        }\n        at = next;\n    }\n    nx_icu.close(cal);\n    *out = s;\n    return 0;\n#else\n    (void)name; (void)s; (void)out;\n    return 1;\n#endif\n}\nNX_INLINE uint64_t nx_time_monotonic_ns(void) {\n#if defined(_WIN32)\n    LARGE_INTEGER f, c; QueryPerformanceFrequency(&f); QueryPerformanceCounter(&c);\n    return (uint64_t)((double)c.QuadPart * 1e9 / (double)f.QuadPart);\n#else\n    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);\n    return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;\n#endif\n}\nNX_INLINE void nx_sleep_ms(uint64_t ms) {\n#if defined(_WIN32)\n    Sleep((DWORD)ms);\n#else\n    usleep((useconds_t)(ms * 1000));\n#endif\n}\nNX_INLINE int64_t nx_mono_ms(void) { return (int64_t)(nx_time_monotonic_ns() / 1000000u); }\n/* what is left of `timeout_ms` since `start` (ms): -1 for no limit */\nNX_INLINE int64_t nx_left_ms(int64_t start, int64_t timeout_ms) {\n    if (timeout_ms < 0) return -1;\n    int64_t left = timeout_ms - (nx_mono_ms() - start);\n    return left > 0 ? left : 0;\n}\n\n/* ---- `nx bench` ---- */\n/* A value the optimizer must assume is read: what a benchmark computes is\n   kept, so the work that makes it is not removed. */\nNX_INLINE void nx_bench_keep(const void* p) {\n#if defined(__GNUC__) || defined(__clang__)\n    __asm__ __volatile__(\"\" : : \"r\"(p) : \"memory\");\n#else\n    static const void* volatile sink; sink = p;\n#endif\n}\ntypedef struct nx_bench_result { uint64_t iters; uint32_t samples; uint32_t err; double median_ns, min_ns, max_ns; } nx_bench_result;\nNX_INLINE int nx_bench_cmp(const void* a, const void* b) { double x = *(const double*)a, y = *(const double*)b; return (x > y) - (x < y); }\n#define NX_BENCH_SAMPLES 21\n/* Calibrate (which is the warmup): double the iterations until one sample\n   takes `sample_ns`; then time NX_BENCH_SAMPLES samples of that many and\n   keep the median. A body slower than a sample gets fewer samples (at\n   least 5), so a slow benchmark takes seconds rather than minutes. A body\n   that returns an error stops it, the error in `err`. */\nNX_INLINE void nx_bench_measure(nx_ctx* c, uint32_t (*f)(nx_ctx*), uint64_t sample_ns, nx_bench_result* r) {\n    memset(r, 0, sizeof *r);\n    uint64_t n = 1, dt = 0;\n    for (;;) {\n        uint64_t t0 = nx_time_monotonic_ns();\n        for (uint64_t i = 0; i < n; i++) { uint32_t e = f(c); if (e) { r->err = e; return; } }\n        dt = nx_time_monotonic_ns() - t0;\n        if (dt >= sample_ns || n >= (1ULL << 40)) break;\n        uint64_t next = dt > 0 ? (uint64_t)((double)n * (double)sample_ns / (double)dt * 1.2) : n * 10;\n        if (next > n * 10) next = n * 10;\n        if (next <= n) next = n + 1;\n        n = next;\n    }\n    uint32_t samples = NX_BENCH_SAMPLES;\n    if (n == 1 && dt > sample_ns) {\n        uint64_t fit = (sample_ns * NX_BENCH_SAMPLES) / dt;\n        samples = fit < 5 ? 5 : (uint32_t)fit;\n        if (samples > NX_BENCH_SAMPLES) samples = NX_BENCH_SAMPLES;\n    }\n    double s[NX_BENCH_SAMPLES];\n    for (uint32_t k = 0; k < samples; k++) {\n        uint64_t t0 = nx_time_monotonic_ns();\n        for (uint64_t i = 0; i < n; i++) { uint32_t e = f(c); if (e) { r->err = e; return; } }\n        s[k] = (double)(nx_time_monotonic_ns() - t0) / (double)n;\n    }\n    qsort(s, samples, sizeof(double), nx_bench_cmp);\n    r->iters = n; r->samples = samples;\n    r->median_ns = s[samples / 2]; r->min_ns = s[0]; r->max_ns = s[samples - 1];\n}\n/* `ns` with three significant digits in the unit that suits it. */\nNX_INLINE const char* nx_bench_time(double ns, char* buf, size_t cap) {\n    const char* unit = \"ns\"; double v = ns;\n    if (ns >= 1e9) { v = ns / 1e9; unit = \"s\"; }\n    else if (ns >= 1e6) { v = ns / 1e6; unit = \"ms\"; }\n    else if (ns >= 1e3) { v = ns / 1e3; unit = \"\\xc2\\xb5s\"; }\n    snprintf(buf, cap, \"%.3g %s\", v, unit);\n    return buf;\n}\nNX_INLINE uint64_t nx_rng_next(nx_ctx* c) {\n    if (!c->rng_seeded) { c->rng ^= (uint64_t)nx_time_monotonic_ns(); c->rng_seeded = true; }\n    /* splitmix64 */\n    c->rng += 0x9E3779B97F4A7C15ULL;\n    uint64_t z = c->rng;\n    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;\n    z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;\n    return z ^ (z >> 31);\n}\nNX_INLINE int64_t nx_random_int(nx_ctx* c, int64_t lo, int64_t hi, const char* loc) {\n    if (hi < lo) nx_panic(\"random.int: upper bound is below the lower bound\", loc);\n    uint64_t span = (uint64_t)(hi - lo) + 1;\n    if (span == 0) return (int64_t)nx_rng_next(c);\n    return lo + (int64_t)(nx_rng_next(c) % span);\n}\nNX_INLINE double nx_random_float(nx_ctx* c) { return (double)(nx_rng_next(c) >> 11) * (1.0 / 9007199254740992.0); }\n\n/* random.secure: n bytes from the operating system's secure generator, for\n   keys, tokens and UUIDs; never the seeded generator above. Windows asks\n   BCryptGenRandom, loaded from bcrypt.dll so no program links another\n   library; Linux the getrandom system call, made directly so the glibc a\n   program needs stays 2.17, or /dev/urandom on a kernel older than 3.17;\n   macOS and the BSDs arc4random_buf; WASI getentropy. False when the source\n   fails, and the bytes must not be used then. */\n#if defined(_WIN32)\ntypedef LONG (WINAPI* nx_bcrypt_gen_random)(void*, unsigned char*, ULONG, ULONG);\n#endif\nNX_INLINE bool nx_os_random(uint8_t* p, size_t n) {\n    if (n == 0) return true;\n#if defined(_WIN32)\n    static nx_bcrypt_gen_random gen = NULL;\n    if (!gen) {\n        HMODULE m = LoadLibraryA(\"bcrypt.dll\");\n        if (m) gen = (nx_bcrypt_gen_random)GetProcAddress(m, \"BCryptGenRandom\");\n        if (!gen) return false;\n    }\n    while (n > 0) {\n        ULONG chunk = n > 0x40000000u ? 0x40000000u : (ULONG)n;\n        /* 2: BCRYPT_USE_SYSTEM_PREFERRED_RNG, no algorithm handle */\n        if (gen(NULL, p, chunk, 2) != 0) return false;\n        p += chunk; n -= chunk;\n    }\n    return true;\n#elif defined(NX_WASM)\n    while (n > 0) {\n        size_t chunk = n > 256 ? 256 : n;\n        if (getentropy(p, chunk) != 0) return false;\n        p += chunk; n -= chunk;\n    }\n    return true;\n#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || defined(__DragonFly__)\n    arc4random_buf(p, n);\n    return true;\n#else\n#if defined(__linux__) && defined(SYS_getrandom)\n    while (n > 0) {\n        long r = syscall(SYS_getrandom, p, n, 0);\n        if (r > 0) { p += (size_t)r; n -= (size_t)r; continue; }\n        if (r < 0 && errno == EINTR) continue;\n        if (r < 0 && errno == ENOSYS) break;\n        return false;\n    }\n    if (n == 0) return true;\n#endif\n#ifndef O_CLOEXEC\n#define O_CLOEXEC 0\n#endif\n    int fd = open(\"/dev/urandom\", O_RDONLY | O_CLOEXEC);\n    if (fd < 0) return false;\n    /* a regular file planted in its place is not a generator */\n    struct stat st;\n    if (fstat(fd, &st) != 0 || !S_ISCHR(st.st_mode)) { close(fd); return false; }\n    while (n > 0) {\n        ssize_t r = read(fd, p, n);\n        if (r > 0) { p += (size_t)r; n -= (size_t)r; continue; }\n        if (r < 0 && errno == EINTR) continue;\n        close(fd);\n        return false;\n    }\n    close(fd);\n    return true;\n#endif\n}\n\n/* ---------------------------------------------------------- starting programs */\n#if defined(_WIN32)\n/* a command line CommandLineToArgvW takes apart into `argv` again; the\n   program's slashes become backslashes, which CreateProcess wants there */\nNX_INLINE void nx_win_cmdline(nx_ctx* c, const nx_sl_u8* argv, size_t argc, nx_string* cmd) {\n    cmd->ptr = NULL; cmd->len = 0; cmd->cap = 0; cmd->ar = NULL;\n    char prog[4096];\n    for (size_t i = 0; i < argc; i++) {\n        if (i) nx_str_append(c, cmd, (const uint8_t*)\" \", 1);\n        nx_sl_u8 a = argv[i];\n        if (i == 0 && a.len < sizeof prog) {\n            for (size_t j = 0; j < a.len; j++) prog[j] = a.ptr[j] == '/' ? '\\\\' : (char)a.ptr[j];\n            a.ptr = (uint8_t*)prog;\n        }\n        bool quote = a.len == 0;\n        for (size_t j = 0; j < a.len && !quote; j++) quote = a.ptr[j] == ' ' || a.ptr[j] == '\\t' || a.ptr[j] == '\"';\n        if (quote) nx_str_append(c, cmd, (const uint8_t*)\"\\\"\", 1);\n        size_t bs = 0;\n        for (size_t j = 0; j < a.len; j++) {\n            uint8_t ch = a.ptr[j];\n            if (ch == '\\\\') { bs++; continue; }\n            if (ch == '\"') { for (size_t k = 0; k < bs * 2 + 1; k++) nx_str_append(c, cmd, (const uint8_t*)\"\\\\\", 1); bs = 0; nx_str_append(c, cmd, &ch, 1); continue; }\n            for (size_t k = 0; k < bs; k++) nx_str_append(c, cmd, (const uint8_t*)\"\\\\\", 1);\n            bs = 0;\n            nx_str_append(c, cmd, &ch, 1);\n        }\n        for (size_t k = 0; k < bs * (quote ? 2 : 1); k++) nx_str_append(c, cmd, (const uint8_t*)\"\\\\\", 1);\n        if (quote) nx_str_append(c, cmd, (const uint8_t*)\"\\\"\", 1);\n    }\n    nx_str_append(c, cmd, (const uint8_t*)\"\", 1); /* NUL */\n}\n/* this program's standard handle `which` as one a child can inherit, or\n   NULL (the caller closes it once the child has started) */\nNX_INLINE HANDLE nx_win_std_dup(DWORD which) {\n    HANDLE h = GetStdHandle(which), d = NULL;\n    if (!h || h == INVALID_HANDLE_VALUE) return NULL;\n    if (!DuplicateHandle(GetCurrentProcess(), h, GetCurrentProcess(), &d, 0, TRUE, DUPLICATE_SAME_ACCESS)) return NULL;\n    return d;\n}\n/* Start `cmd` in `cwd` (NULL: this program's) with `give` as its stdin,\n   stdout and stderr, inheritable handles or NULL, and no other handle of\n   this program's: a program started at the same time on another thread\n   cannot hold these pipes open, nor this one theirs. 0 when it started,\n   else CreateProcess's error. */\nNX_INLINE DWORD nx_win_start(char* cmd, const char* cwd, HANDLE give[3], PROCESS_INFORMATION* pi) {\n    STARTUPINFOEXA si;\n    memset(&si, 0, sizeof si);\n    si.StartupInfo.cb = sizeof si;\n    si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;\n    si.StartupInfo.hStdInput = give[0]; si.StartupInfo.hStdOutput = give[1]; si.StartupInfo.hStdError = give[2];\n    /* each handle once; a console's pseudo handle needs no inheriting and cannot be listed */\n    HANDLE list[3]; DWORD nl = 0;\n    for (int i = 0; i < 3; i++) {\n        HANDLE h = give[i];\n        if (!h || h == INVALID_HANDLE_VALUE) continue;\n        if ((((uintptr_t)h) & 3) == 3 && GetFileType(h) == FILE_TYPE_CHAR) continue;\n        bool seen = false;\n        for (DWORD j = 0; j < nl; j++) seen = seen || list[j] == h;\n        if (!seen) list[nl++] = h;\n    }\n    LPPROC_THREAD_ATTRIBUTE_LIST attrs = NULL;\n    DWORD flags = 0;\n    if (nl > 0) {\n        SIZE_T size = 0;\n        InitializeProcThreadAttributeList(NULL, 1, 0, &size);\n        attrs = (LPPROC_THREAD_ATTRIBUTE_LIST)malloc(size);\n        if (attrs && InitializeProcThreadAttributeList(attrs, 1, 0, &size)) {\n            if (UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, list, nl * sizeof(HANDLE), NULL, NULL)) {\n                si.lpAttributeList = attrs;\n                flags = EXTENDED_STARTUPINFO_PRESENT;\n            } else { DeleteProcThreadAttributeList(attrs); free(attrs); attrs = NULL; }\n        } else { free(attrs); attrs = NULL; }\n    }\n    memset(pi, 0, sizeof *pi);\n    BOOL ok = CreateProcessA(NULL, cmd, NULL, NULL, TRUE, flags, NULL, cwd, &si.StartupInfo, pi);\n    DWORD err = ok ? 0 : GetLastError();\n    if (attrs) { DeleteProcThreadAttributeList(attrs); free(attrs); }\n    return err;\n}\n#elif !defined(NX_WASM)\n/* a pipe no program inherits: a child gets its end as 0, 1 or 2 */\nNX_INLINE int nx_pipe_cloexec(int p[2]) {\n#if defined(__linux__) && defined(SYS_pipe2)\n    if (syscall(SYS_pipe2, p, O_CLOEXEC) == 0) return 0;\n    if (errno != ENOSYS) return -1;\n#endif\n    if (pipe(p) != 0) return -1;\n    fcntl(p[0], F_SETFD, FD_CLOEXEC);\n    fcntl(p[1], F_SETFD, FD_CLOEXEC);\n    return 0;\n}\n/* In a child between fork and exec: make `fds[i]` its descriptor i (-1\n   leaves i as it is), with only the calls that are safe there. */\nNX_INLINE void nx_child_std(int fds[3]) {\n    /* one already below 3 would be overwritten before its turn: move it up */\n    for (int i = 0; i < 3; i++) {\n        if (fds[i] >= 0 && fds[i] < 3 && fds[i] != i) fds[i] = fcntl(fds[i], F_DUPFD_CLOEXEC, 3);\n    }\n    for (int i = 0; i < 3; i++) {\n        if (fds[i] < 0) continue;\n        if (fds[i] == i) {\n            int fl = fcntl(i, F_GETFD);\n            if (fl >= 0) fcntl(i, F_SETFD, fl & ~FD_CLOEXEC);\n        } else dup2(fds[i], i);\n    }\n}\n/* Is there a file `prog` names (along PATH when it has no slash)? exec\n   says EACCES both for a program that is there but cannot run and for a\n   directory on PATH it may not search, which leaves a missing program\n   looking like a forbidden one. */\nNX_INLINE bool nx_prog_exists(const char* prog) {\n    struct stat st;\n    if (strchr(prog, '/')) return stat(prog, &st) == 0;\n    const char* path = getenv(\"PATH\");\n    if (!path || !*path) path = \"/bin:/usr/bin\";\n    char buf[4096];\n    size_t pl = strlen(prog);\n    for (;;) {\n        const char* e = strchr(path, ':');\n        size_t dl = e ? (size_t)(e - path) : strlen(path);\n        /* an empty entry is the working directory */\n        const char* dir = dl ? path : \".\";\n        if (!dl) dl = 1;\n        if (dl + 1 + pl < sizeof buf) {\n            memcpy(buf, dir, dl);\n            buf[dl] = '/';\n            memcpy(buf + dl + 1, prog, pl + 1);\n            if (stat(buf, &st) == 0 && !S_ISDIR(st.st_mode)) return true;\n        }\n        if (!e) return false;\n        path = e + 1;\n    }\n}\n/* A write to a pipe whose reader is gone raises SIGPIPE, which would end\n   the program: held off while a child's input is written, and one raised\n   meanwhile is taken before it is let through (unless it was held already). */\nNX_INLINE void nx_sigpipe_hold(sigset_t* old) {\n    sigset_t s;\n    sigemptyset(&s);\n    sigaddset(&s, SIGPIPE);\n    pthread_sigmask(SIG_BLOCK, &s, old);\n}\nNX_INLINE void nx_sigpipe_release(const sigset_t* old) {\n    sigset_t s, pending;\n    sigemptyset(&s);\n    sigaddset(&s, SIGPIPE);\n    sigpending(&pending);\n    if (sigismember(&pending, SIGPIPE) && !sigismember(old, SIGPIPE)) { int sig; sigwait(&s, &sig); }\n    pthread_sigmask(SIG_SETMASK, old, NULL);\n}\n#endif\n\n/* process.run: spawn argv[0] with the given arguments (searching PATH), wait,\n * and return its exit code. False when the process could not be started. */\n#if defined(NX_WASM)\nNX_INLINE bool nx_run(nx_ctx* c, const nx_sl_u8* argv, size_t argc, int* code) {\n    (void)c; (void)argv; (void)argc; (void)code;\n    errno = ENOSYS;\n    return false;\n}\n#else\nNX_INLINE bool nx_run(nx_ctx* c, const nx_sl_u8* argv, size_t argc, int* code) {\n    if (argc == 0) return false;\n    fflush(stdout); fflush(stderr);\n#if defined(_WIN32)\n    nx_string cmd;\n    nx_win_cmdline(c, argv, argc, &cmd);\n    /* the child writes where this program does */\n    static const DWORD std_ids[3] = { STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE };\n    HANDLE give[3], dups[3];\n    for (int i = 0; i < 3; i++) {\n        dups[i] = nx_win_std_dup(std_ids[i]);\n        give[i] = dups[i] ? dups[i] : GetStdHandle(std_ids[i]);\n    }\n    PROCESS_INFORMATION pi;\n    DWORD err = nx_win_start((char*)cmd.ptr, NULL, give, &pi);\n    for (int i = 0; i < 3; i++) if (dups[i]) CloseHandle(dups[i]);\n    nx_str_free(c, &cmd);\n    if (err) return false;\n    WaitForSingleObject(pi.hProcess, INFINITE);\n    DWORD ec = 1;\n    GetExitCodeProcess(pi.hProcess, &ec);\n    CloseHandle(pi.hProcess); CloseHandle(pi.hThread);\n    *code = (int)ec;\n    return true;\n#else\n    char** av = (char**)nx_alloc_bytes(c, (argc + 1) * sizeof(char*), 8);\n    for (size_t i = 0; i < argc; i++) {\n        av[i] = (char*)nx_alloc_bytes(c, argv[i].len + 1, 1);\n        nx_bytes_copy(av[i], argv[i].ptr, argv[i].len); av[i][argv[i].len] = 0;\n    }\n    av[argc] = NULL;\n    pid_t pid = 0;\n    int rc = posix_spawnp(&pid, av[0], NULL, NULL, av, environ);\n    for (size_t i = 0; i < argc; i++) nx_free_bytes(c, av[i], argv[i].len + 1);\n    nx_free_bytes(c, av, (argc + 1) * sizeof(char*));\n    if (rc != 0) return false;\n    int st = 0;\n    if (waitpid(pid, &st, 0) < 0) return false;\n    *code = WIFEXITED(st) ? WEXITSTATUS(st) : 128 + (WIFSIGNALED(st) ? WTERMSIG(st) : 0);\n    return true;\n#endif\n}\n#endif\n/* A path as C takes it, in `buf`. An empty one names nothing, on every\n   platform (ENOENT, as POSIX answers; WASI would open the directory it runs\n   in), and one too long for `buf` fails with ENAMETOOLONG. */\nNX_INLINE bool nx_cpath(nx_sl_u8 path, char* buf, size_t cap) {\n    if (path.len == 0) { errno = ENOENT; return false; }\n    if (path.len >= cap) { errno = ENAMETOOLONG; return false; }\n    nx_bytes_copy(buf, path.ptr, path.len); buf[path.len] = 0;\n    return true;\n}\n/* Run a program with its stdin fed from `input`, in `cwd` when given, and\n   its stdout and stderr captured. The captured text is kept for\n   nx_last_stdout / nx_last_stderr to hand over; each thread has its own. */\nNX_STATE NX_THREAD_LOCAL nx_string nx_cap_out, nx_cap_err;\nNX_INLINE void nx_cap_reset(nx_ctx* c) {\n    nx_str_free(c, &nx_cap_out); nx_str_free(c, &nx_cap_err);\n    nx_cap_out.ptr = NULL; nx_cap_out.len = 0; nx_cap_out.cap = 0; nx_cap_out.ar = c->arena;\n    nx_cap_err.ptr = NULL; nx_cap_err.len = 0; nx_cap_err.cap = 0; nx_cap_err.ar = c->arena;\n}\nNX_INLINE nx_string nx_last_stdout(nx_ctx* c) {\n    nx_string s = nx_cap_out;\n    nx_cap_out.ptr = NULL; nx_cap_out.len = 0; nx_cap_out.cap = 0; nx_cap_out.ar = c->arena;\n    return s;\n}\nNX_INLINE nx_string nx_last_stderr(nx_ctx* c) {\n    nx_string s = nx_cap_err;\n    nx_cap_err.ptr = NULL; nx_cap_err.len = 0; nx_cap_err.cap = 0; nx_cap_err.ar = c->arena;\n    return s;\n}\n#if defined(_WIN32)\nNX_INLINE void nx_win_drain(nx_ctx* c, HANDLE h, nx_string* out) {\n    char buf[65536]; DWORD n;\n    while (ReadFile(h, buf, sizeof buf, &n, NULL) && n > 0) nx_str_append(c, out, (const uint8_t*)buf, n);\n}\n/* stderr is drained on a helper thread while this one drains stdout, so a child\n   that fills one pipe before finishing the other cannot stall */\ntypedef struct { nx_ctx* c; HANDLE h; nx_string* out; } nx_win_drain_job;\nstatic DWORD WINAPI nx_win_drain_thread(LPVOID p) {\n    nx_win_drain_job* j = (nx_win_drain_job*)p;\n    nx_win_drain(j->c, j->h, j->out);\n    return 0;\n}\n/* the child's input, written on a helper thread while the output is\n   drained, so a child that writes before it reads cannot stall; it stops\n   when the child no longer reads, and closes the pipe */\ntypedef struct { HANDLE h; const uint8_t* p; size_t n; } nx_win_feed_job;\nNX_INLINE void nx_win_feed(nx_win_feed_job* j) {\n    size_t off = 0;\n    while (off < j->n) {\n        DWORD chunk = (DWORD)((j->n - off) > (1u << 30) ? (1u << 30) : (j->n - off));\n        DWORD w = 0;\n        if (!WriteFile(j->h, j->p + off, chunk, &w, NULL) || w == 0) break;\n        off += w;\n    }\n    CloseHandle(j->h);\n}\nstatic DWORD WINAPI nx_win_feed_thread(LPVOID p) {\n    nx_win_feed((nx_win_feed_job*)p);\n    return 0;\n}\n#endif\n#if defined(NX_WASM)\nNX_INLINE bool nx_run_capture(nx_ctx* c, const nx_sl_u8* argv, size_t argc, nx_sl_u8 input, nx_sl_u8 cwd, int* code) {\n    (void)c; (void)argv; (void)argc; (void)input; (void)cwd; (void)code;\n    nx_cap_reset(c);\n    errno = ENOSYS;\n    return false;\n}\n#else\nNX_INLINE bool nx_run_capture(nx_ctx* c, const nx_sl_u8* argv, size_t argc, nx_sl_u8 input, nx_sl_u8 cwd, int* code) {\n    if (argc == 0) return false;\n    fflush(stdout); fflush(stderr);\n    nx_cap_reset(c);\n    char dir[4096];\n    const char* cwdp = NULL;\n    if (cwd.len > 0) { if (!nx_cpath(cwd, dir, sizeof dir)) return false; cwdp = dir; }\n#if defined(_WIN32)\n    nx_string cmd;\n    nx_win_cmdline(c, argv, argc, &cmd);\n    SECURITY_ATTRIBUTES sa; sa.nLength = sizeof sa; sa.bInheritHandle = TRUE; sa.lpSecurityDescriptor = NULL;\n    HANDLE in_r = NULL, in_w = NULL, out_r = NULL, out_w = NULL, err_r = NULL, err_w = NULL;\n    if (!CreatePipe(&in_r, &in_w, &sa, 1 << 20) || !CreatePipe(&out_r, &out_w, &sa, 1 << 20) || !CreatePipe(&err_r, &err_w, &sa, 1 << 20)) { nx_str_free(c, &cmd); return false; }\n    SetHandleInformation(in_w, HANDLE_FLAG_INHERIT, 0);\n    SetHandleInformation(out_r, HANDLE_FLAG_INHERIT, 0);\n    SetHandleInformation(err_r, HANDLE_FLAG_INHERIT, 0);\n    HANDLE give[3] = { in_r, out_w, err_w };\n    PROCESS_INFORMATION pi;\n    DWORD err = nx_win_start((char*)cmd.ptr, cwdp, give, &pi);\n    nx_str_free(c, &cmd);\n    CloseHandle(in_r); CloseHandle(out_w); CloseHandle(err_w);\n    if (err) { CloseHandle(in_w); CloseHandle(out_r); CloseHandle(err_r); return false; }\n    /* the input goes in on one helper thread and stderr comes out on\n       another while this one drains stdout: a child that writes before it\n       reads, or fills one pipe before finishing the other, cannot stall */\n    nx_win_feed_job feed; feed.h = in_w; feed.p = input.ptr; feed.n = input.len;\n    HANDLE feeder = NULL;\n    if (input.len > 0) feeder = CreateThread(NULL, 0, nx_win_feed_thread, &feed, 0, NULL);\n    if (!feeder) nx_win_feed(&feed);\n    nx_string err_buf; err_buf.ptr = NULL; err_buf.len = 0; err_buf.cap = 0; err_buf.ar = c->arena;\n    nx_win_drain_job job; job.c = c; job.h = err_r; job.out = &err_buf;\n    HANDLE drain = CreateThread(NULL, 0, nx_win_drain_thread, &job, 0, NULL);\n    nx_win_drain(c, out_r, &nx_cap_out);\n    if (drain) { WaitForSingleObject(drain, INFINITE); CloseHandle(drain); } else nx_win_drain(c, err_r, &err_buf);\n    if (feeder) { WaitForSingleObject(feeder, INFINITE); CloseHandle(feeder); }\n    nx_cap_err = err_buf;\n    CloseHandle(out_r); CloseHandle(err_r);\n    WaitForSingleObject(pi.hProcess, INFINITE);\n    DWORD ec = 1;\n    GetExitCodeProcess(pi.hProcess, &ec);\n    CloseHandle(pi.hProcess); CloseHandle(pi.hThread);\n    *code = (int)ec;\n    return true;\n#else\n    char** av = (char**)nx_alloc_bytes(c, (argc + 1) * sizeof(char*), 8);\n    for (size_t i = 0; i < argc; i++) {\n        av[i] = (char*)nx_alloc_bytes(c, argv[i].len + 1, 1);\n        nx_bytes_copy(av[i], argv[i].ptr, argv[i].len); av[i][argv[i].len] = 0;\n    }\n    av[argc] = NULL;\n    int inp[2], outp[2], errp[2];\n    if (nx_pipe_cloexec(inp) != 0 || nx_pipe_cloexec(outp) != 0 || nx_pipe_cloexec(errp) != 0) return false;\n    pid_t pid = fork();\n    if (pid < 0) return false;\n    if (pid == 0) {\n        int fds[3] = { inp[0], outp[1], errp[1] };\n        nx_child_std(fds);\n        if (cwdp && chdir(cwdp) != 0) _exit(126);\n        execvp(av[0], av);\n        _exit(127);\n    }\n    close(inp[0]); close(outp[1]); close(errp[1]);\n    for (size_t i = 0; i < argc; i++) nx_free_bytes(c, av[i], argv[i].len + 1);\n    nx_free_bytes(c, av, (argc + 1) * sizeof(char*));\n    /* the input is written as the child takes it while both output pipes\n       are drained as it fills them: a child that writes before it reads, or\n       fills one pipe before finishing the other, cannot stall. A write to a\n       child that stopped reading fails with EPIPE, and SIGPIPE is held off. */\n    sigset_t old_set;\n    nx_sigpipe_hold(&old_set);\n    size_t fed = 0;\n    if (input.len == 0) { close(inp[1]); inp[1] = -1; }\n    else { int fl = fcntl(inp[1], F_GETFL); if (fl >= 0) fcntl(inp[1], F_SETFL, fl | O_NONBLOCK); }\n    char buf[65536]; ssize_t n;\n    struct pollfd pfd[3];\n    pfd[0].fd = outp[0]; pfd[0].events = POLLIN;\n    pfd[1].fd = errp[0]; pfd[1].events = POLLIN;\n    pfd[2].fd = inp[1]; pfd[2].events = POLLOUT;\n    int open_fds = 2;\n    while (open_fds > 0 || pfd[2].fd >= 0) {\n        if (poll(pfd, 3, -1) < 0) { if (errno == EINTR) continue; break; }\n        for (int i = 0; i < 2; i++) {\n            if (pfd[i].fd < 0 || !(pfd[i].revents & (POLLIN | POLLHUP | POLLERR))) continue;\n            n = read(pfd[i].fd, buf, sizeof buf);\n            if (n > 0) nx_str_append(c, i == 0 ? &nx_cap_out : &nx_cap_err, (const uint8_t*)buf, (size_t)n);\n            else if (n == 0 || errno != EINTR) { pfd[i].fd = -1; open_fds--; }\n        }\n        if (pfd[2].fd >= 0 && (pfd[2].revents & (POLLOUT | POLLHUP | POLLERR))) {\n            ssize_t w = write(pfd[2].fd, input.ptr + fed, input.len - fed);\n            if (w > 0) fed += (size_t)w;\n            /* EPIPE, or another failure: the child reads no more */\n            else if (!(w < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR))) fed = input.len;\n            if (fed >= input.len) { close(pfd[2].fd); pfd[2].fd = -1; }\n        }\n    }\n    if (pfd[2].fd >= 0) close(pfd[2].fd);\n    nx_sigpipe_release(&old_set);\n    close(outp[0]); close(errp[0]);\n    int st = 0;\n    if (waitpid(pid, &st, 0) < 0) return false;\n    *code = WIFEXITED(st) ? WEXITSTATUS(st) : 128 + (WIFSIGNALED(st) ? WTERMSIG(st) : 0);\n    return true;\n#endif\n}\n#endif\n\n/* --------------------------------------------------------- child processes */\n/* process.spawn and the child_* calls: a program started with pipes to this\n   one, written to and read from while it runs. Output that arrives while\n   the caller waits for something else (its input to go in, the other\n   stream, the exit) is kept until it is read, so the child never stalls\n   on a full pipe while this program waits on it. A handle is 1 + its slot.\n   Results: 0 ok, 1 no such program, 3 timed out, 4 any other failure (the\n   codes of the socket calls). Timeouts in ms: negative waits for ever, 0\n   looks without waiting. */\n#define NX_MAX_CHILDREN 64\ntypedef struct { uint8_t* p; size_t len, cap, pos; } nx_cbuf;\ntypedef struct {\n#if defined(_WIN32)\n    HANDLE h;              /* this program's end, overlapped; NULL once closed */\n    OVERLAPPED ov;\n    bool busy;             /* a read or write is in flight */\n    uint8_t* stage;        /* where an output pipe's reads land */\n#else\n    int fd;                /* -1 once closed */\n#endif\n    bool piped;\n    bool eof;              /* an output pipe the child closed */\n    nx_cbuf buf;           /* output read and not yet taken */\n} nx_cpipe;\ntypedef struct {\n    int state;             /* 0 free, 1 being set up or let go, 2 in use */\n    int64_t pid;\n#if defined(_WIN32)\n    HANDLE proc;\n    int32_t sent;          /* the signal child_signal ended it with */\n#endif\n    nx_cpipe in, out, err;\n    bool done;             /* it ended and was waited for */\n    int32_t code, sig;\n} nx_child;\nNX_STATE nx_child nx_children[NX_MAX_CHILDREN];\nenum { NX_CH_WRITTEN, NX_CH_OUT, NX_CH_ERR, NX_CH_EXIT };\n\nNX_INLINE nx_child* nx_child_at(int64_t h) {\n    if (h < 1 || h > NX_MAX_CHILDREN) return NULL;\n    nx_child* ch = &nx_children[h - 1];\n    return __atomic_load_n(&ch->state, __ATOMIC_ACQUIRE) == 2 ? ch : NULL;\n}\nNX_INLINE int64_t nx_child_pid(int64_t h) {\n    nx_child* ch = nx_child_at(h);\n    return ch ? ch->pid : -1;\n}\n#if defined(NX_WASM)\nNX_INLINE int32_t nx_child_spawn(nx_ctx* c, const nx_sl_u8* argv, size_t argc, nx_sl_u8 cwd, int64_t flags, int64_t* out) {\n    (void)c; (void)argv; (void)argc; (void)cwd; (void)flags; (void)out;\n    return 4;\n}\nNX_INLINE int32_t nx_child_write(int64_t h, nx_sl_u8 data, int64_t timeout_ms) { (void)h; (void)data; (void)timeout_ms; return 4; }\nNX_INLINE int32_t nx_child_read(nx_ctx* c, int64_t h, int64_t stream, size_t n, int64_t timeout_ms, nx_string* out) {\n    (void)c; (void)h; (void)stream; (void)n; (void)timeout_ms; (void)out;\n    return 4;\n}\nNX_INLINE int32_t nx_child_wait(int64_t h, int64_t timeout_ms, int64_t* status) { (void)h; (void)timeout_ms; (void)status; return 4; }\nNX_INLINE int32_t nx_child_signal(int64_t h, int32_t sig) { (void)h; (void)sig; return 4; }\nNX_INLINE void nx_child_close_input(int64_t h) { (void)h; }\nNX_INLINE void nx_child_close(int64_t h) { (void)h; }\nNX_INLINE void nx_trap_signals(void) { }\nNX_INLINE int32_t nx_next_signal(int64_t timeout_ms) { (void)timeout_ms; return 0; }\n#else\nNX_INLINE int nx_child_claim(void) {\n    for (int i = 0; i < NX_MAX_CHILDREN; i++) {\n        int expected = 0;\n        if (__atomic_compare_exchange_n(&nx_children[i].state, &expected, 1, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) return i;\n    }\n    return -1;\n}\nNX_INLINE void nx_child_reset(nx_child* ch) {\n    ch->pid = 0; ch->done = false; ch->code = 0; ch->sig = 0;\n#if defined(_WIN32)\n    ch->proc = NULL; ch->sent = 0;\n#endif\n    nx_cpipe* pipes[3] = { &ch->in, &ch->out, &ch->err };\n    for (int i = 0; i < 3; i++) {\n        memset(pipes[i], 0, sizeof *pipes[i]);\n#if !defined(_WIN32)\n        pipes[i]->fd = -1;\n#endif\n    }\n}\nNX_INLINE void nx_cbuf_add(nx_cbuf* b, const uint8_t* p, size_t n) {\n    if (b->pos == b->len) { b->pos = 0; b->len = 0; }\n    else if (b->pos > 0 && b->len + n > b->cap) {\n        memmove(b->p, b->p + b->pos, b->len - b->pos);\n        b->len -= b->pos; b->pos = 0;\n    }\n    if (b->len + n > b->cap) {\n        size_t cap = b->cap ? b->cap : 65536;\n        while (cap < b->len + n) cap *= 2;\n        uint8_t* q = (uint8_t*)realloc(b->p, cap);\n        if (!q) nx_panic(\"out of memory keeping a child's output\", \"process\");\n        b->p = q; b->cap = cap;\n    }\n    memcpy(b->p + b->len, p, n);\n    b->len += n;\n}\nNX_INLINE bool nx_cpipe_ready(const nx_cpipe* pp) { return pp->buf.pos < pp->buf.len || pp->eof; }\n#if defined(_WIN32)\n/* A pipe whose far end a child gets: this program's end overlapped, so\n   reads, writes and the exit can be waited for together and with a\n   timeout (an anonymous pipe cannot be); the child's an ordinary one. */\nNX_STATE volatile LONG nx_pipe_serial;\n#ifndef PIPE_REJECT_REMOTE_CLIENTS\n#define PIPE_REJECT_REMOTE_CLIENTS 0x00000008\n#endif\nNX_INLINE bool nx_win_pipe(bool child_reads, HANDLE* ours, HANDLE* theirs) {\n    char name[96];\n    snprintf(name, sizeof name, \"\\\\\\\\.\\\\pipe\\\\nx-%lu-%ld\", (unsigned long)GetCurrentProcessId(), (long)InterlockedIncrement(&nx_pipe_serial));\n    DWORD mode = (child_reads ? PIPE_ACCESS_OUTBOUND : PIPE_ACCESS_INBOUND) | FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE;\n    HANDLE s = CreateNamedPipeA(name, mode, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS, 1, 65536, 65536, 0, NULL);\n    if (s == INVALID_HANDLE_VALUE) return false;\n    SECURITY_ATTRIBUTES sa; sa.nLength = sizeof sa; sa.bInheritHandle = TRUE; sa.lpSecurityDescriptor = NULL;\n    HANDLE t = CreateFileA(name, child_reads ? GENERIC_READ : GENERIC_WRITE, 0, &sa, OPEN_EXISTING, 0, NULL);\n    if (t == INVALID_HANDLE_VALUE) { CloseHandle(s); return false; }\n    *ours = s; *theirs = t;\n    return true;\n}\nNX_INLINE void nx_cpipe_close(nx_cpipe* pp) {\n    if (!pp->h) return;\n    if (pp->busy) {\n        DWORD x = 0;\n        CancelIoEx(pp->h, &pp->ov);\n        GetOverlappedResult(pp->h, &pp->ov, &x, TRUE);\n        pp->busy = false;\n    }\n    CloseHandle(pp->h);\n    pp->h = NULL;\n}\n/* keep a read waiting on an output pipe; what comes at once is kept */\nNX_INLINE void nx_cpipe_post(nx_cpipe* pp) {\n    while (pp->h && !pp->busy) {\n        DWORD got = 0;\n        ResetEvent(pp->ov.hEvent);\n        if (!ReadFile(pp->h, pp->stage, 65536, NULL, &pp->ov)) {\n            if (GetLastError() == ERROR_IO_PENDING) { pp->busy = true; return; }\n            /* ERROR_BROKEN_PIPE: the child closed its end */\n            nx_cpipe_close(pp);\n            pp->eof = true;\n            return;\n        }\n        if (GetOverlappedResult(pp->h, &pp->ov, &got, FALSE) && got > 0) nx_cbuf_add(&pp->buf, pp->stage, got);\n    }\n}\n/* take a read that completed */\nNX_INLINE void nx_cpipe_finish(nx_cpipe* pp) {\n    if (!pp->busy) return;\n    DWORD got = 0;\n    if (GetOverlappedResult(pp->h, &pp->ov, &got, FALSE)) {\n        pp->busy = false;\n        if (got > 0) nx_cbuf_add(&pp->buf, pp->stage, got);\n        return;\n    }\n    if (GetLastError() == ERROR_IO_INCOMPLETE) return;\n    pp->busy = false;\n    nx_cpipe_close(pp);\n    pp->eof = true;\n}\nNX_INLINE bool nx_child_reap(nx_child* ch, bool block) {\n    if (ch->done) return true;\n    if (WaitForSingleObject(ch->proc, block ? INFINITE : 0) != WAIT_OBJECT_0) return false;\n    DWORD ec = 1;\n    GetExitCodeProcess(ch->proc, &ec);\n    ch->done = true;\n    ch->code = (int32_t)ec;\n    ch->sig = ch->sent && ec == (DWORD)(128 + ch->sent) ? ch->sent : 0;\n    return true;\n}\n#else\nNX_INLINE void nx_cpipe_close(nx_cpipe* pp) {\n    if (pp->fd >= 0) { close(pp->fd); pp->fd = -1; }\n}\n/* one read from an output pipe the poll found ready */\nNX_INLINE void nx_cpipe_pull(nx_cpipe* pp) {\n    uint8_t buf[65536];\n    ssize_t n = read(pp->fd, buf, sizeof buf);\n    if (n > 0) { nx_cbuf_add(&pp->buf, buf, (size_t)n); return; }\n    if (n < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) return;\n    nx_cpipe_close(pp);\n    pp->eof = true;\n}\nNX_INLINE bool nx_child_reap(nx_child* ch, bool block) {\n    if (ch->done) return true;\n    int st = 0;\n    pid_t r;\n    do { r = waitpid((pid_t)ch->pid, &st, block ? 0 : WNOHANG); } while (r < 0 && errno == EINTR);\n    if (r == 0) return false;\n    ch->done = true;\n    if (r < 0) { ch->code = -1; ch->sig = 0; return true; } /* waited for elsewhere */\n    if (WIFSIGNALED(st)) { ch->sig = WTERMSIG(st); ch->code = 128 + ch->sig; }\n    else { ch->sig = 0; ch->code = WIFEXITED(st) ? WEXITSTATUS(st) : -1; }\n    return true;\n}\n#endif\nNX_INLINE bool nx_child_holds(nx_child* ch, int until, size_t n, const size_t* off) {\n    if (until == NX_CH_WRITTEN) return *off >= n;\n    if (until == NX_CH_OUT) return nx_cpipe_ready(&ch->out);\n    if (until == NX_CH_ERR) return nx_cpipe_ready(&ch->err);\n    return nx_child_reap(ch, false);\n}\n/* Serve the child's pipes until `until` holds or `timeout_ms` passes:\n   output that arrives is kept, and for NX_CH_WRITTEN `src[*off..n]` goes in\n   as the child takes it. 0 when it held, 3 on timeout, 4 when the input\n   broke (the child reads no more) or waiting failed. */\nstatic int32_t nx_child_serve(nx_child* ch, int until, const uint8_t* src, size_t n, size_t* off, int64_t timeout_ms) {\n    int64_t start = nx_mono_ms();\n#if defined(_WIN32)\n    int32_t result = 3;\n    for (;;) {\n        nx_cpipe_post(&ch->out);\n        nx_cpipe_post(&ch->err);\n        if (until == NX_CH_WRITTEN && !ch->in.busy && *off < n) {\n            if (!ch->in.h) { result = 4; break; }\n            DWORD chunk = (DWORD)(n - *off > (1u << 30) ? (1u << 30) : n - *off), w = 0;\n            ResetEvent(ch->in.ov.hEvent);\n            if (WriteFile(ch->in.h, src + *off, chunk, NULL, &ch->in.ov)) {\n                if (GetOverlappedResult(ch->in.h, &ch->in.ov, &w, FALSE)) *off += w;\n                continue;\n            }\n            /* ERROR_NO_DATA or ERROR_BROKEN_PIPE: the child reads no more */\n            if (GetLastError() != ERROR_IO_PENDING) { result = 4; break; }\n            ch->in.busy = true;\n        }\n        if (nx_child_holds(ch, until, n, off)) { result = 0; break; }\n        int64_t left = nx_left_ms(start, timeout_ms);\n        HANDLE ev[4];\n        DWORD k = 0;\n        if (ch->out.busy) ev[k++] = ch->out.ov.hEvent;\n        if (ch->err.busy) ev[k++] = ch->err.ov.hEvent;\n        if (ch->in.busy) ev[k++] = ch->in.ov.hEvent;\n        if (until == NX_CH_EXIT) ev[k++] = ch->proc;\n        if (k == 0) { result = 4; break; } /* nothing could change: a stream not piped */\n        DWORD r = WaitForMultipleObjects(k, ev, FALSE, left < 0 ? INFINITE : (DWORD)(left > 0x7fffffff ? 0x7fffffff : left));\n        if (r == WAIT_FAILED) { result = 4; break; }\n        nx_cpipe_finish(&ch->out);\n        nx_cpipe_finish(&ch->err);\n        if (ch->in.busy) {\n            DWORD w = 0;\n            if (GetOverlappedResult(ch->in.h, &ch->in.ov, &w, FALSE)) { ch->in.busy = false; *off += w; }\n            else if (GetLastError() != ERROR_IO_INCOMPLETE) { ch->in.busy = false; result = 4; break; }\n        }\n        if (nx_child_holds(ch, until, n, off)) { result = 0; break; }\n        if (r == WAIT_TIMEOUT && nx_left_ms(start, timeout_ms) == 0) { result = 3; break; }\n    }\n    /* a write still in flight reads the caller's bytes: it is called off before they go */\n    if (ch->in.busy) {\n        DWORD w = 0;\n        CancelIoEx(ch->in.h, &ch->in.ov);\n        if (GetOverlappedResult(ch->in.h, &ch->in.ov, &w, TRUE)) *off += w;\n        ch->in.busy = false;\n    }\n    return result;\n#else\n    int nap = 1;\n    for (;;) {\n        if (nx_child_holds(ch, until, n, off)) return 0;\n        int64_t left = nx_left_ms(start, timeout_ms);\n        struct pollfd p[3];\n        int np = 0, io = -1, ie = -1, ii = -1;\n        if (ch->out.fd >= 0) { p[np].fd = ch->out.fd; p[np].events = POLLIN; p[np].revents = 0; io = np++; }\n        if (ch->err.fd >= 0) { p[np].fd = ch->err.fd; p[np].events = POLLIN; p[np].revents = 0; ie = np++; }\n        if (until == NX_CH_WRITTEN) {\n            if (ch->in.fd < 0) return 4;\n            p[np].fd = ch->in.fd; p[np].events = POLLOUT; p[np].revents = 0; ii = np++;\n        }\n        int wait = left < 0 ? -1 : left > 1000000000 ? 1000000000 : (int)left;\n        if (until == NX_CH_EXIT) {\n            /* an exit cannot be polled for: with pipes to watch, look again\n               every 20 ms; with none, wait for it, or nap a little longer each time */\n            if (np == 0) {\n                if (wait < 0) { nx_child_reap(ch, true); continue; }\n                if (nap < wait) wait = nap;\n                if (nap < 32) nap *= 2;\n            } else if (wait < 0 || wait > 20) wait = 20;\n        } else if (np == 0) return 4; /* nothing could change: a stream not piped */\n        int r = 0;\n        if (np == 0) nx_sleep_ms((uint64_t)wait);\n        else r = poll(p, (nfds_t)np, wait);\n        if (r < 0 && errno != EINTR) return 4;\n        if (r > 0) {\n            if (io >= 0 && p[io].revents) nx_cpipe_pull(&ch->out);\n            if (ie >= 0 && p[ie].revents) nx_cpipe_pull(&ch->err);\n            if (ii >= 0 && p[ii].revents) {\n                ssize_t w = write(ch->in.fd, src + *off, n - *off);\n                if (w > 0) *off += (size_t)w;\n                /* EPIPE: the child reads no more */\n                else if (w < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) return 4;\n            }\n        }\n        if (!nx_child_holds(ch, until, n, off) && nx_left_ms(start, timeout_ms) == 0) return 3;\n    }\n#endif\n}\n/* Start argv[0] (found on PATH) in `cwd` when given. `flags` says where each\n   stream goes, two bits each (stdin, then stdout, then stderr): 0 this\n   program's, 1 a pipe, 2 nowhere (the null device); 3 for stderr: into\n   stdout. `*out` gets the handle. */\nNX_INLINE int32_t nx_child_spawn(nx_ctx* c, const nx_sl_u8* argv, size_t argc, nx_sl_u8 cwd, int64_t flags, int64_t* out) {\n    if (argc == 0) return 4;\n    char dir[4096];\n    const char* cwdp = NULL;\n    if (cwd.len > 0) { if (!nx_cpath(cwd, dir, sizeof dir)) return 4; cwdp = dir; }\n    int mode[3] = { (int)(flags & 3), (int)((flags >> 2) & 3), (int)((flags >> 4) & 3) };\n    if (mode[0] == 3 || mode[1] == 3) return 4;\n    int slot = nx_child_claim();\n    if (slot < 0) return 4;\n    nx_child* ch = &nx_children[slot];\n    nx_child_reset(ch);\n    nx_cpipe* pipes[3] = { &ch->in, &ch->out, &ch->err };\n    fflush(stdout); fflush(stderr);\n#if defined(_WIN32)\n    static const DWORD std_ids[3] = { STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE };\n    SECURITY_ATTRIBUTES sa; sa.nLength = sizeof sa; sa.bInheritHandle = TRUE; sa.lpSecurityDescriptor = NULL;\n    HANDLE ours[3] = { NULL, NULL, NULL }, give[3] = { NULL, NULL, NULL }, shut[3] = { NULL, NULL, NULL };\n    HANDLE nul = NULL;\n    int nshut = 0;\n    bool ok = true;\n    for (int i = 0; i < 3 && ok; i++) {\n        if (mode[i] == 1) {\n            ok = nx_win_pipe(i == 0, &ours[i], &give[i]);\n            if (ok) shut[nshut++] = give[i];\n        } else if (mode[i] == 2) {\n            if (!nul) {\n                nul = CreateFileA(\"NUL\", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, NULL);\n                if (nul == INVALID_HANDLE_VALUE) { nul = NULL; ok = false; break; }\n                shut[nshut++] = nul;\n            }\n            give[i] = nul;\n        } else if (mode[i] == 3) give[i] = give[1];\n        else {\n            HANDLE d = nx_win_std_dup(std_ids[i]);\n            if (d) { give[i] = d; shut[nshut++] = d; } else give[i] = GetStdHandle(std_ids[i]);\n        }\n    }\n    DWORD err = 0;\n    PROCESS_INFORMATION pi;\n    if (ok) {\n        nx_string cmd;\n        nx_win_cmdline(c, argv, argc, &cmd);\n        err = nx_win_start((char*)cmd.ptr, cwdp, give, &pi);\n        nx_str_free(c, &cmd);\n    }\n    for (int i = 0; i < nshut; i++) CloseHandle(shut[i]);\n    if (!ok || err) {\n        for (int i = 0; i < 3; i++) if (ours[i]) CloseHandle(ours[i]);\n        __atomic_store_n(&ch->state, 0, __ATOMIC_RELEASE);\n        return err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND ? 1 : 4;\n    }\n    CloseHandle(pi.hThread);\n    ch->proc = pi.hProcess;\n    ch->pid = (int64_t)pi.dwProcessId;\n    for (int i = 0; i < 3; i++) {\n        if (!ours[i]) continue;\n        nx_cpipe* pp = pipes[i];\n        pp->h = ours[i];\n        pp->piped = true;\n        pp->ov.hEvent = CreateEventA(NULL, TRUE, FALSE, NULL);\n        if (i > 0) pp->stage = (uint8_t*)malloc(65536);\n    }\n#else\n    char** av = (char**)nx_alloc_bytes(c, (argc + 1) * sizeof(char*), 8);\n    for (size_t i = 0; i < argc; i++) {\n        av[i] = (char*)nx_alloc_bytes(c, argv[i].len + 1, 1);\n        nx_bytes_copy(av[i], argv[i].ptr, argv[i].len); av[i][argv[i].len] = 0;\n    }\n    av[argc] = NULL;\n    int ends[3][2] = { { -1, -1 }, { -1, -1 }, { -1, -1 } };\n    int nul = -1, fail[2] = { -1, -1 };\n    bool ok = nx_pipe_cloexec(fail) == 0;\n    for (int i = 0; i < 3 && ok; i++) {\n        if (mode[i] == 1) ok = nx_pipe_cloexec(ends[i]) == 0;\n        else if (mode[i] == 2 && nul < 0) { nul = open(\"/dev/null\", O_RDWR | O_CLOEXEC); ok = nul >= 0; }\n    }\n    pid_t pid = ok ? fork() : -1;\n    if (pid == 0) {\n        /* the child: its end of each pipe, the null device, or this program's */\n        int fds[3];\n        for (int i = 0; i < 3; i++) {\n            if (mode[i] == 1) fds[i] = i == 0 ? ends[0][0] : ends[i][1];\n            else if (mode[i] == 2) fds[i] = nul;\n            else if (mode[i] == 3) fds[i] = fds[1] >= 0 ? fds[1] : 1;\n            else fds[i] = -1;\n        }\n        nx_child_std(fds);\n        int why[2] = { 0, 0 };\n        if (cwdp && chdir(cwdp) != 0) { why[0] = 1; why[1] = errno; }\n        else {\n            /* what this program held back or caught, the child starts without */\n            sigset_t none;\n            sigemptyset(&none);\n            sigprocmask(SIG_SETMASK, &none, NULL);\n            execvp(av[0], av);\n            why[1] = errno;\n        }\n        /* the fail pipe closes when exec succeeds; failing, it says why */\n        ssize_t w = write(fail[1], why, sizeof why);\n        (void)w;\n        _exit(127);\n    }\n    /* the child's ends are its own now */\n    if (ends[0][0] >= 0) close(ends[0][0]);\n    if (ends[1][1] >= 0) close(ends[1][1]);\n    if (ends[2][1] >= 0) close(ends[2][1]);\n    if (nul >= 0) close(nul);\n    if (fail[1] >= 0) close(fail[1]);\n    int why[2] = { 0, 0 };\n    ssize_t got = 0;\n    if (pid > 0) {\n        do { got = read(fail[0], why, sizeof why); } while (got < 0 && errno == EINTR);\n    }\n    if (fail[0] >= 0) close(fail[0]);\n    bool failed = pid <= 0 || got == (ssize_t)sizeof why;\n    /* not found: exec found no such file anywhere it looked */\n    bool missing = failed && pid > 0 && why[0] == 0 && (why[1] == ENOENT || why[1] == ENOTDIR || why[1] == EACCES) && !nx_prog_exists(av[0]);\n    for (size_t i = 0; i < argc; i++) nx_free_bytes(c, av[i], argv[i].len + 1);\n    nx_free_bytes(c, av, (argc + 1) * sizeof(char*));\n    if (failed) {\n        if (pid > 0) { int st; while (waitpid(pid, &st, 0) < 0 && errno == EINTR) { } }\n        if (ends[0][1] >= 0) close(ends[0][1]);\n        if (ends[1][0] >= 0) close(ends[1][0]);\n        if (ends[2][0] >= 0) close(ends[2][0]);\n        __atomic_store_n(&ch->state, 0, __ATOMIC_RELEASE);\n        return missing ? 1 : 4;\n    }\n    ch->pid = (int64_t)pid;\n    ch->in.fd = ends[0][1];\n    ch->out.fd = ends[1][0];\n    ch->err.fd = ends[2][0];\n    for (int i = 0; i < 3; i++) pipes[i]->piped = mode[i] == 1;\n    /* the input goes in as the child takes it: a write never blocks */\n    if (ch->in.fd >= 0) { int fl = fcntl(ch->in.fd, F_GETFL); if (fl >= 0) fcntl(ch->in.fd, F_SETFL, fl | O_NONBLOCK); }\n#endif\n    __atomic_store_n(&ch->state, 2, __ATOMIC_RELEASE);\n    *out = slot + 1;\n    return 0;\n}\n/* Write all of `data` as the child takes it, keeping its output meanwhile. */\nNX_INLINE int32_t nx_child_write(int64_t h, nx_sl_u8 data, int64_t timeout_ms) {\n    nx_child* ch = nx_child_at(h);\n    if (!ch || !ch->in.piped) return 4;\n    size_t off = 0;\n#if defined(_WIN32)\n    return nx_child_serve(ch, NX_CH_WRITTEN, data.ptr, data.len, &off, timeout_ms);\n#else\n    sigset_t old;\n    nx_sigpipe_hold(&old);\n    int32_t r = nx_child_serve(ch, NX_CH_WRITTEN, data.ptr, data.len, &off, timeout_ms);\n    nx_sigpipe_release(&old);\n    return r;\n#endif\n}\n/* the end of the child's input */\nNX_INLINE void nx_child_close_input(int64_t h) {\n    nx_child* ch = nx_child_at(h);\n    if (ch) nx_cpipe_close(&ch->in);\n}\n/* Up to `n` bytes the child wrote to `stream` (1 stdout, 2 stderr), waiting\n   for some; empty at its end. */\nNX_INLINE int32_t nx_child_read(nx_ctx* c, int64_t h, int64_t stream, size_t n, int64_t timeout_ms, nx_string* out) {\n    nx_child* ch = nx_child_at(h);\n    if (!ch || (stream != 1 && stream != 2)) return 4;\n    nx_cpipe* pp = stream == 2 ? &ch->err : &ch->out;\n    if (!pp->piped) return 4;\n    size_t none = 0;\n    int32_t r = nx_child_serve(ch, stream == 2 ? NX_CH_ERR : NX_CH_OUT, NULL, 0, &none, timeout_ms);\n    if (r) return r;\n    nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;\n    size_t have = pp->buf.len - pp->buf.pos;\n    if (have > n) have = n;\n    if (have > 0) { nx_str_append(c, &s, pp->buf.p + pp->buf.pos, have); pp->buf.pos += have; }\n    *out = s;\n    return 0;\n}\n/* Wait for the child to end, keeping its output meanwhile; `*status` is\n   its exit code in the low 32 bits and the signal that ended it above. */\nNX_INLINE int32_t nx_child_wait(int64_t h, int64_t timeout_ms, int64_t* status) {\n    nx_child* ch = nx_child_at(h);\n    if (!ch) return 4;\n    size_t none = 0;\n    int32_t r = nx_child_serve(ch, NX_CH_EXIT, NULL, 0, &none, timeout_ms);\n    if (r) return r;\n    *status = ((int64_t)ch->sig << 32) | (int64_t)(uint32_t)ch->code;\n    return 0;\n}\n/* Send the child a signal; on Windows, which has none, any but 0 ends it\n   with exit code 128 + sig, and child_wait reports the signal. Nothing\n   happens to a child that already ended. */\nNX_INLINE int32_t nx_child_signal(int64_t h, int32_t sig) {\n    nx_child* ch = nx_child_at(h);\n    if (!ch || sig < 0 || sig > 64) return 4;\n    if (ch->done) return 0;\n#if defined(_WIN32)\n    if (sig == 0 || WaitForSingleObject(ch->proc, 0) == WAIT_OBJECT_0) return 0;\n    ch->sent = sig;\n    if (!TerminateProcess(ch->proc, (UINT)(128 + sig))) return WaitForSingleObject(ch->proc, 0) == WAIT_OBJECT_0 ? 0 : 4;\n    return 0;\n#else\n    return kill((pid_t)ch->pid, sig) == 0 || errno == ESRCH ? 0 : 4;\n#endif\n}\n/* Let the child go: its pipes close and what was not read is dropped. A\n   program still running goes on (and is not waited for). */\nNX_INLINE void nx_child_close(int64_t h) {\n    nx_child* ch = nx_child_at(h);\n    if (!ch) return;\n    int expected = 2;\n    if (!__atomic_compare_exchange_n(&ch->state, &expected, 1, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) return;\n    nx_cpipe* pipes[3] = { &ch->in, &ch->out, &ch->err };\n    for (int i = 0; i < 3; i++) {\n        nx_cpipe* pp = pipes[i];\n        nx_cpipe_close(pp);\n        free(pp->buf.p);\n        pp->buf.p = NULL;\n#if defined(_WIN32)\n        if (pp->ov.hEvent) CloseHandle(pp->ov.hEvent);\n        free(pp->stage);\n#endif\n    }\n    nx_child_reap(ch, false); /* one that ended leaves nothing behind */\n#if defined(_WIN32)\n    CloseHandle(ch->proc);\n#endif\n    __atomic_store_n(&ch->state, 0, __ATOMIC_RELEASE);\n}\n\n/* process.trap_signals and next_signal: SIGINT, SIGTERM and SIGHUP (on\n   Windows Ctrl-C, Ctrl-Break, the console closing, logoff and shutdown)\n   no longer end the program; each is queued, and next_signal takes them\n   in order. */\nNX_STATE int nx_sig_trapped;\n#if defined(_WIN32)\nNX_STATE HANDLE nx_sig_sem;\nNX_STATE volatile LONG nx_sig_head, nx_sig_tail;\nNX_STATE volatile LONG nx_sig_ring[64];\nstatic BOOL WINAPI nx_sig_console(DWORD kind) {\n    LONG sig = kind == CTRL_C_EVENT ? 2 : kind == CTRL_BREAK_EVENT ? 21 : kind == CTRL_CLOSE_EVENT ? 1 : 15;\n    LONG t = InterlockedIncrement(&nx_sig_tail) - 1;\n    nx_sig_ring[t & 63] = sig;\n    ReleaseSemaphore(nx_sig_sem, 1, NULL);\n    /* the console closing, logoff and shutdown end the program once this\n       returns: it does not, so the program has until the system's limit\n       (a few seconds) to finish */\n    if (kind == CTRL_CLOSE_EVENT || kind == CTRL_LOGOFF_EVENT || kind == CTRL_SHUTDOWN_EVENT) Sleep(INFINITE);\n    return TRUE;\n}\nNX_INLINE void nx_trap_signals(void) {\n    int expected = 0;\n    if (!__atomic_compare_exchange_n(&nx_sig_trapped, &expected, 1, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) return;\n    nx_sig_sem = CreateSemaphoreA(NULL, 0, 64, NULL);\n    SetConsoleCtrlHandler(nx_sig_console, TRUE);\n}\nNX_INLINE int32_t nx_next_signal(int64_t timeout_ms) {\n    if (!nx_sig_sem) return 0;\n    DWORD r = WaitForSingleObject(nx_sig_sem, timeout_ms < 0 ? INFINITE : (DWORD)(timeout_ms > 0x7fffffff ? 0x7fffffff : timeout_ms));\n    if (r != WAIT_OBJECT_0) return 0;\n    LONG hd = InterlockedIncrement(&nx_sig_head) - 1;\n    return (int32_t)nx_sig_ring[hd & 63];\n}\n#else\n/* the handler writes the signal's number to a pipe (all a handler may\n   safely do), and next_signal reads it back */\nNX_STATE int nx_sig_rd NX_STATE_INIT(-1);\nNX_STATE int nx_sig_wr NX_STATE_INIT(-1);\nstatic void nx_sig_caught(int sig) {\n    int saved = errno;\n    unsigned char b = (unsigned char)sig;\n    ssize_t w = write(nx_sig_wr, &b, 1);\n    (void)w;\n    errno = saved;\n}\nNX_INLINE void nx_trap_signals(void) {\n    int expected = 0;\n    if (!__atomic_compare_exchange_n(&nx_sig_trapped, &expected, 1, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) return;\n    int p[2];\n    if (nx_pipe_cloexec(p) != 0) return;\n    fcntl(p[0], F_SETFL, fcntl(p[0], F_GETFL) | O_NONBLOCK);\n    fcntl(p[1], F_SETFL, fcntl(p[1], F_GETFL) | O_NONBLOCK);\n    nx_sig_wr = p[1];\n    __atomic_store_n(&nx_sig_rd, p[0], __ATOMIC_RELEASE);\n    struct sigaction sa;\n    memset(&sa, 0, sizeof sa);\n    sa.sa_handler = nx_sig_caught;\n    sigemptyset(&sa.sa_mask);\n    sa.sa_flags = SA_RESTART;\n    sigaction(SIGINT, &sa, NULL);\n    sigaction(SIGTERM, &sa, NULL);\n    sigaction(SIGHUP, &sa, NULL);\n}\nNX_INLINE int32_t nx_next_signal(int64_t timeout_ms) {\n    int fd = __atomic_load_n(&nx_sig_rd, __ATOMIC_ACQUIRE);\n    if (fd < 0) return 0;\n    int64_t start = nx_mono_ms();\n    for (;;) {\n        unsigned char b = 0;\n        if (read(fd, &b, 1) == 1) return (int32_t)b;\n        int64_t left = nx_left_ms(start, timeout_ms);\n        if (left == 0) return 0;\n        struct pollfd p;\n        p.fd = fd; p.events = POLLIN; p.revents = 0;\n        if (poll(&p, 1, left < 0 ? -1 : left > 1000000000 ? 1000000000 : (int)left) < 0 && errno != EINTR) return 0;\n    }\n}\n#endif\n#endif\n\nNX_INLINE bool nx_read_file(nx_ctx* c, nx_sl_u8 path, nx_string* out) {\n    char p[4096];\n    if (!nx_cpath(path, p, sizeof p)) return false;\n    FILE* f = fopen(p, \"rb\");\n    if (!f) return false;\n    nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;\n    uint8_t buf[65536];\n    size_t n;\n    while ((n = fread(buf, 1, sizeof buf, f)) > 0) nx_str_append(c, &s, buf, n);\n    fclose(f);\n    *out = s;\n    return true;\n}\nNX_INLINE bool nx_write_file(nx_sl_u8 path, nx_sl_u8 data) {\n    char p[4096];\n    if (!nx_cpath(path, p, sizeof p)) return false;\n    FILE* f = fopen(p, \"wb\");\n    if (!f) return false;\n    size_t w = data.len ? fwrite(data.ptr, 1, data.len, f) : 0;\n    fclose(f);\n    return w == data.len;\n}\nNX_INLINE bool nx_append_file(nx_sl_u8 path, nx_sl_u8 data) {\n    char p[4096];\n    if (!nx_cpath(path, p, sizeof p)) return false;\n    FILE* f = fopen(p, \"ab\");\n    if (!f) return false;\n    size_t w = data.len ? fwrite(data.ptr, 1, data.len, f) : 0;\n    fclose(f);\n    return w == data.len;\n}\n\n/* ------------------------------------------------------------- file system */\n/* Results: 0 ok, 1 not found, 2 any other failure. */\nNX_INLINE int32_t nx_fs_errcode(void) { return errno == ENOENT ? 1 : 2; }\n/* 0 = nothing there, 1 = file (or anything not a directory), 2 = directory */\nNX_INLINE int32_t nx_fs_kind(nx_sl_u8 path) {\n    char p[4096];\n    if (!nx_cpath(path, p, sizeof p)) return 0;\n#if defined(_WIN32)\n    DWORD a = GetFileAttributesA(p);\n    if (a == INVALID_FILE_ATTRIBUTES) return 0;\n    return (a & FILE_ATTRIBUTE_DIRECTORY) ? 2 : 1;\n#else\n    struct stat st;\n    if (stat(p, &st) != 0) return 0;\n    return S_ISDIR(st.st_mode) ? 2 : 1;\n#endif\n}\nNX_INLINE int32_t nx_fs_stat(nx_sl_u8 path, int64_t* size, int64_t* mtime_ms) {\n    char p[4096];\n    if (!nx_cpath(path, p, sizeof p)) return nx_fs_errcode();\n#if defined(_WIN32)\n    struct _stat64 st;\n    if (_stat64(p, &st) != 0) return nx_fs_errcode();\n#else\n    struct stat st;\n    if (stat(p, &st) != 0) return nx_fs_errcode();\n#endif\n    *size = (int64_t)st.st_size;\n    *mtime_ms = (int64_t)st.st_mtime * 1000;\n    return 0;\n}\nNX_INLINE int32_t nx_fs_mkdir(nx_sl_u8 path) {\n    char p[4096];\n    if (!nx_cpath(path, p, sizeof p)) return nx_fs_errcode();\n#if defined(_WIN32)\n    if (_mkdir(p) == 0 || errno == EEXIST) return 0;\n#else\n    if (mkdir(p, 0777) == 0 || errno == EEXIST) return 0;\n#endif\n    return nx_fs_errcode();\n}\nNX_INLINE int32_t nx_fs_remove_file(nx_sl_u8 path) {\n    char p[4096];\n    if (!nx_cpath(path, p, sizeof p)) return nx_fs_errcode();\n    if (remove(p) == 0) return 0;\n#if defined(_WIN32)\n    /* a read-only file (every object in a git checkout) refuses `remove` on\n       Windows; asking to delete it is asking to clear that bit first */\n    if (errno == EACCES && _chmod(p, _S_IWRITE) == 0 && remove(p) == 0) return 0;\n#endif\n    return nx_fs_errcode();\n}\nNX_INLINE int32_t nx_fs_remove_dir(nx_sl_u8 path) {\n    char p[4096];\n    if (!nx_cpath(path, p, sizeof p)) return nx_fs_errcode();\n#if defined(_WIN32)\n    return _rmdir(p) == 0 ? 0 : nx_fs_errcode();\n#else\n    return rmdir(p) == 0 ? 0 : nx_fs_errcode();\n#endif\n}\nNX_INLINE int32_t nx_fs_rename(nx_sl_u8 from, nx_sl_u8 to) {\n    char p[4096], q[4096];\n    if (!nx_cpath(from, p, sizeof p) || !nx_cpath(to, q, sizeof q)) return nx_fs_errcode();\n#if defined(_WIN32)\n    if (MoveFileExA(p, q, MOVEFILE_REPLACE_EXISTING)) return 0;\n    return GetLastError() == ERROR_FILE_NOT_FOUND || GetLastError() == ERROR_PATH_NOT_FOUND ? 1 : 2;\n#else\n    return rename(p, q) == 0 ? 0 : nx_fs_errcode();\n#endif\n}\nNX_INLINE void nx_fs_push_name(nx_ctx* c, nx_rawlist* l, const char* name) {\n    if (strcmp(name, \".\") == 0 || strcmp(name, \"..\") == 0) return;\n    nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;\n    nx_str_append(c, &s, (const uint8_t*)name, strlen(name));\n    if (l->len == l->cap) nx_list_grow(c, l, sizeof(nx_string), _Alignof(nx_string), l->len + 1);\n    ((nx_string*)l->ptr)[l->len++] = s;\n}\n/* the entries of a directory, unsorted, without `.` and `..` */\nNX_INLINE int32_t nx_fs_list_dir(nx_ctx* c, nx_sl_u8 path, nx_rawlist* out) {\n    char p[4096];\n    if (!nx_cpath(path, p, sizeof p)) return nx_fs_errcode();\n    nx_rawlist l; l.ptr = NULL; l.len = 0; l.cap = 0; l.ar = c->arena;\n#if defined(_WIN32)\n    char pat[4200];\n    snprintf(pat, sizeof pat, \"%s\\\\*\", p);\n    WIN32_FIND_DATAA fd;\n    HANDLE h = FindFirstFileA(pat, &fd);\n    if (h == INVALID_HANDLE_VALUE) {\n        DWORD e = GetLastError();\n        return e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND ? 1 : 2;\n    }\n    do { nx_fs_push_name(c, &l, fd.cFileName); } while (FindNextFileA(h, &fd));\n    FindClose(h);\n#else\n    DIR* d = opendir(p);\n    if (!d) return nx_fs_errcode();\n    struct dirent* e;\n    while ((e = readdir(d)) != NULL) nx_fs_push_name(c, &l, e->d_name);\n    closedir(d);\n#endif\n    *out = l;\n    return 0;\n}\nNX_INLINE bool nx_fs_cwd(nx_ctx* c, nx_string* out) {\n    char buf[4096];\n    size_t n;\n#if defined(_WIN32)\n    DWORD r = GetCurrentDirectoryA(sizeof buf, buf);\n    if (r == 0 || r >= sizeof buf) return false;\n    n = (size_t)r;\n#else\n    if (!getcwd(buf, sizeof buf)) return false;\n    n = strlen(buf);\n#endif\n    nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;\n    nx_str_append(c, &s, (const uint8_t*)buf, n);\n    *out = s;\n    return true;\n}\n/* the path of the running executable; empty when the platform will not say */\nNX_INLINE nx_string nx_exe_path(nx_ctx* c) {\n    nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;\n    char buf[4096];\n    size_t n = 0;\n#if defined(_WIN32)\n    DWORD r = GetModuleFileNameA(NULL, buf, (DWORD)sizeof buf);\n    if (r == 0 || r >= sizeof buf) return s;\n    n = (size_t)r;\n#elif defined(__APPLE__)\n    uint32_t size = (uint32_t)sizeof buf;\n    if (_NSGetExecutablePath(buf, &size) != 0) return s;\n    n = strlen(buf);\n#else\n    ssize_t r = readlink(\"/proc/self/exe\", buf, sizeof buf - 1);\n    if (r <= 0) return s;\n    n = (size_t)r;\n#endif\n    nx_str_append(c, &s, (const uint8_t*)buf, n);\n    return s;\n}\nNX_INLINE nx_string nx_fs_temp_dir(nx_ctx* c) {\n    nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;\n#if defined(_WIN32)\n    char buf[MAX_PATH + 2];\n    DWORD n = GetTempPathA(sizeof buf, buf);\n    if (n > 0 && n < sizeof buf) {\n        if (buf[n - 1] == '\\\\' || buf[n - 1] == '/') n--;\n        nx_str_append(c, &s, (const uint8_t*)buf, n);\n    }\n#else\n    const char* t = getenv(\"TMPDIR\");\n    if (!t || !*t) t = \"/tmp\";\n    size_t n = strlen(t);\n    if (n > 1 && t[n - 1] == '/') n--;\n    nx_str_append(c, &s, (const uint8_t*)t, n);\n#endif\n    return s;\n}\n\n/* ------------------------------------------------------------ file handles */\n/* 1 = stdin, 2 = stdout, 3 = stderr; opened files get 4 and up. */\n#define NX_MAX_FILES 64\nNX_STATE FILE* nx_files[NX_MAX_FILES];\nNX_INLINE FILE* nx_fh(int64_t h) {\n    if (h == 1) return stdin;\n    if (h == 2) return stdout;\n    if (h == 3) return stderr;\n    if (h < 4 || h >= NX_MAX_FILES + 4) return NULL;\n    return nx_files[h - 4];\n}\n/* a handle, or -1 when the path does not exist, -2 on any other failure */\nNX_INLINE int64_t nx_file_open(nx_sl_u8 path, nx_sl_u8 mode) {\n    char p[4096], m[8];\n    if (mode.len == 0 || mode.len > 3) return -2;\n    if (!nx_cpath(path, p, sizeof p)) return errno == ENOENT ? -1 : -2;\n    memcpy(m, mode.ptr, mode.len); m[mode.len] = 'b'; m[mode.len + 1] = 0;\n    FILE* f = fopen(p, m);\n    if (!f) return errno == ENOENT ? -1 : -2;\n    for (int i = 0; i < NX_MAX_FILES; i++) {\n        if (!nx_files[i]) { nx_files[i] = f; nx_track_handle(0, i + 4, true); return i + 4; }\n    }\n    fclose(f);\n    return -2;\n}\n/* stdin is read at the descriptor level, so a pipe or a terminal hands over what it\n   has instead of waiting for a full buffer the way fread does; every stdin reader in\n   the runtime consumes from this one buffer */\nNX_STATE uint8_t nx_stdin_buf[65536];\nNX_STATE size_t nx_stdin_pos, nx_stdin_len;\nNX_INLINE bool nx_stdin_fill(void) {\n    if (nx_stdin_pos < nx_stdin_len) return true;\n#if defined(_WIN32)\n    int n = _read(0, nx_stdin_buf, (unsigned)sizeof nx_stdin_buf);\n#else\n    ssize_t n;\n    do { n = read(0, nx_stdin_buf, sizeof nx_stdin_buf); } while (n < 0 && errno == EINTR);\n#endif\n    if (n <= 0) return false;\n    nx_stdin_pos = 0; nx_stdin_len = (size_t)n;\n    return true;\n}\n/* up to n bytes; an empty result means end of input */\nNX_INLINE bool nx_file_read(nx_ctx* c, int64_t h, size_t n, nx_string* out) {\n    FILE* f = nx_fh(h);\n    if (!f) return false;\n    nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;\n    if (n > 0 && h == 1) {\n        if (nx_stdin_fill()) {\n            size_t have = nx_stdin_len - nx_stdin_pos;\n            if (have > n) have = n;\n            nx_list_grow(c, (nx_rawlist*)&s, 1, 1, have);\n            memcpy(s.ptr, nx_stdin_buf + nx_stdin_pos, have);\n            s.len = have;\n            nx_stdin_pos += have;\n        }\n    } else if (n > 0) {\n        nx_list_grow(c, (nx_rawlist*)&s, 1, 1, n);\n        s.len = fread(s.ptr, 1, n, f);\n        if (s.len == 0 && ferror(f)) return false;\n    }\n    *out = s;\n    return true;\n}\nNX_INLINE bool nx_file_write(int64_t h, nx_sl_u8 data) {\n    FILE* f = nx_fh(h);\n    if (!f) return false;\n    return data.len == 0 || fwrite(data.ptr, 1, data.len, f) == data.len;\n}\nNX_INLINE bool nx_file_flush(int64_t h) {\n    FILE* f = nx_fh(h);\n    return f && fflush(f) == 0;\n}\nNX_INLINE bool nx_file_close(int64_t h) {\n    if (h >= 1 && h <= 3) return true;\n    FILE* f = nx_fh(h);\n    if (!f) return false;\n    nx_files[h - 4] = NULL;\n    nx_track_handle(0, h, false);\n    return fclose(f) == 0;\n}\n/* set a variable in this process's environment (and its children's); an\n   empty value removes it */\nNX_INLINE void nx_set_env(nx_sl_u8 name, nx_sl_u8 value) {\n    char n[256], v[4096];\n    if (name.len == 0 || name.len >= sizeof n || value.len >= sizeof v) return;\n    memcpy(n, name.ptr, name.len); n[name.len] = 0;\n    nx_bytes_copy(v, value.ptr, value.len); v[value.len] = 0;\n#if defined(_WIN32)\n    _putenv_s(n, v);\n#else\n    if (value.len == 0) unsetenv(n); else setenv(n, v, 1);\n#endif\n}\n/* is the handle (1 stdin, 2 stdout, 3 stderr) a terminal? */\nNX_INLINE bool nx_is_terminal(int64_t h) {\n    int fd = h == 1 ? 0 : h == 2 ? 1 : h == 3 ? 2 : -1;\n    if (fd < 0) return false;\n#if defined(_WIN32)\n    return _isatty(fd) != 0;\n#else\n    return isatty(fd) != 0;\n#endif\n}\n/* every environment variable as \"NAME=value\" */\nNX_INLINE void nx_environ(nx_ctx* c, nx_rawlist* out) {\n    nx_rawlist l; l.ptr = NULL; l.len = 0; l.cap = 0; l.ar = c->arena;\n#if defined(_WIN32)\n    char* env = GetEnvironmentStringsA();\n    if (env) {\n        for (char* p = env; *p; p += strlen(p) + 1) {\n            if (*p == '=') continue; /* per-drive working directories */\n            nx_fs_push_name(c, &l, p);\n        }\n        FreeEnvironmentStringsA(env);\n    }\n#else\n    for (char** e = environ; e && *e; e++) nx_fs_push_name(c, &l, *e);\n#endif\n    *out = l;\n}\n\n/* ------------------------------------------------------------------ sockets */\n/* Handles are the OS socket numbers. Result codes: 0 ok, 1 not found (name\n   lookup), 2 connection refused, 3 timed out, 4 any other failure. */\n#if defined(_WIN32)\ntypedef SOCKET nx_sock;\n#define NX_BAD_SOCK INVALID_SOCKET\n#define nx_closesock closesocket\nNX_INLINE void nx_net_init(void) {\n    static int done = 0;\n    if (!done) { WSADATA w; WSAStartup(MAKEWORD(2, 2), &w); done = 1; }\n}\nNX_INLINE int32_t nx_net_code(void) {\n    int e = WSAGetLastError();\n    if (e == WSAECONNREFUSED) return 2;\n    if (e == WSAETIMEDOUT || e == WSAEWOULDBLOCK) return 3;\n    return 4;\n}\nNX_INLINE void nx_net_blocking(nx_sock s, bool on) { u_long mode = on ? 0 : 1; ioctlsocket(s, FIONBIO, &mode); }\nNX_INLINE bool nx_net_in_progress(void) { return WSAGetLastError() == WSAEWOULDBLOCK; }\n#elif defined(NX_WASM)\ntypedef int nx_sock;\n#define NX_BAD_SOCK (-1)\n#define nx_closesock(s) ((void)(s), 0)\nNX_INLINE void nx_net_init(void) {}\n#else\ntypedef int nx_sock;\n#define NX_BAD_SOCK (-1)\n#define nx_closesock close\nNX_INLINE void nx_net_init(void) {}\nNX_INLINE int32_t nx_net_code(void) {\n    if (errno == ECONNREFUSED) return 2;\n    if (errno == ETIMEDOUT || errno == EAGAIN || errno == EWOULDBLOCK) return 3;\n    return 4;\n}\nNX_INLINE void nx_net_blocking(nx_sock s, bool on) {\n    int fl = fcntl(s, F_GETFL, 0);\n    if (fl >= 0) fcntl(s, F_SETFL, on ? (fl & ~O_NONBLOCK) : (fl | O_NONBLOCK));\n}\nNX_INLINE bool nx_net_in_progress(void) { return errno == EINPROGRESS || errno == EINTR; }\n#endif\n/* A send to a connection the peer has reset fails with EPIPE; without\n   these it raises SIGPIPE first, which ends the program. Linux and the BSDs\n   take MSG_NOSIGNAL on each send, macOS SO_NOSIGPIPE on the socket. */\n#if defined(MSG_NOSIGNAL)\n#define NX_SEND_FLAGS MSG_NOSIGNAL\n#else\n#define NX_SEND_FLAGS 0\n#endif\n#if defined(NX_WASM)\n/* no sockets in the playground: every call fails as \"any other failure\" */\nNX_INLINE int32_t nx_tcp_connect(nx_sl_u8 host, uint16_t port, int64_t timeout_ms, int64_t* out) { (void)host; (void)port; (void)timeout_ms; (void)out; return 4; }\nNX_INLINE int32_t nx_tcp_listen(nx_sl_u8 host, uint16_t port, int64_t* out) { (void)host; (void)port; (void)out; return 4; }\nNX_INLINE int32_t nx_tcp_accept(int64_t l, int64_t timeout_ms, int64_t* out) { (void)l; (void)timeout_ms; (void)out; return 4; }\nNX_INLINE int32_t nx_net_send(int64_t h, nx_sl_u8 data) { (void)h; (void)data; return 4; }\nNX_INLINE int32_t nx_net_recv(nx_ctx* c, int64_t h, size_t n, int64_t timeout_ms, nx_string* out) { (void)c; (void)h; (void)n; (void)timeout_ms; (void)out; return 4; }\nNX_INLINE int32_t nx_net_close(int64_t h) { (void)h; return 4; }\nNX_INLINE int32_t nx_net_name(nx_ctx* c, int64_t h, bool local, nx_string* out) { (void)c; (void)h; (void)local; (void)out; return 4; }\nNX_INLINE int32_t nx_net_resolve(nx_ctx* c, nx_sl_u8 host, nx_rawlist* out) { (void)c; (void)host; (void)out; return 4; }\nNX_INLINE int32_t nx_udp_bind(nx_sl_u8 host, uint16_t port, int64_t* out) { (void)host; (void)port; (void)out; return 4; }\nNX_INLINE int32_t nx_udp_send_to(int64_t h, nx_sl_u8 host, uint16_t port, nx_sl_u8 data) { (void)h; (void)host; (void)port; (void)data; return 4; }\nNX_INLINE int32_t nx_udp_recv_from(nx_ctx* c, int64_t h, size_t n, int64_t timeout_ms, nx_string* out) { (void)c; (void)h; (void)n; (void)timeout_ms; (void)out; return 4; }\nNX_INLINE nx_string nx_net_last_peer(nx_ctx* c) { nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena; return s; }\n#else\nNX_STATE char nx_net_peer_buf[128];\n\nNX_INLINE struct addrinfo* nx_net_lookup(nx_sl_u8 host, uint16_t port, int socktype, bool passive) {\n    char h[256], p[8];\n    if (host.len >= sizeof h) return NULL;\n    nx_bytes_copy(h, host.ptr, host.len); h[host.len] = 0;\n    snprintf(p, sizeof p, \"%u\", (unsigned)port);\n    struct addrinfo hints;\n    memset(&hints, 0, sizeof hints);\n    hints.ai_family = AF_UNSPEC;\n    hints.ai_socktype = socktype;\n    if (passive) hints.ai_flags = AI_PASSIVE;\n    struct addrinfo* res = NULL;\n    nx_net_init();\n    if (getaddrinfo(host.len ? h : NULL, p, &hints, &res) != 0) return NULL;\n    return res;\n}\nNX_INLINE void nx_net_set_timeout(nx_sock s, int64_t ms) {\n#if defined(_WIN32)\n    DWORD t = (DWORD)(ms < 0 ? 0 : ms);\n    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&t, sizeof t);\n#else\n    struct timeval tv;\n    tv.tv_sec = (time_t)(ms < 0 ? 0 : ms / 1000);\n    tv.tv_usec = (suseconds_t)(ms < 0 ? 0 : (ms % 1000) * 1000);\n    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv);\n#endif\n}\n/* wait until the socket is readable (or writable); false on timeout. For a\n   pending connect the exception set is watched too: Winsock reports a\n   refused connection there rather than as writable. */\nNX_INLINE bool nx_net_wait(nx_sock s, bool write, int64_t ms) {\n    fd_set fds, exc;\n    FD_ZERO(&fds);\n    FD_SET(s, &fds);\n    FD_ZERO(&exc);\n    FD_SET(s, &exc);\n    struct timeval tv;\n    tv.tv_sec = (long)(ms / 1000);\n    tv.tv_usec = (long)((ms % 1000) * 1000);\n    int r = select((int)(s + 1), write ? NULL : &fds, write ? &fds : NULL, write ? &exc : NULL, ms > 0 ? &tv : NULL);\n    return r > 0;\n}\n/* what every connected TCP socket gets: no Nagle delay, and no SIGPIPE */\nNX_INLINE void nx_tcp_ready(nx_sock s) {\n    int one = 1;\n    setsockopt(s, IPPROTO_TCP, TCP_NODELAY, (const char*)&one, sizeof one);\n#if defined(SO_NOSIGPIPE)\n    setsockopt(s, SOL_SOCKET, SO_NOSIGPIPE, (const char*)&one, sizeof one);\n#endif\n}\nNX_INLINE int32_t nx_tcp_connect(nx_sl_u8 host, uint16_t port, int64_t timeout_ms, int64_t* out) {\n    struct addrinfo* res = nx_net_lookup(host, port, SOCK_STREAM, false);\n    if (!res) return 1;\n    int32_t code = 4;\n    for (struct addrinfo* ai = res; ai; ai = ai->ai_next) {\n        nx_sock s = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);\n        if (s == NX_BAD_SOCK) continue;\n        bool ok;\n        if (timeout_ms > 0) {\n            nx_net_blocking(s, false);\n            int r = connect(s, ai->ai_addr, (int)ai->ai_addrlen);\n            ok = r == 0;\n            if (!ok && !nx_net_in_progress()) {\n                /* it failed at once (no route, say): the socket then\n                   selects as writable with no error pending, so waiting\n                   would take it for connected */\n                code = nx_net_code();\n            } else if (!ok) {\n                if (nx_net_wait(s, true, timeout_ms)) {\n                    int err = 0; socklen_t len = sizeof err;\n                    getsockopt(s, SOL_SOCKET, SO_ERROR, (char*)&err, &len);\n#if defined(_WIN32)\n                    if (err == 0) { fd_set ex; FD_ZERO(&ex); FD_SET(s, &ex); struct timeval z = {0, 0}; if (select((int)(s + 1), NULL, NULL, &ex, &z) > 0) err = WSAECONNREFUSED; }\n#endif\n                    ok = err == 0;\n                    if (!ok) {\n#if defined(_WIN32)\n                        WSASetLastError(err);\n#else\n                        errno = err;\n#endif\n                        code = nx_net_code();\n                    }\n                } else {\n                    code = 3;\n                }\n            }\n            nx_net_blocking(s, true);\n        } else {\n            ok = connect(s, ai->ai_addr, (int)ai->ai_addrlen) == 0;\n            if (!ok) code = nx_net_code();\n        }\n        if (ok) {\n            nx_tcp_ready(s);\n            *out = (int64_t)s; nx_track_handle(1, *out, true);\n            freeaddrinfo(res);\n            return 0;\n        }\n        nx_closesock(s);\n    }\n    freeaddrinfo(res);\n    return code;\n}\nNX_INLINE int32_t nx_tcp_listen(nx_sl_u8 host, uint16_t port, int64_t* out) {\n    struct addrinfo* res = nx_net_lookup(host, port, SOCK_STREAM, true);\n    if (!res) return 1;\n    int32_t code = 4;\n    for (struct addrinfo* ai = res; ai; ai = ai->ai_next) {\n        nx_sock s = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);\n        if (s == NX_BAD_SOCK) continue;\n        int one = 1;\n        setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (const char*)&one, sizeof one);\n        if (bind(s, ai->ai_addr, (int)ai->ai_addrlen) == 0 && listen(s, 64) == 0) {\n            *out = (int64_t)s; nx_track_handle(1, *out, true);\n            freeaddrinfo(res);\n            return 0;\n        }\n        code = nx_net_code();\n        nx_closesock(s);\n    }\n    freeaddrinfo(res);\n    return code;\n}\nNX_INLINE int32_t nx_tcp_accept(int64_t l, int64_t timeout_ms, int64_t* out) {\n    nx_sock ls = (nx_sock)l;\n    if (timeout_ms > 0 && !nx_net_wait(ls, false, timeout_ms)) return 3;\n    nx_sock s = accept(ls, NULL, NULL);\n    if (s == NX_BAD_SOCK) return nx_net_code();\n    nx_tcp_ready(s);\n    *out = (int64_t)s; nx_track_handle(1, *out, true);\n    return 0;\n}\nNX_INLINE int32_t nx_net_send(int64_t h, nx_sl_u8 data) {\n    nx_sock s = (nx_sock)h;\n    size_t sent = 0;\n    while (sent < data.len) {\n        int n = (int)send(s, (const char*)data.ptr + sent, (int)(data.len - sent), NX_SEND_FLAGS);\n        if (n <= 0) return nx_net_code();\n        sent += (size_t)n;\n    }\n    return 0;\n}\nNX_INLINE int32_t nx_net_recv(nx_ctx* c, int64_t h, size_t n, int64_t timeout_ms, nx_string* out) {\n    nx_sock s = (nx_sock)h;\n    if (timeout_ms > 0 && !nx_net_wait(s, false, timeout_ms)) return 3;\n    nx_string str; str.ptr = NULL; str.len = 0; str.cap = 0; str.ar = c->arena;\n    if (n == 0) { *out = str; return 0; }\n    nx_list_grow(c, (nx_rawlist*)&str, 1, 1, n);\n    int got = (int)recv(s, (char*)str.ptr, (int)n, 0);\n    if (got < 0) return nx_net_code();\n    str.len = (size_t)got;\n    *out = str;\n    return 0;\n}\nNX_INLINE int32_t nx_net_close(int64_t h) {\n    nx_track_handle(1, h, false);\n    return nx_closesock((nx_sock)h) == 0 ? 0 : 4;\n}\nNX_INLINE void nx_net_format_addr(struct sockaddr* sa, socklen_t len, char* buf, size_t cap) {\n    char host[96], serv[16];\n    if (getnameinfo(sa, len, host, sizeof host, serv, sizeof serv, NI_NUMERICHOST | NI_NUMERICSERV) != 0) { buf[0] = 0; return; }\n    if (sa->sa_family == AF_INET6) snprintf(buf, cap, \"[%s]:%s\", host, serv);\n    else snprintf(buf, cap, \"%s:%s\", host, serv);\n}\nNX_INLINE int32_t nx_net_name(nx_ctx* c, int64_t h, bool local, nx_string* out) {\n    struct sockaddr_storage ss;\n    socklen_t len = sizeof ss;\n    int r = local ? getsockname((nx_sock)h, (struct sockaddr*)&ss, &len) : getpeername((nx_sock)h, (struct sockaddr*)&ss, &len);\n    if (r != 0) return 4;\n    char buf[128];\n    nx_net_format_addr((struct sockaddr*)&ss, len, buf, sizeof buf);\n    nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;\n    nx_str_append(c, &s, (const uint8_t*)buf, strlen(buf));\n    *out = s;\n    return 0;\n}\nNX_INLINE int32_t nx_net_resolve(nx_ctx* c, nx_sl_u8 host, nx_rawlist* out) {\n    struct addrinfo* res = nx_net_lookup(host, 0, SOCK_STREAM, false);\n    if (!res) return 1;\n    nx_rawlist l; l.ptr = NULL; l.len = 0; l.cap = 0; l.ar = c->arena;\n    for (struct addrinfo* ai = res; ai; ai = ai->ai_next) {\n        char hostbuf[96];\n        if (getnameinfo(ai->ai_addr, (socklen_t)ai->ai_addrlen, hostbuf, sizeof hostbuf, NULL, 0, NI_NUMERICHOST) == 0) {\n            bool dup = false;\n            for (size_t i = 0; i < l.len; i++) {\n                nx_string* e = &((nx_string*)l.ptr)[i];\n                if (e->len == strlen(hostbuf) && memcmp(e->ptr, hostbuf, e->len) == 0) dup = true;\n            }\n            if (!dup) nx_fs_push_name(c, &l, hostbuf);\n        }\n    }\n    freeaddrinfo(res);\n    *out = l;\n    return 0;\n}\nNX_INLINE int32_t nx_udp_bind(nx_sl_u8 host, uint16_t port, int64_t* out) {\n    struct addrinfo* res = nx_net_lookup(host, port, SOCK_DGRAM, true);\n    if (!res) return 1;\n    int32_t code = 4;\n    for (struct addrinfo* ai = res; ai; ai = ai->ai_next) {\n        nx_sock s = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);\n        if (s == NX_BAD_SOCK) continue;\n        if (bind(s, ai->ai_addr, (int)ai->ai_addrlen) == 0) {\n            *out = (int64_t)s; nx_track_handle(1, *out, true);\n            freeaddrinfo(res);\n            return 0;\n        }\n        code = nx_net_code();\n        nx_closesock(s);\n    }\n    freeaddrinfo(res);\n    return code;\n}\nNX_INLINE int32_t nx_udp_send_to(int64_t h, nx_sl_u8 host, uint16_t port, nx_sl_u8 data) {\n    struct addrinfo* res = nx_net_lookup(host, port, SOCK_DGRAM, false);\n    if (!res) return 1;\n    int n = (int)sendto((nx_sock)h, (const char*)data.ptr, (int)data.len, 0, res->ai_addr, (int)res->ai_addrlen);\n    freeaddrinfo(res);\n    return n < 0 ? nx_net_code() : 0;\n}\nNX_INLINE int32_t nx_udp_recv_from(nx_ctx* c, int64_t h, size_t n, int64_t timeout_ms, nx_string* out) {\n    nx_sock s = (nx_sock)h;\n    if (timeout_ms > 0 && !nx_net_wait(s, false, timeout_ms)) return 3;\n    nx_string str; str.ptr = NULL; str.len = 0; str.cap = 0; str.ar = c->arena;\n    if (n == 0) n = 1;\n    nx_list_grow(c, (nx_rawlist*)&str, 1, 1, n);\n    struct sockaddr_storage ss;\n    socklen_t len = sizeof ss;\n    int got = (int)recvfrom(s, (char*)str.ptr, (int)n, 0, (struct sockaddr*)&ss, &len);\n    if (got < 0) return nx_net_code();\n    str.len = (size_t)got;\n    nx_net_format_addr((struct sockaddr*)&ss, len, nx_net_peer_buf, sizeof nx_net_peer_buf);\n    *out = str;\n    return 0;\n}\nNX_INLINE nx_string nx_net_last_peer(nx_ctx* c) {\n    nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;\n    nx_str_append(c, &s, (const uint8_t*)nx_net_peer_buf, strlen(nx_net_peer_buf));\n    return s;\n}\n#endif\n\n/* ------------------------------------------------------------------ TLS */\n/* net.tls_*: TLS over a TCP connection by the platform's own library,\n   loaded when first used so no program links it: SChannel on Windows,\n   Security.framework on macOS, OpenSSL (libssl 3 or 1.1) elsewhere. The\n   server's certificate is checked against the system's roots and the host\n   name. Handles are 1 + a slot; the result codes are the socket calls'\n   (1 no such host, 2 refused, 3 timed out, 4 any other failure), and\n   net.tls_problem says in words what went wrong on this thread. */\n#if defined(_WIN32)\n#ifndef SECURITY_WIN32\n#define SECURITY_WIN32\n#endif\n#include <security.h>\n#include <schannel.h>\n#elif !defined(NX_WASM)\n#include <dlfcn.h>\n#endif\n#define NX_MAX_TLS 256\ntypedef struct {\n    int state;               /* 0 free, 1 being set up or let go, 2 in use */\n    nx_sock sock;\n    char host[256];\n    bool ended;              /* the connection is over */\n    bool clean;              /* ... and ended with close_notify */\n    int64_t timeout_ms;      /* what a send may wait (0: no limit) */\n    uint8_t* plain;          /* decrypted and not yet taken */\n    size_t plain_len, plain_pos, plain_cap;\n#if defined(_WIN32)\n    CredHandle cred;\n    CtxtHandle ctx;\n    bool have_cred, have_ctx;\n    SecPkgContext_StreamSizes sizes;\n    uint8_t* raw;            /* received and not yet decrypted */\n    size_t raw_len, raw_cap;\n#else\n    void* ssl;               /* OpenSSL's SSL*, or an SSLContextRef */\n    int64_t deadline;        /* for Security.framework's callbacks (0: none) */\n#endif\n} nx_tls;\nNX_STATE nx_tls nx_tlss[NX_MAX_TLS];\nNX_STATE NX_THREAD_LOCAL char nx_tls_why[256];\n\nNX_INLINE void nx_tls_say(const char* what) { snprintf(nx_tls_why, sizeof nx_tls_why, \"%s\", what); }\nNX_INLINE nx_string nx_tls_problem(nx_ctx* c) {\n    nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;\n    nx_str_append(c, &s, (const uint8_t*)nx_tls_why, strlen(nx_tls_why));\n    return s;\n}\nNX_INLINE nx_tls* nx_tls_at(int64_t h) {\n    if (h < 1 || h > NX_MAX_TLS) return NULL;\n    nx_tls* t = &nx_tlss[h - 1];\n    return __atomic_load_n(&t->state, __ATOMIC_ACQUIRE) == 2 ? t : NULL;\n}\n/* a deadline `ms` from now (0: none), and what is left of one: 0 for no\n   deadline, -1 when it has passed */\nNX_INLINE int64_t nx_deadline(int64_t ms) { return ms > 0 ? nx_mono_ms() + ms : 0; }\nNX_INLINE int64_t nx_until(int64_t deadline) {\n    if (deadline == 0) return 0;\n    int64_t left = deadline - nx_mono_ms();\n    return left > 0 ? left : -1;\n}\n#if defined(NX_WASM)\nNX_INLINE bool nx_tls_available(void) { return false; }\nNX_INLINE int32_t nx_tls_connect(nx_sl_u8 host, uint16_t port, int64_t timeout_ms, int64_t* out) {\n    (void)host; (void)port; (void)timeout_ms; (void)out;\n    nx_tls_say(\"no TLS in WebAssembly\");\n    return 4;\n}\nNX_INLINE int32_t nx_tls_send(int64_t h, nx_sl_u8 data) { (void)h; (void)data; return 4; }\nNX_INLINE int32_t nx_tls_recv(nx_ctx* c, int64_t h, size_t n, int64_t timeout_ms, nx_string* out) {\n    (void)c; (void)h; (void)n; (void)timeout_ms; (void)out;\n    return 4;\n}\nNX_INLINE bool nx_tls_truncated(int64_t h) { (void)h; return false; }\nNX_INLINE void nx_tls_close(int64_t h) { (void)h; }\n#else\nNX_INLINE void nx_tls_keep(nx_tls* t, const uint8_t* p, size_t n) {\n    if (t->plain_pos == t->plain_len) { t->plain_pos = 0; t->plain_len = 0; }\n    if (t->plain_len + n > t->plain_cap) {\n        size_t cap = t->plain_cap ? t->plain_cap : 16384;\n        while (cap < t->plain_len + n) cap *= 2;\n        uint8_t* q = (uint8_t*)realloc(t->plain, cap);\n        if (!q) nx_panic(\"out of memory keeping TLS data\", \"net.tls_recv\");\n        t->plain = q;\n        t->plain_cap = cap;\n    }\n    memcpy(t->plain + t->plain_len, p, n);\n    t->plain_len += n;\n}\n/* a send that would have blocked, on a socket that does not */\nNX_INLINE bool nx_tls_again(void) {\n#if defined(_WIN32)\n    return WSAGetLastError() == WSAEWOULDBLOCK;\n#else\n    return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR;\n#endif\n}\n/* all of `n` bytes to the socket, waiting for room until the deadline */\nNX_INLINE int32_t nx_tls_put(nx_sock s, const uint8_t* p, size_t n, int64_t deadline) {\n    size_t sent = 0;\n    while (sent < n) {\n        int64_t left = nx_until(deadline);\n        if (left < 0) return 3;\n        if (!nx_net_wait(s, true, left)) return 3;\n        int k = (int)send(s, (const char*)p + sent, (int)(n - sent), NX_SEND_FLAGS);\n        if (k < 0 && !nx_tls_again()) return nx_net_code();\n        if (k > 0) sent += (size_t)k;\n    }\n    return 0;\n}\nNX_INLINE void nx_tls_reset(nx_tls* t) {\n    t->sock = NX_BAD_SOCK;\n    t->host[0] = 0;\n    t->ended = false;\n    t->clean = false;\n    t->timeout_ms = 0;\n    t->plain = NULL;\n    t->plain_len = 0; t->plain_pos = 0; t->plain_cap = 0;\n#if defined(_WIN32)\n    t->have_cred = false;\n    t->have_ctx = false;\n    memset(&t->sizes, 0, sizeof t->sizes);\n    t->raw = NULL;\n    t->raw_len = 0; t->raw_cap = 0;\n#else\n    t->ssl = NULL;\n    t->deadline = 0;\n#endif\n}\nNX_INLINE int nx_tls_claim(void) {\n    for (int i = 0; i < NX_MAX_TLS; i++) {\n        int expected = 0;\n        if (__atomic_compare_exchange_n(&nx_tlss[i].state, &expected, 1, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {\n            nx_tls_reset(&nx_tlss[i]);\n            return i;\n        }\n    }\n    return -1;\n}\n\n#if defined(_WIN32)\n/* ----- SChannel, through the function table secur32.dll hands out */\nNX_STATE PSecurityFunctionTableA nx_sspi;\nNX_STATE int nx_sspi_state;\nNX_INLINE bool nx_tls_available(void) {\n    int st = __atomic_load_n(&nx_sspi_state, __ATOMIC_ACQUIRE);\n    if (st == 0) {\n        HMODULE m = LoadLibraryA(\"secur32.dll\");\n        INIT_SECURITY_INTERFACE_A init = m ? (INIT_SECURITY_INTERFACE_A)GetProcAddress(m, \"InitSecurityInterfaceA\") : NULL;\n        nx_sspi = init ? init() : NULL;\n        st = nx_sspi ? 1 : 2;\n        __atomic_store_n(&nx_sspi_state, st, __ATOMIC_RELEASE);\n    }\n    return st == 1;\n}\n#define NX_ISC_FLAGS (ISC_REQ_SEQUENCE_DETECT | ISC_REQ_REPLAY_DETECT | ISC_REQ_CONFIDENTIALITY | ISC_REQ_EXTENDED_ERROR | ISC_REQ_ALLOCATE_MEMORY | ISC_REQ_STREAM)\nNX_INLINE void nx_tls_say_status(SECURITY_STATUS st) {\n    const char* what = \"the TLS handshake failed\";\n    if (st == SEC_E_UNTRUSTED_ROOT || st == CERT_E_UNTRUSTEDROOT || st == CERT_E_CHAINING) what = \"the server's certificate is not signed by a root this system trusts\";\n    else if (st == SEC_E_WRONG_PRINCIPAL || st == CERT_E_CN_NO_MATCH) what = \"the server's certificate is for another name\";\n    else if (st == SEC_E_CERT_EXPIRED || st == CERT_E_EXPIRED) what = \"the server's certificate has expired\";\n    else if (st == CRYPT_E_REVOKED) what = \"the server's certificate is revoked\";\n    else if (st == SEC_E_ILLEGAL_MESSAGE) what = \"the server sent an alert, or something that is not TLS\";\n    else if (st == SEC_E_ALGORITHM_MISMATCH) what = \"the server and this system have no cipher in common\";\n    else if (st == SEC_E_DECRYPT_FAILURE || st == SEC_E_MESSAGE_ALTERED) what = \"a TLS record did not decrypt\";\n    snprintf(nx_tls_why, sizeof nx_tls_why, \"%s (SChannel 0x%08lX)\", what, (unsigned long)st);\n}\n/* room for `more` bytes after what `raw` holds */\nNX_INLINE void nx_tls_room(nx_tls* t, size_t more) {\n    if (t->raw_len + more <= t->raw_cap) return;\n    size_t cap = t->raw_cap ? t->raw_cap : 32768;\n    while (cap < t->raw_len + more) cap *= 2;\n    uint8_t* q = (uint8_t*)realloc(t->raw, cap);\n    if (!q) nx_panic(\"out of memory in TLS\", \"net.tls\");\n    t->raw = q;\n    t->raw_cap = cap;\n}\n/* more ciphertext: 0, 3 on timeout, 5 when the peer closed, else a socket code */\nNX_INLINE int32_t nx_tls_pull(nx_tls* t, int64_t deadline) {\n    int64_t left = nx_until(deadline);\n    if (left < 0) return 3;\n    if (!nx_net_wait(t->sock, false, left)) return 3;\n    nx_tls_room(t, 16384);\n    int k = (int)recv(t->sock, (char*)t->raw + t->raw_len, 16384, 0);\n    if (k == 0) return 5;\n    if (k < 0) return nx_net_code();\n    t->raw_len += (size_t)k;\n    return 0;\n}\nNX_INLINE int32_t nx_tls_token(nx_tls* t, SecBuffer* b, int64_t deadline) {\n    int32_t r = 0;\n    if (b->pvBuffer && b->cbBuffer > 0) r = nx_tls_put(t->sock, (const uint8_t*)b->pvBuffer, b->cbBuffer, deadline);\n    if (b->pvBuffer) nx_sspi->FreeContextBuffer(b->pvBuffer);\n    b->pvBuffer = NULL;\n    b->cbBuffer = 0;\n    return r;\n}\nNX_INLINE int32_t nx_tls_lost(int32_t r) {\n    if (r == 3) nx_tls_say(\"the TLS handshake took longer than allowed\");\n    else nx_tls_say(\"the server closed the connection during the TLS handshake\");\n    return r == 5 ? 4 : r;\n}\n/* Step the handshake over what `raw` holds until it completes: from the\n   start, or for a message after it (DecryptMessage's SEC_I_RENEGOTIATE). */\nNX_INLINE int32_t nx_tls_steps(nx_tls* t, int64_t deadline) {\n    SECURITY_STATUS st;\n    TimeStamp ts;\n    ULONG got = 0;\n    if (!t->have_ctx) {\n        SecBuffer out = { 0, SECBUFFER_TOKEN, NULL };\n        SecBufferDesc od = { SECBUFFER_VERSION, 1, &out };\n        st = nx_sspi->InitializeSecurityContextA(&t->cred, NULL, (SEC_CHAR*)t->host, NX_ISC_FLAGS, 0, 0, NULL, 0, &t->ctx, &od, &got, &ts);\n        if (st != SEC_I_CONTINUE_NEEDED) { nx_tls_say_status(st); return 4; }\n        t->have_ctx = true;\n        int32_t r = nx_tls_token(t, &out, deadline);\n        if (r) return nx_tls_lost(r);\n    }\n    for (;;) {\n        if (t->raw_len == 0) {\n            int32_t r = nx_tls_pull(t, deadline);\n            if (r) return nx_tls_lost(r);\n        }\n        SecBuffer in[2] = { { (ULONG)t->raw_len, SECBUFFER_TOKEN, t->raw }, { 0, SECBUFFER_EMPTY, NULL } };\n        SecBufferDesc id = { SECBUFFER_VERSION, 2, in };\n        SecBuffer out = { 0, SECBUFFER_TOKEN, NULL };\n        SecBufferDesc od = { SECBUFFER_VERSION, 1, &out };\n        st = nx_sspi->InitializeSecurityContextA(&t->cred, &t->ctx, (SEC_CHAR*)t->host, NX_ISC_FLAGS, 0, 0, &id, 0, NULL, &od, &got, &ts);\n        if (st == SEC_E_INCOMPLETE_MESSAGE) {\n            int32_t r = nx_tls_pull(t, deadline);\n            if (r) return nx_tls_lost(r);\n            continue;\n        }\n        /* a token to send even on failure: the alert that says why */\n        int32_t sent = nx_tls_token(t, &out, deadline);\n        if (st != SEC_E_OK && st != SEC_I_CONTINUE_NEEDED && st != SEC_I_INCOMPLETE_CREDENTIALS) {\n            nx_tls_say_status(st);\n            return 4;\n        }\n        /* keep what this step did not read */\n        if (in[1].BufferType == SECBUFFER_EXTRA && in[1].cbBuffer > 0) {\n            memmove(t->raw, t->raw + (t->raw_len - in[1].cbBuffer), in[1].cbBuffer);\n            t->raw_len = in[1].cbBuffer;\n        } else {\n            t->raw_len = 0;\n        }\n        if (sent) return nx_tls_lost(sent);\n        if (st == SEC_E_OK) return 0;\n    }\n}\nNX_INLINE int32_t nx_tls_open(nx_tls* t, int64_t deadline) {\n    SCHANNEL_CRED sc;\n    memset(&sc, 0, sizeof sc);\n    sc.dwVersion = SCHANNEL_CRED_VERSION;\n    sc.dwFlags = SCH_CRED_AUTO_CRED_VALIDATION | SCH_CRED_NO_DEFAULT_CREDS | SCH_USE_STRONG_CRYPTO;\n    TimeStamp ts;\n    SECURITY_STATUS st = nx_sspi->AcquireCredentialsHandleA(NULL, (SEC_CHAR*)UNISP_NAME_A, SECPKG_CRED_OUTBOUND, NULL, &sc, NULL, NULL, &t->cred, &ts);\n    if (st != SEC_E_OK) { nx_tls_say_status(st); return 4; }\n    t->have_cred = true;\n    int32_t r = nx_tls_steps(t, deadline);\n    if (r) return r;\n    st = nx_sspi->QueryContextAttributesA(&t->ctx, SECPKG_ATTR_STREAM_SIZES, &t->sizes);\n    if (st != SEC_E_OK) { nx_tls_say_status(st); return 4; }\n    return 0;\n}\nNX_INLINE int32_t nx_tls_write(nx_tls* t, const uint8_t* p, size_t n, int64_t deadline) {\n    size_t hdr = t->sizes.cbHeader, tail = t->sizes.cbTrailer, max = t->sizes.cbMaximumMessage;\n    uint8_t* buf = (uint8_t*)malloc(hdr + max + tail);\n    if (!buf) nx_panic(\"out of memory in TLS\", \"net.tls_send\");\n    int32_t r = 0;\n    while (n > 0) {\n        size_t k = n < max ? n : max;\n        memcpy(buf + hdr, p, k);\n        SecBuffer b[4] = { { (ULONG)hdr, SECBUFFER_STREAM_HEADER, buf }, { (ULONG)k, SECBUFFER_DATA, buf + hdr }, { (ULONG)tail, SECBUFFER_STREAM_TRAILER, buf + hdr + k }, { 0, SECBUFFER_EMPTY, NULL } };\n        SecBufferDesc d = { SECBUFFER_VERSION, 4, b };\n        SECURITY_STATUS st = nx_sspi->EncryptMessage(&t->ctx, 0, &d, 0);\n        if (st != SEC_E_OK) { nx_tls_say_status(st); r = 4; break; }\n        r = nx_tls_put(t->sock, buf, b[0].cbBuffer + b[1].cbBuffer + b[2].cbBuffer, deadline);\n        if (r) { nx_tls_say(r == 3 ? \"a TLS send took longer than allowed\" : \"the connection failed while sending\"); break; }\n        p += k;\n        n -= k;\n    }\n    free(buf);\n    return r;\n}\n/* decrypt until there is something to read or the connection is over */\nNX_INLINE int32_t nx_tls_fill(nx_tls* t, int64_t deadline) {\n    while (t->plain_pos >= t->plain_len && !t->ended) {\n        if (t->raw_len > 0) {\n            SecBuffer b[4] = { { (ULONG)t->raw_len, SECBUFFER_DATA, t->raw }, { 0, SECBUFFER_EMPTY, NULL }, { 0, SECBUFFER_EMPTY, NULL }, { 0, SECBUFFER_EMPTY, NULL } };\n            SecBufferDesc d = { SECBUFFER_VERSION, 4, b };\n            SECURITY_STATUS st = nx_sspi->DecryptMessage(&t->ctx, &d, 0, NULL);\n            if (st == SEC_E_OK || st == SEC_I_RENEGOTIATE || st == SEC_I_CONTEXT_EXPIRED) {\n                SecBuffer* data = NULL;\n                SecBuffer* extra = NULL;\n                for (int i = 1; i < 4; i++) {\n                    if (b[i].BufferType == SECBUFFER_DATA) data = &b[i];\n                    if (b[i].BufferType == SECBUFFER_EXTRA) extra = &b[i];\n                }\n                /* the data sits in `raw`: taken before the rest moves over it */\n                if (data && data->cbBuffer > 0) nx_tls_keep(t, (const uint8_t*)data->pvBuffer, data->cbBuffer);\n                if (extra && extra->cbBuffer > 0) {\n                    memmove(t->raw, t->raw + (t->raw_len - extra->cbBuffer), extra->cbBuffer);\n                    t->raw_len = extra->cbBuffer;\n                } else {\n                    t->raw_len = 0;\n                }\n                if (st == SEC_I_CONTEXT_EXPIRED) {\n                    t->ended = true;\n                    t->clean = true;\n                } else if (st == SEC_I_RENEGOTIATE) {\n                    int32_t r = nx_tls_steps(t, deadline);\n                    if (r) return r;\n                }\n                continue;\n            }\n            if (st != SEC_E_INCOMPLETE_MESSAGE) { nx_tls_say_status(st); return 4; }\n        }\n        int32_t r = nx_tls_pull(t, deadline);\n        if (r == 5) { t->ended = true; break; }\n        if (r) return r;\n    }\n    return 0;\n}\n/* close_notify, when the connection still runs, and the handles let go */\nNX_INLINE void nx_tls_shut(nx_tls* t) {\n    if (t->have_ctx && !t->ended) {\n        DWORD kind = SCHANNEL_SHUTDOWN;\n        SecBuffer b = { sizeof kind, SECBUFFER_TOKEN, &kind };\n        SecBufferDesc d = { SECBUFFER_VERSION, 1, &b };\n        if (nx_sspi->ApplyControlToken(&t->ctx, &d) == SEC_E_OK) {\n            SecBuffer out = { 0, SECBUFFER_TOKEN, NULL };\n            SecBufferDesc od = { SECBUFFER_VERSION, 1, &out };\n            ULONG got = 0;\n            TimeStamp ts;\n            nx_sspi->InitializeSecurityContextA(&t->cred, &t->ctx, (SEC_CHAR*)t->host, NX_ISC_FLAGS, 0, 0, NULL, 0, NULL, &od, &got, &ts);\n            nx_tls_token(t, &out, nx_deadline(1000));\n        }\n    }\n    if (t->have_ctx) nx_sspi->DeleteSecurityContext(&t->ctx);\n    if (t->have_cred) nx_sspi->FreeCredentialsHandle(&t->cred);\n    free(t->raw);\n    t->raw = NULL;\n}\n#elif defined(__APPLE__)\n/* ----- Security.framework's Secure Transport, found with dlsym */\ntypedef int32_t nx_osstatus;\ntypedef nx_osstatus (*nx_st_readfn)(const void*, void*, size_t*);\ntypedef nx_osstatus (*nx_st_writefn)(const void*, const void*, size_t*);\ntypedef struct {\n    void* (*SSLCreateContext)(const void*, int, int);\n    nx_osstatus (*SSLSetIOFuncs)(void*, nx_st_readfn, nx_st_writefn);\n    nx_osstatus (*SSLSetConnection)(void*, const void*);\n    nx_osstatus (*SSLSetPeerDomainName)(void*, const char*, size_t);\n    nx_osstatus (*SSLHandshake)(void*);\n    nx_osstatus (*SSLWrite)(void*, const void*, size_t, size_t*);\n    nx_osstatus (*SSLRead)(void*, void*, size_t, size_t*);\n    nx_osstatus (*SSLClose)(void*);\n    void (*CFRelease)(const void*);\n} nx_sectrans;\nNX_STATE nx_sectrans nx_st;\nNX_STATE int nx_st_state;\n#define NX_ST_WOULD_BLOCK (-9803)\n#define NX_ST_CLOSED_GRACEFUL (-9805)\n#define NX_ST_CLOSED_ABORT (-9806)\n#define NX_ST_CLOSED_NO_NOTIFY (-9816)\nNX_INLINE bool nx_tls_available(void) {\n    int st = __atomic_load_n(&nx_st_state, __ATOMIC_ACQUIRE);\n    if (st == 0) {\n        void* sec = dlopen(\"/System/Library/Frameworks/Security.framework/Security\", RTLD_LAZY);\n        void* cf = dlopen(\"/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation\", RTLD_LAZY);\n        bool ok = sec && cf;\n#define NX_ST_SYM(lib, f) if (ok) { *(void**)&nx_st.f = dlsym(lib, #f); ok = nx_st.f != NULL; }\n        NX_ST_SYM(sec, SSLCreateContext)\n        NX_ST_SYM(sec, SSLSetIOFuncs)\n        NX_ST_SYM(sec, SSLSetConnection)\n        NX_ST_SYM(sec, SSLSetPeerDomainName)\n        NX_ST_SYM(sec, SSLHandshake)\n        NX_ST_SYM(sec, SSLWrite)\n        NX_ST_SYM(sec, SSLRead)\n        NX_ST_SYM(sec, SSLClose)\n        NX_ST_SYM(cf, CFRelease)\n#undef NX_ST_SYM\n        st = ok ? 1 : 2;\n        __atomic_store_n(&nx_st_state, st, __ATOMIC_RELEASE);\n    }\n    return st == 1;\n}\n/* The socket is non-blocking: a read takes what has come and says\n   \"would block\" for the rest, so SSLRead gives what it decrypted without\n   waiting to fill its buffer; the callers wait for the socket. */\nstatic nx_osstatus nx_st_read(const void* conn, void* data, size_t* len) {\n    nx_tls* t = (nx_tls*)conn;\n    size_t want = *len, got = 0;\n    while (got < want) {\n        ssize_t k = recv(t->sock, (char*)data + got, want - got, 0);\n        if (k > 0) { got += (size_t)k; continue; }\n        if (k == 0) { *len = got; return NX_ST_CLOSED_NO_NOTIFY; }\n        if (errno == EINTR) continue;\n        *len = got;\n        return errno == EAGAIN || errno == EWOULDBLOCK ? NX_ST_WOULD_BLOCK : NX_ST_CLOSED_ABORT;\n    }\n    *len = got;\n    return 0;\n}\nstatic nx_osstatus nx_st_write(const void* conn, const void* data, size_t* len) {\n    nx_tls* t = (nx_tls*)conn;\n    int32_t r = nx_tls_put(t->sock, (const uint8_t*)data, *len, t->deadline);\n    if (r) { *len = 0; return NX_ST_CLOSED_ABORT; }\n    return 0;\n}\nNX_INLINE void nx_tls_say_status(nx_osstatus st) {\n    const char* what = \"the TLS handshake failed\";\n    if (st == -9807 || st == -9812 || st == -9813) what = \"the server's certificate is not signed by a root this system trusts\";\n    else if (st == -9843) what = \"the server's certificate is for another name\";\n    else if (st == -9814 || st == -9815) what = \"the server's certificate has expired or is not valid yet\";\n    else if (st == -9808) what = \"the server's certificate is bad\";\n    else if (st == -9824) what = \"the server refused the handshake\";\n    else if (st == NX_ST_CLOSED_ABORT || st == NX_ST_CLOSED_NO_NOTIFY) what = \"the server closed the connection during the TLS handshake\";\n    snprintf(nx_tls_why, sizeof nx_tls_why, \"%s (Secure Transport %d)\", what, (int)st);\n}\n/* wait for the socket to have something to read; false once the deadline passed */\nNX_INLINE bool nx_tls_await(nx_tls* t, int64_t deadline) {\n    int64_t left = nx_until(deadline);\n    return left >= 0 && nx_net_wait(t->sock, false, left);\n}\nNX_INLINE int32_t nx_tls_open(nx_tls* t, int64_t deadline) {\n    void* ctx = nx_st.SSLCreateContext(NULL, 1, 0);\n    if (!ctx) { nx_tls_say(\"Secure Transport would not make a context\"); return 4; }\n    t->ssl = ctx;\n    nx_st.SSLSetIOFuncs(ctx, nx_st_read, nx_st_write);\n    nx_st.SSLSetConnection(ctx, t);\n    nx_st.SSLSetPeerDomainName(ctx, t->host, strlen(t->host));\n    nx_net_blocking(t->sock, false);\n    t->deadline = deadline;\n    for (;;) {\n        nx_osstatus st = nx_st.SSLHandshake(ctx);\n        if (st == 0) return 0;\n        if (st == NX_ST_WOULD_BLOCK) {\n            if (!nx_tls_await(t, deadline)) { nx_tls_say(\"the TLS handshake took longer than allowed\"); return 3; }\n            continue;\n        }\n        nx_tls_say_status(st);\n        return 4;\n    }\n}\nNX_INLINE int32_t nx_tls_write(nx_tls* t, const uint8_t* p, size_t n, int64_t deadline) {\n    t->deadline = deadline;\n    while (n > 0) {\n        size_t done = 0;\n        nx_osstatus st = nx_st.SSLWrite(t->ssl, p, n, &done);\n        p += done;\n        n -= done;\n        if (st == 0) continue;\n        if (st == NX_ST_WOULD_BLOCK) {\n            if (!nx_tls_await(t, deadline)) { nx_tls_say(\"a TLS send took longer than allowed\"); return 3; }\n            continue;\n        }\n        nx_tls_say(\"the connection failed while sending\");\n        return 4;\n    }\n    return 0;\n}\nNX_INLINE int32_t nx_tls_fill(nx_tls* t, int64_t deadline) {\n    uint8_t buf[16384];\n    t->deadline = deadline;\n    while (t->plain_pos >= t->plain_len && !t->ended) {\n        size_t got = 0;\n        nx_osstatus st = nx_st.SSLRead(t->ssl, buf, sizeof buf, &got);\n        if (got > 0) nx_tls_keep(t, buf, got);\n        if (st == 0) continue;\n        if (st == NX_ST_WOULD_BLOCK) {\n            if (got > 0) continue;\n            if (!nx_tls_await(t, deadline)) return 3;\n            continue;\n        }\n        if (st == NX_ST_CLOSED_GRACEFUL) { t->ended = true; t->clean = true; break; }\n        if (st == NX_ST_CLOSED_NO_NOTIFY || st == NX_ST_CLOSED_ABORT) { t->ended = true; break; }\n        nx_tls_say_status(st);\n        return 4;\n    }\n    return 0;\n}\nNX_INLINE void nx_tls_shut(nx_tls* t) {\n    if (!t->ssl) return;\n    if (!t->ended) {\n        t->deadline = nx_deadline(1000);\n        nx_st.SSLClose(t->ssl);\n    }\n    nx_st.CFRelease(t->ssl);\n    t->ssl = NULL;\n}\n#else\n/* ----- OpenSSL's libssl, loaded with dlopen */\ntypedef struct {\n    int (*OPENSSL_init_ssl)(uint64_t, const void*);\n    const void* (*TLS_client_method)(void);\n    void* (*SSL_CTX_new)(const void*);\n    int (*SSL_CTX_set_default_verify_paths)(void*);\n    void (*SSL_CTX_set_verify)(void*, int, void*);\n    void* (*SSL_new)(void*);\n    int (*SSL_set_fd)(void*, int);\n    long (*SSL_ctrl)(void*, int, long, void*);\n    int (*SSL_set1_host)(void*, const char*);\n    int (*SSL_connect)(void*);\n    int (*SSL_read)(void*, void*, int);\n    int (*SSL_write)(void*, const void*, int);\n    int (*SSL_shutdown)(void*);\n    int (*SSL_get_error)(const void*, int);\n    long (*SSL_get_verify_result)(const void*);\n    void (*SSL_free)(void*);\n    unsigned long (*ERR_get_error)(void);\n    void (*ERR_clear_error)(void);\n    void (*ERR_error_string_n)(unsigned long, char*, size_t);\n    const char* (*X509_verify_cert_error_string)(long);\n} nx_openssl;\nNX_STATE nx_openssl nx_ossl;\nNX_STATE void* nx_ossl_ctx;\nNX_STATE int nx_ossl_state;\nNX_STATE bool nx_ossl_3;\n#define NX_SSL_WANT_READ 2\n#define NX_SSL_WANT_WRITE 3\n#define NX_SSL_ERROR_SSL 1\n#define NX_SSL_ERROR_SYSCALL 5\n#define NX_SSL_ZERO_RETURN 6\nNX_INLINE bool nx_tls_available(void) {\n    int expected = 0;\n    if (__atomic_compare_exchange_n(&nx_ossl_state, &expected, 3, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {\n        static const char* names[] = { \"libssl.so.3\", \"libssl.so.1.1\", \"libssl.so\" };\n        void* h = NULL;\n        for (int i = 0; i < 3 && !h; i++) {\n            h = dlopen(names[i], RTLD_NOW | RTLD_GLOBAL);\n            if (h && i == 0) nx_ossl_3 = true;\n        }\n        bool ok = h != NULL;\n#define NX_OSSL_SYM(f) if (ok) { *(void**)&nx_ossl.f = dlsym(h, #f); ok = nx_ossl.f != NULL; }\n        NX_OSSL_SYM(OPENSSL_init_ssl)\n        NX_OSSL_SYM(TLS_client_method)\n        NX_OSSL_SYM(SSL_CTX_new)\n        NX_OSSL_SYM(SSL_CTX_set_default_verify_paths)\n        NX_OSSL_SYM(SSL_CTX_set_verify)\n        NX_OSSL_SYM(SSL_new)\n        NX_OSSL_SYM(SSL_set_fd)\n        NX_OSSL_SYM(SSL_ctrl)\n        NX_OSSL_SYM(SSL_set1_host)\n        NX_OSSL_SYM(SSL_connect)\n        NX_OSSL_SYM(SSL_read)\n        NX_OSSL_SYM(SSL_write)\n        NX_OSSL_SYM(SSL_shutdown)\n        NX_OSSL_SYM(SSL_get_error)\n        NX_OSSL_SYM(SSL_get_verify_result)\n        NX_OSSL_SYM(SSL_free)\n        NX_OSSL_SYM(ERR_get_error)\n        NX_OSSL_SYM(ERR_clear_error)\n        NX_OSSL_SYM(ERR_error_string_n)\n        NX_OSSL_SYM(X509_verify_cert_error_string)\n#undef NX_OSSL_SYM\n        if (ok) {\n            nx_ossl.OPENSSL_init_ssl(0, NULL);\n            nx_ossl_ctx = nx_ossl.SSL_CTX_new(nx_ossl.TLS_client_method());\n            ok = nx_ossl_ctx != NULL && nx_ossl.SSL_CTX_set_default_verify_paths(nx_ossl_ctx) == 1;\n            /* SSL_VERIFY_PEER: a certificate that does not check out ends the handshake */\n            if (ok) nx_ossl.SSL_CTX_set_verify(nx_ossl_ctx, 1, NULL);\n        }\n        __atomic_store_n(&nx_ossl_state, ok ? 1 : 2, __ATOMIC_RELEASE);\n    }\n    int st;\n    while ((st = __atomic_load_n(&nx_ossl_state, __ATOMIC_ACQUIRE)) == 3) nx_sleep_ms(1);\n    return st == 1;\n}\nNX_INLINE void nx_tls_say_error(const char* what) {\n    unsigned long e = nx_ossl.ERR_get_error();\n    if (e == 0) { nx_tls_say(what); return; }\n    char buf[160];\n    nx_ossl.ERR_error_string_n(e, buf, sizeof buf);\n    snprintf(nx_tls_why, sizeof nx_tls_why, \"%s (%s)\", what, buf);\n}\n/* wait for what OpenSSL asked for; false once the deadline passed */\nNX_INLINE bool nx_tls_await(nx_tls* t, int want, int64_t deadline) {\n    int64_t left = nx_until(deadline);\n    return left >= 0 && nx_net_wait(t->sock, want == NX_SSL_WANT_WRITE, left);\n}\nNX_INLINE int32_t nx_tls_open(nx_tls* t, int64_t deadline) {\n    void* ssl = nx_ossl.SSL_new(nx_ossl_ctx);\n    if (!ssl) { nx_tls_say_error(\"OpenSSL would not make a connection\"); return 4; }\n    t->ssl = ssl;\n    nx_ossl.SSL_set_fd(ssl, (int)t->sock);\n    /* SSL_set_tlsext_host_name: the name for the server to pick a certificate by */\n    nx_ossl.SSL_ctrl(ssl, 55, 0, t->host);\n    /* and the name the certificate must carry */\n    nx_ossl.SSL_set1_host(ssl, t->host);\n    nx_net_blocking(t->sock, false);\n    nx_ossl.ERR_clear_error();\n    for (;;) {\n        int r = nx_ossl.SSL_connect(ssl);\n        if (r == 1) return 0;\n        int e = nx_ossl.SSL_get_error(ssl, r);\n        if (e == NX_SSL_WANT_READ || e == NX_SSL_WANT_WRITE) {\n            if (!nx_tls_await(t, e, deadline)) { nx_tls_say(\"the TLS handshake took longer than allowed\"); return 3; }\n            continue;\n        }\n        long v = nx_ossl.SSL_get_verify_result(ssl);\n        if (v != 0) {\n            snprintf(nx_tls_why, sizeof nx_tls_why, \"the server's certificate does not check out: %s\", nx_ossl.X509_verify_cert_error_string(v));\n        } else if (e == NX_SSL_ERROR_SYSCALL) {\n            nx_tls_say_error(\"the server closed the connection during the TLS handshake\");\n        } else {\n            nx_tls_say_error(\"the TLS handshake failed\");\n        }\n        return 4;\n    }\n}\nNX_INLINE int32_t nx_tls_write(nx_tls* t, const uint8_t* p, size_t n, int64_t deadline) {\n    sigset_t old;\n    nx_sigpipe_hold(&old);\n    int32_t code = 0;\n    while (n > 0) {\n        int k = n > (1u << 30) ? (1 << 30) : (int)n;\n        nx_ossl.ERR_clear_error();\n        int r = nx_ossl.SSL_write(t->ssl, p, k);\n        if (r > 0) { p += r; n -= (size_t)r; continue; }\n        int e = nx_ossl.SSL_get_error(t->ssl, r);\n        if (e == NX_SSL_WANT_READ || e == NX_SSL_WANT_WRITE) {\n            if (nx_tls_await(t, e, deadline)) continue;\n            nx_tls_say(\"a TLS send took longer than allowed\");\n            code = 3;\n            break;\n        }\n        nx_tls_say_error(\"the connection failed while sending\");\n        code = 4;\n        break;\n    }\n    nx_sigpipe_release(&old);\n    return code;\n}\nNX_INLINE int32_t nx_tls_fill(nx_tls* t, int64_t deadline) {\n    uint8_t buf[16384];\n    while (t->plain_pos >= t->plain_len && !t->ended) {\n        nx_ossl.ERR_clear_error();\n        int r = nx_ossl.SSL_read(t->ssl, buf, (int)sizeof buf);\n        if (r > 0) { nx_tls_keep(t, buf, (size_t)r); continue; }\n        int e = nx_ossl.SSL_get_error(t->ssl, r);\n        if (e == NX_SSL_ZERO_RETURN) { t->ended = true; t->clean = true; break; }\n        if (e == NX_SSL_WANT_READ || e == NX_SSL_WANT_WRITE) {\n            if (!nx_tls_await(t, e, deadline)) return 3;\n            continue;\n        }\n        /* the peer went away without close_notify: OpenSSL 1.1 says so\n           with an empty error queue, 3 with UNEXPECTED_EOF_WHILE_READING */\n        unsigned long err = nx_ossl.ERR_get_error();\n        if ((e == NX_SSL_ERROR_SYSCALL && err == 0) || (nx_ossl_3 && (err & 0x7FFFFF) == 294)) { t->ended = true; break; }\n        char text[160];\n        nx_ossl.ERR_error_string_n(err, text, sizeof text);\n        snprintf(nx_tls_why, sizeof nx_tls_why, \"a TLS record did not decrypt (%s)\", text);\n        return 4;\n    }\n    return 0;\n}\nNX_INLINE void nx_tls_shut(nx_tls* t) {\n    if (!t->ssl) return;\n    if (!t->ended) {\n        sigset_t old;\n        nx_sigpipe_hold(&old);\n        nx_ossl.SSL_shutdown(t->ssl);\n        nx_sigpipe_release(&old);\n    }\n    nx_ossl.SSL_free(t->ssl);\n    t->ssl = NULL;\n}\n#endif\n\n/* the slot let go: the platform's part first, then the socket */\nNX_INLINE void nx_tls_release(nx_tls* t) {\n    nx_tls_shut(t);\n    free(t->plain);\n    t->plain = NULL;\n    if (t->sock != NX_BAD_SOCK) nx_net_close((int64_t)t->sock);\n    t->sock = NX_BAD_SOCK;\n    __atomic_store_n(&t->state, 0, __ATOMIC_RELEASE);\n}\nNX_INLINE int32_t nx_tls_connect(nx_sl_u8 host, uint16_t port, int64_t timeout_ms, int64_t* out) {\n    nx_tls_why[0] = 0;\n    if (!nx_tls_available()) {\n        nx_tls_say(\"this system has no TLS library to load (OpenSSL's libssl)\");\n        return 4;\n    }\n    if (host.len == 0 || host.len >= sizeof nx_tlss[0].host) { nx_tls_say(\"TLS needs a host name\"); return 4; }\n    int64_t deadline = nx_deadline(timeout_ms);\n    int64_t sock = 0;\n    int32_t r = nx_tcp_connect(host, port, timeout_ms, &sock);\n    if (r) {\n        nx_tls_say(r == 1 ? \"no such host\" : r == 2 ? \"the connection was refused\" : r == 3 ? \"the connection took longer than allowed\" : \"the connection failed\");\n        return r;\n    }\n    int slot = nx_tls_claim();\n    if (slot < 0) {\n        nx_net_close(sock);\n        nx_tls_say(\"too many TLS connections are open\");\n        return 4;\n    }\n    nx_tls* t = &nx_tlss[slot];\n    t->sock = (nx_sock)sock;\n    memcpy(t->host, host.ptr, host.len);\n    t->host[host.len] = 0;\n    t->timeout_ms = timeout_ms;\n    r = nx_tls_open(t, deadline);\n    if (r) {\n        /* no close_notify for a handshake that did not finish */\n        t->ended = true;\n        nx_tls_release(t);\n        return r;\n    }\n    __atomic_store_n(&t->state, 2, __ATOMIC_RELEASE);\n    *out = slot + 1;\n    return 0;\n}\nNX_INLINE int32_t nx_tls_send(int64_t h, nx_sl_u8 data) {\n    nx_tls* t = nx_tls_at(h);\n    if (!t) { nx_tls_say(\"not an open TLS connection\"); return 4; }\n    if (t->ended) { nx_tls_say(\"the connection is over\"); return 4; }\n    return nx_tls_write(t, data.ptr, data.len, nx_deadline(t->timeout_ms));\n}\n/* Up to `n` bytes of what the server sent, waiting at most `timeout_ms`\n   (0: no limit) for some; empty at the end of the connection. */\nNX_INLINE int32_t nx_tls_recv(nx_ctx* c, int64_t h, size_t n, int64_t timeout_ms, nx_string* out) {\n    nx_tls* t = nx_tls_at(h);\n    if (!t) { nx_tls_say(\"not an open TLS connection\"); return 4; }\n    int32_t r = nx_tls_fill(t, nx_deadline(timeout_ms));\n    if (r) return r;\n    nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;\n    size_t have = t->plain_len - t->plain_pos;\n    if (have > n) have = n;\n    if (have > 0) {\n        nx_str_append(c, &s, t->plain + t->plain_pos, have);\n        t->plain_pos += have;\n    }\n    *out = s;\n    return 0;\n}\n/* Did the connection end without close_notify, so that what came may be cut short? */\nNX_INLINE bool nx_tls_truncated(int64_t h) {\n    nx_tls* t = nx_tls_at(h);\n    return t && t->ended && !t->clean;\n}\nNX_INLINE void nx_tls_close(int64_t h) {\n    nx_tls* t = nx_tls_at(h);\n    if (!t) return;\n    int expected = 2;\n    if (!__atomic_compare_exchange_n(&t->state, &expected, 1, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) return;\n    nx_tls_release(t);\n}\n#endif\n\n/* ------------------------------------------------------------- threads */\n/* A spawned thread runs a Nexium function value `fn(*mut X)` with its own\n   context; a panic inside it is re-raised by the joiner. Handles are\n   pointers to the task record, freed by join. */\ntypedef struct nx_thread_task {\n    nx_ctx ctx;\n    void* fnp;\n    void* env;\n    void* arg;\n    bool panicked;\n    bool started;\n    char msg[256];\n    char loc[256];\n#if defined(_WIN32)\n    HANDLE h;\n#else\n    pthread_t h;\n#endif\n} nx_thread_task;\nstatic void nx_thread_run(nx_thread_task* t) {\n    nx_boundary b;\n    b.track = NULL;\n    nx_boundary* prev = nx_tls_boundary;\n    nx_tls_boundary = &b;\n    if (setjmp(b.jb)) {\n        t->panicked = true;\n        snprintf(t->msg, sizeof t->msg, \"%s\", b.msg);\n        snprintf(t->loc, sizeof t->loc, \"%s\", b.loc);\n    } else {\n        ((void (*)(nx_ctx*, void*, void*))t->fnp)(&t->ctx, t->env, t->arg);\n    }\n    nx_tls_boundary = prev;\n}\n#if defined(_WIN32)\nstatic DWORD WINAPI nx_thread_entry(LPVOID p) { nx_thread_run((nx_thread_task*)p); return 0; }\n#else\nstatic void* nx_thread_entry(void* p) { nx_thread_run((nx_thread_task*)p); return NULL; }\n#endif\nNX_INLINE int64_t nx_thread_start(nx_ctx* c, void* fnp, void* env, void* arg) {\n    nx_thread_task* t = (nx_thread_task*)malloc(sizeof *t);\n    if (!t) nx_panic(\"out of memory starting a thread\", \"thread.start\");\n    t->ctx = *c;\n    nx_ctx_untrack(&t->ctx);\n    t->ctx.live_allocs = 0; t->ctx.live_bytes = 0; t->ctx.total_allocs = 0; t->ctx.peak_bytes = 0;\n    nx_ctx_track_self(&t->ctx);\n    t->ctx.rng ^= (uint64_t)(uintptr_t)t * 0x9E3779B97F4A7C15ULL;\n    t->fnp = fnp; t->env = env; t->arg = arg;\n    t->panicked = false; t->started = true;\n#if defined(_WIN32)\n    t->h = CreateThread(NULL, 0, nx_thread_entry, t, 0, NULL);\n    if (!t->h) { t->started = false; nx_thread_run(t); }\n#else\n    if (pthread_create(&t->h, NULL, nx_thread_entry, t) != 0) { t->started = false; nx_thread_run(t); }\n#endif\n    return (int64_t)(intptr_t)t;\n}\n/* wait for a thread and free its record; true, with what it said in `msg`,\n   when it panicked */\nNX_INLINE bool nx_thread_wait(int64_t h, char* msg, size_t cap) {\n    nx_thread_task* t = (nx_thread_task*)(intptr_t)h;\n    if (!t) return false;\n    if (t->started) {\n#if defined(_WIN32)\n        WaitForSingleObject(t->h, INFINITE);\n        CloseHandle(t->h);\n#else\n        pthread_join(t->h, NULL);\n#endif\n    }\n    bool panicked = t->panicked;\n    if (panicked) snprintf(msg, cap, \"in a thread: %s (at %s)\", t->msg, t->loc);\n    free(t);\n    return panicked;\n}\nNX_INLINE void nx_thread_join(int64_t h, const char* loc) {\n    char msg[600];\n    if (nx_thread_wait(h, msg, sizeof msg)) nx_panic(msg, loc);\n}\n/* thread.join_all: every thread is waited for before the first panic among\n   them is re-raised, so none runs on with storage the panic releases */\nNX_INLINE void nx_thread_join_all(const int64_t* hs, size_t n, const char* loc) {\n    char msg[600], first[600];\n    bool panicked = false;\n    for (size_t i = 0; i < n; i++) {\n        if (nx_thread_wait(hs[i], msg, sizeof msg) && !panicked) {\n            panicked = true;\n            memcpy(first, msg, sizeof first);\n        }\n    }\n    if (panicked) nx_panic(first, loc);\n}\n/* mutexes and condition variables, as heap handles */\n#if defined(_WIN32)\nNX_INLINE int64_t nx_mutex_new(void) { CRITICAL_SECTION* m = (CRITICAL_SECTION*)malloc(sizeof *m); InitializeCriticalSection(m); return (int64_t)(intptr_t)m; }\nNX_INLINE void nx_mutex_lock_raw(int64_t m) { EnterCriticalSection((CRITICAL_SECTION*)(intptr_t)m); }\nNX_INLINE void nx_mutex_unlock_raw(int64_t m) { LeaveCriticalSection((CRITICAL_SECTION*)(intptr_t)m); }\nNX_INLINE void nx_mutex_free(int64_t m) { DeleteCriticalSection((CRITICAL_SECTION*)(intptr_t)m); free((void*)(intptr_t)m); }\nNX_INLINE int64_t nx_cond_new(void) { CONDITION_VARIABLE* cv = (CONDITION_VARIABLE*)malloc(sizeof *cv); InitializeConditionVariable(cv); return (int64_t)(intptr_t)cv; }\nNX_INLINE void nx_cond_wait(int64_t cv, int64_t m) { SleepConditionVariableCS((CONDITION_VARIABLE*)(intptr_t)cv, (CRITICAL_SECTION*)(intptr_t)m, INFINITE); }\nNX_INLINE void nx_cond_signal(int64_t cv) { WakeConditionVariable((CONDITION_VARIABLE*)(intptr_t)cv); }\nNX_INLINE void nx_cond_broadcast(int64_t cv) { WakeAllConditionVariable((CONDITION_VARIABLE*)(intptr_t)cv); }\nNX_INLINE void nx_cond_free(int64_t cv) { free((void*)(intptr_t)cv); }\n#else\nNX_INLINE int64_t nx_mutex_new(void) { pthread_mutex_t* m = (pthread_mutex_t*)malloc(sizeof *m); pthread_mutex_init(m, NULL); return (int64_t)(intptr_t)m; }\nNX_INLINE void nx_mutex_lock_raw(int64_t m) { pthread_mutex_lock((pthread_mutex_t*)(intptr_t)m); }\nNX_INLINE void nx_mutex_unlock_raw(int64_t m) { pthread_mutex_unlock((pthread_mutex_t*)(intptr_t)m); }\nNX_INLINE void nx_mutex_free(int64_t m) { pthread_mutex_destroy((pthread_mutex_t*)(intptr_t)m); free((void*)(intptr_t)m); }\nNX_INLINE int64_t nx_cond_new(void) { pthread_cond_t* cv = (pthread_cond_t*)malloc(sizeof *cv); pthread_cond_init(cv, NULL); return (int64_t)(intptr_t)cv; }\nNX_INLINE void nx_cond_wait(int64_t cv, int64_t m) { pthread_cond_wait((pthread_cond_t*)(intptr_t)cv, (pthread_mutex_t*)(intptr_t)m); }\nNX_INLINE void nx_cond_signal(int64_t cv) { pthread_cond_signal((pthread_cond_t*)(intptr_t)cv); }\nNX_INLINE void nx_cond_broadcast(int64_t cv) { pthread_cond_broadcast((pthread_cond_t*)(intptr_t)cv); }\nNX_INLINE void nx_cond_free(int64_t cv) { pthread_cond_destroy((pthread_cond_t*)(intptr_t)cv); free((void*)(intptr_t)cv); }\n#endif\n/* a lock taken inside an export call registers with the call's tracker (the\n   tracker's own lock uses the raw pair, which registers nothing) */\nNX_INLINE void nx_mutex_lock(int64_t m) { nx_mutex_lock_raw(m); nx_track_handle(2, m, true); }\nNX_INLINE void nx_mutex_unlock(int64_t m) { nx_track_handle(2, m, false); nx_mutex_unlock_raw(m); }\n/* sync.wait_for: sync.wait for at most `ms` (negative: for ever); false when\n   the time ran out. Like sync.wait it may also return with nothing\n   signalled, so the caller checks its condition again. */\nNX_INLINE bool nx_cond_wait_for(int64_t cv, int64_t m, int64_t ms) {\n    if (ms < 0) { nx_cond_wait(cv, m); return true; }\n#if defined(_WIN32)\n    return SleepConditionVariableCS((CONDITION_VARIABLE*)(intptr_t)cv, (CRITICAL_SECTION*)(intptr_t)m, ms > 0x7ffffffe ? 0x7ffffffe : (DWORD)ms) != 0;\n#else\n    struct timespec ts;\n    clock_gettime(CLOCK_REALTIME, &ts);\n    ts.tv_sec += (time_t)(ms / 1000);\n    ts.tv_nsec += (long)(ms % 1000) * 1000000L;\n    if (ts.tv_nsec >= 1000000000L) { ts.tv_sec += 1; ts.tv_nsec -= 1000000000L; }\n    return pthread_cond_timedwait((pthread_cond_t*)(intptr_t)cv, (pthread_mutex_t*)(intptr_t)m, &ts) == 0;\n#endif\n}\n\n/* A bell: rung by any thread, waited for by one, a ring before the wait\n   kept until it. std.thread's select waits on one while the channels it\n   watches ring it. */\ntypedef struct { int64_t m, cv; bool rung; } nx_bell;\nNX_INLINE int64_t nx_bell_new(void) {\n    nx_bell* b = (nx_bell*)malloc(sizeof *b);\n    if (!b) nx_panic(\"out of memory making a bell\", \"sync.bell_new\");\n    b->m = nx_mutex_new();\n    b->cv = nx_cond_new();\n    b->rung = false;\n    return (int64_t)(intptr_t)b;\n}\nNX_INLINE void nx_bell_ring(int64_t h) {\n    nx_bell* b = (nx_bell*)(intptr_t)h;\n    nx_mutex_lock_raw(b->m);\n    b->rung = true;\n    nx_cond_signal(b->cv);\n    nx_mutex_unlock_raw(b->m);\n}\n/* true when it rang (and it is quiet again), false when `ms` passed first\n   (negative: waits for ever) */\nNX_INLINE bool nx_bell_wait(int64_t h, int64_t ms) {\n    nx_bell* b = (nx_bell*)(intptr_t)h;\n    int64_t start = nx_mono_ms();\n    nx_mutex_lock_raw(b->m);\n    while (!b->rung) {\n        int64_t left = nx_left_ms(start, ms);\n        if (left == 0) break;\n        nx_cond_wait_for(b->cv, b->m, left);\n    }\n    bool rang = b->rung;\n    b->rung = false;\n    nx_mutex_unlock_raw(b->m);\n    return rang;\n}\nNX_INLINE void nx_bell_free(int64_t h) {\n    nx_bell* b = (nx_bell*)(intptr_t)h;\n    if (!b) return;\n    nx_cond_free(b->cv);\n    nx_mutex_free(b->m);\n    free(b);\n}\n\n/* sync.atomic_*: an i64 read and changed whole by any thread, sequentially\n   consistent */\nNX_INLINE int64_t nx_atomic_load(const int64_t* p) { return __atomic_load_n(p, __ATOMIC_SEQ_CST); }\nNX_INLINE void nx_atomic_store(int64_t* p, int64_t v) { __atomic_store_n(p, v, __ATOMIC_SEQ_CST); }\nNX_INLINE int64_t nx_atomic_add(int64_t* p, int64_t v) { return __atomic_fetch_add(p, v, __ATOMIC_SEQ_CST); }\nNX_INLINE int64_t nx_atomic_swap(int64_t* p, int64_t v) { return __atomic_exchange_n(p, v, __ATOMIC_SEQ_CST); }\nNX_INLINE bool nx_atomic_cas(int64_t* p, int64_t expected, int64_t desired) {\n    return __atomic_compare_exchange_n(p, &expected, desired, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);\n}\n\n/* ---------------------------------------------------- raw terminal input */\n/* `io.raw_mode(true)`: the console gives bytes as they are typed, without\n * echo, with VT sequences in (arrow keys) and out (colours); false restores\n * what was there, and so does exit. The REPL's line editor lives on this.\n * `io.read_key()` is one byte from the same buffer `io.read_line()` reads,\n * `io.pending_input()` how many are buffered (an escape sequence arrives\n * whole). */\n#if defined(_WIN32)\nNX_STATE DWORD nx_saved_in_mode, nx_saved_out_mode;\nNX_STATE bool nx_raw_saved;\nstatic void nx_raw_restore(void) {\n    if (!nx_raw_saved) return;\n    SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), nx_saved_in_mode);\n    SetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE), nx_saved_out_mode);\n}\nNX_INLINE bool nx_raw_mode(bool on) {\n    HANDLE hin = GetStdHandle(STD_INPUT_HANDLE), hout = GetStdHandle(STD_OUTPUT_HANDLE);\n    if (!on) { nx_raw_restore(); return true; }\n    DWORD im, om;\n    if (!GetConsoleMode(hin, &im) || !GetConsoleMode(hout, &om)) return false;\n    if (!nx_raw_saved) { nx_saved_in_mode = im; nx_saved_out_mode = om; nx_raw_saved = true; atexit(nx_raw_restore); }\n    DWORD nim = (im & ~(DWORD)(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT)) | ENABLE_VIRTUAL_TERMINAL_INPUT;\n    if (!SetConsoleMode(hin, nim)) return false;\n    SetConsoleMode(hout, om | ENABLE_VIRTUAL_TERMINAL_PROCESSING | ENABLE_PROCESSED_OUTPUT);\n    return true;\n}\n#elif defined(NX_WASM)\nNX_INLINE bool nx_raw_mode(bool on) { (void)on; return false; }\n#else\nNX_STATE struct termios nx_saved_termios;\nNX_STATE bool nx_raw_saved;\nstatic void nx_raw_restore(void) { if (nx_raw_saved) tcsetattr(0, TCSANOW, &nx_saved_termios); }\nNX_INLINE bool nx_raw_mode(bool on) {\n    if (!on) { nx_raw_restore(); return true; }\n    struct termios t;\n    if (tcgetattr(0, &t) != 0) return false;\n    if (!nx_raw_saved) { nx_saved_termios = t; nx_raw_saved = true; atexit(nx_raw_restore); }\n    t.c_lflag &= ~(tcflag_t)(ICANON | ECHO | ISIG);\n    t.c_iflag &= ~(tcflag_t)(ICRNL);\n    t.c_cc[VMIN] = 1;\n    t.c_cc[VTIME] = 0;\n    return tcsetattr(0, TCSANOW, &t) == 0;\n}\n#endif\nNX_INLINE bool nx_read_key(int64_t* out) {\n    if (!nx_stdin_fill()) return false;\n    *out = (int64_t)nx_stdin_buf[nx_stdin_pos++];\n    return true;\n}\nNX_INLINE int64_t nx_pending_input(void) { return (int64_t)(nx_stdin_len - nx_stdin_pos); }\n\nNX_INLINE bool nx_read_line(nx_ctx* c, nx_string* out) {\n    nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;\n    bool any = false;\n    while (nx_stdin_fill()) {\n        uint8_t b = nx_stdin_buf[nx_stdin_pos++];\n#if defined(_WIN32)\n        /* a console in binary mode passes Ctrl-Z through; keep it as end of input */\n        if (b == 0x1A && !any) return false;\n#endif\n        any = true;\n        if (b == '\\n') break;\n        nx_str_append(c, &s, &b, 1);\n    }\n    if (!any) return false;\n    if (s.len && s.ptr[s.len - 1] == '\\r') s.len--;\n    *out = s;\n    return true;\n}\n\n/* ----------------------------------------------------- checked arithmetic */\n#define NX_INT_OPS(N, T, UT, MIN, MAX) \\\n    NX_INLINE T nx_add_##N(T a, T b, const char* loc) { T r; if (__builtin_add_overflow(a, b, &r)) nx_panic(\"integer overflow in `+`\", loc); return r; } \\\n    NX_INLINE T nx_sub_##N(T a, T b, const char* loc) { T r; if (__builtin_sub_overflow(a, b, &r)) nx_panic(\"integer overflow in `-`\", loc); return r; } \\\n    NX_INLINE T nx_mul_##N(T a, T b, const char* loc) { T r; if (__builtin_mul_overflow(a, b, &r)) nx_panic(\"integer overflow in `*`\", loc); return r; } \\\n    NX_INLINE T nx_div_##N(T a, T b, const char* loc) { if (b == 0) nx_panic(\"division by zero\", loc); if ((T)(MIN) < 0 && a == (T)(MIN) && b == (T)-1) nx_panic(\"integer overflow in `/`\", loc); return a / b; } \\\n    NX_INLINE T nx_rem_##N(T a, T b, const char* loc) { if (b == 0) nx_panic(\"remainder by zero\", loc); if ((T)(MIN) < 0 && a == (T)(MIN) && b == (T)-1) return 0; return a % b; } \\\n    NX_INLINE T nx_neg_##N(T a, const char* loc) { if ((T)(MIN) < 0 && a == (T)(MIN)) nx_panic(\"integer overflow in negation\", loc); return (T)(-a); } \\\n    NX_INLINE T nx_addw_##N(T a, T b) { return (T)((UT)a + (UT)b); } \\\n    NX_INLINE T nx_subw_##N(T a, T b) { return (T)((UT)a - (UT)b); } \\\n    NX_INLINE T nx_mulw_##N(T a, T b) { return (T)((UT)a * (UT)b); } \\\n    NX_INLINE T nx_adds_##N(T a, T b) { T r; if (__builtin_add_overflow(a, b, &r)) return (b > 0) ? (T)(MAX) : (T)(MIN); return r; } \\\n    NX_INLINE T nx_subs_##N(T a, T b) { T r; if (__builtin_sub_overflow(a, b, &r)) return (b > 0) ? (T)(MIN) : (T)(MAX); return r; } \\\n    NX_INLINE T nx_muls_##N(T a, T b) { T r; if (__builtin_mul_overflow(a, b, &r)) return ((a < 0) != (b < 0)) ? (T)(MIN) : (T)(MAX); return r; } \\\n    NX_INLINE T nx_shl_##N(T a, uint32_t b, const char* loc) { if (b >= sizeof(T) * 8) nx_panic(\"shift amount exceeds the bit width\", loc); return (T)((UT)a << b); } \\\n    NX_INLINE T nx_shr_##N(T a, uint32_t b, const char* loc) { if (b >= sizeof(T) * 8) nx_panic(\"shift amount exceeds the bit width\", loc); return (T)(a >> b); } \\\n    NX_INLINE T nx_abs_##N(T a, const char* loc) { if ((T)(MIN) < 0 && a == (T)(MIN)) nx_panic(\"integer overflow in abs\", loc); return a < 0 ? (T)(-a) : a; }\n\nNX_INT_OPS(i8, int8_t, uint8_t, INT8_MIN, INT8_MAX)\nNX_INT_OPS(i16, int16_t, uint16_t, INT16_MIN, INT16_MAX)\nNX_INT_OPS(i32, int32_t, uint32_t, INT32_MIN, INT32_MAX)\nNX_INT_OPS(i64, int64_t, uint64_t, INT64_MIN, INT64_MAX)\nNX_INT_OPS(u8, uint8_t, uint8_t, 0, UINT8_MAX)\nNX_INT_OPS(u16, uint16_t, uint16_t, 0, UINT16_MAX)\nNX_INT_OPS(u32, uint32_t, uint32_t, 0, UINT32_MAX)\nNX_INT_OPS(u64, uint64_t, uint64_t, 0, UINT64_MAX)\nNX_INT_OPS(isize, intptr_t, uintptr_t, INTPTR_MIN, INTPTR_MAX)\nNX_INT_OPS(usize, size_t, size_t, 0, SIZE_MAX)\nNX_INT_OPS(i128, nx_i128, nx_u128, NX_I128_MIN, NX_I128_MAX)\nNX_INT_OPS(u128, nx_u128, nx_u128, 0, (~(nx_u128)0))\n\n/* Generated locals are named `<name>_<n>`. macOS's <mach/.../thread_status.h>\n * (reached through the system headers above) defines object-like macros of\n * that shape (`#define ts_32 uts.ts_32`), which would rewrite a local such as\n * `ts_32`; the generated code never needs them. */\n#undef ts_32\n#undef ts_64\n#undef es_32\n#undef es_64\n#undef fs_32\n#undef fs_64\n#undef ds_32\n#undef ds_64\n#undef ns_32\n#undef ns_64\n#undef ss_32\n#undef ss_64\n#undef cs_32\n#undef cs_64\n\n#endif /* NX_RT_H */\n\n/* ---------------------------------------------------- main on a big stack */\n/* `artifact cli { stack = \"1G\" }`: the generated main runs the program on a\n * thread reserving that much stack, so a recursion deeper than the platform's\n * default (a megabyte on some Windows toolchains, eight on Linux and macOS)\n * gets the room it declared. The reservation is address space; pages are\n * committed as the program reaches them. When the thread cannot be created\n * the program runs on the default stack. A 32-bit process caps it at 256 MB. */\ntypedef struct nx_stack_call { void (*f)(void*); void* arg; } nx_stack_call;\n#if defined(_WIN32)\n#ifndef STACK_SIZE_PARAM_IS_A_RESERVATION\n#define STACK_SIZE_PARAM_IS_A_RESERVATION 0x00010000\n#endif\nstatic DWORD WINAPI nx_stack_entry(LPVOID p) { nx_stack_call* c = (nx_stack_call*)p; c->f(c->arg); return 0; }\n#else\nstatic void* nx_stack_entry(void* p) { nx_stack_call* c = (nx_stack_call*)p; c->f(c->arg); return NULL; }\n#endif\nNX_INLINE void nx_run_on_stack(uint64_t bytes, void (*f)(void*), void* arg) {\n    nx_stack_call c; c.f = f; c.arg = arg;\n    if (sizeof(void*) < 8 && bytes > (uint64_t)256 * 1024 * 1024) bytes = (uint64_t)256 * 1024 * 1024;\n#if defined(_WIN32)\n    HANDLE h = CreateThread(NULL, (SIZE_T)bytes, nx_stack_entry, &c, STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);\n    if (h) { WaitForSingleObject(h, INFINITE); CloseHandle(h); return; }\n#elif defined(NX_WASM)\n    (void)nx_stack_entry;\n#else\n    pthread_attr_t attr; pthread_t t;\n    if (pthread_attr_init(&attr) == 0) {\n        bool ok = pthread_attr_setstacksize(&attr, (size_t)bytes) == 0 && pthread_create(&t, &attr, nx_stack_entry, &c) == 0;\n        pthread_attr_destroy(&attr);\n        if (ok) { pthread_join(t, NULL); return; }\n    }\n#endif\n    f(arg);\n}\n\n/* ------------------------------------------- what an export call acquired */\n/* S3 promises that a panic never crosses an export boundary; this is the\n * other half: a panic caught at the boundary releases everything the call\n * acquired, so a call that keeps failing does not grow. The wrapper of every\n * export installs a tracker for the call's context: its allocator records\n * every live allocation (arena chunks included, since arenas allocate from the\n * base allocator), and the file, socket and lock functions register their\n * handles through the thread's boundary. A `for parallel` body copies the\n * context to other threads, so the tables are behind a lock. On the panic\n * path the wrapper releases every entry; on the normal path only the tables\n * go, since the code released what it owned. Threads and parallel tasks that\n * panic on their own keep leaking what they allocated: what a thread allocates\n * can escape through `shared_mutable`, and freeing it would be worse.\n * Exports cannot return heap values or reach globals (S1, S2), so nothing\n * allocated during a panicked call is reachable afterwards. */\ntypedef struct nx_tracker {\n    nx_alloc parent;\n    void** slots; size_t cap; size_t used; size_t live;\n    int64_t* files; size_t nfiles; size_t files_cap;\n    int64_t* socks; size_t nsocks; size_t socks_cap;\n    int64_t* locks; size_t nlocks; size_t locks_cap;\n    int64_t mutex;\n} nx_tracker;\n#define NX_TR_DEAD ((void*)(uintptr_t)1)\nstatic size_t nx_tr_hash(void* p) { uintptr_t x = (uintptr_t)p; x ^= x >> 17; x *= (uintptr_t)0x9E3779B97F4A7C15ULL; x ^= x >> 29; return (size_t)x; }\nstatic void nx_tr_rebuild(nx_tracker* t, size_t ncap) {\n    void** ns = (void**)calloc(ncap, sizeof(void*));\n    if (!ns) return;\n    for (size_t i = 0; i < t->cap; i++) {\n        void* p = t->slots[i];\n        if (!p || p == NX_TR_DEAD) continue;\n        size_t j = nx_tr_hash(p) & (ncap - 1);\n        while (ns[j]) j = (j + 1) & (ncap - 1);\n        ns[j] = p;\n    }\n    free(t->slots);\n    t->slots = ns; t->cap = ncap; t->used = t->live;\n}\nstatic void nx_tr_add(nx_tracker* t, void* p) {\n    if (!p) return;\n    nx_mutex_lock_raw(t->mutex);\n    if ((t->used + 1) * 2 > t->cap) nx_tr_rebuild(t, t->cap == 0 ? 256 : (t->live * 4 > t->cap ? t->cap * 2 : t->cap));\n    if (t->cap) {\n        size_t mask = t->cap - 1, j = nx_tr_hash(p) & mask;\n        while (t->slots[j] && t->slots[j] != NX_TR_DEAD) j = (j + 1) & mask;\n        if (!t->slots[j]) t->used++;\n        t->slots[j] = p; t->live++;\n    }\n    nx_mutex_unlock_raw(t->mutex);\n}\nstatic void nx_tr_remove(nx_tracker* t, void* p) {\n    if (!p || !t->cap) return;\n    nx_mutex_lock_raw(t->mutex);\n    size_t mask = t->cap - 1, j = nx_tr_hash(p) & mask;\n    while (t->slots[j]) {\n        if (t->slots[j] == p) { t->slots[j] = NX_TR_DEAD; t->live--; break; }\n        j = (j + 1) & mask;\n    }\n    nx_mutex_unlock_raw(t->mutex);\n}\nstatic void* nx_tr_alloc(void* st, size_t size, size_t align) { nx_tracker* t = (nx_tracker*)st; void* p = t->parent.alloc(t->parent.state, size, align); nx_tr_add(t, p); return p; }\nstatic void* nx_tr_realloc(void* st, void* p, size_t old_size, size_t new_size, size_t align) { nx_tracker* t = (nx_tracker*)st; nx_tr_remove(t, p); void* q = t->parent.realloc(t->parent.state, p, old_size, new_size, align); nx_tr_add(t, q); return q; }\nstatic void nx_tr_free(void* st, void* p, size_t size) { nx_tracker* t = (nx_tracker*)st; nx_tr_remove(t, p); t->parent.free(t->parent.state, p, size); }\nstatic void nx_tr_list_set(int64_t** xs, size_t* n, size_t* cap, int64_t h, bool acquire) {\n    if (acquire) {\n        if (*n == *cap) { size_t nc = *cap ? *cap * 2 : 8; int64_t* g = (int64_t*)realloc(*xs, nc * sizeof(int64_t)); if (!g) return; *xs = g; *cap = nc; }\n        (*xs)[(*n)++] = h;\n    } else {\n        for (size_t i = *n; i-- > 0;) { if ((*xs)[i] == h) { (*xs)[i] = (*xs)[*n - 1]; (*n)--; return; } }\n    }\n}\nstatic void nx_track_handle(int kind, int64_t h, bool acquire) {\n    nx_boundary* b = nx_tls_boundary;\n    if (!b || !b->track) return;\n    nx_tracker* t = b->track;\n    nx_mutex_lock_raw(t->mutex);\n    if (kind == 0) nx_tr_list_set(&t->files, &t->nfiles, &t->files_cap, h, acquire);\n    else if (kind == 1) nx_tr_list_set(&t->socks, &t->nsocks, &t->socks_cap, h, acquire);\n    else nx_tr_list_set(&t->locks, &t->nlocks, &t->locks_cap, h, acquire);\n    nx_mutex_unlock_raw(t->mutex);\n}\n/* a thread started inside an export call may outlive the call, and what it\n   allocates can escape through `shared_mutable`: it allocates untracked */\nstatic void nx_ctx_untrack(nx_ctx* c) {\n    if (c->alloc.alloc == nx_tr_alloc) c->alloc = ((nx_tracker*)c->alloc.state)->parent;\n    if (c->base.alloc == nx_tr_alloc) c->base = ((nx_tracker*)c->base.state)->parent;\n}\nNX_INLINE void nx_export_enter(nx_ctx* c, nx_boundary* b, nx_tracker* t) {\n    memset(t, 0, sizeof *t);\n    t->parent = c->alloc;\n    t->mutex = nx_mutex_new();\n    c->alloc.alloc = nx_tr_alloc; c->alloc.realloc = nx_tr_realloc; c->alloc.free = nx_tr_free; c->alloc.state = t;\n    c->base = c->alloc;\n    b->track = t;\n}\nNX_INLINE void nx_export_leave(nx_ctx* c, nx_boundary* b, nx_tracker* t, bool panicked) {\n    b->track = NULL; /* the releases below must not register themselves */\n    if (panicked) {\n        for (size_t i = t->nlocks; i-- > 0;) nx_mutex_unlock_raw(t->locks[i]);\n        for (size_t i = 0; i < t->nsocks; i++) nx_closesock((nx_sock)t->socks[i]);\n        for (size_t i = 0; i < t->nfiles; i++) nx_file_close(t->files[i]);\n        for (size_t i = 0; i < t->cap; i++) { void* p = t->slots[i]; if (p && p != NX_TR_DEAD) t->parent.free(t->parent.state, p, 0); }\n    }\n    free(t->slots); free(t->files); free(t->socks); free(t->locks);\n    nx_mutex_free(t->mutex);\n    c->alloc = t->parent;\n    c->base = t->parent;\n}\n";
-static const nx_sl_u8 nxc_RUNTIME_H_153 = { (uint8_t*)nx_str_397, 186746 };
+static const char nx_str_397[192234] = "/* Nexium runtime. Embedded into every generated translation unit.\n *\n * Design constraints (specification section 4.1):\n *   S1  no initialization: every function here works from any thread with no setup.\n *   S2  no process-global state a program can reach: the compiler rejects a\n *       mutable global in an embeddable artifact, and what the runtime keeps\n *       for itself (thread-locals such as the panic boundary and the cache of\n *       small freed blocks, and tables filled on first use such as the map\n *       hash key and the file table) is per translation unit, so two\n *       libraries in one process each carry their own copy.\n *   S3  panics do not cross an export boundary: nx_panic longjmps to the nearest\n *       boundary when one is installed, and aborts the process otherwise.\n */\n#ifndef NX_RT_H\n#define NX_RT_H\n\n#include <stdint.h>\n#include <stddef.h>\n#include <stdbool.h>\n#include <string.h>\n#include <stdio.h>\n#include <stdlib.h>\n/* NX_WASM: built for wasm32-wasi (a program, a library for the page, the\n   playground). The platform has no processes, sockets or terminal; those\n   parts fail with the error a program would see when the operating system\n   refuses. setjmp is WebAssembly's exception handling, which nx turns on\n   (-mexception-handling -mllvm -wasm-enable-sjlj) and whose three helpers it\n   compiles beside the program (nx_wasm_sjlj.c); C compiled without it has\n   none (NX_NO_SETJMP), and a panic ends the program wherever it is. */\n#if defined(__wasi__) && !defined(NX_WASM)\n#define NX_WASM 1\n#endif\n#if defined(NX_WASM) && !defined(__wasm_exception_handling__)\n#define NX_NO_SETJMP 1\ntypedef int jmp_buf[1];\n#define setjmp(b) ((void)(b), 0)\n#define longjmp(b, v) ((void)(b), (void)(v), abort())\n#else\n#include <setjmp.h>\n#endif\n#include <errno.h>\n#include <sys/stat.h>\n#include <math.h>\n#include <time.h>\n\n#if defined(_WIN32)\n#ifndef WIN32_LEAN_AND_MEAN\n#define WIN32_LEAN_AND_MEAN\n#endif\n#include <winsock2.h>\n#include <ws2tcpip.h>\n#include <windows.h>\n#include <io.h>\n#include <fcntl.h>\n#include <direct.h>\n#elif defined(NX_WASM)\n#include <sys/time.h>\n#include <unistd.h>\n#include <dirent.h>\n#include <fcntl.h>\nextern char** environ;\n#else\n#include <sys/time.h>\n#include <unistd.h>\n#include <termios.h>\n#include <poll.h>\n#include <signal.h>\n#include <spawn.h>\n#include <sys/wait.h>\n#include <dirent.h>\n#include <fcntl.h>\n#include <sys/socket.h>\n#include <sys/select.h>\n#include <netinet/in.h>\n#include <netinet/tcp.h>\n#include <arpa/inet.h>\n#include <netdb.h>\nextern char** environ;\n#if defined(__APPLE__)\n#include <mach-o/dyld.h>\n#endif\n#if defined(__linux__)\n#include <sys/syscall.h>\n#endif\n#endif\n\n#if defined(_MSC_VER) && !defined(__clang__)\n#define NX_THREAD_LOCAL __declspec(thread)\n#define NX_NORETURN __declspec(noreturn)\n#else\n#define NX_THREAD_LOCAL _Thread_local\n#define NX_NORETURN _Noreturn\n#endif\n#define NX_INLINE static inline\n#if defined(_WIN32) && defined(NX_BUILD_SHARED)\n#define NX_EXPORT __declspec(dllexport)\n#elif defined(NX_BUILD_SHARED)\n#define NX_EXPORT __attribute__((visibility(\"default\")))\n#else\n#define NX_EXPORT\n#endif\n#define NX_UNUSED(x) (void)(x)\n\n/* i128 and u128: the C compiler's __int128 on 64-bit targets, and C23's\n   _BitInt(128) on 32-bit ones (x86, ARM, RISC-V), which have no __int128;\n   clang carries _BitInt through the same operators, overflow builtins and\n   float conversions, inline where a 32-bit target has no library routine */\n#if defined(__SIZEOF_INT128__)\ntypedef __int128 nx_i128;\ntypedef unsigned __int128 nx_u128;\n#elif defined(__BITINT_MAXWIDTH__) && __BITINT_MAXWIDTH__ >= 128\ntypedef _BitInt(128) nx_i128;\ntypedef unsigned _BitInt(128) nx_u128;\n#else\n#error \"Nexium's i128 needs __int128 or _BitInt(128): on a 32-bit target build with zig cc (the default) or clang 16 or later\"\n#endif\n#define NX_I128_MAX ((nx_i128)((((nx_u128)1) << 127) - 1))\n#define NX_I128_MIN ((nx_i128)(-NX_I128_MAX - 1))\n\n/* ------------------------------------------------------------------ slices */\ntypedef struct nx_sl_u8 { uint8_t* ptr; size_t len; } nx_sl_u8;\nstruct nx_arena;\n/* Growable containers remember the arena they were created in (NULL = the\n * root allocator), so a container created outside a `using arena` block keeps\n * its storage on the heap even when it grows inside the block. */\ntypedef struct nx_string { uint8_t* ptr; size_t len; size_t cap; struct nx_arena* ar; } nx_string;\ntypedef struct nx_rawlist { void* ptr; size_t len; size_t cap; struct nx_arena* ar; } nx_rawlist;\n\nNX_INLINE nx_sl_u8 nx_lit(const char* s, size_t n) { nx_sl_u8 r; r.ptr = (uint8_t*)s; r.len = n; return r; }\n\n/* --------------------------------------------------------------- allocator */\ntypedef struct nx_alloc {\n    void* (*alloc)(void* state, size_t size, size_t align);\n    void* (*realloc)(void* state, void* p, size_t old_size, size_t new_size, size_t align);\n    void (*free)(void* state, void* p, size_t size);\n    void* state;\n} nx_alloc;\n\ntypedef struct nx_ctx {\n    nx_alloc alloc;\n    /* the root (non-arena) allocator, and the innermost arena in scope */\n    nx_alloc base;\n    struct nx_arena* arena;\n    uint64_t rng;\n    bool rng_seeded;\n    int argc;\n    char** argv;\n    FILE* out;\n    FILE* err;\n    /* leak tracking (only maintained when built with -DNX_LEAK_CHECK) */\n    size_t live_allocs;\n    size_t live_bytes;\n    size_t total_allocs;\n    size_t peak_bytes;\n    /* os.args(): built once, owned by the context */\n    nx_sl_u8* args_cache;\n    size_t args_len;\n} nx_ctx;\n\n/* ------------------------------------------------------------------ panics */\nstruct nx_tracker;\ntypedef struct nx_boundary {\n    jmp_buf jb;\n    char msg[256];\n    char loc[128];\n    /* the resources of the export call this boundary belongs to, or NULL */\n    struct nx_tracker* track;\n} nx_boundary;\n/* files (kind 0), sockets (1) and held locks (2) register with the boundary's\n   tracker as they are acquired and released; defined with the tracker below */\nstatic void nx_track_handle(int kind, int64_t h, bool acquire);\nstatic void nx_ctx_untrack(nx_ctx* c);\n\n/* The runtime's state. In one C file (the default) each variable is static;\n   a program compiled as several (`nx build` of a debug build, one C file per\n   module: NX_RT_SHARED) shares one copy, which the unit with NX_RT_OWNER\n   defines and the others declare. */\n#if defined(NX_RT_SHARED) && !defined(NX_RT_OWNER)\n#define NX_STATE extern\n#define NX_STATE_INIT(v)\n#elif defined(NX_RT_SHARED)\n#define NX_STATE\n#define NX_STATE_INIT(v) = v\n#else\n#define NX_STATE static\n#define NX_STATE_INIT(v) = v\n#endif\n\nNX_STATE NX_THREAD_LOCAL nx_boundary* nx_tls_boundary NX_STATE_INIT(NULL);\nNX_STATE NX_THREAD_LOCAL char nx_tls_last_panic[256];\n\nNX_NORETURN NX_INLINE void nx_panic(const char* msg, const char* loc) {\n#if defined(NX_NO_SETJMP)\n    /* no boundary can catch it: the program ends as main's would end it */\n    fflush(stdout);\n    fprintf(stderr, \"panic: %s\\n  at %s\\n\", msg, loc ? loc : \"?\");\n    fflush(stderr);\n    exit(101);\n#endif\n    if (nx_tls_boundary) {\n        nx_boundary* b = nx_tls_boundary;\n        snprintf(b->msg, sizeof b->msg, \"%s\", msg);\n        snprintf(b->loc, sizeof b->loc, \"%s\", loc ? loc : \"\");\n        snprintf(nx_tls_last_panic, sizeof nx_tls_last_panic, \"%s (at %s)\", msg, loc ? loc : \"?\");\n        longjmp(b->jb, 1);\n    }\n    fprintf(stderr, \"panic: %s\\n  at %s\\n\", msg, loc ? loc : \"?\");\n    fflush(stderr);\n    abort();\n}\n\nNX_NORETURN NX_INLINE void nx_panic_bounds(size_t i, size_t len, const char* loc) {\n    char buf[128];\n    snprintf(buf, sizeof buf, \"index %zu out of bounds for length %zu\", i, len);\n    nx_panic(buf, loc);\n}\n\n/* pointer + offset that is defined for a null pointer: an empty slice has no\n * storage, and `NULL + 0` is undefined in C (UBSan traps it) */\n#define nx_padd(p, n) ((n) ? (p) + (n) : (p))\n\nNX_INLINE size_t nx_idx(size_t i, size_t len, const char* loc) {\n    if (i >= len) nx_panic_bounds(i, len, loc);\n    return i;\n}\n\nNX_INLINE void nx_slice_check(size_t start, size_t end, size_t len, const char* loc) {\n    if (start > end || end > len) {\n        char buf[128];\n        snprintf(buf, sizeof buf, \"slice %zu..%zu out of range for length %zu\", start, end, len);\n        nx_panic(buf, loc);\n    }\n}\n\nNX_INLINE nx_i128 nx_cast_check(nx_i128 v, nx_i128 lo, nx_i128 hi, const char* loc) {\n    if (v < lo || v > hi) nx_panic(\"value does not fit the target type\", loc);\n    return v;\n}\n\nNX_INLINE int64_t nx_f2i(double f, nx_i128 lo, nx_i128 hi, const char* loc) {\n    if (!(f == f) || f < (double)lo || f > (double)hi) nx_panic(\"float to integer cast out of range\", loc);\n    return (int64_t)f;\n}\n\n/* ------------------------------------------------------- default allocator */\n#ifdef NX_LEAK_CHECK\n/* the tracking allocator keeps its counters in the context (no globals) */\nNX_INLINE void nx_track(void* st, ptrdiff_t allocs, ptrdiff_t bytes) {\n    struct nx_ctx* c = (struct nx_ctx*)st;\n    if (!c) return;\n    c->live_allocs = (size_t)((ptrdiff_t)c->live_allocs + allocs);\n    c->live_bytes = (size_t)((ptrdiff_t)c->live_bytes + bytes);\n    if (allocs > 0) c->total_allocs++;\n    if (c->live_bytes > c->peak_bytes) c->peak_bytes = c->live_bytes;\n}\n#endif\n/* Small blocks (up to 64 bytes and a little over, in four classes 16 bytes\n * apart) are kept when freed, up to 64 per class, on a list of the thread's\n * own, and handed out again before malloc is asked: a program that makes and\n * drops short strings (`format(\"w{}\", .{k})` ten million times) spent much\n * of its time in the C library's allocator on Windows, whose malloc caches\n * nothing small. A block is always allocated at its class's size, so a\n * cached one fits any request of its class, and a realloc into or out of\n * the classes makes a whole block rather than shrinking one. The classes\n * end where the C library's own steps do: on 64-bit Windows and under\n * 64-bit glibc a block carries an 8-byte header and is rounded up to 16, so\n * a request of 24, 40, 56 or 72 bytes costs what one of 16, 32, 48 or 64\n * does (measured), the classes end at those, and a cached block costs the C\n * library no more than its request would; elsewhere they end at the\n * multiples of 16.\n * The leak checker counts what malloc alone would count: a block from the\n * list is an allocation, one put on it a free, and a realloc a realloc\n * whichever way it went. Under AddressSanitizer the cache is off and every\n * request has its exact size, so a use after free or an overflow stays what\n * it is (-DNX_SMALL_CACHE=1 forces it on, for a sanitizer run of the cache\n * itself). The lists are thread-local and per translation unit, like the\n * panic boundary: no lock, no setup, and every thread the runtime starts,\n * and every exported call, returns what it holds when it ends\n * (nx_small_drain). */\n#ifndef NX_SMALL_CACHE\n#if defined(__SANITIZE_ADDRESS__)\n#define NX_SMALL_CACHE 0\n#elif defined(__has_feature)\n#if __has_feature(address_sanitizer)\n#define NX_SMALL_CACHE 0\n#else\n#define NX_SMALL_CACHE 1\n#endif\n#else\n#define NX_SMALL_CACHE 1\n#endif\n#endif\n#if NX_SMALL_CACHE\n#if defined(_WIN64) || (defined(__GLIBC__) && defined(__LP64__))\n#define NX_SMALL_SLACK 8\n#else\n#define NX_SMALL_SLACK 0\n#endif\n#define NX_SMALL_CLASSES 4\n#define NX_SMALL_MAX (16 * NX_SMALL_CLASSES + NX_SMALL_SLACK)\n#define NX_SMALL_KEEP 64\ntypedef struct nx_small_block { struct nx_small_block* next; } nx_small_block;\nNX_STATE NX_THREAD_LOCAL nx_small_block* nx_small_lists[NX_SMALL_CLASSES];\nNX_STATE NX_THREAD_LOCAL unsigned nx_small_counts[NX_SMALL_CLASSES];\n/* the class of a size: 0 to 3 up to NX_SMALL_MAX bytes, -1 past that */\nNX_INLINE int nx_small_class(size_t size) {\n    if (size > NX_SMALL_MAX) return -1;\n    return size <= 16 + NX_SMALL_SLACK ? 0 : (int)((size - NX_SMALL_SLACK - 1) >> 4);\n}\n/* the size every block of class k is allocated at */\nNX_INLINE size_t nx_small_size(int k) { return (size_t)16 * (size_t)(k + 1) + NX_SMALL_SLACK; }\n/* a block for a request of class k, from the list or from malloc, at the class's size */\nNX_INLINE void* nx_small_take(int k) {\n    nx_small_block* b = nx_small_lists[k];\n    if (b) { nx_small_lists[k] = b->next; nx_small_counts[k]--; return b; }\n    return malloc(nx_small_size(k));\n}\n/* a block of class k back on its list, or to free when the list is full */\nNX_INLINE void nx_small_put(int k, void* p) {\n    if (nx_small_counts[k] < NX_SMALL_KEEP) {\n        nx_small_block* b = (nx_small_block*)p;\n        b->next = nx_small_lists[k];\n        nx_small_lists[k] = b;\n        nx_small_counts[k]++;\n    } else {\n        free(p);\n    }\n}\n/* every block this thread holds goes back to malloc: the last act of a\n   thread the runtime started, and of an exported call */\nNX_INLINE void nx_small_drain(void) {\n    for (int k = 0; k < NX_SMALL_CLASSES; k++) {\n        nx_small_block* b = nx_small_lists[k];\n        while (b) { nx_small_block* n = b->next; free(b); b = n; }\n        nx_small_lists[k] = NULL; nx_small_counts[k] = 0;\n    }\n}\n#else\nNX_INLINE void nx_small_drain(void) {}\n#endif\nNX_INLINE void* nx_malloc_alloc(void* st, size_t size, size_t align) {\n    NX_UNUSED(st); NX_UNUSED(align);\n#if NX_SMALL_CACHE\n    int k = nx_small_class(size);\n    void* p = k >= 0 ? nx_small_take(k) : malloc(size);\n#else\n    void* p = malloc(size ? size : 1);\n#endif\n    if (!p) nx_panic(\"out of memory\", \"allocator\");\n#ifdef NX_LEAK_CHECK\n    nx_track(st, 1, (ptrdiff_t)size);\n#endif\n    return p;\n}\nNX_INLINE void nx_malloc_free(void* st, void* p, size_t size) {\n    NX_UNUSED(st); NX_UNUSED(size);\n#ifdef NX_LEAK_CHECK\n    if (p) nx_track(st, -1, -(ptrdiff_t)size);\n#endif\n#if NX_SMALL_CACHE\n    /* a size of 0 names a block of unknown size (an export's panic path\n       releases what it tracked that way): back to malloc, not to a list */\n    int k = size ? nx_small_class(size) : -1;\n    if (p && k >= 0) { nx_small_put(k, p); return; }\n#endif\n    free(p);\n}\nNX_INLINE void* nx_malloc_realloc(void* st, void* p, size_t old_size, size_t new_size, size_t align) {\n    NX_UNUSED(st); NX_UNUSED(old_size); NX_UNUSED(align);\n    void* q;\n#if NX_SMALL_CACHE\n    int ko = p ? nx_small_class(old_size) : -1, kn = nx_small_class(new_size);\n    if (p && ko >= 0 && ko == kn) {\n        q = p;  /* allocated at its class's size: it fits */\n    } else if (ko >= 0 || kn >= 0) {\n        /* into or out of the classes, or from one to another: a whole block\n           of the new size, so what reaches a list was made at its class's size */\n        q = kn >= 0 ? nx_small_take(kn) : malloc(new_size);\n        if (q && p) {\n            memcpy(q, p, old_size < new_size ? old_size : new_size);\n            if (ko >= 0) nx_small_put(ko, p); else free(p);\n        }\n    } else {\n        q = realloc(p, new_size ? new_size : 1);\n    }\n#else\n    q = realloc(p, new_size ? new_size : 1);\n#endif\n    if (!q) nx_panic(\"out of memory\", \"allocator\");\n#ifdef NX_LEAK_CHECK\n    nx_track(st, p ? 0 : 1, (ptrdiff_t)new_size - (ptrdiff_t)old_size);\n#endif\n    return q;\n}\nNX_INLINE void nx_leak_report(struct nx_ctx* c) {\n#ifdef NX_LEAK_CHECK\n    fflush(stdout);\n    if (c->live_allocs == 0) {\n        fprintf(stderr, \"leaks: none (%zu allocation(s), peak %zu bytes)\\n\", c->total_allocs, c->peak_bytes);\n    } else {\n        fprintf(stderr, \"leaks: %zu allocation(s) still live at exit, %zu bytes (of %zu total, peak %zu bytes)\\n\", c->live_allocs, c->live_bytes, c->total_allocs, c->peak_bytes);\n        fprintf(stderr, \"       a live `ref class` cycle or a value moved into a container that was never released is the usual cause (spec 5.4: use `weak` at back edges)\\n\");\n    }\n#else\n    NX_UNUSED(c);\n#endif\n}\n\nNX_INLINE nx_ctx nx_default_ctx(int argc, char** argv) {\n    nx_ctx c;\n    c.alloc.alloc = nx_malloc_alloc;\n    c.alloc.realloc = nx_malloc_realloc;\n    c.alloc.free = nx_malloc_free;\n    c.alloc.state = NULL;\n    c.base = c.alloc;\n    c.arena = NULL;\n    c.rng = 0x9E3779B97F4A7C15ULL;\n    c.rng_seeded = false;\n    c.argc = argc;\n    c.argv = argv;\n    c.out = stdout;\n    c.err = stderr;\n    c.live_allocs = 0; c.live_bytes = 0; c.total_allocs = 0; c.peak_bytes = 0;\n    c.args_cache = NULL; c.args_len = 0;\n#if defined(_WIN32)\n    /* byte-exact output on every platform: no CRLF translation */\n    _setmode(_fileno(stdin), _O_BINARY);\n    _setmode(_fileno(stdout), _O_BINARY);\n    _setmode(_fileno(stderr), _O_BINARY);\n#endif\n    return c;\n}\n/* the architecture this program runs on; the driver chooses a CPU baseline by it */\nNX_INLINE nx_sl_u8 nx_host_arch(void) {\n#if defined(__x86_64__) || defined(_M_X64)\n    return nx_lit(\"x86_64\", 6);\n#elif defined(__aarch64__) || defined(_M_ARM64)\n    return nx_lit(\"aarch64\", 7);\n#elif defined(__i386__) || defined(_M_IX86)\n    return nx_lit(\"x86\", 3);\n#elif defined(__arm__) || defined(_M_ARM)\n    return nx_lit(\"arm\", 3);\n#elif defined(__riscv) && (__riscv_xlen == 64)\n    return nx_lit(\"riscv64\", 7);\n#elif defined(__riscv) && (__riscv_xlen == 32)\n    return nx_lit(\"riscv32\", 7);\n#elif defined(__wasm32__)\n    return nx_lit(\"wasm32\", 6);\n#else\n    return nx_lit(\"unknown\", 7);\n#endif\n}\n/* the operating system this program runs on, and the pointer width in bits:\n   `@target()` is (os, arch, bits), a constant of the C build */\nNX_INLINE nx_sl_u8 nx_host_os(void) {\n#if defined(_WIN32)\n    return nx_lit(\"windows\", 7);\n#elif defined(__APPLE__)\n    return nx_lit(\"macos\", 5);\n#elif defined(__linux__)\n    return nx_lit(\"linux\", 5);\n#elif defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)\n    return nx_lit(\"bsd\", 3);\n#elif defined(__wasi__)\n    return nx_lit(\"wasi\", 4);\n#else\n    return nx_lit(\"unknown\", 7);\n#endif\n}\n#define NX_PTR_BITS ((uint32_t)(sizeof(void*) * 8))\n/* UTF-8 on the Windows console for the program's life (the console's own code\n   page shows `\303\251` as two symbols); the previous page comes back at exit */\n#if defined(_WIN32)\nNX_STATE UINT nx_prev_console_cp NX_STATE_INIT(0);\nstatic void nx_console_restore(void) { if (nx_prev_console_cp) SetConsoleOutputCP(nx_prev_console_cp); }\n#endif\nNX_INLINE void nx_console_utf8(void) {\n#if defined(_WIN32)\n    UINT cur = GetConsoleOutputCP();\n    if (cur != 0 && cur != 65001) { nx_prev_console_cp = cur; SetConsoleOutputCP(65001); atexit(nx_console_restore); }\n#endif\n}\n/* the tracking allocator needs the context as its state; installed by entry points */\nNX_INLINE void nx_ctx_track_self(nx_ctx* c) {\n#ifdef NX_LEAK_CHECK\n    if (c->alloc.alloc == nx_malloc_alloc) c->alloc.state = c;\n    if (c->base.alloc == nx_malloc_alloc) c->base.state = c;\n#else\n    NX_UNUSED(c);\n#endif\n}\n\nNX_INLINE void* nx_alloc_bytes(nx_ctx* c, size_t size, size_t align) { return c->alloc.alloc(c->alloc.state, size, align); }\n/* A debug build fills storage with a fixed byte before freeing it, so a\n * view that outlived its storage (specification 5.6) reads garbage or\n * panics on its length instead of yielding the old contents by luck. */\nNX_INLINE void nx_free_bytes(nx_ctx* c, void* p, size_t size) {\n    if (!p) return;\n#ifdef NX_MODE_DEBUG\n    memset(p, 0xDD, size);\n#endif\n    c->alloc.free(c->alloc.state, p, size);\n}\nNX_INLINE void nx_ctx_release(nx_ctx* c) {\n    if (c->args_cache) { nx_free_bytes(c, c->args_cache, (c->args_len ? c->args_len : 1) * sizeof(nx_sl_u8)); c->args_cache = NULL; }\n}\nNX_INLINE nx_sl_u8* nx_args(nx_ctx* c, size_t* n) {\n    if (!c->args_cache) {\n        size_t k = c->argc > 0 ? (size_t)c->argc : 0;\n        c->args_cache = (nx_sl_u8*)nx_alloc_bytes(c, (k ? k : 1) * sizeof(nx_sl_u8), 8);\n        for (size_t i = 0; i < k; i++) { c->args_cache[i].ptr = (uint8_t*)c->argv[i]; c->args_cache[i].len = strlen(c->argv[i]); }\n        c->args_len = k;\n    }\n    *n = c->args_len;\n    return c->args_cache;\n}\n\n/* ----------------------------------------------------------------- arena */\n/* A bump allocator over chunks taken from the parent context. `free` is a\n * no-op; everything is released when the `using arena { }` block ends. */\ntypedef struct nx_arena_chunk { struct nx_arena_chunk* next; size_t cap; size_t used; } nx_arena_chunk;\ntypedef struct nx_arena { nx_ctx* parent; nx_arena_chunk* head; void* last; size_t last_size; } nx_arena;\n\nNX_INLINE void* nx_arena_alloc(void* st, size_t size, size_t align) {\n    nx_arena* a = (nx_arena*)st;\n    if (align < 16) align = 16;\n    size_t need = (size + align - 1) / align * align;\n    nx_arena_chunk* ch = a->head;\n    if (!ch || ch->used + need > ch->cap) {\n        size_t cap = need > 65536 - sizeof(nx_arena_chunk) ? need + sizeof(nx_arena_chunk) : 65536;\n        nx_arena_chunk* n = (nx_arena_chunk*)nx_alloc_bytes(a->parent, cap, 16);\n        n->next = ch; n->cap = cap; n->used = (sizeof(nx_arena_chunk) + 15) / 16 * 16;\n        a->head = ch = n;\n    }\n    void* p = (uint8_t*)ch + ch->used;\n    ch->used += need;\n    a->last = p; a->last_size = need;\n    return p;\n}\nNX_INLINE bool nx_arena_owns(const nx_arena* a, const void* p) {\n    for (const nx_arena_chunk* ch = a->head; ch; ch = ch->next)\n        if ((const uint8_t*)p >= (const uint8_t*)ch && (const uint8_t*)p < (const uint8_t*)ch + ch->cap) return true;\n    return false;\n}\nNX_INLINE void* nx_arena_realloc(void* st, void* p, size_t old_size, size_t new_size, size_t align) {\n    nx_arena* a = (nx_arena*)st;\n    if (p && !nx_arena_owns(a, p)) return a->parent->alloc.realloc(a->parent->alloc.state, p, old_size, new_size, align);\n    if (p && p == a->last) {\n        nx_arena_chunk* ch = a->head;\n        size_t need = (new_size + 15) / 16 * 16;\n        if (ch->used - a->last_size + need <= ch->cap) { ch->used = ch->used - a->last_size + need; a->last_size = need; return p; }\n    }\n    void* q = nx_arena_alloc(st, new_size, align);\n    if (p && old_size) memcpy(q, p, old_size < new_size ? old_size : new_size);\n    return q;\n}\nNX_INLINE void nx_arena_free(void* st, void* p, size_t size) {\n    nx_arena* a = (nx_arena*)st;\n    if (p && !nx_arena_owns(a, p)) a->parent->alloc.free(a->parent->alloc.state, p, size);\n}\nNX_INLINE nx_ctx nx_arena_begin(nx_ctx* parent, nx_arena* a) {\n    a->parent = parent; a->head = NULL; a->last = NULL; a->last_size = 0;\n    nx_ctx sub = *parent;\n    sub.alloc.alloc = nx_arena_alloc; sub.alloc.realloc = nx_arena_realloc; sub.alloc.free = nx_arena_free; sub.alloc.state = a;\n    sub.arena = a;\n    return sub;\n}\n/* Container storage goes to the container's own arena, or to the root allocator. */\nNX_INLINE void* nx_cont_alloc(nx_ctx* c, nx_arena* ar, size_t size, size_t align) {\n    return ar ? nx_arena_alloc(ar, size, align) : c->base.alloc(c->base.state, size, align);\n}\nNX_INLINE void* nx_cont_realloc(nx_ctx* c, nx_arena* ar, void* p, size_t old_size, size_t new_size, size_t align) {\n    return ar ? nx_arena_realloc(ar, p, old_size, new_size, align) : c->base.realloc(c->base.state, p, old_size, new_size, align);\n}\nNX_INLINE void nx_cont_free(nx_ctx* c, nx_arena* ar, void* p, size_t size) {\n    if (p && !ar) c->base.free(c->base.state, p, size);\n}\nNX_INLINE void nx_arena_end(nx_arena* a) {\n    nx_arena_chunk* ch = a->head;\n    while (ch) { nx_arena_chunk* n = ch->next; nx_free_bytes(a->parent, ch, ch->cap); ch = n; }\n    a->head = NULL;\n}\n\n/* ------------------------------------------------------------ parallel for */\ntypedef void (*nx_par_fn)(nx_ctx*, void*, size_t, size_t);\ntypedef struct nx_par_task { nx_ctx ctx; nx_par_fn f; void* env; size_t begin; size_t end; bool panicked; char msg[256]; char loc[128]; } nx_par_task;\n\nNX_INLINE void nx_par_run(nx_par_task* t) {\n    nx_boundary b;\n    b.track = NULL;\n    nx_boundary* prev = nx_tls_boundary;\n    nx_tls_boundary = &b;\n    if (setjmp(b.jb)) {\n        t->panicked = true;\n        snprintf(t->msg, sizeof t->msg, \"%s\", b.msg);\n        snprintf(t->loc, sizeof t->loc, \"%s\", b.loc);\n    } else {\n        t->f(&t->ctx, t->env, t->begin, t->end);\n    }\n    nx_tls_boundary = prev;\n}\n#if defined(_WIN32)\nstatic DWORD WINAPI nx_par_thread(LPVOID p) { nx_par_run((nx_par_task*)p); nx_small_drain(); return 0; }\nNX_INLINE size_t nx_hw_threads(void) { SYSTEM_INFO si; GetSystemInfo(&si); return si.dwNumberOfProcessors ? si.dwNumberOfProcessors : 1; }\n#else\n#include <pthread.h>\n#if defined(NX_WASM)\n/* wasm32-wasi has no threads: wasi-libc declares pthreads and defines none.\n   Starting a thread fails, so the work runs in place where the parallel\n   loop and `thread.spawn` already fall back to, and a lock has no one else\n   to wait for. (The playground's compiler links against these: its driver\n   compiles C on threads, which in the page it never does.) */\n#define pthread_create(t, attr, f, arg) ((void)(t), (void)(attr), (void)(f), (void)(arg), EAGAIN)\n#define pthread_join(t, r) ((void)(t), (void)(r), 0)\n#define pthread_mutex_init(m, a) ((void)(m), (void)(a), 0)\n#define pthread_mutex_destroy(m) ((void)(m), 0)\n#define pthread_mutex_lock(m) ((void)(m), 0)\n#define pthread_mutex_unlock(m) ((void)(m), 0)\n#define pthread_cond_init(v, a) ((void)(v), (void)(a), 0)\n#define pthread_cond_destroy(v) ((void)(v), 0)\n#define pthread_cond_wait(v, m) ((void)(v), (void)(m), 0)\n#define pthread_cond_timedwait(v, m, t) ((void)(v), (void)(m), (void)(t), ETIMEDOUT)\n#define pthread_cond_signal(v) ((void)(v), 0)\n#define pthread_cond_broadcast(v) ((void)(v), 0)\n#endif\nstatic void* nx_par_thread(void* p) { nx_par_run((nx_par_task*)p); nx_small_drain(); return NULL; }\nNX_INLINE size_t nx_hw_threads(void) { long n = sysconf(_SC_NPROCESSORS_ONLN); return n > 0 ? (size_t)n : 1; }\n#endif\n\n/* Runs f over [0, n) split across worker threads. Each worker gets its own\n * context (no shared allocator state); a panic in any worker is re-raised in\n * the calling thread after every worker has finished. */\nNX_INLINE void nx_parallel_for(nx_ctx* c, size_t n, nx_par_fn f, void* env, const char* loc) {\n    if (n == 0) return;\n    size_t workers = nx_hw_threads();\n    if (workers > 64) workers = 64;\n    if (workers > n) workers = n;\n    if (workers <= 1) { f(c, env, 0, n); return; }\n    nx_par_task tasks[64];\n    size_t chunk = (n + workers - 1) / workers;\n#if defined(_WIN32)\n    HANDLE handles[64];\n#else\n    pthread_t handles[64];\n#endif\n    for (size_t w = 0; w < workers; w++) {\n        tasks[w].ctx = *c;\n        tasks[w].ctx.live_allocs = 0; tasks[w].ctx.live_bytes = 0; tasks[w].ctx.total_allocs = 0; tasks[w].ctx.peak_bytes = 0;\n        nx_ctx_track_self(&tasks[w].ctx);\n        tasks[w].ctx.rng ^= (uint64_t)(w + 1) * 0x9E3779B97F4A7C15ULL;\n        tasks[w].f = f; tasks[w].env = env; tasks[w].panicked = false;\n        tasks[w].begin = w * chunk;\n        tasks[w].end = (w + 1) * chunk < n ? (w + 1) * chunk : n;\n#if defined(_WIN32)\n        handles[w] = CreateThread(NULL, 0, nx_par_thread, &tasks[w], 0, NULL);\n        if (!handles[w]) nx_par_run(&tasks[w]);\n#else\n        if (pthread_create(&handles[w], NULL, nx_par_thread, &tasks[w]) != 0) { nx_par_run(&tasks[w]); handles[w] = 0; }\n#endif\n    }\n    for (size_t w = 0; w < workers; w++) {\n#if defined(_WIN32)\n        if (handles[w]) { WaitForSingleObject(handles[w], INFINITE); CloseHandle(handles[w]); }\n#else\n        if (handles[w]) pthread_join(handles[w], NULL);\n#endif\n        c->live_allocs += tasks[w].ctx.live_allocs;\n        c->live_bytes += tasks[w].ctx.live_bytes;\n        c->total_allocs += tasks[w].ctx.total_allocs;\n    }\n    for (size_t w = 0; w < workers; w++) {\n        if (tasks[w].panicked) {\n            char buf[400];\n            snprintf(buf, sizeof buf, \"%s (in a parallel worker at %s)\", tasks[w].msg, tasks[w].loc);\n            nx_panic(buf, loc);\n        }\n    }\n}\n\n/* --------------------------------------------------------------- lists */\n/* The first block holds 16 bytes at least: a string's first append took 4,\n * and the next one grew it at once (no allocator hands out less anyway). */\nNX_INLINE void nx_list_grow(nx_ctx* c, nx_rawlist* l, size_t elem, size_t align, size_t min_cap) {\n    size_t cap = l->cap ? l->cap * 2 : (elem && elem < 4 ? 16 / elem : 4);\n    if (cap < min_cap) cap = min_cap;\n    l->ptr = nx_cont_realloc(c, l->ar, l->ptr, l->cap * elem, cap * elem, align);\n    l->cap = cap;\n}\nNX_INLINE void nx_list_free(nx_ctx* c, nx_rawlist* l, size_t elem) {\n    nx_cont_free(c, l->ar, l->ptr, l->cap * elem);\n    l->ptr = NULL; l->len = 0; l->cap = 0;\n}\nNX_INLINE void nx_list_reserve(nx_ctx* c, nx_rawlist* l, size_t elem, size_t align, size_t extra) {\n    if (l->len + extra > l->cap) nx_list_grow(c, l, elem, align, l->len + extra);\n}\nNX_INLINE nx_rawlist nx_list_clone_raw(nx_ctx* c, const nx_rawlist* l, size_t elem, size_t align) {\n    nx_rawlist r; r.ptr = NULL; r.len = 0; r.cap = 0; r.ar = c->arena;\n    if (l->len) {\n        r.ptr = nx_cont_alloc(c, r.ar, l->len * elem, align);\n        memcpy(r.ptr, l->ptr, l->len * elem);\n        r.len = l->len; r.cap = l->len;\n    }\n    return r;\n}\n\n/* -------------------------------------------------------------- strings */\nNX_INLINE void nx_str_reserve(nx_ctx* c, nx_string* s, size_t extra) {\n    if (s->len + extra > s->cap) nx_list_grow(c, (nx_rawlist*)s, 1, 1, s->len + extra);\n}\nNX_INLINE void nx_str_append(nx_ctx* c, nx_string* s, const uint8_t* p, size_t n) {\n    nx_str_reserve(c, s, n);\n    if (n) memcpy(s->ptr + s->len, p, n);\n    s->len += n;\n}\nNX_INLINE nx_string nx_str_from(nx_ctx* c, nx_sl_u8 src) {\n    nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;\n    nx_str_append(c, &s, src.ptr, src.len);\n    return s;\n}\nNX_INLINE void nx_str_free(nx_ctx* c, nx_string* s) { nx_list_free(c, (nx_rawlist*)s, 1); }\nNX_INLINE nx_sl_u8 nx_str_slice(nx_string s) { nx_sl_u8 r; r.ptr = s.ptr; r.len = s.len; return r; }\nNX_INLINE size_t nx_utf8_encode(uint32_t cp, uint8_t* out) {\n    if (cp < 0x80) { out[0] = (uint8_t)cp; return 1; }\n    if (cp < 0x800) { out[0] = (uint8_t)(0xC0 | (cp >> 6)); out[1] = (uint8_t)(0x80 | (cp & 0x3F)); return 2; }\n    if (cp < 0x10000) { out[0] = (uint8_t)(0xE0 | (cp >> 12)); out[1] = (uint8_t)(0x80 | ((cp >> 6) & 0x3F)); out[2] = (uint8_t)(0x80 | (cp & 0x3F)); return 3; }\n    out[0] = (uint8_t)(0xF0 | (cp >> 18)); out[1] = (uint8_t)(0x80 | ((cp >> 12) & 0x3F)); out[2] = (uint8_t)(0x80 | ((cp >> 6) & 0x3F)); out[3] = (uint8_t)(0x80 | (cp & 0x3F)); return 4;\n}\nNX_INLINE void nx_str_append_char(nx_ctx* c, nx_string* s, uint32_t cp) {\n    uint8_t buf[4];\n    size_t n = nx_utf8_encode(cp, buf);\n    nx_str_append(c, s, buf, n);\n}\n\n/* Copy a slice's bytes. An empty slice may have a null pointer (an empty\n   String has no storage), and memcpy may not be given one even to copy\n   nothing (C11 7.24.1; glibc declares the arguments nonnull), so every copy\n   out of a slice goes through here or checks the length itself. */\nNX_INLINE void nx_bytes_copy(void* d, const void* s, size_t n) { if (n) memcpy(d, s, n); }\nNX_INLINE bool nx_sl_eq(nx_sl_u8 a, nx_sl_u8 b) { return a.len == b.len && (a.len == 0 || memcmp(a.ptr, b.ptr, a.len) == 0); }\nNX_INLINE int nx_sl_cmp(nx_sl_u8 a, nx_sl_u8 b) {\n    size_t n = a.len < b.len ? a.len : b.len;\n    int r = n ? memcmp(a.ptr, b.ptr, n) : 0;\n    if (r) return r;\n    return a.len < b.len ? -1 : (a.len > b.len ? 1 : 0);\n}\nNX_INLINE bool nx_sl_starts_with(nx_sl_u8 a, nx_sl_u8 p) { return a.len >= p.len && (p.len == 0 || memcmp(a.ptr, p.ptr, p.len) == 0); }\nNX_INLINE bool nx_sl_ends_with(nx_sl_u8 a, nx_sl_u8 p) { return a.len >= p.len && (p.len == 0 || memcmp(a.ptr + a.len - p.len, p.ptr, p.len) == 0); }\nNX_INLINE bool nx_sl_find(nx_sl_u8 a, nx_sl_u8 n, size_t* out) {\n    if (n.len == 0) { *out = 0; return true; }\n    if (a.len < n.len) return false;\n    for (size_t i = 0; i + n.len <= a.len; i++) {\n        if (a.ptr[i] == n.ptr[0] && memcmp(a.ptr + i, n.ptr, n.len) == 0) { *out = i; return true; }\n    }\n    return false;\n}\nNX_INLINE nx_sl_u8 nx_sl_trim(nx_sl_u8 a) {\n    size_t s = 0, e = a.len;\n    while (s < e && (a.ptr[s] == ' ' || a.ptr[s] == '\\t' || a.ptr[s] == '\\n' || a.ptr[s] == '\\r')) s++;\n    while (e > s && (a.ptr[e - 1] == ' ' || a.ptr[e - 1] == '\\t' || a.ptr[e - 1] == '\\n' || a.ptr[e - 1] == '\\r')) e--;\n    nx_sl_u8 r; r.ptr = nx_padd(a.ptr, s); r.len = e - s; return r;\n}\nNX_INLINE bool nx_sl_eq_ignore_case(nx_sl_u8 a, nx_sl_u8 b) {\n    if (a.len != b.len) return false;\n    for (size_t i = 0; i < a.len; i++) {\n        uint8_t x = a.ptr[i], y = b.ptr[i];\n        if (x >= 'A' && x <= 'Z') x += 32;\n        if (y >= 'A' && y <= 'Z') y += 32;\n        if (x != y) return false;\n    }\n    return true;\n}\n/* parse a decimal/hex integer; returns 0 ok, 1 invalid, 2 overflow */\nNX_INLINE int nx_parse_int(nx_sl_u8 s, nx_i128 lo, nx_i128 hi, nx_i128* out) {\n    size_t i = 0; bool neg = false;\n    s = nx_sl_trim(s);\n    if (s.len == 0) return 1;\n    if (s.ptr[0] == '-') { neg = true; i = 1; } else if (s.ptr[0] == '+') { i = 1; }\n    if (i >= s.len) return 1;\n    nx_i128 v = 0; int base = 10;\n    if (i + 1 < s.len && s.ptr[i] == '0' && (s.ptr[i + 1] == 'x' || s.ptr[i + 1] == 'X')) { base = 16; i += 2; }\n    for (; i < s.len; i++) {\n        uint8_t ch = s.ptr[i]; int d;\n        if (ch == '_') continue;\n        if (ch >= '0' && ch <= '9') d = ch - '0';\n        else if (base == 16 && ch >= 'a' && ch <= 'f') d = ch - 'a' + 10;\n        else if (base == 16 && ch >= 'A' && ch <= 'F') d = ch - 'A' + 10;\n        else return 1;\n        /* overflow of the accumulator itself: the range check below cannot see it */\n        if (v > (NX_I128_MAX - d) / base) return 2;\n        v = v * base + d;\n    }\n    if (neg) v = -v;\n    if (v < lo || v > hi) return 2;\n    *out = v;\n    return 0;\n}\n/* nx_parse_int for an unsigned type, whose range can pass nx_i128's:\n * the same text is read, a minus sign only in range on zero */\nNX_INLINE int nx_parse_uint(nx_sl_u8 s, nx_u128 hi, nx_u128* out) {\n    size_t i = 0; bool neg = false;\n    s = nx_sl_trim(s);\n    if (s.len == 0) return 1;\n    if (s.ptr[0] == '-') { neg = true; i = 1; } else if (s.ptr[0] == '+') { i = 1; }\n    if (i >= s.len) return 1;\n    nx_u128 v = 0; unsigned base = 10;\n    if (i + 1 < s.len && s.ptr[i] == '0' && (s.ptr[i + 1] == 'x' || s.ptr[i + 1] == 'X')) { base = 16; i += 2; }\n    for (; i < s.len; i++) {\n        uint8_t ch = s.ptr[i]; unsigned d;\n        if (ch == '_') continue;\n        if (ch >= '0' && ch <= '9') d = ch - '0';\n        else if (base == 16 && ch >= 'a' && ch <= 'f') d = ch - 'a' + 10;\n        else if (base == 16 && ch >= 'A' && ch <= 'F') d = ch - 'A' + 10;\n        else return 1;\n        if (v > (~(nx_u128)0 - d) / base) return 2;\n        v = v * base + d;\n    }\n    if ((neg && v != 0) || v > hi) return 2;\n    *out = v;\n    return 0;\n}\nNX_INLINE bool nx_parse_float(nx_sl_u8 s, double* out) {\n    char buf[64];\n    s = nx_sl_trim(s);\n    if (s.len == 0 || s.len >= sizeof buf) return false;\n    memcpy(buf, s.ptr, s.len); buf[s.len] = 0;\n    char* end = NULL;\n    double v = strtod(buf, &end);\n    if (end != buf + s.len) return false;\n    *out = v;\n    return true;\n}\n\n/* -------------------------------------------------------------- formatting */\ntypedef struct nx_sink { nx_ctx* ctx; nx_string* str; FILE* f; char buf[512]; size_t n; } nx_sink;\nNX_INLINE nx_sink nx_sink_file(nx_ctx* c, FILE* f) { nx_sink s; s.ctx = c; s.str = NULL; s.f = f; s.n = 0; return s; }\nNX_INLINE nx_sink nx_sink_str(nx_ctx* c, nx_string* str) { nx_sink s; s.ctx = c; s.str = str; s.f = NULL; s.n = 0; return s; }\nNX_INLINE void nx_sink_flush(nx_sink* s) { if (s->f && s->n) { fwrite(s->buf, 1, s->n, s->f); s->n = 0; } if (s->f) fflush(s->f); }\nNX_INLINE void nx_w(nx_sink* s, const uint8_t* p, size_t n) {\n    if (n == 0) return;\n    if (s->str) { nx_str_append(s->ctx, s->str, p, n); return; }\n    if (n > sizeof s->buf) { nx_sink_flush(s); fwrite(p, 1, n, s->f); return; }\n    if (s->n + n > sizeof s->buf) { fwrite(s->buf, 1, s->n, s->f); s->n = 0; }\n    memcpy(s->buf + s->n, p, n); s->n += n;\n}\nNX_INLINE void nx_w_cstr(nx_sink* s, const char* p) { nx_w(s, (const uint8_t*)p, strlen(p)); }\nNX_INLINE void nx_w_sl(nx_sink* s, nx_sl_u8 v) { nx_w(s, v.ptr, v.len); }\nNX_INLINE void nx_w_pad(nx_sink* s, const char* txt, size_t len, int width, bool left) {\n    if (width > 0 && (size_t)width > len && !left) { for (size_t i = len; i < (size_t)width; i++) nx_w(s, (const uint8_t*)\" \", 1); }\n    nx_w(s, (const uint8_t*)txt, len);\n    if (width > 0 && (size_t)width > len && left) { for (size_t i = len; i < (size_t)width; i++) nx_w(s, (const uint8_t*)\" \", 1); }\n}\n/* The digits of a value that fits in 64 bits, written backwards from `end`;\n * how many. In 64 bits, and base 10 by a constant: a 128-bit division is a\n * library call per digit, which made formatting an integer the slow part\n * of building a short string. */\nNX_INLINE size_t nx_digits_u64(char* end, uint64_t v, int b, const char* digits) {\n    char* p = end;\n    if (b == 10) { do { *--p = (char)('0' + v % 10); v /= 10; } while (v); }\n    else { do { *--p = digits[v % (unsigned)b]; v /= (unsigned)b; } while (v); }\n    return (size_t)(end - p);\n}\n/* base: 10, 16 (lower), 17 (upper), 2, 8; an unsigned value, u128's whole range */\nNX_INLINE void nx_w_uint(nx_sink* s, nx_u128 u, int base, int width, bool left) {\n    char buf[140]; size_t i = sizeof buf;\n    int b = base == 17 ? 16 : base;\n    const char* digits = base == 17 ? \"0123456789ABCDEF\" : \"0123456789abcdef\";\n    if ((u >> 64) == 0) i -= nx_digits_u64(buf + i, (uint64_t)u, b, digits);\n    else while (u) { buf[--i] = digits[u % b]; u /= b; }\n    nx_w_pad(s, buf + i, sizeof buf - i, width, left);\n}\n/* base: 10, 16 (lower), 17 (upper), 2, 8 */\nNX_INLINE void nx_w_int(nx_sink* s, nx_i128 v, int base, int width, bool left) {\n    char buf[140]; size_t i = sizeof buf; bool neg = v < 0;\n    nx_u128 u = neg ? (nx_u128)(-(v + 1)) + 1 : (nx_u128)v;\n    int b = base == 17 ? 16 : base;\n    const char* digits = base == 17 ? \"0123456789ABCDEF\" : \"0123456789abcdef\";\n    if ((u >> 64) == 0) i -= nx_digits_u64(buf + i, (uint64_t)u, b, digits);\n    else while (u) { buf[--i] = digits[u % b]; u /= b; }\n    if (neg) buf[--i] = '-';\n    nx_w_pad(s, buf + i, sizeof buf - i, width, left);\n}\n/* an f32 (`f32` set) is written as the shortest text that reads back as that f32 */\nNX_INLINE void nx_w_float(nx_sink* s, double v, int prec, bool exp, int width, bool left, bool f32) {\n    char buf[64];\n    if (v != v) { snprintf(buf, sizeof buf, \"nan\"); }\n    else if (isinf(v)) { snprintf(buf, sizeof buf, v > 0 ? \"inf\" : \"-inf\"); }\n    else if (exp) { snprintf(buf, sizeof buf, \"%.*e\", prec < 0 ? 6 : prec, v); }\n    else if (prec >= 0) { snprintf(buf, sizeof buf, \"%.*f\", prec, v); }\n    else if (v == floor(v) && fabs(v) < 1e16) { snprintf(buf, sizeof buf, \"%.1f\", v); }\n    else { /* the shortest text that reads back as the same value */\n        int p = 1;\n        for (; p <= 17; p++) {\n            snprintf(buf, sizeof buf, \"%.*g\", p, v);\n            if (f32 ? (float)strtod(buf, NULL) == (float)v : strtod(buf, NULL) == v) break;\n        }\n    }\n    nx_w_pad(s, buf, strlen(buf), width, left);\n}\nNX_INLINE void nx_w_bool(nx_sink* s, bool b) { nx_w_cstr(s, b ? \"true\" : \"false\"); }\nNX_INLINE void nx_w_char(nx_sink* s, uint32_t cp) { uint8_t buf[4]; size_t n = nx_utf8_encode(cp, buf); nx_w(s, buf, n); }\n\n/* --------------------------------------------------------------- maps */\n/* A map keeps its entries in the order their keys were first put: iterating\n * gives them in that order (putting a key again keeps its place; removing\n * one closes the gap), whatever the keys hash to, as the interpreter's maps\n * do. An index of entry numbers, open addressing with linear probing over a\n * power-of-two table, finds a key. Keys are hashed with SipHash-1-3 under a\n * key drawn once per process from the operating system's generator, so\n * someone who chooses a program's keys cannot choose ones that collide.\n * Keys and values are stored as raw bytes.\n * key_kind: 0 = inline bytes, 1 = nx_sl_u8 (content hashed, storage borrowed),\n *           2 = nx_string (content hashed, owned by the map). */\ntypedef struct nx_map {\n    /* the entries, `used` of them written, room for `ecap`; `live` 0 for a\n       removed one */\n    uint8_t* keys; uint8_t* vals; uint8_t* live; uint64_t* hashes;\n    /* the index: per slot 0 (empty), NX_MAP_GONE (a removed entry's), or\n       an entry's number + 1; `filled` slots are not empty */\n    size_t* index; size_t icap; size_t filled;\n    size_t used; size_t ecap; size_t len; size_t ksize; size_t vsize; int key_kind;\n    nx_arena* ar;\n} nx_map;\n#define NX_MAP_GONE ((size_t)-1)\n\nNX_INLINE bool nx_os_random(uint8_t* p, size_t n);\nNX_STATE uint64_t nx_map_seed[2];\nNX_STATE int nx_map_seeded;\n/* the process's hash key, drawn at the first use of a map: 0 not drawn,\n   1 being drawn (another thread waits), 2 ready */\nNX_INLINE void nx_map_seed_init(void) {\n    if (__atomic_load_n(&nx_map_seeded, __ATOMIC_ACQUIRE) == 2) return;\n    int expected = 0;\n    if (__atomic_compare_exchange_n(&nx_map_seeded, &expected, 1, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {\n        uint64_t k[2] = { 0, 0 };\n        if (!nx_os_random((uint8_t*)k, sizeof k)) {\n            /* no generator: something no one outside can predict well (the\n               time and two addresses; not clock(), which wasm32-wasi lacks) */\n            k[0] = (uint64_t)time(NULL) * 0x9E3779B97F4A7C15ULL;\n            k[1] = (uint64_t)(uintptr_t)&k ^ ((uint64_t)(uintptr_t)&nx_map_seeded << 16);\n        }\n        nx_map_seed[0] = k[0];\n        nx_map_seed[1] = k[1];\n        __atomic_store_n(&nx_map_seeded, 2, __ATOMIC_RELEASE);\n        return;\n    }\n    while (__atomic_load_n(&nx_map_seeded, __ATOMIC_ACQUIRE) != 2) { }\n}\n#define NX_ROTL64(x, b) (uint64_t)(((x) << (b)) | ((x) >> (64 - (b))))\n#define NX_SIPROUND do { \\\n    v0 += v1; v1 = NX_ROTL64(v1, 13); v1 ^= v0; v0 = NX_ROTL64(v0, 32); \\\n    v2 += v3; v3 = NX_ROTL64(v3, 16); v3 ^= v2; \\\n    v0 += v3; v3 = NX_ROTL64(v3, 21); v3 ^= v0; \\\n    v2 += v1; v1 = NX_ROTL64(v1, 17); v1 ^= v2; v2 = NX_ROTL64(v2, 32); } while (0)\n/* SipHash-1-3 (one round per 8 bytes, three to finish), as Rust's HashMap */\nNX_INLINE uint64_t nx_siphash13(uint64_t k0, uint64_t k1, const uint8_t* p, size_t n) {\n    uint64_t v0 = 0x736f6d6570736575ULL ^ k0, v1 = 0x646f72616e646f6dULL ^ k1;\n    uint64_t v2 = 0x6c7967656e657261ULL ^ k0, v3 = 0x7465646279746573ULL ^ k1;\n    size_t end = n & ~(size_t)7;\n    for (size_t i = 0; i < end; i += 8) {\n        uint64_t m = 0;\n        for (int b = 0; b < 8; b++) m |= (uint64_t)p[i + b] << (8 * b);\n        v3 ^= m; NX_SIPROUND; v0 ^= m;\n    }\n    uint64_t last = (uint64_t)n << 56;\n    for (size_t b = 0; b < (n & 7); b++) last |= (uint64_t)p[end + b] << (8 * b);\n    v3 ^= last; NX_SIPROUND; v0 ^= last;\n    v2 ^= 0xff; NX_SIPROUND; NX_SIPROUND; NX_SIPROUND;\n    return v0 ^ v1 ^ v2 ^ v3;\n}\nNX_INLINE nx_sl_u8 nx_map_key_bytes(const nx_map* m, const void* key) {\n    nx_sl_u8 r;\n    if (m->key_kind == 0) { r.ptr = (uint8_t*)key; r.len = m->ksize; }\n    else { const nx_sl_u8* s = (const nx_sl_u8*)key; r.ptr = s->ptr; r.len = s->len; }\n    return r;\n}\nNX_INLINE uint64_t nx_map_hash(nx_sl_u8 kb) {\n    nx_map_seed_init();\n    return nx_siphash13(nx_map_seed[0], nx_map_seed[1], kb.ptr, kb.len);\n}\nNX_INLINE nx_map nx_map_new(nx_ctx* c, size_t ksize, size_t vsize, int key_kind) {\n    nx_map m; memset(&m, 0, sizeof m); m.ksize = ksize; m.vsize = vsize; m.key_kind = key_kind; m.ar = c->arena; return m;\n}\n/* the slot of the entry holding `kb` (true, and its number in *entry), or\n   where it would go: the first removed entry's slot on its way, else the\n   empty slot that ends it. The index always has an empty slot. */\nNX_INLINE bool nx_map_find(const nx_map* m, nx_sl_u8 kb, uint64_t h, size_t* slot, size_t* entry) {\n    if (m->icap == 0) { *slot = 0; return false; }\n    size_t mask = m->icap - 1, i = (size_t)h & mask, gone = NX_MAP_GONE;\n    for (;;) {\n        size_t v = m->index[i];\n        if (v == 0) { *slot = gone != NX_MAP_GONE ? gone : i; return false; }\n        if (v == NX_MAP_GONE) {\n            if (gone == NX_MAP_GONE) gone = i;\n        } else if (m->hashes[v - 1] == h && nx_sl_eq(nx_map_key_bytes(m, m->keys + (v - 1) * m->ksize), kb)) {\n            *slot = i; *entry = v - 1; return true;\n        }\n        i = (i + 1) & mask;\n    }\n}\n/* an index of `icap` slots over the live entries */\nNX_INLINE void nx_map_reindex(nx_ctx* c, nx_map* m, size_t icap) {\n    if (m->icap) nx_cont_free(c, m->ar, m->index, m->icap * sizeof(size_t));\n    m->index = (size_t*)nx_cont_alloc(c, m->ar, icap * sizeof(size_t), _Alignof(size_t));\n    memset(m->index, 0, icap * sizeof(size_t));\n    m->icap = icap;\n    m->filled = 0;\n    size_t mask = icap - 1;\n    for (size_t e = 0; e < m->used; e++) {\n        if (!m->live[e]) continue;\n        size_t i = (size_t)m->hashes[e] & mask;\n        while (m->index[i] != 0) i = (i + 1) & mask;\n        m->index[i] = e + 1;\n        m->filled++;\n    }\n}\n/* room for one more entry: the removed ones packed out, in order, when they\n   are half of what is written, else twice the room */\nNX_INLINE void nx_map_make_room(nx_ctx* c, nx_map* m) {\n    size_t dead = m->used - m->len;\n    if (dead > 0 && dead * 2 >= m->used) {\n        size_t w = 0;\n        for (size_t r = 0; r < m->used; r++) {\n            if (!m->live[r]) continue;\n            if (w != r) {\n                memmove(m->keys + w * m->ksize, m->keys + r * m->ksize, m->ksize);\n                if (m->vsize) memmove(m->vals + w * m->vsize, m->vals + r * m->vsize, m->vsize);\n                m->hashes[w] = m->hashes[r];\n                m->live[w] = 1;\n            }\n            w++;\n        }\n        for (size_t r = w; r < m->used; r++) m->live[r] = 0;\n        m->used = w;\n        nx_map_reindex(c, m, m->icap);\n        return;\n    }\n    size_t ncap = m->ecap ? m->ecap * 2 : 8;\n    size_t vs = m->vsize ? m->vsize : 1;\n    uint8_t* keys = (uint8_t*)nx_cont_alloc(c, m->ar, ncap * m->ksize, 16);\n    uint8_t* vals = (uint8_t*)nx_cont_alloc(c, m->ar, ncap * vs, 16);\n    uint8_t* live = (uint8_t*)nx_cont_alloc(c, m->ar, ncap, 1);\n    uint64_t* hashes = (uint64_t*)nx_cont_alloc(c, m->ar, ncap * sizeof(uint64_t), _Alignof(uint64_t));\n    memset(live, 0, ncap);\n    if (m->used) {\n        memcpy(keys, m->keys, m->used * m->ksize);\n        memcpy(vals, m->vals, m->used * vs);\n        memcpy(live, m->live, m->used);\n        memcpy(hashes, m->hashes, m->used * sizeof(uint64_t));\n    }\n    if (m->ecap) {\n        nx_cont_free(c, m->ar, m->keys, m->ecap * m->ksize);\n        nx_cont_free(c, m->ar, m->vals, m->ecap * vs);\n        nx_cont_free(c, m->ar, m->live, m->ecap);\n        nx_cont_free(c, m->ar, m->hashes, m->ecap * sizeof(uint64_t));\n    }\n    m->keys = keys; m->vals = vals; m->live = live; m->hashes = hashes; m->ecap = ncap;\n}\n/* a new entry at the end, for a key that is not in the map */\nNX_INLINE void nx_map_append(nx_ctx* c, nx_map* m, const void* key, const void* val, nx_sl_u8 kb, uint64_t h) {\n    if (m->used == m->ecap) nx_map_make_room(c, m);\n    if ((m->filled + 1) * 4 > m->icap * 3) {\n        size_t icap = m->icap ? m->icap : 8;\n        while ((m->len + 1) * 2 > icap) icap *= 2;\n        nx_map_reindex(c, m, icap);\n    }\n    size_t slot = 0, unused = 0;\n    (void)nx_map_find(m, kb, h, &slot, &unused);\n    size_t e = m->used++;\n    memcpy(m->keys + e * m->ksize, key, m->ksize);\n    if (m->vsize) memcpy(m->vals + e * m->vsize, val, m->vsize);\n    m->hashes[e] = h;\n    m->live[e] = 1;\n    if (m->index[slot] == 0) m->filled++;\n    m->index[slot] = e + 1;\n    m->len++;\n}\n/* returns pointer to the existing value slot, or NULL */\nNX_INLINE void* nx_map_get(const nx_map* m, const void* key) {\n    if (m->len == 0) return NULL;\n    nx_sl_u8 kb = nx_map_key_bytes(m, key);\n    size_t slot, e;\n    if (nx_map_find(m, kb, nx_map_hash(kb), &slot, &e)) return m->vals + e * m->vsize;\n    return NULL;\n}\n/* returns true if an existing entry was replaced (the old key/value are returned in old_key/old_val for dropping) */\nNX_INLINE bool nx_map_put(nx_ctx* c, nx_map* m, const void* key, const void* val, void* old_key, void* old_val) {\n    nx_sl_u8 kb = nx_map_key_bytes(m, key);\n    uint64_t h = nx_map_hash(kb);\n    size_t slot, e;\n    if (nx_map_find(m, kb, h, &slot, &e)) {\n        if (old_key) memcpy(old_key, m->keys + e * m->ksize, m->ksize);\n        if (old_val) memcpy(old_val, m->vals + e * m->vsize, m->vsize);\n        memcpy(m->keys + e * m->ksize, key, m->ksize);\n        if (m->vsize) memcpy(m->vals + e * m->vsize, val, m->vsize);\n        return true;\n    }\n    nx_map_append(c, m, key, val, kb, h);\n    return false;\n}\n/* `m.get_or_put(key, val)`: the value slot of `key`, hashed once, holding\n   `val` when the key is new. When it was there, the entry keeps its own key\n   and value and *found says so: the caller drops the two it passed. */\nNX_INLINE void* nx_map_get_or_put(nx_ctx* c, nx_map* m, const void* key, const void* val, bool* found) {\n    nx_sl_u8 kb = nx_map_key_bytes(m, key);\n    uint64_t h = nx_map_hash(kb);\n    size_t slot, e;\n    if (nx_map_find(m, kb, h, &slot, &e)) { *found = true; return m->vals + e * m->vsize; }\n    *found = false;\n    nx_map_append(c, m, key, val, kb, h);\n    return m->vals + (m->used - 1) * m->vsize;\n}\nNX_INLINE bool nx_map_remove(nx_map* m, const void* key, void* old_key, void* old_val) {\n    if (m->len == 0) return false;\n    nx_sl_u8 kb = nx_map_key_bytes(m, key);\n    size_t slot, e;\n    if (!nx_map_find(m, kb, nx_map_hash(kb), &slot, &e)) return false;\n    if (old_key) memcpy(old_key, m->keys + e * m->ksize, m->ksize);\n    if (old_val) memcpy(old_val, m->vals + e * m->vsize, m->vsize);\n    m->live[e] = 0;\n    m->index[slot] = NX_MAP_GONE;\n    m->len--;\n    if (m->len == 0) {\n        /* the last one gone: start over in the same room */\n        memset(m->live, 0, m->used);\n        m->used = 0;\n        memset(m->index, 0, m->icap * sizeof(size_t));\n        m->filled = 0;\n    }\n    return true;\n}\nNX_INLINE void nx_map_free_storage(nx_ctx* c, nx_map* m) {\n    if (m->ecap) {\n        size_t vs = m->vsize ? m->vsize : 1;\n        nx_cont_free(c, m->ar, m->keys, m->ecap * m->ksize);\n        nx_cont_free(c, m->ar, m->vals, m->ecap * vs);\n        nx_cont_free(c, m->ar, m->live, m->ecap);\n        nx_cont_free(c, m->ar, m->hashes, m->ecap * sizeof(uint64_t));\n    }\n    if (m->icap) nx_cont_free(c, m->ar, m->index, m->icap * sizeof(size_t));\n    m->keys = NULL; m->vals = NULL; m->live = NULL; m->hashes = NULL; m->index = NULL;\n    m->ecap = 0; m->icap = 0; m->filled = 0; m->used = 0; m->len = 0;\n}\n/* iterate in insertion order: start with i = 0; returns false when done */\nNX_INLINE bool nx_map_next(const nx_map* m, size_t* i, void** key, void** val) {\n    while (*i < m->used) {\n        size_t k = (*i)++;\n        if (m->live[k]) { *key = m->keys + k * m->ksize; *val = m->vals + k * m->vsize; return true; }\n    }\n    return false;\n}\nNX_INLINE nx_map nx_map_clone_raw(nx_ctx* c, const nx_map* m) {\n    nx_map n = nx_map_new(c, m->ksize, m->vsize, m->key_kind);\n    if (m->ecap) {\n        size_t vs = m->vsize ? m->vsize : 1;\n        n.keys = (uint8_t*)nx_cont_alloc(c, n.ar, m->ecap * m->ksize, 16);\n        n.vals = (uint8_t*)nx_cont_alloc(c, n.ar, m->ecap * vs, 16);\n        n.live = (uint8_t*)nx_cont_alloc(c, n.ar, m->ecap, 1);\n        n.hashes = (uint64_t*)nx_cont_alloc(c, n.ar, m->ecap * sizeof(uint64_t), _Alignof(uint64_t));\n        memset(n.live, 0, m->ecap);\n        if (m->used) {\n            memcpy(n.keys, m->keys, m->used * m->ksize);\n            memcpy(n.vals, m->vals, m->used * vs);\n            memcpy(n.live, m->live, m->used);\n            memcpy(n.hashes, m->hashes, m->used * sizeof(uint64_t));\n        }\n        n.ecap = m->ecap; n.used = m->used; n.len = m->len;\n    }\n    if (m->icap) {\n        n.index = (size_t*)nx_cont_alloc(c, n.ar, m->icap * sizeof(size_t), _Alignof(size_t));\n        memcpy(n.index, m->index, m->icap * sizeof(size_t));\n        n.icap = m->icap; n.filled = m->filled;\n    }\n    return n;\n}\n\n/* ------------------------------------------------------ reference counting */\ntypedef struct nx_obj_header { size_t rc; size_t weak; } nx_obj_header;\nNX_INLINE void* nx_retain(void* p) { if (p) ((nx_obj_header*)p)->rc++; return p; }\nNX_INLINE void* nx_weak_new(void* p) { if (p) ((nx_obj_header*)p)->weak++; return p; }\n/* returns true when the object is alive (and retains it) */\nNX_INLINE bool nx_weak_upgrade(void* p) { if (p && ((nx_obj_header*)p)->rc > 0) { ((nx_obj_header*)p)->rc++; return true; } return false; }\n\n/* --------------------------------------------------------------- binary */\nNX_INLINE uint64_t nx_bits_read(const uint8_t* p, size_t bit, size_t n) {\n    uint64_t v = 0;\n    /* fast path: byte aligned */\n    if ((bit & 7) == 0 && (n & 7) == 0) {\n        const uint8_t* q = p + bit / 8;\n        for (size_t i = 0; i < n / 8; i++) v = (v << 8) | q[i];\n        return v;\n    }\n    for (size_t i = 0; i < n; i++) {\n        size_t b = bit + i;\n        v = (v << 1) | ((p[b >> 3] >> (7 - (b & 7))) & 1);\n    }\n    return v;\n}\nNX_INLINE void nx_bits_write(uint8_t* p, size_t bit, size_t n, uint64_t v) {\n    if ((bit & 7) == 0 && (n & 7) == 0) {\n        uint8_t* q = p + bit / 8;\n        for (size_t i = 0; i < n / 8; i++) q[i] = (uint8_t)(v >> ((n / 8 - 1 - i) * 8));\n        return;\n    }\n    for (size_t i = 0; i < n; i++) {\n        size_t b = bit + i;\n        uint8_t bitv = (uint8_t)((v >> (n - 1 - i)) & 1);\n        if (bitv) p[b >> 3] |= (uint8_t)(0x80 >> (b & 7));\n        else p[b >> 3] &= (uint8_t)~(0x80 >> (b & 7));\n    }\n}\nNX_INLINE uint64_t nx_bswap(uint64_t v, size_t nbytes) {\n    uint64_t r = 0;\n    for (size_t i = 0; i < nbytes; i++) r |= ((v >> (i * 8)) & 0xff) << ((nbytes - 1 - i) * 8);\n    return r;\n}\nNX_INLINE bool nx_is_little_endian(void) { uint16_t x = 1; return *(uint8_t*)&x == 1; }\nNX_INLINE int64_t nx_sign_extend(uint64_t v, size_t n) {\n    if (n >= 64) return (int64_t)v;\n    uint64_t m = 1ULL << (n - 1);\n    return (int64_t)((v ^ m) - m);\n}\n\n/* ------------------------------------------------------------------ misc */\nNX_INLINE int64_t nx_time_now_ms(void) {\n#if defined(_WIN32)\n    FILETIME ft; GetSystemTimeAsFileTime(&ft);\n    uint64_t t = ((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime;\n    return (int64_t)(t / 10000) - 11644473600000LL;\n#else\n    struct timeval tv; gettimeofday(&tv, NULL);\n    return (int64_t)tv.tv_sec * 1000 + tv.tv_usec / 1000;\n#endif\n}\n/* minutes east of UTC of local time at the given instant (0 when unknown) */\nNX_INLINE int64_t nx_time_utc_offset_min(int64_t epoch_ms) {\n    time_t t = (time_t)(epoch_ms / 1000);\n    struct tm loc, utc;\n#if defined(_WIN32)\n    if (localtime_s(&loc, &t) != 0 || gmtime_s(&utc, &t) != 0) return 0;\n#else\n    if (!localtime_r(&t, &loc) || !gmtime_r(&t, &utc)) return 0;\n#endif\n    int64_t lmin = ((int64_t)loc.tm_yday * 1440) + loc.tm_hour * 60 + loc.tm_min;\n    int64_t umin = ((int64_t)utc.tm_yday * 1440) + utc.tm_hour * 60 + utc.tm_min;\n    int64_t diff = lmin - umin;\n    if (loc.tm_year != utc.tm_year) diff += loc.tm_year > utc.tm_year ? 365 * 1440 : -365 * 1440;\n    return diff;\n}\n/* time.zone_rules: a zone of the IANA database as text, for std.time. The\n   first line is the zone's name; each further line is a period, `start\n   offset dst abbrev`: start in ms since the epoch (`-` for the first\n   period), the offset in seconds east of UTC, 1 for daylight time.\n   Windows has no zoneinfo files; its ICU (icu.dll, Windows 10 1903 and\n   later) has the database, loaded at the first call so no program links\n   it. An empty name is the system's zone. Changes are listed to 2200;\n   after that the zone keeps its standard offset. Elsewhere std.time reads\n   the zoneinfo files itself and this is NotFound. 0, or 1 for a zone ICU\n   does not know or no ICU. */\n#if defined(_WIN32)\ntypedef void* (*nx_ucal_open_fn)(const uint16_t*, int32_t, const char*, int32_t, int32_t*);\ntypedef void (*nx_ucal_close_fn)(void*);\ntypedef void (*nx_ucal_set_millis_fn)(void*, double, int32_t*);\ntypedef int32_t (*nx_ucal_get_fn)(const void*, int32_t, int32_t*);\ntypedef int8_t (*nx_ucal_transition_fn)(const void*, int32_t, double*, int32_t*);\ntypedef int32_t (*nx_ucal_display_fn)(const void*, int32_t, const char*, uint16_t*, int32_t, int32_t*);\ntypedef int32_t (*nx_ucal_default_fn)(uint16_t*, int32_t, int32_t*);\ntypedef int32_t (*nx_ucal_canonical_fn)(const uint16_t*, int32_t, uint16_t*, int32_t, int8_t*, int32_t*);\ntypedef struct nx_icu_fns {\n    nx_ucal_open_fn open; nx_ucal_close_fn close; nx_ucal_set_millis_fn set_millis; nx_ucal_get_fn get;\n    nx_ucal_transition_fn transition; nx_ucal_display_fn display; nx_ucal_default_fn default_zone;\n    nx_ucal_canonical_fn canonical;\n} nx_icu_fns;\nNX_STATE nx_icu_fns nx_icu;\nNX_STATE int nx_icu_state; /* 0 not loaded yet, 1 loaded, 2 missing */\nNX_INLINE bool nx_icu_load(void) {\n    int st = __atomic_load_n(&nx_icu_state, __ATOMIC_ACQUIRE);\n    if (st != 0) return st == 1;\n    nx_icu_fns f;\n    memset(&f, 0, sizeof f);\n    HMODULE m = LoadLibraryA(\"icu.dll\");\n    if (!m) m = LoadLibraryA(\"icuin.dll\");\n    if (m) {\n        f.open = (nx_ucal_open_fn)(void*)GetProcAddress(m, \"ucal_open\");\n        f.close = (nx_ucal_close_fn)(void*)GetProcAddress(m, \"ucal_close\");\n        f.set_millis = (nx_ucal_set_millis_fn)(void*)GetProcAddress(m, \"ucal_setMillis\");\n        f.get = (nx_ucal_get_fn)(void*)GetProcAddress(m, \"ucal_get\");\n        f.transition = (nx_ucal_transition_fn)(void*)GetProcAddress(m, \"ucal_getTimeZoneTransitionDate\");\n        f.display = (nx_ucal_display_fn)(void*)GetProcAddress(m, \"ucal_getTimeZoneDisplayName\");\n        f.default_zone = (nx_ucal_default_fn)(void*)GetProcAddress(m, \"ucal_getDefaultTimeZone\");\n        f.canonical = (nx_ucal_canonical_fn)(void*)GetProcAddress(m, \"ucal_getCanonicalTimeZoneID\");\n    }\n    bool ok = f.open && f.close && f.set_millis && f.get && f.transition && f.display && f.default_zone && f.canonical;\n    /* threads that race here store the same pointers */\n    if (ok) nx_icu = f;\n    __atomic_store_n(&nx_icu_state, ok ? 1 : 2, __ATOMIC_RELEASE);\n    return ok;\n}\n/* one period's line. The abbreviation is ICU's short English name where\n   one of these Englishes has it (CET is British, IST Indian, AEST\n   Australian); else the zoneinfo files' style, `+0530`, or `LMT` for the\n   local mean time a place kept before it took a standard offset */\nNX_INLINE void nx_icu_period(nx_ctx* c, nx_string* s, void* cal, bool first, double at, int32_t offset_ms, bool dst) {\n    static const char* const locales[] = { \"en_US\", \"en_GB\", \"en_IN\", \"en_AU\" };\n    uint16_t w[48];\n    char line[128], abbr[48];\n    size_t k = 0;\n    for (size_t l = 0; l < sizeof locales / sizeof locales[0]; l++) {\n        int32_t st = 0;\n        /* 1 UCAL_SHORT_STANDARD, 3 UCAL_SHORT_DST */\n        int32_t n = nx_icu.display(cal, dst ? 3 : 1, locales[l], w, 47, &st);\n        k = 0;\n        if (st > 0) continue;\n        for (int32_t i = 0; i < n && k < sizeof abbr - 1; i++) abbr[k++] = w[i] > 32 && w[i] < 127 ? (char)w[i] : '_';\n        /* `GMT+1` is no name, only an offset */\n        if (k > 3 && memcmp(abbr, \"GMT\", 3) == 0 && (abbr[3] == '+' || abbr[3] == '-')) { k = 0; continue; }\n        if (k > 0) break;\n    }\n    if (k == 0) {\n        int32_t sec = offset_ms / 1000;\n        if (sec % 60 != 0) {\n            memcpy(abbr, \"LMT\", 3);\n            k = 3;\n        } else {\n            int32_t a = sec < 0 ? -sec : sec;\n            k = (size_t)snprintf(abbr, sizeof abbr, \"%c%02d\", sec < 0 ? '-' : '+', (int)(a / 3600));\n            if (a % 3600 != 0) k += (size_t)snprintf(abbr + k, sizeof abbr - k, \"%02d\", (int)(a % 3600 / 60));\n        }\n    }\n    abbr[k] = 0;\n    int len = first\n        ? snprintf(line, sizeof line, \"- %ld %d %s\\n\", (long)(offset_ms / 1000), dst ? 1 : 0, abbr)\n        : snprintf(line, sizeof line, \"%lld %ld %d %s\\n\", (long long)at, (long)(offset_ms / 1000), dst ? 1 : 0, abbr);\n    if (len > 0) nx_str_append(c, s, (const uint8_t*)line, (size_t)len);\n}\n#endif\nNX_INLINE int32_t nx_time_zone_rules(nx_ctx* c, nx_sl_u8 name, nx_string* out) {\n    nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;\n#if defined(_WIN32)\n    if (!nx_icu_load()) return 1;\n    uint16_t id[128];\n    int32_t idlen = 0, st = 0;\n    if (name.len == 0) {\n        idlen = nx_icu.default_zone(id, 127, &st);\n        if (st > 0 || idlen <= 0 || idlen >= 127) return 1;\n    } else {\n        if (name.len >= 127) return 1;\n        for (size_t i = 0; i < name.len; i++) {\n            if (name.ptr[i] < 33 || name.ptr[i] > 126) return 1;\n            id[i] = name.ptr[i];\n        }\n        idlen = (int32_t)name.len;\n        /* an unknown id would open as GMT: ask whether the database has it */\n        uint16_t canon[128];\n        int8_t system = 0;\n        nx_icu.canonical(id, idlen, canon, 127, &system, &st);\n        if (st > 0 || !system) return 1;\n    }\n    for (int32_t i = 0; i < idlen; i++) {\n        uint8_t b = id[i] < 127 ? (uint8_t)id[i] : '?';\n        nx_str_append(c, &s, &b, 1);\n    }\n    nx_str_append(c, &s, (const uint8_t*)\"\\n\", 1);\n    st = 0;\n    /* 1 UCAL_GREGORIAN */\n    void* cal = nx_icu.open(id, idlen, \"en_US\", 1, &st);\n    if (st > 0 || !cal) { nx_str_free(c, &s); return 1; }\n    /* from 1684, before every zone's first change, to 2200 */\n    double at = -9.0e12;\n    const double end = 7258118400000.0;\n    bool first = true;\n    for (int guard = 0; guard < 5000; guard++) {\n        st = 0;\n        nx_icu.set_millis(cal, at, &st);\n        /* 15 UCAL_ZONE_OFFSET, 16 UCAL_DST_OFFSET, in ms */\n        int32_t raw = nx_icu.get(cal, 15, &st);\n        int32_t dst = nx_icu.get(cal, 16, &st);\n        if (st > 0) break;\n        nx_icu_period(c, &s, cal, first, at, raw + dst, dst != 0);\n        first = false;\n        double next = 0;\n        st = 0;\n        /* 0 UCAL_TZ_TRANSITION_NEXT */\n        if (!nx_icu.transition(cal, 0, &next, &st) || st > 0 || next <= at) break;\n        if (next >= end) {\n            if (dst != 0) {\n                nx_icu.set_millis(cal, next, &st);\n                nx_icu_period(c, &s, cal, false, next, raw, false);\n            }\n            break;\n        }\n        at = next;\n    }\n    nx_icu.close(cal);\n    *out = s;\n    return 0;\n#else\n    (void)name; (void)s; (void)out;\n    return 1;\n#endif\n}\nNX_INLINE uint64_t nx_time_monotonic_ns(void) {\n#if defined(_WIN32)\n    LARGE_INTEGER f, c; QueryPerformanceFrequency(&f); QueryPerformanceCounter(&c);\n    return (uint64_t)((double)c.QuadPart * 1e9 / (double)f.QuadPart);\n#else\n    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);\n    return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;\n#endif\n}\nNX_INLINE void nx_sleep_ms(uint64_t ms) {\n#if defined(_WIN32)\n    Sleep((DWORD)ms);\n#else\n    usleep((useconds_t)(ms * 1000));\n#endif\n}\nNX_INLINE int64_t nx_mono_ms(void) { return (int64_t)(nx_time_monotonic_ns() / 1000000u); }\n/* what is left of `timeout_ms` since `start` (ms): -1 for no limit */\nNX_INLINE int64_t nx_left_ms(int64_t start, int64_t timeout_ms) {\n    if (timeout_ms < 0) return -1;\n    int64_t left = timeout_ms - (nx_mono_ms() - start);\n    return left > 0 ? left : 0;\n}\n\n/* ---- `nx bench` ---- */\n/* A value the optimizer must assume is read: what a benchmark computes is\n   kept, so the work that makes it is not removed. */\nNX_INLINE void nx_bench_keep(const void* p) {\n#if defined(__GNUC__) || defined(__clang__)\n    __asm__ __volatile__(\"\" : : \"r\"(p) : \"memory\");\n#else\n    static const void* volatile sink; sink = p;\n#endif\n}\ntypedef struct nx_bench_result { uint64_t iters; uint32_t samples; uint32_t err; double median_ns, min_ns, max_ns; } nx_bench_result;\nNX_INLINE int nx_bench_cmp(const void* a, const void* b) { double x = *(const double*)a, y = *(const double*)b; return (x > y) - (x < y); }\n#define NX_BENCH_SAMPLES 21\n/* Calibrate (which is the warmup): double the iterations until one sample\n   takes `sample_ns`; then time NX_BENCH_SAMPLES samples of that many and\n   keep the median. A body slower than a sample gets fewer samples (at\n   least 5), so a slow benchmark takes seconds rather than minutes. A body\n   that returns an error stops it, the error in `err`. */\nNX_INLINE void nx_bench_measure(nx_ctx* c, uint32_t (*f)(nx_ctx*), uint64_t sample_ns, nx_bench_result* r) {\n    memset(r, 0, sizeof *r);\n    uint64_t n = 1, dt = 0;\n    for (;;) {\n        uint64_t t0 = nx_time_monotonic_ns();\n        for (uint64_t i = 0; i < n; i++) { uint32_t e = f(c); if (e) { r->err = e; return; } }\n        dt = nx_time_monotonic_ns() - t0;\n        if (dt >= sample_ns || n >= (1ULL << 40)) break;\n        uint64_t next = dt > 0 ? (uint64_t)((double)n * (double)sample_ns / (double)dt * 1.2) : n * 10;\n        if (next > n * 10) next = n * 10;\n        if (next <= n) next = n + 1;\n        n = next;\n    }\n    uint32_t samples = NX_BENCH_SAMPLES;\n    if (n == 1 && dt > sample_ns) {\n        uint64_t fit = (sample_ns * NX_BENCH_SAMPLES) / dt;\n        samples = fit < 5 ? 5 : (uint32_t)fit;\n        if (samples > NX_BENCH_SAMPLES) samples = NX_BENCH_SAMPLES;\n    }\n    double s[NX_BENCH_SAMPLES];\n    for (uint32_t k = 0; k < samples; k++) {\n        uint64_t t0 = nx_time_monotonic_ns();\n        for (uint64_t i = 0; i < n; i++) { uint32_t e = f(c); if (e) { r->err = e; return; } }\n        s[k] = (double)(nx_time_monotonic_ns() - t0) / (double)n;\n    }\n    qsort(s, samples, sizeof(double), nx_bench_cmp);\n    r->iters = n; r->samples = samples;\n    r->median_ns = s[samples / 2]; r->min_ns = s[0]; r->max_ns = s[samples - 1];\n}\n/* `ns` with three significant digits in the unit that suits it. */\nNX_INLINE const char* nx_bench_time(double ns, char* buf, size_t cap) {\n    const char* unit = \"ns\"; double v = ns;\n    if (ns >= 1e9) { v = ns / 1e9; unit = \"s\"; }\n    else if (ns >= 1e6) { v = ns / 1e6; unit = \"ms\"; }\n    else if (ns >= 1e3) { v = ns / 1e3; unit = \"\\xc2\\xb5s\"; }\n    snprintf(buf, cap, \"%.3g %s\", v, unit);\n    return buf;\n}\nNX_INLINE uint64_t nx_rng_next(nx_ctx* c) {\n    if (!c->rng_seeded) { c->rng ^= (uint64_t)nx_time_monotonic_ns(); c->rng_seeded = true; }\n    /* splitmix64 */\n    c->rng += 0x9E3779B97F4A7C15ULL;\n    uint64_t z = c->rng;\n    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;\n    z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;\n    return z ^ (z >> 31);\n}\nNX_INLINE int64_t nx_random_int(nx_ctx* c, int64_t lo, int64_t hi, const char* loc) {\n    if (hi < lo) nx_panic(\"random.int: upper bound is below the lower bound\", loc);\n    uint64_t span = (uint64_t)(hi - lo) + 1;\n    if (span == 0) return (int64_t)nx_rng_next(c);\n    return lo + (int64_t)(nx_rng_next(c) % span);\n}\nNX_INLINE double nx_random_float(nx_ctx* c) { return (double)(nx_rng_next(c) >> 11) * (1.0 / 9007199254740992.0); }\n\n/* random.secure: n bytes from the operating system's secure generator, for\n   keys, tokens and UUIDs; never the seeded generator above. Windows asks\n   BCryptGenRandom, loaded from bcrypt.dll so no program links another\n   library; Linux the getrandom system call, made directly so the glibc a\n   program needs stays 2.17, or /dev/urandom on a kernel older than 3.17;\n   macOS and the BSDs arc4random_buf; WASI getentropy. False when the source\n   fails, and the bytes must not be used then. */\n#if defined(_WIN32)\ntypedef LONG (WINAPI* nx_bcrypt_gen_random)(void*, unsigned char*, ULONG, ULONG);\n#endif\nNX_INLINE bool nx_os_random(uint8_t* p, size_t n) {\n    if (n == 0) return true;\n#if defined(_WIN32)\n    static nx_bcrypt_gen_random gen = NULL;\n    if (!gen) {\n        HMODULE m = LoadLibraryA(\"bcrypt.dll\");\n        if (m) gen = (nx_bcrypt_gen_random)GetProcAddress(m, \"BCryptGenRandom\");\n        if (!gen) return false;\n    }\n    while (n > 0) {\n        ULONG chunk = n > 0x40000000u ? 0x40000000u : (ULONG)n;\n        /* 2: BCRYPT_USE_SYSTEM_PREFERRED_RNG, no algorithm handle */\n        if (gen(NULL, p, chunk, 2) != 0) return false;\n        p += chunk; n -= chunk;\n    }\n    return true;\n#elif defined(NX_WASM)\n    while (n > 0) {\n        size_t chunk = n > 256 ? 256 : n;\n        if (getentropy(p, chunk) != 0) return false;\n        p += chunk; n -= chunk;\n    }\n    return true;\n#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || defined(__DragonFly__)\n    arc4random_buf(p, n);\n    return true;\n#else\n#if defined(__linux__) && defined(SYS_getrandom)\n    while (n > 0) {\n        long r = syscall(SYS_getrandom, p, n, 0);\n        if (r > 0) { p += (size_t)r; n -= (size_t)r; continue; }\n        if (r < 0 && errno == EINTR) continue;\n        if (r < 0 && errno == ENOSYS) break;\n        return false;\n    }\n    if (n == 0) return true;\n#endif\n#ifndef O_CLOEXEC\n#define O_CLOEXEC 0\n#endif\n    int fd = open(\"/dev/urandom\", O_RDONLY | O_CLOEXEC);\n    if (fd < 0) return false;\n    /* a regular file planted in its place is not a generator */\n    struct stat st;\n    if (fstat(fd, &st) != 0 || !S_ISCHR(st.st_mode)) { close(fd); return false; }\n    while (n > 0) {\n        ssize_t r = read(fd, p, n);\n        if (r > 0) { p += (size_t)r; n -= (size_t)r; continue; }\n        if (r < 0 && errno == EINTR) continue;\n        close(fd);\n        return false;\n    }\n    close(fd);\n    return true;\n#endif\n}\n\n/* ---------------------------------------------------------- starting programs */\n#if defined(_WIN32)\n/* a command line CommandLineToArgvW takes apart into `argv` again; the\n   program's slashes become backslashes, which CreateProcess wants there */\nNX_INLINE void nx_win_cmdline(nx_ctx* c, const nx_sl_u8* argv, size_t argc, nx_string* cmd) {\n    cmd->ptr = NULL; cmd->len = 0; cmd->cap = 0; cmd->ar = NULL;\n    char prog[4096];\n    for (size_t i = 0; i < argc; i++) {\n        if (i) nx_str_append(c, cmd, (const uint8_t*)\" \", 1);\n        nx_sl_u8 a = argv[i];\n        if (i == 0 && a.len < sizeof prog) {\n            for (size_t j = 0; j < a.len; j++) prog[j] = a.ptr[j] == '/' ? '\\\\' : (char)a.ptr[j];\n            a.ptr = (uint8_t*)prog;\n        }\n        bool quote = a.len == 0;\n        for (size_t j = 0; j < a.len && !quote; j++) quote = a.ptr[j] == ' ' || a.ptr[j] == '\\t' || a.ptr[j] == '\"';\n        if (quote) nx_str_append(c, cmd, (const uint8_t*)\"\\\"\", 1);\n        size_t bs = 0;\n        for (size_t j = 0; j < a.len; j++) {\n            uint8_t ch = a.ptr[j];\n            if (ch == '\\\\') { bs++; continue; }\n            if (ch == '\"') { for (size_t k = 0; k < bs * 2 + 1; k++) nx_str_append(c, cmd, (const uint8_t*)\"\\\\\", 1); bs = 0; nx_str_append(c, cmd, &ch, 1); continue; }\n            for (size_t k = 0; k < bs; k++) nx_str_append(c, cmd, (const uint8_t*)\"\\\\\", 1);\n            bs = 0;\n            nx_str_append(c, cmd, &ch, 1);\n        }\n        for (size_t k = 0; k < bs * (quote ? 2 : 1); k++) nx_str_append(c, cmd, (const uint8_t*)\"\\\\\", 1);\n        if (quote) nx_str_append(c, cmd, (const uint8_t*)\"\\\"\", 1);\n    }\n    nx_str_append(c, cmd, (const uint8_t*)\"\", 1); /* NUL */\n}\n/* this program's standard handle `which` as one a child can inherit, or\n   NULL (the caller closes it once the child has started) */\nNX_INLINE HANDLE nx_win_std_dup(DWORD which) {\n    HANDLE h = GetStdHandle(which), d = NULL;\n    if (!h || h == INVALID_HANDLE_VALUE) return NULL;\n    if (!DuplicateHandle(GetCurrentProcess(), h, GetCurrentProcess(), &d, 0, TRUE, DUPLICATE_SAME_ACCESS)) return NULL;\n    return d;\n}\n/* Start `cmd` in `cwd` (NULL: this program's) with `give` as its stdin,\n   stdout and stderr, inheritable handles or NULL, and no other handle of\n   this program's: a program started at the same time on another thread\n   cannot hold these pipes open, nor this one theirs. 0 when it started,\n   else CreateProcess's error. */\nNX_INLINE DWORD nx_win_start(char* cmd, const char* cwd, HANDLE give[3], PROCESS_INFORMATION* pi) {\n    STARTUPINFOEXA si;\n    memset(&si, 0, sizeof si);\n    si.StartupInfo.cb = sizeof si;\n    si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;\n    si.StartupInfo.hStdInput = give[0]; si.StartupInfo.hStdOutput = give[1]; si.StartupInfo.hStdError = give[2];\n    /* each handle once; a console's pseudo handle needs no inheriting and cannot be listed */\n    HANDLE list[3]; DWORD nl = 0;\n    for (int i = 0; i < 3; i++) {\n        HANDLE h = give[i];\n        if (!h || h == INVALID_HANDLE_VALUE) continue;\n        if ((((uintptr_t)h) & 3) == 3 && GetFileType(h) == FILE_TYPE_CHAR) continue;\n        bool seen = false;\n        for (DWORD j = 0; j < nl; j++) seen = seen || list[j] == h;\n        if (!seen) list[nl++] = h;\n    }\n    LPPROC_THREAD_ATTRIBUTE_LIST attrs = NULL;\n    DWORD flags = 0;\n    if (nl > 0) {\n        SIZE_T size = 0;\n        InitializeProcThreadAttributeList(NULL, 1, 0, &size);\n        attrs = (LPPROC_THREAD_ATTRIBUTE_LIST)malloc(size);\n        if (attrs && InitializeProcThreadAttributeList(attrs, 1, 0, &size)) {\n            if (UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, list, nl * sizeof(HANDLE), NULL, NULL)) {\n                si.lpAttributeList = attrs;\n                flags = EXTENDED_STARTUPINFO_PRESENT;\n            } else { DeleteProcThreadAttributeList(attrs); free(attrs); attrs = NULL; }\n        } else { free(attrs); attrs = NULL; }\n    }\n    memset(pi, 0, sizeof *pi);\n    BOOL ok = CreateProcessA(NULL, cmd, NULL, NULL, TRUE, flags, NULL, cwd, &si.StartupInfo, pi);\n    DWORD err = ok ? 0 : GetLastError();\n    if (attrs) { DeleteProcThreadAttributeList(attrs); free(attrs); }\n    return err;\n}\n#elif !defined(NX_WASM)\n/* a pipe no program inherits: a child gets its end as 0, 1 or 2 */\nNX_INLINE int nx_pipe_cloexec(int p[2]) {\n#if defined(__linux__) && defined(SYS_pipe2)\n    if (syscall(SYS_pipe2, p, O_CLOEXEC) == 0) return 0;\n    if (errno != ENOSYS) return -1;\n#endif\n    if (pipe(p) != 0) return -1;\n    fcntl(p[0], F_SETFD, FD_CLOEXEC);\n    fcntl(p[1], F_SETFD, FD_CLOEXEC);\n    return 0;\n}\n/* In a child between fork and exec: make `fds[i]` its descriptor i (-1\n   leaves i as it is), with only the calls that are safe there. */\nNX_INLINE void nx_child_std(int fds[3]) {\n    /* one already below 3 would be overwritten before its turn: move it up */\n    for (int i = 0; i < 3; i++) {\n        if (fds[i] >= 0 && fds[i] < 3 && fds[i] != i) fds[i] = fcntl(fds[i], F_DUPFD_CLOEXEC, 3);\n    }\n    for (int i = 0; i < 3; i++) {\n        if (fds[i] < 0) continue;\n        if (fds[i] == i) {\n            int fl = fcntl(i, F_GETFD);\n            if (fl >= 0) fcntl(i, F_SETFD, fl & ~FD_CLOEXEC);\n        } else dup2(fds[i], i);\n    }\n}\n/* Is there a file `prog` names (along PATH when it has no slash)? exec\n   says EACCES both for a program that is there but cannot run and for a\n   directory on PATH it may not search, which leaves a missing program\n   looking like a forbidden one. */\nNX_INLINE bool nx_prog_exists(const char* prog) {\n    struct stat st;\n    if (strchr(prog, '/')) return stat(prog, &st) == 0;\n    const char* path = getenv(\"PATH\");\n    if (!path || !*path) path = \"/bin:/usr/bin\";\n    char buf[4096];\n    size_t pl = strlen(prog);\n    for (;;) {\n        const char* e = strchr(path, ':');\n        size_t dl = e ? (size_t)(e - path) : strlen(path);\n        /* an empty entry is the working directory */\n        const char* dir = dl ? path : \".\";\n        if (!dl) dl = 1;\n        if (dl + 1 + pl < sizeof buf) {\n            memcpy(buf, dir, dl);\n            buf[dl] = '/';\n            memcpy(buf + dl + 1, prog, pl + 1);\n            if (stat(buf, &st) == 0 && !S_ISDIR(st.st_mode)) return true;\n        }\n        if (!e) return false;\n        path = e + 1;\n    }\n}\n/* A write to a pipe whose reader is gone raises SIGPIPE, which would end\n   the program: held off while a child's input is written, and one raised\n   meanwhile is taken before it is let through (unless it was held already). */\nNX_INLINE void nx_sigpipe_hold(sigset_t* old) {\n    sigset_t s;\n    sigemptyset(&s);\n    sigaddset(&s, SIGPIPE);\n    pthread_sigmask(SIG_BLOCK, &s, old);\n}\nNX_INLINE void nx_sigpipe_release(const sigset_t* old) {\n    sigset_t s, pending;\n    sigemptyset(&s);\n    sigaddset(&s, SIGPIPE);\n    sigpending(&pending);\n    if (sigismember(&pending, SIGPIPE) && !sigismember(old, SIGPIPE)) { int sig; sigwait(&s, &sig); }\n    pthread_sigmask(SIG_SETMASK, old, NULL);\n}\n#endif\n\n/* process.run: spawn argv[0] with the given arguments (searching PATH), wait,\n * and return its exit code. False when the process could not be started. */\n#if defined(NX_WASM)\nNX_INLINE bool nx_run(nx_ctx* c, const nx_sl_u8* argv, size_t argc, int* code) {\n    (void)c; (void)argv; (void)argc; (void)code;\n    errno = ENOSYS;\n    return false;\n}\n#else\nNX_INLINE bool nx_run(nx_ctx* c, const nx_sl_u8* argv, size_t argc, int* code) {\n    if (argc == 0) return false;\n    fflush(stdout); fflush(stderr);\n#if defined(_WIN32)\n    nx_string cmd;\n    nx_win_cmdline(c, argv, argc, &cmd);\n    /* the child writes where this program does */\n    static const DWORD std_ids[3] = { STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE };\n    HANDLE give[3], dups[3];\n    for (int i = 0; i < 3; i++) {\n        dups[i] = nx_win_std_dup(std_ids[i]);\n        give[i] = dups[i] ? dups[i] : GetStdHandle(std_ids[i]);\n    }\n    PROCESS_INFORMATION pi;\n    DWORD err = nx_win_start((char*)cmd.ptr, NULL, give, &pi);\n    for (int i = 0; i < 3; i++) if (dups[i]) CloseHandle(dups[i]);\n    nx_str_free(c, &cmd);\n    if (err) return false;\n    WaitForSingleObject(pi.hProcess, INFINITE);\n    DWORD ec = 1;\n    GetExitCodeProcess(pi.hProcess, &ec);\n    CloseHandle(pi.hProcess); CloseHandle(pi.hThread);\n    *code = (int)ec;\n    return true;\n#else\n    char** av = (char**)nx_alloc_bytes(c, (argc + 1) * sizeof(char*), 8);\n    for (size_t i = 0; i < argc; i++) {\n        av[i] = (char*)nx_alloc_bytes(c, argv[i].len + 1, 1);\n        nx_bytes_copy(av[i], argv[i].ptr, argv[i].len); av[i][argv[i].len] = 0;\n    }\n    av[argc] = NULL;\n    pid_t pid = 0;\n    int rc = posix_spawnp(&pid, av[0], NULL, NULL, av, environ);\n    for (size_t i = 0; i < argc; i++) nx_free_bytes(c, av[i], argv[i].len + 1);\n    nx_free_bytes(c, av, (argc + 1) * sizeof(char*));\n    if (rc != 0) return false;\n    int st = 0;\n    if (waitpid(pid, &st, 0) < 0) return false;\n    *code = WIFEXITED(st) ? WEXITSTATUS(st) : 128 + (WIFSIGNALED(st) ? WTERMSIG(st) : 0);\n    return true;\n#endif\n}\n#endif\n/* A path as C takes it, in `buf`. An empty one names nothing, on every\n   platform (ENOENT, as POSIX answers; WASI would open the directory it runs\n   in), and one too long for `buf` fails with ENAMETOOLONG. */\nNX_INLINE bool nx_cpath(nx_sl_u8 path, char* buf, size_t cap) {\n    if (path.len == 0) { errno = ENOENT; return false; }\n    if (path.len >= cap) { errno = ENAMETOOLONG; return false; }\n    nx_bytes_copy(buf, path.ptr, path.len); buf[path.len] = 0;\n    return true;\n}\n/* Run a program with its stdin fed from `input`, in `cwd` when given, and\n   its stdout and stderr captured. The captured text is kept for\n   nx_last_stdout / nx_last_stderr to hand over; each thread has its own. */\nNX_STATE NX_THREAD_LOCAL nx_string nx_cap_out, nx_cap_err;\nNX_INLINE void nx_cap_reset(nx_ctx* c) {\n    nx_str_free(c, &nx_cap_out); nx_str_free(c, &nx_cap_err);\n    nx_cap_out.ptr = NULL; nx_cap_out.len = 0; nx_cap_out.cap = 0; nx_cap_out.ar = c->arena;\n    nx_cap_err.ptr = NULL; nx_cap_err.len = 0; nx_cap_err.cap = 0; nx_cap_err.ar = c->arena;\n}\nNX_INLINE nx_string nx_last_stdout(nx_ctx* c) {\n    nx_string s = nx_cap_out;\n    nx_cap_out.ptr = NULL; nx_cap_out.len = 0; nx_cap_out.cap = 0; nx_cap_out.ar = c->arena;\n    return s;\n}\nNX_INLINE nx_string nx_last_stderr(nx_ctx* c) {\n    nx_string s = nx_cap_err;\n    nx_cap_err.ptr = NULL; nx_cap_err.len = 0; nx_cap_err.cap = 0; nx_cap_err.ar = c->arena;\n    return s;\n}\n#if defined(_WIN32)\nNX_INLINE void nx_win_drain(nx_ctx* c, HANDLE h, nx_string* out) {\n    char buf[65536]; DWORD n;\n    while (ReadFile(h, buf, sizeof buf, &n, NULL) && n > 0) nx_str_append(c, out, (const uint8_t*)buf, n);\n}\n/* stderr is drained on a helper thread while this one drains stdout, so a child\n   that fills one pipe before finishing the other cannot stall */\ntypedef struct { nx_ctx* c; HANDLE h; nx_string* out; } nx_win_drain_job;\nstatic DWORD WINAPI nx_win_drain_thread(LPVOID p) {\n    nx_win_drain_job* j = (nx_win_drain_job*)p;\n    nx_win_drain(j->c, j->h, j->out);\n    nx_small_drain();\n    return 0;\n}\n/* the child's input, written on a helper thread while the output is\n   drained, so a child that writes before it reads cannot stall; it stops\n   when the child no longer reads, and closes the pipe */\ntypedef struct { HANDLE h; const uint8_t* p; size_t n; } nx_win_feed_job;\nNX_INLINE void nx_win_feed(nx_win_feed_job* j) {\n    size_t off = 0;\n    while (off < j->n) {\n        DWORD chunk = (DWORD)((j->n - off) > (1u << 30) ? (1u << 30) : (j->n - off));\n        DWORD w = 0;\n        if (!WriteFile(j->h, j->p + off, chunk, &w, NULL) || w == 0) break;\n        off += w;\n    }\n    CloseHandle(j->h);\n}\nstatic DWORD WINAPI nx_win_feed_thread(LPVOID p) {\n    nx_win_feed((nx_win_feed_job*)p);\n    return 0;\n}\n#endif\n#if defined(NX_WASM)\nNX_INLINE bool nx_run_capture(nx_ctx* c, const nx_sl_u8* argv, size_t argc, nx_sl_u8 input, nx_sl_u8 cwd, int* code) {\n    (void)c; (void)argv; (void)argc; (void)input; (void)cwd; (void)code;\n    nx_cap_reset(c);\n    errno = ENOSYS;\n    return false;\n}\n#else\nNX_INLINE bool nx_run_capture(nx_ctx* c, const nx_sl_u8* argv, size_t argc, nx_sl_u8 input, nx_sl_u8 cwd, int* code) {\n    if (argc == 0) return false;\n    fflush(stdout); fflush(stderr);\n    nx_cap_reset(c);\n    char dir[4096];\n    const char* cwdp = NULL;\n    if (cwd.len > 0) { if (!nx_cpath(cwd, dir, sizeof dir)) return false; cwdp = dir; }\n#if defined(_WIN32)\n    nx_string cmd;\n    nx_win_cmdline(c, argv, argc, &cmd);\n    SECURITY_ATTRIBUTES sa; sa.nLength = sizeof sa; sa.bInheritHandle = TRUE; sa.lpSecurityDescriptor = NULL;\n    HANDLE in_r = NULL, in_w = NULL, out_r = NULL, out_w = NULL, err_r = NULL, err_w = NULL;\n    if (!CreatePipe(&in_r, &in_w, &sa, 1 << 20) || !CreatePipe(&out_r, &out_w, &sa, 1 << 20) || !CreatePipe(&err_r, &err_w, &sa, 1 << 20)) { nx_str_free(c, &cmd); return false; }\n    SetHandleInformation(in_w, HANDLE_FLAG_INHERIT, 0);\n    SetHandleInformation(out_r, HANDLE_FLAG_INHERIT, 0);\n    SetHandleInformation(err_r, HANDLE_FLAG_INHERIT, 0);\n    HANDLE give[3] = { in_r, out_w, err_w };\n    PROCESS_INFORMATION pi;\n    DWORD err = nx_win_start((char*)cmd.ptr, cwdp, give, &pi);\n    nx_str_free(c, &cmd);\n    CloseHandle(in_r); CloseHandle(out_w); CloseHandle(err_w);\n    if (err) { CloseHandle(in_w); CloseHandle(out_r); CloseHandle(err_r); return false; }\n    /* the input goes in on one helper thread and stderr comes out on\n       another while this one drains stdout: a child that writes before it\n       reads, or fills one pipe before finishing the other, cannot stall */\n    nx_win_feed_job feed; feed.h = in_w; feed.p = input.ptr; feed.n = input.len;\n    HANDLE feeder = NULL;\n    if (input.len > 0) feeder = CreateThread(NULL, 0, nx_win_feed_thread, &feed, 0, NULL);\n    if (!feeder) nx_win_feed(&feed);\n    nx_string err_buf; err_buf.ptr = NULL; err_buf.len = 0; err_buf.cap = 0; err_buf.ar = c->arena;\n    nx_win_drain_job job; job.c = c; job.h = err_r; job.out = &err_buf;\n    HANDLE drain = CreateThread(NULL, 0, nx_win_drain_thread, &job, 0, NULL);\n    nx_win_drain(c, out_r, &nx_cap_out);\n    if (drain) { WaitForSingleObject(drain, INFINITE); CloseHandle(drain); } else nx_win_drain(c, err_r, &err_buf);\n    if (feeder) { WaitForSingleObject(feeder, INFINITE); CloseHandle(feeder); }\n    nx_cap_err = err_buf;\n    CloseHandle(out_r); CloseHandle(err_r);\n    WaitForSingleObject(pi.hProcess, INFINITE);\n    DWORD ec = 1;\n    GetExitCodeProcess(pi.hProcess, &ec);\n    CloseHandle(pi.hProcess); CloseHandle(pi.hThread);\n    *code = (int)ec;\n    return true;\n#else\n    char** av = (char**)nx_alloc_bytes(c, (argc + 1) * sizeof(char*), 8);\n    for (size_t i = 0; i < argc; i++) {\n        av[i] = (char*)nx_alloc_bytes(c, argv[i].len + 1, 1);\n        nx_bytes_copy(av[i], argv[i].ptr, argv[i].len); av[i][argv[i].len] = 0;\n    }\n    av[argc] = NULL;\n    int inp[2], outp[2], errp[2];\n    if (nx_pipe_cloexec(inp) != 0 || nx_pipe_cloexec(outp) != 0 || nx_pipe_cloexec(errp) != 0) return false;\n    pid_t pid = fork();\n    if (pid < 0) return false;\n    if (pid == 0) {\n        int fds[3] = { inp[0], outp[1], errp[1] };\n        nx_child_std(fds);\n        if (cwdp && chdir(cwdp) != 0) _exit(126);\n        execvp(av[0], av);\n        _exit(127);\n    }\n    close(inp[0]); close(outp[1]); close(errp[1]);\n    for (size_t i = 0; i < argc; i++) nx_free_bytes(c, av[i], argv[i].len + 1);\n    nx_free_bytes(c, av, (argc + 1) * sizeof(char*));\n    /* the input is written as the child takes it while both output pipes\n       are drained as it fills them: a child that writes before it reads, or\n       fills one pipe before finishing the other, cannot stall. A write to a\n       child that stopped reading fails with EPIPE, and SIGPIPE is held off. */\n    sigset_t old_set;\n    nx_sigpipe_hold(&old_set);\n    size_t fed = 0;\n    if (input.len == 0) { close(inp[1]); inp[1] = -1; }\n    else { int fl = fcntl(inp[1], F_GETFL); if (fl >= 0) fcntl(inp[1], F_SETFL, fl | O_NONBLOCK); }\n    char buf[65536]; ssize_t n;\n    struct pollfd pfd[3];\n    pfd[0].fd = outp[0]; pfd[0].events = POLLIN;\n    pfd[1].fd = errp[0]; pfd[1].events = POLLIN;\n    pfd[2].fd = inp[1]; pfd[2].events = POLLOUT;\n    int open_fds = 2;\n    while (open_fds > 0 || pfd[2].fd >= 0) {\n        if (poll(pfd, 3, -1) < 0) { if (errno == EINTR) continue; break; }\n        for (int i = 0; i < 2; i++) {\n            if (pfd[i].fd < 0 || !(pfd[i].revents & (POLLIN | POLLHUP | POLLERR))) continue;\n            n = read(pfd[i].fd, buf, sizeof buf);\n            if (n > 0) nx_str_append(c, i == 0 ? &nx_cap_out : &nx_cap_err, (const uint8_t*)buf, (size_t)n);\n            else if (n == 0 || errno != EINTR) { pfd[i].fd = -1; open_fds--; }\n        }\n        if (pfd[2].fd >= 0 && (pfd[2].revents & (POLLOUT | POLLHUP | POLLERR))) {\n            ssize_t w = write(pfd[2].fd, input.ptr + fed, input.len - fed);\n            if (w > 0) fed += (size_t)w;\n            /* EPIPE, or another failure: the child reads no more */\n            else if (!(w < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR))) fed = input.len;\n            if (fed >= input.len) { close(pfd[2].fd); pfd[2].fd = -1; }\n        }\n    }\n    if (pfd[2].fd >= 0) close(pfd[2].fd);\n    nx_sigpipe_release(&old_set);\n    close(outp[0]); close(errp[0]);\n    int st = 0;\n    if (waitpid(pid, &st, 0) < 0) return false;\n    *code = WIFEXITED(st) ? WEXITSTATUS(st) : 128 + (WIFSIGNALED(st) ? WTERMSIG(st) : 0);\n    return true;\n#endif\n}\n#endif\n\n/* --------------------------------------------------------- child processes */\n/* process.spawn and the child_* calls: a program started with pipes to this\n   one, written to and read from while it runs. Output that arrives while\n   the caller waits for something else (its input to go in, the other\n   stream, the exit) is kept until it is read, so the child never stalls\n   on a full pipe while this program waits on it. A handle is 1 + its slot.\n   Results: 0 ok, 1 no such program, 3 timed out, 4 any other failure (the\n   codes of the socket calls). Timeouts in ms: negative waits for ever, 0\n   looks without waiting. */\n#define NX_MAX_CHILDREN 64\ntypedef struct { uint8_t* p; size_t len, cap, pos; } nx_cbuf;\ntypedef struct {\n#if defined(_WIN32)\n    HANDLE h;              /* this program's end, overlapped; NULL once closed */\n    OVERLAPPED ov;\n    bool busy;             /* a read or write is in flight */\n    uint8_t* stage;        /* where an output pipe's reads land */\n#else\n    int fd;                /* -1 once closed */\n#endif\n    bool piped;\n    bool eof;              /* an output pipe the child closed */\n    nx_cbuf buf;           /* output read and not yet taken */\n} nx_cpipe;\ntypedef struct {\n    int state;             /* 0 free, 1 being set up or let go, 2 in use */\n    int64_t pid;\n#if defined(_WIN32)\n    HANDLE proc;\n    int32_t sent;          /* the signal child_signal ended it with */\n#endif\n    nx_cpipe in, out, err;\n    bool done;             /* it ended and was waited for */\n    int32_t code, sig;\n} nx_child;\nNX_STATE nx_child nx_children[NX_MAX_CHILDREN];\nenum { NX_CH_WRITTEN, NX_CH_OUT, NX_CH_ERR, NX_CH_EXIT };\n\nNX_INLINE nx_child* nx_child_at(int64_t h) {\n    if (h < 1 || h > NX_MAX_CHILDREN) return NULL;\n    nx_child* ch = &nx_children[h - 1];\n    return __atomic_load_n(&ch->state, __ATOMIC_ACQUIRE) == 2 ? ch : NULL;\n}\nNX_INLINE int64_t nx_child_pid(int64_t h) {\n    nx_child* ch = nx_child_at(h);\n    return ch ? ch->pid : -1;\n}\n#if defined(NX_WASM)\nNX_INLINE int32_t nx_child_spawn(nx_ctx* c, const nx_sl_u8* argv, size_t argc, nx_sl_u8 cwd, int64_t flags, int64_t* out) {\n    (void)c; (void)argv; (void)argc; (void)cwd; (void)flags; (void)out;\n    return 4;\n}\nNX_INLINE int32_t nx_child_write(int64_t h, nx_sl_u8 data, int64_t timeout_ms) { (void)h; (void)data; (void)timeout_ms; return 4; }\nNX_INLINE int32_t nx_child_read(nx_ctx* c, int64_t h, int64_t stream, size_t n, int64_t timeout_ms, nx_string* out) {\n    (void)c; (void)h; (void)stream; (void)n; (void)timeout_ms; (void)out;\n    return 4;\n}\nNX_INLINE int32_t nx_child_wait(int64_t h, int64_t timeout_ms, int64_t* status) { (void)h; (void)timeout_ms; (void)status; return 4; }\nNX_INLINE int32_t nx_child_signal(int64_t h, int32_t sig) { (void)h; (void)sig; return 4; }\nNX_INLINE void nx_child_close_input(int64_t h) { (void)h; }\nNX_INLINE void nx_child_close(int64_t h) { (void)h; }\nNX_INLINE void nx_trap_signals(void) { }\nNX_INLINE int32_t nx_next_signal(int64_t timeout_ms) { (void)timeout_ms; return 0; }\n#else\nNX_INLINE int nx_child_claim(void) {\n    for (int i = 0; i < NX_MAX_CHILDREN; i++) {\n        int expected = 0;\n        if (__atomic_compare_exchange_n(&nx_children[i].state, &expected, 1, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) return i;\n    }\n    return -1;\n}\nNX_INLINE void nx_child_reset(nx_child* ch) {\n    ch->pid = 0; ch->done = false; ch->code = 0; ch->sig = 0;\n#if defined(_WIN32)\n    ch->proc = NULL; ch->sent = 0;\n#endif\n    nx_cpipe* pipes[3] = { &ch->in, &ch->out, &ch->err };\n    for (int i = 0; i < 3; i++) {\n        memset(pipes[i], 0, sizeof *pipes[i]);\n#if !defined(_WIN32)\n        pipes[i]->fd = -1;\n#endif\n    }\n}\nNX_INLINE void nx_cbuf_add(nx_cbuf* b, const uint8_t* p, size_t n) {\n    if (b->pos == b->len) { b->pos = 0; b->len = 0; }\n    else if (b->pos > 0 && b->len + n > b->cap) {\n        memmove(b->p, b->p + b->pos, b->len - b->pos);\n        b->len -= b->pos; b->pos = 0;\n    }\n    if (b->len + n > b->cap) {\n        size_t cap = b->cap ? b->cap : 65536;\n        while (cap < b->len + n) cap *= 2;\n        uint8_t* q = (uint8_t*)realloc(b->p, cap);\n        if (!q) nx_panic(\"out of memory keeping a child's output\", \"process\");\n        b->p = q; b->cap = cap;\n    }\n    memcpy(b->p + b->len, p, n);\n    b->len += n;\n}\nNX_INLINE bool nx_cpipe_ready(const nx_cpipe* pp) { return pp->buf.pos < pp->buf.len || pp->eof; }\n#if defined(_WIN32)\n/* A pipe whose far end a child gets: this program's end overlapped, so\n   reads, writes and the exit can be waited for together and with a\n   timeout (an anonymous pipe cannot be); the child's an ordinary one. */\nNX_STATE volatile LONG nx_pipe_serial;\n#ifndef PIPE_REJECT_REMOTE_CLIENTS\n#define PIPE_REJECT_REMOTE_CLIENTS 0x00000008\n#endif\nNX_INLINE bool nx_win_pipe(bool child_reads, HANDLE* ours, HANDLE* theirs) {\n    char name[96];\n    snprintf(name, sizeof name, \"\\\\\\\\.\\\\pipe\\\\nx-%lu-%ld\", (unsigned long)GetCurrentProcessId(), (long)InterlockedIncrement(&nx_pipe_serial));\n    DWORD mode = (child_reads ? PIPE_ACCESS_OUTBOUND : PIPE_ACCESS_INBOUND) | FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE;\n    HANDLE s = CreateNamedPipeA(name, mode, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS, 1, 65536, 65536, 0, NULL);\n    if (s == INVALID_HANDLE_VALUE) return false;\n    SECURITY_ATTRIBUTES sa; sa.nLength = sizeof sa; sa.bInheritHandle = TRUE; sa.lpSecurityDescriptor = NULL;\n    HANDLE t = CreateFileA(name, child_reads ? GENERIC_READ : GENERIC_WRITE, 0, &sa, OPEN_EXISTING, 0, NULL);\n    if (t == INVALID_HANDLE_VALUE) { CloseHandle(s); return false; }\n    *ours = s; *theirs = t;\n    return true;\n}\nNX_INLINE void nx_cpipe_close(nx_cpipe* pp) {\n    if (!pp->h) return;\n    if (pp->busy) {\n        DWORD x = 0;\n        CancelIoEx(pp->h, &pp->ov);\n        GetOverlappedResult(pp->h, &pp->ov, &x, TRUE);\n        pp->busy = false;\n    }\n    CloseHandle(pp->h);\n    pp->h = NULL;\n}\n/* keep a read waiting on an output pipe; what comes at once is kept */\nNX_INLINE void nx_cpipe_post(nx_cpipe* pp) {\n    while (pp->h && !pp->busy) {\n        DWORD got = 0;\n        ResetEvent(pp->ov.hEvent);\n        if (!ReadFile(pp->h, pp->stage, 65536, NULL, &pp->ov)) {\n            if (GetLastError() == ERROR_IO_PENDING) { pp->busy = true; return; }\n            /* ERROR_BROKEN_PIPE: the child closed its end */\n            nx_cpipe_close(pp);\n            pp->eof = true;\n            return;\n        }\n        if (GetOverlappedResult(pp->h, &pp->ov, &got, FALSE) && got > 0) nx_cbuf_add(&pp->buf, pp->stage, got);\n    }\n}\n/* take a read that completed */\nNX_INLINE void nx_cpipe_finish(nx_cpipe* pp) {\n    if (!pp->busy) return;\n    DWORD got = 0;\n    if (GetOverlappedResult(pp->h, &pp->ov, &got, FALSE)) {\n        pp->busy = false;\n        if (got > 0) nx_cbuf_add(&pp->buf, pp->stage, got);\n        return;\n    }\n    if (GetLastError() == ERROR_IO_INCOMPLETE) return;\n    pp->busy = false;\n    nx_cpipe_close(pp);\n    pp->eof = true;\n}\nNX_INLINE bool nx_child_reap(nx_child* ch, bool block) {\n    if (ch->done) return true;\n    if (WaitForSingleObject(ch->proc, block ? INFINITE : 0) != WAIT_OBJECT_0) return false;\n    DWORD ec = 1;\n    GetExitCodeProcess(ch->proc, &ec);\n    ch->done = true;\n    ch->code = (int32_t)ec;\n    ch->sig = ch->sent && ec == (DWORD)(128 + ch->sent) ? ch->sent : 0;\n    return true;\n}\n#else\nNX_INLINE void nx_cpipe_close(nx_cpipe* pp) {\n    if (pp->fd >= 0) { close(pp->fd); pp->fd = -1; }\n}\n/* one read from an output pipe the poll found ready */\nNX_INLINE void nx_cpipe_pull(nx_cpipe* pp) {\n    uint8_t buf[65536];\n    ssize_t n = read(pp->fd, buf, sizeof buf);\n    if (n > 0) { nx_cbuf_add(&pp->buf, buf, (size_t)n); return; }\n    if (n < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) return;\n    nx_cpipe_close(pp);\n    pp->eof = true;\n}\nNX_INLINE bool nx_child_reap(nx_child* ch, bool block) {\n    if (ch->done) return true;\n    int st = 0;\n    pid_t r;\n    do { r = waitpid((pid_t)ch->pid, &st, block ? 0 : WNOHANG); } while (r < 0 && errno == EINTR);\n    if (r == 0) return false;\n    ch->done = true;\n    if (r < 0) { ch->code = -1; ch->sig = 0; return true; } /* waited for elsewhere */\n    if (WIFSIGNALED(st)) { ch->sig = WTERMSIG(st); ch->code = 128 + ch->sig; }\n    else { ch->sig = 0; ch->code = WIFEXITED(st) ? WEXITSTATUS(st) : -1; }\n    return true;\n}\n#endif\nNX_INLINE bool nx_child_holds(nx_child* ch, int until, size_t n, const size_t* off) {\n    if (until == NX_CH_WRITTEN) return *off >= n;\n    if (until == NX_CH_OUT) return nx_cpipe_ready(&ch->out);\n    if (until == NX_CH_ERR) return nx_cpipe_ready(&ch->err);\n    return nx_child_reap(ch, false);\n}\n/* Serve the child's pipes until `until` holds or `timeout_ms` passes:\n   output that arrives is kept, and for NX_CH_WRITTEN `src[*off..n]` goes in\n   as the child takes it. 0 when it held, 3 on timeout, 4 when the input\n   broke (the child reads no more) or waiting failed. */\nstatic int32_t nx_child_serve(nx_child* ch, int until, const uint8_t* src, size_t n, size_t* off, int64_t timeout_ms) {\n    int64_t start = nx_mono_ms();\n#if defined(_WIN32)\n    int32_t result = 3;\n    for (;;) {\n        nx_cpipe_post(&ch->out);\n        nx_cpipe_post(&ch->err);\n        if (until == NX_CH_WRITTEN && !ch->in.busy && *off < n) {\n            if (!ch->in.h) { result = 4; break; }\n            DWORD chunk = (DWORD)(n - *off > (1u << 30) ? (1u << 30) : n - *off), w = 0;\n            ResetEvent(ch->in.ov.hEvent);\n            if (WriteFile(ch->in.h, src + *off, chunk, NULL, &ch->in.ov)) {\n                if (GetOverlappedResult(ch->in.h, &ch->in.ov, &w, FALSE)) *off += w;\n                continue;\n            }\n            /* ERROR_NO_DATA or ERROR_BROKEN_PIPE: the child reads no more */\n            if (GetLastError() != ERROR_IO_PENDING) { result = 4; break; }\n            ch->in.busy = true;\n        }\n        if (nx_child_holds(ch, until, n, off)) { result = 0; break; }\n        int64_t left = nx_left_ms(start, timeout_ms);\n        HANDLE ev[4];\n        DWORD k = 0;\n        if (ch->out.busy) ev[k++] = ch->out.ov.hEvent;\n        if (ch->err.busy) ev[k++] = ch->err.ov.hEvent;\n        if (ch->in.busy) ev[k++] = ch->in.ov.hEvent;\n        if (until == NX_CH_EXIT) ev[k++] = ch->proc;\n        if (k == 0) { result = 4; break; } /* nothing could change: a stream not piped */\n        DWORD r = WaitForMultipleObjects(k, ev, FALSE, left < 0 ? INFINITE : (DWORD)(left > 0x7fffffff ? 0x7fffffff : left));\n        if (r == WAIT_FAILED) { result = 4; break; }\n        nx_cpipe_finish(&ch->out);\n        nx_cpipe_finish(&ch->err);\n        if (ch->in.busy) {\n            DWORD w = 0;\n            if (GetOverlappedResult(ch->in.h, &ch->in.ov, &w, FALSE)) { ch->in.busy = false; *off += w; }\n            else if (GetLastError() != ERROR_IO_INCOMPLETE) { ch->in.busy = false; result = 4; break; }\n        }\n        if (nx_child_holds(ch, until, n, off)) { result = 0; break; }\n        if (r == WAIT_TIMEOUT && nx_left_ms(start, timeout_ms) == 0) { result = 3; break; }\n    }\n    /* a write still in flight reads the caller's bytes: it is called off before they go */\n    if (ch->in.busy) {\n        DWORD w = 0;\n        CancelIoEx(ch->in.h, &ch->in.ov);\n        if (GetOverlappedResult(ch->in.h, &ch->in.ov, &w, TRUE)) *off += w;\n        ch->in.busy = false;\n    }\n    return result;\n#else\n    int nap = 1;\n    for (;;) {\n        if (nx_child_holds(ch, until, n, off)) return 0;\n        int64_t left = nx_left_ms(start, timeout_ms);\n        struct pollfd p[3];\n        int np = 0, io = -1, ie = -1, ii = -1;\n        if (ch->out.fd >= 0) { p[np].fd = ch->out.fd; p[np].events = POLLIN; p[np].revents = 0; io = np++; }\n        if (ch->err.fd >= 0) { p[np].fd = ch->err.fd; p[np].events = POLLIN; p[np].revents = 0; ie = np++; }\n        if (until == NX_CH_WRITTEN) {\n            if (ch->in.fd < 0) return 4;\n            p[np].fd = ch->in.fd; p[np].events = POLLOUT; p[np].revents = 0; ii = np++;\n        }\n        int wait = left < 0 ? -1 : left > 1000000000 ? 1000000000 : (int)left;\n        if (until == NX_CH_EXIT) {\n            /* an exit cannot be polled for: with pipes to watch, look again\n               every 20 ms; with none, wait for it, or nap a little longer each time */\n            if (np == 0) {\n                if (wait < 0) { nx_child_reap(ch, true); continue; }\n                if (nap < wait) wait = nap;\n                if (nap < 32) nap *= 2;\n            } else if (wait < 0 || wait > 20) wait = 20;\n        } else if (np == 0) return 4; /* nothing could change: a stream not piped */\n        int r = 0;\n        if (np == 0) nx_sleep_ms((uint64_t)wait);\n        else r = poll(p, (nfds_t)np, wait);\n        if (r < 0 && errno != EINTR) return 4;\n        if (r > 0) {\n            if (io >= 0 && p[io].revents) nx_cpipe_pull(&ch->out);\n            if (ie >= 0 && p[ie].revents) nx_cpipe_pull(&ch->err);\n            if (ii >= 0 && p[ii].revents) {\n                ssize_t w = write(ch->in.fd, src + *off, n - *off);\n                if (w > 0) *off += (size_t)w;\n                /* EPIPE: the child reads no more */\n                else if (w < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) return 4;\n            }\n        }\n        if (!nx_child_holds(ch, until, n, off) && nx_left_ms(start, timeout_ms) == 0) return 3;\n    }\n#endif\n}\n/* Start argv[0] (found on PATH) in `cwd` when given. `flags` says where each\n   stream goes, two bits each (stdin, then stdout, then stderr): 0 this\n   program's, 1 a pipe, 2 nowhere (the null device); 3 for stderr: into\n   stdout. `*out` gets the handle. */\nNX_INLINE int32_t nx_child_spawn(nx_ctx* c, const nx_sl_u8* argv, size_t argc, nx_sl_u8 cwd, int64_t flags, int64_t* out) {\n    if (argc == 0) return 4;\n    char dir[4096];\n    const char* cwdp = NULL;\n    if (cwd.len > 0) { if (!nx_cpath(cwd, dir, sizeof dir)) return 4; cwdp = dir; }\n    int mode[3] = { (int)(flags & 3), (int)((flags >> 2) & 3), (int)((flags >> 4) & 3) };\n    if (mode[0] == 3 || mode[1] == 3) return 4;\n    int slot = nx_child_claim();\n    if (slot < 0) return 4;\n    nx_child* ch = &nx_children[slot];\n    nx_child_reset(ch);\n    nx_cpipe* pipes[3] = { &ch->in, &ch->out, &ch->err };\n    fflush(stdout); fflush(stderr);\n#if defined(_WIN32)\n    static const DWORD std_ids[3] = { STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE };\n    SECURITY_ATTRIBUTES sa; sa.nLength = sizeof sa; sa.bInheritHandle = TRUE; sa.lpSecurityDescriptor = NULL;\n    HANDLE ours[3] = { NULL, NULL, NULL }, give[3] = { NULL, NULL, NULL }, shut[3] = { NULL, NULL, NULL };\n    HANDLE nul = NULL;\n    int nshut = 0;\n    bool ok = true;\n    for (int i = 0; i < 3 && ok; i++) {\n        if (mode[i] == 1) {\n            ok = nx_win_pipe(i == 0, &ours[i], &give[i]);\n            if (ok) shut[nshut++] = give[i];\n        } else if (mode[i] == 2) {\n            if (!nul) {\n                nul = CreateFileA(\"NUL\", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, NULL);\n                if (nul == INVALID_HANDLE_VALUE) { nul = NULL; ok = false; break; }\n                shut[nshut++] = nul;\n            }\n            give[i] = nul;\n        } else if (mode[i] == 3) give[i] = give[1];\n        else {\n            HANDLE d = nx_win_std_dup(std_ids[i]);\n            if (d) { give[i] = d; shut[nshut++] = d; } else give[i] = GetStdHandle(std_ids[i]);\n        }\n    }\n    DWORD err = 0;\n    PROCESS_INFORMATION pi;\n    if (ok) {\n        nx_string cmd;\n        nx_win_cmdline(c, argv, argc, &cmd);\n        err = nx_win_start((char*)cmd.ptr, cwdp, give, &pi);\n        nx_str_free(c, &cmd);\n    }\n    for (int i = 0; i < nshut; i++) CloseHandle(shut[i]);\n    if (!ok || err) {\n        for (int i = 0; i < 3; i++) if (ours[i]) CloseHandle(ours[i]);\n        __atomic_store_n(&ch->state, 0, __ATOMIC_RELEASE);\n        return err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND ? 1 : 4;\n    }\n    CloseHandle(pi.hThread);\n    ch->proc = pi.hProcess;\n    ch->pid = (int64_t)pi.dwProcessId;\n    for (int i = 0; i < 3; i++) {\n        if (!ours[i]) continue;\n        nx_cpipe* pp = pipes[i];\n        pp->h = ours[i];\n        pp->piped = true;\n        pp->ov.hEvent = CreateEventA(NULL, TRUE, FALSE, NULL);\n        if (i > 0) pp->stage = (uint8_t*)malloc(65536);\n    }\n#else\n    char** av = (char**)nx_alloc_bytes(c, (argc + 1) * sizeof(char*), 8);\n    for (size_t i = 0; i < argc; i++) {\n        av[i] = (char*)nx_alloc_bytes(c, argv[i].len + 1, 1);\n        nx_bytes_copy(av[i], argv[i].ptr, argv[i].len); av[i][argv[i].len] = 0;\n    }\n    av[argc] = NULL;\n    int ends[3][2] = { { -1, -1 }, { -1, -1 }, { -1, -1 } };\n    int nul = -1, fail[2] = { -1, -1 };\n    bool ok = nx_pipe_cloexec(fail) == 0;\n    for (int i = 0; i < 3 && ok; i++) {\n        if (mode[i] == 1) ok = nx_pipe_cloexec(ends[i]) == 0;\n        else if (mode[i] == 2 && nul < 0) { nul = open(\"/dev/null\", O_RDWR | O_CLOEXEC); ok = nul >= 0; }\n    }\n    pid_t pid = ok ? fork() : -1;\n    if (pid == 0) {\n        /* the child: its end of each pipe, the null device, or this program's */\n        int fds[3];\n        for (int i = 0; i < 3; i++) {\n            if (mode[i] == 1) fds[i] = i == 0 ? ends[0][0] : ends[i][1];\n            else if (mode[i] == 2) fds[i] = nul;\n            else if (mode[i] == 3) fds[i] = fds[1] >= 0 ? fds[1] : 1;\n            else fds[i] = -1;\n        }\n        nx_child_std(fds);\n        int why[2] = { 0, 0 };\n        if (cwdp && chdir(cwdp) != 0) { why[0] = 1; why[1] = errno; }\n        else {\n            /* what this program held back or caught, the child starts without */\n            sigset_t none;\n            sigemptyset(&none);\n            sigprocmask(SIG_SETMASK, &none, NULL);\n            execvp(av[0], av);\n            why[1] = errno;\n        }\n        /* the fail pipe closes when exec succeeds; failing, it says why */\n        ssize_t w = write(fail[1], why, sizeof why);\n        (void)w;\n        _exit(127);\n    }\n    /* the child's ends are its own now */\n    if (ends[0][0] >= 0) close(ends[0][0]);\n    if (ends[1][1] >= 0) close(ends[1][1]);\n    if (ends[2][1] >= 0) close(ends[2][1]);\n    if (nul >= 0) close(nul);\n    if (fail[1] >= 0) close(fail[1]);\n    int why[2] = { 0, 0 };\n    ssize_t got = 0;\n    if (pid > 0) {\n        do { got = read(fail[0], why, sizeof why); } while (got < 0 && errno == EINTR);\n    }\n    if (fail[0] >= 0) close(fail[0]);\n    bool failed = pid <= 0 || got == (ssize_t)sizeof why;\n    /* not found: exec found no such file anywhere it looked */\n    bool missing = failed && pid > 0 && why[0] == 0 && (why[1] == ENOENT || why[1] == ENOTDIR || why[1] == EACCES) && !nx_prog_exists(av[0]);\n    for (size_t i = 0; i < argc; i++) nx_free_bytes(c, av[i], argv[i].len + 1);\n    nx_free_bytes(c, av, (argc + 1) * sizeof(char*));\n    if (failed) {\n        if (pid > 0) { int st; while (waitpid(pid, &st, 0) < 0 && errno == EINTR) { } }\n        if (ends[0][1] >= 0) close(ends[0][1]);\n        if (ends[1][0] >= 0) close(ends[1][0]);\n        if (ends[2][0] >= 0) close(ends[2][0]);\n        __atomic_store_n(&ch->state, 0, __ATOMIC_RELEASE);\n        return missing ? 1 : 4;\n    }\n    ch->pid = (int64_t)pid;\n    ch->in.fd = ends[0][1];\n    ch->out.fd = ends[1][0];\n    ch->err.fd = ends[2][0];\n    for (int i = 0; i < 3; i++) pipes[i]->piped = mode[i] == 1;\n    /* the input goes in as the child takes it: a write never blocks */\n    if (ch->in.fd >= 0) { int fl = fcntl(ch->in.fd, F_GETFL); if (fl >= 0) fcntl(ch->in.fd, F_SETFL, fl | O_NONBLOCK); }\n#endif\n    __atomic_store_n(&ch->state, 2, __ATOMIC_RELEASE);\n    *out = slot + 1;\n    return 0;\n}\n/* Write all of `data` as the child takes it, keeping its output meanwhile. */\nNX_INLINE int32_t nx_child_write(int64_t h, nx_sl_u8 data, int64_t timeout_ms) {\n    nx_child* ch = nx_child_at(h);\n    if (!ch || !ch->in.piped) return 4;\n    size_t off = 0;\n#if defined(_WIN32)\n    return nx_child_serve(ch, NX_CH_WRITTEN, data.ptr, data.len, &off, timeout_ms);\n#else\n    sigset_t old;\n    nx_sigpipe_hold(&old);\n    int32_t r = nx_child_serve(ch, NX_CH_WRITTEN, data.ptr, data.len, &off, timeout_ms);\n    nx_sigpipe_release(&old);\n    return r;\n#endif\n}\n/* the end of the child's input */\nNX_INLINE void nx_child_close_input(int64_t h) {\n    nx_child* ch = nx_child_at(h);\n    if (ch) nx_cpipe_close(&ch->in);\n}\n/* Up to `n` bytes the child wrote to `stream` (1 stdout, 2 stderr), waiting\n   for some; empty at its end. */\nNX_INLINE int32_t nx_child_read(nx_ctx* c, int64_t h, int64_t stream, size_t n, int64_t timeout_ms, nx_string* out) {\n    nx_child* ch = nx_child_at(h);\n    if (!ch || (stream != 1 && stream != 2)) return 4;\n    nx_cpipe* pp = stream == 2 ? &ch->err : &ch->out;\n    if (!pp->piped) return 4;\n    size_t none = 0;\n    int32_t r = nx_child_serve(ch, stream == 2 ? NX_CH_ERR : NX_CH_OUT, NULL, 0, &none, timeout_ms);\n    if (r) return r;\n    nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;\n    size_t have = pp->buf.len - pp->buf.pos;\n    if (have > n) have = n;\n    if (have > 0) { nx_str_append(c, &s, pp->buf.p + pp->buf.pos, have); pp->buf.pos += have; }\n    *out = s;\n    return 0;\n}\n/* Wait for the child to end, keeping its output meanwhile; `*status` is\n   its exit code in the low 32 bits and the signal that ended it above. */\nNX_INLINE int32_t nx_child_wait(int64_t h, int64_t timeout_ms, int64_t* status) {\n    nx_child* ch = nx_child_at(h);\n    if (!ch) return 4;\n    size_t none = 0;\n    int32_t r = nx_child_serve(ch, NX_CH_EXIT, NULL, 0, &none, timeout_ms);\n    if (r) return r;\n    *status = ((int64_t)ch->sig << 32) | (int64_t)(uint32_t)ch->code;\n    return 0;\n}\n/* Send the child a signal; on Windows, which has none, any but 0 ends it\n   with exit code 128 + sig, and child_wait reports the signal. Nothing\n   happens to a child that already ended. */\nNX_INLINE int32_t nx_child_signal(int64_t h, int32_t sig) {\n    nx_child* ch = nx_child_at(h);\n    if (!ch || sig < 0 || sig > 64) return 4;\n    if (ch->done) return 0;\n#if defined(_WIN32)\n    if (sig == 0 || WaitForSingleObject(ch->proc, 0) == WAIT_OBJECT_0) return 0;\n    ch->sent = sig;\n    if (!TerminateProcess(ch->proc, (UINT)(128 + sig))) return WaitForSingleObject(ch->proc, 0) == WAIT_OBJECT_0 ? 0 : 4;\n    return 0;\n#else\n    return kill((pid_t)ch->pid, sig) == 0 || errno == ESRCH ? 0 : 4;\n#endif\n}\n/* Let the child go: its pipes close and what was not read is dropped. A\n   program still running goes on (and is not waited for). */\nNX_INLINE void nx_child_close(int64_t h) {\n    nx_child* ch = nx_child_at(h);\n    if (!ch) return;\n    int expected = 2;\n    if (!__atomic_compare_exchange_n(&ch->state, &expected, 1, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) return;\n    nx_cpipe* pipes[3] = { &ch->in, &ch->out, &ch->err };\n    for (int i = 0; i < 3; i++) {\n        nx_cpipe* pp = pipes[i];\n        nx_cpipe_close(pp);\n        free(pp->buf.p);\n        pp->buf.p = NULL;\n#if defined(_WIN32)\n        if (pp->ov.hEvent) CloseHandle(pp->ov.hEvent);\n        free(pp->stage);\n#endif\n    }\n    nx_child_reap(ch, false); /* one that ended leaves nothing behind */\n#if defined(_WIN32)\n    CloseHandle(ch->proc);\n#endif\n    __atomic_store_n(&ch->state, 0, __ATOMIC_RELEASE);\n}\n\n/* process.trap_signals and next_signal: SIGINT, SIGTERM and SIGHUP (on\n   Windows Ctrl-C, Ctrl-Break, the console closing, logoff and shutdown)\n   no longer end the program; each is queued, and next_signal takes them\n   in order. */\nNX_STATE int nx_sig_trapped;\n#if defined(_WIN32)\nNX_STATE HANDLE nx_sig_sem;\nNX_STATE volatile LONG nx_sig_head, nx_sig_tail;\nNX_STATE volatile LONG nx_sig_ring[64];\nstatic BOOL WINAPI nx_sig_console(DWORD kind) {\n    LONG sig = kind == CTRL_C_EVENT ? 2 : kind == CTRL_BREAK_EVENT ? 21 : kind == CTRL_CLOSE_EVENT ? 1 : 15;\n    LONG t = InterlockedIncrement(&nx_sig_tail) - 1;\n    nx_sig_ring[t & 63] = sig;\n    ReleaseSemaphore(nx_sig_sem, 1, NULL);\n    /* the console closing, logoff and shutdown end the program once this\n       returns: it does not, so the program has until the system's limit\n       (a few seconds) to finish */\n    if (kind == CTRL_CLOSE_EVENT || kind == CTRL_LOGOFF_EVENT || kind == CTRL_SHUTDOWN_EVENT) Sleep(INFINITE);\n    return TRUE;\n}\nNX_INLINE void nx_trap_signals(void) {\n    int expected = 0;\n    if (!__atomic_compare_exchange_n(&nx_sig_trapped, &expected, 1, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) return;\n    nx_sig_sem = CreateSemaphoreA(NULL, 0, 64, NULL);\n    SetConsoleCtrlHandler(nx_sig_console, TRUE);\n}\nNX_INLINE int32_t nx_next_signal(int64_t timeout_ms) {\n    if (!nx_sig_sem) return 0;\n    DWORD r = WaitForSingleObject(nx_sig_sem, timeout_ms < 0 ? INFINITE : (DWORD)(timeout_ms > 0x7fffffff ? 0x7fffffff : timeout_ms));\n    if (r != WAIT_OBJECT_0) return 0;\n    LONG hd = InterlockedIncrement(&nx_sig_head) - 1;\n    return (int32_t)nx_sig_ring[hd & 63];\n}\n#else\n/* the handler writes the signal's number to a pipe (all a handler may\n   safely do), and next_signal reads it back */\nNX_STATE int nx_sig_rd NX_STATE_INIT(-1);\nNX_STATE int nx_sig_wr NX_STATE_INIT(-1);\nstatic void nx_sig_caught(int sig) {\n    int saved = errno;\n    unsigned char b = (unsigned char)sig;\n    ssize_t w = write(nx_sig_wr, &b, 1);\n    (void)w;\n    errno = saved;\n}\nNX_INLINE void nx_trap_signals(void) {\n    int expected = 0;\n    if (!__atomic_compare_exchange_n(&nx_sig_trapped, &expected, 1, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) return;\n    int p[2];\n    if (nx_pipe_cloexec(p) != 0) return;\n    fcntl(p[0], F_SETFL, fcntl(p[0], F_GETFL) | O_NONBLOCK);\n    fcntl(p[1], F_SETFL, fcntl(p[1], F_GETFL) | O_NONBLOCK);\n    nx_sig_wr = p[1];\n    __atomic_store_n(&nx_sig_rd, p[0], __ATOMIC_RELEASE);\n    struct sigaction sa;\n    memset(&sa, 0, sizeof sa);\n    sa.sa_handler = nx_sig_caught;\n    sigemptyset(&sa.sa_mask);\n    sa.sa_flags = SA_RESTART;\n    sigaction(SIGINT, &sa, NULL);\n    sigaction(SIGTERM, &sa, NULL);\n    sigaction(SIGHUP, &sa, NULL);\n}\nNX_INLINE int32_t nx_next_signal(int64_t timeout_ms) {\n    int fd = __atomic_load_n(&nx_sig_rd, __ATOMIC_ACQUIRE);\n    if (fd < 0) return 0;\n    int64_t start = nx_mono_ms();\n    for (;;) {\n        unsigned char b = 0;\n        if (read(fd, &b, 1) == 1) return (int32_t)b;\n        int64_t left = nx_left_ms(start, timeout_ms);\n        if (left == 0) return 0;\n        struct pollfd p;\n        p.fd = fd; p.events = POLLIN; p.revents = 0;\n        if (poll(&p, 1, left < 0 ? -1 : left > 1000000000 ? 1000000000 : (int)left) < 0 && errno != EINTR) return 0;\n    }\n}\n#endif\n#endif\n\nNX_INLINE bool nx_read_file(nx_ctx* c, nx_sl_u8 path, nx_string* out) {\n    char p[4096];\n    if (!nx_cpath(path, p, sizeof p)) return false;\n    FILE* f = fopen(p, \"rb\");\n    if (!f) return false;\n    nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;\n    uint8_t buf[65536];\n    size_t n;\n    while ((n = fread(buf, 1, sizeof buf, f)) > 0) nx_str_append(c, &s, buf, n);\n    fclose(f);\n    *out = s;\n    return true;\n}\nNX_INLINE bool nx_write_file(nx_sl_u8 path, nx_sl_u8 data) {\n    char p[4096];\n    if (!nx_cpath(path, p, sizeof p)) return false;\n    FILE* f = fopen(p, \"wb\");\n    if (!f) return false;\n    size_t w = data.len ? fwrite(data.ptr, 1, data.len, f) : 0;\n    fclose(f);\n    return w == data.len;\n}\nNX_INLINE bool nx_append_file(nx_sl_u8 path, nx_sl_u8 data) {\n    char p[4096];\n    if (!nx_cpath(path, p, sizeof p)) return false;\n    FILE* f = fopen(p, \"ab\");\n    if (!f) return false;\n    size_t w = data.len ? fwrite(data.ptr, 1, data.len, f) : 0;\n    fclose(f);\n    return w == data.len;\n}\n\n/* ------------------------------------------------------------- file system */\n/* Results: 0 ok, 1 not found, 2 any other failure. */\nNX_INLINE int32_t nx_fs_errcode(void) { return errno == ENOENT ? 1 : 2; }\n/* 0 = nothing there, 1 = file (or anything not a directory), 2 = directory */\nNX_INLINE int32_t nx_fs_kind(nx_sl_u8 path) {\n    char p[4096];\n    if (!nx_cpath(path, p, sizeof p)) return 0;\n#if defined(_WIN32)\n    DWORD a = GetFileAttributesA(p);\n    if (a == INVALID_FILE_ATTRIBUTES) return 0;\n    return (a & FILE_ATTRIBUTE_DIRECTORY) ? 2 : 1;\n#else\n    struct stat st;\n    if (stat(p, &st) != 0) return 0;\n    return S_ISDIR(st.st_mode) ? 2 : 1;\n#endif\n}\nNX_INLINE int32_t nx_fs_stat(nx_sl_u8 path, int64_t* size, int64_t* mtime_ms) {\n    char p[4096];\n    if (!nx_cpath(path, p, sizeof p)) return nx_fs_errcode();\n#if defined(_WIN32)\n    struct _stat64 st;\n    if (_stat64(p, &st) != 0) return nx_fs_errcode();\n#else\n    struct stat st;\n    if (stat(p, &st) != 0) return nx_fs_errcode();\n#endif\n    *size = (int64_t)st.st_size;\n    *mtime_ms = (int64_t)st.st_mtime * 1000;\n    return 0;\n}\nNX_INLINE int32_t nx_fs_mkdir(nx_sl_u8 path) {\n    char p[4096];\n    if (!nx_cpath(path, p, sizeof p)) return nx_fs_errcode();\n#if defined(_WIN32)\n    if (_mkdir(p) == 0 || errno == EEXIST) return 0;\n#else\n    if (mkdir(p, 0777) == 0 || errno == EEXIST) return 0;\n#endif\n    return nx_fs_errcode();\n}\nNX_INLINE int32_t nx_fs_remove_file(nx_sl_u8 path) {\n    char p[4096];\n    if (!nx_cpath(path, p, sizeof p)) return nx_fs_errcode();\n    if (remove(p) == 0) return 0;\n#if defined(_WIN32)\n    /* a read-only file (every object in a git checkout) refuses `remove` on\n       Windows; asking to delete it is asking to clear that bit first */\n    if (errno == EACCES && _chmod(p, _S_IWRITE) == 0 && remove(p) == 0) return 0;\n#endif\n    return nx_fs_errcode();\n}\nNX_INLINE int32_t nx_fs_remove_dir(nx_sl_u8 path) {\n    char p[4096];\n    if (!nx_cpath(path, p, sizeof p)) return nx_fs_errcode();\n#if defined(_WIN32)\n    return _rmdir(p) == 0 ? 0 : nx_fs_errcode();\n#else\n    return rmdir(p) == 0 ? 0 : nx_fs_errcode();\n#endif\n}\nNX_INLINE int32_t nx_fs_rename(nx_sl_u8 from, nx_sl_u8 to) {\n    char p[4096], q[4096];\n    if (!nx_cpath(from, p, sizeof p) || !nx_cpath(to, q, sizeof q)) return nx_fs_errcode();\n#if defined(_WIN32)\n    if (MoveFileExA(p, q, MOVEFILE_REPLACE_EXISTING)) return 0;\n    return GetLastError() == ERROR_FILE_NOT_FOUND || GetLastError() == ERROR_PATH_NOT_FOUND ? 1 : 2;\n#else\n    return rename(p, q) == 0 ? 0 : nx_fs_errcode();\n#endif\n}\nNX_INLINE void nx_fs_push_name(nx_ctx* c, nx_rawlist* l, const char* name) {\n    if (strcmp(name, \".\") == 0 || strcmp(name, \"..\") == 0) return;\n    nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;\n    nx_str_append(c, &s, (const uint8_t*)name, strlen(name));\n    if (l->len == l->cap) nx_list_grow(c, l, sizeof(nx_string), _Alignof(nx_string), l->len + 1);\n    ((nx_string*)l->ptr)[l->len++] = s;\n}\n/* the entries of a directory, unsorted, without `.` and `..` */\nNX_INLINE int32_t nx_fs_list_dir(nx_ctx* c, nx_sl_u8 path, nx_rawlist* out) {\n    char p[4096];\n    if (!nx_cpath(path, p, sizeof p)) return nx_fs_errcode();\n    nx_rawlist l; l.ptr = NULL; l.len = 0; l.cap = 0; l.ar = c->arena;\n#if defined(_WIN32)\n    char pat[4200];\n    snprintf(pat, sizeof pat, \"%s\\\\*\", p);\n    WIN32_FIND_DATAA fd;\n    HANDLE h = FindFirstFileA(pat, &fd);\n    if (h == INVALID_HANDLE_VALUE) {\n        DWORD e = GetLastError();\n        return e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND ? 1 : 2;\n    }\n    do { nx_fs_push_name(c, &l, fd.cFileName); } while (FindNextFileA(h, &fd));\n    FindClose(h);\n#else\n    DIR* d = opendir(p);\n    if (!d) return nx_fs_errcode();\n    struct dirent* e;\n    while ((e = readdir(d)) != NULL) nx_fs_push_name(c, &l, e->d_name);\n    closedir(d);\n#endif\n    *out = l;\n    return 0;\n}\nNX_INLINE bool nx_fs_cwd(nx_ctx* c, nx_string* out) {\n    char buf[4096];\n    size_t n;\n#if defined(_WIN32)\n    DWORD r = GetCurrentDirectoryA(sizeof buf, buf);\n    if (r == 0 || r >= sizeof buf) return false;\n    n = (size_t)r;\n#else\n    if (!getcwd(buf, sizeof buf)) return false;\n    n = strlen(buf);\n#endif\n    nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;\n    nx_str_append(c, &s, (const uint8_t*)buf, n);\n    *out = s;\n    return true;\n}\n/* the path of the running executable; empty when the platform will not say */\nNX_INLINE nx_string nx_exe_path(nx_ctx* c) {\n    nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;\n    char buf[4096];\n    size_t n = 0;\n#if defined(_WIN32)\n    DWORD r = GetModuleFileNameA(NULL, buf, (DWORD)sizeof buf);\n    if (r == 0 || r >= sizeof buf) return s;\n    n = (size_t)r;\n#elif defined(__APPLE__)\n    uint32_t size = (uint32_t)sizeof buf;\n    if (_NSGetExecutablePath(buf, &size) != 0) return s;\n    n = strlen(buf);\n#else\n    ssize_t r = readlink(\"/proc/self/exe\", buf, sizeof buf - 1);\n    if (r <= 0) return s;\n    n = (size_t)r;\n#endif\n    nx_str_append(c, &s, (const uint8_t*)buf, n);\n    return s;\n}\nNX_INLINE nx_string nx_fs_temp_dir(nx_ctx* c) {\n    nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;\n#if defined(_WIN32)\n    char buf[MAX_PATH + 2];\n    DWORD n = GetTempPathA(sizeof buf, buf);\n    if (n > 0 && n < sizeof buf) {\n        if (buf[n - 1] == '\\\\' || buf[n - 1] == '/') n--;\n        nx_str_append(c, &s, (const uint8_t*)buf, n);\n    }\n#else\n    const char* t = getenv(\"TMPDIR\");\n    if (!t || !*t) t = \"/tmp\";\n    size_t n = strlen(t);\n    if (n > 1 && t[n - 1] == '/') n--;\n    nx_str_append(c, &s, (const uint8_t*)t, n);\n#endif\n    return s;\n}\n\n/* ------------------------------------------------------------ file handles */\n/* 1 = stdin, 2 = stdout, 3 = stderr; opened files get 4 and up. */\n#define NX_MAX_FILES 64\nNX_STATE FILE* nx_files[NX_MAX_FILES];\nNX_INLINE FILE* nx_fh(int64_t h) {\n    if (h == 1) return stdin;\n    if (h == 2) return stdout;\n    if (h == 3) return stderr;\n    if (h < 4 || h >= NX_MAX_FILES + 4) return NULL;\n    return nx_files[h - 4];\n}\n/* a handle, or -1 when the path does not exist, -2 on any other failure */\nNX_INLINE int64_t nx_file_open(nx_sl_u8 path, nx_sl_u8 mode) {\n    char p[4096], m[8];\n    if (mode.len == 0 || mode.len > 3) return -2;\n    if (!nx_cpath(path, p, sizeof p)) return errno == ENOENT ? -1 : -2;\n    memcpy(m, mode.ptr, mode.len); m[mode.len] = 'b'; m[mode.len + 1] = 0;\n    FILE* f = fopen(p, m);\n    if (!f) return errno == ENOENT ? -1 : -2;\n    for (int i = 0; i < NX_MAX_FILES; i++) {\n        if (!nx_files[i]) { nx_files[i] = f; nx_track_handle(0, i + 4, true); return i + 4; }\n    }\n    fclose(f);\n    return -2;\n}\n/* stdin is read at the descriptor level, so a pipe or a terminal hands over what it\n   has instead of waiting for a full buffer the way fread does; every stdin reader in\n   the runtime consumes from this one buffer */\nNX_STATE uint8_t nx_stdin_buf[65536];\nNX_STATE size_t nx_stdin_pos, nx_stdin_len;\nNX_INLINE bool nx_stdin_fill(void) {\n    if (nx_stdin_pos < nx_stdin_len) return true;\n#if defined(_WIN32)\n    int n = _read(0, nx_stdin_buf, (unsigned)sizeof nx_stdin_buf);\n#else\n    ssize_t n;\n    do { n = read(0, nx_stdin_buf, sizeof nx_stdin_buf); } while (n < 0 && errno == EINTR);\n#endif\n    if (n <= 0) return false;\n    nx_stdin_pos = 0; nx_stdin_len = (size_t)n;\n    return true;\n}\n/* up to n bytes; an empty result means end of input */\nNX_INLINE bool nx_file_read(nx_ctx* c, int64_t h, size_t n, nx_string* out) {\n    FILE* f = nx_fh(h);\n    if (!f) return false;\n    nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;\n    if (n > 0 && h == 1) {\n        if (nx_stdin_fill()) {\n            size_t have = nx_stdin_len - nx_stdin_pos;\n            if (have > n) have = n;\n            nx_list_grow(c, (nx_rawlist*)&s, 1, 1, have);\n            memcpy(s.ptr, nx_stdin_buf + nx_stdin_pos, have);\n            s.len = have;\n            nx_stdin_pos += have;\n        }\n    } else if (n > 0) {\n        nx_list_grow(c, (nx_rawlist*)&s, 1, 1, n);\n        s.len = fread(s.ptr, 1, n, f);\n        if (s.len == 0 && ferror(f)) return false;\n    }\n    *out = s;\n    return true;\n}\nNX_INLINE bool nx_file_write(int64_t h, nx_sl_u8 data) {\n    FILE* f = nx_fh(h);\n    if (!f) return false;\n    return data.len == 0 || fwrite(data.ptr, 1, data.len, f) == data.len;\n}\nNX_INLINE bool nx_file_flush(int64_t h) {\n    FILE* f = nx_fh(h);\n    return f && fflush(f) == 0;\n}\nNX_INLINE bool nx_file_close(int64_t h) {\n    if (h >= 1 && h <= 3) return true;\n    FILE* f = nx_fh(h);\n    if (!f) return false;\n    nx_files[h - 4] = NULL;\n    nx_track_handle(0, h, false);\n    return fclose(f) == 0;\n}\n/* set a variable in this process's environment (and its children's); an\n   empty value removes it */\nNX_INLINE void nx_set_env(nx_sl_u8 name, nx_sl_u8 value) {\n    char n[256], v[4096];\n    if (name.len == 0 || name.len >= sizeof n || value.len >= sizeof v) return;\n    memcpy(n, name.ptr, name.len); n[name.len] = 0;\n    nx_bytes_copy(v, value.ptr, value.len); v[value.len] = 0;\n#if defined(_WIN32)\n    _putenv_s(n, v);\n#else\n    if (value.len == 0) unsetenv(n); else setenv(n, v, 1);\n#endif\n}\n/* is the handle (1 stdin, 2 stdout, 3 stderr) a terminal? */\nNX_INLINE bool nx_is_terminal(int64_t h) {\n    int fd = h == 1 ? 0 : h == 2 ? 1 : h == 3 ? 2 : -1;\n    if (fd < 0) return false;\n#if defined(_WIN32)\n    return _isatty(fd) != 0;\n#else\n    return isatty(fd) != 0;\n#endif\n}\n/* every environment variable as \"NAME=value\" */\nNX_INLINE void nx_environ(nx_ctx* c, nx_rawlist* out) {\n    nx_rawlist l; l.ptr = NULL; l.len = 0; l.cap = 0; l.ar = c->arena;\n#if defined(_WIN32)\n    char* env = GetEnvironmentStringsA();\n    if (env) {\n        for (char* p = env; *p; p += strlen(p) + 1) {\n            if (*p == '=') continue; /* per-drive working directories */\n            nx_fs_push_name(c, &l, p);\n        }\n        FreeEnvironmentStringsA(env);\n    }\n#else\n    for (char** e = environ; e && *e; e++) nx_fs_push_name(c, &l, *e);\n#endif\n    *out = l;\n}\n\n/* ------------------------------------------------------------------ sockets */\n/* Handles are the OS socket numbers. Result codes: 0 ok, 1 not found (name\n   lookup), 2 connection refused, 3 timed out, 4 any other failure. */\n#if defined(_WIN32)\ntypedef SOCKET nx_sock;\n#define NX_BAD_SOCK INVALID_SOCKET\n#define nx_closesock closesocket\nNX_INLINE void nx_net_init(void) {\n    static int done = 0;\n    if (!done) { WSADATA w; WSAStartup(MAKEWORD(2, 2), &w); done = 1; }\n}\nNX_INLINE int32_t nx_net_code(void) {\n    int e = WSAGetLastError();\n    if (e == WSAECONNREFUSED) return 2;\n    if (e == WSAETIMEDOUT || e == WSAEWOULDBLOCK) return 3;\n    return 4;\n}\nNX_INLINE void nx_net_blocking(nx_sock s, bool on) { u_long mode = on ? 0 : 1; ioctlsocket(s, FIONBIO, &mode); }\nNX_INLINE bool nx_net_in_progress(void) { return WSAGetLastError() == WSAEWOULDBLOCK; }\n#elif defined(NX_WASM)\ntypedef int nx_sock;\n#define NX_BAD_SOCK (-1)\n#define nx_closesock(s) ((void)(s), 0)\nNX_INLINE void nx_net_init(void) {}\n#else\ntypedef int nx_sock;\n#define NX_BAD_SOCK (-1)\n#define nx_closesock close\nNX_INLINE void nx_net_init(void) {}\nNX_INLINE int32_t nx_net_code(void) {\n    if (errno == ECONNREFUSED) return 2;\n    if (errno == ETIMEDOUT || errno == EAGAIN || errno == EWOULDBLOCK) return 3;\n    return 4;\n}\nNX_INLINE void nx_net_blocking(nx_sock s, bool on) {\n    int fl = fcntl(s, F_GETFL, 0);\n    if (fl >= 0) fcntl(s, F_SETFL, on ? (fl & ~O_NONBLOCK) : (fl | O_NONBLOCK));\n}\nNX_INLINE bool nx_net_in_progress(void) { return errno == EINPROGRESS || errno == EINTR; }\n#endif\n/* A send to a connection the peer has reset fails with EPIPE; without\n   these it raises SIGPIPE first, which ends the program. Linux and the BSDs\n   take MSG_NOSIGNAL on each send, macOS SO_NOSIGPIPE on the socket. */\n#if defined(MSG_NOSIGNAL)\n#define NX_SEND_FLAGS MSG_NOSIGNAL\n#else\n#define NX_SEND_FLAGS 0\n#endif\n#if defined(NX_WASM)\n/* no sockets in the playground: every call fails as \"any other failure\" */\nNX_INLINE int32_t nx_tcp_connect(nx_sl_u8 host, uint16_t port, int64_t timeout_ms, int64_t* out) { (void)host; (void)port; (void)timeout_ms; (void)out; return 4; }\nNX_INLINE int32_t nx_tcp_listen(nx_sl_u8 host, uint16_t port, int64_t* out) { (void)host; (void)port; (void)out; return 4; }\nNX_INLINE int32_t nx_tcp_accept(int64_t l, int64_t timeout_ms, int64_t* out) { (void)l; (void)timeout_ms; (void)out; return 4; }\nNX_INLINE int32_t nx_net_send(int64_t h, nx_sl_u8 data) { (void)h; (void)data; return 4; }\nNX_INLINE int32_t nx_net_recv(nx_ctx* c, int64_t h, size_t n, int64_t timeout_ms, nx_string* out) { (void)c; (void)h; (void)n; (void)timeout_ms; (void)out; return 4; }\nNX_INLINE int32_t nx_net_close(int64_t h) { (void)h; return 4; }\nNX_INLINE int32_t nx_net_name(nx_ctx* c, int64_t h, bool local, nx_string* out) { (void)c; (void)h; (void)local; (void)out; return 4; }\nNX_INLINE int32_t nx_net_resolve(nx_ctx* c, nx_sl_u8 host, nx_rawlist* out) { (void)c; (void)host; (void)out; return 4; }\nNX_INLINE int32_t nx_udp_bind(nx_sl_u8 host, uint16_t port, int64_t* out) { (void)host; (void)port; (void)out; return 4; }\nNX_INLINE int32_t nx_udp_send_to(int64_t h, nx_sl_u8 host, uint16_t port, nx_sl_u8 data) { (void)h; (void)host; (void)port; (void)data; return 4; }\nNX_INLINE int32_t nx_udp_recv_from(nx_ctx* c, int64_t h, size_t n, int64_t timeout_ms, nx_string* out) { (void)c; (void)h; (void)n; (void)timeout_ms; (void)out; return 4; }\nNX_INLINE nx_string nx_net_last_peer(nx_ctx* c) { nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena; return s; }\n#else\nNX_STATE char nx_net_peer_buf[128];\n\nNX_INLINE struct addrinfo* nx_net_lookup(nx_sl_u8 host, uint16_t port, int socktype, bool passive) {\n    char h[256], p[8];\n    if (host.len >= sizeof h) return NULL;\n    nx_bytes_copy(h, host.ptr, host.len); h[host.len] = 0;\n    snprintf(p, sizeof p, \"%u\", (unsigned)port);\n    struct addrinfo hints;\n    memset(&hints, 0, sizeof hints);\n    hints.ai_family = AF_UNSPEC;\n    hints.ai_socktype = socktype;\n    if (passive) hints.ai_flags = AI_PASSIVE;\n    struct addrinfo* res = NULL;\n    nx_net_init();\n    if (getaddrinfo(host.len ? h : NULL, p, &hints, &res) != 0) return NULL;\n    return res;\n}\nNX_INLINE void nx_net_set_timeout(nx_sock s, int64_t ms) {\n#if defined(_WIN32)\n    DWORD t = (DWORD)(ms < 0 ? 0 : ms);\n    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&t, sizeof t);\n#else\n    struct timeval tv;\n    tv.tv_sec = (time_t)(ms < 0 ? 0 : ms / 1000);\n    tv.tv_usec = (suseconds_t)(ms < 0 ? 0 : (ms % 1000) * 1000);\n    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv);\n#endif\n}\n/* wait until the socket is readable (or writable); false on timeout. For a\n   pending connect the exception set is watched too: Winsock reports a\n   refused connection there rather than as writable. */\nNX_INLINE bool nx_net_wait(nx_sock s, bool write, int64_t ms) {\n    fd_set fds, exc;\n    FD_ZERO(&fds);\n    FD_SET(s, &fds);\n    FD_ZERO(&exc);\n    FD_SET(s, &exc);\n    struct timeval tv;\n    tv.tv_sec = (long)(ms / 1000);\n    tv.tv_usec = (long)((ms % 1000) * 1000);\n    int r = select((int)(s + 1), write ? NULL : &fds, write ? &fds : NULL, write ? &exc : NULL, ms > 0 ? &tv : NULL);\n    return r > 0;\n}\n/* what every connected TCP socket gets: no Nagle delay, and no SIGPIPE */\nNX_INLINE void nx_tcp_ready(nx_sock s) {\n    int one = 1;\n    setsockopt(s, IPPROTO_TCP, TCP_NODELAY, (const char*)&one, sizeof one);\n#if defined(SO_NOSIGPIPE)\n    setsockopt(s, SOL_SOCKET, SO_NOSIGPIPE, (const char*)&one, sizeof one);\n#endif\n}\nNX_INLINE int32_t nx_tcp_connect(nx_sl_u8 host, uint16_t port, int64_t timeout_ms, int64_t* out) {\n    struct addrinfo* res = nx_net_lookup(host, port, SOCK_STREAM, false);\n    if (!res) return 1;\n    int32_t code = 4;\n    for (struct addrinfo* ai = res; ai; ai = ai->ai_next) {\n        nx_sock s = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);\n        if (s == NX_BAD_SOCK) continue;\n        bool ok;\n        if (timeout_ms > 0) {\n            nx_net_blocking(s, false);\n            int r = connect(s, ai->ai_addr, (int)ai->ai_addrlen);\n            ok = r == 0;\n            if (!ok && !nx_net_in_progress()) {\n                /* it failed at once (no route, say): the socket then\n                   selects as writable with no error pending, so waiting\n                   would take it for connected */\n                code = nx_net_code();\n            } else if (!ok) {\n                if (nx_net_wait(s, true, timeout_ms)) {\n                    int err = 0; socklen_t len = sizeof err;\n                    getsockopt(s, SOL_SOCKET, SO_ERROR, (char*)&err, &len);\n#if defined(_WIN32)\n                    if (err == 0) { fd_set ex; FD_ZERO(&ex); FD_SET(s, &ex); struct timeval z = {0, 0}; if (select((int)(s + 1), NULL, NULL, &ex, &z) > 0) err = WSAECONNREFUSED; }\n#endif\n                    ok = err == 0;\n                    if (!ok) {\n#if defined(_WIN32)\n                        WSASetLastError(err);\n#else\n                        errno = err;\n#endif\n                        code = nx_net_code();\n                    }\n                } else {\n                    code = 3;\n                }\n            }\n            nx_net_blocking(s, true);\n        } else {\n            ok = connect(s, ai->ai_addr, (int)ai->ai_addrlen) == 0;\n            if (!ok) code = nx_net_code();\n        }\n        if (ok) {\n            nx_tcp_ready(s);\n            *out = (int64_t)s; nx_track_handle(1, *out, true);\n            freeaddrinfo(res);\n            return 0;\n        }\n        nx_closesock(s);\n    }\n    freeaddrinfo(res);\n    return code;\n}\nNX_INLINE int32_t nx_tcp_listen(nx_sl_u8 host, uint16_t port, int64_t* out) {\n    struct addrinfo* res = nx_net_lookup(host, port, SOCK_STREAM, true);\n    if (!res) return 1;\n    int32_t code = 4;\n    for (struct addrinfo* ai = res; ai; ai = ai->ai_next) {\n        nx_sock s = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);\n        if (s == NX_BAD_SOCK) continue;\n        int one = 1;\n        setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (const char*)&one, sizeof one);\n        if (bind(s, ai->ai_addr, (int)ai->ai_addrlen) == 0 && listen(s, 64) == 0) {\n            *out = (int64_t)s; nx_track_handle(1, *out, true);\n            freeaddrinfo(res);\n            return 0;\n        }\n        code = nx_net_code();\n        nx_closesock(s);\n    }\n    freeaddrinfo(res);\n    return code;\n}\nNX_INLINE int32_t nx_tcp_accept(int64_t l, int64_t timeout_ms, int64_t* out) {\n    nx_sock ls = (nx_sock)l;\n    if (timeout_ms > 0 && !nx_net_wait(ls, false, timeout_ms)) return 3;\n    nx_sock s = accept(ls, NULL, NULL);\n    if (s == NX_BAD_SOCK) return nx_net_code();\n    nx_tcp_ready(s);\n    *out = (int64_t)s; nx_track_handle(1, *out, true);\n    return 0;\n}\nNX_INLINE int32_t nx_net_send(int64_t h, nx_sl_u8 data) {\n    nx_sock s = (nx_sock)h;\n    size_t sent = 0;\n    while (sent < data.len) {\n        int n = (int)send(s, (const char*)data.ptr + sent, (int)(data.len - sent), NX_SEND_FLAGS);\n        if (n <= 0) return nx_net_code();\n        sent += (size_t)n;\n    }\n    return 0;\n}\nNX_INLINE int32_t nx_net_recv(nx_ctx* c, int64_t h, size_t n, int64_t timeout_ms, nx_string* out) {\n    nx_sock s = (nx_sock)h;\n    if (timeout_ms > 0 && !nx_net_wait(s, false, timeout_ms)) return 3;\n    nx_string str; str.ptr = NULL; str.len = 0; str.cap = 0; str.ar = c->arena;\n    if (n == 0) { *out = str; return 0; }\n    nx_list_grow(c, (nx_rawlist*)&str, 1, 1, n);\n    int got = (int)recv(s, (char*)str.ptr, (int)n, 0);\n    if (got < 0) return nx_net_code();\n    str.len = (size_t)got;\n    *out = str;\n    return 0;\n}\nNX_INLINE int32_t nx_net_close(int64_t h) {\n    nx_track_handle(1, h, false);\n    return nx_closesock((nx_sock)h) == 0 ? 0 : 4;\n}\nNX_INLINE void nx_net_format_addr(struct sockaddr* sa, socklen_t len, char* buf, size_t cap) {\n    char host[96], serv[16];\n    if (getnameinfo(sa, len, host, sizeof host, serv, sizeof serv, NI_NUMERICHOST | NI_NUMERICSERV) != 0) { buf[0] = 0; return; }\n    if (sa->sa_family == AF_INET6) snprintf(buf, cap, \"[%s]:%s\", host, serv);\n    else snprintf(buf, cap, \"%s:%s\", host, serv);\n}\nNX_INLINE int32_t nx_net_name(nx_ctx* c, int64_t h, bool local, nx_string* out) {\n    struct sockaddr_storage ss;\n    socklen_t len = sizeof ss;\n    int r = local ? getsockname((nx_sock)h, (struct sockaddr*)&ss, &len) : getpeername((nx_sock)h, (struct sockaddr*)&ss, &len);\n    if (r != 0) return 4;\n    char buf[128];\n    nx_net_format_addr((struct sockaddr*)&ss, len, buf, sizeof buf);\n    nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;\n    nx_str_append(c, &s, (const uint8_t*)buf, strlen(buf));\n    *out = s;\n    return 0;\n}\nNX_INLINE int32_t nx_net_resolve(nx_ctx* c, nx_sl_u8 host, nx_rawlist* out) {\n    struct addrinfo* res = nx_net_lookup(host, 0, SOCK_STREAM, false);\n    if (!res) return 1;\n    nx_rawlist l; l.ptr = NULL; l.len = 0; l.cap = 0; l.ar = c->arena;\n    for (struct addrinfo* ai = res; ai; ai = ai->ai_next) {\n        char hostbuf[96];\n        if (getnameinfo(ai->ai_addr, (socklen_t)ai->ai_addrlen, hostbuf, sizeof hostbuf, NULL, 0, NI_NUMERICHOST) == 0) {\n            bool dup = false;\n            for (size_t i = 0; i < l.len; i++) {\n                nx_string* e = &((nx_string*)l.ptr)[i];\n                if (e->len == strlen(hostbuf) && memcmp(e->ptr, hostbuf, e->len) == 0) dup = true;\n            }\n            if (!dup) nx_fs_push_name(c, &l, hostbuf);\n        }\n    }\n    freeaddrinfo(res);\n    *out = l;\n    return 0;\n}\nNX_INLINE int32_t nx_udp_bind(nx_sl_u8 host, uint16_t port, int64_t* out) {\n    struct addrinfo* res = nx_net_lookup(host, port, SOCK_DGRAM, true);\n    if (!res) return 1;\n    int32_t code = 4;\n    for (struct addrinfo* ai = res; ai; ai = ai->ai_next) {\n        nx_sock s = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);\n        if (s == NX_BAD_SOCK) continue;\n        if (bind(s, ai->ai_addr, (int)ai->ai_addrlen) == 0) {\n            *out = (int64_t)s; nx_track_handle(1, *out, true);\n            freeaddrinfo(res);\n            return 0;\n        }\n        code = nx_net_code();\n        nx_closesock(s);\n    }\n    freeaddrinfo(res);\n    return code;\n}\nNX_INLINE int32_t nx_udp_send_to(int64_t h, nx_sl_u8 host, uint16_t port, nx_sl_u8 data) {\n    struct addrinfo* res = nx_net_lookup(host, port, SOCK_DGRAM, false);\n    if (!res) return 1;\n    int n = (int)sendto((nx_sock)h, (const char*)data.ptr, (int)data.len, 0, res->ai_addr, (int)res->ai_addrlen);\n    freeaddrinfo(res);\n    return n < 0 ? nx_net_code() : 0;\n}\nNX_INLINE int32_t nx_udp_recv_from(nx_ctx* c, int64_t h, size_t n, int64_t timeout_ms, nx_string* out) {\n    nx_sock s = (nx_sock)h;\n    if (timeout_ms > 0 && !nx_net_wait(s, false, timeout_ms)) return 3;\n    nx_string str; str.ptr = NULL; str.len = 0; str.cap = 0; str.ar = c->arena;\n    if (n == 0) n = 1;\n    nx_list_grow(c, (nx_rawlist*)&str, 1, 1, n);\n    struct sockaddr_storage ss;\n    socklen_t len = sizeof ss;\n    int got = (int)recvfrom(s, (char*)str.ptr, (int)n, 0, (struct sockaddr*)&ss, &len);\n    if (got < 0) return nx_net_code();\n    str.len = (size_t)got;\n    nx_net_format_addr((struct sockaddr*)&ss, len, nx_net_peer_buf, sizeof nx_net_peer_buf);\n    *out = str;\n    return 0;\n}\nNX_INLINE nx_string nx_net_last_peer(nx_ctx* c) {\n    nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;\n    nx_str_append(c, &s, (const uint8_t*)nx_net_peer_buf, strlen(nx_net_peer_buf));\n    return s;\n}\n#endif\n\n/* ------------------------------------------------------------------ TLS */\n/* net.tls_*: TLS over a TCP connection by the platform's own library,\n   loaded when first used so no program links it: SChannel on Windows,\n   Security.framework on macOS, OpenSSL (libssl 3 or 1.1) elsewhere. The\n   server's certificate is checked against the system's roots and the host\n   name. Handles are 1 + a slot; the result codes are the socket calls'\n   (1 no such host, 2 refused, 3 timed out, 4 any other failure), and\n   net.tls_problem says in words what went wrong on this thread. */\n#if defined(_WIN32)\n#ifndef SECURITY_WIN32\n#define SECURITY_WIN32\n#endif\n#include <security.h>\n#include <schannel.h>\n#elif !defined(NX_WASM)\n#include <dlfcn.h>\n#endif\n#define NX_MAX_TLS 256\ntypedef struct {\n    int state;               /* 0 free, 1 being set up or let go, 2 in use */\n    nx_sock sock;\n    char host[256];\n    bool ended;              /* the connection is over */\n    bool clean;              /* ... and ended with close_notify */\n    int64_t timeout_ms;      /* what a send may wait (0: no limit) */\n    uint8_t* plain;          /* decrypted and not yet taken */\n    size_t plain_len, plain_pos, plain_cap;\n#if defined(_WIN32)\n    CredHandle cred;\n    CtxtHandle ctx;\n    bool have_cred, have_ctx;\n    SecPkgContext_StreamSizes sizes;\n    uint8_t* raw;            /* received and not yet decrypted */\n    size_t raw_len, raw_cap;\n#else\n    void* ssl;               /* OpenSSL's SSL*, or an SSLContextRef */\n    int64_t deadline;        /* for Security.framework's callbacks (0: none) */\n#endif\n} nx_tls;\nNX_STATE nx_tls nx_tlss[NX_MAX_TLS];\nNX_STATE NX_THREAD_LOCAL char nx_tls_why[256];\n\nNX_INLINE void nx_tls_say(const char* what) { snprintf(nx_tls_why, sizeof nx_tls_why, \"%s\", what); }\nNX_INLINE nx_string nx_tls_problem(nx_ctx* c) {\n    nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;\n    nx_str_append(c, &s, (const uint8_t*)nx_tls_why, strlen(nx_tls_why));\n    return s;\n}\nNX_INLINE nx_tls* nx_tls_at(int64_t h) {\n    if (h < 1 || h > NX_MAX_TLS) return NULL;\n    nx_tls* t = &nx_tlss[h - 1];\n    return __atomic_load_n(&t->state, __ATOMIC_ACQUIRE) == 2 ? t : NULL;\n}\n/* a deadline `ms` from now (0: none), and what is left of one: 0 for no\n   deadline, -1 when it has passed */\nNX_INLINE int64_t nx_deadline(int64_t ms) { return ms > 0 ? nx_mono_ms() + ms : 0; }\nNX_INLINE int64_t nx_until(int64_t deadline) {\n    if (deadline == 0) return 0;\n    int64_t left = deadline - nx_mono_ms();\n    return left > 0 ? left : -1;\n}\n#if defined(NX_WASM)\nNX_INLINE bool nx_tls_available(void) { return false; }\nNX_INLINE int32_t nx_tls_connect(nx_sl_u8 host, uint16_t port, int64_t timeout_ms, int64_t* out) {\n    (void)host; (void)port; (void)timeout_ms; (void)out;\n    nx_tls_say(\"no TLS in WebAssembly\");\n    return 4;\n}\nNX_INLINE int32_t nx_tls_send(int64_t h, nx_sl_u8 data) { (void)h; (void)data; return 4; }\nNX_INLINE int32_t nx_tls_recv(nx_ctx* c, int64_t h, size_t n, int64_t timeout_ms, nx_string* out) {\n    (void)c; (void)h; (void)n; (void)timeout_ms; (void)out;\n    return 4;\n}\nNX_INLINE bool nx_tls_truncated(int64_t h) { (void)h; return false; }\nNX_INLINE void nx_tls_close(int64_t h) { (void)h; }\n#else\nNX_INLINE void nx_tls_keep(nx_tls* t, const uint8_t* p, size_t n) {\n    if (t->plain_pos == t->plain_len) { t->plain_pos = 0; t->plain_len = 0; }\n    if (t->plain_len + n > t->plain_cap) {\n        size_t cap = t->plain_cap ? t->plain_cap : 16384;\n        while (cap < t->plain_len + n) cap *= 2;\n        uint8_t* q = (uint8_t*)realloc(t->plain, cap);\n        if (!q) nx_panic(\"out of memory keeping TLS data\", \"net.tls_recv\");\n        t->plain = q;\n        t->plain_cap = cap;\n    }\n    memcpy(t->plain + t->plain_len, p, n);\n    t->plain_len += n;\n}\n/* a send that would have blocked, on a socket that does not */\nNX_INLINE bool nx_tls_again(void) {\n#if defined(_WIN32)\n    return WSAGetLastError() == WSAEWOULDBLOCK;\n#else\n    return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR;\n#endif\n}\n/* all of `n` bytes to the socket, waiting for room until the deadline */\nNX_INLINE int32_t nx_tls_put(nx_sock s, const uint8_t* p, size_t n, int64_t deadline) {\n    size_t sent = 0;\n    while (sent < n) {\n        int64_t left = nx_until(deadline);\n        if (left < 0) return 3;\n        if (!nx_net_wait(s, true, left)) return 3;\n        int k = (int)send(s, (const char*)p + sent, (int)(n - sent), NX_SEND_FLAGS);\n        if (k < 0 && !nx_tls_again()) return nx_net_code();\n        if (k > 0) sent += (size_t)k;\n    }\n    return 0;\n}\nNX_INLINE void nx_tls_reset(nx_tls* t) {\n    t->sock = NX_BAD_SOCK;\n    t->host[0] = 0;\n    t->ended = false;\n    t->clean = false;\n    t->timeout_ms = 0;\n    t->plain = NULL;\n    t->plain_len = 0; t->plain_pos = 0; t->plain_cap = 0;\n#if defined(_WIN32)\n    t->have_cred = false;\n    t->have_ctx = false;\n    memset(&t->sizes, 0, sizeof t->sizes);\n    t->raw = NULL;\n    t->raw_len = 0; t->raw_cap = 0;\n#else\n    t->ssl = NULL;\n    t->deadline = 0;\n#endif\n}\nNX_INLINE int nx_tls_claim(void) {\n    for (int i = 0; i < NX_MAX_TLS; i++) {\n        int expected = 0;\n        if (__atomic_compare_exchange_n(&nx_tlss[i].state, &expected, 1, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {\n            nx_tls_reset(&nx_tlss[i]);\n            return i;\n        }\n    }\n    return -1;\n}\n\n#if defined(_WIN32)\n/* ----- SChannel, through the function table secur32.dll hands out */\nNX_STATE PSecurityFunctionTableA nx_sspi;\nNX_STATE int nx_sspi_state;\nNX_INLINE bool nx_tls_available(void) {\n    int st = __atomic_load_n(&nx_sspi_state, __ATOMIC_ACQUIRE);\n    if (st == 0) {\n        HMODULE m = LoadLibraryA(\"secur32.dll\");\n        INIT_SECURITY_INTERFACE_A init = m ? (INIT_SECURITY_INTERFACE_A)GetProcAddress(m, \"InitSecurityInterfaceA\") : NULL;\n        nx_sspi = init ? init() : NULL;\n        st = nx_sspi ? 1 : 2;\n        __atomic_store_n(&nx_sspi_state, st, __ATOMIC_RELEASE);\n    }\n    return st == 1;\n}\n#define NX_ISC_FLAGS (ISC_REQ_SEQUENCE_DETECT | ISC_REQ_REPLAY_DETECT | ISC_REQ_CONFIDENTIALITY | ISC_REQ_EXTENDED_ERROR | ISC_REQ_ALLOCATE_MEMORY | ISC_REQ_STREAM)\nNX_INLINE void nx_tls_say_status(SECURITY_STATUS st) {\n    const char* what = \"the TLS handshake failed\";\n    if (st == SEC_E_UNTRUSTED_ROOT || st == CERT_E_UNTRUSTEDROOT || st == CERT_E_CHAINING) what = \"the server's certificate is not signed by a root this system trusts\";\n    else if (st == SEC_E_WRONG_PRINCIPAL || st == CERT_E_CN_NO_MATCH) what = \"the server's certificate is for another name\";\n    else if (st == SEC_E_CERT_EXPIRED || st == CERT_E_EXPIRED) what = \"the server's certificate has expired\";\n    else if (st == CRYPT_E_REVOKED) what = \"the server's certificate is revoked\";\n    else if (st == SEC_E_ILLEGAL_MESSAGE) what = \"the server sent an alert, or something that is not TLS\";\n    else if (st == SEC_E_ALGORITHM_MISMATCH) what = \"the server and this system have no cipher in common\";\n    else if (st == SEC_E_DECRYPT_FAILURE || st == SEC_E_MESSAGE_ALTERED) what = \"a TLS record did not decrypt\";\n    snprintf(nx_tls_why, sizeof nx_tls_why, \"%s (SChannel 0x%08lX)\", what, (unsigned long)st);\n}\n/* room for `more` bytes after what `raw` holds */\nNX_INLINE void nx_tls_room(nx_tls* t, size_t more) {\n    if (t->raw_len + more <= t->raw_cap) return;\n    size_t cap = t->raw_cap ? t->raw_cap : 32768;\n    while (cap < t->raw_len + more) cap *= 2;\n    uint8_t* q = (uint8_t*)realloc(t->raw, cap);\n    if (!q) nx_panic(\"out of memory in TLS\", \"net.tls\");\n    t->raw = q;\n    t->raw_cap = cap;\n}\n/* more ciphertext: 0, 3 on timeout, 5 when the peer closed, else a socket code */\nNX_INLINE int32_t nx_tls_pull(nx_tls* t, int64_t deadline) {\n    int64_t left = nx_until(deadline);\n    if (left < 0) return 3;\n    if (!nx_net_wait(t->sock, false, left)) return 3;\n    nx_tls_room(t, 16384);\n    int k = (int)recv(t->sock, (char*)t->raw + t->raw_len, 16384, 0);\n    if (k == 0) return 5;\n    if (k < 0) return nx_net_code();\n    t->raw_len += (size_t)k;\n    return 0;\n}\nNX_INLINE int32_t nx_tls_token(nx_tls* t, SecBuffer* b, int64_t deadline) {\n    int32_t r = 0;\n    if (b->pvBuffer && b->cbBuffer > 0) r = nx_tls_put(t->sock, (const uint8_t*)b->pvBuffer, b->cbBuffer, deadline);\n    if (b->pvBuffer) nx_sspi->FreeContextBuffer(b->pvBuffer);\n    b->pvBuffer = NULL;\n    b->cbBuffer = 0;\n    return r;\n}\nNX_INLINE int32_t nx_tls_lost(int32_t r) {\n    if (r == 3) nx_tls_say(\"the TLS handshake took longer than allowed\");\n    else nx_tls_say(\"the server closed the connection during the TLS handshake\");\n    return r == 5 ? 4 : r;\n}\n/* Step the handshake over what `raw` holds until it completes: from the\n   start, or for a message after it (DecryptMessage's SEC_I_RENEGOTIATE). */\nNX_INLINE int32_t nx_tls_steps(nx_tls* t, int64_t deadline) {\n    SECURITY_STATUS st;\n    TimeStamp ts;\n    ULONG got = 0;\n    if (!t->have_ctx) {\n        SecBuffer out = { 0, SECBUFFER_TOKEN, NULL };\n        SecBufferDesc od = { SECBUFFER_VERSION, 1, &out };\n        st = nx_sspi->InitializeSecurityContextA(&t->cred, NULL, (SEC_CHAR*)t->host, NX_ISC_FLAGS, 0, 0, NULL, 0, &t->ctx, &od, &got, &ts);\n        if (st != SEC_I_CONTINUE_NEEDED) { nx_tls_say_status(st); return 4; }\n        t->have_ctx = true;\n        int32_t r = nx_tls_token(t, &out, deadline);\n        if (r) return nx_tls_lost(r);\n    }\n    for (;;) {\n        if (t->raw_len == 0) {\n            int32_t r = nx_tls_pull(t, deadline);\n            if (r) return nx_tls_lost(r);\n        }\n        SecBuffer in[2] = { { (ULONG)t->raw_len, SECBUFFER_TOKEN, t->raw }, { 0, SECBUFFER_EMPTY, NULL } };\n        SecBufferDesc id = { SECBUFFER_VERSION, 2, in };\n        SecBuffer out = { 0, SECBUFFER_TOKEN, NULL };\n        SecBufferDesc od = { SECBUFFER_VERSION, 1, &out };\n        st = nx_sspi->InitializeSecurityContextA(&t->cred, &t->ctx, (SEC_CHAR*)t->host, NX_ISC_FLAGS, 0, 0, &id, 0, NULL, &od, &got, &ts);\n        if (st == SEC_E_INCOMPLETE_MESSAGE) {\n            int32_t r = nx_tls_pull(t, deadline);\n            if (r) return nx_tls_lost(r);\n            continue;\n        }\n        /* a token to send even on failure: the alert that says why */\n        int32_t sent = nx_tls_token(t, &out, deadline);\n        if (st != SEC_E_OK && st != SEC_I_CONTINUE_NEEDED && st != SEC_I_INCOMPLETE_CREDENTIALS) {\n            nx_tls_say_status(st);\n            return 4;\n        }\n        /* keep what this step did not read */\n        if (in[1].BufferType == SECBUFFER_EXTRA && in[1].cbBuffer > 0) {\n            memmove(t->raw, t->raw + (t->raw_len - in[1].cbBuffer), in[1].cbBuffer);\n            t->raw_len = in[1].cbBuffer;\n        } else {\n            t->raw_len = 0;\n        }\n        if (sent) return nx_tls_lost(sent);\n        if (st == SEC_E_OK) return 0;\n    }\n}\nNX_INLINE int32_t nx_tls_open(nx_tls* t, int64_t deadline) {\n    SCHANNEL_CRED sc;\n    memset(&sc, 0, sizeof sc);\n    sc.dwVersion = SCHANNEL_CRED_VERSION;\n    sc.dwFlags = SCH_CRED_AUTO_CRED_VALIDATION | SCH_CRED_NO_DEFAULT_CREDS | SCH_USE_STRONG_CRYPTO;\n    TimeStamp ts;\n    SECURITY_STATUS st = nx_sspi->AcquireCredentialsHandleA(NULL, (SEC_CHAR*)UNISP_NAME_A, SECPKG_CRED_OUTBOUND, NULL, &sc, NULL, NULL, &t->cred, &ts);\n    if (st != SEC_E_OK) { nx_tls_say_status(st); return 4; }\n    t->have_cred = true;\n    int32_t r = nx_tls_steps(t, deadline);\n    if (r) return r;\n    st = nx_sspi->QueryContextAttributesA(&t->ctx, SECPKG_ATTR_STREAM_SIZES, &t->sizes);\n    if (st != SEC_E_OK) { nx_tls_say_status(st); return 4; }\n    return 0;\n}\nNX_INLINE int32_t nx_tls_write(nx_tls* t, const uint8_t* p, size_t n, int64_t deadline) {\n    size_t hdr = t->sizes.cbHeader, tail = t->sizes.cbTrailer, max = t->sizes.cbMaximumMessage;\n    uint8_t* buf = (uint8_t*)malloc(hdr + max + tail);\n    if (!buf) nx_panic(\"out of memory in TLS\", \"net.tls_send\");\n    int32_t r = 0;\n    while (n > 0) {\n        size_t k = n < max ? n : max;\n        memcpy(buf + hdr, p, k);\n        SecBuffer b[4] = { { (ULONG)hdr, SECBUFFER_STREAM_HEADER, buf }, { (ULONG)k, SECBUFFER_DATA, buf + hdr }, { (ULONG)tail, SECBUFFER_STREAM_TRAILER, buf + hdr + k }, { 0, SECBUFFER_EMPTY, NULL } };\n        SecBufferDesc d = { SECBUFFER_VERSION, 4, b };\n        SECURITY_STATUS st = nx_sspi->EncryptMessage(&t->ctx, 0, &d, 0);\n        if (st != SEC_E_OK) { nx_tls_say_status(st); r = 4; break; }\n        r = nx_tls_put(t->sock, buf, b[0].cbBuffer + b[1].cbBuffer + b[2].cbBuffer, deadline);\n        if (r) { nx_tls_say(r == 3 ? \"a TLS send took longer than allowed\" : \"the connection failed while sending\"); break; }\n        p += k;\n        n -= k;\n    }\n    free(buf);\n    return r;\n}\n/* decrypt until there is something to read or the connection is over */\nNX_INLINE int32_t nx_tls_fill(nx_tls* t, int64_t deadline) {\n    while (t->plain_pos >= t->plain_len && !t->ended) {\n        if (t->raw_len > 0) {\n            SecBuffer b[4] = { { (ULONG)t->raw_len, SECBUFFER_DATA, t->raw }, { 0, SECBUFFER_EMPTY, NULL }, { 0, SECBUFFER_EMPTY, NULL }, { 0, SECBUFFER_EMPTY, NULL } };\n            SecBufferDesc d = { SECBUFFER_VERSION, 4, b };\n            SECURITY_STATUS st = nx_sspi->DecryptMessage(&t->ctx, &d, 0, NULL);\n            if (st == SEC_E_OK || st == SEC_I_RENEGOTIATE || st == SEC_I_CONTEXT_EXPIRED) {\n                SecBuffer* data = NULL;\n                SecBuffer* extra = NULL;\n                for (int i = 1; i < 4; i++) {\n                    if (b[i].BufferType == SECBUFFER_DATA) data = &b[i];\n                    if (b[i].BufferType == SECBUFFER_EXTRA) extra = &b[i];\n                }\n                /* the data sits in `raw`: taken before the rest moves over it */\n                if (data && data->cbBuffer > 0) nx_tls_keep(t, (const uint8_t*)data->pvBuffer, data->cbBuffer);\n                if (extra && extra->cbBuffer > 0) {\n                    memmove(t->raw, t->raw + (t->raw_len - extra->cbBuffer), extra->cbBuffer);\n                    t->raw_len = extra->cbBuffer;\n                } else {\n                    t->raw_len = 0;\n                }\n                if (st == SEC_I_CONTEXT_EXPIRED) {\n                    t->ended = true;\n                    t->clean = true;\n                } else if (st == SEC_I_RENEGOTIATE) {\n                    int32_t r = nx_tls_steps(t, deadline);\n                    if (r) return r;\n                }\n                continue;\n            }\n            if (st != SEC_E_INCOMPLETE_MESSAGE) { nx_tls_say_status(st); return 4; }\n        }\n        int32_t r = nx_tls_pull(t, deadline);\n        if (r == 5) { t->ended = true; break; }\n        if (r) return r;\n    }\n    return 0;\n}\n/* close_notify, when the connection still runs, and the handles let go */\nNX_INLINE void nx_tls_shut(nx_tls* t) {\n    if (t->have_ctx && !t->ended) {\n        DWORD kind = SCHANNEL_SHUTDOWN;\n        SecBuffer b = { sizeof kind, SECBUFFER_TOKEN, &kind };\n        SecBufferDesc d = { SECBUFFER_VERSION, 1, &b };\n        if (nx_sspi->ApplyControlToken(&t->ctx, &d) == SEC_E_OK) {\n            SecBuffer out = { 0, SECBUFFER_TOKEN, NULL };\n            SecBufferDesc od = { SECBUFFER_VERSION, 1, &out };\n            ULONG got = 0;\n            TimeStamp ts;\n            nx_sspi->InitializeSecurityContextA(&t->cred, &t->ctx, (SEC_CHAR*)t->host, NX_ISC_FLAGS, 0, 0, NULL, 0, NULL, &od, &got, &ts);\n            nx_tls_token(t, &out, nx_deadline(1000));\n        }\n    }\n    if (t->have_ctx) nx_sspi->DeleteSecurityContext(&t->ctx);\n    if (t->have_cred) nx_sspi->FreeCredentialsHandle(&t->cred);\n    free(t->raw);\n    t->raw = NULL;\n}\n#elif defined(__APPLE__)\n/* ----- Security.framework's Secure Transport, found with dlsym */\ntypedef int32_t nx_osstatus;\ntypedef nx_osstatus (*nx_st_readfn)(const void*, void*, size_t*);\ntypedef nx_osstatus (*nx_st_writefn)(const void*, const void*, size_t*);\ntypedef struct {\n    void* (*SSLCreateContext)(const void*, int, int);\n    nx_osstatus (*SSLSetIOFuncs)(void*, nx_st_readfn, nx_st_writefn);\n    nx_osstatus (*SSLSetConnection)(void*, const void*);\n    nx_osstatus (*SSLSetPeerDomainName)(void*, const char*, size_t);\n    nx_osstatus (*SSLHandshake)(void*);\n    nx_osstatus (*SSLWrite)(void*, const void*, size_t, size_t*);\n    nx_osstatus (*SSLRead)(void*, void*, size_t, size_t*);\n    nx_osstatus (*SSLClose)(void*);\n    void (*CFRelease)(const void*);\n} nx_sectrans;\nNX_STATE nx_sectrans nx_st;\nNX_STATE int nx_st_state;\n#define NX_ST_WOULD_BLOCK (-9803)\n#define NX_ST_CLOSED_GRACEFUL (-9805)\n#define NX_ST_CLOSED_ABORT (-9806)\n#define NX_ST_CLOSED_NO_NOTIFY (-9816)\nNX_INLINE bool nx_tls_available(void) {\n    int st = __atomic_load_n(&nx_st_state, __ATOMIC_ACQUIRE);\n    if (st == 0) {\n        void* sec = dlopen(\"/System/Library/Frameworks/Security.framework/Security\", RTLD_LAZY);\n        void* cf = dlopen(\"/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation\", RTLD_LAZY);\n        bool ok = sec && cf;\n#define NX_ST_SYM(lib, f) if (ok) { *(void**)&nx_st.f = dlsym(lib, #f); ok = nx_st.f != NULL; }\n        NX_ST_SYM(sec, SSLCreateContext)\n        NX_ST_SYM(sec, SSLSetIOFuncs)\n        NX_ST_SYM(sec, SSLSetConnection)\n        NX_ST_SYM(sec, SSLSetPeerDomainName)\n        NX_ST_SYM(sec, SSLHandshake)\n        NX_ST_SYM(sec, SSLWrite)\n        NX_ST_SYM(sec, SSLRead)\n        NX_ST_SYM(sec, SSLClose)\n        NX_ST_SYM(cf, CFRelease)\n#undef NX_ST_SYM\n        st = ok ? 1 : 2;\n        __atomic_store_n(&nx_st_state, st, __ATOMIC_RELEASE);\n    }\n    return st == 1;\n}\n/* The socket is non-blocking: a read takes what has come and says\n   \"would block\" for the rest, so SSLRead gives what it decrypted without\n   waiting to fill its buffer; the callers wait for the socket. */\nstatic nx_osstatus nx_st_read(const void* conn, void* data, size_t* len) {\n    nx_tls* t = (nx_tls*)conn;\n    size_t want = *len, got = 0;\n    while (got < want) {\n        ssize_t k = recv(t->sock, (char*)data + got, want - got, 0);\n        if (k > 0) { got += (size_t)k; continue; }\n        if (k == 0) { *len = got; return NX_ST_CLOSED_NO_NOTIFY; }\n        if (errno == EINTR) continue;\n        *len = got;\n        return errno == EAGAIN || errno == EWOULDBLOCK ? NX_ST_WOULD_BLOCK : NX_ST_CLOSED_ABORT;\n    }\n    *len = got;\n    return 0;\n}\nstatic nx_osstatus nx_st_write(const void* conn, const void* data, size_t* len) {\n    nx_tls* t = (nx_tls*)conn;\n    int32_t r = nx_tls_put(t->sock, (const uint8_t*)data, *len, t->deadline);\n    if (r) { *len = 0; return NX_ST_CLOSED_ABORT; }\n    return 0;\n}\nNX_INLINE void nx_tls_say_status(nx_osstatus st) {\n    const char* what = \"the TLS handshake failed\";\n    if (st == -9807 || st == -9812 || st == -9813) what = \"the server's certificate is not signed by a root this system trusts\";\n    else if (st == -9843) what = \"the server's certificate is for another name\";\n    else if (st == -9814 || st == -9815) what = \"the server's certificate has expired or is not valid yet\";\n    else if (st == -9808) what = \"the server's certificate is bad\";\n    else if (st == -9824) what = \"the server refused the handshake\";\n    else if (st == NX_ST_CLOSED_ABORT || st == NX_ST_CLOSED_NO_NOTIFY) what = \"the server closed the connection during the TLS handshake\";\n    snprintf(nx_tls_why, sizeof nx_tls_why, \"%s (Secure Transport %d)\", what, (int)st);\n}\n/* wait for the socket to have something to read; false once the deadline passed */\nNX_INLINE bool nx_tls_await(nx_tls* t, int64_t deadline) {\n    int64_t left = nx_until(deadline);\n    return left >= 0 && nx_net_wait(t->sock, false, left);\n}\nNX_INLINE int32_t nx_tls_open(nx_tls* t, int64_t deadline) {\n    void* ctx = nx_st.SSLCreateContext(NULL, 1, 0);\n    if (!ctx) { nx_tls_say(\"Secure Transport would not make a context\"); return 4; }\n    t->ssl = ctx;\n    nx_st.SSLSetIOFuncs(ctx, nx_st_read, nx_st_write);\n    nx_st.SSLSetConnection(ctx, t);\n    nx_st.SSLSetPeerDomainName(ctx, t->host, strlen(t->host));\n    nx_net_blocking(t->sock, false);\n    t->deadline = deadline;\n    for (;;) {\n        nx_osstatus st = nx_st.SSLHandshake(ctx);\n        if (st == 0) return 0;\n        if (st == NX_ST_WOULD_BLOCK) {\n            if (!nx_tls_await(t, deadline)) { nx_tls_say(\"the TLS handshake took longer than allowed\"); return 3; }\n            continue;\n        }\n        nx_tls_say_status(st);\n        return 4;\n    }\n}\nNX_INLINE int32_t nx_tls_write(nx_tls* t, const uint8_t* p, size_t n, int64_t deadline) {\n    t->deadline = deadline;\n    while (n > 0) {\n        size_t done = 0;\n        nx_osstatus st = nx_st.SSLWrite(t->ssl, p, n, &done);\n        p += done;\n        n -= done;\n        if (st == 0) continue;\n        if (st == NX_ST_WOULD_BLOCK) {\n            if (!nx_tls_await(t, deadline)) { nx_tls_say(\"a TLS send took longer than allowed\"); return 3; }\n            continue;\n        }\n        nx_tls_say(\"the connection failed while sending\");\n        return 4;\n    }\n    return 0;\n}\nNX_INLINE int32_t nx_tls_fill(nx_tls* t, int64_t deadline) {\n    uint8_t buf[16384];\n    t->deadline = deadline;\n    while (t->plain_pos >= t->plain_len && !t->ended) {\n        size_t got = 0;\n        nx_osstatus st = nx_st.SSLRead(t->ssl, buf, sizeof buf, &got);\n        if (got > 0) nx_tls_keep(t, buf, got);\n        if (st == 0) continue;\n        if (st == NX_ST_WOULD_BLOCK) {\n            if (got > 0) continue;\n            if (!nx_tls_await(t, deadline)) return 3;\n            continue;\n        }\n        if (st == NX_ST_CLOSED_GRACEFUL) { t->ended = true; t->clean = true; break; }\n        if (st == NX_ST_CLOSED_NO_NOTIFY || st == NX_ST_CLOSED_ABORT) { t->ended = true; break; }\n        nx_tls_say_status(st);\n        return 4;\n    }\n    return 0;\n}\nNX_INLINE void nx_tls_shut(nx_tls* t) {\n    if (!t->ssl) return;\n    if (!t->ended) {\n        t->deadline = nx_deadline(1000);\n        nx_st.SSLClose(t->ssl);\n    }\n    nx_st.CFRelease(t->ssl);\n    t->ssl = NULL;\n}\n#else\n/* ----- OpenSSL's libssl, loaded with dlopen */\ntypedef struct {\n    int (*OPENSSL_init_ssl)(uint64_t, const void*);\n    const void* (*TLS_client_method)(void);\n    void* (*SSL_CTX_new)(const void*);\n    int (*SSL_CTX_set_default_verify_paths)(void*);\n    void (*SSL_CTX_set_verify)(void*, int, void*);\n    void* (*SSL_new)(void*);\n    int (*SSL_set_fd)(void*, int);\n    long (*SSL_ctrl)(void*, int, long, void*);\n    int (*SSL_set1_host)(void*, const char*);\n    int (*SSL_connect)(void*);\n    int (*SSL_read)(void*, void*, int);\n    int (*SSL_write)(void*, const void*, int);\n    int (*SSL_shutdown)(void*);\n    int (*SSL_get_error)(const void*, int);\n    long (*SSL_get_verify_result)(const void*);\n    void (*SSL_free)(void*);\n    unsigned long (*ERR_get_error)(void);\n    void (*ERR_clear_error)(void);\n    void (*ERR_error_string_n)(unsigned long, char*, size_t);\n    const char* (*X509_verify_cert_error_string)(long);\n} nx_openssl;\nNX_STATE nx_openssl nx_ossl;\nNX_STATE void* nx_ossl_ctx;\nNX_STATE int nx_ossl_state;\nNX_STATE bool nx_ossl_3;\n#define NX_SSL_WANT_READ 2\n#define NX_SSL_WANT_WRITE 3\n#define NX_SSL_ERROR_SSL 1\n#define NX_SSL_ERROR_SYSCALL 5\n#define NX_SSL_ZERO_RETURN 6\nNX_INLINE bool nx_tls_available(void) {\n    int expected = 0;\n    if (__atomic_compare_exchange_n(&nx_ossl_state, &expected, 3, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {\n        static const char* names[] = { \"libssl.so.3\", \"libssl.so.1.1\", \"libssl.so\" };\n        void* h = NULL;\n        for (int i = 0; i < 3 && !h; i++) {\n            h = dlopen(names[i], RTLD_NOW | RTLD_GLOBAL);\n            if (h && i == 0) nx_ossl_3 = true;\n        }\n        bool ok = h != NULL;\n#define NX_OSSL_SYM(f) if (ok) { *(void**)&nx_ossl.f = dlsym(h, #f); ok = nx_ossl.f != NULL; }\n        NX_OSSL_SYM(OPENSSL_init_ssl)\n        NX_OSSL_SYM(TLS_client_method)\n        NX_OSSL_SYM(SSL_CTX_new)\n        NX_OSSL_SYM(SSL_CTX_set_default_verify_paths)\n        NX_OSSL_SYM(SSL_CTX_set_verify)\n        NX_OSSL_SYM(SSL_new)\n        NX_OSSL_SYM(SSL_set_fd)\n        NX_OSSL_SYM(SSL_ctrl)\n        NX_OSSL_SYM(SSL_set1_host)\n        NX_OSSL_SYM(SSL_connect)\n        NX_OSSL_SYM(SSL_read)\n        NX_OSSL_SYM(SSL_write)\n        NX_OSSL_SYM(SSL_shutdown)\n        NX_OSSL_SYM(SSL_get_error)\n        NX_OSSL_SYM(SSL_get_verify_result)\n        NX_OSSL_SYM(SSL_free)\n        NX_OSSL_SYM(ERR_get_error)\n        NX_OSSL_SYM(ERR_clear_error)\n        NX_OSSL_SYM(ERR_error_string_n)\n        NX_OSSL_SYM(X509_verify_cert_error_string)\n#undef NX_OSSL_SYM\n        if (ok) {\n            nx_ossl.OPENSSL_init_ssl(0, NULL);\n            nx_ossl_ctx = nx_ossl.SSL_CTX_new(nx_ossl.TLS_client_method());\n            ok = nx_ossl_ctx != NULL && nx_ossl.SSL_CTX_set_default_verify_paths(nx_ossl_ctx) == 1;\n            /* SSL_VERIFY_PEER: a certificate that does not check out ends the handshake */\n            if (ok) nx_ossl.SSL_CTX_set_verify(nx_ossl_ctx, 1, NULL);\n        }\n        __atomic_store_n(&nx_ossl_state, ok ? 1 : 2, __ATOMIC_RELEASE);\n    }\n    int st;\n    while ((st = __atomic_load_n(&nx_ossl_state, __ATOMIC_ACQUIRE)) == 3) nx_sleep_ms(1);\n    return st == 1;\n}\nNX_INLINE void nx_tls_say_error(const char* what) {\n    unsigned long e = nx_ossl.ERR_get_error();\n    if (e == 0) { nx_tls_say(what); return; }\n    char buf[160];\n    nx_ossl.ERR_error_string_n(e, buf, sizeof buf);\n    snprintf(nx_tls_why, sizeof nx_tls_why, \"%s (%s)\", what, buf);\n}\n/* wait for what OpenSSL asked for; false once the deadline passed */\nNX_INLINE bool nx_tls_await(nx_tls* t, int want, int64_t deadline) {\n    int64_t left = nx_until(deadline);\n    return left >= 0 && nx_net_wait(t->sock, want == NX_SSL_WANT_WRITE, left);\n}\nNX_INLINE int32_t nx_tls_open(nx_tls* t, int64_t deadline) {\n    void* ssl = nx_ossl.SSL_new(nx_ossl_ctx);\n    if (!ssl) { nx_tls_say_error(\"OpenSSL would not make a connection\"); return 4; }\n    t->ssl = ssl;\n    nx_ossl.SSL_set_fd(ssl, (int)t->sock);\n    /* SSL_set_tlsext_host_name: the name for the server to pick a certificate by */\n    nx_ossl.SSL_ctrl(ssl, 55, 0, t->host);\n    /* and the name the certificate must carry */\n    nx_ossl.SSL_set1_host(ssl, t->host);\n    nx_net_blocking(t->sock, false);\n    nx_ossl.ERR_clear_error();\n    for (;;) {\n        int r = nx_ossl.SSL_connect(ssl);\n        if (r == 1) return 0;\n        int e = nx_ossl.SSL_get_error(ssl, r);\n        if (e == NX_SSL_WANT_READ || e == NX_SSL_WANT_WRITE) {\n            if (!nx_tls_await(t, e, deadline)) { nx_tls_say(\"the TLS handshake took longer than allowed\"); return 3; }\n            continue;\n        }\n        long v = nx_ossl.SSL_get_verify_result(ssl);\n        if (v != 0) {\n            snprintf(nx_tls_why, sizeof nx_tls_why, \"the server's certificate does not check out: %s\", nx_ossl.X509_verify_cert_error_string(v));\n        } else if (e == NX_SSL_ERROR_SYSCALL) {\n            nx_tls_say_error(\"the server closed the connection during the TLS handshake\");\n        } else {\n            nx_tls_say_error(\"the TLS handshake failed\");\n        }\n        return 4;\n    }\n}\nNX_INLINE int32_t nx_tls_write(nx_tls* t, const uint8_t* p, size_t n, int64_t deadline) {\n    sigset_t old;\n    nx_sigpipe_hold(&old);\n    int32_t code = 0;\n    while (n > 0) {\n        int k = n > (1u << 30) ? (1 << 30) : (int)n;\n        nx_ossl.ERR_clear_error();\n        int r = nx_ossl.SSL_write(t->ssl, p, k);\n        if (r > 0) { p += r; n -= (size_t)r; continue; }\n        int e = nx_ossl.SSL_get_error(t->ssl, r);\n        if (e == NX_SSL_WANT_READ || e == NX_SSL_WANT_WRITE) {\n            if (nx_tls_await(t, e, deadline)) continue;\n            nx_tls_say(\"a TLS send took longer than allowed\");\n            code = 3;\n            break;\n        }\n        nx_tls_say_error(\"the connection failed while sending\");\n        code = 4;\n        break;\n    }\n    nx_sigpipe_release(&old);\n    return code;\n}\nNX_INLINE int32_t nx_tls_fill(nx_tls* t, int64_t deadline) {\n    uint8_t buf[16384];\n    while (t->plain_pos >= t->plain_len && !t->ended) {\n        nx_ossl.ERR_clear_error();\n        int r = nx_ossl.SSL_read(t->ssl, buf, (int)sizeof buf);\n        if (r > 0) { nx_tls_keep(t, buf, (size_t)r); continue; }\n        int e = nx_ossl.SSL_get_error(t->ssl, r);\n        if (e == NX_SSL_ZERO_RETURN) { t->ended = true; t->clean = true; break; }\n        if (e == NX_SSL_WANT_READ || e == NX_SSL_WANT_WRITE) {\n            if (!nx_tls_await(t, e, deadline)) return 3;\n            continue;\n        }\n        /* the peer went away without close_notify: OpenSSL 1.1 says so\n           with an empty error queue, 3 with UNEXPECTED_EOF_WHILE_READING */\n        unsigned long err = nx_ossl.ERR_get_error();\n        if ((e == NX_SSL_ERROR_SYSCALL && err == 0) || (nx_ossl_3 && (err & 0x7FFFFF) == 294)) { t->ended = true; break; }\n        char text[160];\n        nx_ossl.ERR_error_string_n(err, text, sizeof text);\n        snprintf(nx_tls_why, sizeof nx_tls_why, \"a TLS record did not decrypt (%s)\", text);\n        return 4;\n    }\n    return 0;\n}\nNX_INLINE void nx_tls_shut(nx_tls* t) {\n    if (!t->ssl) return;\n    if (!t->ended) {\n        sigset_t old;\n        nx_sigpipe_hold(&old);\n        nx_ossl.SSL_shutdown(t->ssl);\n        nx_sigpipe_release(&old);\n    }\n    nx_ossl.SSL_free(t->ssl);\n    t->ssl = NULL;\n}\n#endif\n\n/* the slot let go: the platform's part first, then the socket */\nNX_INLINE void nx_tls_release(nx_tls* t) {\n    nx_tls_shut(t);\n    free(t->plain);\n    t->plain = NULL;\n    if (t->sock != NX_BAD_SOCK) nx_net_close((int64_t)t->sock);\n    t->sock = NX_BAD_SOCK;\n    __atomic_store_n(&t->state, 0, __ATOMIC_RELEASE);\n}\nNX_INLINE int32_t nx_tls_connect(nx_sl_u8 host, uint16_t port, int64_t timeout_ms, int64_t* out) {\n    nx_tls_why[0] = 0;\n    if (!nx_tls_available()) {\n        nx_tls_say(\"this system has no TLS library to load (OpenSSL's libssl)\");\n        return 4;\n    }\n    if (host.len == 0 || host.len >= sizeof nx_tlss[0].host) { nx_tls_say(\"TLS needs a host name\"); return 4; }\n    int64_t deadline = nx_deadline(timeout_ms);\n    int64_t sock = 0;\n    int32_t r = nx_tcp_connect(host, port, timeout_ms, &sock);\n    if (r) {\n        nx_tls_say(r == 1 ? \"no such host\" : r == 2 ? \"the connection was refused\" : r == 3 ? \"the connection took longer than allowed\" : \"the connection failed\");\n        return r;\n    }\n    int slot = nx_tls_claim();\n    if (slot < 0) {\n        nx_net_close(sock);\n        nx_tls_say(\"too many TLS connections are open\");\n        return 4;\n    }\n    nx_tls* t = &nx_tlss[slot];\n    t->sock = (nx_sock)sock;\n    memcpy(t->host, host.ptr, host.len);\n    t->host[host.len] = 0;\n    t->timeout_ms = timeout_ms;\n    r = nx_tls_open(t, deadline);\n    if (r) {\n        /* no close_notify for a handshake that did not finish */\n        t->ended = true;\n        nx_tls_release(t);\n        return r;\n    }\n    __atomic_store_n(&t->state, 2, __ATOMIC_RELEASE);\n    *out = slot + 1;\n    return 0;\n}\nNX_INLINE int32_t nx_tls_send(int64_t h, nx_sl_u8 data) {\n    nx_tls* t = nx_tls_at(h);\n    if (!t) { nx_tls_say(\"not an open TLS connection\"); return 4; }\n    if (t->ended) { nx_tls_say(\"the connection is over\"); return 4; }\n    return nx_tls_write(t, data.ptr, data.len, nx_deadline(t->timeout_ms));\n}\n/* Up to `n` bytes of what the server sent, waiting at most `timeout_ms`\n   (0: no limit) for some; empty at the end of the connection. */\nNX_INLINE int32_t nx_tls_recv(nx_ctx* c, int64_t h, size_t n, int64_t timeout_ms, nx_string* out) {\n    nx_tls* t = nx_tls_at(h);\n    if (!t) { nx_tls_say(\"not an open TLS connection\"); return 4; }\n    int32_t r = nx_tls_fill(t, nx_deadline(timeout_ms));\n    if (r) return r;\n    nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;\n    size_t have = t->plain_len - t->plain_pos;\n    if (have > n) have = n;\n    if (have > 0) {\n        nx_str_append(c, &s, t->plain + t->plain_pos, have);\n        t->plain_pos += have;\n    }\n    *out = s;\n    return 0;\n}\n/* Did the connection end without close_notify, so that what came may be cut short? */\nNX_INLINE bool nx_tls_truncated(int64_t h) {\n    nx_tls* t = nx_tls_at(h);\n    return t && t->ended && !t->clean;\n}\nNX_INLINE void nx_tls_close(int64_t h) {\n    nx_tls* t = nx_tls_at(h);\n    if (!t) return;\n    int expected = 2;\n    if (!__atomic_compare_exchange_n(&t->state, &expected, 1, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) return;\n    nx_tls_release(t);\n}\n#endif\n\n/* ------------------------------------------------------------- threads */\n/* A spawned thread runs a Nexium function value `fn(*mut X)` with its own\n   context; a panic inside it is re-raised by the joiner. Handles are\n   pointers to the task record, freed by join. */\ntypedef struct nx_thread_task {\n    nx_ctx ctx;\n    void* fnp;\n    void* env;\n    void* arg;\n    bool panicked;\n    bool started;\n    char msg[256];\n    char loc[256];\n#if defined(_WIN32)\n    HANDLE h;\n#else\n    pthread_t h;\n#endif\n} nx_thread_task;\nstatic void nx_thread_run(nx_thread_task* t) {\n    nx_boundary b;\n    b.track = NULL;\n    nx_boundary* prev = nx_tls_boundary;\n    nx_tls_boundary = &b;\n    if (setjmp(b.jb)) {\n        t->panicked = true;\n        snprintf(t->msg, sizeof t->msg, \"%s\", b.msg);\n        snprintf(t->loc, sizeof t->loc, \"%s\", b.loc);\n    } else {\n        ((void (*)(nx_ctx*, void*, void*))t->fnp)(&t->ctx, t->env, t->arg);\n    }\n    nx_tls_boundary = prev;\n}\n#if defined(_WIN32)\nstatic DWORD WINAPI nx_thread_entry(LPVOID p) { nx_thread_run((nx_thread_task*)p); nx_small_drain(); return 0; }\n#else\nstatic void* nx_thread_entry(void* p) { nx_thread_run((nx_thread_task*)p); nx_small_drain(); return NULL; }\n#endif\nNX_INLINE int64_t nx_thread_start(nx_ctx* c, void* fnp, void* env, void* arg) {\n    nx_thread_task* t = (nx_thread_task*)malloc(sizeof *t);\n    if (!t) nx_panic(\"out of memory starting a thread\", \"thread.start\");\n    t->ctx = *c;\n    nx_ctx_untrack(&t->ctx);\n    t->ctx.live_allocs = 0; t->ctx.live_bytes = 0; t->ctx.total_allocs = 0; t->ctx.peak_bytes = 0;\n    nx_ctx_track_self(&t->ctx);\n    t->ctx.rng ^= (uint64_t)(uintptr_t)t * 0x9E3779B97F4A7C15ULL;\n    t->fnp = fnp; t->env = env; t->arg = arg;\n    t->panicked = false; t->started = true;\n#if defined(_WIN32)\n    t->h = CreateThread(NULL, 0, nx_thread_entry, t, 0, NULL);\n    if (!t->h) { t->started = false; nx_thread_run(t); }\n#else\n    if (pthread_create(&t->h, NULL, nx_thread_entry, t) != 0) { t->started = false; nx_thread_run(t); }\n#endif\n    return (int64_t)(intptr_t)t;\n}\n/* wait for a thread and free its record; true, with what it said in `msg`,\n   when it panicked */\nNX_INLINE bool nx_thread_wait(int64_t h, char* msg, size_t cap) {\n    nx_thread_task* t = (nx_thread_task*)(intptr_t)h;\n    if (!t) return false;\n    if (t->started) {\n#if defined(_WIN32)\n        WaitForSingleObject(t->h, INFINITE);\n        CloseHandle(t->h);\n#else\n        pthread_join(t->h, NULL);\n#endif\n    }\n    bool panicked = t->panicked;\n    if (panicked) snprintf(msg, cap, \"in a thread: %s (at %s)\", t->msg, t->loc);\n    free(t);\n    return panicked;\n}\nNX_INLINE void nx_thread_join(int64_t h, const char* loc) {\n    char msg[600];\n    if (nx_thread_wait(h, msg, sizeof msg)) nx_panic(msg, loc);\n}\n/* thread.join_all: every thread is waited for before the first panic among\n   them is re-raised, so none runs on with storage the panic releases */\nNX_INLINE void nx_thread_join_all(const int64_t* hs, size_t n, const char* loc) {\n    char msg[600], first[600];\n    bool panicked = false;\n    for (size_t i = 0; i < n; i++) {\n        if (nx_thread_wait(hs[i], msg, sizeof msg) && !panicked) {\n            panicked = true;\n            memcpy(first, msg, sizeof first);\n        }\n    }\n    if (panicked) nx_panic(first, loc);\n}\n/* mutexes and condition variables, as heap handles */\n#if defined(_WIN32)\nNX_INLINE int64_t nx_mutex_new(void) { CRITICAL_SECTION* m = (CRITICAL_SECTION*)malloc(sizeof *m); InitializeCriticalSection(m); return (int64_t)(intptr_t)m; }\nNX_INLINE void nx_mutex_lock_raw(int64_t m) { EnterCriticalSection((CRITICAL_SECTION*)(intptr_t)m); }\nNX_INLINE void nx_mutex_unlock_raw(int64_t m) { LeaveCriticalSection((CRITICAL_SECTION*)(intptr_t)m); }\nNX_INLINE void nx_mutex_free(int64_t m) { DeleteCriticalSection((CRITICAL_SECTION*)(intptr_t)m); free((void*)(intptr_t)m); }\nNX_INLINE int64_t nx_cond_new(void) { CONDITION_VARIABLE* cv = (CONDITION_VARIABLE*)malloc(sizeof *cv); InitializeConditionVariable(cv); return (int64_t)(intptr_t)cv; }\nNX_INLINE void nx_cond_wait(int64_t cv, int64_t m) { SleepConditionVariableCS((CONDITION_VARIABLE*)(intptr_t)cv, (CRITICAL_SECTION*)(intptr_t)m, INFINITE); }\nNX_INLINE void nx_cond_signal(int64_t cv) { WakeConditionVariable((CONDITION_VARIABLE*)(intptr_t)cv); }\nNX_INLINE void nx_cond_broadcast(int64_t cv) { WakeAllConditionVariable((CONDITION_VARIABLE*)(intptr_t)cv); }\nNX_INLINE void nx_cond_free(int64_t cv) { free((void*)(intptr_t)cv); }\n#else\nNX_INLINE int64_t nx_mutex_new(void) { pthread_mutex_t* m = (pthread_mutex_t*)malloc(sizeof *m); pthread_mutex_init(m, NULL); return (int64_t)(intptr_t)m; }\nNX_INLINE void nx_mutex_lock_raw(int64_t m) { pthread_mutex_lock((pthread_mutex_t*)(intptr_t)m); }\nNX_INLINE void nx_mutex_unlock_raw(int64_t m) { pthread_mutex_unlock((pthread_mutex_t*)(intptr_t)m); }\nNX_INLINE void nx_mutex_free(int64_t m) { pthread_mutex_destroy((pthread_mutex_t*)(intptr_t)m); free((void*)(intptr_t)m); }\nNX_INLINE int64_t nx_cond_new(void) { pthread_cond_t* cv = (pthread_cond_t*)malloc(sizeof *cv); pthread_cond_init(cv, NULL); return (int64_t)(intptr_t)cv; }\nNX_INLINE void nx_cond_wait(int64_t cv, int64_t m) { pthread_cond_wait((pthread_cond_t*)(intptr_t)cv, (pthread_mutex_t*)(intptr_t)m); }\nNX_INLINE void nx_cond_signal(int64_t cv) { pthread_cond_signal((pthread_cond_t*)(intptr_t)cv); }\nNX_INLINE void nx_cond_broadcast(int64_t cv) { pthread_cond_broadcast((pthread_cond_t*)(intptr_t)cv); }\nNX_INLINE void nx_cond_free(int64_t cv) { pthread_cond_destroy((pthread_cond_t*)(intptr_t)cv); free((void*)(intptr_t)cv); }\n#endif\n/* a lock taken inside an export call registers with the call's tracker (the\n   tracker's own lock uses the raw pair, which registers nothing) */\nNX_INLINE void nx_mutex_lock(int64_t m) { nx_mutex_lock_raw(m); nx_track_handle(2, m, true); }\nNX_INLINE void nx_mutex_unlock(int64_t m) { nx_track_handle(2, m, false); nx_mutex_unlock_raw(m); }\n/* sync.wait_for: sync.wait for at most `ms` (negative: for ever); false when\n   the time ran out. Like sync.wait it may also return with nothing\n   signalled, so the caller checks its condition again. */\nNX_INLINE bool nx_cond_wait_for(int64_t cv, int64_t m, int64_t ms) {\n    if (ms < 0) { nx_cond_wait(cv, m); return true; }\n#if defined(_WIN32)\n    return SleepConditionVariableCS((CONDITION_VARIABLE*)(intptr_t)cv, (CRITICAL_SECTION*)(intptr_t)m, ms > 0x7ffffffe ? 0x7ffffffe : (DWORD)ms) != 0;\n#else\n    struct timespec ts;\n    clock_gettime(CLOCK_REALTIME, &ts);\n    ts.tv_sec += (time_t)(ms / 1000);\n    ts.tv_nsec += (long)(ms % 1000) * 1000000L;\n    if (ts.tv_nsec >= 1000000000L) { ts.tv_sec += 1; ts.tv_nsec -= 1000000000L; }\n    return pthread_cond_timedwait((pthread_cond_t*)(intptr_t)cv, (pthread_mutex_t*)(intptr_t)m, &ts) == 0;\n#endif\n}\n\n/* A bell: rung by any thread, waited for by one, a ring before the wait\n   kept until it. std.thread's select waits on one while the channels it\n   watches ring it. */\ntypedef struct { int64_t m, cv; bool rung; } nx_bell;\nNX_INLINE int64_t nx_bell_new(void) {\n    nx_bell* b = (nx_bell*)malloc(sizeof *b);\n    if (!b) nx_panic(\"out of memory making a bell\", \"sync.bell_new\");\n    b->m = nx_mutex_new();\n    b->cv = nx_cond_new();\n    b->rung = false;\n    return (int64_t)(intptr_t)b;\n}\nNX_INLINE void nx_bell_ring(int64_t h) {\n    nx_bell* b = (nx_bell*)(intptr_t)h;\n    nx_mutex_lock_raw(b->m);\n    b->rung = true;\n    nx_cond_signal(b->cv);\n    nx_mutex_unlock_raw(b->m);\n}\n/* true when it rang (and it is quiet again), false when `ms` passed first\n   (negative: waits for ever) */\nNX_INLINE bool nx_bell_wait(int64_t h, int64_t ms) {\n    nx_bell* b = (nx_bell*)(intptr_t)h;\n    int64_t start = nx_mono_ms();\n    nx_mutex_lock_raw(b->m);\n    while (!b->rung) {\n        int64_t left = nx_left_ms(start, ms);\n        if (left == 0) break;\n        nx_cond_wait_for(b->cv, b->m, left);\n    }\n    bool rang = b->rung;\n    b->rung = false;\n    nx_mutex_unlock_raw(b->m);\n    return rang;\n}\nNX_INLINE void nx_bell_free(int64_t h) {\n    nx_bell* b = (nx_bell*)(intptr_t)h;\n    if (!b) return;\n    nx_cond_free(b->cv);\n    nx_mutex_free(b->m);\n    free(b);\n}\n\n/* sync.atomic_*: an i64 read and changed whole by any thread, sequentially\n   consistent */\nNX_INLINE int64_t nx_atomic_load(const int64_t* p) { return __atomic_load_n(p, __ATOMIC_SEQ_CST); }\nNX_INLINE void nx_atomic_store(int64_t* p, int64_t v) { __atomic_store_n(p, v, __ATOMIC_SEQ_CST); }\nNX_INLINE int64_t nx_atomic_add(int64_t* p, int64_t v) { return __atomic_fetch_add(p, v, __ATOMIC_SEQ_CST); }\nNX_INLINE int64_t nx_atomic_swap(int64_t* p, int64_t v) { return __atomic_exchange_n(p, v, __ATOMIC_SEQ_CST); }\nNX_INLINE bool nx_atomic_cas(int64_t* p, int64_t expected, int64_t desired) {\n    return __atomic_compare_exchange_n(p, &expected, desired, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);\n}\n\n/* ---------------------------------------------------- raw terminal input */\n/* `io.raw_mode(true)`: the console gives bytes as they are typed, without\n * echo, with VT sequences in (arrow keys) and out (colours); false restores\n * what was there, and so does exit. The REPL's line editor lives on this.\n * `io.read_key()` is one byte from the same buffer `io.read_line()` reads,\n * `io.pending_input()` how many are buffered (an escape sequence arrives\n * whole). */\n#if defined(_WIN32)\nNX_STATE DWORD nx_saved_in_mode, nx_saved_out_mode;\nNX_STATE bool nx_raw_saved;\nstatic void nx_raw_restore(void) {\n    if (!nx_raw_saved) return;\n    SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), nx_saved_in_mode);\n    SetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE), nx_saved_out_mode);\n}\nNX_INLINE bool nx_raw_mode(bool on) {\n    HANDLE hin = GetStdHandle(STD_INPUT_HANDLE), hout = GetStdHandle(STD_OUTPUT_HANDLE);\n    if (!on) { nx_raw_restore(); return true; }\n    DWORD im, om;\n    if (!GetConsoleMode(hin, &im) || !GetConsoleMode(hout, &om)) return false;\n    if (!nx_raw_saved) { nx_saved_in_mode = im; nx_saved_out_mode = om; nx_raw_saved = true; atexit(nx_raw_restore); }\n    DWORD nim = (im & ~(DWORD)(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT)) | ENABLE_VIRTUAL_TERMINAL_INPUT;\n    if (!SetConsoleMode(hin, nim)) return false;\n    SetConsoleMode(hout, om | ENABLE_VIRTUAL_TERMINAL_PROCESSING | ENABLE_PROCESSED_OUTPUT);\n    return true;\n}\n#elif defined(NX_WASM)\nNX_INLINE bool nx_raw_mode(bool on) { (void)on; return false; }\n#else\nNX_STATE struct termios nx_saved_termios;\nNX_STATE bool nx_raw_saved;\nstatic void nx_raw_restore(void) { if (nx_raw_saved) tcsetattr(0, TCSANOW, &nx_saved_termios); }\nNX_INLINE bool nx_raw_mode(bool on) {\n    if (!on) { nx_raw_restore(); return true; }\n    struct termios t;\n    if (tcgetattr(0, &t) != 0) return false;\n    if (!nx_raw_saved) { nx_saved_termios = t; nx_raw_saved = true; atexit(nx_raw_restore); }\n    t.c_lflag &= ~(tcflag_t)(ICANON | ECHO | ISIG);\n    t.c_iflag &= ~(tcflag_t)(ICRNL);\n    t.c_cc[VMIN] = 1;\n    t.c_cc[VTIME] = 0;\n    return tcsetattr(0, TCSANOW, &t) == 0;\n}\n#endif\nNX_INLINE bool nx_read_key(int64_t* out) {\n    if (!nx_stdin_fill()) return false;\n    *out = (int64_t)nx_stdin_buf[nx_stdin_pos++];\n    return true;\n}\nNX_INLINE int64_t nx_pending_input(void) { return (int64_t)(nx_stdin_len - nx_stdin_pos); }\n\nNX_INLINE bool nx_read_line(nx_ctx* c, nx_string* out) {\n    nx_string s; s.ptr = NULL; s.len = 0; s.cap = 0; s.ar = c->arena;\n    bool any = false;\n    while (nx_stdin_fill()) {\n        uint8_t b = nx_stdin_buf[nx_stdin_pos++];\n#if defined(_WIN32)\n        /* a console in binary mode passes Ctrl-Z through; keep it as end of input */\n        if (b == 0x1A && !any) return false;\n#endif\n        any = true;\n        if (b == '\\n') break;\n        nx_str_append(c, &s, &b, 1);\n    }\n    if (!any) return false;\n    if (s.len && s.ptr[s.len - 1] == '\\r') s.len--;\n    *out = s;\n    return true;\n}\n\n/* ----------------------------------------------------- checked arithmetic */\n#define NX_INT_OPS(N, T, UT, MIN, MAX) \\\n    NX_INLINE T nx_add_##N(T a, T b, const char* loc) { T r; if (__builtin_add_overflow(a, b, &r)) nx_panic(\"integer overflow in `+`\", loc); return r; } \\\n    NX_INLINE T nx_sub_##N(T a, T b, const char* loc) { T r; if (__builtin_sub_overflow(a, b, &r)) nx_panic(\"integer overflow in `-`\", loc); return r; } \\\n    NX_INLINE T nx_mul_##N(T a, T b, const char* loc) { T r; if (__builtin_mul_overflow(a, b, &r)) nx_panic(\"integer overflow in `*`\", loc); return r; } \\\n    NX_INLINE T nx_div_##N(T a, T b, const char* loc) { if (b == 0) nx_panic(\"division by zero\", loc); if ((T)(MIN) < 0 && a == (T)(MIN) && b == (T)-1) nx_panic(\"integer overflow in `/`\", loc); return a / b; } \\\n    NX_INLINE T nx_rem_##N(T a, T b, const char* loc) { if (b == 0) nx_panic(\"remainder by zero\", loc); if ((T)(MIN) < 0 && a == (T)(MIN) && b == (T)-1) return 0; return a % b; } \\\n    NX_INLINE T nx_neg_##N(T a, const char* loc) { if ((T)(MIN) < 0 && a == (T)(MIN)) nx_panic(\"integer overflow in negation\", loc); return (T)(-a); } \\\n    NX_INLINE T nx_addw_##N(T a, T b) { return (T)((UT)a + (UT)b); } \\\n    NX_INLINE T nx_subw_##N(T a, T b) { return (T)((UT)a - (UT)b); } \\\n    NX_INLINE T nx_mulw_##N(T a, T b) { return (T)((UT)a * (UT)b); } \\\n    NX_INLINE T nx_adds_##N(T a, T b) { T r; if (__builtin_add_overflow(a, b, &r)) return (b > 0) ? (T)(MAX) : (T)(MIN); return r; } \\\n    NX_INLINE T nx_subs_##N(T a, T b) { T r; if (__builtin_sub_overflow(a, b, &r)) return (b > 0) ? (T)(MIN) : (T)(MAX); return r; } \\\n    NX_INLINE T nx_muls_##N(T a, T b) { T r; if (__builtin_mul_overflow(a, b, &r)) return ((a < 0) != (b < 0)) ? (T)(MIN) : (T)(MAX); return r; } \\\n    NX_INLINE T nx_shl_##N(T a, uint32_t b, const char* loc) { if (b >= sizeof(T) * 8) nx_panic(\"shift amount exceeds the bit width\", loc); return (T)((UT)a << b); } \\\n    NX_INLINE T nx_shr_##N(T a, uint32_t b, const char* loc) { if (b >= sizeof(T) * 8) nx_panic(\"shift amount exceeds the bit width\", loc); return (T)(a >> b); } \\\n    NX_INLINE T nx_abs_##N(T a, const char* loc) { if ((T)(MIN) < 0 && a == (T)(MIN)) nx_panic(\"integer overflow in abs\", loc); return a < 0 ? (T)(-a) : a; }\n\nNX_INT_OPS(i8, int8_t, uint8_t, INT8_MIN, INT8_MAX)\nNX_INT_OPS(i16, int16_t, uint16_t, INT16_MIN, INT16_MAX)\nNX_INT_OPS(i32, int32_t, uint32_t, INT32_MIN, INT32_MAX)\nNX_INT_OPS(i64, int64_t, uint64_t, INT64_MIN, INT64_MAX)\nNX_INT_OPS(u8, uint8_t, uint8_t, 0, UINT8_MAX)\nNX_INT_OPS(u16, uint16_t, uint16_t, 0, UINT16_MAX)\nNX_INT_OPS(u32, uint32_t, uint32_t, 0, UINT32_MAX)\nNX_INT_OPS(u64, uint64_t, uint64_t, 0, UINT64_MAX)\nNX_INT_OPS(isize, intptr_t, uintptr_t, INTPTR_MIN, INTPTR_MAX)\nNX_INT_OPS(usize, size_t, size_t, 0, SIZE_MAX)\nNX_INT_OPS(i128, nx_i128, nx_u128, NX_I128_MIN, NX_I128_MAX)\nNX_INT_OPS(u128, nx_u128, nx_u128, 0, (~(nx_u128)0))\n\n/* Generated locals are named `<name>_<n>`. macOS's <mach/.../thread_status.h>\n * (reached through the system headers above) defines object-like macros of\n * that shape (`#define ts_32 uts.ts_32`), which would rewrite a local such as\n * `ts_32`; the generated code never needs them. */\n#undef ts_32\n#undef ts_64\n#undef es_32\n#undef es_64\n#undef fs_32\n#undef fs_64\n#undef ds_32\n#undef ds_64\n#undef ns_32\n#undef ns_64\n#undef ss_32\n#undef ss_64\n#undef cs_32\n#undef cs_64\n\n#endif /* NX_RT_H */\n\n/* ---------------------------------------------------- main on a big stack */\n/* `artifact cli { stack = \"1G\" }`: the generated main runs the program on a\n * thread reserving that much stack, so a recursion deeper than the platform's\n * default (a megabyte on some Windows toolchains, eight on Linux and macOS)\n * gets the room it declared. The reservation is address space; pages are\n * committed as the program reaches them. When the thread cannot be created\n * the program runs on the default stack. A 32-bit process caps it at 256 MB. */\ntypedef struct nx_stack_call { void (*f)(void*); void* arg; } nx_stack_call;\n#if defined(_WIN32)\n#ifndef STACK_SIZE_PARAM_IS_A_RESERVATION\n#define STACK_SIZE_PARAM_IS_A_RESERVATION 0x00010000\n#endif\nstatic DWORD WINAPI nx_stack_entry(LPVOID p) { nx_stack_call* c = (nx_stack_call*)p; c->f(c->arg); nx_small_drain(); return 0; }\n#else\nstatic void* nx_stack_entry(void* p) { nx_stack_call* c = (nx_stack_call*)p; c->f(c->arg); nx_small_drain(); return NULL; }\n#endif\nNX_INLINE void nx_run_on_stack(uint64_t bytes, void (*f)(void*), void* arg) {\n    nx_stack_call c; c.f = f; c.arg = arg;\n    if (sizeof(void*) < 8 && bytes > (uint64_t)256 * 1024 * 1024) bytes = (uint64_t)256 * 1024 * 1024;\n#if defined(_WIN32)\n    HANDLE h = CreateThread(NULL, (SIZE_T)bytes, nx_stack_entry, &c, STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);\n    if (h) { WaitForSingleObject(h, INFINITE); CloseHandle(h); return; }\n#elif defined(NX_WASM)\n    (void)nx_stack_entry;\n#else\n    pthread_attr_t attr; pthread_t t;\n    if (pthread_attr_init(&attr) == 0) {\n        bool ok = pthread_attr_setstacksize(&attr, (size_t)bytes) == 0 && pthread_create(&t, &attr, nx_stack_entry, &c) == 0;\n        pthread_attr_destroy(&attr);\n        if (ok) { pthread_join(t, NULL); return; }\n    }\n#endif\n    f(arg);\n}\n\n/* ------------------------------------------- what an export call acquired */\n/* S3 promises that a panic never crosses an export boundary; this is the\n * other half: a panic caught at the boundary releases everything the call\n * acquired, so a call that keeps failing does not grow. The wrapper of every\n * export installs a tracker for the call's context: its allocator records\n * every live allocation (arena chunks included, since arenas allocate from the\n * base allocator), and the file, socket and lock functions register their\n * handles through the thread's boundary. A `for parallel` body copies the\n * context to other threads, so the tables are behind a lock. On the panic\n * path the wrapper releases every entry; on the normal path only the tables\n * go, since the code released what it owned. Threads and parallel tasks that\n * panic on their own keep leaking what they allocated: what a thread allocates\n * can escape through `shared_mutable`, and freeing it would be worse.\n * Exports cannot return heap values or reach globals (S1, S2), so nothing\n * allocated during a panicked call is reachable afterwards. */\ntypedef struct nx_tracker {\n    nx_alloc parent;\n    void** slots; size_t cap; size_t used; size_t live;\n    int64_t* files; size_t nfiles; size_t files_cap;\n    int64_t* socks; size_t nsocks; size_t socks_cap;\n    int64_t* locks; size_t nlocks; size_t locks_cap;\n    int64_t mutex;\n} nx_tracker;\n#define NX_TR_DEAD ((void*)(uintptr_t)1)\nstatic size_t nx_tr_hash(void* p) { uintptr_t x = (uintptr_t)p; x ^= x >> 17; x *= (uintptr_t)0x9E3779B97F4A7C15ULL; x ^= x >> 29; return (size_t)x; }\nstatic void nx_tr_rebuild(nx_tracker* t, size_t ncap) {\n    void** ns = (void**)calloc(ncap, sizeof(void*));\n    if (!ns) return;\n    for (size_t i = 0; i < t->cap; i++) {\n        void* p = t->slots[i];\n        if (!p || p == NX_TR_DEAD) continue;\n        size_t j = nx_tr_hash(p) & (ncap - 1);\n        while (ns[j]) j = (j + 1) & (ncap - 1);\n        ns[j] = p;\n    }\n    free(t->slots);\n    t->slots = ns; t->cap = ncap; t->used = t->live;\n}\nstatic void nx_tr_add(nx_tracker* t, void* p) {\n    if (!p) return;\n    nx_mutex_lock_raw(t->mutex);\n    if ((t->used + 1) * 2 > t->cap) nx_tr_rebuild(t, t->cap == 0 ? 256 : (t->live * 4 > t->cap ? t->cap * 2 : t->cap));\n    if (t->cap) {\n        size_t mask = t->cap - 1, j = nx_tr_hash(p) & mask;\n        while (t->slots[j] && t->slots[j] != NX_TR_DEAD) j = (j + 1) & mask;\n        if (!t->slots[j]) t->used++;\n        t->slots[j] = p; t->live++;\n    }\n    nx_mutex_unlock_raw(t->mutex);\n}\nstatic void nx_tr_remove(nx_tracker* t, void* p) {\n    if (!p || !t->cap) return;\n    nx_mutex_lock_raw(t->mutex);\n    size_t mask = t->cap - 1, j = nx_tr_hash(p) & mask;\n    while (t->slots[j]) {\n        if (t->slots[j] == p) { t->slots[j] = NX_TR_DEAD; t->live--; break; }\n        j = (j + 1) & mask;\n    }\n    nx_mutex_unlock_raw(t->mutex);\n}\nstatic void* nx_tr_alloc(void* st, size_t size, size_t align) { nx_tracker* t = (nx_tracker*)st; void* p = t->parent.alloc(t->parent.state, size, align); nx_tr_add(t, p); return p; }\nstatic void* nx_tr_realloc(void* st, void* p, size_t old_size, size_t new_size, size_t align) { nx_tracker* t = (nx_tracker*)st; nx_tr_remove(t, p); void* q = t->parent.realloc(t->parent.state, p, old_size, new_size, align); nx_tr_add(t, q); return q; }\nstatic void nx_tr_free(void* st, void* p, size_t size) { nx_tracker* t = (nx_tracker*)st; nx_tr_remove(t, p); t->parent.free(t->parent.state, p, size); }\nstatic void nx_tr_list_set(int64_t** xs, size_t* n, size_t* cap, int64_t h, bool acquire) {\n    if (acquire) {\n        if (*n == *cap) { size_t nc = *cap ? *cap * 2 : 8; int64_t* g = (int64_t*)realloc(*xs, nc * sizeof(int64_t)); if (!g) return; *xs = g; *cap = nc; }\n        (*xs)[(*n)++] = h;\n    } else {\n        for (size_t i = *n; i-- > 0;) { if ((*xs)[i] == h) { (*xs)[i] = (*xs)[*n - 1]; (*n)--; return; } }\n    }\n}\nstatic void nx_track_handle(int kind, int64_t h, bool acquire) {\n    nx_boundary* b = nx_tls_boundary;\n    if (!b || !b->track) return;\n    nx_tracker* t = b->track;\n    nx_mutex_lock_raw(t->mutex);\n    if (kind == 0) nx_tr_list_set(&t->files, &t->nfiles, &t->files_cap, h, acquire);\n    else if (kind == 1) nx_tr_list_set(&t->socks, &t->nsocks, &t->socks_cap, h, acquire);\n    else nx_tr_list_set(&t->locks, &t->nlocks, &t->locks_cap, h, acquire);\n    nx_mutex_unlock_raw(t->mutex);\n}\n/* a thread started inside an export call may outlive the call, and what it\n   allocates can escape through `shared_mutable`: it allocates untracked */\nstatic void nx_ctx_untrack(nx_ctx* c) {\n    if (c->alloc.alloc == nx_tr_alloc) c->alloc = ((nx_tracker*)c->alloc.state)->parent;\n    if (c->base.alloc == nx_tr_alloc) c->base = ((nx_tracker*)c->base.state)->parent;\n}\nNX_INLINE void nx_export_enter(nx_ctx* c, nx_boundary* b, nx_tracker* t) {\n    memset(t, 0, sizeof *t);\n    t->parent = c->alloc;\n    t->mutex = nx_mutex_new();\n    c->alloc.alloc = nx_tr_alloc; c->alloc.realloc = nx_tr_realloc; c->alloc.free = nx_tr_free; c->alloc.state = t;\n    c->base = c->alloc;\n    b->track = t;\n}\nNX_INLINE void nx_export_leave(nx_ctx* c, nx_boundary* b, nx_tracker* t, bool panicked) {\n    b->track = NULL; /* the releases below must not register themselves */\n    if (panicked) {\n        for (size_t i = t->nlocks; i-- > 0;) nx_mutex_unlock_raw(t->locks[i]);\n        for (size_t i = 0; i < t->nsocks; i++) nx_closesock((nx_sock)t->socks[i]);\n        for (size_t i = 0; i < t->nfiles; i++) nx_file_close(t->files[i]);\n        for (size_t i = 0; i < t->cap; i++) { void* p = t->slots[i]; if (p && p != NX_TR_DEAD) t->parent.free(t->parent.state, p, 0); }\n    }\n    free(t->slots); free(t->files); free(t->socks); free(t->locks);\n    nx_mutex_free(t->mutex);\n    c->alloc = t->parent;\n    c->base = t->parent;\n    /* the small blocks the call cached go back too: nothing of the call\n       stays on the host's thread */\n    nx_small_drain();\n}\n";
+static const nx_sl_u8 nxc_RUNTIME_H_153 = { (uint8_t*)nx_str_397, 192233 };
 static const char nx_str_398[1454] = "/* setjmp and longjmp on WebAssembly: wasi-libc's runtime for them, which\n * zig 0.14 leaves out. `-mllvm -wasm-enable-sjlj` lowers the runtime's\n * setjmp and longjmp to these three calls: longjmp throws WebAssembly's\n * C_LONGJMP exception, and the frame that called setjmp knows its own by the\n * invocation it was made in. nx compiles this file beside a program built\n * for wasm32-wasi. It is a translation unit of its own on purpose: defined\n * in the one that calls setjmp, LLVM 19 lowers the calls to code that no\n * engine accepts. Weak, so a libc that has them wins.\n */\n#include <stdint.h>\n#include <stddef.h>\n\nstruct nx_wasm_jb { void* invocation; uint32_t label; struct { void* env; int val; } arg; };\n\n__attribute__((weak)) void __wasm_setjmp(void* env, uint32_t label, void* invocation) {\n    struct nx_wasm_jb* jb = (struct nx_wasm_jb*)env;\n    if (label == 0 || invocation == NULL) __builtin_trap();\n    jb->invocation = invocation;\n    jb->label = label;\n}\n\n__attribute__((weak)) uint32_t __wasm_setjmp_test(void* env, void* invocation) {\n    struct nx_wasm_jb* jb = (struct nx_wasm_jb*)env;\n    if (jb->label == 0 || invocation == NULL) __builtin_trap();\n    return jb->invocation == invocation ? jb->label : 0;\n}\n\n__attribute__((weak)) void __wasm_longjmp(void* env, int val) {\n    struct nx_wasm_jb* jb = (struct nx_wasm_jb*)env;\n    jb->arg.env = env;\n    jb->arg.val = val == 0 ? 1 : val;\n    __builtin_wasm_throw(1, &jb->arg);\n}\n";
 static const nx_sl_u8 nxc_WASM_SJLJ_C_154 = { (uint8_t*)nx_str_398, 1453 };
 static const uint8_t nxc_MODE_DEBUG_155 = ((uint8_t)0ULL);
@@ -10246,182 +10367,185 @@ static const char nx_str_5168[8] = "_len })";
 static const char nx_str_5169[12] = "/* export: ";
 static const char nx_str_5170[11] = "NX_EXPORT ";
 static const char nx_str_5171[45] = "  nx_ctx _nx_ctx = nx_default_ctx(0, NULL);\n";
-static const char nx_str_5172[19] = "NX_EXPORT int32_t ";
-static const char nx_str_5173[191] = "  nx_ctx _nx_ctx = nx_default_ctx(0, NULL);\n  nx_boundary _nxb; nx_boundary* _nx_prev = nx_tls_boundary; nx_tls_boundary = &_nxb;\n  nx_tracker _nxt; nx_export_enter(&_nx_ctx, &_nxb, &_nxt);\n";
-static const char nx_str_5174[108] = "  if (setjmp(_nxb.jb)) { nx_export_leave(&_nx_ctx, &_nxb, &_nxt, true); nx_tls_boundary = _nx_prev; return ";
-static const char nx_str_5175[10] = " _nx_r = ";
-static const char nx_str_5176[126] = ");\n  nx_export_leave(&_nx_ctx, &_nxb, &_nxt, false); nx_tls_boundary = _nx_prev;\n  if (_nx_r.err) return (int32_t)_nx_r.err;\n";
-static const char nx_str_5177[4] = ") *";
-static const char nx_str_5178[15] = " = _nx_r.val;\n";
-static const char nx_str_5179[88] = ");\n  nx_export_leave(&_nx_ctx, &_nxb, &_nxt, false); nx_tls_boundary = _nx_prev;\n  if (";
-static const char nx_str_5180[11] = " = _nx_r;\n";
-static const char nx_str_5181[82] = ");\n  nx_export_leave(&_nx_ctx, &_nxb, &_nxt, false); nx_tls_boundary = _nx_prev;\n";
-static const char nx_str_5182[15] = "  return 0;\n}\n";
-static const char nx_str_5183[11] = "nx_parenv_";
-static const char nx_str_5184[8] = "nx_par_";
-static const char nx_str_5185[3] = " s";
-static const char nx_str_5186[4] = "* l";
-static const char nx_str_5187[15] = " char _pad; } ";
-static const char nx_str_5188[3] = ".s";
-static const char nx_str_5189[3] = ".l";
-static const char nx_str_5190[20] = "nx_parallel_for(c, ";
-static const char nx_str_5191[11] = "(*_penv->l";
-static const char nx_str_5192[12] = "* _penv = (";
-static const char nx_str_5193[25] = "*)_pv; NX_UNUSED(_penv);";
-static const char nx_str_5194[8] = " = _b; ";
-static const char nx_str_5195[8] = " < _e; ";
-static const char nx_str_5196[12] = " = _penv->s";
-static const char nx_str_5197[47] = "(nx_ctx* c, void* _pv, size_t _b, size_t _e);\n";
-static const char nx_str_5198[64] = "(nx_ctx* c, void* _pv, size_t _b, size_t _e) {\n  NX_UNUSED(c);\n";
-static const char nx_str_5199[21] = "nx_lit((const char*)";
-static const char nx_str_5200[10] = "utf8=true";
-static const char nx_str_5201[14] = "nx_bits_read(";
-static const char nx_str_5202[10] = "nx_bswap(";
-static const char nx_str_5203[6] = " / 8)";
-static const char nx_str_5204[35] = "(nx_is_little_endian() ? nx_bswap(";
-static const char nx_str_5205[9] = " / 8) : ";
-static const char nx_str_5206[28] = "({ uint32_t _b = (uint32_t)";
-static const char nx_str_5207[40] = "; float _f; memcpy(&_f, &_b, 4); _f; })";
-static const char nx_str_5208[28] = "({ uint64_t _b = (uint64_t)";
-static const char nx_str_5209[41] = "; double _f; memcpy(&_f, &_b, 8); _f; })";
-static const char nx_str_5210[16] = "nx_sign_extend(";
-static const char nx_str_5211[10] = " = false;";
-static const char nx_str_5212[5] = "do {";
-static const char nx_str_5213[17] = " = 0; NX_UNUSED(";
-static const char nx_str_5214[10] = ".len * 8)";
-static const char nx_str_5215[11] = "((size_t)(";
-static const char nx_str_5216[6] = "if ((";
-static const char nx_str_5217[11] = " & 7) || (";
-static const char nx_str_5218[14] = " & 7)) break;";
-static const char nx_str_5219[10] = "nx_sl_u8 ";
-static const char nx_str_5220[14] = " = { nx_padd(";
-static const char nx_str_5221[8] = " / 8), ";
-static const char nx_str_5222[8] = " / 8 };";
-static const char nx_str_5223[20] = "if (!nx_utf8_valid(";
-static const char nx_str_5224[10] = ")) break;";
-static const char nx_str_5225[10] = " & 7) || ";
-static const char nx_str_5226[17] = ".len * 8) break;";
-static const char nx_str_5227[20] = "if (memcmp(nx_padd(";
-static const char nx_str_5228[19] = ".len) != 0) break;";
-static const char nx_str_5229[7] = "if (((";
-static const char nx_str_5230[9] = ")) != ((";
-static const char nx_str_5231[11] = "))) break;";
-static const char nx_str_5232[9] = " = true;";
-static const char nx_str_5233[13] = "} while (0);";
-static const char nx_str_5234[6] = " = 0;";
-static const char nx_str_5235[12] = "u; break; }";
-static const char nx_str_5236[13] = ".len * 8) { ";
-static const char nx_str_5237[16] = "memcpy(nx_padd(";
-static const char nx_str_5238[7] = " / 8);";
-static const char nx_str_5239[23] = "({ float _f = (float)(";
-static const char nx_str_5240[54] = "); uint32_t _b; memcpy(&_b, &_f, 4); (uint64_t)_b; })";
-static const char nx_str_5241[25] = "({ double _f = (double)(";
-static const char nx_str_5242[44] = "); uint64_t _b; memcpy(&_b, &_f, 8); _b; })";
-static const char nx_str_5243[12] = "(uint64_t)(";
-static const char nx_str_5244[15] = "nx_bits_write(";
-static const char nx_str_5245[20] = ".val = (nx_sl_u8){ ";
-static const char nx_str_5246[80] = "no `main` function found; add `fn main() { ... }` or declare a library artifact";
-static const char nx_str_5247[254] = "  nx_console_utf8();\n  nx_ctx ctx = nx_default_ctx(argc, argv);\n  nx_ctx_track_self(&ctx);\n  nx_boundary b; b.track = NULL; nx_tls_boundary = &b;\n  if (setjmp(b.jb)) { fflush(stdout); fprintf(stderr, \"panic: %s\\n  at %s\\n\", b.msg, b.loc); return 101; }\n";
-static const char nx_str_5248[60] = "`main` takes no parameters; read arguments with `os.args()`";
-static const char nx_str_5249[87] = "(&ctx);\n  fflush(stdout);\n  nx_ctx_release(&ctx);\n  nx_leak_report(&ctx);\n  return 0;\n";
-static const char nx_str_5250[6] = " r = ";
-static const char nx_str_5251[156] = "(&ctx);\n  fflush(stdout);\n  nx_ctx_release(&ctx);\n  nx_leak_report(&ctx);\n  if (r.err) { fprintf(stderr, \"error: %s\\n\", nx_error_name(r.err)); return 1; }\n";
-static const char nx_str_5252[22] = "  return (int)r.val;\n";
-static const char nx_str_5253[19] = "  int code = (int)";
-static const char nx_str_5254[90] = "(&ctx);\n  fflush(stdout);\n  nx_ctx_release(&ctx);\n  nx_leak_report(&ctx);\n  return code;\n";
-static const char nx_str_5255[60] = "`main` must return `void`, `!void`, or an integer exit code";
-static const char nx_str_5256[50] = "static int nx_main_body(int argc, char** argv) {\n";
-static const char nx_str_5257[35] = "int main(int argc, char** argv) {\n";
-static const char nx_str_5258[202] = "typedef struct nx_main_call { int argc; char** argv; int code; } nx_main_call;\nstatic void nx_main_trampoline(void* p) { nx_main_call* c = (nx_main_call*)p; c->code = nx_main_body(c->argc, c->argv); }\n";
-static const char nx_str_5259[109] = "int main(int argc, char** argv) { nx_main_call c; c.argc = argc; c.argv = argv; c.code = 0; nx_run_on_stack(";
-static const char nx_str_5260[48] = "ULL, nx_main_trampoline, &c); return c.code; }\n";
-static const char nx_str_5261[321] = "  nx_console_utf8();\n  nx_ctx ctx = nx_default_ctx(argc, argv);\n  const char* filter = NULL; int verbose = 0;\n  for (int ai = 1; ai < argc; ai++) { if (strcmp(argv[ai], \"--verbose\") == 0) verbose = 1; else filter = argv[ai]; }\n  int passed = 0, failed = 0, skipped = 0;\n  nx_boundary b; b.track = NULL; uint64_t t0 = 0;\n";
-static const char nx_str_5262[25] = "  if (!filter || strstr(";
-static const char nx_str_5263[154] = ", filter)) {\n    nx_tls_boundary = &b; t0 = nx_time_monotonic_ns();\n    if (setjmp(b.jb)) { failed++; printf(\"FAIL  %s\\n      panic: %s\\n      at %s\\n\", ";
-static const char nx_str_5264[31] = ", b.msg, b.loc); }\n    else { ";
-static const char nx_str_5265[70] = "(&ctx); if (r.err) { failed++; printf(\"FAIL  %s\\n      error: %s\\n\", ";
-static const char nx_str_5266[90] = ", nx_error_name(r.err)); } else { passed++; if (verbose) printf(\"ok    %s  (%.1f ms)\\n\", ";
-static const char nx_str_5267[75] = ", (double)(nx_time_monotonic_ns() - t0) / 1e6); else printf(\"ok    %s\\n\", ";
-static const char nx_str_5268[92] = "); } }\n    nx_tls_boundary = NULL;\n  } else { skipped++; if (verbose) printf(\"skip  %s\\n\", ";
-static const char nx_str_5269[128] = "  printf(\"\\n%d passed, %d failed%s\\n\", passed, failed, skipped ? \" (some skipped by filter)\" : \"\");\n  return failed ? 1 : 0;\n}\n";
-static const char nx_str_5270[32] = "static uint32_t nx_bench_thunk_";
-static const char nx_str_5271[15] = "(nx_ctx* c) { ";
-static const char nx_str_5272[41] = "(c); nx_bench_keep(&r); return r.err; }\n";
-static const char nx_str_5273[415] = "  nx_console_utf8();\n  nx_ctx ctx = nx_default_ctx(argc, argv);\n  const char* filter = NULL; uint64_t sample_ns = 10000000ULL;\n  for (int ai = 1; ai < argc; ai++) { if (strcmp(argv[ai], \"--quick\") == 0) sample_ns = 1000000ULL; else if (strcmp(argv[ai], \"--filter\") != 0) filter = argv[ai]; }\n  int ran = 0, failed = 0, skipped = 0;\n  nx_boundary b; b.track = NULL; nx_bench_result r; char med[32], lo[32], hi[32];\n";
-static const char nx_str_5274[135] = ", filter)) {\n    ran++; nx_tls_boundary = &b;\n    if (setjmp(b.jb)) { failed++; printf(\"FAIL   %s\\n       panic: %s\\n       at %s\\n\", ";
-static const char nx_str_5275[75] = ", b.msg, b.loc); }\n    else {\n      nx_bench_measure(&ctx, nx_bench_thunk_";
-static const char nx_str_5276[88] = ", sample_ns, &r);\n      if (r.err) { failed++; printf(\"FAIL   %s\\n       error: %s\\n\", ";
-static const char nx_str_5277[110] = ", nx_error_name(r.err)); }\n      else printf(\"bench  %-*s  %s/iter  (min %s, max %s; %u samples of %llu)\\n\", ";
-static const char nx_str_5278[245] = ", nx_bench_time(r.median_ns, med, sizeof med), nx_bench_time(r.min_ns, lo, sizeof lo), nx_bench_time(r.max_ns, hi, sizeof hi), r.samples, (unsigned long long)r.iters);\n      fflush(stdout);\n    }\n    nx_tls_boundary = NULL;\n  } else skipped++;\n";
-static const char nx_str_5279[30] = "  printf(\"\\n%d benchmark(s), ";
-static const char nx_str_5280[123] = " mode%s%s\\n\", ran, failed ? \", some failed\" : \"\", skipped ? \" (some skipped by filter)\" : \"\");\n  return failed ? 1 : 0;\n}\n";
-static const char nx_str_5281[53] = "static const char* const nx_error_names[] = { \"(ok)\"";
-static const char nx_str_5282[4] = ", \"";
-static const char nx_str_5283[161] = " };\nNX_INLINE const char* nx_error_name(uint32_t e) { return e <= sizeof(nx_error_names)/sizeof(*nx_error_names) - 1 ? nx_error_names[e] : \"(unknown error)\"; }\n";
-static const char nx_str_5284[23] = "/* generated by nx */\n";
-static const char nx_str_5285[6] = "DEBUG";
-static const char nx_str_5286[5] = "SAFE";
-static const char nx_str_5287[5] = "FAST";
-static const char nx_str_5288[6] = "SMALL";
-static const char nx_str_5289[17] = "#define NX_MODE_";
-static const char nx_str_5290[24] = "#define NX_RT_SHARED 1\n";
-static const char nx_str_5291[23] = "#define NX_RT_OWNER 1\n";
-static const char nx_str_5292[37] = "\n/* ---- imported C headers ---- */\n";
-static const char nx_str_5293[23] = "_Static_assert(sizeof(";
-static const char nx_str_5294[6] = ") == ";
-static const char nx_str_5295[12] = ", \"@sizeOf(";
-static const char nx_str_5296[6] = ") is ";
-static const char nx_str_5297[11] = " bytes\");\n";
-static const char nx_str_5298[39] = "\n/* ---- forward declarations ---- */\n";
-static const char nx_str_5299[24] = "\n/* ---- types ---- */\n";
-static const char nx_str_5300[51] = "\n/* ---- @sizeOf, as C lays the types out ---- */\n";
-static const char nx_str_5301[23] = "\n/* ---- data ---- */\n";
-static const char nx_str_5302[29] = "\n/* ---- prototypes ---- */\n";
-static const char nx_str_5303[26] = "\n/* ---- helpers ---- */\n";
-static const char nx_str_5304[28] = "\n/* ---- functions ---- */\n";
-static const char nx_str_5305[24] = "\n/* ---- entry ---- */\n";
-static const char nx_str_5306[23] = "NX_EXPORT const char* ";
-static const char nx_str_5307[91] = "_error_name(int32_t code) { return nx_error_name((uint32_t)code); }\nNX_EXPORT const char* ";
-static const char nx_str_5308[49] = "_last_panic(void) { return nx_tls_last_panic; }\n";
-static const char nx_str_5309[3] = "\\u";
-static const char nx_str_5310[33] = "a control character in a comment";
-static const char nx_str_5311[56] = "more on the line after its key and value, or its header";
-static const char nx_str_5312[36] = "a multi-line string cannot be a key";
-static const char nx_str_5313[4] = "'''";
-static const char nx_str_5314[17] = "a key is missing";
-static const char nx_str_5315[40] = "a table's header is not closed with `]`";
-static const char nx_str_5316[51] = "an array of tables' header is not closed with `]]`";
-static const char nx_str_5317[26] = "` is a value, not a table";
-static const char nx_str_5318[37] = "` is a table, not an array of tables";
-static const char nx_str_5319[37] = "` is an array of tables, not a table";
-static const char nx_str_5320[12] = "the table `";
-static const char nx_str_5321[19] = "` is defined twice";
-static const char nx_str_5322[27] = "`=` is missing after a key";
-static const char nx_str_5323[10] = "the key `";
-static const char nx_str_5324[45] = "` is not a table that dotted keys can add to";
-static const char nx_str_5325[48] = "` has a header, so dotted keys cannot add to it";
-static const char nx_str_5326[35] = "a string is not closed on its line";
-static const char nx_str_5327[32] = "a control character in a string";
-static const char nx_str_5328[29] = "a string ends in a backslash";
-static const char nx_str_5329[25] = "a \\u escape is cut short";
-static const char nx_str_5330[53] = "a \\u escape with a character that is not a hex digit";
-static const char nx_str_5331[47] = "a \\u escape that is not a Unicode scalar value";
-static const char nx_str_5332[32] = "an escape TOML does not have: \\";
-static const char nx_str_5333[34] = "a multi-line string is not closed";
-static const char nx_str_5334[49] = "three quotes in a row inside a multi-line string";
-static const char nx_str_5335[23] = "an array is not closed";
-static const char nx_str_5336[38] = "a comma or `]` is missing in an array";
-static const char nx_str_5337[71] = "a comma or `}` is missing in an inline table (it must fit on one line)";
-static const char nx_str_5338[19] = "a value is missing";
-static const char nx_str_5339[5] = "+inf";
-static const char nx_str_5340[5] = "+nan";
-static const char nx_str_5341[5] = "-nan";
-static const char nx_str_5342[36] = "` is not a date or time TOML allows";
-static const char nx_str_5343[26] = "` is not a value TOML has";
-static const char nx_str_5344[8] = "signal ";
-static const char nx_str_5345[2] = "w";
-static const char nx_str_5346[20] = "thread joined twice";
-static const char nx_str_5347[58] = "the argument is shared with the running thread until join";
+static const char nx_str_5172[11] = " _nx_r = (";
+static const char nx_str_5173[40] = ");\n  nx_small_drain();\n  return _nx_r;\n";
+static const char nx_str_5174[24] = ");\n  nx_small_drain();\n";
+static const char nx_str_5175[19] = "NX_EXPORT int32_t ";
+static const char nx_str_5176[191] = "  nx_ctx _nx_ctx = nx_default_ctx(0, NULL);\n  nx_boundary _nxb; nx_boundary* _nx_prev = nx_tls_boundary; nx_tls_boundary = &_nxb;\n  nx_tracker _nxt; nx_export_enter(&_nx_ctx, &_nxb, &_nxt);\n";
+static const char nx_str_5177[108] = "  if (setjmp(_nxb.jb)) { nx_export_leave(&_nx_ctx, &_nxb, &_nxt, true); nx_tls_boundary = _nx_prev; return ";
+static const char nx_str_5178[10] = " _nx_r = ";
+static const char nx_str_5179[126] = ");\n  nx_export_leave(&_nx_ctx, &_nxb, &_nxt, false); nx_tls_boundary = _nx_prev;\n  if (_nx_r.err) return (int32_t)_nx_r.err;\n";
+static const char nx_str_5180[4] = ") *";
+static const char nx_str_5181[15] = " = _nx_r.val;\n";
+static const char nx_str_5182[88] = ");\n  nx_export_leave(&_nx_ctx, &_nxb, &_nxt, false); nx_tls_boundary = _nx_prev;\n  if (";
+static const char nx_str_5183[11] = " = _nx_r;\n";
+static const char nx_str_5184[82] = ");\n  nx_export_leave(&_nx_ctx, &_nxb, &_nxt, false); nx_tls_boundary = _nx_prev;\n";
+static const char nx_str_5185[15] = "  return 0;\n}\n";
+static const char nx_str_5186[11] = "nx_parenv_";
+static const char nx_str_5187[8] = "nx_par_";
+static const char nx_str_5188[3] = " s";
+static const char nx_str_5189[4] = "* l";
+static const char nx_str_5190[15] = " char _pad; } ";
+static const char nx_str_5191[3] = ".s";
+static const char nx_str_5192[3] = ".l";
+static const char nx_str_5193[20] = "nx_parallel_for(c, ";
+static const char nx_str_5194[11] = "(*_penv->l";
+static const char nx_str_5195[12] = "* _penv = (";
+static const char nx_str_5196[25] = "*)_pv; NX_UNUSED(_penv);";
+static const char nx_str_5197[8] = " = _b; ";
+static const char nx_str_5198[8] = " < _e; ";
+static const char nx_str_5199[12] = " = _penv->s";
+static const char nx_str_5200[47] = "(nx_ctx* c, void* _pv, size_t _b, size_t _e);\n";
+static const char nx_str_5201[64] = "(nx_ctx* c, void* _pv, size_t _b, size_t _e) {\n  NX_UNUSED(c);\n";
+static const char nx_str_5202[21] = "nx_lit((const char*)";
+static const char nx_str_5203[10] = "utf8=true";
+static const char nx_str_5204[14] = "nx_bits_read(";
+static const char nx_str_5205[10] = "nx_bswap(";
+static const char nx_str_5206[6] = " / 8)";
+static const char nx_str_5207[35] = "(nx_is_little_endian() ? nx_bswap(";
+static const char nx_str_5208[9] = " / 8) : ";
+static const char nx_str_5209[28] = "({ uint32_t _b = (uint32_t)";
+static const char nx_str_5210[40] = "; float _f; memcpy(&_f, &_b, 4); _f; })";
+static const char nx_str_5211[28] = "({ uint64_t _b = (uint64_t)";
+static const char nx_str_5212[41] = "; double _f; memcpy(&_f, &_b, 8); _f; })";
+static const char nx_str_5213[16] = "nx_sign_extend(";
+static const char nx_str_5214[10] = " = false;";
+static const char nx_str_5215[5] = "do {";
+static const char nx_str_5216[17] = " = 0; NX_UNUSED(";
+static const char nx_str_5217[10] = ".len * 8)";
+static const char nx_str_5218[11] = "((size_t)(";
+static const char nx_str_5219[6] = "if ((";
+static const char nx_str_5220[11] = " & 7) || (";
+static const char nx_str_5221[14] = " & 7)) break;";
+static const char nx_str_5222[10] = "nx_sl_u8 ";
+static const char nx_str_5223[14] = " = { nx_padd(";
+static const char nx_str_5224[8] = " / 8), ";
+static const char nx_str_5225[8] = " / 8 };";
+static const char nx_str_5226[20] = "if (!nx_utf8_valid(";
+static const char nx_str_5227[10] = ")) break;";
+static const char nx_str_5228[10] = " & 7) || ";
+static const char nx_str_5229[17] = ".len * 8) break;";
+static const char nx_str_5230[20] = "if (memcmp(nx_padd(";
+static const char nx_str_5231[19] = ".len) != 0) break;";
+static const char nx_str_5232[7] = "if (((";
+static const char nx_str_5233[9] = ")) != ((";
+static const char nx_str_5234[11] = "))) break;";
+static const char nx_str_5235[9] = " = true;";
+static const char nx_str_5236[13] = "} while (0);";
+static const char nx_str_5237[6] = " = 0;";
+static const char nx_str_5238[12] = "u; break; }";
+static const char nx_str_5239[13] = ".len * 8) { ";
+static const char nx_str_5240[16] = "memcpy(nx_padd(";
+static const char nx_str_5241[7] = " / 8);";
+static const char nx_str_5242[23] = "({ float _f = (float)(";
+static const char nx_str_5243[54] = "); uint32_t _b; memcpy(&_b, &_f, 4); (uint64_t)_b; })";
+static const char nx_str_5244[25] = "({ double _f = (double)(";
+static const char nx_str_5245[44] = "); uint64_t _b; memcpy(&_b, &_f, 8); _b; })";
+static const char nx_str_5246[12] = "(uint64_t)(";
+static const char nx_str_5247[15] = "nx_bits_write(";
+static const char nx_str_5248[20] = ".val = (nx_sl_u8){ ";
+static const char nx_str_5249[80] = "no `main` function found; add `fn main() { ... }` or declare a library artifact";
+static const char nx_str_5250[254] = "  nx_console_utf8();\n  nx_ctx ctx = nx_default_ctx(argc, argv);\n  nx_ctx_track_self(&ctx);\n  nx_boundary b; b.track = NULL; nx_tls_boundary = &b;\n  if (setjmp(b.jb)) { fflush(stdout); fprintf(stderr, \"panic: %s\\n  at %s\\n\", b.msg, b.loc); return 101; }\n";
+static const char nx_str_5251[60] = "`main` takes no parameters; read arguments with `os.args()`";
+static const char nx_str_5252[87] = "(&ctx);\n  fflush(stdout);\n  nx_ctx_release(&ctx);\n  nx_leak_report(&ctx);\n  return 0;\n";
+static const char nx_str_5253[6] = " r = ";
+static const char nx_str_5254[156] = "(&ctx);\n  fflush(stdout);\n  nx_ctx_release(&ctx);\n  nx_leak_report(&ctx);\n  if (r.err) { fprintf(stderr, \"error: %s\\n\", nx_error_name(r.err)); return 1; }\n";
+static const char nx_str_5255[22] = "  return (int)r.val;\n";
+static const char nx_str_5256[19] = "  int code = (int)";
+static const char nx_str_5257[90] = "(&ctx);\n  fflush(stdout);\n  nx_ctx_release(&ctx);\n  nx_leak_report(&ctx);\n  return code;\n";
+static const char nx_str_5258[60] = "`main` must return `void`, `!void`, or an integer exit code";
+static const char nx_str_5259[50] = "static int nx_main_body(int argc, char** argv) {\n";
+static const char nx_str_5260[35] = "int main(int argc, char** argv) {\n";
+static const char nx_str_5261[202] = "typedef struct nx_main_call { int argc; char** argv; int code; } nx_main_call;\nstatic void nx_main_trampoline(void* p) { nx_main_call* c = (nx_main_call*)p; c->code = nx_main_body(c->argc, c->argv); }\n";
+static const char nx_str_5262[109] = "int main(int argc, char** argv) { nx_main_call c; c.argc = argc; c.argv = argv; c.code = 0; nx_run_on_stack(";
+static const char nx_str_5263[48] = "ULL, nx_main_trampoline, &c); return c.code; }\n";
+static const char nx_str_5264[321] = "  nx_console_utf8();\n  nx_ctx ctx = nx_default_ctx(argc, argv);\n  const char* filter = NULL; int verbose = 0;\n  for (int ai = 1; ai < argc; ai++) { if (strcmp(argv[ai], \"--verbose\") == 0) verbose = 1; else filter = argv[ai]; }\n  int passed = 0, failed = 0, skipped = 0;\n  nx_boundary b; b.track = NULL; uint64_t t0 = 0;\n";
+static const char nx_str_5265[25] = "  if (!filter || strstr(";
+static const char nx_str_5266[154] = ", filter)) {\n    nx_tls_boundary = &b; t0 = nx_time_monotonic_ns();\n    if (setjmp(b.jb)) { failed++; printf(\"FAIL  %s\\n      panic: %s\\n      at %s\\n\", ";
+static const char nx_str_5267[31] = ", b.msg, b.loc); }\n    else { ";
+static const char nx_str_5268[70] = "(&ctx); if (r.err) { failed++; printf(\"FAIL  %s\\n      error: %s\\n\", ";
+static const char nx_str_5269[90] = ", nx_error_name(r.err)); } else { passed++; if (verbose) printf(\"ok    %s  (%.1f ms)\\n\", ";
+static const char nx_str_5270[75] = ", (double)(nx_time_monotonic_ns() - t0) / 1e6); else printf(\"ok    %s\\n\", ";
+static const char nx_str_5271[92] = "); } }\n    nx_tls_boundary = NULL;\n  } else { skipped++; if (verbose) printf(\"skip  %s\\n\", ";
+static const char nx_str_5272[128] = "  printf(\"\\n%d passed, %d failed%s\\n\", passed, failed, skipped ? \" (some skipped by filter)\" : \"\");\n  return failed ? 1 : 0;\n}\n";
+static const char nx_str_5273[32] = "static uint32_t nx_bench_thunk_";
+static const char nx_str_5274[15] = "(nx_ctx* c) { ";
+static const char nx_str_5275[41] = "(c); nx_bench_keep(&r); return r.err; }\n";
+static const char nx_str_5276[415] = "  nx_console_utf8();\n  nx_ctx ctx = nx_default_ctx(argc, argv);\n  const char* filter = NULL; uint64_t sample_ns = 10000000ULL;\n  for (int ai = 1; ai < argc; ai++) { if (strcmp(argv[ai], \"--quick\") == 0) sample_ns = 1000000ULL; else if (strcmp(argv[ai], \"--filter\") != 0) filter = argv[ai]; }\n  int ran = 0, failed = 0, skipped = 0;\n  nx_boundary b; b.track = NULL; nx_bench_result r; char med[32], lo[32], hi[32];\n";
+static const char nx_str_5277[135] = ", filter)) {\n    ran++; nx_tls_boundary = &b;\n    if (setjmp(b.jb)) { failed++; printf(\"FAIL   %s\\n       panic: %s\\n       at %s\\n\", ";
+static const char nx_str_5278[75] = ", b.msg, b.loc); }\n    else {\n      nx_bench_measure(&ctx, nx_bench_thunk_";
+static const char nx_str_5279[88] = ", sample_ns, &r);\n      if (r.err) { failed++; printf(\"FAIL   %s\\n       error: %s\\n\", ";
+static const char nx_str_5280[110] = ", nx_error_name(r.err)); }\n      else printf(\"bench  %-*s  %s/iter  (min %s, max %s; %u samples of %llu)\\n\", ";
+static const char nx_str_5281[245] = ", nx_bench_time(r.median_ns, med, sizeof med), nx_bench_time(r.min_ns, lo, sizeof lo), nx_bench_time(r.max_ns, hi, sizeof hi), r.samples, (unsigned long long)r.iters);\n      fflush(stdout);\n    }\n    nx_tls_boundary = NULL;\n  } else skipped++;\n";
+static const char nx_str_5282[30] = "  printf(\"\\n%d benchmark(s), ";
+static const char nx_str_5283[123] = " mode%s%s\\n\", ran, failed ? \", some failed\" : \"\", skipped ? \" (some skipped by filter)\" : \"\");\n  return failed ? 1 : 0;\n}\n";
+static const char nx_str_5284[53] = "static const char* const nx_error_names[] = { \"(ok)\"";
+static const char nx_str_5285[4] = ", \"";
+static const char nx_str_5286[161] = " };\nNX_INLINE const char* nx_error_name(uint32_t e) { return e <= sizeof(nx_error_names)/sizeof(*nx_error_names) - 1 ? nx_error_names[e] : \"(unknown error)\"; }\n";
+static const char nx_str_5287[23] = "/* generated by nx */\n";
+static const char nx_str_5288[6] = "DEBUG";
+static const char nx_str_5289[5] = "SAFE";
+static const char nx_str_5290[5] = "FAST";
+static const char nx_str_5291[6] = "SMALL";
+static const char nx_str_5292[17] = "#define NX_MODE_";
+static const char nx_str_5293[24] = "#define NX_RT_SHARED 1\n";
+static const char nx_str_5294[23] = "#define NX_RT_OWNER 1\n";
+static const char nx_str_5295[37] = "\n/* ---- imported C headers ---- */\n";
+static const char nx_str_5296[23] = "_Static_assert(sizeof(";
+static const char nx_str_5297[6] = ") == ";
+static const char nx_str_5298[12] = ", \"@sizeOf(";
+static const char nx_str_5299[6] = ") is ";
+static const char nx_str_5300[11] = " bytes\");\n";
+static const char nx_str_5301[39] = "\n/* ---- forward declarations ---- */\n";
+static const char nx_str_5302[24] = "\n/* ---- types ---- */\n";
+static const char nx_str_5303[51] = "\n/* ---- @sizeOf, as C lays the types out ---- */\n";
+static const char nx_str_5304[23] = "\n/* ---- data ---- */\n";
+static const char nx_str_5305[29] = "\n/* ---- prototypes ---- */\n";
+static const char nx_str_5306[26] = "\n/* ---- helpers ---- */\n";
+static const char nx_str_5307[28] = "\n/* ---- functions ---- */\n";
+static const char nx_str_5308[24] = "\n/* ---- entry ---- */\n";
+static const char nx_str_5309[23] = "NX_EXPORT const char* ";
+static const char nx_str_5310[91] = "_error_name(int32_t code) { return nx_error_name((uint32_t)code); }\nNX_EXPORT const char* ";
+static const char nx_str_5311[49] = "_last_panic(void) { return nx_tls_last_panic; }\n";
+static const char nx_str_5312[3] = "\\u";
+static const char nx_str_5313[33] = "a control character in a comment";
+static const char nx_str_5314[56] = "more on the line after its key and value, or its header";
+static const char nx_str_5315[36] = "a multi-line string cannot be a key";
+static const char nx_str_5316[4] = "'''";
+static const char nx_str_5317[17] = "a key is missing";
+static const char nx_str_5318[40] = "a table's header is not closed with `]`";
+static const char nx_str_5319[51] = "an array of tables' header is not closed with `]]`";
+static const char nx_str_5320[26] = "` is a value, not a table";
+static const char nx_str_5321[37] = "` is a table, not an array of tables";
+static const char nx_str_5322[37] = "` is an array of tables, not a table";
+static const char nx_str_5323[12] = "the table `";
+static const char nx_str_5324[19] = "` is defined twice";
+static const char nx_str_5325[27] = "`=` is missing after a key";
+static const char nx_str_5326[10] = "the key `";
+static const char nx_str_5327[45] = "` is not a table that dotted keys can add to";
+static const char nx_str_5328[48] = "` has a header, so dotted keys cannot add to it";
+static const char nx_str_5329[35] = "a string is not closed on its line";
+static const char nx_str_5330[32] = "a control character in a string";
+static const char nx_str_5331[29] = "a string ends in a backslash";
+static const char nx_str_5332[25] = "a \\u escape is cut short";
+static const char nx_str_5333[53] = "a \\u escape with a character that is not a hex digit";
+static const char nx_str_5334[47] = "a \\u escape that is not a Unicode scalar value";
+static const char nx_str_5335[32] = "an escape TOML does not have: \\";
+static const char nx_str_5336[34] = "a multi-line string is not closed";
+static const char nx_str_5337[49] = "three quotes in a row inside a multi-line string";
+static const char nx_str_5338[23] = "an array is not closed";
+static const char nx_str_5339[38] = "a comma or `]` is missing in an array";
+static const char nx_str_5340[71] = "a comma or `}` is missing in an inline table (it must fit on one line)";
+static const char nx_str_5341[19] = "a value is missing";
+static const char nx_str_5342[5] = "+inf";
+static const char nx_str_5343[5] = "+nan";
+static const char nx_str_5344[5] = "-nan";
+static const char nx_str_5345[36] = "` is not a date or time TOML allows";
+static const char nx_str_5346[26] = "` is not a value TOML has";
+static const char nx_str_5347[8] = "signal ";
+static const char nx_str_5348[2] = "w";
+static const char nx_str_5349[20] = "thread joined twice";
+static const char nx_str_5350[58] = "the argument is shared with the running thread until join";
 
 /* ---- prototypes ---- */
 static void nx_usage(nx_ctx*);
@@ -15906,13 +16030,13 @@ static nx_opt_string nx_write_c(nx_ctx* c, nx_Opts* o_0, nx_sl_u8 stem_1, nx_sl_
   nx_string existing_7 = _t21;
   nx_slice_check(0, existing_7.len, existing_7.len, "self/nx.nx:475");
   nx_sl_u8 _t24 = ((nx_sl_u8){ nx_padd(existing_7.ptr, 0), existing_7.len - 0 });
-  nx_sl_u8 _t25 = nx_lit(nx_str_397, 186746);
+  nx_sl_u8 _t25 = nx_lit(nx_str_397, 192233);
   current_6 = nx_sl_eq(_t24, _t25);
     if ((!(current_6)))
     {
       nx_slice_check(0, rt_5.len, rt_5.len, "self/nx.nx:476");
       nx_sl_u8 _t26 = ((nx_sl_u8){ nx_padd(rt_5.ptr, 0), rt_5.len - 0 });
-      nx_sl_u8 _t27 = nx_lit(nx_str_397, 186746);
+      nx_sl_u8 _t27 = nx_lit(nx_str_397, 192233);
       nx_eu_void _t28 = ((nx_eu_void){ .err = nx_write_file(_t26, _t27) ? 0 : 8u });
       if (_t28.err) {
         {
@@ -21942,7 +22066,7 @@ static int32_t nx_cmd_ship(nx_ctx* c, nx_Opts* o_0) {
       nx_string rt_39 = _t130;
       nx_slice_check(0, rt_39.len, rt_39.len, "self/nx.nx:1675");
       nx_sl_u8 _t133 = ((nx_sl_u8){ nx_padd(rt_39.ptr, 0), rt_39.len - 0 });
-      nx_sl_u8 _t134 = nx_lit(nx_str_397, 186746);
+      nx_sl_u8 _t134 = nx_lit(nx_str_397, 192233);
       nx_eu_void _t135 = ((nx_eu_void){ .err = nx_write_file(_t133, _t134) ? 0 : 8u });
       if (_t135.err) {
         {
@@ -55995,7 +56119,7 @@ static nx_sl_u8 nx_m24_opt_word(nx_ctx* c, size_t id_0) {
 static nx_m24_Gen nx_m24_new_gen(nx_ctx* c, nx_m2_Checker* c_0, uint8_t mode_1, uint8_t entry_2) {
   NX_UNUSED(c);
   nx_map idents_3 = nx_map_new(c, sizeof(nx_string), sizeof(bool), 2);
-  nx_sl_u8 bytes_4 = nx_lit(nx_str_397, 186746);
+  nx_sl_u8 bytes_4 = nx_lit(nx_str_397, 192233);
   size_t i_5 = ((size_t)0ULL);
   for (;;) {
     bool _t1 = ((i_5) < (((bytes_4).len)));
@@ -56195,7 +56319,7 @@ static nx_string nx_m24_const_mangled(nx_ctx* c, nx_m2_Checker* c_0, size_t id_1
   NX_UNUSED(c);
   nx_string _t1 = {0}; _t1.ar = c->arena;
   nx_sink _t2 = nx_sink_str(c, &_t1);
-  nx_string _t3 = ((*c_0).consts_9.ptr[nx_idx(id_1, (*c_0).consts_9.len, "self/cgen.nx:5576")]).name_0;
+  nx_string _t3 = ((*c_0).consts_9.ptr[nx_idx(id_1, (*c_0).consts_9.len, "self/cgen.nx:5578")]).name_0;
   nx_sl_u8 _t4 = nx_str_slice(_t3);
   nx_w(&_t2, (const uint8_t*)nx_str_2325, 4);
   nx_w_sl(&_t2, _t4);
@@ -56209,7 +56333,7 @@ static nx_string nx_m24_global_mangled(nx_ctx* c, nx_m2_Checker* c_0, size_t id_
   NX_UNUSED(c);
   nx_string _t1 = {0}; _t1.ar = c->arena;
   nx_sink _t2 = nx_sink_str(c, &_t1);
-  nx_string _t3 = ((*c_0).globals_10.ptr[nx_idx(id_1, (*c_0).globals_10.len, "self/cgen.nx:5577")]).name_0;
+  nx_string _t3 = ((*c_0).globals_10.ptr[nx_idx(id_1, (*c_0).globals_10.len, "self/cgen.nx:5579")]).name_0;
   nx_sl_u8 _t4 = nx_str_slice(_t3);
   nx_w(&_t2, (const uint8_t*)nx_str_2326, 4);
   nx_w_sl(&_t2, _t4);
@@ -56226,9 +56350,9 @@ static nx_sl_u8 nx_m24_stem_of(nx_ctx* c, nx_sl_u8 path_0) {
   for (;;) {
     bool _t1 = ((i_2) > (((size_t)0ULL)));
     if (!_t1) break;
-    bool _t2 = ((path_0.ptr[nx_idx(((i_2) - (((size_t)1ULL))), path_0.len, "self/cgen.nx:5584")]) == (((uint8_t)47ULL)));
+    bool _t2 = ((path_0.ptr[nx_idx(((i_2) - (((size_t)1ULL))), path_0.len, "self/cgen.nx:5586")]) == (((uint8_t)47ULL)));
     if (!_t2) {
-      _t2 = ((path_0.ptr[nx_idx(((i_2) - (((size_t)1ULL))), path_0.len, "self/cgen.nx:5584")]) == (((uint8_t)92ULL)));
+      _t2 = ((path_0.ptr[nx_idx(((i_2) - (((size_t)1ULL))), path_0.len, "self/cgen.nx:5586")]) == (((uint8_t)92ULL)));
     }
       if (_t2)
       {
@@ -56236,7 +56360,7 @@ static nx_sl_u8 nx_m24_stem_of(nx_ctx* c, nx_sl_u8 path_0) {
         goto nx_brk_0;
       }
     size_t* _t3 = &(i_2);
-    *_t3 = nx_sub_usize((*_t3), ((size_t)1ULL), "self/cgen.nx:5585");
+    *_t3 = nx_sub_usize((*_t3), ((size_t)1ULL), "self/cgen.nx:5587");
     nx_cont_0: ;
   }
   nx_brk_0: ;
@@ -56245,17 +56369,17 @@ static nx_sl_u8 nx_m24_stem_of(nx_ctx* c, nx_sl_u8 path_0) {
   for (;;) {
     bool _t4 = ((j_4) > (start_1));
     if (!_t4) break;
-      if (((path_0.ptr[nx_idx(((j_4) - (((size_t)1ULL))), path_0.len, "self/cgen.nx:5590")]) == (((uint8_t)46ULL))))
+      if (((path_0.ptr[nx_idx(((j_4) - (((size_t)1ULL))), path_0.len, "self/cgen.nx:5592")]) == (((uint8_t)46ULL))))
       {
         end_3 = ((j_4) - (((size_t)1ULL)));
         goto nx_brk_1;
       }
     size_t* _t5 = &(j_4);
-    *_t5 = nx_sub_usize((*_t5), ((size_t)1ULL), "self/cgen.nx:5591");
+    *_t5 = nx_sub_usize((*_t5), ((size_t)1ULL), "self/cgen.nx:5593");
     nx_cont_1: ;
   }
   nx_brk_1: ;
-  nx_slice_check(start_1, end_3, path_0.len, "self/cgen.nx:5593");
+  nx_slice_check(start_1, end_3, path_0.len, "self/cgen.nx:5595");
   nx_sl_u8 _t6 = ((nx_sl_u8){ nx_padd(path_0.ptr, start_1), end_3 - start_1 });
   return _t6;
 }
@@ -56271,7 +56395,7 @@ static nx_string nx_m24_join_strings(nx_ctx* c, nx_list_string* xs_0, nx_sl_u8 s
       {
         nx_str_append(c, &(out_2), sep_1.ptr, sep_1.len);
       }
-    nx_slice_check(0, x_3.len, x_3.len, "self/cgen.nx:5600");
+    nx_slice_check(0, x_3.len, x_3.len, "self/cgen.nx:5602");
     nx_sl_u8 _t3 = ((nx_sl_u8){ nx_padd(x_3.ptr, 0), x_3.len - 0 });
     nx_str_append(c, &(out_2), _t3.ptr, _t3.len);
     nx_cont_0: ;
@@ -56312,20 +56436,20 @@ static void nx_m24_sort_usize(nx_ctx* c, nx_list_usize* xs_0) {
     for (;;) {
       bool _t2 = ((j_3) > (((size_t)0ULL)));
       if (_t2) {
-        _t2 = (((*xs_0).ptr[nx_idx(nx_sub_usize(j_3, ((size_t)1ULL), "self/cgen.nx:5615"), (*xs_0).len, "self/cgen.nx:5615")]) > ((*xs_0).ptr[nx_idx(j_3, (*xs_0).len, "self/cgen.nx:5615")]));
+        _t2 = (((*xs_0).ptr[nx_idx(nx_sub_usize(j_3, ((size_t)1ULL), "self/cgen.nx:5617"), (*xs_0).len, "self/cgen.nx:5617")]) > ((*xs_0).ptr[nx_idx(j_3, (*xs_0).len, "self/cgen.nx:5617")]));
       }
       bool _t3 = _t2;
       if (!_t3) break;
-      size_t t_4 = (*xs_0).ptr[nx_idx(((j_3) - (((size_t)1ULL))), (*xs_0).len, "self/cgen.nx:5616")];
-      (*xs_0).ptr[nx_idx(((j_3) - (((size_t)1ULL))), (*xs_0).len, "self/cgen.nx:5617")] = (*xs_0).ptr[nx_idx(j_3, (*xs_0).len, "self/cgen.nx:5617")];
-      (*xs_0).ptr[nx_idx(j_3, (*xs_0).len, "self/cgen.nx:5618")] = t_4;
+      size_t t_4 = (*xs_0).ptr[nx_idx(((j_3) - (((size_t)1ULL))), (*xs_0).len, "self/cgen.nx:5618")];
+      (*xs_0).ptr[nx_idx(((j_3) - (((size_t)1ULL))), (*xs_0).len, "self/cgen.nx:5619")] = (*xs_0).ptr[nx_idx(j_3, (*xs_0).len, "self/cgen.nx:5619")];
+      (*xs_0).ptr[nx_idx(j_3, (*xs_0).len, "self/cgen.nx:5620")] = t_4;
       size_t* _t4 = &(j_3);
-      *_t4 = nx_sub_usize((*_t4), ((size_t)1ULL), "self/cgen.nx:5619");
+      *_t4 = nx_sub_usize((*_t4), ((size_t)1ULL), "self/cgen.nx:5621");
       nx_cont_1: ;
     }
     nx_brk_1: ;
     size_t* _t5 = &(i_2);
-    *_t5 = nx_add_usize((*_t5), ((size_t)1ULL), "self/cgen.nx:5621");
+    *_t5 = nx_add_usize((*_t5), ((size_t)1ULL), "self/cgen.nx:5623");
     nx_cont_0: ;
   }
   nx_brk_0: ;
@@ -56337,10 +56461,10 @@ static void nx_m24_list_remove_usize(nx_ctx* c, nx_list_usize* xs_0, size_t x_1)
   for (;;) {
     bool _t1 = ((i_2) < ((((*xs_0)).len)));
     if (!_t1) break;
-      if ((((*xs_0).ptr[nx_idx(i_2, (*xs_0).len, "self/cgen.nx:5628")]) == (x_1)))
+      if ((((*xs_0).ptr[nx_idx(i_2, (*xs_0).len, "self/cgen.nx:5630")]) == (x_1)))
       {
         nx_list_usize* _t2 = &((*xs_0));
-        if (i_2 >= _t2->len) nx_panic_bounds(i_2, _t2->len, "self/cgen.nx:5628");
+        if (i_2 >= _t2->len) nx_panic_bounds(i_2, _t2->len, "self/cgen.nx:5630");
         size_t _t3 = _t2->ptr[i_2];
         memmove(_t2->ptr + i_2, _t2->ptr + i_2 + 1, (_t2->len - i_2 - 1) * sizeof(size_t));
         _t2->len--;
@@ -56348,7 +56472,7 @@ static void nx_m24_list_remove_usize(nx_ctx* c, nx_list_usize* xs_0, size_t x_1)
         return;
       }
     size_t* _t4 = &(i_2);
-    *_t4 = nx_add_usize((*_t4), ((size_t)1ULL), "self/cgen.nx:5629");
+    *_t4 = nx_add_usize((*_t4), ((size_t)1ULL), "self/cgen.nx:5631");
     nx_cont_0: ;
   }
   nx_brk_0: ;
@@ -56377,30 +56501,30 @@ static nx_eu_void nx_m24_main(nx_ctx* c) {
     nx_sl_u8 _t5 = args_0.ptr[i_4];
     bool _t6 = nx_sl_eq(_t5, nx_lit(nx_str_473, 5));
     if (_t6) {
-      _t6 = ((nx_add_usize(i_4, ((size_t)1ULL), "self/cgen.nx:5644")) < (((args_0).len)));
+      _t6 = ((nx_add_usize(i_4, ((size_t)1ULL), "self/cgen.nx:5646")) < (((args_0).len)));
     }
       if (_t6)
       {
-        std_dir_1 = args_0.ptr[nx_idx(nx_add_usize(i_4, ((size_t)1ULL), "self/cgen.nx:5644"), args_0.len, "self/cgen.nx:5644")];
+        std_dir_1 = args_0.ptr[nx_idx(nx_add_usize(i_4, ((size_t)1ULL), "self/cgen.nx:5646"), args_0.len, "self/cgen.nx:5646")];
         size_t* _t7 = &(i_4);
-        *_t7 = nx_add_usize((*_t7), ((size_t)1ULL), "self/cgen.nx:5644");
+        *_t7 = nx_add_usize((*_t7), ((size_t)1ULL), "self/cgen.nx:5646");
       }
       else
       {
         nx_sl_u8 _t8 = args_0.ptr[i_4];
         bool _t9 = nx_sl_eq(_t8, nx_lit(nx_str_474, 4));
         if (_t9) {
-          _t9 = ((nx_add_usize(i_4, ((size_t)1ULL), "self/cgen.nx:5645")) < (((args_0).len)));
+          _t9 = ((nx_add_usize(i_4, ((size_t)1ULL), "self/cgen.nx:5647")) < (((args_0).len)));
         }
           if (_t9)
           {
-            nx_sl_u8 _t10 = args_0.ptr[nx_idx(nx_add_usize(i_4, ((size_t)1ULL), "self/cgen.nx:5645"), args_0.len, "self/cgen.nx:5645")];
+            nx_sl_u8 _t10 = args_0.ptr[nx_idx(nx_add_usize(i_4, ((size_t)1ULL), "self/cgen.nx:5647"), args_0.len, "self/cgen.nx:5647")];
             nx_string _t11 = nx_str_from(c, _t10);
             nx_string _t12 = _t11;
             nx_drop_string(c, &(cc_text_2));
             cc_text_2 = _t12;
             size_t* _t13 = &(i_4);
-            *_t13 = nx_add_usize((*_t13), ((size_t)1ULL), "self/cgen.nx:5645");
+            *_t13 = nx_add_usize((*_t13), ((size_t)1ULL), "self/cgen.nx:5647");
           }
           else
           {
@@ -56412,7 +56536,7 @@ static nx_eu_void nx_m24_main(nx_ctx* c) {
           }
       }
     size_t* _t15 = &(i_4);
-    *_t15 = nx_add_usize((*_t15), ((size_t)1ULL), "self/cgen.nx:5647");
+    *_t15 = nx_add_usize((*_t15), ((size_t)1ULL), "self/cgen.nx:5649");
     nx_cont_0: ;
   }
   nx_brk_0: ;
@@ -56433,7 +56557,7 @@ static nx_eu_void nx_m24_main(nx_ctx* c) {
   nx_list_string cc_6 = ((nx_list_string){NULL, 0, 0, c->arena});
     if (((((cc_text_2).len)) > (((size_t)0ULL))))
     {
-      nx_slice_check(0, cc_text_2.len, cc_text_2.len, "self/cgen.nx:5652");
+      nx_slice_check(0, cc_text_2.len, cc_text_2.len, "self/cgen.nx:5654");
       nx_sl_u8 _t20 = ((nx_sl_u8){ nx_padd(cc_text_2.ptr, 0), cc_text_2.len - 0 });
       nx_list_sl_u8 _t21 = {0}; _t21.ar = c->arena;
       { size_t _s = 0; for (;;) { nx_sl_u8 _rest = { nx_padd(_t20.ptr, _s), _t20.len - _s }; size_t _i; bool _f = nx_lit(nx_str_492, 1).len && nx_sl_find(_rest, nx_lit(nx_str_492, 1), &_i); nx_sl_u8 _piece = { _rest.ptr, _f ? _i : _rest.len };
@@ -56489,7 +56613,7 @@ static nx_eu_void nx_m24_main(nx_ctx* c) {
           _t41->ptr[_t41->len++] = _t40;
         }
     }
-  nx_sl_u8 _t42 = args_0.ptr[nx_idx(((size_t)1ULL), args_0.len, "self/cgen.nx:5660")];
+  nx_sl_u8 _t42 = args_0.ptr[nx_idx(((size_t)1ULL), args_0.len, "self/cgen.nx:5662")];
   nx_eu_list_m2_Mod _t43 = nx_m2_load(c, _t42, std_dir_1);
   nx_eu_list_m2_Mod _t44 = _t43;
   if (_t44.err) {
@@ -56548,7 +56672,7 @@ static nx_eu_void nx_m24_main(nx_ctx* c) {
   uint8_t _t59 = ((uint8_t)0ULL);
   nx_m24_Gen _t60 = nx_m24_new_gen(c, _t58, _t59, entry_3);
   nx_m24_Gen g_12 = _t60;
-  nx_sl_u8 _t61 = args_0.ptr[nx_idx(((size_t)1ULL), args_0.len, "self/cgen.nx:5672")];
+  nx_sl_u8 _t61 = args_0.ptr[nx_idx(((size_t)1ULL), args_0.len, "self/cgen.nx:5674")];
   nx_sl_u8 _t62 = nx_m24_stem_of(c, _t61);
   nx_sl_u8 _t63 = _t62;
   nx_string _t64 = nx_str_from(c, _t63);
@@ -175133,45 +175257,48 @@ static nx_string nx_Gen_export_wrapper_1498(nx_ctx* c, nx_m24_Gen* self_0, size_
           nx_string _t154 = {0}; _t154.ar = c->arena;
           nx_sink _t155 = nx_sink_str(c, &_t154);
           nx_sl_u8 _t156 = nx_str_slice(rc_35);
-          nx_sl_u8 _t157 = nx_str_slice(target_31);
-          nx_list_string* _t158 = &(args_5);
-          nx_string _t159 = nx_m24_join_strings(c, _t158, nx_lit(nx_str_1811, 2));
-          nx_string _t160 = _t159;
-          nx_sl_u8 _t161 = nx_str_slice(_t160);
-          nx_w(&_t155, (const uint8_t*)nx_str_4518, 10);
+          nx_sl_u8 _t157 = nx_str_slice(rc_35);
+          nx_sl_u8 _t158 = nx_str_slice(target_31);
+          nx_list_string* _t159 = &(args_5);
+          nx_string _t160 = nx_m24_join_strings(c, _t159, nx_lit(nx_str_1811, 2));
+          nx_string _t161 = _t160;
+          nx_sl_u8 _t162 = nx_str_slice(_t161);
+          nx_w(&_t155, (const uint8_t*)nx_str_718, 2);
           nx_w_sl(&_t155, _t156);
-          nx_w(&_t155, (const uint8_t*)nx_str_736, 1);
+          nx_w(&_t155, (const uint8_t*)nx_str_5172, 10);
           nx_w_sl(&_t155, _t157);
+          nx_w(&_t155, (const uint8_t*)nx_str_736, 1);
+          nx_w_sl(&_t155, _t158);
           nx_w(&_t155, (const uint8_t*)nx_str_1102, 1);
-          nx_w_sl(&_t155, _t161);
-          nx_w(&_t155, (const uint8_t*)nx_str_2405, 3);
-          nx_string _t162 = _t154;
-          nx_slice_check(0, _t162.len, _t162.len, "self/cgen.nx:4812");
-          nx_sl_u8 _t163 = ((nx_sl_u8){ nx_padd(_t162.ptr, 0), _t162.len - 0 });
-          nx_str_append(c, &(out_32), _t163.ptr, _t163.len);
-          nx_drop_string(c, &_t162);
-          nx_drop_string(c, &_t160);
+          nx_w_sl(&_t155, _t162);
+          nx_w(&_t155, (const uint8_t*)nx_str_5173, 39);
+          nx_string _t163 = _t154;
+          nx_slice_check(0, _t163.len, _t163.len, "self/cgen.nx:4814");
+          nx_sl_u8 _t164 = ((nx_sl_u8){ nx_padd(_t163.ptr, 0), _t163.len - 0 });
+          nx_str_append(c, &(out_32), _t164.ptr, _t164.len);
+          nx_drop_string(c, &_t163);
+          nx_drop_string(c, &_t161);
         }
         else
         {
-          nx_string _t164 = {0}; _t164.ar = c->arena;
-          nx_sink _t165 = nx_sink_str(c, &_t164);
-          nx_sl_u8 _t166 = nx_str_slice(target_31);
-          nx_list_string* _t167 = &(args_5);
-          nx_string _t168 = nx_m24_join_strings(c, _t167, nx_lit(nx_str_1811, 2));
-          nx_string _t169 = _t168;
-          nx_sl_u8 _t170 = nx_str_slice(_t169);
-          nx_w(&_t165, (const uint8_t*)nx_str_718, 2);
-          nx_w_sl(&_t165, _t166);
-          nx_w(&_t165, (const uint8_t*)nx_str_1102, 1);
-          nx_w_sl(&_t165, _t170);
-          nx_w(&_t165, (const uint8_t*)nx_str_2405, 3);
-          nx_string _t171 = _t164;
-          nx_slice_check(0, _t171.len, _t171.len, "self/cgen.nx:4814");
-          nx_sl_u8 _t172 = ((nx_sl_u8){ nx_padd(_t171.ptr, 0), _t171.len - 0 });
-          nx_str_append(c, &(out_32), _t172.ptr, _t172.len);
-          nx_drop_string(c, &_t171);
-          nx_drop_string(c, &_t169);
+          nx_string _t165 = {0}; _t165.ar = c->arena;
+          nx_sink _t166 = nx_sink_str(c, &_t165);
+          nx_sl_u8 _t167 = nx_str_slice(target_31);
+          nx_list_string* _t168 = &(args_5);
+          nx_string _t169 = nx_m24_join_strings(c, _t168, nx_lit(nx_str_1811, 2));
+          nx_string _t170 = _t169;
+          nx_sl_u8 _t171 = nx_str_slice(_t170);
+          nx_w(&_t166, (const uint8_t*)nx_str_718, 2);
+          nx_w_sl(&_t166, _t167);
+          nx_w(&_t166, (const uint8_t*)nx_str_1102, 1);
+          nx_w_sl(&_t166, _t171);
+          nx_w(&_t166, (const uint8_t*)nx_str_5174, 23);
+          nx_string _t172 = _t165;
+          nx_slice_check(0, _t172.len, _t172.len, "self/cgen.nx:4816");
+          nx_sl_u8 _t173 = ((nx_sl_u8){ nx_padd(_t172.ptr, 0), _t172.len - 0 });
+          nx_str_append(c, &(out_32), _t173.ptr, _t173.len);
+          nx_drop_string(c, &_t172);
+          nx_drop_string(c, &_t170);
         }
       nx_str_append(c, &(out_32), nx_lit(nx_str_1462, 2).ptr, nx_lit(nx_str_1462, 2).len);
       nx_drop_string(c, &_t152);
@@ -175180,175 +175307,175 @@ static nx_string nx_Gen_export_wrapper_1498(nx_ctx* c, nx_m24_Gen* self_0, size_
     else
     {
       nx_list_string all_36 = ((nx_list_string){NULL, 0, 0, c->arena});
-      nx_sl_string _t173 = ((nx_sl_string){ params_4.ptr, params_4.len });
-      for (size_t _t174 = 0; _t174 < _t173.len; _t174++) {
-        nx_string p_37 = _t173.ptr[_t174];
-        nx_string _t175 = nx_clone_string(c, &p_37);
-        nx_list_string* _t176 = &(all_36);
-        if (_t176->len == _t176->cap) nx_list_grow(c, (nx_rawlist*)_t176, sizeof(nx_string), _Alignof(nx_string), _t176->len + 1);
-        _t176->ptr[_t176->len++] = _t175;
+      nx_sl_string _t174 = ((nx_sl_string){ params_4.ptr, params_4.len });
+      for (size_t _t175 = 0; _t175 < _t174.len; _t175++) {
+        nx_string p_37 = _t174.ptr[_t175];
+        nx_string _t176 = nx_clone_string(c, &p_37);
+        nx_list_string* _t177 = &(all_36);
+        if (_t177->len == _t177->cap) nx_list_grow(c, (nx_rawlist*)_t177, sizeof(nx_string), _Alignof(nx_string), _t177->len + 1);
+        _t177->ptr[_t177->len++] = _t176;
         nx_cont_2: ;
       }
       nx_brk_2: ;
         if (has_ret_19)
         {
-          nx_string _t177 = {0}; _t177.ar = c->arena;
-          nx_sink _t178 = nx_sink_str(c, &_t177);
-          nx_sl_u8 _t179 = nx_str_slice(ret_c_18);
-          nx_sl_u8 _t180 = nx_str_slice(on_30);
-          nx_w_sl(&_t178, _t179);
-          nx_w(&_t178, (const uint8_t*)nx_str_1853, 2);
-          nx_w_sl(&_t178, _t180);
-          nx_string _t181 = _t177;
-          nx_list_string* _t182 = &(all_36);
-          if (_t182->len == _t182->cap) nx_list_grow(c, (nx_rawlist*)_t182, sizeof(nx_string), _Alignof(nx_string), _t182->len + 1);
-          _t182->ptr[_t182->len++] = _t181;
+          nx_string _t178 = {0}; _t178.ar = c->arena;
+          nx_sink _t179 = nx_sink_str(c, &_t178);
+          nx_sl_u8 _t180 = nx_str_slice(ret_c_18);
+          nx_sl_u8 _t181 = nx_str_slice(on_30);
+          nx_w_sl(&_t179, _t180);
+          nx_w(&_t179, (const uint8_t*)nx_str_1853, 2);
+          nx_w_sl(&_t179, _t181);
+          nx_string _t182 = _t178;
+          nx_list_string* _t183 = &(all_36);
+          if (_t183->len == _t183->cap) nx_list_grow(c, (nx_rawlist*)_t183, sizeof(nx_string), _Alignof(nx_string), _t183->len + 1);
+          _t183->ptr[_t183->len++] = _t182;
         }
-      nx_string _t183;
+      nx_string _t184;
         if (((((all_36).len)) == (((size_t)0ULL))))
         {
-          nx_string _t184 = nx_str_from(c, nx_lit(nx_str_48, 4));
-          _t183 = _t184;
+          nx_string _t185 = nx_str_from(c, nx_lit(nx_str_48, 4));
+          _t184 = _t185;
         }
         else
         {
-          nx_list_string* _t185 = &(all_36);
-          nx_string _t186 = nx_m24_join_strings(c, _t185, nx_lit(nx_str_1811, 2));
-          _t183 = _t186;
+          nx_list_string* _t186 = &(all_36);
+          nx_string _t187 = nx_m24_join_strings(c, _t186, nx_lit(nx_str_1811, 2));
+          _t184 = _t187;
         }
-      nx_string alljoined_38 = _t183;
-      nx_string _t187 = {0}; _t187.ar = c->arena;
-      nx_sink _t188 = nx_sink_str(c, &_t187);
-      nx_sl_u8 _t189 = nx_str_slice(fname_2);
-      nx_sl_u8 _t190 = nx_str_slice(alljoined_38);
-      nx_w(&_t188, (const uint8_t*)nx_str_5172, 18);
-      nx_w_sl(&_t188, _t189);
-      nx_w(&_t188, (const uint8_t*)nx_str_1102, 1);
-      nx_w_sl(&_t188, _t190);
-      nx_w(&_t188, (const uint8_t*)nx_str_2242, 4);
-      nx_string _t191 = _t187;
-      nx_slice_check(0, _t191.len, _t191.len, "self/cgen.nx:4822");
-      nx_sl_u8 _t192 = ((nx_sl_u8){ nx_padd(_t191.ptr, 0), _t191.len - 0 });
-      nx_str_append(c, &(out_32), _t192.ptr, _t192.len);
-      nx_str_append(c, &(out_32), nx_lit(nx_str_5173, 190).ptr, nx_lit(nx_str_5173, 190).len);
-      nx_string _t193 = {0}; _t193.ar = c->arena;
-      nx_sink _t194 = nx_sink_str(c, &_t193);
-      nx_w(&_t194, (const uint8_t*)nx_str_5174, 107);
-      nx_w_uint(&_t194, (nx_u128)(panic_id_33), 10, 0, false);
-      nx_w(&_t194, (const uint8_t*)nx_str_4747, 4);
-      nx_string _t195 = _t193;
-      nx_slice_check(0, _t195.len, _t195.len, "self/cgen.nx:4826");
-      nx_sl_u8 _t196 = ((nx_sl_u8){ nx_padd(_t195.ptr, 0), _t195.len - 0 });
-      nx_str_append(c, &(out_32), _t196.ptr, _t196.len);
+      nx_string alljoined_38 = _t184;
+      nx_string _t188 = {0}; _t188.ar = c->arena;
+      nx_sink _t189 = nx_sink_str(c, &_t188);
+      nx_sl_u8 _t190 = nx_str_slice(fname_2);
+      nx_sl_u8 _t191 = nx_str_slice(alljoined_38);
+      nx_w(&_t189, (const uint8_t*)nx_str_5175, 18);
+      nx_w_sl(&_t189, _t190);
+      nx_w(&_t189, (const uint8_t*)nx_str_1102, 1);
+      nx_w_sl(&_t189, _t191);
+      nx_w(&_t189, (const uint8_t*)nx_str_2242, 4);
+      nx_string _t192 = _t188;
+      nx_slice_check(0, _t192.len, _t192.len, "self/cgen.nx:4824");
+      nx_sl_u8 _t193 = ((nx_sl_u8){ nx_padd(_t192.ptr, 0), _t192.len - 0 });
+      nx_str_append(c, &(out_32), _t193.ptr, _t193.len);
+      nx_str_append(c, &(out_32), nx_lit(nx_str_5176, 190).ptr, nx_lit(nx_str_5176, 190).len);
+      nx_string _t194 = {0}; _t194.ar = c->arena;
+      nx_sink _t195 = nx_sink_str(c, &_t194);
+      nx_w(&_t195, (const uint8_t*)nx_str_5177, 107);
+      nx_w_uint(&_t195, (nx_u128)(panic_id_33), 10, 0, false);
+      nx_w(&_t195, (const uint8_t*)nx_str_4747, 4);
+      nx_string _t196 = _t194;
+      nx_slice_check(0, _t196.len, _t196.len, "self/cgen.nx:4828");
+      nx_sl_u8 _t197 = ((nx_sl_u8){ nx_padd(_t196.ptr, 0), _t196.len - 0 });
+      nx_str_append(c, &(out_32), _t197.ptr, _t197.len);
         if (is_eu_16)
         {
-          nx_string _t197 = nx_Gen_cty_1407(c, self_0, ret_t_15);
-          nx_string rcn_39 = _t197;
-          nx_string _t198 = {0}; _t198.ar = c->arena;
-          nx_sink _t199 = nx_sink_str(c, &_t198);
-          nx_sl_u8 _t200 = nx_str_slice(rcn_39);
-          nx_sl_u8 _t201 = nx_str_slice(target_31);
-          nx_list_string* _t202 = &(args_5);
-          nx_string _t203 = nx_m24_join_strings(c, _t202, nx_lit(nx_str_1811, 2));
-          nx_string _t204 = _t203;
-          nx_sl_u8 _t205 = nx_str_slice(_t204);
-          nx_w(&_t199, (const uint8_t*)nx_str_718, 2);
-          nx_w_sl(&_t199, _t200);
-          nx_w(&_t199, (const uint8_t*)nx_str_5175, 9);
-          nx_w_sl(&_t199, _t201);
-          nx_w(&_t199, (const uint8_t*)nx_str_1102, 1);
-          nx_w_sl(&_t199, _t205);
-          nx_w(&_t199, (const uint8_t*)nx_str_5176, 125);
-          nx_string _t206 = _t198;
-          nx_slice_check(0, _t206.len, _t206.len, "self/cgen.nx:4829");
-          nx_sl_u8 _t207 = ((nx_sl_u8){ nx_padd(_t206.ptr, 0), _t206.len - 0 });
-          nx_str_append(c, &(out_32), _t207.ptr, _t207.len);
+          nx_string _t198 = nx_Gen_cty_1407(c, self_0, ret_t_15);
+          nx_string rcn_39 = _t198;
+          nx_string _t199 = {0}; _t199.ar = c->arena;
+          nx_sink _t200 = nx_sink_str(c, &_t199);
+          nx_sl_u8 _t201 = nx_str_slice(rcn_39);
+          nx_sl_u8 _t202 = nx_str_slice(target_31);
+          nx_list_string* _t203 = &(args_5);
+          nx_string _t204 = nx_m24_join_strings(c, _t203, nx_lit(nx_str_1811, 2));
+          nx_string _t205 = _t204;
+          nx_sl_u8 _t206 = nx_str_slice(_t205);
+          nx_w(&_t200, (const uint8_t*)nx_str_718, 2);
+          nx_w_sl(&_t200, _t201);
+          nx_w(&_t200, (const uint8_t*)nx_str_5178, 9);
+          nx_w_sl(&_t200, _t202);
+          nx_w(&_t200, (const uint8_t*)nx_str_1102, 1);
+          nx_w_sl(&_t200, _t206);
+          nx_w(&_t200, (const uint8_t*)nx_str_5179, 125);
+          nx_string _t207 = _t199;
+          nx_slice_check(0, _t207.len, _t207.len, "self/cgen.nx:4831");
+          nx_sl_u8 _t208 = ((nx_sl_u8){ nx_padd(_t207.ptr, 0), _t207.len - 0 });
+          nx_str_append(c, &(out_32), _t208.ptr, _t208.len);
             if (has_ret_19)
             {
-              nx_string _t208 = {0}; _t208.ar = c->arena;
-              nx_sink _t209 = nx_sink_str(c, &_t208);
-              nx_sl_u8 _t210 = nx_str_slice(on_30);
+              nx_string _t209 = {0}; _t209.ar = c->arena;
+              nx_sink _t210 = nx_sink_str(c, &_t209);
               nx_sl_u8 _t211 = nx_str_slice(on_30);
-              nx_w(&_t209, (const uint8_t*)nx_str_4929, 6);
-              nx_w_sl(&_t209, _t210);
-              nx_w(&_t209, (const uint8_t*)nx_str_5177, 3);
-              nx_w_sl(&_t209, _t211);
-              nx_w(&_t209, (const uint8_t*)nx_str_5178, 14);
-              nx_string _t212 = _t208;
-              nx_slice_check(0, _t212.len, _t212.len, "self/cgen.nx:4830");
-              nx_sl_u8 _t213 = ((nx_sl_u8){ nx_padd(_t212.ptr, 0), _t212.len - 0 });
-              nx_str_append(c, &(out_32), _t213.ptr, _t213.len);
-              nx_drop_string(c, &_t212);
+              nx_sl_u8 _t212 = nx_str_slice(on_30);
+              nx_w(&_t210, (const uint8_t*)nx_str_4929, 6);
+              nx_w_sl(&_t210, _t211);
+              nx_w(&_t210, (const uint8_t*)nx_str_5180, 3);
+              nx_w_sl(&_t210, _t212);
+              nx_w(&_t210, (const uint8_t*)nx_str_5181, 14);
+              nx_string _t213 = _t209;
+              nx_slice_check(0, _t213.len, _t213.len, "self/cgen.nx:4832");
+              nx_sl_u8 _t214 = ((nx_sl_u8){ nx_padd(_t213.ptr, 0), _t213.len - 0 });
+              nx_str_append(c, &(out_32), _t214.ptr, _t214.len);
+              nx_drop_string(c, &_t213);
             }
-          nx_drop_string(c, &_t206);
-          nx_drop_string(c, &_t204);
+          nx_drop_string(c, &_t207);
+          nx_drop_string(c, &_t205);
           nx_drop_string(c, &rcn_39);
         }
         else
         {
             if (has_ret_19)
             {
-              nx_string _t214 = nx_Gen_cty_1407(c, self_0, ret_t_15);
-              nx_string rcn_40 = _t214;
-              nx_string _t215 = {0}; _t215.ar = c->arena;
-              nx_sink _t216 = nx_sink_str(c, &_t215);
-              nx_sl_u8 _t217 = nx_str_slice(rcn_40);
-              nx_sl_u8 _t218 = nx_str_slice(target_31);
-              nx_list_string* _t219 = &(args_5);
-              nx_string _t220 = nx_m24_join_strings(c, _t219, nx_lit(nx_str_1811, 2));
-              nx_string _t221 = _t220;
-              nx_sl_u8 _t222 = nx_str_slice(_t221);
-              nx_sl_u8 _t223 = nx_str_slice(on_30);
+              nx_string _t215 = nx_Gen_cty_1407(c, self_0, ret_t_15);
+              nx_string rcn_40 = _t215;
+              nx_string _t216 = {0}; _t216.ar = c->arena;
+              nx_sink _t217 = nx_sink_str(c, &_t216);
+              nx_sl_u8 _t218 = nx_str_slice(rcn_40);
+              nx_sl_u8 _t219 = nx_str_slice(target_31);
+              nx_list_string* _t220 = &(args_5);
+              nx_string _t221 = nx_m24_join_strings(c, _t220, nx_lit(nx_str_1811, 2));
+              nx_string _t222 = _t221;
+              nx_sl_u8 _t223 = nx_str_slice(_t222);
               nx_sl_u8 _t224 = nx_str_slice(on_30);
-              nx_w(&_t216, (const uint8_t*)nx_str_718, 2);
-              nx_w_sl(&_t216, _t217);
-              nx_w(&_t216, (const uint8_t*)nx_str_5175, 9);
-              nx_w_sl(&_t216, _t218);
-              nx_w(&_t216, (const uint8_t*)nx_str_1102, 1);
-              nx_w_sl(&_t216, _t222);
-              nx_w(&_t216, (const uint8_t*)nx_str_5179, 87);
-              nx_w_sl(&_t216, _t223);
-              nx_w(&_t216, (const uint8_t*)nx_str_5177, 3);
-              nx_w_sl(&_t216, _t224);
-              nx_w(&_t216, (const uint8_t*)nx_str_5180, 10);
-              nx_string _t225 = _t215;
-              nx_slice_check(0, _t225.len, _t225.len, "self/cgen.nx:4833");
-              nx_sl_u8 _t226 = ((nx_sl_u8){ nx_padd(_t225.ptr, 0), _t225.len - 0 });
-              nx_str_append(c, &(out_32), _t226.ptr, _t226.len);
-              nx_drop_string(c, &_t225);
-              nx_drop_string(c, &_t221);
+              nx_sl_u8 _t225 = nx_str_slice(on_30);
+              nx_w(&_t217, (const uint8_t*)nx_str_718, 2);
+              nx_w_sl(&_t217, _t218);
+              nx_w(&_t217, (const uint8_t*)nx_str_5178, 9);
+              nx_w_sl(&_t217, _t219);
+              nx_w(&_t217, (const uint8_t*)nx_str_1102, 1);
+              nx_w_sl(&_t217, _t223);
+              nx_w(&_t217, (const uint8_t*)nx_str_5182, 87);
+              nx_w_sl(&_t217, _t224);
+              nx_w(&_t217, (const uint8_t*)nx_str_5180, 3);
+              nx_w_sl(&_t217, _t225);
+              nx_w(&_t217, (const uint8_t*)nx_str_5183, 10);
+              nx_string _t226 = _t216;
+              nx_slice_check(0, _t226.len, _t226.len, "self/cgen.nx:4835");
+              nx_sl_u8 _t227 = ((nx_sl_u8){ nx_padd(_t226.ptr, 0), _t226.len - 0 });
+              nx_str_append(c, &(out_32), _t227.ptr, _t227.len);
+              nx_drop_string(c, &_t226);
+              nx_drop_string(c, &_t222);
               nx_drop_string(c, &rcn_40);
             }
             else
             {
-              nx_string _t227 = {0}; _t227.ar = c->arena;
-              nx_sink _t228 = nx_sink_str(c, &_t227);
-              nx_sl_u8 _t229 = nx_str_slice(target_31);
-              nx_list_string* _t230 = &(args_5);
-              nx_string _t231 = nx_m24_join_strings(c, _t230, nx_lit(nx_str_1811, 2));
-              nx_string _t232 = _t231;
-              nx_sl_u8 _t233 = nx_str_slice(_t232);
-              nx_w(&_t228, (const uint8_t*)nx_str_718, 2);
-              nx_w_sl(&_t228, _t229);
-              nx_w(&_t228, (const uint8_t*)nx_str_1102, 1);
-              nx_w_sl(&_t228, _t233);
-              nx_w(&_t228, (const uint8_t*)nx_str_5181, 81);
-              nx_string _t234 = _t227;
-              nx_slice_check(0, _t234.len, _t234.len, "self/cgen.nx:4835");
-              nx_sl_u8 _t235 = ((nx_sl_u8){ nx_padd(_t234.ptr, 0), _t234.len - 0 });
-              nx_str_append(c, &(out_32), _t235.ptr, _t235.len);
-              nx_drop_string(c, &_t234);
-              nx_drop_string(c, &_t232);
+              nx_string _t228 = {0}; _t228.ar = c->arena;
+              nx_sink _t229 = nx_sink_str(c, &_t228);
+              nx_sl_u8 _t230 = nx_str_slice(target_31);
+              nx_list_string* _t231 = &(args_5);
+              nx_string _t232 = nx_m24_join_strings(c, _t231, nx_lit(nx_str_1811, 2));
+              nx_string _t233 = _t232;
+              nx_sl_u8 _t234 = nx_str_slice(_t233);
+              nx_w(&_t229, (const uint8_t*)nx_str_718, 2);
+              nx_w_sl(&_t229, _t230);
+              nx_w(&_t229, (const uint8_t*)nx_str_1102, 1);
+              nx_w_sl(&_t229, _t234);
+              nx_w(&_t229, (const uint8_t*)nx_str_5184, 81);
+              nx_string _t235 = _t228;
+              nx_slice_check(0, _t235.len, _t235.len, "self/cgen.nx:4837");
+              nx_sl_u8 _t236 = ((nx_sl_u8){ nx_padd(_t235.ptr, 0), _t235.len - 0 });
+              nx_str_append(c, &(out_32), _t236.ptr, _t236.len);
+              nx_drop_string(c, &_t235);
+              nx_drop_string(c, &_t233);
             }
         }
-      nx_str_append(c, &(out_32), nx_lit(nx_str_5182, 14).ptr, nx_lit(nx_str_5182, 14).len);
-      nx_drop_string(c, &_t195);
-      nx_drop_string(c, &_t191);
+      nx_str_append(c, &(out_32), nx_lit(nx_str_5185, 14).ptr, nx_lit(nx_str_5185, 14).len);
+      nx_drop_string(c, &_t196);
+      nx_drop_string(c, &_t192);
       nx_drop_string(c, &alljoined_38);
       nx_drop_list_string(c, &all_36);
     }
-  nx_string _t236 = out_32; memset(&out_32, 0, sizeof out_32);
-  nx_string _t237 = _t236;
+  nx_string _t237 = out_32; memset(&out_32, 0, sizeof out_32);
+  nx_string _t238 = _t237;
   nx_drop_string(c, &joined_34);
   nx_drop_string(c, &_t139);
   nx_drop_string(c, &_t137);
@@ -175362,7 +175489,7 @@ static nx_string nx_Gen_export_wrapper_1498(nx_ctx* c, nx_m24_Gen* self_0, size_
   nx_drop_list_string(c, &params_4);
   nx_drop_list_usize(c, &ps_3);
   nx_drop_string(c, &fname_2);
-  return _t237;
+  return _t238;
   nx_drop_string(c, &joined_34);
   nx_drop_string(c, &_t139);
   nx_drop_string(c, &_t137);
@@ -175422,7 +175549,7 @@ static nx_list_usize nx_Gen_free_locals_1499(nx_ctx* c, nx_m24_Gen* self_0, size
 
 static void nx_Gen_walk_block_1500(nx_ctx* c, nx_m24_Gen* self_0, size_t b_1, nx_list_usize* used_2, nx_list_usize* declared_3) {
   NX_UNUSED(c);
-  nx_list_usize _t1 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(b_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4856")]).kids_9;
+  nx_list_usize _t1 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(b_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4858")]).kids_9;
   nx_list_usize _t2 = nx_clone_list_usize(c, &_t1);
   nx_sl_usize _t3 = ((nx_sl_usize){ _t2.ptr, _t2.len });
   for (size_t _t4 = 0; _t4 < _t3.len; _t4++) {
@@ -175431,7 +175558,7 @@ static void nx_Gen_walk_block_1500(nx_ctx* c, nx_m24_Gen* self_0, size_t b_1, nx
     nx_cont_0: ;
   }
   nx_brk_0: ;
-  size_t tail_6 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(b_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4857")]).a_4;
+  size_t tail_6 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(b_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4859")]).a_4;
     if (((tail_6) != (((size_t)18446744073709551615ULL))))
     {
       nx_Gen_walk_expr_1503(c, self_0, tail_6, used_2, declared_3);
@@ -175441,10 +175568,10 @@ static void nx_Gen_walk_block_1500(nx_ctx* c, nx_m24_Gen* self_0, size_t b_1, nx
 
 static void nx_Gen_walk_stmt_1501(nx_ctx* c, nx_m24_Gen* self_0, size_t s_1, nx_list_usize* used_2, nx_list_usize* declared_3) {
   NX_UNUSED(c);
-  nx_m2_TKind k_4 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(s_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4862")]).k_0;
-  nx_list_usize _t1 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(s_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4863")]).kids_9;
+  nx_m2_TKind k_4 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(s_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4864")]).k_0;
+  nx_list_usize _t1 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(s_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4865")]).kids_9;
   nx_list_usize kids_5 = nx_clone_list_usize(c, &_t1);
-  size_t a_6 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(s_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4864")]).a_4;
+  size_t a_6 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(s_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4866")]).a_4;
     if (nx_eq_m2_TKind(&(k_4), &(((nx_m2_TKind){ .tag = 0 }))))
     {
       size_t _t2 = a_6;
@@ -175453,7 +175580,7 @@ static void nx_Gen_walk_stmt_1501(nx_ctx* c, nx_m24_Gen* self_0, size_t s_1, nx_
       _t3->ptr[_t3->len++] = _t2;
         if (((((kids_5).len)) > (((size_t)0ULL))))
         {
-          size_t _t4 = kids_5.ptr[nx_idx(((size_t)0ULL), kids_5.len, "self/cgen.nx:4867")];
+          size_t _t4 = kids_5.ptr[nx_idx(((size_t)0ULL), kids_5.len, "self/cgen.nx:4869")];
           nx_Gen_walk_expr_1503(c, self_0, _t4, used_2, declared_3);
         }
     }
@@ -175461,9 +175588,9 @@ static void nx_Gen_walk_stmt_1501(nx_ctx* c, nx_m24_Gen* self_0, size_t s_1, nx_
     {
         if (nx_eq_m2_TKind(&(k_4), &(((nx_m2_TKind){ .tag = 1 }))))
         {
-          size_t _t5 = kids_5.ptr[nx_idx(((size_t)0ULL), kids_5.len, "self/cgen.nx:4869")];
+          size_t _t5 = kids_5.ptr[nx_idx(((size_t)0ULL), kids_5.len, "self/cgen.nx:4871")];
           nx_Gen_walk_expr_1503(c, self_0, _t5, used_2, declared_3);
-          size_t _t6 = kids_5.ptr[nx_idx(((size_t)1ULL), kids_5.len, "self/cgen.nx:4870")];
+          size_t _t6 = kids_5.ptr[nx_idx(((size_t)1ULL), kids_5.len, "self/cgen.nx:4872")];
           nx_Gen_walk_expr_1503(c, self_0, _t6, used_2, declared_3);
         }
         else
@@ -175480,7 +175607,7 @@ static void nx_Gen_walk_stmt_1501(nx_ctx* c, nx_m24_Gen* self_0, size_t s_1, nx_
             {
                 if (((((kids_5).len)) > (((size_t)0ULL))))
                 {
-                  size_t _t9 = kids_5.ptr[nx_idx(((size_t)0ULL), kids_5.len, "self/cgen.nx:4872")];
+                  size_t _t9 = kids_5.ptr[nx_idx(((size_t)0ULL), kids_5.len, "self/cgen.nx:4874")];
                   nx_Gen_walk_expr_1503(c, self_0, _t9, used_2, declared_3);
                 }
             }
@@ -175492,20 +175619,20 @@ static void nx_Gen_walk_stmt_1501(nx_ctx* c, nx_m24_Gen* self_0, size_t s_1, nx_
               }
                 if (_t10)
                 {
-                  size_t _t11 = kids_5.ptr[nx_idx(((size_t)0ULL), kids_5.len, "self/cgen.nx:4874")];
+                  size_t _t11 = kids_5.ptr[nx_idx(((size_t)0ULL), kids_5.len, "self/cgen.nx:4876")];
                   nx_Gen_walk_stmt_1501(c, self_0, _t11, used_2, declared_3);
                 }
                 else
                 {
                     if (nx_eq_m2_TKind(&(k_4), &(((nx_m2_TKind){ .tag = 8 }))))
                     {
-                      size_t _t12 = kids_5.ptr[nx_idx(((size_t)0ULL), kids_5.len, "self/cgen.nx:4876")];
+                      size_t _t12 = kids_5.ptr[nx_idx(((size_t)0ULL), kids_5.len, "self/cgen.nx:4878")];
                       nx_Gen_walk_expr_1503(c, self_0, _t12, used_2, declared_3);
-                      size_t _t13 = kids_5.ptr[nx_idx(((size_t)1ULL), kids_5.len, "self/cgen.nx:4877")];
+                      size_t _t13 = kids_5.ptr[nx_idx(((size_t)1ULL), kids_5.len, "self/cgen.nx:4879")];
                       nx_Gen_walk_block_1500(c, self_0, _t13, used_2, declared_3);
                         if (((((kids_5).len)) > (((size_t)2ULL))))
                         {
-                          size_t _t14 = kids_5.ptr[nx_idx(((size_t)2ULL), kids_5.len, "self/cgen.nx:4878")];
+                          size_t _t14 = kids_5.ptr[nx_idx(((size_t)2ULL), kids_5.len, "self/cgen.nx:4880")];
                           nx_Gen_walk_block_1500(c, self_0, _t14, used_2, declared_3);
                         }
                     }
@@ -175517,23 +175644,23 @@ static void nx_Gen_walk_stmt_1501(nx_ctx* c, nx_m24_Gen* self_0, size_t s_1, nx_
                           nx_list_usize* _t16 = &((*declared_3));
                           if (_t16->len == _t16->cap) nx_list_grow(c, (nx_rawlist*)_t16, sizeof(size_t), _Alignof(size_t), _t16->len + 1);
                           _t16->ptr[_t16->len++] = _t15;
-                          size_t _t17 = kids_5.ptr[nx_idx(((size_t)0ULL), kids_5.len, "self/cgen.nx:4881")];
+                          size_t _t17 = kids_5.ptr[nx_idx(((size_t)0ULL), kids_5.len, "self/cgen.nx:4883")];
                           nx_Gen_walk_expr_1503(c, self_0, _t17, used_2, declared_3);
-                          size_t _t18 = kids_5.ptr[nx_idx(((size_t)1ULL), kids_5.len, "self/cgen.nx:4882")];
+                          size_t _t18 = kids_5.ptr[nx_idx(((size_t)1ULL), kids_5.len, "self/cgen.nx:4884")];
                           nx_Gen_walk_expr_1503(c, self_0, _t18, used_2, declared_3);
-                            if (((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(s_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4883")]).flag_7)
+                            if (((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(s_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4885")]).flag_7)
                             {
-                              size_t _t19 = kids_5.ptr[nx_idx(((size_t)2ULL), kids_5.len, "self/cgen.nx:4883")];
+                              size_t _t19 = kids_5.ptr[nx_idx(((size_t)2ULL), kids_5.len, "self/cgen.nx:4885")];
                               nx_Gen_walk_expr_1503(c, self_0, _t19, used_2, declared_3);
                             }
-                          size_t _t20 = kids_5.ptr[nx_idx(nx_sub_usize(((kids_5).len), ((size_t)1ULL), "self/cgen.nx:4884"), kids_5.len, "self/cgen.nx:4884")];
+                          size_t _t20 = kids_5.ptr[nx_idx(nx_sub_usize(((kids_5).len), ((size_t)1ULL), "self/cgen.nx:4886"), kids_5.len, "self/cgen.nx:4886")];
                           nx_Gen_walk_block_1500(c, self_0, _t20, used_2, declared_3);
                         }
                         else
                         {
                             if (nx_eq_m2_TKind(&(k_4), &(((nx_m2_TKind){ .tag = 10 }))))
                             {
-                              nx_list_usize _t21 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(s_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4886")]).kids2_10;
+                              nx_list_usize _t21 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(s_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4888")]).kids2_10;
                               nx_list_usize locals_7 = nx_clone_list_usize(c, &_t21);
                               nx_sl_usize _t22 = ((nx_sl_usize){ locals_7.ptr, locals_7.len });
                               for (size_t i_9 = 0; i_9 < _t22.len; i_9++) {
@@ -175542,7 +175669,7 @@ static void nx_Gen_walk_stmt_1501(nx_ctx* c, nx_m24_Gen* self_0, size_t s_1, nx_
                                 nx_list_usize* _t24 = &((*declared_3));
                                 if (_t24->len == _t24->cap) nx_list_grow(c, (nx_rawlist*)_t24, sizeof(size_t), _Alignof(size_t), _t24->len + 1);
                                 _t24->ptr[_t24->len++] = _t23;
-                                size_t _t25 = kids_5.ptr[nx_idx(i_9, kids_5.len, "self/cgen.nx:4889")];
+                                size_t _t25 = kids_5.ptr[nx_idx(i_9, kids_5.len, "self/cgen.nx:4891")];
                                 nx_Gen_walk_expr_1503(c, self_0, _t25, used_2, declared_3);
                                 nx_cont_0: ;
                               }
@@ -175554,7 +175681,7 @@ static void nx_Gen_walk_stmt_1501(nx_ctx* c, nx_m24_Gen* self_0, size_t s_1, nx_
                                   if (_t27->len == _t27->cap) nx_list_grow(c, (nx_rawlist*)_t27, sizeof(size_t), _Alignof(size_t), _t27->len + 1);
                                   _t27->ptr[_t27->len++] = _t26;
                                 }
-                              size_t _t28 = kids_5.ptr[nx_idx(nx_sub_usize(((kids_5).len), ((size_t)1ULL), "self/cgen.nx:4892"), kids_5.len, "self/cgen.nx:4892")];
+                              size_t _t28 = kids_5.ptr[nx_idx(nx_sub_usize(((kids_5).len), ((size_t)1ULL), "self/cgen.nx:4894"), kids_5.len, "self/cgen.nx:4894")];
                               nx_Gen_walk_block_1500(c, self_0, _t28, used_2, declared_3);
                               nx_drop_list_usize(c, &locals_7);
                             }
@@ -175566,7 +175693,7 @@ static void nx_Gen_walk_stmt_1501(nx_ctx* c, nx_m24_Gen* self_0, size_t s_1, nx_
                               }
                                 if (_t29)
                                 {
-                                  size_t _t30 = kids_5.ptr[nx_idx(((size_t)0ULL), kids_5.len, "self/cgen.nx:4894")];
+                                  size_t _t30 = kids_5.ptr[nx_idx(((size_t)0ULL), kids_5.len, "self/cgen.nx:4896")];
                                   nx_Gen_walk_block_1500(c, self_0, _t30, used_2, declared_3);
                                 }
                                 else
@@ -175591,12 +175718,12 @@ static void nx_Gen_walk_stmt_1501(nx_ctx* c, nx_m24_Gen* self_0, size_t s_1, nx_
 
 static void nx_Gen_walk_pat_1502(nx_ctx* c, nx_m24_Gen* self_0, size_t p_1, nx_list_usize* declared_2) {
   NX_UNUSED(c);
-  nx_m2_TKind k_3 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(p_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4901")]).k_0;
-  nx_list_usize _t1 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(p_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4902")]).kids_9;
+  nx_m2_TKind k_3 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(p_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4903")]).k_0;
+  nx_list_usize _t1 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(p_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4904")]).kids_9;
   nx_list_usize kids_4 = nx_clone_list_usize(c, &_t1);
     if (nx_eq_m2_TKind(&(k_3), &(((nx_m2_TKind){ .tag = 74 }))))
     {
-      size_t _t2 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(p_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4903")]).a_4;
+      size_t _t2 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(p_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4905")]).a_4;
       nx_list_usize* _t3 = &((*declared_2));
       if (_t3->len == _t3->cap) nx_list_grow(c, (nx_rawlist*)_t3, sizeof(size_t), _Alignof(size_t), _t3->len + 1);
       _t3->ptr[_t3->len++] = _t2;
@@ -175605,9 +175732,9 @@ static void nx_Gen_walk_pat_1502(nx_ctx* c, nx_m24_Gen* self_0, size_t p_1, nx_l
     }
     if (nx_eq_m2_TKind(&(k_3), &(((nx_m2_TKind){ .tag = 90 }))))
     {
-        if (((((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(p_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4904")]).a_4) != (((size_t)18446744073709551615ULL))))
+        if (((((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(p_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4906")]).a_4) != (((size_t)18446744073709551615ULL))))
         {
-          size_t _t4 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(p_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4904")]).a_4;
+          size_t _t4 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(p_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4906")]).a_4;
           nx_list_usize* _t5 = &((*declared_2));
           if (_t5->len == _t5->cap) nx_list_grow(c, (nx_rawlist*)_t5, sizeof(size_t), _Alignof(size_t), _t5->len + 1);
           _t5->ptr[_t5->len++] = _t4;
@@ -175617,7 +175744,7 @@ static void nx_Gen_walk_pat_1502(nx_ctx* c, nx_m24_Gen* self_0, size_t p_1, nx_l
     }
     if (nx_eq_m2_TKind(&(k_3), &(((nx_m2_TKind){ .tag = 91 }))))
     {
-      size_t _t6 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(p_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4905")]).a_4;
+      size_t _t6 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(p_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4907")]).a_4;
       nx_list_usize* _t7 = &((*declared_2));
       if (_t7->len == _t7->cap) nx_list_grow(c, (nx_rawlist*)_t7, sizeof(size_t), _Alignof(size_t), _t7->len + 1);
       _t7->ptr[_t7->len++] = _t6;
@@ -175663,24 +175790,24 @@ static void nx_Gen_walk_pat_1502(nx_ctx* c, nx_m24_Gen* self_0, size_t p_1, nx_l
       nx_sl_usize _t16 = ((nx_sl_usize){ kids_4.ptr, kids_4.len });
       for (size_t _t17 = 0; _t17 < _t16.len; _t17++) {
         size_t seg_6 = _t16.ptr[_t17];
-        nx_string _t18 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(seg_6, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4912")]).name_11;
+        nx_string _t18 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(seg_6, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4914")]).name_11;
         nx_string desc_7 = nx_clone_string(c, &_t18);
-        nx_slice_check(0, desc_7.len, desc_7.len, "self/cgen.nx:4913");
+        nx_slice_check(0, desc_7.len, desc_7.len, "self/cgen.nx:4915");
         nx_sl_u8 _t19 = ((nx_sl_u8){ nx_padd(desc_7.ptr, 0), desc_7.len - 0 });
         nx_list_string _t20 = nx_m2_split_words(c, _t19);
         nx_list_string words_8 = _t20;
-        nx_string _t21 = words_8.ptr[nx_idx(((size_t)0ULL), words_8.len, "self/cgen.nx:4914")];
+        nx_string _t21 = words_8.ptr[nx_idx(((size_t)0ULL), words_8.len, "self/cgen.nx:4916")];
         nx_sl_u8 _t22 = nx_str_slice(_t21);
         bool _t23 = nx_sl_eq(_t22, nx_lit(nx_str_3242, 4));
         if (!_t23) {
-          nx_string _t24 = words_8.ptr[nx_idx(((size_t)0ULL), words_8.len, "self/cgen.nx:4914")];
+          nx_string _t24 = words_8.ptr[nx_idx(((size_t)0ULL), words_8.len, "self/cgen.nx:4916")];
           nx_sl_u8 _t25 = nx_str_slice(_t24);
           _t23 = nx_sl_eq(_t25, nx_lit(nx_str_3243, 4));
         }
           if (_t23)
           {
-            nx_slice_check(0, words_8.ptr[nx_idx(((size_t)1ULL), words_8.len, "self/cgen.nx:4914")].len, words_8.ptr[nx_idx(((size_t)1ULL), words_8.len, "self/cgen.nx:4914")].len, "self/cgen.nx:4914");
-            nx_sl_u8 _t26 = ((nx_sl_u8){ nx_padd(words_8.ptr[nx_idx(((size_t)1ULL), words_8.len, "self/cgen.nx:4914")].ptr, 0), words_8.ptr[nx_idx(((size_t)1ULL), words_8.len, "self/cgen.nx:4914")].len - 0 });
+            nx_slice_check(0, words_8.ptr[nx_idx(((size_t)1ULL), words_8.len, "self/cgen.nx:4916")].len, words_8.ptr[nx_idx(((size_t)1ULL), words_8.len, "self/cgen.nx:4916")].len, "self/cgen.nx:4916");
+            nx_sl_u8 _t26 = ((nx_sl_u8){ nx_padd(words_8.ptr[nx_idx(((size_t)1ULL), words_8.len, "self/cgen.nx:4916")].ptr, 0), words_8.ptr[nx_idx(((size_t)1ULL), words_8.len, "self/cgen.nx:4916")].len - 0 });
             nx_eu_usize _t27; { nx_u128 _v = 0; int _r = nx_parse_uint(_t26, ((nx_u128)SIZE_MAX), &_v); _t27.err = _r == 0 ? 0 : (_r == 1 ? 9u : 5u); if (_r == 0) _t27.val = (size_t)_v; }
             nx_eu_usize _t28 = _t27;
             size_t _t29;
@@ -175707,10 +175834,10 @@ static void nx_Gen_walk_pat_1502(nx_ctx* c, nx_m24_Gen* self_0, size_t p_1, nx_l
 
 static void nx_Gen_walk_expr_1503(nx_ctx* c, nx_m24_Gen* self_0, size_t e_1, nx_list_usize* used_2, nx_list_usize* declared_3) {
   NX_UNUSED(c);
-  nx_m2_TKind k_4 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(e_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4920")]).k_0;
-  nx_list_usize _t1 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(e_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4921")]).kids_9;
+  nx_m2_TKind k_4 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(e_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4922")]).k_0;
+  nx_list_usize _t1 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(e_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4923")]).kids_9;
   nx_list_usize kids_5 = nx_clone_list_usize(c, &_t1);
-  size_t a_6 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(e_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4922")]).a_4;
+  size_t a_6 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(e_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4924")]).a_4;
     if (nx_eq_m2_TKind(&(k_4), &(((nx_m2_TKind){ .tag = 21 }))))
     {
       size_t _t2 = a_6;
@@ -175722,13 +175849,13 @@ static void nx_Gen_walk_expr_1503(nx_ctx* c, nx_m24_Gen* self_0, size_t e_1, nx_
     }
     if (nx_eq_m2_TKind(&(k_4), &(((nx_m2_TKind){ .tag = 39 }))))
     {
-      size_t _t4 = kids_5.ptr[nx_idx(((size_t)0ULL), kids_5.len, "self/cgen.nx:4925")];
+      size_t _t4 = kids_5.ptr[nx_idx(((size_t)0ULL), kids_5.len, "self/cgen.nx:4927")];
       nx_Gen_walk_expr_1503(c, self_0, _t4, used_2, declared_3);
-      size_t _t5 = kids_5.ptr[nx_idx(((size_t)1ULL), kids_5.len, "self/cgen.nx:4926")];
+      size_t _t5 = kids_5.ptr[nx_idx(((size_t)1ULL), kids_5.len, "self/cgen.nx:4928")];
       nx_Gen_walk_block_1500(c, self_0, _t5, used_2, declared_3);
         if (((((kids_5).len)) > (((size_t)2ULL))))
         {
-          size_t _t6 = kids_5.ptr[nx_idx(((size_t)2ULL), kids_5.len, "self/cgen.nx:4927")];
+          size_t _t6 = kids_5.ptr[nx_idx(((size_t)2ULL), kids_5.len, "self/cgen.nx:4929")];
           nx_Gen_walk_block_1500(c, self_0, _t6, used_2, declared_3);
         }
       nx_drop_list_usize(c, &kids_5);
@@ -175736,17 +175863,17 @@ static void nx_Gen_walk_expr_1503(nx_ctx* c, nx_m24_Gen* self_0, size_t e_1, nx_
     }
     if (nx_eq_m2_TKind(&(k_4), &(((nx_m2_TKind){ .tag = 40 }))))
     {
-      size_t _t7 = kids_5.ptr[nx_idx(((size_t)0ULL), kids_5.len, "self/cgen.nx:4931")];
+      size_t _t7 = kids_5.ptr[nx_idx(((size_t)0ULL), kids_5.len, "self/cgen.nx:4933")];
       nx_Gen_walk_expr_1503(c, self_0, _t7, used_2, declared_3);
       size_t _t8 = a_6;
       nx_list_usize* _t9 = &((*declared_3));
       if (_t9->len == _t9->cap) nx_list_grow(c, (nx_rawlist*)_t9, sizeof(size_t), _Alignof(size_t), _t9->len + 1);
       _t9->ptr[_t9->len++] = _t8;
-      size_t _t10 = kids_5.ptr[nx_idx(((size_t)1ULL), kids_5.len, "self/cgen.nx:4933")];
+      size_t _t10 = kids_5.ptr[nx_idx(((size_t)1ULL), kids_5.len, "self/cgen.nx:4935")];
       nx_Gen_walk_block_1500(c, self_0, _t10, used_2, declared_3);
         if (((((kids_5).len)) > (((size_t)2ULL))))
         {
-          size_t _t11 = kids_5.ptr[nx_idx(((size_t)2ULL), kids_5.len, "self/cgen.nx:4934")];
+          size_t _t11 = kids_5.ptr[nx_idx(((size_t)2ULL), kids_5.len, "self/cgen.nx:4936")];
           nx_Gen_walk_block_1500(c, self_0, _t11, used_2, declared_3);
         }
       nx_drop_list_usize(c, &kids_5);
@@ -175754,29 +175881,29 @@ static void nx_Gen_walk_expr_1503(nx_ctx* c, nx_m24_Gen* self_0, size_t e_1, nx_
     }
     if (nx_eq_m2_TKind(&(k_4), &(((nx_m2_TKind){ .tag = 41 }))))
     {
-      size_t _t12 = kids_5.ptr[nx_idx(((size_t)0ULL), kids_5.len, "self/cgen.nx:4938")];
+      size_t _t12 = kids_5.ptr[nx_idx(((size_t)0ULL), kids_5.len, "self/cgen.nx:4940")];
       nx_Gen_walk_expr_1503(c, self_0, _t12, used_2, declared_3);
       size_t i_7 = ((size_t)1ULL);
       for (;;) {
         bool _t13 = ((i_7) < (((kids_5).len)));
         if (!_t13) break;
-        nx_list_usize _t14 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(kids_5.ptr[nx_idx(i_7, kids_5.len, "self/cgen.nx:4941")], (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4941")]).kids_9;
+        nx_list_usize _t14 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(kids_5.ptr[nx_idx(i_7, kids_5.len, "self/cgen.nx:4943")], (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4943")]).kids_9;
         nx_list_usize akids_8 = nx_clone_list_usize(c, &_t14);
-        size_t _t15 = akids_8.ptr[nx_idx(((size_t)0ULL), akids_8.len, "self/cgen.nx:4942")];
+        size_t _t15 = akids_8.ptr[nx_idx(((size_t)0ULL), akids_8.len, "self/cgen.nx:4944")];
         nx_Gen_walk_pat_1502(c, self_0, _t15, declared_3);
         size_t j_9 = ((size_t)1ULL);
         for (;;) {
           bool _t16 = ((j_9) < (((akids_8).len)));
           if (!_t16) break;
-          size_t _t17 = akids_8.ptr[nx_idx(j_9, akids_8.len, "self/cgen.nx:4944")];
+          size_t _t17 = akids_8.ptr[nx_idx(j_9, akids_8.len, "self/cgen.nx:4946")];
           nx_Gen_walk_expr_1503(c, self_0, _t17, used_2, declared_3);
           size_t* _t18 = &(j_9);
-          *_t18 = nx_add_usize((*_t18), ((size_t)1ULL), "self/cgen.nx:4944");
+          *_t18 = nx_add_usize((*_t18), ((size_t)1ULL), "self/cgen.nx:4946");
           nx_cont_1: ;
         }
         nx_brk_1: ;
         size_t* _t19 = &(i_7);
-        *_t19 = nx_add_usize((*_t19), ((size_t)1ULL), "self/cgen.nx:4945");
+        *_t19 = nx_add_usize((*_t19), ((size_t)1ULL), "self/cgen.nx:4947");
         nx_drop_list_usize(c, &akids_8);
         nx_cont_0: ;
       }
@@ -175786,14 +175913,14 @@ static void nx_Gen_walk_expr_1503(nx_ctx* c, nx_m24_Gen* self_0, size_t e_1, nx_
     }
     if (nx_eq_m2_TKind(&(k_4), &(((nx_m2_TKind){ .tag = 42 }))))
     {
-      size_t _t20 = kids_5.ptr[nx_idx(((size_t)0ULL), kids_5.len, "self/cgen.nx:4949")];
+      size_t _t20 = kids_5.ptr[nx_idx(((size_t)0ULL), kids_5.len, "self/cgen.nx:4951")];
       nx_Gen_walk_block_1500(c, self_0, _t20, used_2, declared_3);
       nx_drop_list_usize(c, &kids_5);
       return;
     }
     if (nx_eq_m2_TKind(&(k_4), &(((nx_m2_TKind){ .tag = 50 }))))
     {
-      size_t _t21 = kids_5.ptr[nx_idx(((size_t)0ULL), kids_5.len, "self/cgen.nx:4951")];
+      size_t _t21 = kids_5.ptr[nx_idx(((size_t)0ULL), kids_5.len, "self/cgen.nx:4953")];
       nx_Gen_walk_expr_1503(c, self_0, _t21, used_2, declared_3);
         if (((a_6) != (((size_t)18446744073709551615ULL))))
         {
@@ -175802,14 +175929,14 @@ static void nx_Gen_walk_expr_1503(nx_ctx* c, nx_m24_Gen* self_0, size_t e_1, nx_
           if (_t23->len == _t23->cap) nx_list_grow(c, (nx_rawlist*)_t23, sizeof(size_t), _Alignof(size_t), _t23->len + 1);
           _t23->ptr[_t23->len++] = _t22;
         }
-      size_t _t24 = kids_5.ptr[nx_idx(((size_t)1ULL), kids_5.len, "self/cgen.nx:4953")];
+      size_t _t24 = kids_5.ptr[nx_idx(((size_t)1ULL), kids_5.len, "self/cgen.nx:4955")];
       nx_Gen_walk_expr_1503(c, self_0, _t24, used_2, declared_3);
       nx_drop_list_usize(c, &kids_5);
       return;
     }
     if (nx_eq_m2_TKind(&(k_4), &(((nx_m2_TKind){ .tag = 61 }))))
     {
-      nx_list_usize _t25 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(e_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4957")]).kids2_10;
+      nx_list_usize _t25 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(e_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4959")]).kids2_10;
       nx_list_usize _t26 = nx_clone_list_usize(c, &_t25);
       nx_sl_usize _t27 = ((nx_sl_usize){ _t26.ptr, _t26.len });
       for (size_t _t28 = 0; _t28 < _t27.len; _t28++) {
@@ -175828,22 +175955,22 @@ static void nx_Gen_walk_expr_1503(nx_ctx* c, nx_m24_Gen* self_0, size_t e_1, nx_
     }
     if (nx_eq_m2_TKind(&(k_4), &(((nx_m2_TKind){ .tag = 68 }))))
     {
-      size_t _t31 = kids_5.ptr[nx_idx(((size_t)0ULL), kids_5.len, "self/cgen.nx:4961")];
+      size_t _t31 = kids_5.ptr[nx_idx(((size_t)0ULL), kids_5.len, "self/cgen.nx:4963")];
       nx_Gen_walk_expr_1503(c, self_0, _t31, used_2, declared_3);
-      nx_list_usize _t32 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(e_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4962")]).kids2_10;
+      nx_list_usize _t32 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(e_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4964")]).kids2_10;
       nx_list_usize fields_12 = nx_clone_list_usize(c, &_t32);
       size_t i_13 = ((size_t)1ULL);
       for (;;) {
         bool _t33 = ((i_13) < (((kids_5).len)));
         if (!_t33) break;
-        size_t _t34 = fields_12.ptr[nx_idx(nx_add_usize(nx_mul_usize(nx_sub_usize(i_13, ((size_t)1ULL), "self/cgen.nx:4965"), ((size_t)2ULL), "self/cgen.nx:4965"), ((size_t)1ULL), "self/cgen.nx:4965"), fields_12.len, "self/cgen.nx:4965")];
+        size_t _t34 = fields_12.ptr[nx_idx(nx_add_usize(nx_mul_usize(nx_sub_usize(i_13, ((size_t)1ULL), "self/cgen.nx:4967"), ((size_t)2ULL), "self/cgen.nx:4967"), ((size_t)1ULL), "self/cgen.nx:4967"), fields_12.len, "self/cgen.nx:4967")];
         nx_list_usize* _t35 = &((*declared_3));
         if (_t35->len == _t35->cap) nx_list_grow(c, (nx_rawlist*)_t35, sizeof(size_t), _Alignof(size_t), _t35->len + 1);
         _t35->ptr[_t35->len++] = _t34;
-        size_t _t36 = kids_5.ptr[nx_idx(i_13, kids_5.len, "self/cgen.nx:4966")];
+        size_t _t36 = kids_5.ptr[nx_idx(i_13, kids_5.len, "self/cgen.nx:4968")];
         nx_Gen_walk_expr_1503(c, self_0, _t36, used_2, declared_3);
         size_t* _t37 = &(i_13);
-        *_t37 = nx_add_usize((*_t37), ((size_t)1ULL), "self/cgen.nx:4967");
+        *_t37 = nx_add_usize((*_t37), ((size_t)1ULL), "self/cgen.nx:4969");
         nx_cont_3: ;
       }
       nx_brk_3: ;
@@ -175854,13 +175981,13 @@ static void nx_Gen_walk_expr_1503(nx_ctx* c, nx_m24_Gen* self_0, size_t e_1, nx_
     }
     if (nx_eq_m2_TKind(&(k_4), &(((nx_m2_TKind){ .tag = 65 }))))
     {
-      size_t _t38 = kids_5.ptr[nx_idx(nx_sub_usize(((kids_5).len), ((size_t)1ULL), "self/cgen.nx:4972"), kids_5.len, "self/cgen.nx:4972")];
+      size_t _t38 = kids_5.ptr[nx_idx(nx_sub_usize(((kids_5).len), ((size_t)1ULL), "self/cgen.nx:4974"), kids_5.len, "self/cgen.nx:4974")];
       nx_Gen_walk_expr_1503(c, self_0, _t38, used_2, declared_3);
       size_t i_14 = ((size_t)0ULL);
       for (;;) {
-        bool _t39 = ((nx_add_usize(i_14, ((size_t)1ULL), "self/cgen.nx:4974")) < (((kids_5).len)));
+        bool _t39 = ((nx_add_usize(i_14, ((size_t)1ULL), "self/cgen.nx:4976")) < (((kids_5).len)));
         if (!_t39) break;
-        nx_list_usize _t40 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(kids_5.ptr[nx_idx(i_14, kids_5.len, "self/cgen.nx:4975")], (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4975")]).kids_9;
+        nx_list_usize _t40 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(kids_5.ptr[nx_idx(i_14, kids_5.len, "self/cgen.nx:4977")], (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4977")]).kids_9;
         nx_list_usize _t41 = nx_clone_list_usize(c, &_t40);
         nx_sl_usize _t42 = ((nx_sl_usize){ _t41.ptr, _t41.len });
         for (size_t _t43 = 0; _t43 < _t42.len; _t43++) {
@@ -175870,7 +175997,7 @@ static void nx_Gen_walk_expr_1503(nx_ctx* c, nx_m24_Gen* self_0, size_t e_1, nx_
         }
         nx_brk_5: ;
         size_t* _t44 = &(i_14);
-        *_t44 = nx_add_usize((*_t44), ((size_t)1ULL), "self/cgen.nx:4976");
+        *_t44 = nx_add_usize((*_t44), ((size_t)1ULL), "self/cgen.nx:4978");
         nx_drop_list_usize(c, &_t41);
         nx_cont_4: ;
       }
@@ -175890,24 +176017,24 @@ static void nx_Gen_walk_expr_1503(nx_ctx* c, nx_m24_Gen* self_0, size_t e_1, nx_
 
 static void nx_Gen_parallel_for_1504(nx_ctx* c, nx_m24_Gen* self_0, size_t s_1) {
   NX_UNUSED(c);
-  nx_list_usize _t1 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(s_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4987")]).kids_9;
+  nx_list_usize _t1 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(s_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4989")]).kids_9;
   nx_list_usize kids_2 = nx_clone_list_usize(c, &_t1);
-  size_t index_3 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(s_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4988")]).a_4;
-  size_t label_4 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(s_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4989")]).b_5;
-  nx_list_usize _t2 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(s_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4990")]).kids2_10;
+  size_t index_3 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(s_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4990")]).a_4;
+  size_t label_4 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(s_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4991")]).b_5;
+  nx_list_usize _t2 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(s_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4992")]).kids2_10;
   nx_list_usize locals_5 = nx_clone_list_usize(c, &_t2);
-  size_t body_6 = kids_2.ptr[nx_idx(nx_sub_usize(((kids_2).len), ((size_t)1ULL), "self/cgen.nx:4991"), kids_2.len, "self/cgen.nx:4991")];
+  size_t body_6 = kids_2.ptr[nx_idx(nx_sub_usize(((kids_2).len), ((size_t)1ULL), "self/cgen.nx:4993"), kids_2.len, "self/cgen.nx:4993")];
   nx_list_string slices_7 = ((nx_list_string){NULL, 0, 0, c->arena});
   nx_list_usize slice_tys_8 = ((nx_list_usize){NULL, 0, 0, c->arena});
   nx_sl_usize _t3 = ((nx_sl_usize){ locals_5.ptr, locals_5.len });
   for (size_t i_10 = 0; i_10 < _t3.len; i_10++) {
     size_t l_9 = _t3.ptr[i_10];
-    size_t _t4 = kids_2.ptr[nx_idx(i_10, kids_2.len, "self/cgen.nx:4996")];
+    size_t _t4 = kids_2.ptr[nx_idx(i_10, kids_2.len, "self/cgen.nx:4998")];
     nx_string _t5 = nx_Gen_expr_1465(c, self_0, _t4);
     nx_string sc_11 = _t5;
-    nx_slice_check(0, sc_11.len, sc_11.len, "self/cgen.nx:4997");
+    nx_slice_check(0, sc_11.len, sc_11.len, "self/cgen.nx:4999");
     nx_sl_u8 _t6 = ((nx_sl_u8){ nx_padd(sc_11.ptr, 0), sc_11.len - 0 });
-    size_t _t7 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(kids_2.ptr[nx_idx(i_10, kids_2.len, "self/cgen.nx:4997")], (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4997")]).ty_1;
+    size_t _t7 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(kids_2.ptr[nx_idx(i_10, kids_2.len, "self/cgen.nx:4999")], (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4999")]).ty_1;
     nx_string _t8 = nx_Gen_bind_tmp_1461(c, self_0, _t6, _t7);
     nx_string st_12 = _t8;
     nx_string _t9 = st_12; memset(&st_12, 0, sizeof st_12);
@@ -175915,7 +176042,7 @@ static void nx_Gen_parallel_for_1504(nx_ctx* c, nx_m24_Gen* self_0, size_t s_1) 
     nx_list_string* _t11 = &(slices_7);
     if (_t11->len == _t11->cap) nx_list_grow(c, (nx_rawlist*)_t11, sizeof(nx_string), _Alignof(nx_string), _t11->len + 1);
     _t11->ptr[_t11->len++] = _t10;
-    size_t _t12 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(kids_2.ptr[nx_idx(i_10, kids_2.len, "self/cgen.nx:4999")], (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:4999")]).ty_1;
+    size_t _t12 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(kids_2.ptr[nx_idx(i_10, kids_2.len, "self/cgen.nx:5001")], (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:5001")]).ty_1;
     nx_list_usize* _t13 = &(slice_tys_8);
     if (_t13->len == _t13->cap) nx_list_grow(c, (nx_rawlist*)_t13, sizeof(size_t), _Alignof(size_t), _t13->len + 1);
     _t13->ptr[_t13->len++] = _t12;
@@ -175924,7 +176051,7 @@ static void nx_Gen_parallel_for_1504(nx_ctx* c, nx_m24_Gen* self_0, size_t s_1) 
     nx_cont_0: ;
   }
   nx_brk_0: ;
-  nx_string _t14 = slices_7.ptr[nx_idx(((size_t)0ULL), slices_7.len, "self/cgen.nx:5001")];
+  nx_string _t14 = slices_7.ptr[nx_idx(((size_t)0ULL), slices_7.len, "self/cgen.nx:5003")];
   nx_string first_13 = nx_clone_string(c, &_t14);
   nx_string _t15 = nx_Gen_node_loc_1399(c, self_0, s_1);
   nx_string loc_14 = _t15;
@@ -175948,7 +176075,7 @@ static void nx_Gen_parallel_for_1504(nx_ctx* c, nx_m24_Gen* self_0, size_t s_1) 
     nx_w_sl(&_t18, _t21);
     nx_w(&_t18, (const uint8_t*)nx_str_2214, 2);
     nx_string _t22 = _t17;
-    nx_slice_check(0, _t22.len, _t22.len, "self/cgen.nx:5005");
+    nx_slice_check(0, _t22.len, _t22.len, "self/cgen.nx:5007");
     nx_sl_u8 _t23 = ((nx_sl_u8){ nx_padd(_t22.ptr, 0), _t22.len - 0 });
     nx_Gen_line_1393(c, self_0, _t23);
     nx_drop_string(c, &_t22);
@@ -175983,13 +176110,13 @@ static void nx_Gen_parallel_for_1504(nx_ctx* c, nx_m24_Gen* self_0, size_t s_1) 
   nx_string _t34 = {0}; _t34.ar = c->arena;
   nx_sink _t35 = nx_sink_str(c, &_t34);
   nx_sl_u8 _t36 = nx_str_slice(n_20);
-  nx_w(&_t35, (const uint8_t*)nx_str_5183, 10);
+  nx_w(&_t35, (const uint8_t*)nx_str_5186, 10);
   nx_w_sl(&_t35, _t36);
   nx_string env_ty_21 = _t34;
   nx_string _t37 = {0}; _t37.ar = c->arena;
   nx_sink _t38 = nx_sink_str(c, &_t37);
   nx_sl_u8 _t39 = nx_str_slice(n_20);
-  nx_w(&_t38, (const uint8_t*)nx_str_5184, 7);
+  nx_w(&_t38, (const uint8_t*)nx_str_5187, 7);
   nx_w_sl(&_t38, _t39);
   nx_string fn_name_22 = _t37;
   nx_string _t40 = {0}; _t40.ar = c->arena;
@@ -176004,11 +176131,11 @@ static void nx_Gen_parallel_for_1504(nx_ctx* c, nx_m24_Gen* self_0, size_t s_1) 
     nx_sl_u8 _t45 = nx_str_slice(cn_26);
     nx_w(&_t44, (const uint8_t*)nx_str_492, 1);
     nx_w_sl(&_t44, _t45);
-    nx_w(&_t44, (const uint8_t*)nx_str_5185, 2);
+    nx_w(&_t44, (const uint8_t*)nx_str_5188, 2);
     nx_w_uint(&_t44, (nx_u128)(k_25), 10, 0, false);
     nx_w(&_t44, (const uint8_t*)nx_str_497, 1);
     nx_string _t46 = _t43;
-    nx_slice_check(0, _t46.len, _t46.len, "self/cgen.nx:5019");
+    nx_slice_check(0, _t46.len, _t46.len, "self/cgen.nx:5021");
     nx_sl_u8 _t47 = ((nx_sl_u8){ nx_padd(_t46.ptr, 0), _t46.len - 0 });
     nx_str_append(c, &(fields_23), _t47.ptr, _t47.len);
     nx_drop_string(c, &_t46);
@@ -176019,7 +176146,7 @@ static void nx_Gen_parallel_for_1504(nx_ctx* c, nx_m24_Gen* self_0, size_t s_1) 
   nx_sl_usize _t48 = ((nx_sl_usize){ free_17.ptr, free_17.len });
   for (size_t _t49 = 0; _t49 < _t48.len; _t49++) {
     size_t l_27 = _t48.ptr[_t49];
-    size_t _t50 = (*self_0).cur_21.local_tys_2.ptr[nx_idx(l_27, (*self_0).cur_21.local_tys_2.len, "self/cgen.nx:5022")];
+    size_t _t50 = (*self_0).cur_21.local_tys_2.ptr[nx_idx(l_27, (*self_0).cur_21.local_tys_2.len, "self/cgen.nx:5024")];
     nx_string _t51 = nx_Gen_cty_1407(c, self_0, _t50);
     nx_string cn_28 = _t51;
     nx_string _t52 = {0}; _t52.ar = c->arena;
@@ -176027,11 +176154,11 @@ static void nx_Gen_parallel_for_1504(nx_ctx* c, nx_m24_Gen* self_0, size_t s_1) 
     nx_sl_u8 _t54 = nx_str_slice(cn_28);
     nx_w(&_t53, (const uint8_t*)nx_str_492, 1);
     nx_w_sl(&_t53, _t54);
-    nx_w(&_t53, (const uint8_t*)nx_str_5186, 3);
+    nx_w(&_t53, (const uint8_t*)nx_str_5189, 3);
     nx_w_uint(&_t53, (nx_u128)(l_27), 10, 0, false);
     nx_w(&_t53, (const uint8_t*)nx_str_497, 1);
     nx_string _t55 = _t52;
-    nx_slice_check(0, _t55.len, _t55.len, "self/cgen.nx:5023");
+    nx_slice_check(0, _t55.len, _t55.len, "self/cgen.nx:5025");
     nx_sl_u8 _t56 = ((nx_sl_u8){ nx_padd(_t55.ptr, 0), _t55.len - 0 });
     nx_str_append(c, &(fields_23), _t56.ptr, _t56.len);
     nx_drop_string(c, &_t55);
@@ -176048,11 +176175,11 @@ static void nx_Gen_parallel_for_1504(nx_ctx* c, nx_m24_Gen* self_0, size_t s_1) 
   nx_w_sl(&_t58, _t59);
   nx_w(&_t58, (const uint8_t*)nx_str_4393, 2);
   nx_w_sl(&_t58, _t60);
-  nx_w(&_t58, (const uint8_t*)nx_str_5187, 14);
+  nx_w(&_t58, (const uint8_t*)nx_str_5190, 14);
   nx_w_sl(&_t58, _t61);
   nx_w(&_t58, (const uint8_t*)nx_str_2247, 2);
   nx_string _t62 = _t57;
-  nx_slice_check(0, _t62.len, _t62.len, "self/cgen.nx:5025");
+  nx_slice_check(0, _t62.len, _t62.len, "self/cgen.nx:5027");
   nx_sl_u8 _t63 = ((nx_sl_u8){ nx_padd(_t62.ptr, 0), _t62.len - 0 });
   nx_str_append(c, &((*self_0).types_out_5), _t63.ptr, _t63.len);
   nx_string _t64 = nx_Gen_tmp_1388(c, self_0);
@@ -176064,7 +176191,7 @@ static void nx_Gen_parallel_for_1504(nx_ctx* c, nx_m24_Gen* self_0, size_t s_1) 
     nx_string _t66 = {0}; _t66.ar = c->arena;
     nx_sink _t67 = nx_sink_str(c, &_t66);
     nx_sl_u8 _t68 = nx_str_slice(sl_31);
-    nx_w(&_t67, (const uint8_t*)nx_str_5188, 2);
+    nx_w(&_t67, (const uint8_t*)nx_str_5191, 2);
     nx_w_uint(&_t67, (nx_u128)(k_32), 10, 0, false);
     nx_w(&_t67, (const uint8_t*)nx_str_1910, 3);
     nx_w_sl(&_t67, _t68);
@@ -176083,7 +176210,7 @@ static void nx_Gen_parallel_for_1504(nx_ctx* c, nx_m24_Gen* self_0, size_t s_1) 
     nx_string _t74 = {0}; _t74.ar = c->arena;
     nx_sink _t75 = nx_sink_str(c, &_t74);
     nx_sl_u8 _t76 = nx_str_slice(name_34);
-    nx_w(&_t75, (const uint8_t*)nx_str_5189, 2);
+    nx_w(&_t75, (const uint8_t*)nx_str_5192, 2);
     nx_w_uint(&_t75, (nx_u128)(l_33), 10, 0, false);
     nx_w(&_t75, (const uint8_t*)nx_str_4587, 5);
     nx_w_sl(&_t75, _t76);
@@ -176111,7 +176238,7 @@ static void nx_Gen_parallel_for_1504(nx_ctx* c, nx_m24_Gen* self_0, size_t s_1) 
   nx_w_sl(&_t80, _t86);
   nx_w(&_t80, (const uint8_t*)nx_str_4675, 3);
   nx_string _t87 = _t79;
-  nx_slice_check(0, _t87.len, _t87.len, "self/cgen.nx:5033");
+  nx_slice_check(0, _t87.len, _t87.len, "self/cgen.nx:5035");
   nx_sl_u8 _t88 = ((nx_sl_u8){ nx_padd(_t87.ptr, 0), _t87.len - 0 });
   nx_Gen_line_1393(c, self_0, _t88);
   nx_string _t89 = {0}; _t89.ar = c->arena;
@@ -176120,7 +176247,7 @@ static void nx_Gen_parallel_for_1504(nx_ctx* c, nx_m24_Gen* self_0, size_t s_1) 
   nx_sl_u8 _t92 = nx_str_slice(fn_name_22);
   nx_sl_u8 _t93 = nx_str_slice(env_29);
   nx_sl_u8 _t94 = nx_str_slice(loc_14);
-  nx_w(&_t90, (const uint8_t*)nx_str_5190, 19);
+  nx_w(&_t90, (const uint8_t*)nx_str_5193, 19);
   nx_w_sl(&_t90, _t91);
   nx_w(&_t90, (const uint8_t*)nx_str_4625, 6);
   nx_w_sl(&_t90, _t92);
@@ -176130,7 +176257,7 @@ static void nx_Gen_parallel_for_1504(nx_ctx* c, nx_m24_Gen* self_0, size_t s_1) 
   nx_w_sl(&_t90, _t94);
   nx_w(&_t90, (const uint8_t*)nx_str_2214, 2);
   nx_string _t95 = _t89;
-  nx_slice_check(0, _t95.len, _t95.len, "self/cgen.nx:5034");
+  nx_slice_check(0, _t95.len, _t95.len, "self/cgen.nx:5036");
   nx_sl_u8 _t96 = ((nx_sl_u8){ nx_padd(_t95.ptr, 0), _t95.len - 0 });
   nx_Gen_line_1393(c, self_0, _t96);
   nx_m24_FnState _t97 = nx_m24_empty_fn_state(c);
@@ -176217,12 +176344,12 @@ static void nx_Gen_parallel_for_1504(nx_ctx* c, nx_m24_Gen* self_0, size_t s_1) 
     size_t l_42 = _t123.ptr[_t124];
     nx_string _t125 = {0}; _t125.ar = c->arena;
     nx_sink _t126 = nx_sink_str(c, &_t125);
-    nx_w(&_t126, (const uint8_t*)nx_str_5191, 10);
+    nx_w(&_t126, (const uint8_t*)nx_str_5194, 10);
     nx_w_uint(&_t126, (nx_u128)(l_42), 10, 0, false);
     nx_w(&_t126, (const uint8_t*)nx_str_736, 1);
     nx_string _t127 = _t125;
-    nx_drop_string(c, &(worker_41.locals_1.ptr[nx_idx(l_42, worker_41.locals_1.len, "self/cgen.nx:5062")]));
-    worker_41.locals_1.ptr[nx_idx(l_42, worker_41.locals_1.len, "self/cgen.nx:5062")] = _t127;
+    nx_drop_string(c, &(worker_41.locals_1.ptr[nx_idx(l_42, worker_41.locals_1.len, "self/cgen.nx:5064")]));
+    worker_41.locals_1.ptr[nx_idx(l_42, worker_41.locals_1.len, "self/cgen.nx:5064")] = _t127;
     nx_cont_9: ;
   }
   nx_brk_9: ;
@@ -176247,11 +176374,11 @@ static void nx_Gen_parallel_for_1504(nx_ctx* c, nx_m24_Gen* self_0, size_t s_1) 
   nx_sl_u8 _t137 = nx_str_slice(env_ty_21);
   nx_sl_u8 _t138 = nx_str_slice(env_ty_21);
   nx_w_sl(&_t136, _t137);
-  nx_w(&_t136, (const uint8_t*)nx_str_5192, 11);
+  nx_w(&_t136, (const uint8_t*)nx_str_5195, 11);
   nx_w_sl(&_t136, _t138);
-  nx_w(&_t136, (const uint8_t*)nx_str_5193, 24);
+  nx_w(&_t136, (const uint8_t*)nx_str_5196, 24);
   nx_string _t139 = _t135;
-  nx_slice_check(0, _t139.len, _t139.len, "self/cgen.nx:5068");
+  nx_slice_check(0, _t139.len, _t139.len, "self/cgen.nx:5070");
   nx_sl_u8 _t140 = ((nx_sl_u8){ nx_padd(_t139.ptr, 0), _t139.len - 0 });
   nx_Gen_line_1393(c, self_0, _t140);
   nx_string _t141;
@@ -176281,13 +176408,13 @@ static void nx_Gen_parallel_for_1504(nx_ctx* c, nx_m24_Gen* self_0, size_t s_1) 
   nx_sl_u8 _t152 = nx_str_slice(idx_43);
   nx_w(&_t149, (const uint8_t*)nx_str_4611, 12);
   nx_w_sl(&_t149, _t150);
-  nx_w(&_t149, (const uint8_t*)nx_str_5194, 7);
+  nx_w(&_t149, (const uint8_t*)nx_str_5197, 7);
   nx_w_sl(&_t149, _t151);
-  nx_w(&_t149, (const uint8_t*)nx_str_5195, 7);
+  nx_w(&_t149, (const uint8_t*)nx_str_5198, 7);
   nx_w_sl(&_t149, _t152);
   nx_w(&_t149, (const uint8_t*)nx_str_4603, 5);
   nx_string _t153 = _t148;
-  nx_slice_check(0, _t153.len, _t153.len, "self/cgen.nx:5072");
+  nx_slice_check(0, _t153.len, _t153.len, "self/cgen.nx:5074");
   nx_sl_u8 _t154 = ((nx_sl_u8){ nx_padd(_t153.ptr, 0), _t153.len - 0 });
   nx_Gen_line_1393(c, self_0, _t154);
   nx_Gen_push_buf_1394(c, self_0);
@@ -176296,7 +176423,7 @@ static void nx_Gen_parallel_for_1504(nx_ctx* c, nx_m24_Gen* self_0, size_t s_1) 
     size_t l_44 = _t155.ptr[k_45];
     nx_string _t156 = nx_Gen_local_name_1401(c, self_0, l_44);
     nx_string name_46 = _t156;
-    size_t _t157 = (*self_0).cur_21.local_tys_2.ptr[nx_idx(l_44, (*self_0).cur_21.local_tys_2.len, "self/cgen.nx:5076")];
+    size_t _t157 = (*self_0).cur_21.local_tys_2.ptr[nx_idx(l_44, (*self_0).cur_21.local_tys_2.len, "self/cgen.nx:5078")];
     nx_string _t158 = nx_Gen_cty_1407(c, self_0, _t157);
     nx_string cn_47 = _t158;
     nx_string _t159 = {0}; _t159.ar = c->arena;
@@ -176307,13 +176434,13 @@ static void nx_Gen_parallel_for_1504(nx_ctx* c, nx_m24_Gen* self_0, size_t s_1) 
     nx_w_sl(&_t160, _t161);
     nx_w(&_t160, (const uint8_t*)nx_str_492, 1);
     nx_w_sl(&_t160, _t162);
-    nx_w(&_t160, (const uint8_t*)nx_str_5196, 11);
+    nx_w(&_t160, (const uint8_t*)nx_str_5199, 11);
     nx_w_uint(&_t160, (nx_u128)(k_45), 10, 0, false);
     nx_w(&_t160, (const uint8_t*)nx_str_4614, 5);
     nx_w_sl(&_t160, _t163);
     nx_w(&_t160, (const uint8_t*)nx_str_4615, 2);
     nx_string _t164 = _t159;
-    nx_slice_check(0, _t164.len, _t164.len, "self/cgen.nx:5077");
+    nx_slice_check(0, _t164.len, _t164.len, "self/cgen.nx:5079");
     nx_sl_u8 _t165 = ((nx_sl_u8){ nx_padd(_t164.ptr, 0), _t164.len - 0 });
     nx_Gen_line_1393(c, self_0, _t165);
     nx_drop_string(c, &_t164);
@@ -176332,7 +176459,7 @@ static void nx_Gen_parallel_for_1504(nx_ctx* c, nx_m24_Gen* self_0, size_t s_1) 
   nx_w_uint(&_t167, (nx_u128)(label_4), 10, 0, false);
   nx_w(&_t167, (const uint8_t*)nx_str_4599, 3);
   nx_string _t168 = _t166;
-  nx_slice_check(0, _t168.len, _t168.len, "self/cgen.nx:5083");
+  nx_slice_check(0, _t168.len, _t168.len, "self/cgen.nx:5085");
   nx_sl_u8 _t169 = ((nx_sl_u8){ nx_padd(_t168.ptr, 0), _t168.len - 0 });
   nx_Gen_line_1393(c, self_0, _t169);
   nx_Gen_line_1393(c, self_0, nx_lit(nx_str_1101, 1));
@@ -176343,9 +176470,9 @@ static void nx_Gen_parallel_for_1504(nx_ctx* c, nx_m24_Gen* self_0, size_t s_1) 
   nx_sl_u8 _t173 = nx_str_slice(fn_name_22);
   nx_w(&_t172, (const uint8_t*)nx_str_4408, 12);
   nx_w_sl(&_t172, _t173);
-  nx_w(&_t172, (const uint8_t*)nx_str_5197, 46);
+  nx_w(&_t172, (const uint8_t*)nx_str_5200, 46);
   nx_string _t174 = _t171;
-  nx_slice_check(0, _t174.len, _t174.len, "self/cgen.nx:5086");
+  nx_slice_check(0, _t174.len, _t174.len, "self/cgen.nx:5088");
   nx_sl_u8 _t175 = ((nx_sl_u8){ nx_padd(_t174.ptr, 0), _t174.len - 0 });
   nx_str_append(c, &((*self_0).protos_out_9), _t175.ptr, _t175.len);
   nx_string _t176 = {0}; _t176.ar = c->arena;
@@ -176354,11 +176481,11 @@ static void nx_Gen_parallel_for_1504(nx_ctx* c, nx_m24_Gen* self_0, size_t s_1) 
   nx_sl_u8 _t179 = nx_str_slice(code_48);
   nx_w(&_t177, (const uint8_t*)nx_str_4408, 12);
   nx_w_sl(&_t177, _t178);
-  nx_w(&_t177, (const uint8_t*)nx_str_5198, 63);
+  nx_w(&_t177, (const uint8_t*)nx_str_5201, 63);
   nx_w_sl(&_t177, _t179);
   nx_w(&_t177, (const uint8_t*)nx_str_2276, 3);
   nx_string _t180 = _t176;
-  nx_slice_check(0, _t180.len, _t180.len, "self/cgen.nx:5087");
+  nx_slice_check(0, _t180.len, _t180.len, "self/cgen.nx:5089");
   nx_sl_u8 _t181 = ((nx_sl_u8){ nx_padd(_t180.ptr, 0), _t180.len - 0 });
   nx_str_append(c, &((*self_0).funcs_out_12), _t181.ptr, _t181.len);
   nx_m24_FnState _t182 = saved_35; memset(&saved_35, 0, sizeof saved_35);
@@ -176466,8 +176593,8 @@ static nx_string nx_Gen_bytes_of_1505(nx_ctx* c, nx_m24_Gen* self_0, nx_sl_u8 s_
       nx_string _t5 = {0}; _t5.ar = c->arena;
       nx_sink _t6 = nx_sink_str(c, &_t5);
       size_t _t7 = nx_Gen_res_1389(c, self_0, ty_2);
-      uint64_t _t8 = ((*((*self_0)).c_0).tys_1.list_0.ptr[nx_idx(_t7, (*((*self_0)).c_0).tys_1.list_0.len, "self/cgen.nx:5107")]).n_3;
-      nx_w(&_t6, (const uint8_t*)nx_str_5199, 20);
+      uint64_t _t8 = ((*((*self_0)).c_0).tys_1.list_0.ptr[nx_idx(_t7, (*((*self_0)).c_0).tys_1.list_0.len, "self/cgen.nx:5109")]).n_3;
+      nx_w(&_t6, (const uint8_t*)nx_str_5202, 20);
       nx_w_sl(&_t6, s_1);
       nx_w(&_t6, (const uint8_t*)nx_str_4671, 4);
       nx_w_uint(&_t6, (nx_u128)(_t8), 10, 0, false);
@@ -176482,30 +176609,30 @@ static nx_string nx_Gen_bytes_of_1505(nx_ctx* c, nx_m24_Gen* self_0, nx_sl_u8 s_
 
 static void nx_Gen_seg_info_1506(nx_ctx* c, nx_m24_Gen* self_0, size_t seg_1, nx_string* kind_2, size_t* local_3, nx_string* size_4, uint64_t* bits_5, nx_string* endian_6, bool* signed_7, bool* float_8, bool* utf8_9) {
   NX_UNUSED(c);
-  nx_string _t1 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(seg_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:5114")]).name_11;
+  nx_string _t1 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(seg_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:5116")]).name_11;
   nx_string desc_10 = nx_clone_string(c, &_t1);
-  nx_slice_check(0, desc_10.len, desc_10.len, "self/cgen.nx:5115");
+  nx_slice_check(0, desc_10.len, desc_10.len, "self/cgen.nx:5117");
   nx_sl_u8 _t2 = ((nx_sl_u8){ nx_padd(desc_10.ptr, 0), desc_10.len - 0 });
   nx_list_string _t3 = nx_m2_split_words(c, _t2);
   nx_list_string words_11 = _t3;
-  nx_string _t4 = words_11.ptr[nx_idx(((size_t)0ULL), words_11.len, "self/cgen.nx:5116")];
+  nx_string _t4 = words_11.ptr[nx_idx(((size_t)0ULL), words_11.len, "self/cgen.nx:5118")];
   nx_string _t5 = nx_clone_string(c, &_t4);
   nx_drop_string(c, &((*kind_2)));
   (*kind_2) = _t5;
   size_t wi_12 = ((size_t)1ULL);
   (*local_3) = ((size_t)18446744073709551615ULL);
-  nx_string _t6 = words_11.ptr[nx_idx(((size_t)0ULL), words_11.len, "self/cgen.nx:5119")];
+  nx_string _t6 = words_11.ptr[nx_idx(((size_t)0ULL), words_11.len, "self/cgen.nx:5121")];
   nx_sl_u8 _t7 = nx_str_slice(_t6);
   bool _t8 = nx_sl_eq(_t7, nx_lit(nx_str_3242, 4));
   if (!_t8) {
-    nx_string _t9 = words_11.ptr[nx_idx(((size_t)0ULL), words_11.len, "self/cgen.nx:5119")];
+    nx_string _t9 = words_11.ptr[nx_idx(((size_t)0ULL), words_11.len, "self/cgen.nx:5121")];
     nx_sl_u8 _t10 = nx_str_slice(_t9);
     _t8 = nx_sl_eq(_t10, nx_lit(nx_str_3243, 4));
   }
     if (_t8)
     {
-      nx_slice_check(0, words_11.ptr[nx_idx(((size_t)1ULL), words_11.len, "self/cgen.nx:5119")].len, words_11.ptr[nx_idx(((size_t)1ULL), words_11.len, "self/cgen.nx:5119")].len, "self/cgen.nx:5119");
-      nx_sl_u8 _t11 = ((nx_sl_u8){ nx_padd(words_11.ptr[nx_idx(((size_t)1ULL), words_11.len, "self/cgen.nx:5119")].ptr, 0), words_11.ptr[nx_idx(((size_t)1ULL), words_11.len, "self/cgen.nx:5119")].len - 0 });
+      nx_slice_check(0, words_11.ptr[nx_idx(((size_t)1ULL), words_11.len, "self/cgen.nx:5121")].len, words_11.ptr[nx_idx(((size_t)1ULL), words_11.len, "self/cgen.nx:5121")].len, "self/cgen.nx:5121");
+      nx_sl_u8 _t11 = ((nx_sl_u8){ nx_padd(words_11.ptr[nx_idx(((size_t)1ULL), words_11.len, "self/cgen.nx:5121")].ptr, 0), words_11.ptr[nx_idx(((size_t)1ULL), words_11.len, "self/cgen.nx:5121")].len - 0 });
       nx_eu_usize _t12; { nx_u128 _v = 0; int _r = nx_parse_uint(_t11, ((nx_u128)SIZE_MAX), &_v); _t12.err = _r == 0 ? 0 : (_r == 1 ? 9u : 5u); if (_r == 0) _t12.val = (size_t)_v; }
       nx_eu_usize _t13 = _t12;
       size_t _t14;
@@ -176519,7 +176646,7 @@ static void nx_Gen_seg_info_1506(nx_ctx* c, nx_m24_Gen* self_0, size_t seg_1, nx
       (*local_3) = _t14;
       wi_12 = ((size_t)2ULL);
     }
-  nx_string _t16 = words_11.ptr[nx_idx(wi_12, words_11.len, "self/cgen.nx:5120")];
+  nx_string _t16 = words_11.ptr[nx_idx(wi_12, words_11.len, "self/cgen.nx:5122")];
   nx_string sw_13 = nx_clone_string(c, &_t16);
   nx_sl_u8 _t17 = nx_str_slice(sw_13);
     if (nx_sl_eq(_t17, nx_lit(nx_str_3217, 9)))
@@ -176529,7 +176656,7 @@ static void nx_Gen_seg_info_1506(nx_ctx* c, nx_m24_Gen* self_0, size_t seg_1, nx
       nx_drop_string(c, &((*size_4)));
       (*size_4) = _t19;
       size_t* _t20 = &(wi_12);
-      *_t20 = nx_add_usize((*_t20), ((size_t)1ULL), "self/cgen.nx:5121");
+      *_t20 = nx_add_usize((*_t20), ((size_t)1ULL), "self/cgen.nx:5123");
     }
     else
     {
@@ -176541,7 +176668,7 @@ static void nx_Gen_seg_info_1506(nx_ctx* c, nx_m24_Gen* self_0, size_t seg_1, nx
           nx_drop_string(c, &((*size_4)));
           (*size_4) = _t23;
           size_t* _t24 = &(wi_12);
-          *_t24 = nx_add_usize((*_t24), ((size_t)1ULL), "self/cgen.nx:5122");
+          *_t24 = nx_add_usize((*_t24), ((size_t)1ULL), "self/cgen.nx:5124");
         }
         else
         {
@@ -176549,8 +176676,8 @@ static void nx_Gen_seg_info_1506(nx_ctx* c, nx_m24_Gen* self_0, size_t seg_1, nx
           nx_string _t26 = _t25;
           nx_drop_string(c, &((*size_4)));
           (*size_4) = _t26;
-          nx_slice_check(0, words_11.ptr[nx_idx(nx_add_usize(wi_12, ((size_t)1ULL), "self/cgen.nx:5123"), words_11.len, "self/cgen.nx:5123")].len, words_11.ptr[nx_idx(nx_add_usize(wi_12, ((size_t)1ULL), "self/cgen.nx:5123"), words_11.len, "self/cgen.nx:5123")].len, "self/cgen.nx:5123");
-          nx_sl_u8 _t27 = ((nx_sl_u8){ nx_padd(words_11.ptr[nx_idx(nx_add_usize(wi_12, ((size_t)1ULL), "self/cgen.nx:5123"), words_11.len, "self/cgen.nx:5123")].ptr, 0), words_11.ptr[nx_idx(nx_add_usize(wi_12, ((size_t)1ULL), "self/cgen.nx:5123"), words_11.len, "self/cgen.nx:5123")].len - 0 });
+          nx_slice_check(0, words_11.ptr[nx_idx(nx_add_usize(wi_12, ((size_t)1ULL), "self/cgen.nx:5125"), words_11.len, "self/cgen.nx:5125")].len, words_11.ptr[nx_idx(nx_add_usize(wi_12, ((size_t)1ULL), "self/cgen.nx:5125"), words_11.len, "self/cgen.nx:5125")].len, "self/cgen.nx:5125");
+          nx_sl_u8 _t27 = ((nx_sl_u8){ nx_padd(words_11.ptr[nx_idx(nx_add_usize(wi_12, ((size_t)1ULL), "self/cgen.nx:5125"), words_11.len, "self/cgen.nx:5125")].ptr, 0), words_11.ptr[nx_idx(nx_add_usize(wi_12, ((size_t)1ULL), "self/cgen.nx:5125"), words_11.len, "self/cgen.nx:5125")].len - 0 });
           nx_eu_u64 _t28; { nx_u128 _v = 0; int _r = nx_parse_uint(_t27, ((nx_u128)18446744073709551615ULL), &_v); _t28.err = _r == 0 ? 0 : (_r == 1 ? 9u : 5u); if (_r == 0) _t28.val = (uint64_t)_v; }
           nx_eu_u64 _t29 = _t28;
           uint64_t _t30;
@@ -176563,24 +176690,24 @@ static void nx_Gen_seg_info_1506(nx_ctx* c, nx_m24_Gen* self_0, size_t seg_1, nx
           } else { _t30 = _t29.val; }
           (*bits_5) = _t30;
           size_t* _t32 = &(wi_12);
-          *_t32 = nx_add_usize((*_t32), ((size_t)2ULL), "self/cgen.nx:5123");
+          *_t32 = nx_add_usize((*_t32), ((size_t)2ULL), "self/cgen.nx:5125");
         }
     }
-  nx_slice_check(((size_t)7ULL), words_11.ptr[nx_idx(wi_12, words_11.len, "self/cgen.nx:5124")].len, words_11.ptr[nx_idx(wi_12, words_11.len, "self/cgen.nx:5124")].len, "self/cgen.nx:5124");
-  nx_sl_u8 _t33 = ((nx_sl_u8){ nx_padd(words_11.ptr[nx_idx(wi_12, words_11.len, "self/cgen.nx:5124")].ptr, ((size_t)7ULL)), words_11.ptr[nx_idx(wi_12, words_11.len, "self/cgen.nx:5124")].len - ((size_t)7ULL) });
+  nx_slice_check(((size_t)7ULL), words_11.ptr[nx_idx(wi_12, words_11.len, "self/cgen.nx:5126")].len, words_11.ptr[nx_idx(wi_12, words_11.len, "self/cgen.nx:5126")].len, "self/cgen.nx:5126");
+  nx_sl_u8 _t33 = ((nx_sl_u8){ nx_padd(words_11.ptr[nx_idx(wi_12, words_11.len, "self/cgen.nx:5126")].ptr, ((size_t)7ULL)), words_11.ptr[nx_idx(wi_12, words_11.len, "self/cgen.nx:5126")].len - ((size_t)7ULL) });
   nx_string _t34 = nx_str_from(c, _t33);
   nx_string _t35 = _t34;
   nx_drop_string(c, &((*endian_6)));
   (*endian_6) = _t35;
-  nx_string _t36 = words_11.ptr[nx_idx(nx_add_usize(wi_12, ((size_t)1ULL), "self/cgen.nx:5125"), words_11.len, "self/cgen.nx:5125")];
+  nx_string _t36 = words_11.ptr[nx_idx(nx_add_usize(wi_12, ((size_t)1ULL), "self/cgen.nx:5127"), words_11.len, "self/cgen.nx:5127")];
   nx_sl_u8 _t37 = nx_str_slice(_t36);
   (*signed_7) = nx_sl_eq(_t37, nx_lit(nx_str_3244, 11));
-  nx_string _t38 = words_11.ptr[nx_idx(nx_add_usize(wi_12, ((size_t)2ULL), "self/cgen.nx:5126"), words_11.len, "self/cgen.nx:5126")];
+  nx_string _t38 = words_11.ptr[nx_idx(nx_add_usize(wi_12, ((size_t)2ULL), "self/cgen.nx:5128"), words_11.len, "self/cgen.nx:5128")];
   nx_sl_u8 _t39 = nx_str_slice(_t38);
   (*float_8) = nx_sl_eq(_t39, nx_lit(nx_str_3218, 10));
-  nx_string _t40 = words_11.ptr[nx_idx(nx_add_usize(wi_12, ((size_t)3ULL), "self/cgen.nx:5127"), words_11.len, "self/cgen.nx:5127")];
+  nx_string _t40 = words_11.ptr[nx_idx(nx_add_usize(wi_12, ((size_t)3ULL), "self/cgen.nx:5129"), words_11.len, "self/cgen.nx:5129")];
   nx_sl_u8 _t41 = nx_str_slice(_t40);
-  (*utf8_9) = nx_sl_eq(_t41, nx_lit(nx_str_5200, 9));
+  (*utf8_9) = nx_sl_eq(_t41, nx_lit(nx_str_5203, 9));
   nx_drop_string(c, &sw_13);
   nx_drop_list_string(c, &words_11);
   nx_drop_string(c, &desc_10);
@@ -176593,9 +176720,9 @@ static size_t nx_Gen_seg_size_expr_1507(nx_ctx* c, nx_m24_Gen* self_0, size_t se
       size_t _t1 = ((size_t)18446744073709551615ULL);
       return _t1;
     }
-  nx_list_usize _t2 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(seg_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:5133")]).kids_9;
+  nx_list_usize _t2 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(seg_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:5135")]).kids_9;
   nx_list_usize skids_4 = nx_clone_list_usize(c, &_t2);
-  size_t _t3 = skids_4.ptr[nx_idx(nx_sub_usize(((skids_4).len), ((size_t)1ULL), "self/cgen.nx:5134"), skids_4.len, "self/cgen.nx:5134")];
+  size_t _t3 = skids_4.ptr[nx_idx(nx_sub_usize(((skids_4).len), ((size_t)1ULL), "self/cgen.nx:5136"), skids_4.len, "self/cgen.nx:5136")];
   nx_drop_list_usize(c, &skids_4);
   return _t3;
   nx_drop_list_usize(c, &skids_4);
@@ -176603,7 +176730,7 @@ static size_t nx_Gen_seg_size_expr_1507(nx_ctx* c, nx_m24_Gen* self_0, size_t se
 
 static size_t nx_Gen_seg_value_expr_1508(nx_ctx* c, nx_m24_Gen* self_0, size_t seg_1) {
   NX_UNUSED(c);
-  size_t _t1 = (*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(seg_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:5137")].kids_9.ptr[nx_idx(((size_t)0ULL), (*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(seg_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:5137")].kids_9.len, "self/cgen.nx:5137")];
+  size_t _t1 = (*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(seg_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:5139")].kids_9.ptr[nx_idx(((size_t)0ULL), (*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(seg_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:5139")].kids_9.len, "self/cgen.nx:5139")];
   return _t1;
 }
 
@@ -176611,7 +176738,7 @@ static nx_string nx_Gen_bits_read_expr_1509(nx_ctx* c, nx_m24_Gen* self_0, nx_sl
   NX_UNUSED(c);
   nx_string _t1 = {0}; _t1.ar = c->arena;
   nx_sink _t2 = nx_sink_str(c, &_t1);
-  nx_w(&_t2, (const uint8_t*)nx_str_5201, 13);
+  nx_w(&_t2, (const uint8_t*)nx_str_5204, 13);
   nx_w_sl(&_t2, buf_1);
   nx_w(&_t2, (const uint8_t*)nx_str_4672, 6);
   nx_w_sl(&_t2, bit_2);
@@ -176624,11 +176751,11 @@ static nx_string nx_Gen_bits_read_expr_1509(nx_ctx* c, nx_m24_Gen* self_0, nx_sl
       nx_string _t3 = {0}; _t3.ar = c->arena;
       nx_sink _t4 = nx_sink_str(c, &_t3);
       nx_sl_u8 _t5 = nx_str_slice(raw_8);
-      nx_w(&_t4, (const uint8_t*)nx_str_5202, 9);
+      nx_w(&_t4, (const uint8_t*)nx_str_5205, 9);
       nx_w_sl(&_t4, _t5);
       nx_w(&_t4, (const uint8_t*)nx_str_1811, 2);
       nx_w_sl(&_t4, sz_3);
-      nx_w(&_t4, (const uint8_t*)nx_str_5203, 5);
+      nx_w(&_t4, (const uint8_t*)nx_str_5206, 5);
       nx_string _t6 = _t3;
       nx_drop_string(c, &(raw_8));
       raw_8 = _t6;
@@ -176641,11 +176768,11 @@ static nx_string nx_Gen_bits_read_expr_1509(nx_ctx* c, nx_m24_Gen* self_0, nx_sl
           nx_sink _t8 = nx_sink_str(c, &_t7);
           nx_sl_u8 _t9 = nx_str_slice(raw_8);
           nx_sl_u8 _t10 = nx_str_slice(raw_8);
-          nx_w(&_t8, (const uint8_t*)nx_str_5204, 34);
+          nx_w(&_t8, (const uint8_t*)nx_str_5207, 34);
           nx_w_sl(&_t8, _t9);
           nx_w(&_t8, (const uint8_t*)nx_str_1811, 2);
           nx_w_sl(&_t8, sz_3);
-          nx_w(&_t8, (const uint8_t*)nx_str_5205, 8);
+          nx_w(&_t8, (const uint8_t*)nx_str_5208, 8);
           nx_w_sl(&_t8, _t10);
           nx_w(&_t8, (const uint8_t*)nx_str_736, 1);
           nx_string _t11 = _t7;
@@ -176660,9 +176787,9 @@ static nx_string nx_Gen_bits_read_expr_1509(nx_ctx* c, nx_m24_Gen* self_0, nx_sl
           nx_string _t12 = {0}; _t12.ar = c->arena;
           nx_sink _t13 = nx_sink_str(c, &_t12);
           nx_sl_u8 _t14 = nx_str_slice(raw_8);
-          nx_w(&_t13, (const uint8_t*)nx_str_5206, 27);
+          nx_w(&_t13, (const uint8_t*)nx_str_5209, 27);
           nx_w_sl(&_t13, _t14);
-          nx_w(&_t13, (const uint8_t*)nx_str_5207, 39);
+          nx_w(&_t13, (const uint8_t*)nx_str_5210, 39);
           nx_string _t15 = _t12;
           nx_drop_string(c, &raw_8);
           return _t15;
@@ -176670,9 +176797,9 @@ static nx_string nx_Gen_bits_read_expr_1509(nx_ctx* c, nx_m24_Gen* self_0, nx_sl
       nx_string _t16 = {0}; _t16.ar = c->arena;
       nx_sink _t17 = nx_sink_str(c, &_t16);
       nx_sl_u8 _t18 = nx_str_slice(raw_8);
-      nx_w(&_t17, (const uint8_t*)nx_str_5208, 27);
+      nx_w(&_t17, (const uint8_t*)nx_str_5211, 27);
       nx_w_sl(&_t17, _t18);
-      nx_w(&_t17, (const uint8_t*)nx_str_5209, 40);
+      nx_w(&_t17, (const uint8_t*)nx_str_5212, 40);
       nx_string _t19 = _t16;
       nx_drop_string(c, &raw_8);
       return _t19;
@@ -176682,7 +176809,7 @@ static nx_string nx_Gen_bits_read_expr_1509(nx_ctx* c, nx_m24_Gen* self_0, nx_sl
       nx_string _t20 = {0}; _t20.ar = c->arena;
       nx_sink _t21 = nx_sink_str(c, &_t20);
       nx_sl_u8 _t22 = nx_str_slice(raw_8);
-      nx_w(&_t21, (const uint8_t*)nx_str_5210, 15);
+      nx_w(&_t21, (const uint8_t*)nx_str_5213, 15);
       nx_w_sl(&_t21, _t22);
       nx_w(&_t21, (const uint8_t*)nx_str_1811, 2);
       nx_w_sl(&_t21, sz_3);
@@ -176709,12 +176836,12 @@ static nx_string nx_Gen_bin_pattern_test_1510(nx_ctx* c, nx_m24_Gen* self_0, nx_
   nx_sl_u8 _t5 = nx_str_slice(flag_5);
   nx_w(&_t4, (const uint8_t*)nx_str_4595, 5);
   nx_w_sl(&_t4, _t5);
-  nx_w(&_t4, (const uint8_t*)nx_str_5211, 9);
+  nx_w(&_t4, (const uint8_t*)nx_str_5214, 9);
   nx_string _t6 = _t3;
-  nx_slice_check(0, _t6.len, _t6.len, "self/cgen.nx:5155");
+  nx_slice_check(0, _t6.len, _t6.len, "self/cgen.nx:5157");
   nx_sl_u8 _t7 = ((nx_sl_u8){ nx_padd(_t6.ptr, 0), _t6.len - 0 });
   nx_Gen_line_1393(c, self_0, _t7);
-  nx_Gen_line_1393(c, self_0, nx_lit(nx_str_5212, 4));
+  nx_Gen_line_1393(c, self_0, nx_lit(nx_str_5215, 4));
   nx_Gen_push_buf_1394(c, self_0);
   nx_string _t8 = nx_Gen_tmp_1388(c, self_0);
   nx_string bit_6 = _t8;
@@ -176724,11 +176851,11 @@ static nx_string nx_Gen_bin_pattern_test_1510(nx_ctx* c, nx_m24_Gen* self_0, nx_
   nx_sl_u8 _t12 = nx_str_slice(bit_6);
   nx_w(&_t10, (const uint8_t*)nx_str_2402, 7);
   nx_w_sl(&_t10, _t11);
-  nx_w(&_t10, (const uint8_t*)nx_str_5213, 16);
+  nx_w(&_t10, (const uint8_t*)nx_str_5216, 16);
   nx_w_sl(&_t10, _t12);
   nx_w(&_t10, (const uint8_t*)nx_str_2214, 2);
   nx_string _t13 = _t9;
-  nx_slice_check(0, _t13.len, _t13.len, "self/cgen.nx:5159");
+  nx_slice_check(0, _t13.len, _t13.len, "self/cgen.nx:5161");
   nx_sl_u8 _t14 = ((nx_sl_u8){ nx_padd(_t13.ptr, 0), _t13.len - 0 });
   nx_Gen_line_1393(c, self_0, _t14);
   nx_string _t15 = {0}; _t15.ar = c->arena;
@@ -176736,7 +176863,7 @@ static nx_string nx_Gen_bin_pattern_test_1510(nx_ctx* c, nx_m24_Gen* self_0, nx_
   nx_sl_u8 _t17 = nx_str_slice(buf_4);
   nx_w(&_t16, (const uint8_t*)nx_str_1102, 1);
   nx_w_sl(&_t16, _t17);
-  nx_w(&_t16, (const uint8_t*)nx_str_5214, 9);
+  nx_w(&_t16, (const uint8_t*)nx_str_5217, 9);
   nx_string total_7 = _t15;
   uint64_t const_bits_8 = ((uint64_t)0ULL);
   bool all_const_9 = true;
@@ -176772,7 +176899,7 @@ static nx_string nx_Gen_bin_pattern_test_1510(nx_ctx* c, nx_m24_Gen* self_0, nx_
       else
       {
         uint64_t* _t32 = &(const_bits_8);
-        *_t32 = nx_add_u64((*_t32), bits_15, "self/cgen.nx:5175");
+        *_t32 = nx_add_u64((*_t32), bits_15, "self/cgen.nx:5177");
       }
     nx_sl_u8 _t33 = nx_str_slice(size_14);
       if (nx_sl_eq(_t33, nx_lit(nx_str_3243, 4)))
@@ -176796,7 +176923,7 @@ static nx_string nx_Gen_bin_pattern_test_1510(nx_ctx* c, nx_m24_Gen* self_0, nx_
       nx_w_uint(&_t35, (nx_u128)(const_bits_8), 10, 0, false);
       nx_w(&_t35, (const uint8_t*)nx_str_4597, 8);
       nx_string _t37 = _t34;
-      nx_slice_check(0, _t37.len, _t37.len, "self/cgen.nx:5178");
+      nx_slice_check(0, _t37.len, _t37.len, "self/cgen.nx:5180");
       nx_sl_u8 _t38 = ((nx_sl_u8){ nx_padd(_t37.ptr, 0), _t37.len - 0 });
       nx_Gen_line_1393(c, self_0, _t38);
       nx_drop_string(c, &_t37);
@@ -176841,9 +176968,9 @@ static nx_string nx_Gen_bin_pattern_test_1510(nx_ctx* c, nx_m24_Gen* self_0, nx_
         nx_sl_u8 _t57 = nx_str_slice(size_23);
           if (nx_sl_eq(_t57, nx_lit(nx_str_3542, 4)))
           {
-            nx_slice_check(0, kind_21.len, kind_21.len, "self/cgen.nx:5193");
+            nx_slice_check(0, kind_21.len, kind_21.len, "self/cgen.nx:5195");
             nx_sl_u8 _t58 = ((nx_sl_u8){ nx_padd(kind_21.ptr, 0), kind_21.len - 0 });
-            nx_slice_check(0, size_23.len, size_23.len, "self/cgen.nx:5193");
+            nx_slice_check(0, size_23.len, size_23.len, "self/cgen.nx:5195");
             nx_sl_u8 _t59 = ((nx_sl_u8){ nx_padd(size_23.ptr, 0), size_23.len - 0 });
             size_t _t60 = nx_Gen_seg_size_expr_1507(c, self_0, seg_20, _t58, _t59);
             size_t _t61 = _t60;
@@ -176852,7 +176979,7 @@ static nx_string nx_Gen_bin_pattern_test_1510(nx_ctx* c, nx_m24_Gen* self_0, nx_
             nx_string _t63 = {0}; _t63.ar = c->arena;
             nx_sink _t64 = nx_sink_str(c, &_t63);
             nx_sl_u8 _t65 = nx_str_slice(v_30);
-            nx_w(&_t64, (const uint8_t*)nx_str_5215, 10);
+            nx_w(&_t64, (const uint8_t*)nx_str_5218, 10);
             nx_w_sl(&_t64, _t65);
             nx_w(&_t64, (const uint8_t*)nx_str_3406, 2);
             nx_string _t66 = _t63;
@@ -176888,7 +177015,7 @@ static nx_string nx_Gen_bin_pattern_test_1510(nx_ctx* c, nx_m24_Gen* self_0, nx_
     nx_w_sl(&_t74, _t76);
     nx_w(&_t74, (const uint8_t*)nx_str_497, 1);
     nx_string _t77 = _t73;
-    nx_slice_check(0, _t77.len, _t77.len, "self/cgen.nx:5197");
+    nx_slice_check(0, _t77.len, _t77.len, "self/cgen.nx:5199");
     nx_sl_u8 _t78 = ((nx_sl_u8){ nx_padd(_t77.ptr, 0), _t77.len - 0 });
     nx_Gen_line_1393(c, self_0, _t78);
       if ((!(all_const_9)))
@@ -176906,12 +177033,12 @@ static nx_string nx_Gen_bin_pattern_test_1510(nx_ctx* c, nx_m24_Gen* self_0, nx_
         nx_w_sl(&_t80, _t83);
         nx_w(&_t80, (const uint8_t*)nx_str_4597, 8);
         nx_string _t84 = _t79;
-        nx_slice_check(0, _t84.len, _t84.len, "self/cgen.nx:5198");
+        nx_slice_check(0, _t84.len, _t84.len, "self/cgen.nx:5200");
         nx_sl_u8 _t85 = ((nx_sl_u8){ nx_padd(_t84.ptr, 0), _t84.len - 0 });
         nx_Gen_line_1393(c, self_0, _t85);
         nx_drop_string(c, &_t84);
       }
-    size_t sty_32 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(seg_20, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:5199")]).ty_1;
+    size_t sty_32 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(seg_20, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:5201")]).ty_1;
     nx_m2_TK _t86 = nx_Gen_kind_1390(c, self_0, sty_32);
     bool _t87 = nx_eq_m2_TK(&(_t86), &(((nx_m2_TK){ .tag = 9 })));
     if (!_t87) {
@@ -176935,13 +177062,13 @@ static nx_string nx_Gen_bin_pattern_test_1510(nx_ctx* c, nx_m24_Gen* self_0, nx_
             nx_sink _t94 = nx_sink_str(c, &_t93);
             nx_sl_u8 _t95 = nx_str_slice(bit_6);
             nx_sl_u8 _t96 = nx_str_slice(sz_31);
-            nx_w(&_t94, (const uint8_t*)nx_str_5216, 5);
+            nx_w(&_t94, (const uint8_t*)nx_str_5219, 5);
             nx_w_sl(&_t94, _t95);
-            nx_w(&_t94, (const uint8_t*)nx_str_5217, 10);
+            nx_w(&_t94, (const uint8_t*)nx_str_5220, 10);
             nx_w_sl(&_t94, _t96);
-            nx_w(&_t94, (const uint8_t*)nx_str_5218, 13);
+            nx_w(&_t94, (const uint8_t*)nx_str_5221, 13);
             nx_string _t97 = _t93;
-            nx_slice_check(0, _t97.len, _t97.len, "self/cgen.nx:5204");
+            nx_slice_check(0, _t97.len, _t97.len, "self/cgen.nx:5206");
             nx_sl_u8 _t98 = ((nx_sl_u8){ nx_padd(_t97.ptr, 0), _t97.len - 0 });
             nx_Gen_line_1393(c, self_0, _t98);
             nx_string _t99 = {0}; _t99.ar = c->arena;
@@ -176950,17 +177077,17 @@ static nx_string nx_Gen_bin_pattern_test_1510(nx_ctx* c, nx_m24_Gen* self_0, nx_
             nx_sl_u8 _t102 = nx_str_slice(buf_4);
             nx_sl_u8 _t103 = nx_str_slice(bit_6);
             nx_sl_u8 _t104 = nx_str_slice(sz_31);
-            nx_w(&_t100, (const uint8_t*)nx_str_5219, 9);
+            nx_w(&_t100, (const uint8_t*)nx_str_5222, 9);
             nx_w_sl(&_t100, _t101);
-            nx_w(&_t100, (const uint8_t*)nx_str_5220, 13);
+            nx_w(&_t100, (const uint8_t*)nx_str_5223, 13);
             nx_w_sl(&_t100, _t102);
             nx_w(&_t100, (const uint8_t*)nx_str_4672, 6);
             nx_w_sl(&_t100, _t103);
-            nx_w(&_t100, (const uint8_t*)nx_str_5221, 7);
+            nx_w(&_t100, (const uint8_t*)nx_str_5224, 7);
             nx_w_sl(&_t100, _t104);
-            nx_w(&_t100, (const uint8_t*)nx_str_5222, 7);
+            nx_w(&_t100, (const uint8_t*)nx_str_5225, 7);
             nx_string _t105 = _t99;
-            nx_slice_check(0, _t105.len, _t105.len, "self/cgen.nx:5205");
+            nx_slice_check(0, _t105.len, _t105.len, "self/cgen.nx:5207");
             nx_sl_u8 _t106 = ((nx_sl_u8){ nx_padd(_t105.ptr, 0), _t105.len - 0 });
             nx_Gen_line_1393(c, self_0, _t106);
               if (utf8_28)
@@ -176968,11 +177095,11 @@ static nx_string nx_Gen_bin_pattern_test_1510(nx_ctx* c, nx_m24_Gen* self_0, nx_
                 nx_string _t107 = {0}; _t107.ar = c->arena;
                 nx_sink _t108 = nx_sink_str(c, &_t107);
                 nx_sl_u8 _t109 = nx_str_slice(name_34);
-                nx_w(&_t108, (const uint8_t*)nx_str_5223, 19);
+                nx_w(&_t108, (const uint8_t*)nx_str_5226, 19);
                 nx_w_sl(&_t108, _t109);
-                nx_w(&_t108, (const uint8_t*)nx_str_5224, 9);
+                nx_w(&_t108, (const uint8_t*)nx_str_5227, 9);
                 nx_string _t110 = _t107;
-                nx_slice_check(0, _t110.len, _t110.len, "self/cgen.nx:5206");
+                nx_slice_check(0, _t110.len, _t110.len, "self/cgen.nx:5208");
                 nx_sl_u8 _t111 = ((nx_sl_u8){ nx_padd(_t110.ptr, 0), _t110.len - 0 });
                 nx_Gen_line_1393(c, self_0, _t111);
                 nx_drop_string(c, &_t110);
@@ -176984,13 +177111,13 @@ static nx_string nx_Gen_bin_pattern_test_1510(nx_ctx* c, nx_m24_Gen* self_0, nx_
           {
             nx_string _t112 = nx_Gen_cty_1407(c, self_0, sty_32);
             nx_string cn_35 = _t112;
-            nx_slice_check(0, buf_4.len, buf_4.len, "self/cgen.nx:5209");
+            nx_slice_check(0, buf_4.len, buf_4.len, "self/cgen.nx:5211");
             nx_sl_u8 _t113 = ((nx_sl_u8){ nx_padd(buf_4.ptr, 0), buf_4.len - 0 });
-            nx_slice_check(0, bit_6.len, bit_6.len, "self/cgen.nx:5209");
+            nx_slice_check(0, bit_6.len, bit_6.len, "self/cgen.nx:5211");
             nx_sl_u8 _t114 = ((nx_sl_u8){ nx_padd(bit_6.ptr, 0), bit_6.len - 0 });
-            nx_slice_check(0, sz_31.len, sz_31.len, "self/cgen.nx:5209");
+            nx_slice_check(0, sz_31.len, sz_31.len, "self/cgen.nx:5211");
             nx_sl_u8 _t115 = ((nx_sl_u8){ nx_padd(sz_31.ptr, 0), sz_31.len - 0 });
-            nx_slice_check(0, endian_25.len, endian_25.len, "self/cgen.nx:5209");
+            nx_slice_check(0, endian_25.len, endian_25.len, "self/cgen.nx:5211");
             nx_sl_u8 _t116 = ((nx_sl_u8){ nx_padd(endian_25.ptr, 0), endian_25.len - 0 });
             nx_sl_u8 _t117 = nx_str_slice(size_23);
             bool _t118 = nx_sl_eq(_t117, nx_lit(nx_str_3199, 4));
@@ -177012,7 +177139,7 @@ static nx_string nx_Gen_bin_pattern_test_1510(nx_ctx* c, nx_m24_Gen* self_0, nx_
             nx_w_sl(&_t122, _t125);
             nx_w(&_t122, (const uint8_t*)nx_str_497, 1);
             nx_string _t126 = _t121;
-            nx_slice_check(0, _t126.len, _t126.len, "self/cgen.nx:5210");
+            nx_slice_check(0, _t126.len, _t126.len, "self/cgen.nx:5212");
             nx_sl_u8 _t127 = ((nx_sl_u8){ nx_padd(_t126.ptr, 0), _t126.len - 0 });
             nx_Gen_line_1393(c, self_0, _t127);
             nx_drop_string(c, &_t126);
@@ -177034,15 +177161,15 @@ static nx_string nx_Gen_bin_pattern_test_1510(nx_ctx* c, nx_m24_Gen* self_0, nx_
             nx_sl_u8 _t132 = nx_str_slice(bit_6);
             nx_sl_u8 _t133 = nx_str_slice(sz_31);
             nx_sl_u8 _t134 = nx_str_slice(vc_38);
-            nx_w(&_t131, (const uint8_t*)nx_str_5216, 5);
+            nx_w(&_t131, (const uint8_t*)nx_str_5219, 5);
             nx_w_sl(&_t131, _t132);
-            nx_w(&_t131, (const uint8_t*)nx_str_5225, 9);
+            nx_w(&_t131, (const uint8_t*)nx_str_5228, 9);
             nx_w_sl(&_t131, _t133);
             nx_w(&_t131, (const uint8_t*)nx_str_3297, 4);
             nx_w_sl(&_t131, _t134);
-            nx_w(&_t131, (const uint8_t*)nx_str_5226, 16);
+            nx_w(&_t131, (const uint8_t*)nx_str_5229, 16);
             nx_string _t135 = _t130;
-            nx_slice_check(0, _t135.len, _t135.len, "self/cgen.nx:5216");
+            nx_slice_check(0, _t135.len, _t135.len, "self/cgen.nx:5218");
             nx_sl_u8 _t136 = ((nx_sl_u8){ nx_padd(_t135.ptr, 0), _t135.len - 0 });
             nx_Gen_line_1393(c, self_0, _t136);
             nx_string _t137 = {0}; _t137.ar = c->arena;
@@ -177051,17 +177178,17 @@ static nx_string nx_Gen_bin_pattern_test_1510(nx_ctx* c, nx_m24_Gen* self_0, nx_
             nx_sl_u8 _t140 = nx_str_slice(bit_6);
             nx_sl_u8 _t141 = nx_str_slice(vc_38);
             nx_sl_u8 _t142 = nx_str_slice(vc_38);
-            nx_w(&_t138, (const uint8_t*)nx_str_5227, 19);
+            nx_w(&_t138, (const uint8_t*)nx_str_5230, 19);
             nx_w_sl(&_t138, _t139);
             nx_w(&_t138, (const uint8_t*)nx_str_4672, 6);
             nx_w_sl(&_t138, _t140);
-            nx_w(&_t138, (const uint8_t*)nx_str_5221, 7);
+            nx_w(&_t138, (const uint8_t*)nx_str_5224, 7);
             nx_w_sl(&_t138, _t141);
             nx_w(&_t138, (const uint8_t*)nx_str_4672, 6);
             nx_w_sl(&_t138, _t142);
-            nx_w(&_t138, (const uint8_t*)nx_str_5228, 18);
+            nx_w(&_t138, (const uint8_t*)nx_str_5231, 18);
             nx_string _t143 = _t137;
-            nx_slice_check(0, _t143.len, _t143.len, "self/cgen.nx:5217");
+            nx_slice_check(0, _t143.len, _t143.len, "self/cgen.nx:5219");
             nx_sl_u8 _t144 = ((nx_sl_u8){ nx_padd(_t143.ptr, 0), _t143.len - 0 });
             nx_Gen_line_1393(c, self_0, _t144);
             nx_drop_string(c, &_t143);
@@ -177072,13 +177199,13 @@ static nx_string nx_Gen_bin_pattern_test_1510(nx_ctx* c, nx_m24_Gen* self_0, nx_
           {
             nx_string _t145 = nx_Gen_cty_1407(c, self_0, sty_32);
             nx_string cn_39 = _t145;
-            nx_slice_check(0, buf_4.len, buf_4.len, "self/cgen.nx:5220");
+            nx_slice_check(0, buf_4.len, buf_4.len, "self/cgen.nx:5222");
             nx_sl_u8 _t146 = ((nx_sl_u8){ nx_padd(buf_4.ptr, 0), buf_4.len - 0 });
-            nx_slice_check(0, bit_6.len, bit_6.len, "self/cgen.nx:5220");
+            nx_slice_check(0, bit_6.len, bit_6.len, "self/cgen.nx:5222");
             nx_sl_u8 _t147 = ((nx_sl_u8){ nx_padd(bit_6.ptr, 0), bit_6.len - 0 });
-            nx_slice_check(0, sz_31.len, sz_31.len, "self/cgen.nx:5220");
+            nx_slice_check(0, sz_31.len, sz_31.len, "self/cgen.nx:5222");
             nx_sl_u8 _t148 = ((nx_sl_u8){ nx_padd(sz_31.ptr, 0), sz_31.len - 0 });
-            nx_slice_check(0, endian_25.len, endian_25.len, "self/cgen.nx:5220");
+            nx_slice_check(0, endian_25.len, endian_25.len, "self/cgen.nx:5222");
             nx_sl_u8 _t149 = ((nx_sl_u8){ nx_padd(endian_25.ptr, 0), endian_25.len - 0 });
             nx_sl_u8 _t150 = nx_str_slice(size_23);
             bool _t151 = nx_sl_eq(_t150, nx_lit(nx_str_3199, 4));
@@ -177096,17 +177223,17 @@ static nx_string nx_Gen_bin_pattern_test_1510(nx_ctx* c, nx_m24_Gen* self_0, nx_
             nx_sl_u8 _t158 = nx_str_slice(read_40);
             nx_sl_u8 _t159 = nx_str_slice(cn_39);
             nx_sl_u8 _t160 = nx_str_slice(vc_41);
-            nx_w(&_t156, (const uint8_t*)nx_str_5229, 6);
+            nx_w(&_t156, (const uint8_t*)nx_str_5232, 6);
             nx_w_sl(&_t156, _t157);
             nx_w(&_t156, (const uint8_t*)nx_str_4710, 2);
             nx_w_sl(&_t156, _t158);
-            nx_w(&_t156, (const uint8_t*)nx_str_5230, 8);
+            nx_w(&_t156, (const uint8_t*)nx_str_5233, 8);
             nx_w_sl(&_t156, _t159);
             nx_w(&_t156, (const uint8_t*)nx_str_4710, 2);
             nx_w_sl(&_t156, _t160);
-            nx_w(&_t156, (const uint8_t*)nx_str_5231, 10);
+            nx_w(&_t156, (const uint8_t*)nx_str_5234, 10);
             nx_string _t161 = _t155;
-            nx_slice_check(0, _t161.len, _t161.len, "self/cgen.nx:5222");
+            nx_slice_check(0, _t161.len, _t161.len, "self/cgen.nx:5224");
             nx_sl_u8 _t162 = ((nx_sl_u8){ nx_padd(_t161.ptr, 0), _t161.len - 0 });
             nx_Gen_line_1393(c, self_0, _t162);
             nx_drop_string(c, &_t161);
@@ -177124,7 +177251,7 @@ static nx_string nx_Gen_bin_pattern_test_1510(nx_ctx* c, nx_m24_Gen* self_0, nx_
     nx_w_sl(&_t164, _t166);
     nx_w(&_t164, (const uint8_t*)nx_str_497, 1);
     nx_string _t167 = _t163;
-    nx_slice_check(0, _t167.len, _t167.len, "self/cgen.nx:5225");
+    nx_slice_check(0, _t167.len, _t167.len, "self/cgen.nx:5227");
     nx_sl_u8 _t168 = ((nx_sl_u8){ nx_padd(_t167.ptr, 0), _t167.len - 0 });
     nx_Gen_line_1393(c, self_0, _t168);
     nx_drop_string(c, &_t167);
@@ -177153,7 +177280,7 @@ static nx_string nx_Gen_bin_pattern_test_1510(nx_ctx* c, nx_m24_Gen* self_0, nx_
       nx_w_sl(&_t171, _t173);
       nx_w(&_t171, (const uint8_t*)nx_str_4597, 8);
       nx_string _t174 = _t170;
-      nx_slice_check(0, _t174.len, _t174.len, "self/cgen.nx:5227");
+      nx_slice_check(0, _t174.len, _t174.len, "self/cgen.nx:5229");
       nx_sl_u8 _t175 = ((nx_sl_u8){ nx_padd(_t174.ptr, 0), _t174.len - 0 });
       nx_Gen_line_1393(c, self_0, _t175);
       nx_drop_string(c, &_t174);
@@ -177162,13 +177289,13 @@ static nx_string nx_Gen_bin_pattern_test_1510(nx_ctx* c, nx_m24_Gen* self_0, nx_
   nx_sink _t177 = nx_sink_str(c, &_t176);
   nx_sl_u8 _t178 = nx_str_slice(flag_5);
   nx_w_sl(&_t177, _t178);
-  nx_w(&_t177, (const uint8_t*)nx_str_5232, 8);
+  nx_w(&_t177, (const uint8_t*)nx_str_5235, 8);
   nx_string _t179 = _t176;
-  nx_slice_check(0, _t179.len, _t179.len, "self/cgen.nx:5228");
+  nx_slice_check(0, _t179.len, _t179.len, "self/cgen.nx:5230");
   nx_sl_u8 _t180 = ((nx_sl_u8){ nx_padd(_t179.ptr, 0), _t179.len - 0 });
   nx_Gen_line_1393(c, self_0, _t180);
   nx_Gen_splice_buf_1396(c, self_0);
-  nx_Gen_line_1393(c, self_0, nx_lit(nx_str_5233, 12));
+  nx_Gen_line_1393(c, self_0, nx_lit(nx_str_5236, 12));
   nx_string _t181 = flag_5; memset(&flag_5, 0, sizeof flag_5);
   nx_string _t182 = _t181;
   nx_drop_string(c, &_t179);
@@ -177200,11 +177327,11 @@ static void nx_Gen_bin_pattern_bind_1511(nx_ctx* c, nx_m24_Gen* self_0, nx_sl_us
   nx_sl_u8 _t6 = nx_str_slice(bit_5);
   nx_w(&_t4, (const uint8_t*)nx_str_2402, 7);
   nx_w_sl(&_t4, _t5);
-  nx_w(&_t4, (const uint8_t*)nx_str_5213, 16);
+  nx_w(&_t4, (const uint8_t*)nx_str_5216, 16);
   nx_w_sl(&_t4, _t6);
   nx_w(&_t4, (const uint8_t*)nx_str_2214, 2);
   nx_string _t7 = _t3;
-  nx_slice_check(0, _t7.len, _t7.len, "self/cgen.nx:5238");
+  nx_slice_check(0, _t7.len, _t7.len, "self/cgen.nx:5240");
   nx_sl_u8 _t8 = ((nx_sl_u8){ nx_padd(_t7.ptr, 0), _t7.len - 0 });
   nx_Gen_line_1393(c, self_0, _t8);
   nx_string _t9 = {0}; _t9.ar = c->arena;
@@ -177212,7 +177339,7 @@ static void nx_Gen_bin_pattern_bind_1511(nx_ctx* c, nx_m24_Gen* self_0, nx_sl_us
   nx_sl_u8 _t11 = nx_str_slice(buf_4);
   nx_w(&_t10, (const uint8_t*)nx_str_1102, 1);
   nx_w_sl(&_t10, _t11);
-  nx_w(&_t10, (const uint8_t*)nx_str_5214, 9);
+  nx_w(&_t10, (const uint8_t*)nx_str_5217, 9);
   nx_string total_6 = _t9;
   nx_sl_usize _t12 = segs_1;
   for (size_t _t13 = 0; _t13 < _t12.len; _t13++) {
@@ -177254,9 +177381,9 @@ static void nx_Gen_bin_pattern_bind_1511(nx_ctx* c, nx_m24_Gen* self_0, nx_sl_us
         nx_sl_u8 _t30 = nx_str_slice(size_10);
           if (nx_sl_eq(_t30, nx_lit(nx_str_3542, 4)))
           {
-            nx_slice_check(0, kind_8.len, kind_8.len, "self/cgen.nx:5253");
+            nx_slice_check(0, kind_8.len, kind_8.len, "self/cgen.nx:5255");
             nx_sl_u8 _t31 = ((nx_sl_u8){ nx_padd(kind_8.ptr, 0), kind_8.len - 0 });
-            nx_slice_check(0, size_10.len, size_10.len, "self/cgen.nx:5253");
+            nx_slice_check(0, size_10.len, size_10.len, "self/cgen.nx:5255");
             nx_sl_u8 _t32 = ((nx_sl_u8){ nx_padd(size_10.ptr, 0), size_10.len - 0 });
             size_t _t33 = nx_Gen_seg_size_expr_1507(c, self_0, seg_7, _t31, _t32);
             size_t _t34 = _t33;
@@ -177265,7 +177392,7 @@ static void nx_Gen_bin_pattern_bind_1511(nx_ctx* c, nx_m24_Gen* self_0, nx_sl_us
             nx_string _t36 = {0}; _t36.ar = c->arena;
             nx_sink _t37 = nx_sink_str(c, &_t36);
             nx_sl_u8 _t38 = nx_str_slice(v_17);
-            nx_w(&_t37, (const uint8_t*)nx_str_5215, 10);
+            nx_w(&_t37, (const uint8_t*)nx_str_5218, 10);
             nx_w_sl(&_t37, _t38);
             nx_w(&_t37, (const uint8_t*)nx_str_3406, 2);
             nx_string _t39 = _t36;
@@ -177301,10 +177428,10 @@ static void nx_Gen_bin_pattern_bind_1511(nx_ctx* c, nx_m24_Gen* self_0, nx_sl_us
     nx_w_sl(&_t47, _t49);
     nx_w(&_t47, (const uint8_t*)nx_str_497, 1);
     nx_string _t50 = _t46;
-    nx_slice_check(0, _t50.len, _t50.len, "self/cgen.nx:5257");
+    nx_slice_check(0, _t50.len, _t50.len, "self/cgen.nx:5259");
     nx_sl_u8 _t51 = ((nx_sl_u8){ nx_padd(_t50.ptr, 0), _t50.len - 0 });
     nx_Gen_line_1393(c, self_0, _t51);
-    size_t sty_19 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(seg_7, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:5258")]).ty_1;
+    size_t sty_19 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(seg_7, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:5260")]).ty_1;
     nx_m2_TK _t52 = nx_Gen_kind_1390(c, self_0, sty_19);
     bool _t53 = nx_eq_m2_TK(&(_t52), &(((nx_m2_TK){ .tag = 9 })));
     if (!_t53) {
@@ -177330,17 +177457,17 @@ static void nx_Gen_bin_pattern_bind_1511(nx_ctx* c, nx_m24_Gen* self_0, nx_sl_us
             nx_sl_u8 _t62 = nx_str_slice(buf_4);
             nx_sl_u8 _t63 = nx_str_slice(bit_5);
             nx_sl_u8 _t64 = nx_str_slice(sz_18);
-            nx_w(&_t60, (const uint8_t*)nx_str_5219, 9);
+            nx_w(&_t60, (const uint8_t*)nx_str_5222, 9);
             nx_w_sl(&_t60, _t61);
-            nx_w(&_t60, (const uint8_t*)nx_str_5220, 13);
+            nx_w(&_t60, (const uint8_t*)nx_str_5223, 13);
             nx_w_sl(&_t60, _t62);
             nx_w(&_t60, (const uint8_t*)nx_str_4672, 6);
             nx_w_sl(&_t60, _t63);
-            nx_w(&_t60, (const uint8_t*)nx_str_5221, 7);
+            nx_w(&_t60, (const uint8_t*)nx_str_5224, 7);
             nx_w_sl(&_t60, _t64);
-            nx_w(&_t60, (const uint8_t*)nx_str_5222, 7);
+            nx_w(&_t60, (const uint8_t*)nx_str_5225, 7);
             nx_string _t65 = _t59;
-            nx_slice_check(0, _t65.len, _t65.len, "self/cgen.nx:5263");
+            nx_slice_check(0, _t65.len, _t65.len, "self/cgen.nx:5265");
             nx_sl_u8 _t66 = ((nx_sl_u8){ nx_padd(_t65.ptr, 0), _t65.len - 0 });
             nx_Gen_line_1393(c, self_0, _t66);
             nx_drop_string(c, &_t65);
@@ -177349,13 +177476,13 @@ static void nx_Gen_bin_pattern_bind_1511(nx_ctx* c, nx_m24_Gen* self_0, nx_sl_us
           {
             nx_string _t67 = nx_Gen_cty_1407(c, self_0, sty_19);
             nx_string cn_22 = _t67;
-            nx_slice_check(0, buf_4.len, buf_4.len, "self/cgen.nx:5266");
+            nx_slice_check(0, buf_4.len, buf_4.len, "self/cgen.nx:5268");
             nx_sl_u8 _t68 = ((nx_sl_u8){ nx_padd(buf_4.ptr, 0), buf_4.len - 0 });
-            nx_slice_check(0, bit_5.len, bit_5.len, "self/cgen.nx:5266");
+            nx_slice_check(0, bit_5.len, bit_5.len, "self/cgen.nx:5268");
             nx_sl_u8 _t69 = ((nx_sl_u8){ nx_padd(bit_5.ptr, 0), bit_5.len - 0 });
-            nx_slice_check(0, sz_18.len, sz_18.len, "self/cgen.nx:5266");
+            nx_slice_check(0, sz_18.len, sz_18.len, "self/cgen.nx:5268");
             nx_sl_u8 _t70 = ((nx_sl_u8){ nx_padd(sz_18.ptr, 0), sz_18.len - 0 });
-            nx_slice_check(0, endian_12.len, endian_12.len, "self/cgen.nx:5266");
+            nx_slice_check(0, endian_12.len, endian_12.len, "self/cgen.nx:5268");
             nx_sl_u8 _t71 = ((nx_sl_u8){ nx_padd(endian_12.ptr, 0), endian_12.len - 0 });
             nx_sl_u8 _t72 = nx_str_slice(size_10);
             bool _t73 = nx_sl_eq(_t72, nx_lit(nx_str_3199, 4));
@@ -177377,7 +177504,7 @@ static void nx_Gen_bin_pattern_bind_1511(nx_ctx* c, nx_m24_Gen* self_0, nx_sl_us
             nx_w_sl(&_t77, _t80);
             nx_w(&_t77, (const uint8_t*)nx_str_497, 1);
             nx_string _t81 = _t76;
-            nx_slice_check(0, _t81.len, _t81.len, "self/cgen.nx:5267");
+            nx_slice_check(0, _t81.len, _t81.len, "self/cgen.nx:5269");
             nx_sl_u8 _t82 = ((nx_sl_u8){ nx_padd(_t81.ptr, 0), _t81.len - 0 });
             nx_Gen_line_1393(c, self_0, _t82);
             nx_drop_string(c, &_t81);
@@ -177395,7 +177522,7 @@ static void nx_Gen_bin_pattern_bind_1511(nx_ctx* c, nx_m24_Gen* self_0, nx_sl_us
     nx_w_sl(&_t84, _t86);
     nx_w(&_t84, (const uint8_t*)nx_str_497, 1);
     nx_string _t87 = _t83;
-    nx_slice_check(0, _t87.len, _t87.len, "self/cgen.nx:5270");
+    nx_slice_check(0, _t87.len, _t87.len, "self/cgen.nx:5272");
     nx_sl_u8 _t88 = ((nx_sl_u8){ nx_padd(_t87.ptr, 0), _t87.len - 0 });
     nx_Gen_line_1393(c, self_0, _t88);
     nx_drop_string(c, &_t87);
@@ -177416,12 +177543,12 @@ static void nx_Gen_bin_pattern_bind_1511(nx_ctx* c, nx_m24_Gen* self_0, nx_sl_us
 
 static nx_string nx_Gen_bin_construct_1512(nx_ctx* c, nx_m24_Gen* self_0, size_t e_1) {
   NX_UNUSED(c);
-  nx_list_usize _t1 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(e_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:5275")]).kids_9;
+  nx_list_usize _t1 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(e_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:5277")]).kids_9;
   nx_list_usize kids_2 = nx_clone_list_usize(c, &_t1);
-  size_t target_3 = kids_2.ptr[nx_idx(nx_sub_usize(((kids_2).len), ((size_t)1ULL), "self/cgen.nx:5276"), kids_2.len, "self/cgen.nx:5276")];
+  size_t target_3 = kids_2.ptr[nx_idx(nx_sub_usize(((kids_2).len), ((size_t)1ULL), "self/cgen.nx:5278"), kids_2.len, "self/cgen.nx:5278")];
   nx_string _t2 = nx_Gen_simple_1458(c, self_0, target_3);
   nx_string buf_4 = _t2;
-  size_t _t3 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(e_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:5278")]).ty_1;
+  size_t _t3 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(e_1, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:5280")]).ty_1;
   nx_string _t4 = nx_Gen_cty_1407(c, self_0, _t3);
   nx_string cn_5 = _t4;
   nx_string _t5 = nx_Gen_tmp_1388(c, self_0);
@@ -177435,7 +177562,7 @@ static nx_string nx_Gen_bin_construct_1512(nx_ctx* c, nx_m24_Gen* self_0, size_t
   nx_w_sl(&_t7, _t9);
   nx_w(&_t7, (const uint8_t*)nx_str_497, 1);
   nx_string _t10 = _t6;
-  nx_slice_check(0, _t10.len, _t10.len, "self/cgen.nx:5280");
+  nx_slice_check(0, _t10.len, _t10.len, "self/cgen.nx:5282");
   nx_sl_u8 _t11 = ((nx_sl_u8){ nx_padd(_t10.ptr, 0), _t10.len - 0 });
   nx_Gen_line_1393(c, self_0, _t11);
   nx_Gen_line_1393(c, self_0, nx_lit(nx_str_1111, 1));
@@ -177447,9 +177574,9 @@ static nx_string nx_Gen_bin_construct_1512(nx_ctx* c, nx_m24_Gen* self_0, size_t
   nx_sl_u8 _t15 = nx_str_slice(bit_7);
   nx_w(&_t14, (const uint8_t*)nx_str_2402, 7);
   nx_w_sl(&_t14, _t15);
-  nx_w(&_t14, (const uint8_t*)nx_str_5234, 5);
+  nx_w(&_t14, (const uint8_t*)nx_str_5237, 5);
   nx_string _t16 = _t13;
-  nx_slice_check(0, _t16.len, _t16.len, "self/cgen.nx:5284");
+  nx_slice_check(0, _t16.len, _t16.len, "self/cgen.nx:5286");
   nx_sl_u8 _t17 = ((nx_sl_u8){ nx_padd(_t16.ptr, 0), _t16.len - 0 });
   nx_Gen_line_1393(c, self_0, _t17);
   nx_string _t18 = {0}; _t18.ar = c->arena;
@@ -177457,7 +177584,7 @@ static nx_string nx_Gen_bin_construct_1512(nx_ctx* c, nx_m24_Gen* self_0, size_t
   nx_sl_u8 _t20 = nx_str_slice(buf_4);
   nx_w(&_t19, (const uint8_t*)nx_str_1102, 1);
   nx_w_sl(&_t19, _t20);
-  nx_w(&_t19, (const uint8_t*)nx_str_5214, 9);
+  nx_w(&_t19, (const uint8_t*)nx_str_5217, 9);
   nx_string total_8 = _t18;
   size_t _t21 = nx_Gen_err_id_1476(c, self_0, nx_lit(nx_str_385, 14));
   size_t fail_9 = _t21;
@@ -177467,18 +177594,18 @@ static nx_string nx_Gen_bin_construct_1512(nx_ctx* c, nx_m24_Gen* self_0, size_t
   nx_w_sl(&_t23, _t24);
   nx_w(&_t23, (const uint8_t*)nx_str_4679, 9);
   nx_string _t25 = _t22;
-  nx_slice_check(0, _t25.len, _t25.len, "self/cgen.nx:5287");
+  nx_slice_check(0, _t25.len, _t25.len, "self/cgen.nx:5289");
   nx_sl_u8 _t26 = ((nx_sl_u8){ nx_padd(_t25.ptr, 0), _t25.len - 0 });
   nx_Gen_line_1393(c, self_0, _t26);
-  nx_Gen_line_1393(c, self_0, nx_lit(nx_str_5212, 4));
+  nx_Gen_line_1393(c, self_0, nx_lit(nx_str_5215, 4));
   nx_Gen_push_buf_1394(c, self_0);
   size_t i_10 = ((size_t)0ULL);
   for (;;) {
-    bool _t27 = ((nx_add_usize(i_10, ((size_t)1ULL), "self/cgen.nx:5291")) < (((kids_2).len)));
+    bool _t27 = ((nx_add_usize(i_10, ((size_t)1ULL), "self/cgen.nx:5293")) < (((kids_2).len)));
     if (!_t27) break;
-    size_t seg_11 = kids_2.ptr[nx_idx(i_10, kids_2.len, "self/cgen.nx:5292")];
+    size_t seg_11 = kids_2.ptr[nx_idx(i_10, kids_2.len, "self/cgen.nx:5294")];
     size_t* _t28 = &(i_10);
-    *_t28 = nx_add_usize((*_t28), ((size_t)1ULL), "self/cgen.nx:5293");
+    *_t28 = nx_add_usize((*_t28), ((size_t)1ULL), "self/cgen.nx:5295");
     nx_string _t29 = {0}; _t29.ar = c->arena;
     nx_string kind_12 = _t29;
     size_t local_13 = ((size_t)18446744073709551615ULL);
@@ -177499,7 +177626,7 @@ static nx_string nx_Gen_bin_construct_1512(nx_ctx* c, nx_m24_Gen* self_0, size_t
     bool* _t38 = &(float_18);
     bool* _t39 = &(utf8_19);
     nx_Gen_seg_info_1506(c, self_0, seg_11, _t32, _t33, _t34, _t35, _t36, _t37, _t38, _t39);
-    size_t sty_20 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(seg_11, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:5303")]).ty_1;
+    size_t sty_20 = ((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(seg_11, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:5305")]).ty_1;
     nx_m2_TK _t40 = nx_Gen_kind_1390(c, self_0, sty_20);
     bool _t41 = nx_eq_m2_TK(&(_t40), &(((nx_m2_TK){ .tag = 9 })));
     if (!_t41) {
@@ -177539,9 +177666,9 @@ static nx_string nx_Gen_bin_construct_1512(nx_ctx* c, nx_m24_Gen* self_0, size_t
         nx_sl_u8 _t54 = nx_str_slice(size_14);
           if (nx_sl_eq(_t54, nx_lit(nx_str_3542, 4)))
           {
-            nx_slice_check(0, kind_12.len, kind_12.len, "self/cgen.nx:5309");
+            nx_slice_check(0, kind_12.len, kind_12.len, "self/cgen.nx:5311");
             nx_sl_u8 _t55 = ((nx_sl_u8){ nx_padd(kind_12.ptr, 0), kind_12.len - 0 });
-            nx_slice_check(0, size_14.len, size_14.len, "self/cgen.nx:5309");
+            nx_slice_check(0, size_14.len, size_14.len, "self/cgen.nx:5311");
             nx_sl_u8 _t56 = ((nx_sl_u8){ nx_padd(size_14.ptr, 0), size_14.len - 0 });
             size_t _t57 = nx_Gen_seg_size_expr_1507(c, self_0, seg_11, _t55, _t56);
             size_t _t58 = _t57;
@@ -177550,7 +177677,7 @@ static nx_string nx_Gen_bin_construct_1512(nx_ctx* c, nx_m24_Gen* self_0, size_t
             nx_string _t60 = {0}; _t60.ar = c->arena;
             nx_sink _t61 = nx_sink_str(c, &_t60);
             nx_sl_u8 _t62 = nx_str_slice(sv_24);
-            nx_w(&_t61, (const uint8_t*)nx_str_5215, 10);
+            nx_w(&_t61, (const uint8_t*)nx_str_5218, 10);
             nx_w_sl(&_t61, _t62);
             nx_w(&_t61, (const uint8_t*)nx_str_3406, 2);
             nx_string _t63 = _t60;
@@ -177565,7 +177692,7 @@ static nx_string nx_Gen_bin_construct_1512(nx_ctx* c, nx_m24_Gen* self_0, size_t
             nx_sl_u8 _t66 = nx_str_slice(v_22);
             nx_w(&_t65, (const uint8_t*)nx_str_1102, 1);
             nx_w_sl(&_t65, _t66);
-            nx_w(&_t65, (const uint8_t*)nx_str_5214, 9);
+            nx_w(&_t65, (const uint8_t*)nx_str_5217, 9);
             nx_string _t67 = _t64;
             nx_drop_string(c, &(size_c_23));
             size_c_23 = _t67;
@@ -177583,7 +177710,7 @@ static nx_string nx_Gen_bin_construct_1512(nx_ctx* c, nx_m24_Gen* self_0, size_t
     nx_w_sl(&_t70, _t72);
     nx_w(&_t70, (const uint8_t*)nx_str_497, 1);
     nx_string _t73 = _t69;
-    nx_slice_check(0, _t73.len, _t73.len, "self/cgen.nx:5313");
+    nx_slice_check(0, _t73.len, _t73.len, "self/cgen.nx:5315");
     nx_sl_u8 _t74 = ((nx_sl_u8){ nx_padd(_t73.ptr, 0), _t73.len - 0 });
     nx_Gen_line_1393(c, self_0, _t74);
     nx_string _t75 = {0}; _t75.ar = c->arena;
@@ -177602,9 +177729,9 @@ static nx_string nx_Gen_bin_construct_1512(nx_ctx* c, nx_m24_Gen* self_0, size_t
     nx_w_sl(&_t76, _t80);
     nx_w(&_t76, (const uint8_t*)nx_str_4682, 7);
     nx_w_uint(&_t76, (nx_u128)(fail_9), 10, 0, false);
-    nx_w(&_t76, (const uint8_t*)nx_str_5235, 11);
+    nx_w(&_t76, (const uint8_t*)nx_str_5238, 11);
     nx_string _t81 = _t75;
-    nx_slice_check(0, _t81.len, _t81.len, "self/cgen.nx:5314");
+    nx_slice_check(0, _t81.len, _t81.len, "self/cgen.nx:5316");
     nx_sl_u8 _t82 = ((nx_sl_u8){ nx_padd(_t81.ptr, 0), _t81.len - 0 });
     nx_Gen_line_1393(c, self_0, _t82);
       if (is_bytes_21)
@@ -177615,19 +177742,19 @@ static nx_string nx_Gen_bin_construct_1512(nx_ctx* c, nx_m24_Gen* self_0, size_t
         nx_sl_u8 _t86 = nx_str_slice(sz_25);
         nx_sl_u8 _t87 = nx_str_slice(v_22);
         nx_sl_u8 _t88 = nx_str_slice(out_6);
-        nx_w(&_t84, (const uint8_t*)nx_str_5216, 5);
+        nx_w(&_t84, (const uint8_t*)nx_str_5219, 5);
         nx_w_sl(&_t84, _t85);
-        nx_w(&_t84, (const uint8_t*)nx_str_5225, 9);
+        nx_w(&_t84, (const uint8_t*)nx_str_5228, 9);
         nx_w_sl(&_t84, _t86);
         nx_w(&_t84, (const uint8_t*)nx_str_4606, 3);
         nx_w_sl(&_t84, _t87);
-        nx_w(&_t84, (const uint8_t*)nx_str_5236, 12);
+        nx_w(&_t84, (const uint8_t*)nx_str_5239, 12);
         nx_w_sl(&_t84, _t88);
         nx_w(&_t84, (const uint8_t*)nx_str_4682, 7);
         nx_w_uint(&_t84, (nx_u128)(fail_9), 10, 0, false);
-        nx_w(&_t84, (const uint8_t*)nx_str_5235, 11);
+        nx_w(&_t84, (const uint8_t*)nx_str_5238, 11);
         nx_string _t89 = _t83;
-        nx_slice_check(0, _t89.len, _t89.len, "self/cgen.nx:5316");
+        nx_slice_check(0, _t89.len, _t89.len, "self/cgen.nx:5318");
         nx_sl_u8 _t90 = ((nx_sl_u8){ nx_padd(_t89.ptr, 0), _t89.len - 0 });
         nx_Gen_line_1393(c, self_0, _t90);
         nx_string _t91 = {0}; _t91.ar = c->arena;
@@ -177636,17 +177763,17 @@ static nx_string nx_Gen_bin_construct_1512(nx_ctx* c, nx_m24_Gen* self_0, size_t
         nx_sl_u8 _t94 = nx_str_slice(bit_7);
         nx_sl_u8 _t95 = nx_str_slice(v_22);
         nx_sl_u8 _t96 = nx_str_slice(sz_25);
-        nx_w(&_t92, (const uint8_t*)nx_str_5237, 15);
+        nx_w(&_t92, (const uint8_t*)nx_str_5240, 15);
         nx_w_sl(&_t92, _t93);
         nx_w(&_t92, (const uint8_t*)nx_str_4672, 6);
         nx_w_sl(&_t92, _t94);
-        nx_w(&_t92, (const uint8_t*)nx_str_5221, 7);
+        nx_w(&_t92, (const uint8_t*)nx_str_5224, 7);
         nx_w_sl(&_t92, _t95);
         nx_w(&_t92, (const uint8_t*)nx_str_4672, 6);
         nx_w_sl(&_t92, _t96);
-        nx_w(&_t92, (const uint8_t*)nx_str_5238, 6);
+        nx_w(&_t92, (const uint8_t*)nx_str_5241, 6);
         nx_string _t97 = _t91;
-        nx_slice_check(0, _t97.len, _t97.len, "self/cgen.nx:5317");
+        nx_slice_check(0, _t97.len, _t97.len, "self/cgen.nx:5319");
         nx_sl_u8 _t98 = ((nx_sl_u8){ nx_padd(_t97.ptr, 0), _t97.len - 0 });
         nx_Gen_line_1393(c, self_0, _t98);
         nx_drop_string(c, &_t97);
@@ -177668,9 +177795,9 @@ static nx_string nx_Gen_bin_construct_1512(nx_ctx* c, nx_m24_Gen* self_0, size_t
                 nx_string _t102 = {0}; _t102.ar = c->arena;
                 nx_sink _t103 = nx_sink_str(c, &_t102);
                 nx_sl_u8 _t104 = nx_str_slice(v_22);
-                nx_w(&_t103, (const uint8_t*)nx_str_5239, 22);
+                nx_w(&_t103, (const uint8_t*)nx_str_5242, 22);
                 nx_w_sl(&_t103, _t104);
-                nx_w(&_t103, (const uint8_t*)nx_str_5240, 53);
+                nx_w(&_t103, (const uint8_t*)nx_str_5243, 53);
                 nx_string _t105 = _t102;
                 nx_drop_string(c, &(raw_26));
                 raw_26 = _t105;
@@ -177680,9 +177807,9 @@ static nx_string nx_Gen_bin_construct_1512(nx_ctx* c, nx_m24_Gen* self_0, size_t
                 nx_string _t106 = {0}; _t106.ar = c->arena;
                 nx_sink _t107 = nx_sink_str(c, &_t106);
                 nx_sl_u8 _t108 = nx_str_slice(v_22);
-                nx_w(&_t107, (const uint8_t*)nx_str_5241, 24);
+                nx_w(&_t107, (const uint8_t*)nx_str_5244, 24);
                 nx_w_sl(&_t107, _t108);
-                nx_w(&_t107, (const uint8_t*)nx_str_5242, 43);
+                nx_w(&_t107, (const uint8_t*)nx_str_5245, 43);
                 nx_string _t109 = _t106;
                 nx_drop_string(c, &(raw_26));
                 raw_26 = _t109;
@@ -177693,7 +177820,7 @@ static nx_string nx_Gen_bin_construct_1512(nx_ctx* c, nx_m24_Gen* self_0, size_t
             nx_string _t110 = {0}; _t110.ar = c->arena;
             nx_sink _t111 = nx_sink_str(c, &_t110);
             nx_sl_u8 _t112 = nx_str_slice(v_22);
-            nx_w(&_t111, (const uint8_t*)nx_str_5243, 11);
+            nx_w(&_t111, (const uint8_t*)nx_str_5246, 11);
             nx_w_sl(&_t111, _t112);
             nx_w(&_t111, (const uint8_t*)nx_str_736, 1);
             nx_string _t113 = _t110;
@@ -177707,11 +177834,11 @@ static nx_string nx_Gen_bin_construct_1512(nx_ctx* c, nx_m24_Gen* self_0, size_t
             nx_sink _t116 = nx_sink_str(c, &_t115);
             nx_sl_u8 _t117 = nx_str_slice(raw_26);
             nx_sl_u8 _t118 = nx_str_slice(sz_25);
-            nx_w(&_t116, (const uint8_t*)nx_str_5202, 9);
+            nx_w(&_t116, (const uint8_t*)nx_str_5205, 9);
             nx_w_sl(&_t116, _t117);
             nx_w(&_t116, (const uint8_t*)nx_str_1811, 2);
             nx_w_sl(&_t116, _t118);
-            nx_w(&_t116, (const uint8_t*)nx_str_5203, 5);
+            nx_w(&_t116, (const uint8_t*)nx_str_5206, 5);
             nx_string _t119 = _t115;
             nx_drop_string(c, &(raw_26));
             raw_26 = _t119;
@@ -177726,11 +177853,11 @@ static nx_string nx_Gen_bin_construct_1512(nx_ctx* c, nx_m24_Gen* self_0, size_t
                 nx_sl_u8 _t123 = nx_str_slice(raw_26);
                 nx_sl_u8 _t124 = nx_str_slice(sz_25);
                 nx_sl_u8 _t125 = nx_str_slice(raw_26);
-                nx_w(&_t122, (const uint8_t*)nx_str_5204, 34);
+                nx_w(&_t122, (const uint8_t*)nx_str_5207, 34);
                 nx_w_sl(&_t122, _t123);
                 nx_w(&_t122, (const uint8_t*)nx_str_1811, 2);
                 nx_w_sl(&_t122, _t124);
-                nx_w(&_t122, (const uint8_t*)nx_str_5205, 8);
+                nx_w(&_t122, (const uint8_t*)nx_str_5208, 8);
                 nx_w_sl(&_t122, _t125);
                 nx_w(&_t122, (const uint8_t*)nx_str_736, 1);
                 nx_string _t126 = _t121;
@@ -177744,7 +177871,7 @@ static nx_string nx_Gen_bin_construct_1512(nx_ctx* c, nx_m24_Gen* self_0, size_t
         nx_sl_u8 _t130 = nx_str_slice(bit_7);
         nx_sl_u8 _t131 = nx_str_slice(sz_25);
         nx_sl_u8 _t132 = nx_str_slice(raw_26);
-        nx_w(&_t128, (const uint8_t*)nx_str_5244, 14);
+        nx_w(&_t128, (const uint8_t*)nx_str_5247, 14);
         nx_w_sl(&_t128, _t129);
         nx_w(&_t128, (const uint8_t*)nx_str_4672, 6);
         nx_w_sl(&_t128, _t130);
@@ -177754,7 +177881,7 @@ static nx_string nx_Gen_bin_construct_1512(nx_ctx* c, nx_m24_Gen* self_0, size_t
         nx_w_sl(&_t128, _t132);
         nx_w(&_t128, (const uint8_t*)nx_str_2214, 2);
         nx_string _t133 = _t127;
-        nx_slice_check(0, _t133.len, _t133.len, "self/cgen.nx:5328");
+        nx_slice_check(0, _t133.len, _t133.len, "self/cgen.nx:5330");
         nx_sl_u8 _t134 = ((nx_sl_u8){ nx_padd(_t133.ptr, 0), _t133.len - 0 });
         nx_Gen_line_1393(c, self_0, _t134);
         nx_drop_string(c, &_t133);
@@ -177769,7 +177896,7 @@ static nx_string nx_Gen_bin_construct_1512(nx_ctx* c, nx_m24_Gen* self_0, size_t
     nx_w_sl(&_t136, _t138);
     nx_w(&_t136, (const uint8_t*)nx_str_497, 1);
     nx_string _t139 = _t135;
-    nx_slice_check(0, _t139.len, _t139.len, "self/cgen.nx:5330");
+    nx_slice_check(0, _t139.len, _t139.len, "self/cgen.nx:5332");
     nx_sl_u8 _t140 = ((nx_sl_u8){ nx_padd(_t139.ptr, 0), _t139.len - 0 });
     nx_Gen_line_1393(c, self_0, _t140);
     nx_drop_string(c, &_t139);
@@ -177790,17 +177917,17 @@ static nx_string nx_Gen_bin_construct_1512(nx_ctx* c, nx_m24_Gen* self_0, size_t
   nx_sl_u8 _t144 = nx_str_slice(buf_4);
   nx_sl_u8 _t145 = nx_str_slice(bit_7);
   nx_w_sl(&_t142, _t143);
-  nx_w(&_t142, (const uint8_t*)nx_str_5245, 19);
+  nx_w(&_t142, (const uint8_t*)nx_str_5248, 19);
   nx_w_sl(&_t142, _t144);
   nx_w(&_t142, (const uint8_t*)nx_str_4672, 6);
   nx_w_sl(&_t142, _t145);
-  nx_w(&_t142, (const uint8_t*)nx_str_5222, 7);
+  nx_w(&_t142, (const uint8_t*)nx_str_5225, 7);
   nx_string _t146 = _t141;
-  nx_slice_check(0, _t146.len, _t146.len, "self/cgen.nx:5332");
+  nx_slice_check(0, _t146.len, _t146.len, "self/cgen.nx:5334");
   nx_sl_u8 _t147 = ((nx_sl_u8){ nx_padd(_t146.ptr, 0), _t146.len - 0 });
   nx_Gen_line_1393(c, self_0, _t147);
   nx_Gen_splice_buf_1396(c, self_0);
-  nx_Gen_line_1393(c, self_0, nx_lit(nx_str_5233, 12));
+  nx_Gen_line_1393(c, self_0, nx_lit(nx_str_5236, 12));
   nx_Gen_splice_buf_1396(c, self_0);
   nx_Gen_line_1393(c, self_0, nx_lit(nx_str_1101, 1));
   nx_string _t148 = out_6; memset(&out_6, 0, sizeof out_6);
@@ -177833,7 +177960,7 @@ static nx_string nx_Gen_main_wrapper_1513(nx_ctx* c, nx_m24_Gen* self_0) {
   size_t main_1 = ((*((*self_0)).c_0)).main_inst_30;
     if (((main_1) == (((size_t)18446744073709551615ULL))))
     {
-      nx_string _t1 = nx_str_from(c, nx_lit(nx_str_5246, 79));
+      nx_string _t1 = nx_str_from(c, nx_lit(nx_str_5249, 79));
       nx_string _t2 = _t1;
       nx_list_string* _t3 = &((*self_0).errors_26);
       if (_t3->len == _t3->cap) nx_list_grow(c, (nx_rawlist*)_t3, sizeof(nx_string), _Alignof(nx_string), _t3->len + 1);
@@ -177844,21 +177971,21 @@ static nx_string nx_Gen_main_wrapper_1513(nx_ctx* c, nx_m24_Gen* self_0) {
     }
   nx_string _t6 = nx_Gen_fn_c_name_1424(c, self_0, main_1);
   nx_string target_2 = _t6;
-  size_t _t7 = ((*((*self_0)).c_0).insts_25.ptr[nx_idx(main_1, (*((*self_0)).c_0).insts_25.len, "self/cgen.nx:5349")]).ret_7;
+  size_t _t7 = ((*((*self_0)).c_0).insts_25.ptr[nx_idx(main_1, (*((*self_0)).c_0).insts_25.len, "self/cgen.nx:5351")]).ret_7;
   size_t _t8 = nx_Gen_res_1389(c, self_0, _t7);
   size_t ret_t_3 = _t8;
   nx_string _t9 = {0}; _t9.ar = c->arena;
   nx_string out_4 = _t9;
   nx_string _t10 = nx_Gen_entry_head_1514(c, self_0);
   nx_string _t11 = _t10;
-  nx_slice_check(0, _t11.len, _t11.len, "self/cgen.nx:5351");
+  nx_slice_check(0, _t11.len, _t11.len, "self/cgen.nx:5353");
   nx_sl_u8 _t12 = ((nx_sl_u8){ nx_padd(_t11.ptr, 0), _t11.len - 0 });
   nx_str_append(c, &(out_4), _t12.ptr, _t12.len);
-  nx_str_append(c, &(out_4), nx_lit(nx_str_5247, 253).ptr, nx_lit(nx_str_5247, 253).len);
-  nx_list_usize _t13 = ((*((*self_0)).c_0).insts_25.ptr[nx_idx(main_1, (*((*self_0)).c_0).insts_25.len, "self/cgen.nx:5353")]).params_6;
+  nx_str_append(c, &(out_4), nx_lit(nx_str_5250, 253).ptr, nx_lit(nx_str_5250, 253).len);
+  nx_list_usize _t13 = ((*((*self_0)).c_0).insts_25.ptr[nx_idx(main_1, (*((*self_0)).c_0).insts_25.len, "self/cgen.nx:5355")]).params_6;
     if (((((_t13).len)) > (((size_t)0ULL))))
     {
-      nx_string _t14 = nx_str_from(c, nx_lit(nx_str_5248, 59));
+      nx_string _t14 = nx_str_from(c, nx_lit(nx_str_5251, 59));
       nx_string _t15 = _t14;
       nx_list_string* _t16 = &((*self_0).errors_26);
       if (_t16->len == _t16->cap) nx_list_grow(c, (nx_rawlist*)_t16, sizeof(nx_string), _Alignof(nx_string), _t16->len + 1);
@@ -177874,9 +178001,9 @@ static nx_string nx_Gen_main_wrapper_1513(nx_ctx* c, nx_m24_Gen* self_0) {
       nx_sl_u8 _t21 = nx_str_slice(target_2);
       nx_w(&_t20, (const uint8_t*)nx_str_718, 2);
       nx_w_sl(&_t20, _t21);
-      nx_w(&_t20, (const uint8_t*)nx_str_5249, 86);
+      nx_w(&_t20, (const uint8_t*)nx_str_5252, 86);
       nx_string _t22 = _t19;
-      nx_slice_check(0, _t22.len, _t22.len, "self/cgen.nx:5356");
+      nx_slice_check(0, _t22.len, _t22.len, "self/cgen.nx:5358");
       nx_sl_u8 _t23 = ((nx_sl_u8){ nx_padd(_t22.ptr, 0), _t22.len - 0 });
       nx_str_append(c, &(out_4), _t23.ptr, _t23.len);
       nx_drop_string(c, &_t22);
@@ -177893,18 +178020,18 @@ static nx_string nx_Gen_main_wrapper_1513(nx_ctx* c, nx_m24_Gen* self_0) {
           nx_sl_u8 _t28 = nx_str_slice(target_2);
           nx_w(&_t26, (const uint8_t*)nx_str_718, 2);
           nx_w_sl(&_t26, _t27);
-          nx_w(&_t26, (const uint8_t*)nx_str_5250, 5);
+          nx_w(&_t26, (const uint8_t*)nx_str_5253, 5);
           nx_w_sl(&_t26, _t28);
-          nx_w(&_t26, (const uint8_t*)nx_str_5251, 155);
+          nx_w(&_t26, (const uint8_t*)nx_str_5254, 155);
           nx_string _t29 = _t25;
-          nx_slice_check(0, _t29.len, _t29.len, "self/cgen.nx:5359");
+          nx_slice_check(0, _t29.len, _t29.len, "self/cgen.nx:5361");
           nx_sl_u8 _t30 = ((nx_sl_u8){ nx_padd(_t29.ptr, 0), _t29.len - 0 });
           nx_str_append(c, &(out_4), _t30.ptr, _t30.len);
-          size_t _t31 = (*((*self_0)).c_0).tys_1.list_0.ptr[nx_idx(ret_t_3, (*((*self_0)).c_0).tys_1.list_0.len, "self/cgen.nx:5360")].args_5.ptr[nx_idx(((size_t)0ULL), (*((*self_0)).c_0).tys_1.list_0.ptr[nx_idx(ret_t_3, (*((*self_0)).c_0).tys_1.list_0.len, "self/cgen.nx:5360")].args_5.len, "self/cgen.nx:5360")];
+          size_t _t31 = (*((*self_0)).c_0).tys_1.list_0.ptr[nx_idx(ret_t_3, (*((*self_0)).c_0).tys_1.list_0.len, "self/cgen.nx:5362")].args_5.ptr[nx_idx(((size_t)0ULL), (*((*self_0)).c_0).tys_1.list_0.ptr[nx_idx(ret_t_3, (*((*self_0)).c_0).tys_1.list_0.len, "self/cgen.nx:5362")].args_5.len, "self/cgen.nx:5362")];
           nx_m2_TK _t32 = nx_Gen_kind_1390(c, self_0, _t31);
             if (nx_eq_m2_TK(&(_t32), &(((nx_m2_TK){ .tag = 0 }))))
             {
-              nx_str_append(c, &(out_4), nx_lit(nx_str_5252, 21).ptr, nx_lit(nx_str_5252, 21).len);
+              nx_str_append(c, &(out_4), nx_lit(nx_str_5255, 21).ptr, nx_lit(nx_str_5255, 21).len);
             }
             else
             {
@@ -177920,18 +178047,18 @@ static nx_string nx_Gen_main_wrapper_1513(nx_ctx* c, nx_m24_Gen* self_0) {
               nx_string _t33 = {0}; _t33.ar = c->arena;
               nx_sink _t34 = nx_sink_str(c, &_t33);
               nx_sl_u8 _t35 = nx_str_slice(target_2);
-              nx_w(&_t34, (const uint8_t*)nx_str_5253, 18);
+              nx_w(&_t34, (const uint8_t*)nx_str_5256, 18);
               nx_w_sl(&_t34, _t35);
-              nx_w(&_t34, (const uint8_t*)nx_str_5254, 89);
+              nx_w(&_t34, (const uint8_t*)nx_str_5257, 89);
               nx_string _t36 = _t33;
-              nx_slice_check(0, _t36.len, _t36.len, "self/cgen.nx:5362");
+              nx_slice_check(0, _t36.len, _t36.len, "self/cgen.nx:5364");
               nx_sl_u8 _t37 = ((nx_sl_u8){ nx_padd(_t36.ptr, 0), _t36.len - 0 });
               nx_str_append(c, &(out_4), _t37.ptr, _t37.len);
               nx_drop_string(c, &_t36);
             }
             else
             {
-              nx_string _t38 = nx_str_from(c, nx_lit(nx_str_5255, 59));
+              nx_string _t38 = nx_str_from(c, nx_lit(nx_str_5258, 59));
               nx_string _t39 = _t38;
               nx_list_string* _t40 = &((*self_0).errors_26);
               if (_t40->len == _t40->cap) nx_list_grow(c, (nx_rawlist*)_t40, sizeof(nx_string), _Alignof(nx_string), _t40->len + 1);
@@ -177957,11 +178084,11 @@ static nx_string nx_Gen_entry_head_1514(nx_ctx* c, nx_m24_Gen* self_0) {
   NX_UNUSED(c);
     if (((((*self_0)).stack_bytes_3) > (((uint64_t)0ULL))))
     {
-      nx_string _t1 = nx_str_from(c, nx_lit(nx_str_5256, 49));
+      nx_string _t1 = nx_str_from(c, nx_lit(nx_str_5259, 49));
       nx_string _t2 = _t1;
       return _t2;
     }
-  nx_string _t3 = nx_str_from(c, nx_lit(nx_str_5257, 34));
+  nx_string _t3 = nx_str_from(c, nx_lit(nx_str_5260, 34));
   nx_string _t4 = _t3;
   return _t4;
 }
@@ -177972,14 +178099,14 @@ static void nx_Gen_entry_tail_1515(nx_ctx* c, nx_m24_Gen* self_0, nx_string* out
     {
       return;
     }
-  nx_str_append(c, &((*out_1)), nx_lit(nx_str_5258, 201).ptr, nx_lit(nx_str_5258, 201).len);
+  nx_str_append(c, &((*out_1)), nx_lit(nx_str_5261, 201).ptr, nx_lit(nx_str_5261, 201).len);
   nx_string _t1 = {0}; _t1.ar = c->arena;
   nx_sink _t2 = nx_sink_str(c, &_t1);
-  nx_w(&_t2, (const uint8_t*)nx_str_5259, 108);
+  nx_w(&_t2, (const uint8_t*)nx_str_5262, 108);
   nx_w_uint(&_t2, (nx_u128)(((*self_0)).stack_bytes_3), 10, 0, false);
-  nx_w(&_t2, (const uint8_t*)nx_str_5260, 47);
+  nx_w(&_t2, (const uint8_t*)nx_str_5263, 47);
   nx_string _t3 = _t1;
-  nx_slice_check(0, _t3.len, _t3.len, "self/cgen.nx:5383");
+  nx_slice_check(0, _t3.len, _t3.len, "self/cgen.nx:5385");
   nx_sl_u8 _t4 = ((nx_sl_u8){ nx_padd(_t3.ptr, 0), _t3.len - 0 });
   nx_str_append(c, &((*out_1)), _t4.ptr, _t4.len);
   nx_drop_string(c, &_t3);
@@ -177991,21 +178118,21 @@ static nx_string nx_Gen_test_runner_1516(nx_ctx* c, nx_m24_Gen* self_0) {
   nx_string out_1 = _t1;
   nx_string _t2 = nx_Gen_entry_head_1514(c, self_0);
   nx_string _t3 = _t2;
-  nx_slice_check(0, _t3.len, _t3.len, "self/cgen.nx:5388");
+  nx_slice_check(0, _t3.len, _t3.len, "self/cgen.nx:5390");
   nx_sl_u8 _t4 = ((nx_sl_u8){ nx_padd(_t3.ptr, 0), _t3.len - 0 });
   nx_str_append(c, &(out_1), _t4.ptr, _t4.len);
-  nx_str_append(c, &(out_1), nx_lit(nx_str_5261, 320).ptr, nx_lit(nx_str_5261, 320).len);
+  nx_str_append(c, &(out_1), nx_lit(nx_str_5264, 320).ptr, nx_lit(nx_str_5264, 320).len);
   nx_list_usize _t5 = nx_clone_list_usize(c, &((*((*self_0)).c_0)).tests_31);
   nx_sl_usize _t6 = ((nx_sl_usize){ _t5.ptr, _t5.len });
   for (size_t _t7 = 0; _t7 < _t6.len; _t7++) {
     size_t t_2 = _t6.ptr[_t7];
-    nx_string _t8 = ((*((*self_0)).c_0).insts_25.ptr[nx_idx(t_2, (*((*self_0)).c_0).insts_25.len, "self/cgen.nx:5391")]).name_0;
+    nx_string _t8 = ((*((*self_0)).c_0).insts_25.ptr[nx_idx(t_2, (*((*self_0)).c_0).insts_25.len, "self/cgen.nx:5393")]).name_0;
     nx_string full_4 = nx_clone_string(c, &_t8);
-    nx_slice_check(((size_t)5ULL), full_4.len, full_4.len, "self/cgen.nx:5392");
+    nx_slice_check(((size_t)5ULL), full_4.len, full_4.len, "self/cgen.nx:5394");
     nx_sl_u8 name_5 = ((nx_sl_u8){ nx_padd(full_4.ptr, ((size_t)5ULL)), full_4.len - ((size_t)5ULL) });
     nx_string _t9 = nx_Gen_fn_c_name_1424(c, self_0, t_2);
     nx_string target_6 = _t9;
-    size_t _t10 = ((*((*self_0)).c_0).insts_25.ptr[nx_idx(t_2, (*((*self_0)).c_0).insts_25.len, "self/cgen.nx:5394")]).ret_7;
+    size_t _t10 = ((*((*self_0)).c_0).insts_25.ptr[nx_idx(t_2, (*((*self_0)).c_0).insts_25.len, "self/cgen.nx:5396")]).ret_7;
     nx_string _t11 = nx_Gen_cty_1407(c, self_0, _t10);
     nx_string rcn_7 = _t11;
     nx_string _t12 = nx_m24_c_escape_bytes(c, name_5);
@@ -178020,25 +178147,25 @@ static nx_string nx_Gen_test_runner_1516(nx_ctx* c, nx_m24_Gen* self_0) {
     nx_sl_u8 _t20 = nx_str_slice(esc_8);
     nx_sl_u8 _t21 = nx_str_slice(esc_8);
     nx_sl_u8 _t22 = nx_str_slice(esc_8);
-    nx_w(&_t14, (const uint8_t*)nx_str_5262, 24);
+    nx_w(&_t14, (const uint8_t*)nx_str_5265, 24);
     nx_w_sl(&_t14, _t15);
-    nx_w(&_t14, (const uint8_t*)nx_str_5263, 153);
+    nx_w(&_t14, (const uint8_t*)nx_str_5266, 153);
     nx_w_sl(&_t14, _t16);
-    nx_w(&_t14, (const uint8_t*)nx_str_5264, 30);
+    nx_w(&_t14, (const uint8_t*)nx_str_5267, 30);
     nx_w_sl(&_t14, _t17);
-    nx_w(&_t14, (const uint8_t*)nx_str_5250, 5);
+    nx_w(&_t14, (const uint8_t*)nx_str_5253, 5);
     nx_w_sl(&_t14, _t18);
-    nx_w(&_t14, (const uint8_t*)nx_str_5265, 69);
+    nx_w(&_t14, (const uint8_t*)nx_str_5268, 69);
     nx_w_sl(&_t14, _t19);
-    nx_w(&_t14, (const uint8_t*)nx_str_5266, 89);
+    nx_w(&_t14, (const uint8_t*)nx_str_5269, 89);
     nx_w_sl(&_t14, _t20);
-    nx_w(&_t14, (const uint8_t*)nx_str_5267, 74);
+    nx_w(&_t14, (const uint8_t*)nx_str_5270, 74);
     nx_w_sl(&_t14, _t21);
-    nx_w(&_t14, (const uint8_t*)nx_str_5268, 91);
+    nx_w(&_t14, (const uint8_t*)nx_str_5271, 91);
     nx_w_sl(&_t14, _t22);
     nx_w(&_t14, (const uint8_t*)nx_str_5157, 5);
     nx_string _t23 = _t13;
-    nx_slice_check(0, _t23.len, _t23.len, "self/cgen.nx:5396");
+    nx_slice_check(0, _t23.len, _t23.len, "self/cgen.nx:5398");
     nx_sl_u8 _t24 = ((nx_sl_u8){ nx_padd(_t23.ptr, 0), _t23.len - 0 });
     nx_str_append(c, &(out_1), _t24.ptr, _t24.len);
     nx_drop_string(c, &_t23);
@@ -178049,7 +178176,7 @@ static nx_string nx_Gen_test_runner_1516(nx_ctx* c, nx_m24_Gen* self_0) {
     nx_cont_0: ;
   }
   nx_brk_0: ;
-  nx_str_append(c, &(out_1), nx_lit(nx_str_5269, 127).ptr, nx_lit(nx_str_5269, 127).len);
+  nx_str_append(c, &(out_1), nx_lit(nx_str_5272, 127).ptr, nx_lit(nx_str_5272, 127).len);
   nx_string* _t25 = &(out_1);
   nx_Gen_entry_tail_1515(c, self_0, _t25);
   nx_string _t26 = out_1; memset(&out_1, 0, sizeof out_1);
@@ -178072,30 +178199,30 @@ static nx_string nx_Gen_bench_runner_1517(nx_ctx* c, nx_m24_Gen* self_0) {
   nx_sl_usize _t3 = ((nx_sl_usize){ _t2.ptr, _t2.len });
   for (size_t _t4 = 0; _t4 < _t3.len; _t4++) {
     size_t t_3 = _t3.ptr[_t4];
-    nx_string _t5 = ((*((*self_0)).c_0).insts_25.ptr[nx_idx(t_3, (*((*self_0)).c_0).insts_25.len, "self/cgen.nx:5411")]).name_0;
+    nx_string _t5 = ((*((*self_0)).c_0).insts_25.ptr[nx_idx(t_3, (*((*self_0)).c_0).insts_25.len, "self/cgen.nx:5413")]).name_0;
     nx_string full_5 = nx_clone_string(c, &_t5);
-      if (((nx_sub_usize(((full_5).len), ((size_t)6ULL), "self/cgen.nx:5412")) > (width_2)))
+      if (((nx_sub_usize(((full_5).len), ((size_t)6ULL), "self/cgen.nx:5414")) > (width_2)))
       {
-        width_2 = nx_sub_usize(((full_5).len), ((size_t)6ULL), "self/cgen.nx:5412");
+        width_2 = nx_sub_usize(((full_5).len), ((size_t)6ULL), "self/cgen.nx:5414");
       }
     nx_string _t6 = nx_Gen_fn_c_name_1424(c, self_0, t_3);
     nx_string target_6 = _t6;
-    size_t _t7 = ((*((*self_0)).c_0).insts_25.ptr[nx_idx(t_3, (*((*self_0)).c_0).insts_25.len, "self/cgen.nx:5414")]).ret_7;
+    size_t _t7 = ((*((*self_0)).c_0).insts_25.ptr[nx_idx(t_3, (*((*self_0)).c_0).insts_25.len, "self/cgen.nx:5416")]).ret_7;
     nx_string _t8 = nx_Gen_cty_1407(c, self_0, _t7);
     nx_string rcn_7 = _t8;
     nx_string _t9 = {0}; _t9.ar = c->arena;
     nx_sink _t10 = nx_sink_str(c, &_t9);
     nx_sl_u8 _t11 = nx_str_slice(rcn_7);
     nx_sl_u8 _t12 = nx_str_slice(target_6);
-    nx_w(&_t10, (const uint8_t*)nx_str_5270, 31);
+    nx_w(&_t10, (const uint8_t*)nx_str_5273, 31);
     nx_w_uint(&_t10, (nx_u128)(t_3), 10, 0, false);
-    nx_w(&_t10, (const uint8_t*)nx_str_5271, 14);
+    nx_w(&_t10, (const uint8_t*)nx_str_5274, 14);
     nx_w_sl(&_t10, _t11);
-    nx_w(&_t10, (const uint8_t*)nx_str_5250, 5);
+    nx_w(&_t10, (const uint8_t*)nx_str_5253, 5);
     nx_w_sl(&_t10, _t12);
-    nx_w(&_t10, (const uint8_t*)nx_str_5272, 40);
+    nx_w(&_t10, (const uint8_t*)nx_str_5275, 40);
     nx_string _t13 = _t9;
-    nx_slice_check(0, _t13.len, _t13.len, "self/cgen.nx:5415");
+    nx_slice_check(0, _t13.len, _t13.len, "self/cgen.nx:5417");
     nx_sl_u8 _t14 = ((nx_sl_u8){ nx_padd(_t13.ptr, 0), _t13.len - 0 });
     nx_str_append(c, &(out_1), _t14.ptr, _t14.len);
     nx_drop_string(c, &_t13);
@@ -178107,17 +178234,17 @@ static nx_string nx_Gen_bench_runner_1517(nx_ctx* c, nx_m24_Gen* self_0) {
   nx_brk_0: ;
   nx_string _t15 = nx_Gen_entry_head_1514(c, self_0);
   nx_string _t16 = _t15;
-  nx_slice_check(0, _t16.len, _t16.len, "self/cgen.nx:5417");
+  nx_slice_check(0, _t16.len, _t16.len, "self/cgen.nx:5419");
   nx_sl_u8 _t17 = ((nx_sl_u8){ nx_padd(_t16.ptr, 0), _t16.len - 0 });
   nx_str_append(c, &(out_1), _t17.ptr, _t17.len);
-  nx_str_append(c, &(out_1), nx_lit(nx_str_5273, 414).ptr, nx_lit(nx_str_5273, 414).len);
+  nx_str_append(c, &(out_1), nx_lit(nx_str_5276, 414).ptr, nx_lit(nx_str_5276, 414).len);
   nx_list_usize _t18 = nx_clone_list_usize(c, &((*((*self_0)).c_0)).benches_32);
   nx_sl_usize _t19 = ((nx_sl_usize){ _t18.ptr, _t18.len });
   for (size_t _t20 = 0; _t20 < _t19.len; _t20++) {
     size_t t_8 = _t19.ptr[_t20];
-    nx_string _t21 = ((*((*self_0)).c_0).insts_25.ptr[nx_idx(t_8, (*((*self_0)).c_0).insts_25.len, "self/cgen.nx:5420")]).name_0;
+    nx_string _t21 = ((*((*self_0)).c_0).insts_25.ptr[nx_idx(t_8, (*((*self_0)).c_0).insts_25.len, "self/cgen.nx:5422")]).name_0;
     nx_string full_10 = nx_clone_string(c, &_t21);
-    nx_slice_check(((size_t)6ULL), full_10.len, full_10.len, "self/cgen.nx:5421");
+    nx_slice_check(((size_t)6ULL), full_10.len, full_10.len, "self/cgen.nx:5423");
     nx_sl_u8 _t22 = ((nx_sl_u8){ nx_padd(full_10.ptr, ((size_t)6ULL)), full_10.len - ((size_t)6ULL) });
     nx_string _t23 = nx_m24_c_escape_bytes(c, _t22);
     nx_string esc_11 = _t23;
@@ -178127,21 +178254,21 @@ static nx_string nx_Gen_bench_runner_1517(nx_ctx* c, nx_m24_Gen* self_0) {
     nx_sl_u8 _t27 = nx_str_slice(esc_11);
     nx_sl_u8 _t28 = nx_str_slice(esc_11);
     nx_sl_u8 _t29 = nx_str_slice(esc_11);
-    nx_w(&_t25, (const uint8_t*)nx_str_5262, 24);
+    nx_w(&_t25, (const uint8_t*)nx_str_5265, 24);
     nx_w_sl(&_t25, _t26);
-    nx_w(&_t25, (const uint8_t*)nx_str_5274, 134);
+    nx_w(&_t25, (const uint8_t*)nx_str_5277, 134);
     nx_w_sl(&_t25, _t27);
-    nx_w(&_t25, (const uint8_t*)nx_str_5275, 74);
+    nx_w(&_t25, (const uint8_t*)nx_str_5278, 74);
     nx_w_uint(&_t25, (nx_u128)(t_8), 10, 0, false);
-    nx_w(&_t25, (const uint8_t*)nx_str_5276, 87);
+    nx_w(&_t25, (const uint8_t*)nx_str_5279, 87);
     nx_w_sl(&_t25, _t28);
-    nx_w(&_t25, (const uint8_t*)nx_str_5277, 109);
+    nx_w(&_t25, (const uint8_t*)nx_str_5280, 109);
     nx_w_uint(&_t25, (nx_u128)(width_2), 10, 0, false);
     nx_w(&_t25, (const uint8_t*)nx_str_1811, 2);
     nx_w_sl(&_t25, _t29);
-    nx_w(&_t25, (const uint8_t*)nx_str_5278, 244);
+    nx_w(&_t25, (const uint8_t*)nx_str_5281, 244);
     nx_string _t30 = _t24;
-    nx_slice_check(0, _t30.len, _t30.len, "self/cgen.nx:5422");
+    nx_slice_check(0, _t30.len, _t30.len, "self/cgen.nx:5424");
     nx_sl_u8 _t31 = ((nx_sl_u8){ nx_padd(_t30.ptr, 0), _t30.len - 0 });
     nx_str_append(c, &(out_1), _t31.ptr, _t31.len);
     nx_drop_string(c, &_t30);
@@ -178180,11 +178307,11 @@ static nx_string nx_Gen_bench_runner_1517(nx_ctx* c, nx_m24_Gen* self_0) {
   nx_sl_u8 mode_name_12 = _t32;
   nx_string _t35 = {0}; _t35.ar = c->arena;
   nx_sink _t36 = nx_sink_str(c, &_t35);
-  nx_w(&_t36, (const uint8_t*)nx_str_5279, 29);
+  nx_w(&_t36, (const uint8_t*)nx_str_5282, 29);
   nx_w_sl(&_t36, mode_name_12);
-  nx_w(&_t36, (const uint8_t*)nx_str_5280, 122);
+  nx_w(&_t36, (const uint8_t*)nx_str_5283, 122);
   nx_string _t37 = _t35;
-  nx_slice_check(0, _t37.len, _t37.len, "self/cgen.nx:5425");
+  nx_slice_check(0, _t37.len, _t37.len, "self/cgen.nx:5427");
   nx_sl_u8 _t38 = ((nx_sl_u8){ nx_padd(_t37.ptr, 0), _t37.len - 0 });
   nx_str_append(c, &(out_1), _t38.ptr, _t38.len);
   nx_string* _t39 = &(out_1);
@@ -178213,11 +178340,11 @@ static void nx_Gen_use_line_directives_1518(nx_ctx* c, nx_m24_Gen* self_0) {
   nx_sl_m2_Mod _t2 = ((nx_sl_m2_Mod){ ((*((*self_0)).c_0)).mods_0.ptr, ((*((*self_0)).c_0)).mods_0.len });
   for (size_t _t3 = 0; _t3 < _t2.len; _t3++) {
     nx_m2_Mod m_1 = _t2.ptr[_t3];
-    nx_slice_check(0, m_1.path_3.len, m_1.path_3.len, "self/cgen.nx:5436");
+    nx_slice_check(0, m_1.path_3.len, m_1.path_3.len, "self/cgen.nx:5438");
     nx_sl_u8 _t4 = ((nx_sl_u8){ nx_padd(m_1.path_3.ptr, 0), m_1.path_3.len - 0 });
     bool _t5 = nx_sl_starts_with(_t4, nx_lit(nx_str_661, 5));
     if (!_t5) {
-      nx_slice_check(0, m_1.name_0.len, m_1.name_0.len, "self/cgen.nx:5436");
+      nx_slice_check(0, m_1.name_0.len, m_1.name_0.len, "self/cgen.nx:5438");
       nx_sl_u8 _t6 = ((nx_sl_u8){ nx_padd(m_1.name_0.ptr, 0), m_1.name_0.len - 0 });
       _t5 = nx_sl_starts_with(_t6, nx_lit(nx_str_662, 8));
     }
@@ -178254,7 +178381,7 @@ static void nx_Gen_use_line_directives_1518(nx_ctx* c, nx_m24_Gen* self_0) {
       nx_cont_1: ;
     }
     nx_brk_1: ;
-    nx_slice_check(0, fixed_3.len, fixed_3.len, "self/cgen.nx:5443");
+    nx_slice_check(0, fixed_3.len, fixed_3.len, "self/cgen.nx:5445");
     nx_sl_u8 _t16 = ((nx_sl_u8){ nx_padd(fixed_3.ptr, 0), fixed_3.len - 0 });
     nx_string _t17 = nx_m24_c_escape_bytes(c, _t16);
     nx_string _t18 = _t17;
@@ -178269,7 +178396,7 @@ static void nx_Gen_use_line_directives_1518(nx_ctx* c, nx_m24_Gen* self_0) {
 
 static nx_string nx_Gen_generate_1519(nx_ctx* c, nx_m24_Gen* self_0) {
   NX_UNUSED(c);
-  nx_string _t1 = nx_str_from(c, nx_lit(nx_str_5281, 52));
+  nx_string _t1 = nx_str_from(c, nx_lit(nx_str_5284, 52));
   nx_string names_1 = _t1;
   nx_sl_string _t2 = ((nx_sl_string){ ((*((*self_0)).c_0)).error_names_23.ptr, ((*((*self_0)).c_0)).error_names_23.len });
   for (size_t _t3 = 0; _t3 < _t2.len; _t3++) {
@@ -178277,26 +178404,26 @@ static nx_string nx_Gen_generate_1519(nx_ctx* c, nx_m24_Gen* self_0) {
     nx_string _t4 = {0}; _t4.ar = c->arena;
     nx_sink _t5 = nx_sink_str(c, &_t4);
     nx_sl_u8 _t6 = nx_str_slice(n_2);
-    nx_w(&_t5, (const uint8_t*)nx_str_5282, 3);
+    nx_w(&_t5, (const uint8_t*)nx_str_5285, 3);
     nx_w_sl(&_t5, _t6);
     nx_w(&_t5, (const uint8_t*)nx_str_677, 1);
     nx_string _t7 = _t4;
-    nx_slice_check(0, _t7.len, _t7.len, "self/cgen.nx:5451");
+    nx_slice_check(0, _t7.len, _t7.len, "self/cgen.nx:5453");
     nx_sl_u8 _t8 = ((nx_sl_u8){ nx_padd(_t7.ptr, 0), _t7.len - 0 });
     nx_str_append(c, &(names_1), _t8.ptr, _t8.len);
     nx_drop_string(c, &_t7);
     nx_cont_0: ;
   }
   nx_brk_0: ;
-  nx_str_append(c, &(names_1), nx_lit(nx_str_5283, 160).ptr, nx_lit(nx_str_5283, 160).len);
-  nx_slice_check(0, names_1.len, names_1.len, "self/cgen.nx:5453");
+  nx_str_append(c, &(names_1), nx_lit(nx_str_5286, 160).ptr, nx_lit(nx_str_5286, 160).len);
+  nx_slice_check(0, names_1.len, names_1.len, "self/cgen.nx:5455");
   nx_sl_u8 _t9 = ((nx_sl_u8){ nx_padd(names_1.ptr, 0), names_1.len - 0 });
   nx_str_append(c, &((*self_0).data_out_11), _t9.ptr, _t9.len);
   size_t nc_3 = ((((*((*self_0)).c_0)).consts_9).len);
   size_t _t10 = nc_3;
   for (size_t i_4 = ((size_t)0ULL); i_4 < _t10; i_4++) {
-    size_t ty_5 = ((*((*self_0)).c_0).consts_9.ptr[nx_idx(i_4, (*((*self_0)).c_0).consts_9.len, "self/cgen.nx:5457")]).ty_6;
-    size_t te_6 = ((*((*self_0)).c_0).consts_9.ptr[nx_idx(i_4, (*((*self_0)).c_0).consts_9.len, "self/cgen.nx:5458")]).value_8;
+    size_t ty_5 = ((*((*self_0)).c_0).consts_9.ptr[nx_idx(i_4, (*((*self_0)).c_0).consts_9.len, "self/cgen.nx:5459")]).ty_6;
+    size_t te_6 = ((*((*self_0)).c_0).consts_9.ptr[nx_idx(i_4, (*((*self_0)).c_0).consts_9.len, "self/cgen.nx:5460")]).value_8;
     bool _t11 = ((ty_5) == (((size_t)18446744073709551615ULL)));
     if (!_t11) {
       _t11 = ((te_6) == (((size_t)18446744073709551615ULL)));
@@ -178305,7 +178432,7 @@ static nx_string nx_Gen_generate_1519(nx_ctx* c, nx_m24_Gen* self_0) {
       {
         goto nx_cont_1;
       }
-      if ((!nx_eq_m2_TKind(&(((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(te_6, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:5460")]).k_0), &(((nx_m2_TKind){ .tag = 66 })))))
+      if ((!nx_eq_m2_TKind(&(((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(te_6, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:5462")]).k_0), &(((nx_m2_TKind){ .tag = 66 })))))
       {
         goto nx_cont_1;
       }
@@ -178333,7 +178460,7 @@ static nx_string nx_Gen_generate_1519(nx_ctx* c, nx_m24_Gen* self_0) {
         nx_w_sl(&_t17, _t22);
         nx_w(&_t17, (const uint8_t*)nx_str_2247, 2);
         nx_string _t23 = _t16;
-        nx_slice_check(0, _t23.len, _t23.len, "self/cgen.nx:5464");
+        nx_slice_check(0, _t23.len, _t23.len, "self/cgen.nx:5466");
         nx_sl_u8 _t24 = ((nx_sl_u8){ nx_padd(_t23.ptr, 0), _t23.len - 0 });
         nx_str_append(c, &((*self_0).data_out_11), _t24.ptr, _t24.len);
         nx_drop_string(c, &_t23);
@@ -178348,7 +178475,7 @@ static nx_string nx_Gen_generate_1519(nx_ctx* c, nx_m24_Gen* self_0) {
   size_t ng_10 = ((((*((*self_0)).c_0)).globals_10).len);
   size_t _t25 = ng_10;
   for (size_t i_11 = ((size_t)0ULL); i_11 < _t25; i_11++) {
-    size_t ty_12 = ((*((*self_0)).c_0).globals_10.ptr[nx_idx(i_11, (*((*self_0)).c_0).globals_10.len, "self/cgen.nx:5468")]).ty_5;
+    size_t ty_12 = ((*((*self_0)).c_0).globals_10.ptr[nx_idx(i_11, (*((*self_0)).c_0).globals_10.len, "self/cgen.nx:5470")]).ty_5;
       if (((ty_12) == (((size_t)18446744073709551615ULL))))
       {
         goto nx_cont_2;
@@ -178357,10 +178484,10 @@ static nx_string nx_Gen_generate_1519(nx_ctx* c, nx_m24_Gen* self_0) {
     nx_string cn_13 = _t26;
     nx_string _t27 = {0}; _t27.ar = c->arena;
     nx_string init_14 = _t27;
-    size_t ge_15 = ((*((*self_0)).c_0).globals_10.ptr[nx_idx(i_11, (*((*self_0)).c_0).globals_10.len, "self/cgen.nx:5472")]).init_6;
+    size_t ge_15 = ((*((*self_0)).c_0).globals_10.ptr[nx_idx(i_11, (*((*self_0)).c_0).globals_10.len, "self/cgen.nx:5474")]).init_6;
     bool _t28 = ((ge_15) != (((size_t)18446744073709551615ULL)));
     if (_t28) {
-      _t28 = nx_eq_m2_TKind(&(((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(ge_15, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:5473")]).k_0), &(((nx_m2_TKind){ .tag = 66 })));
+      _t28 = nx_eq_m2_TKind(&(((*((*self_0)).c_0).tir_28.nodes_0.ptr[nx_idx(ge_15, (*((*self_0)).c_0).tir_28.nodes_0.len, "self/cgen.nx:5475")]).k_0), &(((nx_m2_TKind){ .tag = 66 })));
     }
       if (_t28)
       {
@@ -178391,7 +178518,7 @@ static nx_string nx_Gen_generate_1519(nx_ctx* c, nx_m24_Gen* self_0) {
         nx_w_sl(&_t36, _t38);
         nx_w(&_t36, (const uint8_t*)nx_str_2247, 2);
         nx_string _t39 = _t35;
-        nx_slice_check(0, _t39.len, _t39.len, "self/cgen.nx:5478");
+        nx_slice_check(0, _t39.len, _t39.len, "self/cgen.nx:5480");
         nx_sl_u8 _t40 = ((nx_sl_u8){ nx_padd(_t39.ptr, 0), _t39.len - 0 });
         nx_str_append(c, &((*self_0).data_out_11), _t40.ptr, _t40.len);
         nx_drop_string(c, &_t39);
@@ -178416,7 +178543,7 @@ static nx_string nx_Gen_generate_1519(nx_ctx* c, nx_m24_Gen* self_0) {
             nx_w_sl(&_t43, _t46);
             nx_w(&_t43, (const uint8_t*)nx_str_2247, 2);
             nx_string _t47 = _t42;
-            nx_slice_check(0, _t47.len, _t47.len, "self/cgen.nx:5479");
+            nx_slice_check(0, _t47.len, _t47.len, "self/cgen.nx:5481");
             nx_sl_u8 _t48 = ((nx_sl_u8){ nx_padd(_t47.ptr, 0), _t47.len - 0 });
             nx_str_append(c, &((*self_0).data_out_11), _t48.ptr, _t48.len);
             nx_drop_string(c, &_t47);
@@ -178434,7 +178561,7 @@ static nx_string nx_Gen_generate_1519(nx_ctx* c, nx_m24_Gen* self_0) {
                 nx_w_sl(&_t50, _t52);
                 nx_w(&_t50, (const uint8_t*)nx_str_2247, 2);
                 nx_string _t53 = _t49;
-                nx_slice_check(0, _t53.len, _t53.len, "self/cgen.nx:5480");
+                nx_slice_check(0, _t53.len, _t53.len, "self/cgen.nx:5482");
                 nx_sl_u8 _t54 = ((nx_sl_u8){ nx_padd(_t53.ptr, 0), _t53.len - 0 });
                 nx_str_append(c, &((*self_0).data_out_11), _t54.ptr, _t54.len);
                 nx_drop_string(c, &_t53);
@@ -178456,7 +178583,7 @@ static nx_string nx_Gen_generate_1519(nx_ctx* c, nx_m24_Gen* self_0) {
                     nx_w_sl(&_t56, _t59);
                     nx_w(&_t56, (const uint8_t*)nx_str_2247, 2);
                     nx_string _t60 = _t55;
-                    nx_slice_check(0, _t60.len, _t60.len, "self/cgen.nx:5481");
+                    nx_slice_check(0, _t60.len, _t60.len, "self/cgen.nx:5483");
                     nx_sl_u8 _t61 = ((nx_sl_u8){ nx_padd(_t60.ptr, 0), _t60.len - 0 });
                     nx_str_append(c, &((*self_0).data_out_11), _t61.ptr, _t61.len);
                     nx_drop_string(c, &_t60);
@@ -178473,7 +178600,7 @@ static nx_string nx_Gen_generate_1519(nx_ctx* c, nx_m24_Gen* self_0) {
                     nx_w_sl(&_t63, _t65);
                     nx_w(&_t63, (const uint8_t*)nx_str_2247, 2);
                     nx_string _t66 = _t62;
-                    nx_slice_check(0, _t66.len, _t66.len, "self/cgen.nx:5482");
+                    nx_slice_check(0, _t66.len, _t66.len, "self/cgen.nx:5484");
                     nx_sl_u8 _t67 = ((nx_sl_u8){ nx_padd(_t66.ptr, 0), _t66.len - 0 });
                     nx_str_append(c, &((*self_0).data_out_11), _t67.ptr, _t67.len);
                     nx_drop_string(c, &_t66);
@@ -178490,9 +178617,9 @@ static nx_string nx_Gen_generate_1519(nx_ctx* c, nx_m24_Gen* self_0) {
   size_t n_18 = ((((*((*self_0)).c_0)).insts_25).len);
   size_t _t68 = n_18;
   for (size_t i_19 = ((size_t)0ULL); i_19 < _t68; i_19++) {
-    bool _t69 = ((((*((*self_0)).c_0).insts_25.ptr[nx_idx(i_19, (*((*self_0)).c_0).insts_25.len, "self/cgen.nx:5487")]).body_9) == (((size_t)18446744073709551615ULL)));
+    bool _t69 = ((((*((*self_0)).c_0).insts_25.ptr[nx_idx(i_19, (*((*self_0)).c_0).insts_25.len, "self/cgen.nx:5489")]).body_9) == (((size_t)18446744073709551615ULL)));
     if (_t69) {
-      _t69 = (!(((*((*self_0)).c_0).insts_25.ptr[nx_idx(i_19, (*((*self_0)).c_0).insts_25.len, "self/cgen.nx:5487")]).is_extern_15));
+      _t69 = (!(((*((*self_0)).c_0).insts_25.ptr[nx_idx(i_19, (*((*self_0)).c_0).insts_25.len, "self/cgen.nx:5489")]).is_extern_15));
     }
       if (_t69)
       {
@@ -178511,7 +178638,7 @@ static nx_string nx_Gen_generate_1519(nx_ctx* c, nx_m24_Gen* self_0) {
     nx_w_sl(&_t73, _t74);
     nx_w(&_t73, (const uint8_t*)nx_str_2247, 2);
     nx_string _t75 = _t72;
-    nx_slice_check(0, _t75.len, _t75.len, "self/cgen.nx:5490");
+    nx_slice_check(0, _t75.len, _t75.len, "self/cgen.nx:5492");
     nx_sl_u8 _t76 = ((nx_sl_u8){ nx_padd(_t75.ptr, 0), _t75.len - 0 });
     nx_str_append(c, &((*self_0).protos_out_9), _t76.ptr, _t76.len);
     nx_drop_string(c, &_t75);
@@ -178521,7 +178648,7 @@ static nx_string nx_Gen_generate_1519(nx_ctx* c, nx_m24_Gen* self_0) {
   nx_brk_3: ;
   size_t _t77 = n_18;
   for (size_t i_21 = ((size_t)0ULL); i_21 < _t77; i_21++) {
-      if (((((*((*self_0)).c_0).insts_25.ptr[nx_idx(i_21, (*((*self_0)).c_0).insts_25.len, "self/cgen.nx:5494")]).body_9) == (((size_t)18446744073709551615ULL))))
+      if (((((*((*self_0)).c_0).insts_25.ptr[nx_idx(i_21, (*((*self_0)).c_0).insts_25.len, "self/cgen.nx:5496")]).body_9) == (((size_t)18446744073709551615ULL))))
       {
         goto nx_cont_4;
       }
@@ -178529,7 +178656,7 @@ static nx_string nx_Gen_generate_1519(nx_ctx* c, nx_m24_Gen* self_0) {
     if (_t78) {
       bool _t79 = ((i_21) >= (((((*self_0)).unit_bodies_33).len)));
       if (!_t79) {
-        _t79 = (!((*self_0).unit_bodies_33.ptr[nx_idx(i_21, (*self_0).unit_bodies_33.len, "self/cgen.nx:5495")]));
+        _t79 = (!((*self_0).unit_bodies_33.ptr[nx_idx(i_21, (*self_0).unit_bodies_33.len, "self/cgen.nx:5497")]));
       }
       _t78 = _t79;
     }
@@ -178552,7 +178679,7 @@ static nx_string nx_Gen_generate_1519(nx_ctx* c, nx_m24_Gen* self_0) {
   for (size_t i_24 = ((size_t)0ULL); i_24 < _t82; i_24++) {
     bool _t83 = holds_entry_22;
     if (_t83) {
-      nx_string _t84 = ((*((*self_0)).c_0).insts_25.ptr[nx_idx(i_24, (*((*self_0)).c_0).insts_25.len, "self/cgen.nx:5502")]).export_name_14;
+      nx_string _t84 = ((*((*self_0)).c_0).insts_25.ptr[nx_idx(i_24, (*((*self_0)).c_0).insts_25.len, "self/cgen.nx:5504")]).export_name_14;
       nx_sl_u8 _t85 = nx_str_slice(_t84);
       _t83 = (!(nx_sl_eq(_t85, nx_lit(nx_str_643, 1))));
     }
@@ -178560,7 +178687,7 @@ static nx_string nx_Gen_generate_1519(nx_ctx* c, nx_m24_Gen* self_0) {
       {
         nx_string _t86 = nx_Gen_export_wrapper_1498(c, self_0, i_24);
         nx_string _t87 = _t86;
-        nx_slice_check(0, _t87.len, _t87.len, "self/cgen.nx:5502");
+        nx_slice_check(0, _t87.len, _t87.len, "self/cgen.nx:5504");
         nx_sl_u8 _t88 = ((nx_sl_u8){ nx_padd(_t87.ptr, 0), _t87.len - 0 });
         nx_str_append(c, &(tail_23), _t88.ptr, _t88.len);
         nx_drop_string(c, &_t87);
@@ -178577,7 +178704,7 @@ static nx_string nx_Gen_generate_1519(nx_ctx* c, nx_m24_Gen* self_0) {
         {
           nx_string _t89 = nx_Gen_main_wrapper_1513(c, self_0);
           nx_string _t90 = _t89;
-          nx_slice_check(0, _t90.len, _t90.len, "self/cgen.nx:5505");
+          nx_slice_check(0, _t90.len, _t90.len, "self/cgen.nx:5507");
           nx_sl_u8 _t91 = ((nx_sl_u8){ nx_padd(_t90.ptr, 0), _t90.len - 0 });
           nx_str_append(c, &(tail_23), _t91.ptr, _t91.len);
           nx_drop_string(c, &_t90);
@@ -178588,7 +178715,7 @@ static nx_string nx_Gen_generate_1519(nx_ctx* c, nx_m24_Gen* self_0) {
             {
               nx_string _t92 = nx_Gen_test_runner_1516(c, self_0);
               nx_string _t93 = _t92;
-              nx_slice_check(0, _t93.len, _t93.len, "self/cgen.nx:5506");
+              nx_slice_check(0, _t93.len, _t93.len, "self/cgen.nx:5508");
               nx_sl_u8 _t94 = ((nx_sl_u8){ nx_padd(_t93.ptr, 0), _t93.len - 0 });
               nx_str_append(c, &(tail_23), _t94.ptr, _t94.len);
               nx_drop_string(c, &_t93);
@@ -178599,7 +178726,7 @@ static nx_string nx_Gen_generate_1519(nx_ctx* c, nx_m24_Gen* self_0) {
                 {
                   nx_string _t95 = nx_Gen_bench_runner_1517(c, self_0);
                   nx_string _t96 = _t95;
-                  nx_slice_check(0, _t96.len, _t96.len, "self/cgen.nx:5507");
+                  nx_slice_check(0, _t96.len, _t96.len, "self/cgen.nx:5509");
                   nx_sl_u8 _t97 = ((nx_sl_u8){ nx_padd(_t96.ptr, 0), _t96.len - 0 });
                   nx_str_append(c, &(tail_23), _t97.ptr, _t97.len);
                   nx_drop_string(c, &_t96);
@@ -178609,29 +178736,29 @@ static nx_string nx_Gen_generate_1519(nx_ctx* c, nx_m24_Gen* self_0) {
     }
   nx_string _t98 = {0}; _t98.ar = c->arena;
   nx_string out_25 = _t98;
-  nx_str_append(c, &(out_25), nx_lit(nx_str_5284, 22).ptr, nx_lit(nx_str_5284, 22).len);
+  nx_str_append(c, &(out_25), nx_lit(nx_str_5287, 22).ptr, nx_lit(nx_str_5287, 22).len);
   nx_sl_u8 _t99;
     if (((((*self_0)).mode_1) == (((uint8_t)0ULL))))
     {
-      _t99 = nx_lit(nx_str_5285, 5);
+      _t99 = nx_lit(nx_str_5288, 5);
     }
     else
     {
       nx_sl_u8 _t100;
       if (((((*self_0)).mode_1) == (((uint8_t)1ULL))))
       {
-        _t100 = nx_lit(nx_str_5286, 4);
+        _t100 = nx_lit(nx_str_5289, 4);
       }
       else
       {
         nx_sl_u8 _t101;
         if (((((*self_0)).mode_1) == (((uint8_t)2ULL))))
         {
-          _t101 = nx_lit(nx_str_5287, 4);
+          _t101 = nx_lit(nx_str_5290, 4);
         }
         else
         {
-          _t101 = nx_lit(nx_str_5288, 5);
+          _t101 = nx_lit(nx_str_5291, 5);
         }
         _t100 = _t101;
       }
@@ -178640,28 +178767,28 @@ static nx_string nx_Gen_generate_1519(nx_ctx* c, nx_m24_Gen* self_0) {
   nx_sl_u8 mode_name_26 = _t99;
   nx_string _t102 = {0}; _t102.ar = c->arena;
   nx_sink _t103 = nx_sink_str(c, &_t102);
-  nx_w(&_t103, (const uint8_t*)nx_str_5289, 16);
+  nx_w(&_t103, (const uint8_t*)nx_str_5292, 16);
   nx_w_sl(&_t103, mode_name_26);
   nx_w(&_t103, (const uint8_t*)nx_str_550, 1);
   nx_string _t104 = _t102;
-  nx_slice_check(0, _t104.len, _t104.len, "self/cgen.nx:5511");
+  nx_slice_check(0, _t104.len, _t104.len, "self/cgen.nx:5513");
   nx_sl_u8 _t105 = ((nx_sl_u8){ nx_padd(_t104.ptr, 0), _t104.len - 0 });
   nx_str_append(c, &(out_25), _t105.ptr, _t105.len);
     if (((*self_0)).unit_mode_32)
     {
-      nx_str_append(c, &(out_25), nx_lit(nx_str_5290, 23).ptr, nx_lit(nx_str_5290, 23).len);
+      nx_str_append(c, &(out_25), nx_lit(nx_str_5293, 23).ptr, nx_lit(nx_str_5293, 23).len);
         if (((*self_0)).unit_root_34)
         {
-          nx_str_append(c, &(out_25), nx_lit(nx_str_5291, 22).ptr, nx_lit(nx_str_5291, 22).len);
+          nx_str_append(c, &(out_25), nx_lit(nx_str_5294, 22).ptr, nx_lit(nx_str_5294, 22).len);
         }
     }
-  nx_sl_u8 _t106 = nx_lit(nx_str_397, 186746);
+  nx_sl_u8 _t106 = nx_lit(nx_str_397, 192233);
   nx_str_append(c, &(out_25), _t106.ptr, _t106.len);
-  nx_str_append(c, &(out_25), nx_lit(nx_str_5292, 36).ptr, nx_lit(nx_str_5292, 36).len);
+  nx_str_append(c, &(out_25), nx_lit(nx_str_5295, 36).ptr, nx_lit(nx_str_5295, 36).len);
   nx_sl_string _t107 = ((nx_sl_string){ ((*((*self_0)).c_0)).cimport_headers_45.ptr, ((*((*self_0)).c_0)).cimport_headers_45.len });
   for (size_t i_28 = 0; i_28 < _t107.len; i_28++) {
     nx_string h_27 = _t107.ptr[i_28];
-      if ((*((*self_0)).c_0).cimport_system_46.ptr[nx_idx(i_28, (*((*self_0)).c_0).cimport_system_46.len, "self/cgen.nx:5519")])
+      if ((*((*self_0)).c_0).cimport_system_46.ptr[nx_idx(i_28, (*((*self_0)).c_0).cimport_system_46.len, "self/cgen.nx:5521")])
       {
         nx_string _t108 = {0}; _t108.ar = c->arena;
         nx_sink _t109 = nx_sink_str(c, &_t108);
@@ -178670,7 +178797,7 @@ static nx_string nx_Gen_generate_1519(nx_ctx* c, nx_m24_Gen* self_0) {
         nx_w_sl(&_t109, _t110);
         nx_w(&_t109, (const uint8_t*)nx_str_1248, 2);
         nx_string _t111 = _t108;
-        nx_slice_check(0, _t111.len, _t111.len, "self/cgen.nx:5519");
+        nx_slice_check(0, _t111.len, _t111.len, "self/cgen.nx:5521");
         nx_sl_u8 _t112 = ((nx_sl_u8){ nx_padd(_t111.ptr, 0), _t111.len - 0 });
         nx_str_append(c, &(out_25), _t112.ptr, _t112.len);
         nx_drop_string(c, &_t111);
@@ -178684,7 +178811,7 @@ static nx_string nx_Gen_generate_1519(nx_ctx* c, nx_m24_Gen* self_0) {
         nx_w_sl(&_t114, _t115);
         nx_w(&_t114, (const uint8_t*)nx_str_1250, 2);
         nx_string _t116 = _t113;
-        nx_slice_check(0, _t116.len, _t116.len, "self/cgen.nx:5519");
+        nx_slice_check(0, _t116.len, _t116.len, "self/cgen.nx:5521");
         nx_sl_u8 _t117 = ((nx_sl_u8){ nx_padd(_t116.ptr, 0), _t116.len - 0 });
         nx_str_append(c, &(out_25), _t117.ptr, _t117.len);
         nx_drop_string(c, &_t116);
@@ -178744,17 +178871,17 @@ static nx_string nx_Gen_generate_1519(nx_ctx* c, nx_m24_Gen* self_0) {
     nx_string _t139 = nx_Checker_ty_name_918(c, ((*self_0)).c_0, (a_33).f0);
     nx_string _t140 = _t139;
     nx_sl_u8 _t141 = nx_str_slice(_t140);
-    nx_w(&_t137, (const uint8_t*)nx_str_5293, 22);
+    nx_w(&_t137, (const uint8_t*)nx_str_5296, 22);
     nx_w_sl(&_t137, _t138);
-    nx_w(&_t137, (const uint8_t*)nx_str_5294, 5);
+    nx_w(&_t137, (const uint8_t*)nx_str_5297, 5);
     nx_w_uint(&_t137, (nx_u128)((a_33).f1), 10, 0, false);
-    nx_w(&_t137, (const uint8_t*)nx_str_5295, 11);
+    nx_w(&_t137, (const uint8_t*)nx_str_5298, 11);
     nx_w_sl(&_t137, _t141);
-    nx_w(&_t137, (const uint8_t*)nx_str_5296, 5);
+    nx_w(&_t137, (const uint8_t*)nx_str_5299, 5);
     nx_w_uint(&_t137, (nx_u128)((a_33).f1), 10, 0, false);
-    nx_w(&_t137, (const uint8_t*)nx_str_5297, 10);
+    nx_w(&_t137, (const uint8_t*)nx_str_5300, 10);
     nx_string line_36 = _t136;
-    nx_slice_check(0, line_36.len, line_36.len, "self/cgen.nx:5532");
+    nx_slice_check(0, line_36.len, line_36.len, "self/cgen.nx:5534");
     nx_sl_u8 _t142 = ((nx_sl_u8){ nx_padd(line_36.ptr, 0), line_36.len - 0 });
     nx_sl_u8 _t143 = _t142;
       if ((nx_map_get(&(claimed_32), &_t143) != NULL))
@@ -178767,7 +178894,7 @@ static nx_string nx_Gen_generate_1519(nx_ctx* c, nx_m24_Gen* self_0) {
     if (nx_map_put(c, &(claimed_32), &_t144, &_t145, &_t146, &_t147)) {
       nx_drop_string(c, &_t146);
     }
-    nx_slice_check(0, line_36.len, line_36.len, "self/cgen.nx:5534");
+    nx_slice_check(0, line_36.len, line_36.len, "self/cgen.nx:5536");
     nx_sl_u8 _t148 = ((nx_sl_u8){ nx_padd(line_36.ptr, 0), line_36.len - 0 });
     nx_str_append(c, &(claims_29), _t148.ptr, _t148.len);
     nx_drop_string(c, &line_36);
@@ -178777,13 +178904,13 @@ static nx_string nx_Gen_generate_1519(nx_ctx* c, nx_m24_Gen* self_0) {
   }
   nx_brk_8: ;
   nx_Gen_define_forwarded_1410(c, self_0);
-  nx_str_append(c, &(out_25), nx_lit(nx_str_5298, 38).ptr, nx_lit(nx_str_5298, 38).len);
-  nx_slice_check(0, (*self_0).fwd_out_8.len, (*self_0).fwd_out_8.len, "self/cgen.nx:5539");
+  nx_str_append(c, &(out_25), nx_lit(nx_str_5301, 38).ptr, nx_lit(nx_str_5301, 38).len);
+  nx_slice_check(0, (*self_0).fwd_out_8.len, (*self_0).fwd_out_8.len, "self/cgen.nx:5541");
   nx_sl_u8 _t149 = ((nx_sl_u8){ nx_padd((*self_0).fwd_out_8.ptr, 0), (*self_0).fwd_out_8.len - 0 });
   nx_str_append(c, &(out_25), _t149.ptr, _t149.len);
-  nx_str_append(c, &(out_25), nx_lit(nx_str_5299, 23).ptr, nx_lit(nx_str_5299, 23).len);
+  nx_str_append(c, &(out_25), nx_lit(nx_str_5302, 23).ptr, nx_lit(nx_str_5302, 23).len);
   nx_map seen_37 = nx_map_new(c, sizeof(nx_string), sizeof(bool), 2);
-  nx_slice_check(0, (*self_0).types_out_5.len, (*self_0).types_out_5.len, "self/cgen.nx:5542");
+  nx_slice_check(0, (*self_0).types_out_5.len, (*self_0).types_out_5.len, "self/cgen.nx:5544");
   nx_sl_u8 _t150 = ((nx_sl_u8){ nx_padd((*self_0).types_out_5.ptr, 0), (*self_0).types_out_5.len - 0 });
   nx_list_sl_u8 _t151 = {0}; _t151.ar = c->arena;
   { size_t _s = 0; for (;;) { nx_sl_u8 _rest = { nx_padd(_t150.ptr, _s), _t150.len - _s }; size_t _i; bool _f = nx_lit("\n", 1).len && nx_sl_find(_rest, nx_lit("\n", 1), &_i); nx_sl_u8 _piece = { _rest.ptr, _f ? _i : _rest.len };
@@ -178795,7 +178922,7 @@ static nx_string nx_Gen_generate_1519(nx_ctx* c, nx_m24_Gen* self_0) {
   nx_sl_sl_u8 _t152 = ((nx_sl_sl_u8){ type_lines_38.ptr, type_lines_38.len });
   for (size_t li_40 = 0; li_40 < _t152.len; li_40++) {
     nx_sl_u8 line_39 = _t152.ptr[li_40];
-    bool _t153 = ((nx_add_usize(li_40, ((size_t)1ULL), "self/cgen.nx:5545")) == (((type_lines_38).len)));
+    bool _t153 = ((nx_add_usize(li_40, ((size_t)1ULL), "self/cgen.nx:5547")) == (((type_lines_38).len)));
     if (_t153) {
       _t153 = ((((line_39).len)) == (((size_t)0ULL)));
     }
@@ -178803,7 +178930,7 @@ static nx_string nx_Gen_generate_1519(nx_ctx* c, nx_m24_Gen* self_0) {
       {
         goto nx_brk_9;
       }
-    nx_slice_check(0, line_39.len, line_39.len, "self/cgen.nx:5546");
+    nx_slice_check(0, line_39.len, line_39.len, "self/cgen.nx:5548");
     nx_sl_u8 _t154 = ((nx_sl_u8){ nx_padd(line_39.ptr, 0), line_39.len - 0 });
     nx_sl_u8 _t155 = _t154;
       if ((nx_map_get(&(seen_37), &_t155) != NULL))
@@ -178817,7 +178944,7 @@ static nx_string nx_Gen_generate_1519(nx_ctx* c, nx_m24_Gen* self_0) {
     if (nx_map_put(c, &(seen_37), &_t157, &_t158, &_t159, &_t160)) {
       nx_drop_string(c, &_t159);
     }
-    nx_slice_check(0, line_39.len, line_39.len, "self/cgen.nx:5548");
+    nx_slice_check(0, line_39.len, line_39.len, "self/cgen.nx:5550");
     nx_sl_u8 _t161 = ((nx_sl_u8){ nx_padd(line_39.ptr, 0), line_39.len - 0 });
     nx_str_append(c, &(out_25), _t161.ptr, _t161.len);
     nx_str_append(c, &(out_25), nx_lit(nx_str_550, 1).ptr, nx_lit(nx_str_550, 1).len);
@@ -178826,29 +178953,29 @@ static nx_string nx_Gen_generate_1519(nx_ctx* c, nx_m24_Gen* self_0) {
   nx_brk_9: ;
     if (((((claims_29).len)) > (((size_t)0ULL))))
     {
-      nx_str_append(c, &(out_25), nx_lit(nx_str_5300, 50).ptr, nx_lit(nx_str_5300, 50).len);
-      nx_slice_check(0, claims_29.len, claims_29.len, "self/cgen.nx:5553");
+      nx_str_append(c, &(out_25), nx_lit(nx_str_5303, 50).ptr, nx_lit(nx_str_5303, 50).len);
+      nx_slice_check(0, claims_29.len, claims_29.len, "self/cgen.nx:5555");
       nx_sl_u8 _t162 = ((nx_sl_u8){ nx_padd(claims_29.ptr, 0), claims_29.len - 0 });
       nx_str_append(c, &(out_25), _t162.ptr, _t162.len);
     }
-  nx_str_append(c, &(out_25), nx_lit(nx_str_5301, 22).ptr, nx_lit(nx_str_5301, 22).len);
-  nx_slice_check(0, (*self_0).data_out_11.len, (*self_0).data_out_11.len, "self/cgen.nx:5556");
+  nx_str_append(c, &(out_25), nx_lit(nx_str_5304, 22).ptr, nx_lit(nx_str_5304, 22).len);
+  nx_slice_check(0, (*self_0).data_out_11.len, (*self_0).data_out_11.len, "self/cgen.nx:5558");
   nx_sl_u8 _t163 = ((nx_sl_u8){ nx_padd((*self_0).data_out_11.ptr, 0), (*self_0).data_out_11.len - 0 });
   nx_str_append(c, &(out_25), _t163.ptr, _t163.len);
-  nx_str_append(c, &(out_25), nx_lit(nx_str_5302, 28).ptr, nx_lit(nx_str_5302, 28).len);
-  nx_slice_check(0, (*self_0).protos_out_9.len, (*self_0).protos_out_9.len, "self/cgen.nx:5558");
+  nx_str_append(c, &(out_25), nx_lit(nx_str_5305, 28).ptr, nx_lit(nx_str_5305, 28).len);
+  nx_slice_check(0, (*self_0).protos_out_9.len, (*self_0).protos_out_9.len, "self/cgen.nx:5560");
   nx_sl_u8 _t164 = ((nx_sl_u8){ nx_padd((*self_0).protos_out_9.ptr, 0), (*self_0).protos_out_9.len - 0 });
   nx_str_append(c, &(out_25), _t164.ptr, _t164.len);
-  nx_str_append(c, &(out_25), nx_lit(nx_str_5303, 25).ptr, nx_lit(nx_str_5303, 25).len);
-  nx_slice_check(0, (*self_0).helpers_out_10.len, (*self_0).helpers_out_10.len, "self/cgen.nx:5560");
+  nx_str_append(c, &(out_25), nx_lit(nx_str_5306, 25).ptr, nx_lit(nx_str_5306, 25).len);
+  nx_slice_check(0, (*self_0).helpers_out_10.len, (*self_0).helpers_out_10.len, "self/cgen.nx:5562");
   nx_sl_u8 _t165 = ((nx_sl_u8){ nx_padd((*self_0).helpers_out_10.ptr, 0), (*self_0).helpers_out_10.len - 0 });
   nx_str_append(c, &(out_25), _t165.ptr, _t165.len);
-  nx_str_append(c, &(out_25), nx_lit(nx_str_5304, 27).ptr, nx_lit(nx_str_5304, 27).len);
-  nx_slice_check(0, (*self_0).funcs_out_12.len, (*self_0).funcs_out_12.len, "self/cgen.nx:5562");
+  nx_str_append(c, &(out_25), nx_lit(nx_str_5307, 27).ptr, nx_lit(nx_str_5307, 27).len);
+  nx_slice_check(0, (*self_0).funcs_out_12.len, (*self_0).funcs_out_12.len, "self/cgen.nx:5564");
   nx_sl_u8 _t166 = ((nx_sl_u8){ nx_padd((*self_0).funcs_out_12.ptr, 0), (*self_0).funcs_out_12.len - 0 });
   nx_str_append(c, &(out_25), _t166.ptr, _t166.len);
-  nx_str_append(c, &(out_25), nx_lit(nx_str_5305, 23).ptr, nx_lit(nx_str_5305, 23).len);
-  nx_slice_check(0, tail_23.len, tail_23.len, "self/cgen.nx:5564");
+  nx_str_append(c, &(out_25), nx_lit(nx_str_5308, 23).ptr, nx_lit(nx_str_5308, 23).len);
+  nx_slice_check(0, tail_23.len, tail_23.len, "self/cgen.nx:5566");
   nx_sl_u8 _t167 = ((nx_sl_u8){ nx_padd(tail_23.ptr, 0), tail_23.len - 0 });
   nx_str_append(c, &(out_25), _t167.ptr, _t167.len);
   bool any_export_41 = false;
@@ -178856,7 +178983,7 @@ static nx_string nx_Gen_generate_1519(nx_ctx* c, nx_m24_Gen* self_0) {
   for (size_t i_42 = ((size_t)0ULL); i_42 < _t168; i_42++) {
     bool _t169 = holds_entry_22;
     if (_t169) {
-      nx_string _t170 = ((*((*self_0)).c_0).insts_25.ptr[nx_idx(i_42, (*((*self_0)).c_0).insts_25.len, "self/cgen.nx:5567")]).export_name_14;
+      nx_string _t170 = ((*((*self_0)).c_0).insts_25.ptr[nx_idx(i_42, (*((*self_0)).c_0).insts_25.len, "self/cgen.nx:5569")]).export_name_14;
       nx_sl_u8 _t171 = nx_str_slice(_t170);
       _t169 = (!(nx_sl_eq(_t171, nx_lit(nx_str_643, 1))));
     }
@@ -178869,7 +178996,7 @@ static nx_string nx_Gen_generate_1519(nx_ctx* c, nx_m24_Gen* self_0) {
   nx_brk_10: ;
     if (any_export_41)
     {
-      nx_slice_check(0, (*self_0).lib_name_29.len, (*self_0).lib_name_29.len, "self/cgen.nx:5569");
+      nx_slice_check(0, (*self_0).lib_name_29.len, (*self_0).lib_name_29.len, "self/cgen.nx:5571");
       nx_sl_u8 _t172 = ((nx_sl_u8){ nx_padd((*self_0).lib_name_29.ptr, 0), (*self_0).lib_name_29.len - 0 });
       nx_string _t173 = nx_m24_sanitize_ident(c, _t172);
       nx_string lib_43 = _t173;
@@ -178877,13 +179004,13 @@ static nx_string nx_Gen_generate_1519(nx_ctx* c, nx_m24_Gen* self_0) {
       nx_sink _t175 = nx_sink_str(c, &_t174);
       nx_sl_u8 _t176 = nx_str_slice(lib_43);
       nx_sl_u8 _t177 = nx_str_slice(lib_43);
-      nx_w(&_t175, (const uint8_t*)nx_str_5306, 22);
+      nx_w(&_t175, (const uint8_t*)nx_str_5309, 22);
       nx_w_sl(&_t175, _t176);
-      nx_w(&_t175, (const uint8_t*)nx_str_5307, 90);
+      nx_w(&_t175, (const uint8_t*)nx_str_5310, 90);
       nx_w_sl(&_t175, _t177);
-      nx_w(&_t175, (const uint8_t*)nx_str_5308, 48);
+      nx_w(&_t175, (const uint8_t*)nx_str_5311, 48);
       nx_string _t178 = _t174;
-      nx_slice_check(0, _t178.len, _t178.len, "self/cgen.nx:5570");
+      nx_slice_check(0, _t178.len, _t178.len, "self/cgen.nx:5572");
       nx_sl_u8 _t179 = ((nx_sl_u8){ nx_padd(_t178.ptr, 0), _t178.len - 0 });
       nx_str_append(c, &(out_25), _t179.ptr, _t179.len);
       nx_drop_string(c, &_t178);
@@ -179356,7 +179483,7 @@ static nx_eu_string nx_Parser_parse_string_1529(nx_ctx* c, nx_m33_Parser* self_0
                                             }
                                               if (_t10)
                                               {
-                                                nx_eu_void _t11 = nx_Parser_expect_word_1526(c, self_0, nx_lit(nx_str_5309, 2));
+                                                nx_eu_void _t11 = nx_Parser_expect_word_1526(c, self_0, nx_lit(nx_str_5312, 2));
                                                 nx_eu_void _t12 = _t11;
                                                 if (_t12.err) {
                                                   nx_drop_string(c, &out_1);
@@ -179933,7 +180060,7 @@ static bool nx_Parser_skip_comment_1542(nx_ctx* c, nx_m36_Parser* self_0) {
     }
       if (_t9)
       {
-        nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5310, 32));
+        nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5313, 32));
         bool _t10 = false;
         return _t10;
       }
@@ -180015,7 +180142,7 @@ static bool nx_Parser_end_of_line_1545(nx_ctx* c, nx_m36_Parser* self_0) {
       bool _t5 = true;
       return _t5;
     }
-  nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5311, 55));
+  nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5314, 55));
   bool _t6 = false;
   return _t6;
 }
@@ -180029,7 +180156,7 @@ static nx_opt_string nx_Parser_simple_key_1546(nx_ctx* c, nx_m36_Parser* self_0)
       bool _t2 = nx_Parser_starts_1539(c, self_0, nx_lit(nx_str_2426, 3));
         if (_t2)
         {
-          nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5312, 35));
+          nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5315, 35));
           nx_opt_string _t3 = ((nx_opt_string){ .has = false });
           return _t3;
         }
@@ -180039,10 +180166,10 @@ static nx_opt_string nx_Parser_simple_key_1546(nx_ctx* c, nx_m36_Parser* self_0)
     }
     if (((c_1) == (((uint8_t)39ULL))))
     {
-      bool _t6 = nx_Parser_starts_1539(c, self_0, nx_lit(nx_str_5313, 3));
+      bool _t6 = nx_Parser_starts_1539(c, self_0, nx_lit(nx_str_5316, 3));
         if (_t6)
         {
-          nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5312, 35));
+          nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5315, 35));
           nx_opt_string _t7 = ((nx_opt_string){ .has = false });
           return _t7;
         }
@@ -180067,7 +180194,7 @@ static nx_opt_string nx_Parser_simple_key_1546(nx_ctx* c, nx_m36_Parser* self_0)
   nx_brk_0: ;
     if (((((*self_0)).at_1) == (start_2)))
     {
-      nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5314, 16));
+      nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5317, 16));
       nx_opt_string _t15 = ((nx_opt_string){ .has = false });
       return _t15;
     }
@@ -180147,7 +180274,7 @@ static bool nx_Parser_header_1548(nx_ctx* c, nx_m36_Parser* self_0, nx_m36_Node*
   uint8_t _t9 = nx_Parser_peek_1540(c, self_0);
     if (((_t9) != (((uint8_t)93ULL))))
     {
-      nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5315, 39));
+      nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5318, 39));
       bool _t10 = false;
       nx_drop_list_string(c, &parts_4);
       return _t10;
@@ -180159,7 +180286,7 @@ static bool nx_Parser_header_1548(nx_ctx* c, nx_m36_Parser* self_0, nx_m36_Node*
       uint8_t _t12 = nx_Parser_peek_1540(c, self_0);
         if (((_t12) != (((uint8_t)93ULL))))
         {
-          nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5316, 50));
+          nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5319, 50));
           bool _t13 = false;
           nx_drop_list_string(c, &parts_4);
           return _t13;
@@ -180268,7 +180395,7 @@ static bool nx_Parser_open_table_1549(nx_ctx* c, nx_m36_Parser* self_0, nx_m36_N
       nx_sink _t35 = nx_sink_str(c, &_t34);
       nx_w(&_t35, (const uint8_t*)nx_str_482, 1);
       nx_w_sl(&_t35, name_5);
-      nx_w(&_t35, (const uint8_t*)nx_str_5317, 25);
+      nx_w(&_t35, (const uint8_t*)nx_str_5320, 25);
       nx_string _t36 = _t34;
       nx_slice_check(0, _t36.len, _t36.len, "<std>/toml.nx:314");
       nx_sl_u8 _t37 = ((nx_sl_u8){ nx_padd(_t36.ptr, 0), _t36.len - 0 });
@@ -180288,7 +180415,7 @@ static bool nx_Parser_open_table_1549(nx_ctx* c, nx_m36_Parser* self_0, nx_m36_N
               nx_sink _t40 = nx_sink_str(c, &_t39);
               nx_w(&_t40, (const uint8_t*)nx_str_482, 1);
               nx_w_sl(&_t40, name_5);
-              nx_w(&_t40, (const uint8_t*)nx_str_5318, 36);
+              nx_w(&_t40, (const uint8_t*)nx_str_5321, 36);
               nx_string _t41 = _t39;
               nx_slice_check(0, _t41.len, _t41.len, "<std>/toml.nx:320");
               nx_sl_u8 _t42 = ((nx_sl_u8){ nx_padd(_t41.ptr, 0), _t41.len - 0 });
@@ -180321,7 +180448,7 @@ static bool nx_Parser_open_table_1549(nx_ctx* c, nx_m36_Parser* self_0, nx_m36_N
           nx_sink _t52 = nx_sink_str(c, &_t51);
           nx_w(&_t52, (const uint8_t*)nx_str_482, 1);
           nx_w_sl(&_t52, name_5);
-          nx_w(&_t52, (const uint8_t*)nx_str_5319, 36);
+          nx_w(&_t52, (const uint8_t*)nx_str_5322, 36);
           nx_string _t53 = _t51;
           nx_slice_check(0, _t53.len, _t53.len, "<std>/toml.nx:330");
           nx_sl_u8 _t54 = ((nx_sl_u8){ nx_padd(_t53.ptr, 0), _t53.len - 0 });
@@ -180339,9 +180466,9 @@ static bool nx_Parser_open_table_1549(nx_ctx* c, nx_m36_Parser* self_0, nx_m36_N
         {
           nx_string _t57 = {0}; _t57.ar = c->arena;
           nx_sink _t58 = nx_sink_str(c, &_t57);
-          nx_w(&_t58, (const uint8_t*)nx_str_5320, 11);
+          nx_w(&_t58, (const uint8_t*)nx_str_5323, 11);
           nx_w_sl(&_t58, name_5);
-          nx_w(&_t58, (const uint8_t*)nx_str_5321, 18);
+          nx_w(&_t58, (const uint8_t*)nx_str_5324, 18);
           nx_string _t59 = _t57;
           nx_slice_check(0, _t59.len, _t59.len, "<std>/toml.nx:334");
           nx_sl_u8 _t60 = ((nx_sl_u8){ nx_padd(_t59.ptr, 0), _t59.len - 0 });
@@ -180392,7 +180519,7 @@ static bool nx_Parser_key_value_1550(nx_ctx* c, nx_m36_Parser* self_0, nx_m36_No
   uint8_t _t6 = nx_Parser_peek_1540(c, self_0);
     if (((_t6) != (((uint8_t)61ULL))))
     {
-      nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5322, 26));
+      nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5325, 26));
       bool _t7 = false;
       nx_drop_list_string(c, &parts_3);
       return _t7;
@@ -180457,9 +180584,9 @@ static bool nx_Parser_put_dotted_1552(nx_ctx* c, nx_m36_Parser* self_0, nx_m36_N
         {
           nx_string _t2 = {0}; _t2.ar = c->arena;
           nx_sink _t3 = nx_sink_str(c, &_t2);
-          nx_w(&_t3, (const uint8_t*)nx_str_5323, 9);
+          nx_w(&_t3, (const uint8_t*)nx_str_5326, 9);
           nx_w_sl(&_t3, name_4);
-          nx_w(&_t3, (const uint8_t*)nx_str_5321, 18);
+          nx_w(&_t3, (const uint8_t*)nx_str_5324, 18);
           nx_string _t4 = _t2;
           nx_slice_check(0, _t4.len, _t4.len, "<std>/toml.nx:372");
           nx_sl_u8 _t5 = ((nx_sl_u8){ nx_padd(_t4.ptr, 0), _t4.len - 0 });
@@ -180495,7 +180622,7 @@ static bool nx_Parser_put_dotted_1552(nx_ctx* c, nx_m36_Parser* self_0, nx_m36_N
             nx_sink _t16 = nx_sink_str(c, &_t15);
             nx_w(&_t16, (const uint8_t*)nx_str_482, 1);
             nx_w_sl(&_t16, name_4);
-            nx_w(&_t16, (const uint8_t*)nx_str_5324, 44);
+            nx_w(&_t16, (const uint8_t*)nx_str_5327, 44);
             nx_string _t17 = _t15;
             nx_slice_check(0, _t17.len, _t17.len, "<std>/toml.nx:382");
             nx_sl_u8 _t18 = ((nx_sl_u8){ nx_padd(_t17.ptr, 0), _t17.len - 0 });
@@ -180510,9 +180637,9 @@ static bool nx_Parser_put_dotted_1552(nx_ctx* c, nx_m36_Parser* self_0, nx_m36_N
           {
             nx_string _t20 = {0}; _t20.ar = c->arena;
             nx_sink _t21 = nx_sink_str(c, &_t20);
-            nx_w(&_t21, (const uint8_t*)nx_str_5320, 11);
+            nx_w(&_t21, (const uint8_t*)nx_str_5323, 11);
             nx_w_sl(&_t21, name_4);
-            nx_w(&_t21, (const uint8_t*)nx_str_5325, 47);
+            nx_w(&_t21, (const uint8_t*)nx_str_5328, 47);
             nx_string _t22 = _t20;
             nx_slice_check(0, _t22.len, _t22.len, "<std>/toml.nx:386");
             nx_sl_u8 _t23 = ((nx_sl_u8){ nx_padd(_t22.ptr, 0), _t22.len - 0 });
@@ -180606,7 +180733,7 @@ static nx_opt_m36_Toml nx_Parser_value_1553(nx_ctx* c, nx_m36_Parser* self_0) {
     }
     if (((c_1) == (((uint8_t)39ULL))))
     {
-      bool _t19 = nx_Parser_starts_1539(c, self_0, nx_lit(nx_str_5313, 3));
+      bool _t19 = nx_Parser_starts_1539(c, self_0, nx_lit(nx_str_5316, 3));
         if (_t19)
         {
           nx_opt_string _t20 = nx_Parser_ml_string_1557(c, self_0, ((uint8_t)39ULL));
@@ -180681,7 +180808,7 @@ static nx_opt_string nx_Parser_basic_string_1554(nx_ctx* c, nx_m36_Parser* self_
     }
       if (_t5)
       {
-        nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5326, 34));
+        nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5329, 34));
         nx_opt_string _t6 = ((nx_opt_string){ .has = false });
         nx_drop_string(c, &out_1);
         return _t6;
@@ -180715,7 +180842,7 @@ static nx_opt_string nx_Parser_basic_string_1554(nx_ctx* c, nx_m36_Parser* self_
     }
       if (_t12)
       {
-        nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5327, 31));
+        nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5330, 31));
         nx_opt_string _t13 = ((nx_opt_string){ .has = false });
         nx_drop_string(c, &out_1);
         return _t13;
@@ -180751,7 +180878,7 @@ static nx_opt_string nx_Parser_literal_string_1555(nx_ctx* c, nx_m36_Parser* sel
     }
       if (_t4)
       {
-        nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5326, 34));
+        nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5329, 34));
         nx_opt_string _t5 = ((nx_opt_string){ .has = false });
         return _t5;
       }
@@ -180770,7 +180897,7 @@ static nx_opt_string nx_Parser_literal_string_1555(nx_ctx* c, nx_m36_Parser* sel
     }
       if (_t7)
       {
-        nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5327, 31));
+        nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5330, 31));
         nx_opt_string _t8 = ((nx_opt_string){ .has = false });
         return _t8;
       }
@@ -180796,7 +180923,7 @@ static bool nx_Parser_escape_1556(nx_ctx* c, nx_m36_Parser* self_0, nx_string* o
   NX_UNUSED(c);
     if (((nx_add_usize(((*self_0)).at_1, ((size_t)1ULL), "<std>/toml.nx:474")) >= (((((*self_0)).src_0).len))))
     {
-      nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5328, 28));
+      nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5331, 28));
       bool _t1 = false;
       return _t1;
     }
@@ -180863,7 +180990,7 @@ static bool nx_Parser_escape_1556(nx_ctx* c, nx_m36_Parser* self_0, nx_string* o
                                   size_t n_3 = _t4;
                                     if (((nx_add_usize(((*self_0)).at_1, n_3, "<std>/toml.nx:489")) > (((((*self_0)).src_0).len))))
                                     {
-                                      nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5329, 24));
+                                      nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5332, 24));
                                       bool _t5 = false;
                                       return _t5;
                                     }
@@ -180875,7 +181002,7 @@ static bool nx_Parser_escape_1556(nx_ctx* c, nx_m36_Parser* self_0, nx_string* o
                                     uint32_t d_6 = _t8;
                                       if (((d_6) > (((uint32_t)15ULL))))
                                       {
-                                        nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5330, 52));
+                                        nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5333, 52));
                                         bool _t9 = false;
                                         return _t9;
                                       }
@@ -180895,7 +181022,7 @@ static bool nx_Parser_escape_1556(nx_ctx* c, nx_m36_Parser* self_0, nx_string* o
                                   }
                                     if (_t12)
                                     {
-                                      nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5331, 46));
+                                      nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5334, 46));
                                       bool _t13 = false;
                                       return _t13;
                                     }
@@ -180909,7 +181036,7 @@ static bool nx_Parser_escape_1556(nx_ctx* c, nx_m36_Parser* self_0, nx_string* o
                                   size_t _t17 = nx_sub_usize(((*self_0)).at_1, ((size_t)1ULL), "<std>/toml.nx:509");
                                   nx_slice_check(_t17, ((*self_0)).at_1, (*self_0).src_0.len, "<std>/toml.nx:509");
                                   nx_sl_u8 _t18 = ((nx_sl_u8){ nx_padd((*self_0).src_0.ptr, _t17), ((*self_0)).at_1 - _t17 });
-                                  nx_w(&_t16, (const uint8_t*)nx_str_5332, 31);
+                                  nx_w(&_t16, (const uint8_t*)nx_str_5335, 31);
                                   nx_w_sl(&_t16, _t18);
                                   nx_string _t19 = _t15;
                                   nx_slice_check(0, _t19.len, _t19.len, "<std>/toml.nx:509");
@@ -180944,7 +181071,7 @@ static nx_opt_string nx_Parser_ml_string_1557(nx_ctx* c, nx_m36_Parser* self_0, 
     if (!_t4) break;
       if (((((*self_0)).at_1) >= (((((*self_0)).src_0).len))))
       {
-        nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5333, 33));
+        nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5336, 33));
         nx_opt_string _t5 = ((nx_opt_string){ .has = false });
         nx_drop_string(c, &out_2);
         return _t5;
@@ -180979,7 +181106,7 @@ static nx_opt_string nx_Parser_ml_string_1557(nx_ctx* c, nx_m36_Parser* self_0, 
         nx_brk_1: ;
           if (((run_4) > (((size_t)5ULL))))
           {
-            nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5334, 48));
+            nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5337, 48));
             nx_opt_string _t12 = ((nx_opt_string){ .has = false });
             nx_drop_string(c, &out_2);
             return _t12;
@@ -181092,7 +181219,7 @@ static nx_opt_string nx_Parser_ml_string_1557(nx_ctx* c, nx_m36_Parser* self_0, 
     }
       if (_t36)
       {
-        nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5327, 31));
+        nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5330, 31));
         nx_opt_string _t37 = ((nx_opt_string){ .has = false });
         nx_drop_string(c, &out_2);
         return _t37;
@@ -181134,7 +181261,7 @@ static nx_opt_m36_Toml nx_Parser_array_1558(nx_ctx* c, nx_m36_Parser* self_0) {
       }
       if (((((*self_0)).at_1) >= (((((*self_0)).src_0).len))))
       {
-        nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5335, 22));
+        nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5338, 22));
         nx_opt_m36_Toml _t7 = ((nx_opt_m36_Toml){ .has = false });
         nx_drop_list_m36_Toml(c, &items_1);
         return _t7;
@@ -181179,7 +181306,7 @@ static nx_opt_m36_Toml nx_Parser_array_1558(nx_ctx* c, nx_m36_Parser* self_0) {
         nx_drop_m36_Toml(c, &v_2);
         goto nx_brk_0;
       }
-    nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5336, 37));
+    nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5339, 37));
     nx_opt_m36_Toml _t22 = ((nx_opt_m36_Toml){ .has = false });
     nx_drop_m36_Toml(c, &v_2);
     nx_drop_list_m36_Toml(c, &items_1);
@@ -181232,7 +181359,7 @@ static nx_opt_m36_Toml nx_Parser_inline_table_1559(nx_ctx* c, nx_m36_Parser* sel
     uint8_t _t14 = nx_Parser_peek_1540(c, self_0);
       if (((_t14) != (((uint8_t)61ULL))))
       {
-        nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5322, 26));
+        nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5325, 26));
         nx_opt_m36_Toml _t15 = ((nx_opt_m36_Toml){ .has = false });
         nx_drop_list_string(c, &parts_2);
         nx_drop_m36_Node(c, &t_1);
@@ -181280,7 +181407,7 @@ static nx_opt_m36_Toml nx_Parser_inline_table_1559(nx_ctx* c, nx_m36_Parser* sel
     uint8_t _t29 = nx_Parser_peek_1540(c, self_0);
       if (((_t29) != (((uint8_t)44ULL))))
       {
-        nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5337, 70));
+        nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5340, 70));
         nx_opt_m36_Toml _t30 = ((nx_opt_m36_Toml){ .has = false });
         nx_drop_m36_Toml(c, &v_3);
         nx_drop_list_string(c, &parts_2);
@@ -181360,7 +181487,7 @@ static nx_opt_m36_Toml nx_Parser_scalar_1560(nx_ctx* c, nx_m36_Parser* self_0) {
   nx_sl_u8 tok_3 = ((nx_sl_u8){ nx_padd((*self_0).src_0.ptr, start_1), ((*self_0)).at_1 - start_1 });
     if (((((tok_3).len)) == (((size_t)0ULL))))
     {
-      nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5338, 18));
+      nx_Parser_fail_1538(c, self_0, nx_lit(nx_str_5341, 18));
       nx_opt_m36_Toml _t14 = ((nx_opt_m36_Toml){ .has = false });
       return _t14;
     }
@@ -181378,7 +181505,7 @@ static nx_opt_m36_Toml nx_Parser_scalar_1560(nx_ctx* c, nx_m36_Parser* self_0) {
     }
   bool _t19 = nx_sl_eq(tok_3, nx_lit(nx_str_2810, 3));
   if (!_t19) {
-    _t19 = nx_sl_eq(tok_3, nx_lit(nx_str_5339, 4));
+    _t19 = nx_sl_eq(tok_3, nx_lit(nx_str_5342, 4));
   }
     if (_t19)
     {
@@ -181394,11 +181521,11 @@ static nx_opt_m36_Toml nx_Parser_scalar_1560(nx_ctx* c, nx_m36_Parser* self_0) {
     }
   bool _t24 = nx_sl_eq(tok_3, nx_lit(nx_str_2809, 3));
   if (!_t24) {
-    _t24 = nx_sl_eq(tok_3, nx_lit(nx_str_5340, 4));
+    _t24 = nx_sl_eq(tok_3, nx_lit(nx_str_5343, 4));
   }
   bool _t25 = _t24;
   if (!_t25) {
-    _t25 = nx_sl_eq(tok_3, nx_lit(nx_str_5341, 4));
+    _t25 = nx_sl_eq(tok_3, nx_lit(nx_str_5344, 4));
   }
     if (_t25)
     {
@@ -181442,7 +181569,7 @@ static nx_opt_m36_Toml nx_Parser_scalar_1560(nx_ctx* c, nx_m36_Parser* self_0) {
             nx_sink _t42 = nx_sink_str(c, &_t41);
             nx_w(&_t42, (const uint8_t*)nx_str_482, 1);
             nx_w_sl(&_t42, tok_3);
-            nx_w(&_t42, (const uint8_t*)nx_str_5342, 35);
+            nx_w(&_t42, (const uint8_t*)nx_str_5345, 35);
             nx_string _t43 = _t41;
             nx_slice_check(0, _t43.len, _t43.len, "<std>/toml.nx:664");
             nx_sl_u8 _t44 = ((nx_sl_u8){ nx_padd(_t43.ptr, 0), _t43.len - 0 });
@@ -181485,7 +181612,7 @@ static nx_opt_m36_Toml nx_Parser_scalar_1560(nx_ctx* c, nx_m36_Parser* self_0) {
   nx_sink _t60 = nx_sink_str(c, &_t59);
   nx_w(&_t60, (const uint8_t*)nx_str_482, 1);
   nx_w_sl(&_t60, tok_3);
-  nx_w(&_t60, (const uint8_t*)nx_str_5343, 25);
+  nx_w(&_t60, (const uint8_t*)nx_str_5346, 25);
   nx_string _t61 = _t59;
   nx_slice_check(0, _t61.len, _t61.len, "<std>/toml.nx:671");
   nx_sl_u8 _t62 = ((nx_sl_u8){ nx_padd(_t61.ptr, 0), _t61.len - 0 });
@@ -181529,14 +181656,14 @@ static nx_string nx_Status_text_1564(nx_ctx* c, nx_m37_Status* self_0) {
         {
           nx_string _t2 = {0}; _t2.ar = c->arena;
           nx_sink _t3 = nx_sink_str(c, &_t2);
-          nx_w(&_t3, (const uint8_t*)nx_str_5344, 7);
+          nx_w(&_t3, (const uint8_t*)nx_str_5347, 7);
           nx_w_int(&_t3, (nx_i128)(((*self_0)).signal_1), 10, 0, false);
           nx_string _t4 = _t2;
           return _t4;
         }
       nx_string _t5 = {0}; _t5.ar = c->arena;
       nx_sink _t6 = nx_sink_str(c, &_t5);
-      nx_w(&_t6, (const uint8_t*)nx_str_5344, 7);
+      nx_w(&_t6, (const uint8_t*)nx_str_5347, 7);
       nx_w_int(&_t6, (nx_i128)(((*self_0)).signal_1), 10, 0, false);
       nx_w(&_t6, (const uint8_t*)nx_str_696, 2);
       nx_w_sl(&_t6, s_1);
@@ -182236,7 +182363,7 @@ static void nx_Reader_close_1594(nx_ctx* c, nx_m38_Reader* self_0) {
 
 static nx_eu_m38_Writer nx_Writer_open_1595(nx_ctx* c, nx_sl_u8 path_0) {
   NX_UNUSED(c);
-  nx_eu_i64 _t1; { int64_t _h = nx_file_open(path_0, nx_lit(nx_str_5345, 1)); if (_h >= 0) { _t1.err = 0; _t1.val = _h; } else _t1.err = _h == -1 ? 7u : 8u; }
+  nx_eu_i64 _t1; { int64_t _h = nx_file_open(path_0, nx_lit(nx_str_5348, 1)); if (_h >= 0) { _t1.err = 0; _t1.val = _h; } else _t1.err = _h == -1 ? 7u : 8u; }
   nx_eu_i64 _t2 = _t1;
   if (_t2.err) {
     return (nx_eu_m38_Writer){ .err = _t2.err };
@@ -182582,7 +182709,7 @@ static void nx_Worker_Late_join_1615(nx_ctx* c, nx_m35_Worker__m35_Late* self_0)
   NX_UNUSED(c);
     if (((*self_0)).joined_2)
     {
-      { char _pb[256]; snprintf(_pb, sizeof _pb, "%.*s", (int)(nx_lit(nx_str_5346, 19).len > 255 ? 255 : nx_lit(nx_str_5346, 19).len), (const char*)nx_lit(nx_str_5346, 19).ptr); nx_panic(_pb, "<std>/thread.nx:108"); }
+      { char _pb[256]; snprintf(_pb, sizeof _pb, "%.*s", (int)(nx_lit(nx_str_5349, 19).len > 255 ? 255 : nx_lit(nx_str_5349, 19).len), (const char*)nx_lit(nx_str_5349, 19).ptr); nx_panic(_pb, "<std>/thread.nx:108"); }
     }
   nx_thread_join(((*self_0)).handle_1, "<std>/thread.nx:109");
   (*self_0).joined_2 = true;
@@ -182904,7 +183031,7 @@ static void nx_Worker_Bumper_join_1633(nx_ctx* c, nx_m35_Worker__m35_Bumper* sel
   NX_UNUSED(c);
     if (((*self_0)).joined_2)
     {
-      { char _pb[256]; snprintf(_pb, sizeof _pb, "%.*s", (int)(nx_lit(nx_str_5346, 19).len > 255 ? 255 : nx_lit(nx_str_5346, 19).len), (const char*)nx_lit(nx_str_5346, 19).ptr); nx_panic(_pb, "<std>/thread.nx:108"); }
+      { char _pb[256]; snprintf(_pb, sizeof _pb, "%.*s", (int)(nx_lit(nx_str_5349, 19).len > 255 ? 255 : nx_lit(nx_str_5349, 19).len), (const char*)nx_lit(nx_str_5349, 19).ptr); nx_panic(_pb, "<std>/thread.nx:108"); }
     }
   nx_thread_join(((*self_0)).handle_1, "<std>/thread.nx:109");
   (*self_0).joined_2 = true;
@@ -182963,7 +183090,7 @@ static void nx_Worker_Producer_join_1639(nx_ctx* c, nx_m35_Worker__m35_Producer*
   NX_UNUSED(c);
     if (((*self_0)).joined_2)
     {
-      { char _pb[256]; snprintf(_pb, sizeof _pb, "%.*s", (int)(nx_lit(nx_str_5346, 19).len > 255 ? 255 : nx_lit(nx_str_5346, 19).len), (const char*)nx_lit(nx_str_5346, 19).ptr); nx_panic(_pb, "<std>/thread.nx:108"); }
+      { char _pb[256]; snprintf(_pb, sizeof _pb, "%.*s", (int)(nx_lit(nx_str_5349, 19).len > 255 ? 255 : nx_lit(nx_str_5349, 19).len), (const char*)nx_lit(nx_str_5349, 19).ptr); nx_panic(_pb, "<std>/thread.nx:108"); }
     }
   nx_thread_join(((*self_0)).handle_1, "<std>/thread.nx:109");
   (*self_0).joined_2 = true;
@@ -183006,7 +183133,7 @@ static int64_t nx_Thread_Range_i64_join_1642(nx_ctx* c, nx_m35_Thread__m35_Range
   NX_UNUSED(c);
     if (((*self_0)).joined_2)
     {
-      { char _pb[256]; snprintf(_pb, sizeof _pb, "%.*s", (int)(nx_lit(nx_str_5346, 19).len > 255 ? 255 : nx_lit(nx_str_5346, 19).len), (const char*)nx_lit(nx_str_5346, 19).ptr); nx_panic(_pb, "<std>/thread.nx:67"); }
+      { char _pb[256]; snprintf(_pb, sizeof _pb, "%.*s", (int)(nx_lit(nx_str_5349, 19).len > 255 ? 255 : nx_lit(nx_str_5349, 19).len), (const char*)nx_lit(nx_str_5349, 19).ptr); nx_panic(_pb, "<std>/thread.nx:67"); }
     }
   nx_thread_join(((*self_0)).handle_1, "<std>/thread.nx:68");
   (*self_0).joined_2 = true;
@@ -183062,7 +183189,7 @@ static size_t nx_Thread_CcJob_usize_join_1645(nx_ctx* c, nx_m35_Thread__CcJob_us
   NX_UNUSED(c);
     if (((*self_0)).joined_2)
     {
-      { char _pb[256]; snprintf(_pb, sizeof _pb, "%.*s", (int)(nx_lit(nx_str_5346, 19).len > 255 ? 255 : nx_lit(nx_str_5346, 19).len), (const char*)nx_lit(nx_str_5346, 19).ptr); nx_panic(_pb, "<std>/thread.nx:67"); }
+      { char _pb[256]; snprintf(_pb, sizeof _pb, "%.*s", (int)(nx_lit(nx_str_5349, 19).len > 255 ? 255 : nx_lit(nx_str_5349, 19).len), (const char*)nx_lit(nx_str_5349, 19).ptr); nx_panic(_pb, "<std>/thread.nx:67"); }
     }
   nx_thread_join(((*self_0)).handle_1, "<std>/thread.nx:68");
   (*self_0).joined_2 = true;
@@ -183077,7 +183204,7 @@ static nx_CcJob* nx_Thread_CcJob_usize_arg_1646(nx_ctx* c, nx_m35_Thread__CcJob_
   NX_UNUSED(c);
     if ((!(((*self_0)).joined_2)))
     {
-      { char _pb[256]; snprintf(_pb, sizeof _pb, "%.*s", (int)(nx_lit(nx_str_5347, 57).len > 255 ? 255 : nx_lit(nx_str_5347, 57).len), (const char*)nx_lit(nx_str_5347, 57).ptr); nx_panic(_pb, "<std>/thread.nx:75"); }
+      { char _pb[256]; snprintf(_pb, sizeof _pb, "%.*s", (int)(nx_lit(nx_str_5350, 57).len > 255 ? 255 : nx_lit(nx_str_5350, 57).len), (const char*)nx_lit(nx_str_5350, 57).ptr); nx_panic(_pb, "<std>/thread.nx:75"); }
     }
   nx_CcJob* _t1 = &((*self_0).cell_0.ptr[nx_idx(((size_t)0ULL), (*self_0).cell_0.len, "<std>/thread.nx:76")].arg_1);
   return _t1;
