@@ -1,5 +1,5 @@
 <div class="hero">
-<img src="assets/banner.svg" alt="Nexium" style="max-width: 640px; width: 100%">
+<picture><source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.svg"><img src="assets/banner-light.svg" alt="Nexium" style="max-width: 640px; width: 100%"></picture>
 <p class="tag">Nexium is a language complete enough to build everything in, that is also the best thing to adopt for one piece of something else.</p>
 </div>
 

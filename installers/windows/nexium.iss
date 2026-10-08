@@ -13,7 +13,7 @@
 ; buttons, and a finish page that can open the README, the changelog, or a
 ; console running `nx doctor`.
 ;
-; The wizard images are drawn by scripts/make_wizard_images.py.
+; The wizard images are drawn by scripts/make_assets.py.
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"

@@ -618,8 +618,8 @@ fn close_lists(out: *mut String, depths: *mut List(usize), ordered: *mut List(bo
 // ----- the page shell -----------------------------------------------------------------
 
 const CSS = r"
-:root { --bg: #ffffff; --fg: #1b1f27; --muted: #5d6675; --line: #e3e6eb; --side: #f6f7f9; --accent: #5b4bd6; --accent-2: #0f9d8a; --code-bg: #f3f4f7; --k: #a626a4; --t: #0b6e99; --s: #3e7f2f; --n: #b36b00; --c: #7a8290; --f: #4b5bd6; --b: #c0392b; }
-@media (prefers-color-scheme: dark) { :root { --bg: #0f1117; --fg: #e6e8ee; --muted: #9aa3b2; --line: #262b36; --side: #141821; --accent: #9d8cff; --accent-2: #4fd1c5; --code-bg: #171b25; --k: #d68cf0; --t: #67c8ff; --s: #9ad27a; --n: #f0b25a; --c: #7d8798; --f: #9fb0ff; --b: #ff7b72; } }
+:root { --bg: #f6f1e7; --fg: #1f2a3a; --muted: #5c6878; --line: #ddd5c5; --side: #efe8da; --accent: #35557a; --accent-2: #d9684b; --code-bg: #ede6d8; --k: #7a3f8f; --t: #0b6e99; --s: #3e7f2f; --n: #a0620a; --c: #7a8290; --f: #35557a; --b: #c0392b; }
+@media (prefers-color-scheme: dark) { :root { --bg: #1b2a3c; --fg: #e6ecf1; --muted: #9fb0c2; --line: #2e4258; --side: #142030; --accent: #9fc0dc; --accent-2: #e08a6c; --code-bg: #142030; --k: #d6a4ec; --t: #7fcbff; --s: #9ad27a; --n: #f0b25a; --c: #8a9bab; --f: #b8cde4; --b: #ff8c7a; } }
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
 body { margin: 0; font: 16px/1.6 -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: var(--fg); background: var(--bg); }
@@ -637,7 +637,7 @@ nav.side .brand img { width: 30px; height: 30px; }
 nav.side h4 { margin: 1.1rem 0 0.35rem; font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
 nav.side a { display: block; padding: 0.22rem 0.5rem; border-radius: 6px; color: var(--fg); font-size: 0.93rem; }
 nav.side a:hover { background: var(--line); text-decoration: none; }
-nav.side a.current { background: var(--accent); color: #fff; }
+nav.side a.current { background: var(--accent); color: var(--bg); }
 nav.side a .num { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 0.35rem; }
 nav.side a.current .num { color: #eee; }
 main { padding: 2rem 3rem 4rem; max-width: 62rem; }
@@ -687,7 +687,7 @@ footer { margin-top: 3rem; color: var(--muted); font-size: 0.85rem; }
 .two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1rem; }
 .play-bar { display: flex; align-items: center; gap: 0.5rem; margin: -0.6rem 0 0.8rem; flex-wrap: wrap; }
 .play-bar button, .play-guess button { font: inherit; font-size: 0.85rem; padding: 0.25rem 0.9rem; border-radius: 6px; border: 1px solid var(--line); background: var(--side); color: var(--fg); cursor: pointer; }
-.play-bar button.play-run { background: var(--accent); border-color: var(--accent); color: #fff; }
+.play-bar button.play-run { background: var(--accent); border-color: var(--accent); color: var(--bg); }
 .play-bar button:disabled { opacity: 0.6; cursor: progress; }
 .play-status { font-size: 0.85rem; color: var(--muted); }
 pre.code code[contenteditable] { outline: none; display: block; min-height: 1.5em; caret-color: var(--accent); }
@@ -1246,7 +1246,7 @@ fn main() -> u8 {
     fs.write(fs.join(out_dir[..], "style.css")[..], CSS) catch { eprintln("error: cannot write the stylesheet", .{}); return 1 }
     // the playground's page half; the compiler (play/nx.wasm) is built by the Pages workflow
     fs.copy("site/play.js", fs.join(out_dir[..], "play.js")[..]) catch { eprintln("error: cannot copy site/play.js", .{}); return 1 }
-    for a in ["logo.svg", "banner.svg", "icon-256.png", "social-preview.png"] {
+    for a in ["logo.svg", "banner-light.svg", "banner-dark.svg", "icon-256.png", "social-preview.png"] {
         fs.copy(fs.join("assets", a)[..], fs.join(fs.join(out_dir[..], "assets")[..], a)[..]) catch { eprintln("warning: cannot copy assets/{}", .{a}) }
     }
     fs.write(fs.join(out_dir[..], ".nojekyll")[..], "") catch { }

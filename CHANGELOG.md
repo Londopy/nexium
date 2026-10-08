@@ -11,6 +11,15 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
 ## [Unreleased]
 
 ### Added
+- A new mark, and every asset drawn from it by one script
+  (`scripts/make_assets.py`, Pillow and nothing else): Fuji over a lake,
+  the lake reflecting the mountain as `nx`, indigo on washi by day and
+  the same scene by night under a dark sky. `assets/logo.svg` switches
+  itself under `prefers-color-scheme: dark`; the README's banner is a
+  `<picture>` with a light and a dark file; the social preview, the icon
+  at every size, the VS Code icon and the installer's wizard images are
+  the same scene. The site and the Topo take the mark's palette, day and
+  night. `scripts/make_icon.py` and `make_wizard_images.py` are gone.
 
 - `m.get_or_put(key, default)`: the value of `key` as a `*mut V`, put in
   with `default` when the key is new, in one lookup (decision 125), so
