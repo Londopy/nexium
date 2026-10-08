@@ -11,6 +11,9 @@ washi; by night the same scene under a dark sky. Writes:
     assets/social-preview.svg/.png  1280 x 640, the GitHub social preview
     assets/icon-256.png             the app icon, and
     assets/icon.ico                 the same at 16 to 256
+    assets/icon-circle-1024.png     the scene composed for a circle (Discord, avatars)
+    assets/icon-small.svg           the mark for tiny places (a browser tab, a window's
+    assets/icon-small.ico, -64.png  title bar): the peak, the water and the sun, no letters
     editors/vscode/icon.png
     installers/windows/wizard-large.bmp, wizard-small.bmp
 
@@ -19,7 +22,7 @@ Open Font License) are outlines in this file, and the rasters are drawn by
 the small path rasterizer below, since Pillow reads no SVG.
 
     python scripts/make_assets.py            # everything
-    python scripts/make_assets.py icon       # one group: logo, banner, social, icon, installer
+    python scripts/make_assets.py icon       # one group: logo, banner, social, icon, circle, small, installer
 """
 import math
 import os
@@ -661,15 +664,18 @@ def mask_of(el, size, S):
     return m
 
 
-def raster(W, H, bg, els, S=4, rx=0):
+def raster(W, H, bg, els, S=4, rx=0, circle=False):
     size = (W * S, H * S)
     canvas = Image.new("RGB", size, hexrgb(bg))
     for el in els:
         canvas.paste(hexrgb(el.color), mask=mask_of(el, size, S))
     out = canvas.resize((W, H), Image.LANCZOS)
-    if rx:
+    if rx or circle:
         a = Image.new("L", size, 0)
-        ImageDraw.Draw(a).rounded_rectangle((0, 0, size[0] - 1, size[1] - 1), radius=rx * S, fill=255)
+        if circle:
+            ImageDraw.Draw(a).ellipse((0, 0, size[0] - 1, size[1] - 1), fill=255)
+        else:
+            ImageDraw.Draw(a).rounded_rectangle((0, 0, size[0] - 1, size[1] - 1), radius=rx * S, fill=255)
         out = out.convert("RGBA")
         out.putalpha(a.resize((W, H), Image.LANCZOS))
     return out
@@ -703,6 +709,29 @@ def social(P):
     url, w = prose("londopy.github.io/nexium", 27, 1280 - 60 - w, 600)
     els.append(El("fill", url, P["wordmark"]))
     return bg, els
+
+
+def small_scene(P, size):
+    """The mark at sizes where letters fail: the peak with its cap, the
+    sky, the water with the mirrored flank, the sun as a dot."""
+    s = size / 256
+    horizon, top, cx = 176 * s, 46 * s, 128 * s
+    els = [El("fill", rect(0, 0, size, 26 * s), P["skywash"]),
+           El("fill", circle(198 * s, 92 * s, 17 * s), P["disc"], P["disc_op"])]
+    peak = fuji(-30 * s, 286 * s, cx, horizon, top)
+    els.append(El("fill", peak, P["mountain"]))
+    els.append(El("fill", cap(cx, top, horizon - top), P["snow"]))
+    els.append(El("fill", rect(0, horizon, size, size - horizon), P["water"]))
+    inverted = mapped(peak, lambda x, y: (x, horizon + (horizon - y) * 0.55))
+    els.append(El("fill", inverted, P["reflection"], 0.45))
+    return P["paper"], els
+
+
+def circle_icon(P, size):
+    """The scene composed for a circle: the horizon higher and the letters
+    closer under the mountain, so the rim cuts only sky and water."""
+    s = size / 256 * 0.74
+    return scene(P, size, size, size * 0.60, size / 2, size * 1.02, s)
 
 
 def wizard_large(P):
@@ -746,13 +775,31 @@ def main(groups):
         sizes = [16, 24, 32, 48, 64, 128, 256]
         images = {}
         for n in sizes:
-            bg, els = square(DAY, n)
+            # the title bar and the taskbar get the small composition
+            bg, els = small_scene(DAY, n) if n <= 32 else square(DAY, n)
             images[n] = raster(n, n, bg, els, S=8 if n <= 64 else 4, rx=n * 0.11)
         images[256].save(os.path.join(ROOT, "assets", "icon-256.png"), optimize=True)
         images[256].save(os.path.join(ROOT, "editors", "vscode", "icon.png"), optimize=True)
         images[256].save(os.path.join(ROOT, "assets", "icon.ico"), sizes=[(n, n) for n in sizes],
                          append_images=[images[n] for n in sizes if n != 256])
         print("wrote assets/icon-256.png, assets/icon.ico, editors/vscode/icon.png")
+    if want("circle"):
+        bg, els = circle_icon(DAY, 1024)
+        raster(1024, 1024, bg, els, S=3, circle=True).save(os.path.join(ROOT, "assets", "icon-circle-1024.png"), optimize=True)
+        print("wrote assets/icon-circle-1024.png")
+    if want("small"):
+        d_bg, d_els = small_scene(DAY, 256)
+        n_bg, n_els = small_scene(NIGHT, 256)
+        save_text("assets/icon-small.svg", svg(256, 256, [("day", d_bg, d_els), ("night", n_bg, n_els)], rx=28, title="Nexium"))
+        sizes = [16, 24, 32, 48, 64]
+        images = {}
+        for n in sizes:
+            bg, els = small_scene(DAY, n)
+            images[n] = raster(n, n, bg, els, S=8, rx=n * 0.11)
+        images[64].save(os.path.join(ROOT, "assets", "icon-small-64.png"), optimize=True)
+        images[64].save(os.path.join(ROOT, "assets", "icon-small.ico"), sizes=[(n, n) for n in sizes],
+                        append_images=[images[n] for n in sizes if n != 64])
+        print("wrote assets/icon-small.svg, assets/icon-small.ico, assets/icon-small-64.png")
     if want("installer"):
         bg, els = wizard_large(DAY)
         raster(164, 314, bg, els, S=4).convert("RGB").save(os.path.join(ROOT, "installers", "windows", "wizard-large.bmp"))
