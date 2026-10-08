@@ -57,7 +57,7 @@ fn plan() -> List(Page) {
     ]
     for d in docs { pages.append(Page{ .section = String.from("docs"), .src = String.from(d.0), .out = format("docs/{}.html", .{d.1}), .title = String.new() }) }
     let project = [
-        ("SPEC.md", "spec"), ("ROADMAP.md", "roadmap"), ("DECISIONS.md", "decisions"), ("CHANGELOG.md", "changelog"),
+        ("SPEC.md", "spec"), ("ROADMAP.md", "roadmap"), ("docs/progress.md", "progress"), ("DECISIONS.md", "decisions"), ("CHANGELOG.md", "changelog"),
         ("CONTRIBUTING.md", "contributing"), ("KNOWN_ISSUES.md", "known-issues"), ("SECURITY.md", "security"), ("CLA.md", "cla"),
     ]
     for d in project { pages.append(Page{ .section = String.from("project"), .src = String.from(d.0), .out = format("docs/{}.html", .{d.1}), .title = String.new() }) }

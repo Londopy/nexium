@@ -21,9 +21,10 @@ const browser = spawn(chrome, ['--headless=new', '--no-sandbox', '--disable-gpu'
 
 let text = '';
 try {
-  // the browser writes the port it chose into the profile
+  // the browser writes the port it chose into the profile; a cold runner's
+  // first start can take well over the 15 seconds this once allowed
   let port = '';
-  for (let i = 0; i < 150 && !port; i++) {
+  for (let i = 0; i < 600 && !port; i++) {
     await sleep(100);
     try { port = readFileSync(join(profile, 'DevToolsActivePort'), 'utf8').split('\n')[0].trim(); } catch { }
   }

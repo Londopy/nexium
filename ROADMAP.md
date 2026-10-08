@@ -11,6 +11,9 @@ something else.* The second half is ahead of the first, on purpose.
 
 ## Now: 1.5.0, and 1.6 next
 
+The work in progress, dated and with its numbers, is in
+[docs/progress.md](docs/progress.md); this file is the plan.
+
 What exists and is verified on Windows, Linux, and macOS (1.1 to 1.5 each
 have a section under *Past 1.0* saying what it added):
 
@@ -812,14 +815,30 @@ proves.
 
 ### 1.6: the runtime that release builds deserve
 
+Status: under way on `main`. The first measurement, with the same C
+compiler on both sides, found three of the four benchmarks (`fib`,
+`nbody`, `sieve`) already at C's speed in `fast` mode; the gap is `words`,
+maps and strings, which has gone from 3.0 times C to 2.0 on Windows and
+1.5 on Linux (`get_or_put`, integers formatted in 64 bits, a string's
+first block of 16 bytes). Safe mode's cost is the overflow checks on
+calls, 1.5 times C on `fib`.
+
 - ARC elision: retain/release pairs the checker proves redundant (a `ref
   class` passed down and back within one function) are not emitted; the
   `refcounts` effect reports the ones that remain.
 - Bounds-check elimination in loops from the range analysis; `nx audit`
   shows which checks survive in a hot function.
 - `Map`: a hash chosen per key type (the iteration order is documented
-  since 1.4: the order the keys were first put); small-string optimization for `String`; `List` growth policy
-  documented and tunable per `using` block.
+  since 1.4: the order the keys were first put); small-string optimization
+  for `String`; `List` growth policy documented and tunable per `using`
+  block. (Done: `Map.get_or_put`, an update in one lookup, decision 125;
+  an integer written with 64-bit arithmetic where each digit was a
+  128-bit division; a string's first block 16 bytes, one allocation for a
+  short string instead of two. Open: small-string optimization does not
+  fit how a `String` is passed, by copy, with slices into it allowed to
+  outlive the call; a cache of small freed blocks in the allocator gives
+  most of the gain on Windows, where the C library's allocator has none,
+  and is measured at 24% on `words`.)
 - `for parallel`: work stealing, a chunk size heuristic, and nested
   parallel loops that share one pool.
 - Compile time: the checker's monomorphization cache, and preprocessed
