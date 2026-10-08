@@ -12,14 +12,46 @@ Everest: Khumbu Icefall. Under way on `main` since 1.5.0.
 
 **Where it stands.** With the same C compiler on both sides (zig cc on
 Windows, gcc on Linux), three of the four benchmarks run at C's speed in
-`fast` mode: `fib` 1.02×, `nbody` 0.96×, `sieve` 1.00×. The gap is `words`,
-maps and strings: 2.0× C on Windows and 1.5× on Linux, from 3.0× and 1.9×
-at 1.5.0. `safe` mode costs 1.5× on `fib`, the overflow checks on every
-call; nothing measurable on the other three.
+`fast` mode: `fib` 0.99×, `nbody` 0.87×, `sieve` 0.93×. The gap is `words`,
+maps and strings: 1.6× C on Windows (0.66 s against 0.42), and on Linux
+under WSL between 1.6× and 1.8× depending on the run (0.82 s against 0.45
+on the last one), from 3.0× and 1.9× at 1.5.0. `safe` mode costs 1.5× on
+`fib`, the overflow checks on every call; nothing measurable on the other
+three.
 
-**Next.** A cache of small freed blocks in the allocator (decided,
-measured, not started; see below), then a benchmark that uses `ref class`,
-so the ARC elision has a number to move.
+**Next.** A benchmark that uses `ref class`, so the ARC elision has a
+number to move.
+
+### 2026-10-08, small blocks cached in the allocator (7203e50)
+
+- Freed blocks of up to 64 bytes and a little over are kept, in four
+  classes 16 bytes apart, up to 64 per class, per thread, and reused before
+  `malloc` is asked (decision 126); a thread the runtime started, and an
+  exported call, return their blocks when they end. The classes end where
+  the C library's steps do: measured on 64-bit Windows and glibc, a block
+  of 24, 40, 56 or 72 bytes costs their allocators what one of 16, 32, 48
+  or 64 does, so the classes end there and a cached block costs no more
+  than its request would; elsewhere they end at the multiples of 16.
+  Small-string optimization is dropped, the reason in the roadmap.
+- Measured, the same C compiler on both sides, medians of nine alternating
+  runs: `words` 0.87 s → 0.66 s on Windows with zig cc (2.1× C → 1.6×, C
+  at 0.42 s); Linux with gcc under WSL unchanged, 0.82 s before and 0.82
+  after in one pass (C at 0.45 s; WSL's figures move between passes, 0.70 s
+  against 0.43 in an earlier one, so only a pass's own before and after
+  compare). On Windows the compiler emits its own C in 0.58 s where it took
+  0.70. `fib`, `nbody` and `sieve`, which allocate nothing in their loops,
+  stay at C's speed (0.99×, 0.87×, 0.93×).
+- Tests: the spec case `s5_small_blocks`, compiled, and under `nx leaks`
+  with the old runtime's counts to the allocation. CI's sanitizer job
+  builds with the cache compiled out, so the cache itself was run under
+  gcc's AddressSanitizer and UBSan in WSL with `-DNX_SMALL_CACHE=1`, over
+  all 80 spec cases, locally only; the case also runs clean there with the
+  cache off, and under UBSan with it on.
+- Found on the way, logged in `KNOWN_ISSUES.md`: `nx leaks` miscounts what
+  a thread allocated and the joiner releases (`s13_concurrency` shows it),
+  and a debug build does not fill a released container buffer with `0xDD`.
+  Fixed beside it: `bootstrap\build.ps1`'s stage 2, broken since the script
+  was written.
 
 ### 2026-10-04, `Map.get_or_put` (61ce3be)
 
@@ -40,7 +72,7 @@ so the ARC elision has a number to move.
   freed blocks in the allocator was measured instead: `words` 0.78 s →
   0.59 s on Windows (2.0× C → 1.5×), nothing on Linux, whose C library
   already caches them. Decided 2026-10-08: the cache, as the roadmap's
-  next item; small-string optimization is dropped. Not started.
+  next item; small-string optimization is dropped. Landed, the entry above.
 
 ### 2026-10-04, faster short strings (694b36c)
 
