@@ -29,6 +29,15 @@ mountain; [docs/release-names.md](docs/release-names.md) has the scheme.
   (rule V3). The `words` benchmark, written this way, takes two thirds of
   the time it took with `get` and then `put` on Windows (2.0 times C's,
   from 3.0), and the same on Linux with gcc.
+- A fifth benchmark, `trees`: 174,754 binary trees of `ref class` nodes
+  (every second depth from 4 to 16, a stretch tree of depth 18 and a
+  long-lived one of depth 17), built, counted and dropped, in the five
+  languages (`bench/trees.*`, decision 127). Counting binds each child
+  with `let`, a copy retained and released: the pair the roadmap's ARC
+  elision item is about, twice per inner node, listed by `nx refcounts
+  bench/trees.nx`. On Windows with zig cc, Nexium runs it in 1.08 seconds
+  against C's 0.85 (1.3 times, in both modes), Rust's 0.94 and Go's 0.50
+  with its collector; Python takes 13.
 
 ### Changed
 

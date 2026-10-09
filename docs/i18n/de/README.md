@@ -361,7 +361,7 @@ using arena {
 - [Installation](../../install.md) (Englisch): der Windows-Installer, das macOS/Linux-Skript, Bauen aus dem Quelltext, Prüfsummen, und wie `nx` einen C-Compiler findet.
 - [Pakete](../../packages.md) (Englisch): `nexium.toml`, `nx add`, `nx fetch`, Git- oder Pfadabhängigkeiten, die Lock-Datei.
 - [Standardbibliothek](../../std.md) (Englisch): die in Nexium geschriebenen Module (`std.strings`, `std.lists`, `std.bytes`, `std.num`, `std.json`, `std.args`, `std.fs`, `std.time`, `std.regex`, `std.text`, `std.testing`, `std.stream`, `std.net`, `std.http`, `std.thread`, `std.process`, `std.sort`, `std.heap`, `std.set`, `std.deque`, `std.hash`, `std.path`, `std.env`, `std.uuid`, `std.log`, `std.csv`, `std.toml`, `std.base64`, `std.websocket`).
-- [Die Zahlen](https://londopy.github.io/nexium/docs/numbers.html) (Englisch): vier Programme in fünf Sprachen, wöchentlich auf einem Runner gemessen.
+- [Die Zahlen](https://londopy.github.io/nexium/docs/numbers.html) (Englisch): fünf Programme in fünf Sprachen, wöchentlich auf einem Runner gemessen.
 - [nexium-gui](../../gui.md) (Englisch): die Immediate-Mode-GUI-Bibliothek und wie man ein Widget schreibt.
 - [Dein Programm veröffentlichen](../../releasing-your-program.md) (Englisch): Binaries für drei Plattformen aus einem Tag, Installer optional.
 - [Editor-Unterstützung](../../../editors) (Englisch): VS Code, Vim, Neovim, Helix, Zed, Emacs, Kate, JetBrains, Sublime Text, Notepad++, nano, und `nx lsp` für alle anderen.
@@ -390,7 +390,8 @@ bei Gleitkomma etwas schneller als Rust und Go, bei Arrays etwas langsamer. Bei
 Aufrufen ist `fast` so schnell wie Rust, mit der doppelten Zeit von C; die
 Überlaufprüfungen von `safe` kosten dort 70 % mehr. Maps und Strings laufen so
 schnell wie in Go, mit etwa der doppelten Zeit von C. Python braucht 3- bis
-74-mal so lange wie Nexium `fast`.
+74-mal so lange wie Nexium `fast`. `trees`, das fünfte Programm, kam nach
+dieser Momentaufnahme hinzu; die Zahlenseite hat es.
 
 `safe` behält die Überlauf- und Grenzprüfungen, wie `nx ship` und `nx bench`
 ohne Angabe bauen; `fast` (`--mode fast`) lässt sie weg. [Die
@@ -482,7 +483,7 @@ Graphem-Cluster und die Groß- und Kleinschreibung von Unicode, und
 `std.testing` Eigenschaftstests, die verkleinern, was sie finden. Als
 Nächstes kommt 1.6, die Laufzeit, die Release-Builds verdienen. Was Nexium noch nicht ist, und wo jeder Punkt beantwortet wird,
 steht in [einem Abschnitt der Roadmap](../../../ROADMAP.md#what-10-is-not-yet): die
-Benchmarks sind vier Programme ([Geschwindigkeit](#geschwindigkeit)), und das
+Benchmarks sind fünf Programme ([Geschwindigkeit](#geschwindigkeit)), und das
 Ökosystem besteht aus einem Maintainer und vier Projekten außerhalb des
 Baums ([oben](#in-freier-wildbahn)). [`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md)
 führt jeden offenen Fehler mit seiner Lösung;
@@ -541,17 +542,17 @@ Ende von `std/text.nx`, `gui/font.bin`, Lock-Dateien):
 
 | Sprache | Zeilen | Anteil | was es ist |
 | --- | --- | --- | --- |
-| Nexium | 58.331 | 85,5 % | der Compiler und seine Werkzeuge (34.300 Zeilen unter `self/`), die Standardbibliothek (29 Module), der Test-Harness und der Fuzzer, Beispiele, die Programme des Tutorials, nexium-gui, der Site-Generator, vier Benchmarks |
-| C | 4.601 | 6,7 % | die Laufzeit (`nx_rt.h`, und `setjmp` für WebAssembly), die GUI-Fensterschicht, mitgeliefertes Test-C, die vier C-Benchmarks |
-| Python | 1.925 | 2,8 % | die Release-Skripte (Notes, Paketmanifeste, Wheels und npm-Pakete, die std-Dokumentation), der Generator der Unicode-Tabellen, der Link-Checker, die gdb- und lldb-Formatierer, der Benchmark-Runner und vier Benchmarks |
+| Nexium | 58.331 | 85,5 % | der Compiler und seine Werkzeuge (34.300 Zeilen unter `self/`), die Standardbibliothek (29 Module), der Test-Harness und der Fuzzer, Beispiele, die Programme des Tutorials, nexium-gui, der Site-Generator, fünf Benchmarks |
+| C | 4.601 | 6,7 % | die Laufzeit (`nx_rt.h`, und `setjmp` für WebAssembly), die GUI-Fensterschicht, mitgeliefertes Test-C, die fünf C-Benchmarks |
+| Python | 1.925 | 2,8 % | die Release-Skripte (Notes, Paketmanifeste, Wheels und npm-Pakete, die std-Dokumentation), der Generator der Unicode-Tabellen, der Link-Checker, die gdb- und lldb-Formatierer, der Benchmark-Runner und fünf Benchmarks |
 | JavaScript, TypeScript | 1.189 | 1,7 % | die VS-Code-Erweiterung, die tree-sitter-Grammatik, die WASI-Schicht des Playgrounds und der Loader, den `artifact wasm` mitliefert, samt seiner Prüfung im Browser |
 | Editor-Dateien | 1.103 | 1,6 % | tree-sitter-Queries, Emacs Lisp, Vim-Script, Lua für Neovim, ein Pygments-Lexer und die 25 Zeilen Rust, die Zed von einer Erweiterung verlangt |
 | Inno Setup, Shell, PowerShell | 879 | 1,3 % | das Skript des Windows-Installers, `install.sh`, `install.ps1`, die Chocolatey-Skripte, die Bootstrap-Skripte |
-| Rust, Go, Ruby | 213 | 0,3 % | je vier Benchmarks in Rust und Go, und die Homebrew-Formel |
+| Rust, Go, Ruby | 213 | 0,3 % | je fünf Benchmarks in Rust und Go, und die Homebrew-Formel |
 
 Im Compiler steckt kein Rust: der erste Compiler trieb die Portierung voran
 und wurde in 1.0 gelöscht (Entscheidung 90). Das verbliebene Rust ist der
-Kleber der Zed-Erweiterung, den Zed zu WebAssembly kompiliert, und vier
+Kleber der Zed-Erweiterung, den Zed zu WebAssembly kompiliert, und fünf
 Benchmark-Programme, geschrieben, um sich daran zu messen, neben ihren
 Go-Zwillingen. Zig steht nicht
 in der Tabelle, weil es im Baum keine Zig-Quellen gibt: `zig cc` ist der
@@ -574,7 +575,7 @@ topo/           das Tutorial: die Kapitel und die Programme, die sie zeigen (von
 site/           der Generator der Dokumentationsseite, ein Nexium-Programm
 tests/          der Harness (run.nx), die Konformitätssuite der Spezifikation (tests/spec), die Compile-Fail-Fälle, die Debugger-Prüfung
 docs/           wie es funktioniert, Sprachreferenz, Einbettungsleitfaden, Übersetzungen in i18n/
-bench/          vier Programme in fünf Sprachen hinter der Zahlenseite
+bench/          fünf Programme in fünf Sprachen hinter der Zahlenseite
 installers/     das Skript des Windows-Installers, install.sh und install.ps1, die winget- und Chocolatey-Manifeste
 docker/         die Compiler-Images für ghcr.io (Debian und Alpine)
 Formula/, bucket/  dieses Repository als Homebrew-Tap und Scoop-Bucket (bei jeder Release geschrieben)

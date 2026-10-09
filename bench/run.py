@@ -18,7 +18,7 @@ from datetime import date
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BENCH = os.path.join(ROOT, "bench")
 OUT = os.path.join(ROOT, "nx-out", "bench")
-PROGRAMS = ["fib", "nbody", "sieve", "words"]
+PROGRAMS = ["fib", "nbody", "sieve", "words", "trees"]
 EXE = ".exe" if os.name == "nt" else ""
 # the programs' sizes: a baseline that measured other ones is not compared
 # (2: each program about a second in the compiled languages)
@@ -172,7 +172,7 @@ if args.out:
 if args.page:
     langs = [l for l, _ in languages]
     lines = ["# The numbers", "",
-             "Four programs written the same way in five languages, timed on one machine",
+             "Five programs written the same way in five languages, timed on one machine",
              "on one day: the median wall time of several runs, in seconds, smaller is",
              "better. Each runs for about a second in the compiled languages, so starting",
              "the process is noise rather than the measurement. What each program",

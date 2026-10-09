@@ -353,7 +353,7 @@ using arena {
 - [설치](../../install.md) (영어): Windows 설치 프로그램, macOS/Linux 스크립트, 소스 빌드, 체크섬, `nx`가 C 컴파일러를 찾는 방법.
 - [패키지](../../packages.md) (영어): `nexium.toml`, `nx add`, `nx fetch`, git 또는 경로 의존성, 잠금 파일.
 - [표준 라이브러리](../../std.md) (영어): Nexium으로 쓰인 모듈(`std.strings`, `std.lists`, `std.bytes`, `std.num`, `std.json`, `std.args`, `std.fs`, `std.time`, `std.regex`, `std.text`, `std.testing`, `std.stream`, `std.net`, `std.http`, `std.thread`, `std.process`, `std.sort`, `std.heap`, `std.set`, `std.deque`, `std.hash`, `std.path`, `std.env`, `std.uuid`, `std.log`, `std.csv`, `std.toml`, `std.base64`, `std.websocket`).
-- [수치](https://londopy.github.io/nexium/docs/numbers.html) (영어): 다섯 언어로 쓴 네 프로그램을 한 러너에서 매주 측정.
+- [수치](https://londopy.github.io/nexium/docs/numbers.html) (영어): 다섯 언어로 쓴 다섯 프로그램을 한 러너에서 매주 측정.
 - [nexium-gui](../../gui.md) (영어): 즉시 모드 GUI 라이브러리와 위젯 작성법.
 - [프로그램 릴리스하기](../../releasing-your-program.md) (영어): 태그 하나로 세 플랫폼의 바이너리를, 설치 프로그램은 선택.
 - [에디터 지원](../../../editors) (영어): VS Code, Vim, Neovim, Helix, Zed, Emacs, Kate, JetBrains, Sublime Text, Notepad++, nano, 나머지는 `nx lsp`로.
@@ -378,7 +378,8 @@ GitHub 러너에서 측정했습니다(2026-09-25, 7회의 중앙값, 5초가 �
 부동소수점과 배열에서 Nexium은 C보다 많아야 3분의 1 더 걸립니다. 부동소수점에서는 Rust와
 Go보다 조금 빠르고, 배열에서는 조금 느립니다. 함수 호출에서 `fast`는 Rust처럼 C의 2배 시간이
 걸리고, `safe`의 오버플로 검사는 여기에 70%를 더합니다. 맵과 문자열은 Go와 같은 속도로 C의
-약 2배 시간입니다. Python은 Nexium `fast`의 3~74배 시간이 걸립니다.
+약 2배 시간입니다. Python은 Nexium `fast`의 3~74배 시간이 걸립니다. 다섯째 프로그램
+`trees`는 이 측정 이후에 추가되었고, 수치 페이지에 있습니다.
 
 `safe`는 오버플로와 범위 검사를 유지하며 `nx ship`과 `nx bench`의 기본값이고,
 `fast`(`--mode fast`)는 검사를 뺍니다. [수치 페이지](https://londopy.github.io/nexium/docs/numbers.html) (영어)에는 C 대비 배수, 각 버전,
@@ -452,7 +453,7 @@ RISC-V 32용으로도(뒤의 둘은 QEMU 아래에서), Node.js 위의 WebAssemb
 변수와 설정 폴더, UUID, 로깅, CSV, TOML, base64 등이 있고, `Map`은 해시
 공격에 강하고 키를 넣은 순서를 지킵니다. `std.time`은 플랫폼의 데이터베이스에서 시간대를 읽고, `std.http`는 플랫폼 자체의 TLS나 nxtls 같은 TLS 계층을 거쳐 HTTPS를 쓰며, `std.websocket`도 마찬가지이고, [nexium-discord](https://github.com/Londopy/nexium-discord)가 그 위에 Discord 봇을 만듭니다. `std.process`는 실행 중인 프로그램과 주고받고, `std.thread`에는 select, 원자적 연산, 호출보다 먼저 끝나는 스레드가, `std.text`에는 자소 클러스터와 Unicode의 대소문자 변환이, `std.testing`에는 찾은 것을 줄여 주는 속성 테스트가 있습니다. 다음은 1.6, 릴리스 빌드에 걸맞은 런타임입니다. Nexium이 아직 아닌 것과 각각이
 어디서 답을 얻는지는 [로드맵의 한 절](../../../ROADMAP.md#what-10-is-not-yet)에 있습니다.
-벤치마크는 네 프로그램([속도](#속도))뿐이며, 생태계는 메인테이너 한 명과 트리 밖의
+벤치마크는 다섯 프로그램([속도](#속도))뿐이며, 생태계는 메인테이너 한 명과 트리 밖의
 프로젝트 넷입니다([위](#실제-사용)).
 [`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md)는 미해결 버그를 수정 방안과 함께,
 [`DECISIONS.md`](../../../DECISIONS.md)는 명세가 열려 있던 곳에서 내린 모든 결정을
@@ -503,17 +504,17 @@ sh bootstrap/build.sh     # nx.c -> nx0; nx0가 self/nx.nx를 빌드 -> nx1; nx1
 
 | 언어 | 줄 수 | 비율 | 무엇인가 |
 | --- | --- | --- | --- |
-| Nexium | 58,331 | 85.5% | 컴파일러와 그 도구(`self/` 아래 34,300줄), 표준 라이브러리(모듈 29개), 테스트 하네스와 퍼저, 예제, 튜토리얼의 프로그램, nexium-gui, 사이트 생성기, 벤치마크 넷 |
-| C | 4,601 | 6.7% | 런타임(`nx_rt.h`와 WebAssembly용 `setjmp`), GUI 창 계층, 동봉된 테스트용 C, C 벤치마크 넷 |
-| Python | 1,925 | 2.8% | 릴리스 스크립트(노트, 패키지 매니페스트, wheel과 npm 패키지, std 문서), Unicode 표 생성기, 링크 검사기, gdb와 lldb 포매터, 벤치마크 러너와 벤치마크 넷 |
+| Nexium | 58,331 | 85.5% | 컴파일러와 그 도구(`self/` 아래 34,300줄), 표준 라이브러리(모듈 29개), 테스트 하네스와 퍼저, 예제, 튜토리얼의 프로그램, nexium-gui, 사이트 생성기, 벤치마크 다섯 |
+| C | 4,601 | 6.7% | 런타임(`nx_rt.h`와 WebAssembly용 `setjmp`), GUI 창 계층, 동봉된 테스트용 C, C 벤치마크 다섯 |
+| Python | 1,925 | 2.8% | 릴리스 스크립트(노트, 패키지 매니페스트, wheel과 npm 패키지, std 문서), Unicode 표 생성기, 링크 검사기, gdb와 lldb 포매터, 벤치마크 러너와 벤치마크 다섯 |
 | JavaScript, TypeScript | 1,189 | 1.7% | VS Code 확장, tree-sitter 문법, 플레이그라운드의 WASI 계층, 그리고 `artifact wasm`이 함께 내보내는 로더와 그 브라우저 검사 |
 | 에디터 파일 | 1,103 | 1.6% | tree-sitter 쿼리, Emacs Lisp, Vim script, Neovim용 Lua, Pygments 렉서, 그리고 Zed가 확장에 요구하는 Rust 25줄 |
 | Inno Setup, 셸, PowerShell | 879 | 1.3% | Windows 설치 프로그램 스크립트, `install.sh`, `install.ps1`, Chocolatey 스크립트, 부트스트랩 스크립트 |
-| Rust, Go, Ruby | 213 | 0.3% | Rust와 Go에 벤치마크 넷씩, 그리고 Homebrew 포뮬러 |
+| Rust, Go, Ruby | 213 | 0.3% | Rust와 Go에 벤치마크 다섯씩, 그리고 Homebrew 포뮬러 |
 
 컴파일러에는 Rust가 없습니다. 첫 컴파일러는 이식을 이끌고 1.0에서 삭제되었으며(결정
 90), 남은 Rust는 Zed가 WebAssembly로 컴파일하는 Zed 확장의 접착 코드와, 비교 측정용으로
-쓴 벤치마크 프로그램 넷(Go 쌍둥이 곁에)뿐입니다. Zig가
+쓴 벤치마크 프로그램 다섯(Go 쌍둥이 곁에)뿐입니다. Zig가
 표에 없는 이유는 트리에 Zig 소스가 없기 때문입니다. `zig cc`는 `nx`가 실행하는 C
 컴파일러이며(Windows 설치 프로그램이 동봉하고, 설치 스크립트가 내려받음), C
 컴파일러를 쓰는 것이지 작성하는 것이 아닌 것과 같습니다.
@@ -533,7 +534,7 @@ topo/           튜토리얼: 각 장과 거기서 보여 주는 프로그램(�
 site/           문서 사이트 생성기. Nexium 프로그램
 tests/          하네스(run.nx), 명세 적합성 스위트(tests/spec), 컴파일 실패 케이스, 디버거 검사
 docs/           동작 원리, 언어 레퍼런스, 임베딩 가이드, i18n/의 번역
-bench/          수치 페이지 뒤의 다섯 언어 네 프로그램
+bench/          수치 페이지 뒤의 다섯 언어 다섯 프로그램
 installers/     Windows 설치 프로그램 스크립트, install.sh와 install.ps1, winget과 Chocolatey 매니페스트
 docker/         ghcr.io용 컴파일러 이미지(Debian과 Alpine)
 Formula/, bucket/  Homebrew tap이자 Scoop bucket으로서의 이 저장소(릴리스마다 작성)

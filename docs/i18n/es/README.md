@@ -361,7 +361,7 @@ using arena {
 - [Instalación](../../install.md) (inglés): el instalador de Windows, el script de macOS/Linux, la compilación desde fuente, las sumas de comprobación y cómo `nx` encuentra un compilador de C.
 - [Paquetes](../../packages.md) (inglés): `nexium.toml`, `nx add`, `nx fetch`, dependencias por git o por ruta, el archivo de bloqueo.
 - [Biblioteca estándar](../../std.md) (inglés): los módulos escritos en Nexium (`std.strings`, `std.lists`, `std.bytes`, `std.num`, `std.json`, `std.args`, `std.fs`, `std.time`, `std.regex`, `std.text`, `std.testing`, `std.stream`, `std.net`, `std.http`, `std.thread`, `std.process`, `std.sort`, `std.heap`, `std.set`, `std.deque`, `std.hash`, `std.path`, `std.env`, `std.uuid`, `std.log`, `std.csv`, `std.toml`, `std.base64`, `std.websocket`).
-- [Las cifras](https://londopy.github.io/nexium/docs/numbers.html) (inglés): cuatro programas en cinco lenguajes, medidos cada semana en un mismo runner.
+- [Las cifras](https://londopy.github.io/nexium/docs/numbers.html) (inglés): cinco programas en cinco lenguajes, medidos cada semana en un mismo runner.
 - [nexium-gui](../../gui.md) (inglés): la biblioteca de GUI de modo inmediato y cómo escribir un widget.
 - [Publicar tu programa](../../releasing-your-program.md) (inglés): binarios para tres plataformas a partir de una etiqueta, instaladores opcionales.
 - [Soporte de editores](../../../editors) (inglés): VS Code, Vim, Neovim, Helix, Zed, Emacs, Kate, JetBrains, Sublime Text, Notepad++, nano, y `nx lsp` para el resto.
@@ -390,7 +390,8 @@ más rápido que Rust y Go en coma flotante, algo más lento en arreglos. En
 llamadas, `fast` iguala a Rust con el doble del tiempo de C, y las
 comprobaciones de desbordamiento de `safe` añaden un 70 %. Los mapas y las
 cadenas van al ritmo de Go, con cerca del doble del tiempo de C. Python tarda
-de 3 a 74 veces lo que Nexium `fast`.
+de 3 a 74 veces lo que Nexium `fast`. `trees`, el quinto programa, se añadió
+después de esta instantánea; la página de cifras lo tiene.
 
 `safe` conserva las comprobaciones de desbordamiento y de límites, como
 compilan `nx ship` y `nx bench` si no se les indica otra cosa; `fast`
@@ -481,7 +482,7 @@ tiene select, operaciones atómicas e hilos que terminan antes que la llamada,
 `std.testing` pruebas de propiedades que reducen lo que encuentran. Después
 viene 1.6, el runtime que merecen las compilaciones de release. Lo que Nexium todavía no es, y dónde
 se responde cada punto, está en [una sección de la hoja de
-ruta](../../../ROADMAP.md#what-10-is-not-yet): las pruebas de rendimiento son cuatro
+ruta](../../../ROADMAP.md#what-10-is-not-yet): las pruebas de rendimiento son cinco
 programas ([Velocidad](#velocidad)), y el ecosistema es un solo mantenedor y
 cuatro proyectos fuera del árbol ([arriba](#en-el-mundo-real)). [`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md)
 lista cada error abierto con su arreglo;
@@ -542,17 +543,17 @@ los archivos de bloqueo):
 
 | lenguaje | líneas | proporción | qué es |
 | --- | --- | --- | --- |
-| Nexium | 58 331 | 85,5 % | el compilador y sus herramientas (34 300 líneas bajo `self/`), la biblioteca estándar (29 módulos), el arnés de pruebas y el fuzzer, los ejemplos, los programas del tutorial, nexium-gui, el generador del sitio, cuatro benchmarks |
-| C | 4 601 | 6,7 % | el runtime (`nx_rt.h`, y `setjmp` para WebAssembly), la capa de ventana de la GUI, C de prueba incluido, los cuatro benchmarks en C |
-| Python | 1 925 | 2,8 % | los scripts de release (notas, manifiestos de paquetes, wheels y paquetes npm, la documentación de std), el generador de las tablas Unicode, el comprobador de enlaces, los formateadores de gdb y lldb, el ejecutor de benchmarks y cuatro benchmarks |
+| Nexium | 58 331 | 85,5 % | el compilador y sus herramientas (34 300 líneas bajo `self/`), la biblioteca estándar (29 módulos), el arnés de pruebas y el fuzzer, los ejemplos, los programas del tutorial, nexium-gui, el generador del sitio, cinco benchmarks |
+| C | 4 601 | 6,7 % | el runtime (`nx_rt.h`, y `setjmp` para WebAssembly), la capa de ventana de la GUI, C de prueba incluido, los cinco benchmarks en C |
+| Python | 1 925 | 2,8 % | los scripts de release (notas, manifiestos de paquetes, wheels y paquetes npm, la documentación de std), el generador de las tablas Unicode, el comprobador de enlaces, los formateadores de gdb y lldb, el ejecutor de benchmarks y cinco benchmarks |
 | JavaScript, TypeScript | 1 189 | 1,7 % | la extensión de VS Code, la gramática de tree-sitter, la capa WASI del playground y el cargador que acompaña a `artifact wasm`, con su prueba en un navegador |
 | archivos de editores | 1 103 | 1,6 % | consultas de tree-sitter, Emacs Lisp, Vim script, Lua para Neovim, un lexer de Pygments, y las 25 líneas de Rust que Zed exige a una extensión |
 | Inno Setup, shell, PowerShell | 879 | 1,3 % | el script del instalador de Windows, `install.sh`, `install.ps1`, los scripts de Chocolatey, los scripts de bootstrap |
-| Rust, Go, Ruby | 213 | 0,3 % | cuatro benchmarks en Rust y cuatro en Go, y la fórmula de Homebrew |
+| Rust, Go, Ruby | 213 | 0,3 % | cinco benchmarks en Rust y cinco en Go, y la fórmula de Homebrew |
 
 No hay Rust en el compilador: el primer compilador impulsó el port y se
 eliminó en 1.0 (decisión 90). El Rust que queda es el pegamento de la
-extensión de Zed, que Zed compila a WebAssembly, y cuatro programas de benchmark
+extensión de Zed, que Zed compila a WebAssembly, y cinco programas de benchmark
 escritos para medirse contra ellos, junto a sus gemelos en Go. Zig no está en la tabla
 porque no hay fuentes Zig en el árbol: `zig cc` es el compilador de C que `nx`
 ejecuta (incluido por el instalador de Windows, descargado por el script de
@@ -573,7 +574,7 @@ topo/           el tutorial: los capítulos y los programas que muestran (ejecut
 site/           el generador del sitio de documentación, un programa Nexium
 tests/          el arnés (run.nx), la suite de conformidad de la especificación (tests/spec), los casos de compile-fail, la prueba del depurador
 docs/           cómo funciona, referencia del lenguaje, guía de integración, traducciones en i18n/
-bench/          cuatro programas en cinco lenguajes detrás de la página de cifras
+bench/          cinco programas en cinco lenguajes detrás de la página de cifras
 installers/     el script del instalador de Windows, install.sh e install.ps1, los manifiestos de winget y Chocolatey
 docker/         las imágenes del compilador para ghcr.io (Debian y Alpine)
 Formula/, bucket/  este repositorio como tap de Homebrew y bucket de Scoop (escritos en cada release)

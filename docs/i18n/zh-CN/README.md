@@ -349,7 +349,7 @@ using arena {
 - [安装](../../install.md)（英文）：Windows 安装程序、macOS/Linux 脚本、源码构建、校验和，以及 `nx` 如何找到 C 编译器。
 - [包](../../packages.md)（英文）：`nexium.toml`、`nx add`、`nx fetch`、git 或路径依赖、锁文件。
 - [标准库](../../std.md)（英文）：用 Nexium 写的模块（`std.strings`、`std.lists`、`std.bytes`、`std.num`、`std.json`、`std.args`、`std.fs`、`std.time`、`std.regex`、`std.text`、`std.testing`、`std.stream`、`std.net`、`std.http`、`std.thread`、`std.process`、`std.sort`、`std.heap`、`std.set`、`std.deque`、`std.hash`、`std.path`、`std.env`、`std.uuid`、`std.log`、`std.csv`、`std.toml`、`std.base64`、`std.websocket`）。
-- [数字](https://londopy.github.io/nexium/docs/numbers.html)（英文）：五种语言写的四个程序，每周在同一台 runner 上测量。
+- [数字](https://londopy.github.io/nexium/docs/numbers.html)（英文）：五种语言写的五个程序，每周在同一台 runner 上测量。
 - [nexium-gui](../../gui.md)（英文）：即时模式 GUI 库以及如何编写一个控件。
 - [发布你的程序](../../releasing-your-program.md)（英文）：从一个标签得到三个平台的二进制，安装程序可选。
 - [编辑器支持](../../../editors)（英文）：VS Code、Vim、Neovim、Helix、Zed、Emacs、Kate、JetBrains、Sublime Text、Notepad++、nano，其余的用 `nx lsp`。
@@ -373,7 +373,7 @@ runner 上测量（2026-09-25；七次运行的中位数，超过五秒的取三
 
 在浮点和数组上，Nexium 的用时最多比 C 多三分之一：浮点上比 Rust 和 Go 略快，数组上略慢。
 在函数调用上，`fast` 与 Rust 一样用时是 C 的两倍，`safe` 的溢出检查在此之上再多 70%。映射与
-字符串的速度与 Go 相同，用时约为 C 的两倍。Python 的用时是 Nexium `fast` 的 3 到 74 倍。
+字符串的速度与 Go 相同，用时约为 C 的两倍。Python 的用时是 Nexium `fast` 的 3 到 74 倍。第五个程序 `trees` 在这次快照之后加入，数字页面上有它。
 
 `safe` 保留溢出和边界检查，是 `nx ship` 和 `nx bench` 的默认模式；`fast`
 （`--mode fast`）去掉这些检查。[数字页面](https://londopy.github.io/nexium/docs/numbers.html)（英文）还给出每个时间相对 C 的倍数、各工具版本和规则；Bench 工作流
@@ -444,7 +444,7 @@ WebAssembly 模块在 Node.js 上运行；`artifact wasm` 把库连同 JavaScrip
 （`std.sort`、`std.heap`、`std.set`、`std.deque`）、`std.hash`、`random.secure`、路径、环境
 变量与配置目录、UUID、日志、CSV、TOML 和 base64；`Map` 能抵御哈希洪水
 攻击并保持键的插入顺序；`std.time` 从平台的数据库读取时区；`std.http` 通过平台自带的 TLS 或 nxtls 这样的 TLS 层发起 HTTPS，`std.websocket` 也是如此，[nexium-discord](https://github.com/Londopy/nexium-discord) 在其上构建 Discord 机器人；`std.process` 与运行中的程序交互，`std.thread` 提供 select、原子操作以及在调用返回前就结束的线程，`std.text` 提供字素簇和 Unicode 的大小写映射，`std.testing` 提供会缩小所找到反例的属性测试。接下来是 1.6：配得上发布构建的运行时。Nexium 还不是什么、每一点在哪里得到回答，见
-[路线图的一节](../../../ROADMAP.md#what-10-is-not-yet)：基准只有四个程序（[速度](#速度)），
+[路线图的一节](../../../ROADMAP.md#what-10-is-not-yet)：基准只有五个程序（[速度](#速度)），
 生态只有一位维护者和四个树外的项目（[上文](#实际使用)）。
 [`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md) 列出每个未修复的缺陷及其修法；
 [`DECISIONS.md`](../../../DECISIONS.md) 列出规范未定之处做出的每一个决定。
@@ -490,16 +490,16 @@ Nexium 程序的测试框架（`nx run tests/run.nx`）驱动，在 CI 中于五
 
 | 语言 | 行数 | 占比 | 是什么 |
 | --- | --- | --- | --- |
-| Nexium | 58,331 | 85.5% | 编译器及其工具（`self/` 下 34,300 行）、标准库（29 个模块）、测试框架与 fuzzer、示例、教程程序、nexium-gui、站点生成器、四个基准程序 |
-| C | 4,601 | 6.7% | 运行时（`nx_rt.h`，以及 WebAssembly 用的 `setjmp`）、GUI 窗口层、随附的测试用 C、四个 C 基准程序 |
-| Python | 1,925 | 2.8% | 发布脚本（说明、包清单、wheel 与 npm 包、std 文档）、Unicode 表的生成器、链接检查器、gdb 与 lldb 格式化器、基准运行器和四个基准程序 |
+| Nexium | 58,331 | 85.5% | 编译器及其工具（`self/` 下 34,300 行）、标准库（29 个模块）、测试框架与 fuzzer、示例、教程程序、nexium-gui、站点生成器、五个基准程序 |
+| C | 4,601 | 6.7% | 运行时（`nx_rt.h`，以及 WebAssembly 用的 `setjmp`）、GUI 窗口层、随附的测试用 C、五个 C 基准程序 |
+| Python | 1,925 | 2.8% | 发布脚本（说明、包清单、wheel 与 npm 包、std 文档）、Unicode 表的生成器、链接检查器、gdb 与 lldb 格式化器、基准运行器和五个基准程序 |
 | JavaScript、TypeScript | 1,189 | 1.7% | VS Code 扩展、tree-sitter 语法、playground 的 WASI 层，以及 `artifact wasm` 附带的加载器和它在浏览器中的检查 |
 | 编辑器文件 | 1,103 | 1.6% | tree-sitter 查询、Emacs Lisp、Vim script、Neovim 用的 Lua、一个 Pygments 词法分析器，以及 Zed 对扩展要求的 25 行 Rust |
 | Inno Setup、shell、PowerShell | 879 | 1.3% | Windows 安装程序脚本、`install.sh`、`install.ps1`、Chocolatey 脚本、自举脚本 |
-| Rust、Go、Ruby | 213 | 0.3% | Rust 与 Go 各四个基准程序，以及 Homebrew 公式 |
+| Rust、Go、Ruby | 213 | 0.3% | Rust 与 Go 各五个基准程序，以及 Homebrew 公式 |
 
 编译器里没有 Rust：第一个编译器推动了移植并在 1.0 时被删除（决策 90）。剩下的 Rust
-是 Zed 扩展的胶水代码，由 Zed 编译为 WebAssembly，以及四个用来对照测量的基准程序，
+是 Zed 扩展的胶水代码，由 Zed 编译为 WebAssembly，以及五个用来对照测量的基准程序，
 旁边是它们的 Go 孪生版本。Zig 不在表中，因为树里没有 Zig
 源码：`zig cc` 是 `nx` 运行的 C 编译器（Windows 安装程序随附，安装脚本下载），正如
 C 编译器是拿来用的，不是拿来写的。
@@ -519,7 +519,7 @@ topo/           教程：各章及其展示的程序（由测试运行）
 site/           文档站点生成器，一个 Nexium 程序
 tests/          测试框架（run.nx）、规范一致性套件（tests/spec）、编译失败用例、调试器检查
 docs/           工作原理、语言参考、嵌入指南、i18n/ 下的翻译
-bench/          数字页背后的五种语言四个程序
+bench/          数字页背后的五种语言五个程序
 installers/     Windows 安装程序脚本、install.sh 与 install.ps1、winget 与 Chocolatey 清单
 docker/         ghcr.io 上的编译器镜像（Debian 与 Alpine）
 Formula/, bucket/  这个仓库作为 Homebrew tap 与 Scoop bucket（每次发布时写入）

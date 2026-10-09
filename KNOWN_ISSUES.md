@@ -150,6 +150,17 @@ goal of SPEC 1; the roadmap's "Errors you can fix alone").
   are written the glued way because of it. Fix: look past `pub` (and the
   other declaration keywords) to `struct`/`enum` before the name, as the
   identifier rule does with `declared`, and respace the tree.
+- **`nx refcounts` lists a `null` written to an optional `ref class` field
+  as a retain.** `refcount_walk` in `self/tools.nx` reports every
+  `Retained` node as "retain (copy of a reference)", and the checker wraps
+  a `null` literal stored into a `?Node` field in one, though the copy it
+  compiles to (`nx_clone_opt_Node` on an empty optional) retains nothing.
+  Reproduce: `nx refcounts bench/trees.nx` lists two retains on the leaf
+  literal `Node{ .left = null, .right = null }` (line 9), where the
+  emitted C has none; the report then overstates a program's reference
+  traffic. Fix: skip a `Retained` whose operand is a `null` literal, or
+  name it as a copy of null, and a case with the report's lines recorded.
+
 - **Formatter bar classification has no unit test.** `nx fmt` tells
   closure bars from bit-or per line (`self/fmt.nx`, `bar_role`); the tree-wide
   `--check` in CI is the only guard. Add cases for `|x| x | 1`, `a | b`,

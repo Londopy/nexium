@@ -822,11 +822,18 @@ maps and strings, which has gone from 3.0 times C to 1.6 on Windows and
 1.6 to 1.8 on Linux, where the figure moves with the run (`get_or_put`,
 integers formatted in 64 bits, a string's first block of 16 bytes, small
 freed blocks kept for reuse). Safe mode's cost is the overflow checks on
-calls, 1.5 times C on `fib`.
+calls, 1.5 times C on `fib`. The fifth benchmark, `trees`, binary trees
+of `ref class` nodes added for the ARC elision item, runs at 1.3 times C
+in both modes on Windows, Rust at 1.1 and Go at 0.6 with its collector.
 
 - ARC elision: retain/release pairs the checker proves redundant (a `ref
   class` passed down and back within one function) are not emitted; the
-  `refcounts` effect reports the ones that remain.
+  `refcounts` effect reports the ones that remain. (The `trees` benchmark,
+  binary trees of `ref class` nodes, is its measure, decision 127: `count`
+  binds each child with `let`, a copy retained and released, twice per
+  inner node, as `nx refcounts bench/trees.nx` lists; bound with `if let`,
+  which borrows, the program runs about a tenth faster, the elision's
+  ceiling.)
 - Bounds-check elimination in loops from the range analysis; `nx audit`
   shows which checks survive in a hot function.
 - `Map`: a hash chosen per key type (the iteration order is documented

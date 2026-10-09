@@ -1,0 +1,41 @@
+// binary trees: for every depth, trees of `ref class` nodes built, counted
+// and dropped, with a long-lived tree kept throughout; the trees and the nodes
+const MIN_DEPTH: i64 = 4
+const MAX_DEPTH: i64 = 17
+
+ref class Node { left: ?Node, right: ?Node }
+
+fn make(depth: i64) -> Node {
+    if depth == 0 { return Node{ .left = null, .right = null } }
+    return Node{ .left = make(depth - 1), .right = make(depth - 1) }
+}
+
+fn count(n: Node) -> i64 {
+    let left = n.left orelse return 1
+    let right = n.right orelse return 1
+    return 1 + count(left) + count(right)
+}
+
+fn main() {
+    var trees: i64 = 0
+    var nodes: i64 = 0
+    {
+        let stretch = make(MAX_DEPTH + 1)
+        nodes += count(stretch)
+        trees += 1
+    }
+    let long_lived = make(MAX_DEPTH)
+    var depth = MIN_DEPTH
+    while depth <= MAX_DEPTH {
+        let iterations: i64 = 1 << (MAX_DEPTH - depth + MIN_DEPTH)
+        for _ in 0..iterations {
+            let t = make(depth)
+            nodes += count(t)
+            trees += 1
+        }
+        depth += 2
+    }
+    nodes += count(long_lived)
+    trees += 1
+    println("{} {}", .{trees, nodes})
+}

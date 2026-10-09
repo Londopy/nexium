@@ -1,6 +1,6 @@
 # bench: the numbers
 
-Four programs, each written the same way in Nexium, C, Rust, Go and Python:
+Five programs, each written the same way in Nexium, C, Rust, Go and Python:
 the same algorithm, the same data, the same output line. Each runs for about
 a second in the compiled languages, long enough that starting the process
 is noise rather than the measurement (Python takes 3 to 35 seconds).
@@ -16,6 +16,7 @@ answer, and keeps the median wall time.
 | `nbody` | floats: five bodies, 10,000,000 steps of a symplectic integrator | the energy, nine decimals |
 | `sieve` | arrays: primes below 100,000,000 | `5761455` |
 | `words` | hashing and strings: 10,000,000 generated words counted in a map | distinct and total |
+| `trees` | allocation and reference counts: 174,754 binary trees of `ref class` nodes (every second depth from 4 to 16, a stretch tree of 18, a long-lived one of 17) built, counted and dropped | trees and nodes |
 
 ```sh
 python bench/run.py                       # the table, on this machine

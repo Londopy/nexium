@@ -354,7 +354,7 @@ using arena {
 - [インストール](../../install.md)（英語）：Windows インストーラ、macOS/Linux スクリプト、ソースビルド、チェックサム、`nx` が C コンパイラを見つける方法。
 - [パッケージ](../../packages.md)（英語）：`nexium.toml`、`nx add`、`nx fetch`、git またはパス依存、ロックファイル。
 - [標準ライブラリ](../../std.md)（英語）：Nexium で書かれたモジュール（`std.strings`、`std.lists`、`std.bytes`、`std.num`、`std.json`、`std.args`、`std.fs`、`std.time`、`std.regex`、`std.text`、`std.testing`、`std.stream`、`std.net`、`std.http`、`std.thread`、`std.process`、`std.sort`、`std.heap`、`std.set`、`std.deque`、`std.hash`、`std.path`、`std.env`、`std.uuid`、`std.log`、`std.csv`、`std.toml`、`std.base64`、`std.websocket`）。
-- [数値](https://londopy.github.io/nexium/docs/numbers.html)（英語）：5 言語で書いた 4 つのプログラムを、同じランナーで毎週計測。
+- [数値](https://londopy.github.io/nexium/docs/numbers.html)（英語）：5 言語で書いた 5 つのプログラムを、同じランナーで毎週計測。
 - [nexium-gui](../../gui.md)（英語）：即時モード GUI ライブラリとウィジェットの書き方。
 - [プログラムのリリース](../../releasing-your-program.md)（英語）：タグから 3 プラットフォームのバイナリを、インストーラは任意で。
 - [エディタ対応](../../../editors)（英語）：VS Code、Vim、Neovim、Helix、Zed、Emacs、Kate、JetBrains、Sublime Text、Notepad++、nano、そのほかは `nx lsp` で。
@@ -380,7 +380,7 @@ using arena {
 浮動小数点と配列では Nexium は C の 3 分の 1 増し以内の時間で、浮動小数点では Rust や Go
 よりやや速く、配列ではやや遅くなります。関数呼び出しでは `fast` が Rust と同じく C の 2 倍の
 時間で、`safe` のオーバーフロー検査はそこに 70% を加えます。マップと文字列は Go と同じ速さで、
-C のおよそ 2 倍の時間です。Python は Nexium `fast` の 3〜74 倍の時間がかかります。
+C のおよそ 2 倍の時間です。Python は Nexium `fast` の 3〜74 倍の時間がかかります。5 つ目のプログラム `trees` はこの計測の後に加わり、数値のページにあります。
 
 `safe` はオーバーフローと範囲の検査を残し、`nx ship` と `nx bench` の既定です。
 `fast`（`--mode fast`）は検査を省きます。[数値のページ](https://londopy.github.io/nexium/docs/numbers.html)（英語）には C の時間に
@@ -456,7 +456,7 @@ RISC-V 32（後の二つは QEMU のもと）向けにも、Node.js 上の WebAs
 フォルダ、UUID、ログ、CSV、TOML、base64 などが入っています。`Map` はハッシュ攻撃に強く、
 キーを入れた順を保ちます。`std.time` はプラットフォームのデータベースからタイムゾーンを読みます。`std.http` はプラットフォーム自身の TLS、または nxtls のような TLS 層を通して HTTPS を話し、`std.websocket` も同じで、[nexium-discord](https://github.com/Londopy/nexium-discord) はその上に Discord ボットを作ります。`std.process` は実行中のプログラムとやり取りし、`std.thread` には select、アトミック操作、呼び出しより先に終わるスレッドがあり、`std.text` には書記素クラスタと Unicode の大文字小文字変換が、`std.testing` には見つけたものを縮小するプロパティテストがあります。次は 1.6、リリースビルドにふさわしいランタイムです。Nexium がまだ
 何でないか、そしてそれぞれがどこで答えられるかは[ロードマップの一節](../../../ROADMAP.md#what-10-is-not-yet)に
-あります。ベンチマークは 4 つのプログラム（[速度](#速度)）だけで、エコシステムは
+あります。ベンチマークは 5 つのプログラム（[速度](#速度)）だけで、エコシステムは
 メンテナ一人とツリー外のプロジェクト四つです（[上](#実際の利用)）。
 [`KNOWN_ISSUES.md`](../../../KNOWN_ISSUES.md) は未修正のバグをその修正案とともに、
 [`DECISIONS.md`](../../../DECISIONS.md) は仕様が開いていた箇所でのすべての判断を
@@ -506,17 +506,17 @@ Rust で書かれた最初のコンパイラは移植を牽引し、1.0 で削�
 
 | 言語 | 行数 | 割合 | 何か |
 | --- | --- | --- | --- |
-| Nexium | 58,331 | 85.5% | コンパイラとそのツール（`self/` 配下に 34,300 行）、標準ライブラリ（29 モジュール）、テストハーネスとファザー、サンプル、チュートリアルのプログラム、nexium-gui、サイト生成器、ベンチマーク 4 つ |
-| C | 4,601 | 6.7% | ランタイム（`nx_rt.h` と WebAssembly 用の `setjmp`）、GUI のウィンドウ層、同梱のテスト用 C、C のベンチマーク 4 つ |
-| Python | 1,925 | 2.8% | リリース用スクリプト（ノート、パッケージのマニフェスト、wheel と npm パッケージ、std ドキュメント）、Unicode テーブルの生成器、リンクチェッカー、gdb と lldb のフォーマッタ、ベンチマークランナーとベンチマーク 4 つ |
+| Nexium | 58,331 | 85.5% | コンパイラとそのツール（`self/` 配下に 34,300 行）、標準ライブラリ（29 モジュール）、テストハーネスとファザー、サンプル、チュートリアルのプログラム、nexium-gui、サイト生成器、ベンチマーク 5 つ |
+| C | 4,601 | 6.7% | ランタイム（`nx_rt.h` と WebAssembly 用の `setjmp`）、GUI のウィンドウ層、同梱のテスト用 C、C のベンチマーク 5 つ |
+| Python | 1,925 | 2.8% | リリース用スクリプト（ノート、パッケージのマニフェスト、wheel と npm パッケージ、std ドキュメント）、Unicode テーブルの生成器、リンクチェッカー、gdb と lldb のフォーマッタ、ベンチマークランナーとベンチマーク 5 つ |
 | JavaScript、TypeScript | 1,189 | 1.7% | VS Code 拡張、tree-sitter 文法、プレイグラウンドの WASI 層、そして `artifact wasm` が同梱するローダとそのブラウザでの検査 |
 | エディタ用ファイル | 1,103 | 1.6% | tree-sitter クエリ、Emacs Lisp、Vim script、Neovim 用 Lua、Pygments のレキサ、そして Zed が拡張に要求する 25 行の Rust |
 | Inno Setup、シェル、PowerShell | 879 | 1.3% | Windows インストーラのスクリプト、`install.sh`、`install.ps1`、Chocolatey のスクリプト、ブートストラップのスクリプト |
-| Rust、Go、Ruby | 213 | 0.3% | Rust と Go にベンチマークが 4 つずつ、そして Homebrew の formula |
+| Rust、Go、Ruby | 213 | 0.3% | Rust と Go にベンチマークが 5 つずつ、そして Homebrew の formula |
 
 コンパイラに Rust はありません。最初のコンパイラは移植を牽引して 1.0 で削除され
 （決定 90）、残る Rust は Zed が WebAssembly にコンパイルする Zed 拡張の接着部分と、
-比較対象として書かれたベンチマークプログラム四つ（Go の双子と並んで）です。
+比較対象として書かれたベンチマークプログラム五つ（Go の双子と並んで）です。
 Zig が表にないのは、ツリーに Zig のソースがないからです。`zig cc` は `nx` が実行する
 C コンパイラであり（Windows インストーラが同梱し、インストールスクリプトがダウンロード
 します）、C コンパイラが書くものではなく使うものであるのと同じです。
@@ -536,7 +536,7 @@ topo/           チュートリアル：各章と、そこで示すプログラ�
 site/           ドキュメントサイトの生成器。Nexium プログラム
 tests/          ハーネス（run.nx）、仕様の適合スイート（tests/spec）、コンパイル失敗ケース、デバッガの検査
 docs/           仕組み、言語リファレンス、組み込みガイド、i18n/ の翻訳
-bench/          数値のページを支える 5 言語 4 プログラム
+bench/          数値のページを支える 5 言語 5 プログラム
 installers/     Windows インストーラのスクリプト、install.sh と install.ps1、winget と Chocolatey のマニフェスト
 docker/         ghcr.io 向けのコンパイラのイメージ（Debian と Alpine）
 Formula/, bucket/  Homebrew の tap と Scoop の bucket としてのこのリポジトリ（リリースごとに書き出し）

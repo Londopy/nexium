@@ -1170,3 +1170,32 @@ the architecture. "Spec" means `nexium-spec.txt`; "archived" means
     cache is on everywhere but under AddressSanitizer: on Linux, whose C
     library caches small blocks itself, it changes nothing measurable, and
     on Windows `words` runs in three quarters of the time.
+127. **The fifth benchmark is binary trees of `ref class` nodes, the
+    classic, sized for a second in C, with a plain `malloc` and `free` per
+    node there.** None of the four benchmarks made a `ref class`, so the
+    ARC elision item had nothing to measure. Binary trees, the Benchmarks
+    Game's program (for every depth, trees built, counted and dropped, a
+    stretch tree first and a long-lived one kept throughout), is allocation
+    and reference-count traffic and little else, has a reference program
+    in every language, and needed no design; an interpreter over a
+    reference-counted syntax tree, the other candidate, would have been a
+    design of its own with no twin elsewhere. It is cut down to one output
+    line, the trees and the nodes, as the table's rule wants. The C version
+    takes a block from `malloc` for every node and frees each, which is what
+    a reader writes; the Game's fast C versions pool their nodes, and a
+    pool would measure the pool. Rust boxes its nodes, Go lets its
+    collector have them, Python makes objects. Every second depth from 4
+    to 16, 2^(21 − depth) trees each, with a stretch tree of depth 18 first
+    and a long-lived one of depth 17 kept, give 174,754 trees and
+    29,971,806 nodes, 0.8 s in C with zig cc on the laptop, inside the
+    table's second. In `make` the compiler moves each fresh child into the
+    literal's field, so building a node costs its allocation and nothing
+    more; the reference traffic is in `count`, which binds each child with
+    `let left = n.left orelse return 1`, the form a reader reaches for to
+    stop at a leaf: a `let` of a reference is a copy, retained there and
+    released at the scope's exit, twice per inner node, which the emitted C
+    shows and `nx refcounts` lists. That is the pair the elision is for, a
+    reference copied out of a borrowed parameter's field and used only
+    within the function, and the program's number to move; `if let`, which
+    borrows, makes none of it and runs about a tenth faster, the elision's
+    ceiling.

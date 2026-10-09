@@ -365,7 +365,7 @@ using arena {
 - [Installing](docs/install.md): the Windows installer, the macOS/Linux script, source builds, checksums, and how `nx` finds a C compiler.
 - [Packages](docs/packages.md): `nexium.toml`, `nx add`, `nx fetch`, git or path dependencies, the lock file.
 - [Standard library](docs/std.md): the modules written in Nexium (`std.strings`, `std.lists`, `std.bytes`, `std.num`, `std.json`, `std.args`, `std.fs`, `std.time`, `std.regex`, `std.text`, `std.testing`, `std.stream`, `std.net`, `std.http`, `std.thread`, `std.process`, `std.sort`, `std.heap`, `std.set`, `std.deque`, `std.hash`, `std.path`, `std.env`, `std.uuid`, `std.log`, `std.csv`, `std.toml`, `std.base64`, `std.websocket`).
-- [The numbers](https://londopy.github.io/nexium/docs/numbers.html): four programs in five languages, measured weekly on one runner.
+- [The numbers](https://londopy.github.io/nexium/docs/numbers.html): five programs in five languages, measured weekly on one runner.
 - [nexium-gui](docs/gui.md): the immediate-mode GUI library and how to write a widget.
 - [Releasing your program](docs/releasing-your-program.md): binaries for three platforms from a tag, installers optional.
 - [Editor support](editors): VS Code, Vim, Neovim, Helix, Zed, Emacs, Kate, JetBrains, Sublime Text, Notepad++, nano, and `nx lsp` for the rest.
@@ -393,7 +393,8 @@ On floats and arrays Nexium takes at most a third longer than C: a little
 ahead of Rust and Go on floats, a little behind them on arrays. On calls
 `fast` matches Rust at twice C's time, and `safe`'s overflow checks add 70% to
 that. Maps and strings run at Go's pace, about twice C's time. Python takes 3
-to 74 times as long as Nexium `fast`.
+to 74 times as long as Nexium `fast`. `trees`, the fifth program, joined
+after this snapshot; the numbers page has it.
 
 `safe` keeps the overflow and bounds checks, as `nx ship` and `nx bench`
 build unless told otherwise; `fast` (`--mode fast`) leaves them out. [The
@@ -482,7 +483,7 @@ talks to programs while they run, `std.thread` has select, atomics and
 threads that end before the call does, `std.text` grapheme clusters and
 Unicode's case mapping, and `std.testing` property tests that shrink what
 they find. Next is 1.6, the runtime that release builds deserve. What Nexium is not yet, and where each is answered, is
-[a section of the roadmap](ROADMAP.md#what-10-is-not-yet): the benchmarks are four
+[a section of the roadmap](ROADMAP.md#what-10-is-not-yet): the benchmarks are five
 programs ([Speed](#speed)), and the ecosystem is one maintainer and four
 projects outside the tree ([above](#in-the-wild)).
 [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) lists every open bug with its fix;
@@ -539,17 +540,17 @@ of `std/text.nx`, `gui/font.bin`, lock files):
 
 | language | lines | share | what it is |
 | --- | --- | --- | --- |
-| Nexium | 58,331 | 85.5% | the compiler and its tools (34,300 lines under `self/`), the standard library (29 modules), the test harness and the fuzzer, the examples, the tutorial's programs, the GUI, the site generator, four benchmarks |
-| C | 4,601 | 6.7% | the runtime (`nx_rt.h`, and `setjmp` for WebAssembly), the GUI window layer, vendored test C, the four C benchmarks |
-| Python | 1,925 | 2.8% | the release scripts (notes, package manifests, wheels and npm packages, the std docs), the Unicode tables' generator, the link checker, the gdb and lldb formatters, the benchmark runner and four benchmarks |
+| Nexium | 58,331 | 85.5% | the compiler and its tools (34,300 lines under `self/`), the standard library (29 modules), the test harness and the fuzzer, the examples, the tutorial's programs, the GUI, the site generator, five benchmarks |
+| C | 4,601 | 6.7% | the runtime (`nx_rt.h`, and `setjmp` for WebAssembly), the GUI window layer, vendored test C, the five C benchmarks |
+| Python | 1,925 | 2.8% | the release scripts (notes, package manifests, wheels and npm packages, the std docs), the Unicode tables' generator, the link checker, the gdb and lldb formatters, the benchmark runner and five benchmarks |
 | JavaScript, TypeScript | 1,189 | 1.7% | the VS Code extension, the tree-sitter grammar, the playground's WASI layer, and the loader `artifact wasm` ships, with its check in a browser |
 | editor files | 1,103 | 1.6% | tree-sitter queries, Emacs Lisp, Vim script, Lua for Neovim, a Pygments lexer, and the 25 lines of Rust that Zed requires of an extension |
 | Inno Setup, shell, PowerShell | 879 | 1.3% | the Windows installer script, `install.sh`, `install.ps1`, the Chocolatey scripts, the bootstrap scripts |
-| Rust, Go, Ruby | 213 | 0.3% | four benchmarks each in Rust and Go, and the Homebrew formula |
+| Rust, Go, Ruby | 213 | 0.3% | five benchmarks each in Rust and Go, and the Homebrew formula |
 
 There is no Rust in the compiler: the first compiler drove the port and
 was deleted at 1.0 (decision 90). The Rust that remains is the glue of the
-Zed extension, which Zed compiles to WebAssembly, and four benchmark
+Zed extension, which Zed compiles to WebAssembly, and five benchmark
 programs written to be measured against, beside their Go twins. Zig is not in
 the table because there is no Zig source in the tree: `zig cc` is the C
 compiler `nx` runs (bundled by the Windows installer, downloaded by the
@@ -570,7 +571,7 @@ topo/           the tutorial: chapters, and the programs they show (run by the t
 site/           the documentation site generator, a Nexium program
 tests/          the harness (run.nx), the spec conformance suite (tests/spec), compile-fail cases, the debugger check
 docs/           how it works, language reference, embedding guide, i18n/ translations
-bench/          four programs in five languages behind the numbers page
+bench/          five programs in five languages behind the numbers page
 installers/     the Windows installer script, install.sh and install.ps1, the winget and Chocolatey manifests
 docker/         the compiler images for ghcr.io (Debian and Alpine)
 Formula/, bucket/  this repository as a Homebrew tap and a Scoop bucket (written at each release)
