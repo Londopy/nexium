@@ -17,10 +17,41 @@ maps and strings: 1.6× C on Windows (0.66 s against 0.42), and on Linux
 under WSL between 1.6× and 1.8× depending on the run (0.82 s against 0.45
 on the last one), from 3.0× and 1.9× at 1.5.0. `safe` mode costs 1.5× on
 `fib`, the overflow checks on every call; nothing measurable on the other
-three.
+three. The fifth benchmark, `trees` (binary trees of `ref class` nodes),
+stands at 1.3× C in both modes on Windows: the ARC elision item's number,
+about a tenth of it the retain and release of each child `count` binds.
 
-**Next.** A benchmark that uses `ref class`, so the ARC elision has a
-number to move.
+**Next.** The ARC elision: the retain and release pairs the checker can
+prove redundant, which `trees` makes twice per inner node in `count`.
+
+### 2026-10-09, the `trees` benchmark (6e7f407)
+
+- A fifth benchmark for the numbers page, binary trees of `ref class`
+  nodes (decision 127): for every second depth from 4 to 16, 2^(21−depth)
+  trees built, counted and dropped, a stretch tree of depth 18 first and a
+  long-lived one of depth 17 kept; 174,754 trees, 29,971,806 nodes;
+  `bench/trees.{nx,c,rs,go,py}`, the same line from all five.
+- Measured on Windows with `bench/run.py` (zig cc 0.14.1 for Nexium and C,
+  rustc 1.98, go 1.26, Python 3.13; medians of five runs): Nexium safe
+  1.07 s, fast 1.08, C 0.85, Rust 0.94, Go 0.50 (its collector against a
+  `malloc` and a `free` per node), Python 13.3. Nexium at 1.3× C in both
+  modes. On Linux under WSL with gcc, where `malloc` is quicker, C takes
+  0.42 s and Nexium `fast` 0.55 (1.3× again).
+- `nx leaks bench/trees.nx`: none, 29,971,806 allocations, peak 25,165,776
+  bytes: the stretch tree alone, 524,287 nodes of 48 bytes (two words of
+  counts and two 16-byte optionals, where C's node is 16 bytes), dropped
+  before the long-lived tree is made. `nx refcounts bench/trees.nx`: eleven
+  sites, four of them in `count`, the retain of each child bound with `let`
+  and its release at the scope's exit, twice per inner node (the two on the
+  leaf literal's `null`s are a report quirk, in `KNOWN_ISSUES.md`); `make`
+  moves its fresh children into the node and retains nothing. Those pairs
+  are the ARC elision's target and this is its before: bound with `if let`,
+  which borrows, the program ran at 1.26× C against 1.39× in one alternating
+  pass, so the elision is worth about a tenth here.
+- The Bench workflow's next run adds the row (a program the baseline lacks
+  is not compared, `bench/run.py` line 158); `docs/numbers.md`,
+  `bench/results/latest.json` and the README's dated Speed table follow
+  from it. The README and its six translations count five benchmarks.
 
 ### 2026-10-08, small blocks cached in the allocator (7203e50)
 
