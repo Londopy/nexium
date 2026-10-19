@@ -3,49 +3,57 @@
   "machine": {
     "os": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
     "cpu": "x86_64",
-    "date": "2026-10-04",
-    "runner": "GitHub Actions 1000010811"
+    "date": "2026-10-19",
+    "runner": "GitHub Actions 1000011680"
   },
   "tools": {
     "nexium": "nx 1.5.0 (Everest: Base Camp)",
     "c": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
-    "rust": "rustc 1.99.0 (b940084d7 2026-09-28)",
+    "rust": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
     "go": "go version go1.23.12 linux/amd64",
     "python": "Python 3.12.3"
   },
   "runs": 7,
   "results": {
     "fib": {
-      "nexium-safe": 1.5237,
-      "nexium-fast": 0.8985,
-      "c": 0.5145,
-      "rust": 0.8464,
-      "go": 1.5618,
-      "python": 39.5085
+      "nexium-safe": 1.0864,
+      "nexium-fast": 0.7336,
+      "c": 0.3892,
+      "rust": 0.7339,
+      "go": 1.3453,
+      "python": 28.9475
     },
     "nbody": {
-      "nexium-safe": 0.7539,
-      "nexium-fast": 0.7533,
-      "c": 0.6806,
-      "rust": 0.7665,
-      "go": 0.8622,
-      "python": 61.477
+      "nexium-safe": 0.655,
+      "nexium-fast": 0.6552,
+      "c": 0.5906,
+      "rust": 0.6722,
+      "go": 0.7084,
+      "python": 49.3766
     },
     "sieve": {
-      "nexium-safe": 0.6439,
-      "nexium-fast": 0.5986,
-      "c": 0.4357,
-      "rust": 0.4353,
-      "go": 0.4768,
-      "python": 5.529
+      "nexium-safe": 0.6318,
+      "nexium-fast": 0.663,
+      "c": 0.5444,
+      "rust": 0.5447,
+      "go": 0.577,
+      "python": 4.3343
     },
     "words": {
-      "nexium-safe": 1.48,
-      "nexium-fast": 1.4385,
-      "c": 0.7203,
-      "rust": 1.1614,
-      "go": 1.4454,
-      "python": 4.4776
+      "nexium-safe": 0.9333,
+      "nexium-fast": 0.9218,
+      "c": 0.5848,
+      "rust": 0.9424,
+      "go": 1.1317,
+      "python": 3.6999
+    },
+    "trees": {
+      "nexium-safe": 0.7396,
+      "nexium-fast": 0.7298,
+      "c": 0.417,
+      "rust": 0.4861,
+      "go": 0.9175,
+      "python": 17.5284
     }
   }
 }
